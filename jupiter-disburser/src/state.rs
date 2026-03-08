@@ -53,13 +53,18 @@ pub struct State {
     /// Updated on Ok/Duplicate transfers.
     pub last_successful_transfer_ts: Option<u64>,
 
-    /// Rescue logic runs at most once every 14 days.
+    /// Timestamp of the last successful controller update performed by rescue logic.
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
 
-    /// Locks for timer overlap protection.
+    /// Legacy lock fields retained for stable-state compatibility.
+    /// Execution no longer depends on either boolean.
     pub main_lock: bool,
     pub rescue_lock: bool,
+
+    /// Expiring lease used to suppress overlapping main ticks without risking a
+    /// permanent wedge if execution stops after an await boundary.
+    pub main_lock_expires_at_ts: Option<u64>,
 
     /// Deterministic, persisted payout plan for idempotent retries.
     pub payout_nonce: u64,
@@ -79,6 +84,7 @@ impl State {
             rescue_triggered: false,
             main_lock: false,
             rescue_lock: false,
+            main_lock_expires_at_ts: Some(0),
             payout_nonce: 1,
             payout_plan: None,
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60), // far in past

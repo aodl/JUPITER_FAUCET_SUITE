@@ -28,10 +28,6 @@ pub fn desired_controllers(
     }
 }
 
-pub fn should_attempt_broken_escalation(now_secs: u64, last_attempt_ts: u64) -> bool {
-    now_secs.saturating_sub(last_attempt_ts) >= BROKEN_WINDOW_SECS
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,31 +79,6 @@ mod tests {
             desired_controllers(now, Some(last), self_id(), rescue_id()),
             Some(vec![rescue_id(), self_id()])
         );
-    }
-
-    #[test]
-    fn broken_escalation_gating() {
-        let last = 1_000_000u64;
-
-        // Just before 14d: do not attempt
-        let now = last + BROKEN_WINDOW_SECS - 1;
-        assert!(!should_attempt_broken_escalation(now, last));
-
-        // Exactly 14d: attempt
-        let now2 = last + BROKEN_WINDOW_SECS;
-        assert!(should_attempt_broken_escalation(now2, last));
-
-        // Far after: still attempt
-        let now3 = last + BROKEN_WINDOW_SECS + 12345;
-        assert!(should_attempt_broken_escalation(now3, last));
-    }
-
-    #[test]
-    fn broken_escalation_gating_saturates_safely() {
-        // If clocks are weird or last_attempt is in the future, saturating_sub prevents underflow.
-        let now = 100u64;
-        let last_attempt = 1_000u64;
-        assert!(!should_attempt_broken_escalation(now, last_attempt));
     }
 
     #[test]

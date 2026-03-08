@@ -516,56 +516,39 @@ fn cmd_test() -> Result<()> {
             // Determine expected principals from reality (not mocks).
             let self_id = Principal::from_text(canister_id("jupiter_disburser_dbg")?.trim())?;
             let rescue = principal_of_identity()?; // same identity used to deploy/configure
-    
+
             let self_txt = self_id.to_text();
             let rescue_txt = rescue.to_text();
-    
-            // 1) Force "broken" state and allow escalation attempt.
+
+            // 1) Force "broken" state.
             let old = now_secs.saturating_sub(30 * 86_400);
             let _: () = call_raw(
                 "jupiter_disburser_dbg",
                 "debug_set_last_successful_transfer_ts",
                 &format!("(opt ({}:nat64))", old),
             )?;
-            let _: () = call_raw(
-                "jupiter_disburser_dbg",
-                "debug_set_last_rescue_check_ts",
-                "(0:nat64)",
-            )?;
-    
+
             // Run rescue tick: should set controllers to {rescue, self}
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
-    
+
             let actual = get_canister_controllers("jupiter_disburser_dbg")?;
             let expected_broken: BTreeSet<String> =
                 [rescue_txt.clone(), self_txt.clone()].into_iter().collect();
             assert_controllers_eq("jupiter_disburser_dbg", &actual, &expected_broken)?;
-    
-            // 2) Gating: set last_rescue_check_ts to now so broken escalation should be skipped.
-            let _: () = call_raw(
-                "jupiter_disburser_dbg",
-                "debug_set_last_rescue_check_ts",
-                &format!("({}:nat64)", now_secs),
-            )?;
-    
-            let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
-    
-            let actual2 = get_canister_controllers("jupiter_disburser_dbg")?;
-            assert_controllers_eq("jupiter_disburser_dbg", &actual2, &expected_broken)?;
-    
-            // 3) Recovery: mark as healthy, then rescue tick should re-blackhole to {self}.
+
+            // 2) Recovery: mark as healthy, then rescue tick should re-blackhole to {self}.
             let _: () = call_raw(
                 "jupiter_disburser_dbg",
                 "debug_set_last_successful_transfer_ts",
                 &format!("(opt ({}:nat64))", now_secs),
             )?;
-    
+
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
-    
-            let actual3 = get_canister_controllers("jupiter_disburser_dbg")?;
+
+            let actual2 = get_canister_controllers("jupiter_disburser_dbg")?;
             let expected_healthy: BTreeSet<String> = [self_txt].into_iter().collect();
-            assert_controllers_eq("jupiter_disburser_dbg", &actual3, &expected_healthy)?;
-    
+            assert_controllers_eq("jupiter_disburser_dbg", &actual2, &expected_healthy)?;
+
             Ok(())
         },
     );
@@ -591,6 +574,32 @@ fn cmd_test() -> Result<()> {
         let after = get_canister_controllers("jupiter_disburser_dbg")?;
         assert_controllers_eq("jupiter_disburser_dbg", &after, &expected)?;
     
+        Ok(())
+    });
+
+    run_scenario(&mut outcomes, "Rescue is not armed before first successful payout", || {
+        let self_id = Principal::from_text(canister_id("jupiter_disburser_dbg")?.trim())?;
+        let rescue = principal_of_identity()?;
+
+        let expected: BTreeSet<String> = [self_id.to_text()].into_iter().collect();
+        let before = get_canister_controllers("jupiter_disburser_dbg")?;
+        assert_controllers_eq("jupiter_disburser_dbg", &before, &expected)?;
+
+        let _: () = call_raw(
+            "jupiter_disburser_dbg",
+            "debug_set_last_successful_transfer_ts",
+            "(null)",
+        )?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
+
+        let after = get_canister_controllers("jupiter_disburser_dbg")?;
+        assert_controllers_eq("jupiter_disburser_dbg", &after, &expected)?;
+
+        if after.contains(&rescue.to_text()) {
+            bail!("rescue controller should not be added before any successful payout is recorded");
+        }
+
         Ok(())
     });
 

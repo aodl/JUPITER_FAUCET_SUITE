@@ -1991,7 +1991,7 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         bail!("expected self-only controller at start, got {:?}", c0);
     }
 
-    // Simulate broken: last_successful_transfer_ts far in the past, rescue check allowed.
+    // Simulate broken: last_successful_transfer_ts far in the past.
     let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
     let old = now_secs.saturating_sub(30 * 24 * 60 * 60);
 
@@ -2001,13 +2001,6 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         Principal::anonymous(),
         "debug_set_last_successful_transfer_ts",
         Some(old),
-    )?;
-    let _: () = update_call(
-        &pic,
-        disburser_canister,
-        Principal::anonymous(),
-        "debug_set_last_rescue_check_ts",
-        0u64,
     )?;
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
 
@@ -2034,6 +2027,87 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     Ok(())
 }
 
+
+
+#[test]
+#[ignore]
+fn e2e_rescue_not_armed_before_first_successful_payout() -> Result<()> {
+    require_ignored_flag()?;
+
+    let icp_features = IcpFeatures {
+        registry: Some(IcpFeaturesConfig::DefaultConfig),
+        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
+        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
+        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
+        ..Default::default()
+    };
+
+    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
+        .with_nns_subnet()
+        .with_application_subnet()
+        .with_icp_features(icp_features)
+        .build();
+
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let controller = Principal::anonymous();
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 71, 1_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+
+    let wasm = build_disburser_wasm()?;
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
+        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: controller,
+        main_interval_seconds: Some(365 * 24 * 60 * 60),
+        rescue_interval_seconds: Some(365 * 24 * 60 * 60),
+    };
+
+    pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
+
+    set_self_only_controller(&pic, disburser_canister)?;
+    let c0 = pic.get_controllers(disburser_canister);
+    if c0 != vec![disburser_canister] {
+        bail!("expected self-only controller at start, got {:?}", c0);
+    }
+
+    // No successful payout has ever been recorded.
+    let _: () = update_call(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_set_last_successful_transfer_ts",
+        None::<u64>,
+    )?;
+
+    pic.advance_time(Duration::from_secs(30 * DAY_SECS));
+    pic.tick();
+
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+
+    let c1 = pic.get_controllers(disburser_canister);
+    if c1 != vec![disburser_canister] {
+        bail!(
+            "expected rescue to remain unarmed before first successful payout; got controllers {:?}",
+            c1
+        );
+    }
+
+    let dbg: DebugState = query_call(&pic, disburser_canister, Principal::anonymous(), "debug_state", ())?;
+    if dbg.rescue_triggered {
+        bail!("expected rescue_triggered=false before first successful payout");
+    }
+
+    Ok(())
+}
 
 #[test]
 #[ignore]

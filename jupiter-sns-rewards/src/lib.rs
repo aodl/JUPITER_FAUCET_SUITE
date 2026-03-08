@@ -1,4 +1,4 @@
-// Placeholder canister used to reserve the SNS rewards principal and default canister account until the staking distribution logic is implemented.
+// Placeholder canister reserved for the SNS rewards principal and default account until staking distribution logic lands.
 
 #[ic_cdk::init]
 fn init() {}

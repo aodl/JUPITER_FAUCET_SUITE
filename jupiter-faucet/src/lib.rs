@@ -1,4 +1,4 @@
-// Placeholder canister used to reserve the faucet principal and default canister account until the payout and cycles top-up logic is implemented.
+// Placeholder canister reserved for the faucet principal and default account until payout and cycles top-up logic lands.
 
 #[ic_cdk::init]
 fn init() {}

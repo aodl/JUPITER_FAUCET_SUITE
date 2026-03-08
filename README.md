@@ -1,227 +1,138 @@
 # Jupiter Faucet Suite
 
-Jupiter Faucet is comprised of a suite of Internet Computer canisters for routing NNS neuron rewards into a fixed downstream value flow.
+Jupiter Faucet is a suite of Internet Computer canisters that routes NNS neuron rewards into a fixed downstream value flow.
 
-At the center of the system is `jupiter-disburser`, which controls a single NNS neuron, disburses maturity, and routes the resulting ICP according to a fixed policy. The remaining canisters exist to preserve that value flow, keep the operational path narrow, and provide a controlled recovery mechanism if a system dependency changes unexpectedly.
+The core production canisters are:
 
-## System overview
+- `jupiter-disburser` (`uccpi-cqaaa-aaaar-qby3q-cai`)
+- `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
+- `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
+- `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
 
-The intended production topology is:
+These canisters are deployed on the Fiduciary subnet (`pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae`) for the stronger consensus profile and operational security expected for treasury-facing infrastructure.
 
-- `jupiter-disburser` controls one NNS neuron and routes minted ICP
-- `jupiter-faucet` receives the base maturity flow and converts it into cycles top-ups
-- `jupiter-sns-rewards` receives the SNS-directed bonus ICP flow and distributes it to JUP SNS stakers
-- `jupiter-faucet-frontend` serves the public interface for the faucet side of the system
-- `jupiter-lifeline` is the recovery controller target for blackholed operational canisters
+## Why the suite is structured this way
 
-In normal operation, the flow is:
+The system is intentionally split into narrowly scoped canisters:
 
-1. ICP is committed to the NNS neuron controlled by `jupiter-disburser`
-2. `jupiter-disburser` periodically disburses maturity to its staging account
-3. the age-neutral base portion is routed to `jupiter-faucet`
-4. the age-bonus portion is split between the configured bonus recipients
-5. one bonus recipient can be `jupiter-sns-rewards`, which then distributes that ICP according to its own staking policy
-6. `jupiter-faucet` converts its incoming ICP into cycles and tops up target canisters proportionally to the stake commitments encoded in the original neuron-funding flow
-
-## Components
-
-### `jupiter-disburser`
-
-`jupiter-disburser` is the canister that controls the NNS neuron.
-
-Its job is to:
-
-- initiate `DisburseMaturity` calls against the configured neuron
-- receive minted ICP into a staging account controlled by the canister
-- derive the age-neutral base component and the age-bonus component from the amount actually minted
-- route the resulting ICP across a fixed set of recipients
-- preserve enough local state to resume safely if execution stops part-way through payout
-- trigger lifeline-based controller recovery if transfer flow stops for long enough to satisfy the rescue policy
-
-The current split model is:
-
-- normal recipient receives the age-neutral base portion
-- bonus recipient 1 receives 80% of the age bonus portion
-- bonus recipient 2 receives 20% of the age bonus portion
-
-Detailed design and operational notes for this canister belong in `jupiter-disburser/README.md`.
-
-### `jupiter-faucet`
-
-`jupiter-faucet` is the destination for the base maturity payout.
-
-Its role in the full system is to:
-
-- receive ICP from `jupiter-disburser`
-- convert that ICP into cycles
-- top up target canisters proportionally to the stake commitments associated with the original neuron funding
-
-The placeholder canister in this repository exists so it can be deployed, assigned a principal, and integrated into the full system while the production logic is being built.
-
-### `jupiter-sns-rewards`
-
-`jupiter-sns-rewards` is the intended destination for one of the bonus maturity outputs from `jupiter-disburser`.
-
-Its role in the full system is to:
-
-- receive ICP routed from `jupiter-disburser`
-- calculate each JUP SNS staker's share according to its own reward logic
-- distribute ICP to those stakers
-
-The current repository contains a deployable placeholder canister so that its principal and default canister account can already be used in configuration.
-
-### `jupiter-faucet-frontend`
-
-`jupiter-faucet-frontend` serves the user-facing website for the faucet side of the system.
-
-The current repository contains a deployable placeholder canister for principal allocation and integration work.
-
-### `jupiter-lifeline`
-
-`jupiter-lifeline` is the recovery controller target for blackholed operational canisters.
-
-It is intentionally minimal. Under normal conditions it does not perform recovery work. Its purpose is to exist as a durable, pre-positioned controller target so that recovery authority can be activated if a blackholed canister needs to be recovered after an unexpected dependency failure.
-
-The expected operating model is:
-
-- keep the lifeline canister simple and durable during normal operation
-- only introduce incident-specific recovery logic if a real lifeline event occurs
-- if a lifeline event occurs, inspect the exact failure mode and upgrade `jupiter-lifeline` with narrowly-scoped recovery code for that incident
+- `jupiter-disburser` controls a single NNS neuron, disburses maturity, and routes minted ICP according to a fixed policy.
+- `jupiter-faucet` receives the age-neutral base payout and will convert it into cycles top-ups for participating canisters.
+- `jupiter-sns-rewards` receives the primary age-bonus payout and will distribute it to JUP SNS stakers.
+- `jupiter-lifeline` is the recovery controller target for blackholed operational canisters.
+- `jupiter-faucet-frontend` is the placeholder for the public-facing asset canister.
 
 ## Why `jupiter-disburser` and `jupiter-faucet` are blackholed
 
-`jupiter-disburser` and `jupiter-faucet` are intended to be blackholed in production after deployment has been validated.
+`jupiter-disburser` and `jupiter-faucet` are intended to be blackholed after deployment has been validated. The point is to keep the core maturity-routing and cycle-top-up path operationally immutable during normal operation.
 
-The purpose of blackholing is to make the core maturity-routing and cycle-top-up path operationally immutable during normal operation. That reduces the risk that a successful governance attack against a related control surface could alter how ICP is routed, converted to cycles, or applied as top-ups.
+That immutability matters even in the unlikely event of a successful governance attack elsewhere in the Jupiter ecosystem. If the payout path can be upgraded at will, the top-up policy can be changed at will. Blackholing narrows that risk and makes the core value flow materially harder to tamper with.
 
-For `jupiter-faucet` in particular, blackholing helps preserve the guarantee that incoming ICP is only processed according to the fixed conversion and top-up rules encoded in the deployed canister. The goal is an immutable cycle top-up path even under an unlikely but successful governance attack elsewhere in the broader Jupiter ecosystem.
+## Why the lifeline canister exists
 
-Blackholing is not used to eliminate recovery options entirely. Instead, recovery authority is pre-positioned through `jupiter-lifeline`, which allows the operational path to stay immutable in normal conditions while still leaving a controlled recovery path for unexpected failures.
+A completely blackholed operational path without any recovery option would be too brittle. `jupiter-lifeline` exists to hold a pre-positioned recovery role for blackholed canisters.
 
-## Lifeline-based recovery model
+If value flow stops for long enough to satisfy the local rescue policy, the affected canister can widen its controller set to include `jupiter-lifeline`. That handoff is driven by persisted local state and a management-canister controller update. It does not depend on a fresh ledger or governance API health check at the point of escalation.
 
-Both `jupiter-disburser` and `jupiter-faucet` are expected to use the same recovery pattern.
+That design avoids a circular failure mode where a system API change could both stop normal transfers and also block the recovery handoff.
 
-Each canister is configured so that, if value flow stops for long enough to satisfy its local rescue policy, it can widen its controller set to include `jupiter-lifeline`. This activates a recovery path without relying on a human-controlled principal in the normal operating path.
+The same recovery pattern is intended for both `jupiter-disburser` and `jupiter-faucet`.
 
-The recovery trigger is intentionally based on elapsed time since the last confirmed successful transfer recorded in canister state. It does not depend on a fresh ledger or governance API health check at the point of escalation.
+## Operational invariant before blackholing
 
-That design avoids a circular failure mode where a system dependency change could both:
+Do not blackhole `jupiter-disburser` or `jupiter-faucet` until at least one successful payout / top-up event has occurred and been recorded.
 
-- stop normal transfer flow
-- and also prevent the canister from proving that transfer flow has stopped
+For `jupiter-disburser`, rescue is armed by the timestamp of the last confirmed successful transfer. Before that timestamp exists, the canister has no evidence that value flow was ever working and will not trigger the lifeline handoff.
 
-By basing the rescue decision on already-persisted local state, the controller handoff remains available even if a dependency API changes in a way that breaks the ordinary payout path.
+## Current `jupiter-disburser` production configuration
 
-## `jupiter-disburser` design notes
+The current production recipients are:
 
-The key design decisions for `jupiter-disburser` are:
+- normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
+- age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
+- age bonus recipient 2: the staking account for the D-QUORUM known neuron on NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` + subaccount `77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f`)
+- rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
+- ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
+- governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
+- `main_interval_seconds = 86400`
+- `rescue_interval_seconds = 86400`
 
-### Staging first, payout second
+The D-QUORUM recipient is intentional. Jupiter Disburser routes 20% of the age-bonus portion to the staking account for the D-QUORUM known neuron to support NNS due diligence and help fund NNS security.
 
-NNS Governance disburses maturity to one destination per call. `jupiter-disburser` always disburses to its own staging account first and only then performs the recipient split on the ledger side.
+A copy-pasteable mainnet install argument file lives at:
 
-That keeps the payout logic grounded in the amount actually minted and makes retries much easier to reason about than repeated governance calls.
+- `jupiter-disburser/mainnet-install-args.did`
 
-### Persistent payout plans
+## Repository layout
 
-Before the first transfer is attempted, the canister persists a payout plan. If a transfer succeeds but execution stops before the plan is cleared, the next run can safely resume without recalculating the split from a partially updated state.
+- `jupiter-disburser/` — NNS maturity routing canister
+- `jupiter-faucet/` — faucet placeholder / future cycles top-up canister
+- `jupiter-sns-rewards/` — SNS rewards placeholder / future staking rewards canister
+- `jupiter-lifeline/` — minimal recovery canister
+- `jupiter-faucet-frontend/` — frontend placeholder canister
+- `xtask/` — local orchestration, mocks, and PocketIC tests
+- `scripts/` — reproducible build helpers
+- `release-artifacts/` — built reproducible artifacts
 
-### Idempotent timers
+## Reproducible builds
 
-Recurring timers drive the canister, but safety comes from state-based idempotence rather than from assuming that timers fire exactly on schedule.
-
-### Age bonus model
-
-`jupiter-disburser` follows the NNS age-bonus ramp:
-
-- age 0 years: `1.00`
-- age 2 years: `1.125`
-- age 4 years and above: `1.25`
-
-The multiplier increases linearly from `1.00` to `1.25` over the first four years, then clamps. The canister records the neuron age at the point of disbursement initiation so that the later split is based on the age that produced the reward.
-
-## Reproducible builds and verification
-
-The release build is produced inside a pinned Docker environment.
-
-The repository build flow is intended to output reproducible artifacts for the full suite. For production canisters that support compressed installation, the release flow uses:
-
-- an uncompressed `.wasm` artifact as the installed module reference for hash comparison
-- a compressed `.wasm.gz` artifact as the deployment package
-
-The standard release build entrypoint is:
+The pinned Docker build emits artifacts for the full suite:
 
 ```bash
 chmod +x scripts/docker-build scripts/build-canister
 ./scripts/docker-build
 ```
 
-Verification is performed by comparing the SHA-256 of the rebuilt uncompressed Wasm module with the installed module hash reported on-chain.
+The deployment package for each canister is the `.wasm.gz` file in `release-artifacts/`. Verification is performed against the uncompressed `.wasm` hash printed by the build script.
 
-## Repository layout
+## Mainnet deployment and upgrade commands
 
-The repository is intended to be structured as a suite root with one directory per canister.
+### Create canisters on the Fiduciary subnet
 
-```text
-jupiter-disburser/
-jupiter-lifeline/
-jupiter-faucet/
-jupiter-sns-rewards/
-jupiter-faucet-frontend/
-scripts/
-xtask/
-release-artifacts/
+```bash
+dfx deploy --network=ic --subnet=pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae jupiter_lifeline
+dfx deploy --network=ic --subnet=pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae jupiter_faucet
+dfx deploy --network=ic --subnet=pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae jupiter_sns_rewards
 ```
 
-Typical responsibilities:
+### Install `jupiter-disburser`
 
-- `jupiter-disburser/` — disburser canister source, Candid files, and component documentation
-- `jupiter-lifeline/` — minimal lifeline canister used as the rescue controller target
-- `jupiter-faucet/` — faucet canister source
-- `jupiter-sns-rewards/` — SNS rewards canister source
-- `jupiter-faucet-frontend/` — frontend canister source
-- `scripts/` — reproducible build helpers
-- `xtask/` — local orchestration, mocks, and integration tooling
-- `release-artifacts/` — reproducible build outputs
+```bash
+dfx canister install jupiter_disburser \
+  --network ic \
+  --wasm release-artifacts/jupiter_disburser.wasm.gz \
+  --argument-file jupiter-disburser/mainnet-install-args.did
+```
 
-## Testing strategy
+### Upgrade commands
 
-The suite is expected to maintain three layers of tests:
+`jupiter-disburser` currently persists its configuration across upgrades. Ordinary code upgrades do not require an argument.
 
-### Unit tests
+```bash
+dfx canister install jupiter_disburser \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_disburser.wasm.gz
 
-Component-level correctness tests that live with each canister.
+dfx canister install jupiter_lifeline \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_lifeline.wasm.gz
 
-### Component integration tests
+dfx canister install jupiter_faucet \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_faucet.wasm.gz
 
-Local integration scenarios using `dfx`, mocks, and targeted flows for a single canister.
-
-### System end-to-end tests
-
-Full-flow PocketIC scenarios that cover the cross-canister path from neuron funding, to maturity routing, to faucet conversion and top-up behavior, to SNS reward routing.
-
-## Deployment pattern
-
-A production deployment should include the lifeline canister before operational canisters are installed in their final configuration.
-
-For blackholed operational canisters, the intended pattern is:
-
-1. deploy `jupiter-lifeline`
-2. record its principal
-3. install `jupiter-disburser` and `jupiter-faucet` with `jupiter-lifeline` configured as the rescue controller target
-4. validate ordinary flow
-5. blackhole the operational canisters once configuration has been confirmed
+dfx canister install jupiter_sns_rewards \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
+```
 
 ## Component documentation
 
-The root README describes the Jupiter suite as a whole.
-
-Detailed component documentation should live next to each canister, for example:
-
 - `jupiter-disburser/README.md`
-- `jupiter-lifeline/README.md`
 - `jupiter-faucet/README.md`
 - `jupiter-sns-rewards/README.md`
+- `jupiter-lifeline/README.md`
 - `jupiter-faucet-frontend/README.md`
-

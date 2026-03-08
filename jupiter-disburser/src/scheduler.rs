@@ -4,9 +4,7 @@ use crate::clients::{GovernanceClient, LedgerClient};
 use crate::{logic, policy, state};
 
 use candid::Nat;
-use ic_cdk::management_canister::{
-    canister_status, update_settings, CanisterSettings, CanisterStatusArgs, UpdateSettingsArgs,
-};
+use ic_cdk::management_canister::{update_settings, CanisterSettings, UpdateSettingsArgs};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use std::{cell::RefCell, time::Duration};
@@ -15,7 +13,6 @@ thread_local! {
     // Prevent repeated identical error spam from eating the small log buffer.
     static LAST_ERR_CODE: RefCell<Option<u32>> = RefCell::new(None);
 }
-
 
 #[cfg(feature = "debug_api")]
 thread_local! {
@@ -80,8 +77,8 @@ fn debug_maybe_abort_after_successful_transfer() -> bool {
         *c
     });
 
-    // Instead of trapping (which can wedge async locks across await boundaries),
-    // we abort the payout tick *after* the ledger reply but *before* persisting
+    // Instead of trapping (which can leave persisted async lock state behind),
+    // abort the payout tick *after* the ledger reply but *before* persisting
     // the transfer status. This simulates a crash and forces the next run to
     // observe a Duplicate and complete deterministically.
     count == n
@@ -103,11 +100,21 @@ fn log_cycles() {
     ic_cdk::println!("Cycles: {}", cycles);
 }
 
-fn controllers_equal_as_set(a: &[candid::Principal], b: &[candid::Principal]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().all(|x| b.contains(x))
+const MAIN_LOCK_LEASE_SECONDS: u64 = 15 * 60;
+
+fn try_acquire_main_lease(now_secs: u64) -> bool {
+    state::with_state_mut(|st| {
+        // Self-heal legacy bool state from older deployments.
+        st.main_lock = false;
+
+        let expires_at = st.main_lock_expires_at_ts.unwrap_or(0);
+        if expires_at > now_secs {
+            return false;
+        }
+
+        st.main_lock_expires_at_ts = Some(now_secs.saturating_add(MAIN_LOCK_LEASE_SECONDS));
+        true
+    })
 }
 
 /// Install two independent interval timers:
@@ -134,15 +141,7 @@ async fn main_tick() {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
 
-    // lock: avoid overlapping executions
-    let should_run = state::with_state_mut(|st| {
-        if st.main_lock {
-            return false;
-        }
-        st.main_lock = true;
-        true
-    });
-    if !should_run {
+    if !try_acquire_main_lease(now_secs) {
         return;
     }
 
@@ -153,10 +152,10 @@ async fn main_tick() {
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs; // extend suppression window
             st.main_lock = false;
+            st.main_lock_expires_at_ts = Some(0);
         });
         return;
     }
-
 
     let mut err: Option<u32> = None;
 
@@ -167,7 +166,6 @@ async fn main_tick() {
         finish_main(now_secs, err);
         return;
     }
-
 
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
@@ -238,6 +236,7 @@ fn finish_main(now_secs: u64, err: Option<u32>) {
     state::with_state_mut(|st| {
         st.last_main_run_ts = now_secs;
         st.main_lock = false;
+        st.main_lock_expires_at_ts = Some(0);
     });
 
     if let Some(code) = err {
@@ -324,7 +323,6 @@ async fn process_payout<L: LedgerClient>(
         });
     }
 
-
     #[cfg(feature = "debug_api")]
     if debug_pause_after_planning() {
         // Keep plan persisted and force the caller to retry later.
@@ -410,31 +408,20 @@ async fn process_payout<L: LedgerClient>(
 /// RESCUE TICK:
 /// - errors-only logs
 /// - policy-driven decision:
-///   * healthy => controllers=[self]
-///   * broken  => controllers=[rescue,self] (but gated to attempt at most once per 14 days)
+///   * healthy => controllers=[self] when rescue is currently active
+///   * broken  => controllers=[rescue,self]
 ///
-/// This path does not need to confirm current ledger or governance health.
-/// It only uses the persisted timestamp of the last confirmed successful transfer
-/// plus management-canister controller updates.
+/// This path is intentionally driven by persisted local state plus a management-canister
+/// controller update. It does not require fresh ledger, governance, or canister-status
+/// health checks at the point of escalation.
 async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
 
-    let should_run = state::with_state_mut(|st| {
-        if st.rescue_lock {
-            return false;
-        }
-        st.rescue_lock = true;
-        true
-    });
-    if !should_run {
-        return;
-    }
-
-    let (last_xfer_opt, rescue_controller, last_rescue_check_ts) = state::with_state(|st| {
+    let (last_xfer_opt, rescue_controller, rescue_triggered) = state::with_state(|st| {
         (
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
-            st.last_rescue_check_ts,
+            st.rescue_triggered,
         )
     });
 
@@ -442,36 +429,17 @@ async fn rescue_tick() {
     let desired_opt = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller);
 
     let Some(mut desired) = desired_opt else {
-        state::with_state_mut(|st| st.rescue_lock = false);
         return;
     };
-
-    // Gate BROKEN actions to once per 14 days; HEALTHY actions happen immediately.
-    let is_broken_action = desired.len() > 1;
-    if is_broken_action && !policy::should_attempt_broken_escalation(now_secs, last_rescue_check_ts) {
-        state::with_state_mut(|st| st.rescue_lock = false);
-        return;
-    }
-    if is_broken_action {
-        state::with_state_mut(|st| st.last_rescue_check_ts = now_secs);
-    }
 
     desired.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
+    desired.dedup();
 
-    let status = match canister_status(&CanisterStatusArgs { canister_id: self_id }).await {
-        Ok(s) => s,
-        Err(_) => {
-            state::with_state_mut(|st| st.rescue_lock = false);
-            log_error(2001);
-            return;
-        }
-    };
+    let rescue_active = desired.iter().any(|p| *p == rescue_controller);
 
-    let mut current = status.settings.controllers;
-    current.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
-
-    if controllers_equal_as_set(&current, &desired) {
-        state::with_state_mut(|st| st.rescue_lock = false);
+    // Healthy steady-state is already self-only. Avoid unnecessary management-canister
+    // calls unless rescue had previously widened the controller set.
+    if !rescue_active && !rescue_triggered {
         return;
     }
 
@@ -485,11 +453,14 @@ async fn rescue_tick() {
 
     if update_settings(&arg).await.is_err() {
         log_error(2002);
-    } else {
-        state::with_state_mut(|st| st.rescue_triggered = desired.len() > 1);
+        return;
     }
 
-    state::with_state_mut(|st| st.rescue_lock = false);
+    state::with_state_mut(|st| {
+        st.rescue_triggered = rescue_active;
+        st.last_rescue_check_ts = now_secs;
+        st.rescue_lock = false;
+    });
 }
 
 #[cfg(feature = "debug_api")]
@@ -501,7 +472,6 @@ pub async fn debug_main_tick_impl() {
 pub async fn debug_rescue_tick_impl() {
     rescue_tick().await;
 }
-
 
 #[cfg(feature = "debug_api")]
 pub async fn debug_build_payout_plan_impl() -> bool {
@@ -574,6 +544,4 @@ pub async fn debug_build_payout_plan_impl() -> bool {
 
     true
 }
-
-
 

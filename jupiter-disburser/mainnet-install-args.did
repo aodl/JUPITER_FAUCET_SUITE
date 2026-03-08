@@ -1,0 +1,22 @@
+(
+  record {
+    neuron_id = 11614578985374291210 : nat64;
+    normal_recipient = record {
+      owner = principal "acjuz-liaaa-aaaar-qb4qq-cai";
+      subaccount = null;
+    };
+    age_bonus_recipient_1 = record {
+      owner = principal "alk7f-5aaaa-aaaar-qb4ra-cai";
+      subaccount = null;
+    };
+    age_bonus_recipient_2 = record {
+      owner = principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
+      subaccount = opt vec { 119; 230; 61; 231; 43; 94; 51; 57; 234; 32; 244; 186; 243; 236; 43; 217; 33; 56; 221; 222; 13; 174; 182; 157; 181; 10; 204; 235; 56; 75; 223; 15 };
+    };
+    ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
+    governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
+    rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
+    main_interval_seconds = opt 86400;
+    rescue_interval_seconds = opt 86400;
+  }
+)

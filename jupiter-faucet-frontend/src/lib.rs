@@ -1,4 +1,4 @@
-// Placeholder canister used to reserve the frontend principal and deployment slot until the asset-serving frontend canister is implemented.
+// Placeholder canister reserved for the frontend principal and deployment slot until the asset canister is implemented.
 
 #[ic_cdk::init]
 fn init() {}
