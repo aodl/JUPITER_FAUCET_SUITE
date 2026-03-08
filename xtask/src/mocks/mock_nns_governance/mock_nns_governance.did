@@ -1,0 +1,62 @@
+type GovernanceError = record { error_message : text; error_type : int32 };
+
+type MaturityDisbursement = record { amount_e8s : opt nat64 };
+
+type Neuron = record {
+  aging_since_timestamp_seconds : nat64;
+  maturity_disbursements_in_progress : opt vec MaturityDisbursement;
+};
+
+type NeuronResult = variant { Ok : Neuron; Err : GovernanceError };
+
+type NeuronId = record { id : nat64 };
+
+type Account = record { owner : opt principal; subaccount : opt blob };
+
+type AccountIdentifier = record { hash : vec nat8 };
+
+type DisburseMaturity = record {
+  percentage_to_disburse : nat32;
+  to_account : opt Account;
+  to_account_identifier : opt AccountIdentifier;
+};
+
+type DisburseMaturityResponse = record { amount_disbursed_e8s : opt nat64 };
+
+type Empty = record {};
+
+type ManageNeuronCommandRequest = variant {
+  DisburseMaturity : DisburseMaturity;
+  RefreshVotingPower : Empty;
+};
+
+type NeuronIdOrSubaccount = variant { NeuronId : NeuronId };
+
+type ManageNeuronRequest = record {
+  neuron_id_or_subaccount : opt NeuronIdOrSubaccount;
+  command : opt ManageNeuronCommandRequest;
+  id : opt NeuronId;
+};
+
+type Command1 = variant {
+  Error : GovernanceError;
+  DisburseMaturity : DisburseMaturityResponse;
+  RefreshVotingPower : Empty;
+};
+
+type ManageNeuronResponse = record { command : opt Command1 };
+
+service : {
+  // Keep nat64 here to match the mock canister implementation.
+  get_full_neuron : (nat64) -> (NeuronResult);
+  manage_neuron : (ManageNeuronRequest) -> (ManageNeuronResponse);
+
+  debug_reset : () -> ();
+  debug_set_in_flight : (bool) -> ();
+  debug_set_aging_since : (nat64) -> ();
+  debug_get_manage_calls : () -> (nat64) query;
+  debug_get_refresh_calls : () -> (nat64) query;
+}
+
+
+

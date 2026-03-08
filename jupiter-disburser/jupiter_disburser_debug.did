@@ -1,0 +1,46 @@
+type Account = record {
+  owner : principal;
+  subaccount : opt blob;
+};
+
+type InitArgs = record {
+  neuron_id : nat64;
+
+  normal_recipient : Account;
+  age_bonus_recipient_1 : Account;
+  age_bonus_recipient_2 : Account;
+
+  ledger_canister_id : opt principal;
+  governance_canister_id : opt principal;
+
+  rescue_controller : principal;
+
+  main_interval_seconds : opt nat64;
+  rescue_interval_seconds : opt nat64;
+};
+
+type Metrics = record {
+  prev_age_seconds : nat64;
+  last_successful_transfer_ts : opt nat64;
+  rescue_triggered : bool;
+};
+
+type DebugState = record {
+  prev_age_seconds : nat64;
+  last_successful_transfer_ts : opt nat64;
+  last_rescue_check_ts : nat64;
+  rescue_triggered : bool;
+  payout_plan_present : bool;
+};
+
+service : (InitArgs) -> {
+  metrics : () -> (Metrics) query;
+
+  debug_main_tick : () -> ();
+  debug_rescue_tick : () -> ();
+  debug_set_prev_age_seconds : (nat64) -> ();
+  debug_set_last_successful_transfer_ts : (opt nat64) -> ();
+  debug_set_last_rescue_check_ts : (nat64) -> ();
+  debug_state : () -> (DebugState) query;
+}
+

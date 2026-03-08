@@ -1,0 +1,76 @@
+{
+  "canisters": {
+    "jupiter_disburser": {
+      "type": "custom",
+      "candid": "jupiter-disburser/jupiter_disburser.did",
+      "wasm": "release-artifacts/jupiter_disburser.wasm",
+      "build": "./scripts/build-canister jupiter-disburser",
+      "skip_cargo_audit": true
+    },
+    "jupiter_disburser_dbg": {
+      "type": "custom",
+      "candid": "jupiter-disburser/jupiter_disburser_debug.did",
+      "wasm": "target/wasm32-unknown-unknown/release/jupiter_disburser.wasm",
+      "build": "cargo build --target wasm32-unknown-unknown --release -p jupiter-disburser --features debug_api --locked",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_icrc_ledger": {
+      "type": "rust",
+      "package": "mock-icrc-ledger",
+      "candid": "xtask/src/mocks/mock_icrc_ledger/mock_icrc_ledger.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_nns_governance": {
+      "type": "rust",
+      "package": "mock-nns-governance",
+      "candid": "xtask/src/mocks/mock_nns_governance/mock_nns_governance.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "jupiter_lifeline": {
+      "type": "custom",
+      "candid": "jupiter-lifeline/jupiter_lifeline.did",
+      "wasm": "release-artifacts/jupiter_lifeline.wasm",
+      "build": "./scripts/build-canister jupiter-lifeline",
+      "skip_cargo_audit": true
+    },
+    "jupiter_faucet": {
+      "type": "custom",
+      "candid": "jupiter-faucet/jupiter_faucet.did",
+      "wasm": "release-artifacts/jupiter_faucet.wasm",
+      "build": "./scripts/build-canister jupiter-faucet",
+      "skip_cargo_audit": true
+    },
+    "jupiter_sns_rewards": {
+      "type": "custom",
+      "candid": "jupiter-sns-rewards/jupiter_sns_rewards.did",
+      "wasm": "release-artifacts/jupiter_sns_rewards.wasm",
+      "build": "./scripts/build-canister jupiter-sns-rewards",
+      "skip_cargo_audit": true
+    },
+    "jupiter_faucet_frontend": {
+      "type": "custom",
+      "candid": "jupiter-faucet-frontend/jupiter_faucet_frontend.did",
+      "wasm": "release-artifacts/jupiter_faucet_frontend.wasm",
+      "build": "./scripts/build-canister jupiter-faucet-frontend",
+      "skip_cargo_audit": true
+    }
+  },
+  "version": 1
+}

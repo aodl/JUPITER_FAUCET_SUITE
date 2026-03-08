@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "$REPO_ROOT"
+
+export TZ=UTC
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --pretty=%ct)}"
+else
+  export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1700000000}"
+fi
+
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${REPO_ROOT}=/build"
+
+mkdir -p release-artifacts
+
+build_one() {
+  local target_name="$1"
+  local cargo_package="$2"
+  local raw_name="$3"
+  local candid_path="$4"
+  local artifact_stem="$5"
+
+  cargo build --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
+
+  local raw_in="target/wasm32-unknown-unknown/release/${raw_name}.wasm"
+  local raw_out="release-artifacts/${artifact_stem}.wasm"
+  local gz_out="release-artifacts/${artifact_stem}.wasm.gz"
+
+  ic-wasm "$raw_in" -o "$raw_out" metadata candid:service -f "$candid_path" -v public
+  ic-wasm "$raw_out" -o "$raw_out" shrink
+
+  gzip -n -9 -c "$raw_out" > "$gz_out"
+
+  sha256sum "$raw_out" > "${raw_out}.sha256"
+  sha256sum "$gz_out" > "${gz_out}.sha256"
+
+  echo "Built ${target_name}: ${raw_out} ${gz_out}"
+}
+
+build_selected() {
+  case "$1" in
+    jupiter-disburser)
+      build_one "jupiter-disburser" "jupiter-disburser" "jupiter_disburser" "jupiter-disburser/jupiter_disburser.did" "jupiter_disburser"
+      ;;
+    jupiter-lifeline)
+      build_one "jupiter-lifeline" "jupiter-lifeline" "jupiter_lifeline" "jupiter-lifeline/jupiter_lifeline.did" "jupiter_lifeline"
+      ;;
+    jupiter-faucet)
+      build_one "jupiter-faucet" "jupiter-faucet" "jupiter_faucet" "jupiter-faucet/jupiter_faucet.did" "jupiter_faucet"
+      ;;
+    jupiter-sns-rewards)
+      build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "jupiter-sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards"
+      ;;
+    jupiter-faucet-frontend)
+      build_one "jupiter-faucet-frontend" "jupiter-faucet-frontend" "jupiter_faucet_frontend" "jupiter-faucet-frontend/jupiter_faucet_frontend.did" "jupiter_faucet_frontend"
+      ;;
+    all)
+      build_selected jupiter-disburser
+      build_selected jupiter-lifeline
+      build_selected jupiter-faucet
+      build_selected jupiter-sns-rewards
+      build_selected jupiter-faucet-frontend
+      ;;
+    *)
+      echo "unknown build target: $1" >&2
+      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
+      exit 1
+      ;;
+  esac
+}
+
+TARGET="${1:-all}"
+build_selected "$TARGET"

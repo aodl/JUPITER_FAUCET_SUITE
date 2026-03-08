@@ -1,0 +1,12 @@
+.git
+.github
+.dfx
+.repro-out
+release-artifacts
+target
+node_modules
+.direnv
+.env
+.env.*
+*.log
+

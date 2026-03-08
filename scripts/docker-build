@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command -v docker >/dev/null 2>&1 || {
+  echo "docker is required but not installed or not on PATH" >&2
+  exit 1
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "$REPO_ROOT"
+
+rm -rf release-artifacts .repro-out
+mkdir -p .repro-out release-artifacts
+
+docker buildx build   --platform linux/amd64   --target artifact   --output type=local,dest=./.repro-out   -f Dockerfile.repro   .
+
+if [ -d ./.repro-out/release-artifacts ]; then
+  cp -a ./.repro-out/release-artifacts/. ./release-artifacts/
+else
+  cp -a ./.repro-out/. ./release-artifacts/
+fi
+
+rm -rf .repro-out
+
+echo
+echo "Built canonical artifact(s):"
+find release-artifacts -maxdepth 2 -type f | sort
+
+echo
+for wasm in release-artifacts/*.wasm; do
+  [ -e "$wasm" ] || continue
+  echo "Installed module hash reference ($(basename "$wasm")):"
+  sha256sum "$wasm"
+  echo
+done
+
+for wasm_gz in release-artifacts/*.wasm.gz; do
+  [ -e "$wasm_gz" ] || continue
+  echo "Deployment package hash ($(basename "$wasm_gz")):"
+  sha256sum "$wasm_gz"
+  echo
+done

@@ -1,0 +1,51 @@
+type Subaccount = blob;
+type Account = record { owner : principal; subaccount : opt Subaccount };
+
+type TransferArg = record {
+  from_subaccount : opt Subaccount;
+  to : Account;
+  amount : nat;
+  fee : opt nat;
+  memo : opt blob;
+  created_at_time : opt nat64;
+};
+
+type TransferError = variant {
+  BadFee : record { expected_fee : nat };
+  InsufficientFunds : record { balance : nat };
+  TooOld;
+  CreatedInFuture : record { ledger_time : nat64 };
+  TemporarilyUnavailable;
+  Duplicate : record { duplicate_of : nat };
+  GenericError : record { error_code : nat; message : text };
+};
+
+type TransferRecord = record {
+  from : Account;
+  to : Account;
+  amount : nat;
+  fee : nat;
+  memo : opt blob;
+  created_at_time : opt nat64;
+  result : text;
+};
+
+type DebugNextTransferError = variant {
+  TemporarilyUnavailable;
+  TooOld;
+  CreatedInFuture : record { ledger_time : nat64 };
+  BadFee : record { expected_fee_e8s : nat64 };
+  Duplicate : record { duplicate_of : nat64 };
+};
+
+service : {
+  icrc1_fee : () -> (nat) query;
+  icrc1_balance_of : (Account) -> (nat) query;
+  icrc1_transfer : (TransferArg) -> (variant { Ok : nat; Err : TransferError });
+
+  debug_reset : () -> ();
+  debug_set_fee : (nat64) -> ();
+  debug_set_next_error : (opt DebugNextTransferError) -> ();
+  debug_credit : (Account, nat64) -> ();
+  debug_transfers : () -> (vec TransferRecord) query;
+}

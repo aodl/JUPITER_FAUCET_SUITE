@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+  "jupiter-disburser",
+  "jupiter-lifeline",
+  "jupiter-faucet",
+  "jupiter-sns-rewards",
+  "jupiter-faucet-frontend",
+  "xtask",
+  "xtask/src/mocks/mock_icrc_ledger",
+  "xtask/src/mocks/mock_nns_governance",
+]
