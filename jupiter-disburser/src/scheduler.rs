@@ -199,6 +199,9 @@ async fn main_tick() {
         // 2) initiate a new disbursement to default staging account (subaccount=None)
         #[cfg(feature = "debug_api")]
         if debug_skip_maturity_initiation() {
+            if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
+                log_error(1006);
+            }
             finish_main(now_secs, err);
             return;
         }
@@ -222,11 +225,18 @@ async fn main_tick() {
         state::with_state_mut(|st| st.prev_age_seconds = age_seconds);
 
         // 4) best-effort voting-power refresh after maturity work has been actioned.
-        // This is intentionally last so a refresh API issue cannot block payout or
+        // This is intentionally late so a refresh API issue cannot block payout or
         // disbursement initiation.
         if gov.refresh_voting_power(cfg.neuron_id).await.is_err() {
             log_error(1005);
         }
+    }
+
+    // 5) best-effort neuron stake refresh on every successful tick. This runs after
+    // any main work above so user / protocol top-ups into the staking subaccount are
+    // recognized without requiring a user-side governance call.
+    if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
+        log_error(1006);
     }
 
     finish_main(now_secs, err);

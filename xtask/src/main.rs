@@ -395,8 +395,8 @@ fn cmd_test() -> Result<()> {
         }
 
         let calls: u64 = call_raw_noargs("mock_nns_governance", "debug_get_manage_calls")?;
-        if calls != 0 {
-            bail!("expected 0 manage_neuron calls, got {}", calls);
+        if calls != 1 {
+            bail!("expected 1 manage_neuron call (best-effort ClaimOrRefresh), got {}", calls);
         }
         Ok(())
     });
@@ -431,8 +431,8 @@ fn cmd_test() -> Result<()> {
         }
 
         let calls: u64 = call_raw_noargs("mock_nns_governance", "debug_get_manage_calls")?;
-        if calls != 2 {
-            bail!("expected 2 manage_neuron calls, got {}", calls);
+        if calls != 4 {
+            bail!("expected 4 manage_neuron calls, got {}", calls);
         }
 
         Ok(())

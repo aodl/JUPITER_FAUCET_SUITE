@@ -16,14 +16,14 @@ These canisters are deployed on the Fiduciary subnet (`pzp6e-ekpqk-3c5x7-2h6so-n
 The system is intentionally split into narrowly scoped canisters:
 
 - `jupiter-disburser` controls a single NNS neuron, disburses maturity, and routes minted ICP according to a fixed policy.
-- `jupiter-faucet` receives the age-neutral base payout and will convert it into cycles top-ups for participating canisters.
+- `jupiter-faucet` receives the age-neutral base payout and, once implemented, will convert it into cycles top-ups for participating canisters. User / protocol stake top-ups into the reward neuron are currently recognized by `jupiter-disburser` via periodic best-effort `ClaimOrRefresh`; in the intended user flow, the deposit memo identifies the canister the user wants topped up.
 - `jupiter-sns-rewards` receives the primary age-bonus payout and will distribute it to JUP SNS stakers.
 - `jupiter-lifeline` is the recovery controller target for blackholed operational canisters.
 - `jupiter-faucet-frontend` is the placeholder for the public-facing asset canister.
 
 ## Why `jupiter-disburser` and `jupiter-faucet` are blackholed
 
-`jupiter-disburser` and `jupiter-faucet` are intended to be blackholed after deployment has been validated. The point is to keep the core maturity-routing and cycle-top-up path operationally immutable during normal operation.
+`jupiter-disburser` and `jupiter-faucet` are intended to be blackholed after deployment has been validated. In this repository, that means operator control is handed off to canister-controlled self-management rather than leaving the canister literally controllerless. The point is to keep the core maturity-routing and cycle-top-up path operationally immutable during normal operation while still allowing the canister to reconcile to a recovery controller when its persisted rescue policy says that value flow has stopped for long enough.
 
 That immutability matters even in the unlikely event of a successful governance attack elsewhere in the Jupiter ecosystem. If the payout path can be upgraded at will, the top-up policy can be changed at will. Blackholing narrows that risk and makes the core value flow materially harder to tamper with.
 
@@ -104,6 +104,38 @@ dfx canister install jupiter_disburser \
   --argument-file jupiter-disburser/mainnet-install-args.did
 ```
 
+### Required post-install settings
+
+Actioned before handing controller ownership away from the deployment operator.
+
+Make logs public on all deployed canisters:
+
+```bash
+dfx canister update-settings jupiter_disburser --network ic --log-visibility public
+dfx canister update-settings jupiter_lifeline --network ic --log-visibility public
+dfx canister update-settings jupiter_faucet --network ic --log-visibility public
+dfx canister update-settings jupiter_sns_rewards --network ic --log-visibility public
+dfx canister update-settings jupiter_faucet_frontend --network ic --log-visibility public
+```
+
+Added `jupiter-disburser` as a controller of itself. This is required for the canister's internal controller reconciliation and rescue escalation flow to work:
+
+```bash
+dfx canister update-settings jupiter_disburser \
+  --network ic \
+  --add-controller uccpi-cqaaa-aaaar-qby3q-cai
+```
+
+After at least one successful payout has occurred, logs are configured, and `blackhole_armed` has been enabled, hand `jupiter-disburser` off to self-only control with:
+
+```bash
+dfx canister update-settings jupiter_disburser \
+  --network ic \
+  --set-controller uccpi-cqaaa-aaaar-qby3q-cai
+```
+
+The future `jupiter-faucet` production rollout should use the same self-controller handoff pattern once its rescue logic stops being a stub. Its top-up attribution flow can still rely on users transferring into the neuron's staking account with the target canister id encoded in the expected memo / attribution flow, but the current periodic best-effort `ClaimOrRefresh` for that neuron now lives in `jupiter-disburser`, not in user flow.
+
 ### Upgrade commands
 
 `jupiter-disburser` persists its configuration across upgrades. Ordinary code upgrades do not require an argument. Blackhole self-management is intentionally installed in an unarmed state (`blackhole_armed = opt false`) until the canister is ready to self-blackhole.
@@ -130,25 +162,13 @@ dfx canister install jupiter_sns_rewards \
   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
 ```
 
-### Arm or disarm blackhole self-management later
-
-When `jupiter-disburser` is ready to move from operator-controlled mode to self-managed blackholing, arm it with:
+### Arm blackhole self-management 
 
 ```bash
 dfx canister install jupiter_disburser \
   --network ic \
   --mode upgrade \
   --argument '(opt record { blackhole_armed = opt true; })' \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz
-```
-
-To explicitly disarm it again:
-
-```bash
-dfx canister install jupiter_disburser \
-  --network ic \
-  --mode upgrade \
-  --argument '(opt record { blackhole_armed = opt false; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 

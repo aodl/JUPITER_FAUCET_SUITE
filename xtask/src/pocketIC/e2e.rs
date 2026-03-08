@@ -758,7 +758,7 @@ fn increase_dissolve_delay(
 
 
 
-fn top_up_neuron_stake(
+fn transfer_to_neuron_staking_subaccount(
     pic: &PocketIc,
     ledger: Principal,
     gov: Principal,
@@ -794,7 +794,15 @@ fn top_up_neuron_stake(
         },
     )?;
 
-    // Refresh to pull the top-up into the neuron stake.
+    Ok(())
+}
+
+fn refresh_neuron_stake(
+    pic: &PocketIc,
+    gov: Principal,
+    controller: Principal,
+    neuron_id: u64,
+) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
         neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
@@ -808,6 +816,18 @@ fn top_up_neuron_stake(
         bail!("claim_or_refresh (refresh) failed: {:?}", e);
     }
     Ok(())
+}
+
+fn top_up_neuron_stake_and_refresh(
+    pic: &PocketIc,
+    ledger: Principal,
+    gov: Principal,
+    controller: Principal,
+    neuron_id: u64,
+    amount_e8s: u64,
+) -> Result<()> {
+    transfer_to_neuron_staking_subaccount(pic, ledger, gov, controller, neuron_id, amount_e8s)?;
+    refresh_neuron_stake(pic, gov, controller, neuron_id)
 }
 
 fn make_and_settle_motion_proposal(
@@ -972,7 +992,7 @@ fn ensure_maturity_ge_1_icp(
     let target = 200_000_000u64; // 2 ICP in e8s (>= 1 ICP after worst-case -5% maturity modulation)
 
     // Make the neuron big so rewards become non-trivial.
-    top_up_neuron_stake(pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?; // 5,000,000 ICP
+    top_up_neuron_stake_and_refresh(pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?; // 5,000,000 ICP
 
     for i in 0..12u64 {
         let n = get_full_neuron(pic, gov, controller, neuron_id)?;
@@ -1057,6 +1077,35 @@ fn wait_for_staging_credit(
 
     let after = icrc1_balance(pic, ledger, staging)?;
     bail!("staging not credited within {}s: before={} after={}", MAX_WAIT_SECS, before, after)
+}
+
+
+fn wait_for_cached_stake_increase(
+    pic: &PocketIc,
+    gov: Principal,
+    sender: Principal,
+    neuron_id: u64,
+    before: u64,
+) -> Result<NeuronMinimal> {
+    const MAX_WAIT_SECS: u64 = 5 * 60;
+    const STEP_SECS: u64 = 5;
+
+    let steps = (MAX_WAIT_SECS + STEP_SECS - 1) / STEP_SECS;
+    let mut last = get_full_neuron(pic, gov, sender, neuron_id)?;
+    for _ in 0..steps {
+        if last.cached_neuron_stake_e8s > before {
+            return Ok(last);
+        }
+        advance_time_steps(pic, STEP_SECS, STEP_SECS, 2);
+        last = get_full_neuron(pic, gov, sender, neuron_id)?;
+    }
+
+    bail!(
+        "cached stake did not increase within {}s: before={} after={}",
+        MAX_WAIT_SECS,
+        before,
+        last.cached_neuron_stake_e8s
+    )
 }
 
 
@@ -2057,7 +2106,7 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
 fn e2e_blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
     require_ignored_flag()?;
 
-    let pic = build_full_icp_pic();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2114,6 +2163,8 @@ fn e2e_blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
     Ok(())
 }
 
+#[test]
+#[ignore]
 fn e2e_rescue_not_armed_before_first_successful_payout() -> Result<()> {
     require_ignored_flag()?;
 
@@ -3097,7 +3148,7 @@ fn e2e_age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
 
     // Make rewards large enough that rounding noise is negligible.
     // (This is the same magnitude used elsewhere to get deterministic maturity accrual.)
-    top_up_neuron_stake(&pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?;
 
     // Recipients.
     let r_normal = pic.create_canister();
@@ -3340,7 +3391,7 @@ fn e2e_age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     // Stake + claim + configure neuron.
     let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 911, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
-    top_up_neuron_stake(&pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?;
 
     let r_normal = pic.create_canister();
     let r_bonus1 = pic.create_canister();
@@ -3724,24 +3775,24 @@ fn e2e_age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     if whale_topup < 1_000_000u64 * 100_000_000u64 {
         bail!("insufficient anonymous balance for whale top-up: anon_bal={} e8s", anon_bal);
     }
-    top_up_neuron_stake(&pic, ledger, gov, Principal::anonymous(), whale_id, whale_topup)?;
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, Principal::anonymous(), whale_id, whale_topup)?;
 
     // Create the 4y neuron at t=0.
     let n4 = stake_and_claim_neuron(&pic, ledger, gov, controller, 990_004, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, n4, 31_557_600)?;
-    top_up_neuron_stake(&pic, ledger, gov, controller, n4, 50_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, n4, 50_000_000 * 100_000_000)?;
 
     // Advance 2 years and create the 2y neuron.
     advance_time_steps(&pic, 2 * SECS_PER_YEAR, 7 * DAY_SECS, 3);
     let n2 = stake_and_claim_neuron(&pic, ledger, gov, controller, 990_002, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, n2, 31_557_600)?;
-    top_up_neuron_stake(&pic, ledger, gov, controller, n2, 50_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, n2, 50_000_000 * 100_000_000)?;
 
     // Advance another 2 years and create the age-0 neuron.
     advance_time_steps(&pic, 2 * SECS_PER_YEAR, 7 * DAY_SECS, 3);
     let n0 = stake_and_claim_neuron(&pic, ledger, gov, controller, 990_003, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, n0, 31_557_600)?;
-    top_up_neuron_stake(&pic, ledger, gov, controller, n0, 50_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, n0, 50_000_000 * 100_000_000)?;
 
     // Create rewardable proposals and ensure ALL neurons vote YES on them.
     let pid = make_motion_proposal(
@@ -4053,6 +4104,69 @@ fn e2e_age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     let dbg_end = debug_state(&pic, disburser_canister)?;
     if dbg_end.payout_plan_present {
         bail!("expected payout plan to be cleared after success");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn e2e_claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let controller = disburser_canister;
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 8_888_000, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+
+    let wasm = build_disburser_wasm()?;
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
+        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: disburser_canister,
+        blackhole_armed: None,
+        main_interval_seconds: Some(365 * DAY_SECS),
+        rescue_interval_seconds: Some(365 * DAY_SECS),
+    };
+
+    pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
+    set_self_only_controller(&pic, disburser_canister)?;
+
+    let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
+    let before_stake = before.cached_neuron_stake_e8s;
+
+    let top_up_e8s = 25 * 100_000_000;
+    transfer_to_neuron_staking_subaccount(&pic, ledger, gov, controller, neuron_id, top_up_e8s)?;
+
+    let mid = get_full_neuron(&pic, gov, controller, neuron_id)?;
+    if mid.cached_neuron_stake_e8s != before_stake {
+        bail!(
+            "expected cached stake to remain unchanged before the disburser tick runs claim_or_refresh; before={} mid={}",
+            before_stake,
+            mid.cached_neuron_stake_e8s
+        );
+    }
+
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+
+    let after = wait_for_cached_stake_increase(&pic, gov, controller, neuron_id, before_stake)?;
+    if after.cached_neuron_stake_e8s < before_stake.saturating_add(top_up_e8s) {
+        bail!(
+            "expected cached stake to reflect the full top-up after disburser-driven claim_or_refresh; before={} top_up={} after={}",
+            before_stake,
+            top_up_e8s,
+            after.cached_neuron_stake_e8s
+        );
     }
 
     Ok(())

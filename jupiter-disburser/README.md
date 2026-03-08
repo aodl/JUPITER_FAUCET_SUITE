@@ -30,6 +30,8 @@ On each main cycle, the canister:
 4. records the neuron age at initiation time so the later split reflects the age that produced the reward
 5. refreshes voting power after a successful maturity-disbursement initiation
 
+The production canister best-effort calls `ClaimOrRefresh` from `jupiter-disburser` on each successful main tick, after any payout / maturity-disbursement work for that run has completed. This keeps governance aware of fresh ICP sent into the neuron's staking subaccount by users or upstream protocol components, without requiring any user-side governance call. `RefreshVotingPower` is still used after successful maturity-disbursement initiation to keep voting power current.
+
 When staged ICP is present, the canister derives:
 
 - `base`
@@ -153,6 +155,17 @@ dfx canister install jupiter_disburser \
   --argument-file jupiter-disburser/mainnet-install-args.did
 ```
 
+Before handing the canister off to self-management, apply the required canister settings while the deployment operator is still a controller:
+
+```bash
+dfx canister update-settings jupiter_disburser --network ic --log-visibility public
+dfx canister update-settings jupiter_disburser \
+  --network ic \
+  --add-controller uccpi-cqaaa-aaaar-qby3q-cai
+```
+
+That self-controller step is required because only controllers can change canister settings, and the rescue/controller-reconciliation path relies on `jupiter-disburser` being able to update its own controller set later.
+
 Upgrades preserve the existing configuration and do not require an argument. The current production install keeps self-blackholing unarmed until the canister is ready to hand off controller reconciliation to its internal rescue logic.
 
 ```bash
@@ -180,6 +193,14 @@ dfx canister install jupiter_disburser \
   --mode upgrade \
   --argument '(opt record { blackhole_armed = opt false; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
+```
+
+After at least one successful payout has occurred and self-management is armed, hand the canister off to self-only control with:
+
+```bash
+dfx canister update-settings jupiter_disburser \
+  --network ic \
+  --set-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
 Verification is performed by comparing the deployed module hash to the SHA-256 of `release-artifacts/jupiter_disburser.wasm` printed by `./scripts/docker-build`.

@@ -37,11 +37,18 @@ type DebugState = record {
 service : (InitArgs) -> {
   metrics : () -> (Metrics) query;
 
+  debug_state : () -> (DebugState) query;
+  debug_state_size_bytes : () -> (nat64) query;
+
   debug_main_tick : () -> ();
   debug_rescue_tick : () -> ();
   debug_set_prev_age_seconds : (nat64) -> ();
   debug_set_last_successful_transfer_ts : (opt nat64) -> ();
   debug_set_last_rescue_check_ts : (nat64) -> ();
-  debug_state : () -> (DebugState) query;
+  debug_set_pause_after_planning : (bool) -> ();
+  debug_set_trap_after_successful_transfers : (opt nat32) -> ();
+  debug_set_simulate_low_cycles : (bool) -> ();
+  debug_set_skip_maturity_initiation : (bool) -> ();
+  debug_build_payout_plan : () -> (bool);
 }
 

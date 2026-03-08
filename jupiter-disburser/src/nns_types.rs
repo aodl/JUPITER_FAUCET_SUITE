@@ -57,9 +57,25 @@ pub struct DisburseMaturityResponse {
 pub struct Empty {}
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
+pub enum By {
+    NeuronIdOrSubaccount(Empty),
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct ClaimOrRefresh {
+    pub by: Option<By>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct ClaimOrRefreshResponse {
+    pub refreshed_neuron_id: Option<NeuronId>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
 pub enum ManageNeuronCommandRequest {
     DisburseMaturity(DisburseMaturity),
     RefreshVotingPower(Empty),
+    ClaimOrRefresh(ClaimOrRefresh),
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
@@ -79,6 +95,7 @@ pub enum Command1 {
     Error(GovernanceError),
     DisburseMaturity(DisburseMaturityResponse),
     RefreshVotingPower(Empty),
+    ClaimOrRefresh(ClaimOrRefreshResponse),
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]

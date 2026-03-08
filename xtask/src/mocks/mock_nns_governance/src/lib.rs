@@ -53,9 +53,25 @@ pub struct DisburseMaturityResponse {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct ClaimOrRefresh {
+    pub by: Option<By>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub enum By {
+    NeuronIdOrSubaccount(Empty),
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct ClaimOrRefreshResponse {
+    pub refreshed_neuron_id: Option<NeuronId>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
 pub enum ManageNeuronCommandRequest {
     DisburseMaturity(DisburseMaturity),
     RefreshVotingPower(Empty),
+    ClaimOrRefresh(ClaimOrRefresh),
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
@@ -78,6 +94,7 @@ pub enum Command1 {
     Error(GovernanceError),
     DisburseMaturity(DisburseMaturityResponse),
     RefreshVotingPower(Empty),
+    ClaimOrRefresh(ClaimOrRefreshResponse),
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
@@ -91,6 +108,7 @@ struct GovState {
     aging_since: u64,
     manage_calls: u64,
     refresh_calls: u64,
+    claim_or_refresh_calls: u64,
 }
 
 thread_local! {
@@ -121,13 +139,26 @@ fn get_full_neuron(_neuron_id: u64) -> NeuronResult {
 
 #[ic_cdk::update]
 fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
-    // Only support DisburseMaturity in this mock.
-    let cmd = match req.command {
+    let ManageNeuronRequest {
+        neuron_id_or_subaccount,
+        command,
+        id,
+    } = req;
+
+    let refreshed_neuron_id = id.or_else(|| match neuron_id_or_subaccount {
+        Some(NeuronIdOrSubaccount::NeuronId(id)) => Some(id),
+        None => None,
+    });
+
+    let cmd = match command {
         Some(ManageNeuronCommandRequest::DisburseMaturity(_d)) => Some(Command1::DisburseMaturity(
             DisburseMaturityResponse { amount_disbursed_e8s: None },
         )),
         Some(ManageNeuronCommandRequest::RefreshVotingPower(_)) => {
             Some(Command1::RefreshVotingPower(Empty {}))
+        }
+        Some(ManageNeuronCommandRequest::ClaimOrRefresh(_)) => {
+            Some(Command1::ClaimOrRefresh(ClaimOrRefreshResponse { refreshed_neuron_id }))
         }
         _ => Some(Command1::Error(GovernanceError {
             error_message: "unsupported".to_string(),
@@ -144,6 +175,9 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
         }
         if matches!(cmd, Some(Command1::RefreshVotingPower(_))) {
             st.refresh_calls += 1;
+        }
+        if matches!(cmd, Some(Command1::ClaimOrRefresh(_))) {
+            st.claim_or_refresh_calls += 1;
         }
     });
 
@@ -173,6 +207,11 @@ fn debug_get_manage_calls() -> u64 {
 #[ic_cdk::query]
 fn debug_get_refresh_calls() -> u64 {
     ST.with(|s| s.borrow().refresh_calls)
+}
+
+#[ic_cdk::query]
+fn debug_get_claim_or_refresh_calls() -> u64 {
+    ST.with(|s| s.borrow().claim_or_refresh_calls)
 }
 
 ic_cdk::export_candid!();

@@ -25,9 +25,16 @@ type DisburseMaturityResponse = record { amount_disbursed_e8s : opt nat64 };
 
 type Empty = record {};
 
+type By = variant { NeuronIdOrSubaccount : Empty };
+
+type ClaimOrRefresh = record { by : opt By };
+
+type ClaimOrRefreshResponse = record { refreshed_neuron_id : opt NeuronId };
+
 type ManageNeuronCommandRequest = variant {
   DisburseMaturity : DisburseMaturity;
   RefreshVotingPower : Empty;
+  ClaimOrRefresh : ClaimOrRefresh;
 };
 
 type NeuronIdOrSubaccount = variant { NeuronId : NeuronId };
@@ -42,6 +49,7 @@ type Command1 = variant {
   Error : GovernanceError;
   DisburseMaturity : DisburseMaturityResponse;
   RefreshVotingPower : Empty;
+  ClaimOrRefresh : ClaimOrRefreshResponse;
 };
 
 type ManageNeuronResponse = record { command : opt Command1 };
@@ -56,6 +64,7 @@ service : {
   debug_set_aging_since : (nat64) -> ();
   debug_get_manage_calls : () -> (nat64) query;
   debug_get_refresh_calls : () -> (nat64) query;
+  debug_get_claim_or_refresh_calls : () -> (nat64) query;
 }
 
 

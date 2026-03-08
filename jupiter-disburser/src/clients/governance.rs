@@ -4,9 +4,9 @@ use ic_cdk::call::Call;
 
 use crate::clients::GovernanceClient;
 use crate::nns_types::{
-    Command1, DisburseMaturity, Empty, GovernanceAccount, GovernanceError,
-    ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
-    NeuronIdOrSubaccount, NeuronResult,
+    By, ClaimOrRefresh, Command1, DisburseMaturity, Empty, GovernanceAccount,
+    GovernanceError, ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse,
+    Neuron, NeuronId, NeuronIdOrSubaccount, NeuronResult,
 };
 
 pub struct NnsGovernanceCanister {
@@ -107,6 +107,38 @@ impl GovernanceClient for NnsGovernanceCanister {
 
         match decoded.command {
             Some(Command1::RefreshVotingPower(_)) => Ok(()),
+            Some(Command1::Error(e)) => Err(e),
+            other => Err(GovernanceError {
+                error_message: format!("unexpected manage_neuron response: {other:?}"),
+                error_type: -2,
+            }),
+        }
+    }
+
+    async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), GovernanceError> {
+        let req = ManageNeuronRequest {
+            neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(ClaimOrRefresh {
+                by: Some(By::NeuronIdOrSubaccount(Empty {})),
+            })),
+            id: None,
+        };
+
+        let resp = Call::unbounded_wait(self.gov_id, "manage_neuron")
+            .with_arg(req)
+            .await
+            .map_err(|e| GovernanceError {
+                error_message: format!("call failed: {e:?}"),
+                error_type: -1,
+            })?;
+
+        let decoded: ManageNeuronResponse = resp.candid().map_err(|e| GovernanceError {
+            error_message: format!("decode failed: {e:?}"),
+            error_type: -1,
+        })?;
+
+        match decoded.command {
+            Some(Command1::ClaimOrRefresh(_)) => Ok(()),
             Some(Command1::Error(e)) => Err(e),
             other => Err(GovernanceError {
                 error_message: format!("unexpected manage_neuron response: {other:?}"),

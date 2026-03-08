@@ -38,5 +38,6 @@ pub trait GovernanceClient: Send + Sync {
     ) -> Result<Option<u64>, GovernanceError>;
 
     async fn refresh_voting_power(&self, neuron_id: u64) -> Result<(), GovernanceError>;
+    async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), GovernanceError>;
 }
 
