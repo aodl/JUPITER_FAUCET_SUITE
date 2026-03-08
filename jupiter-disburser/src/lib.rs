@@ -22,9 +22,15 @@ pub struct InitArgs {
     pub governance_canister_id: Option<Principal>,
 
     pub rescue_controller: Principal,
+    pub blackhole_armed: Option<bool>,
 
     pub main_interval_seconds: Option<u64>,
     pub rescue_interval_seconds: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Default)]
+pub struct UpgradeArgs {
+    pub blackhole_armed: Option<bool>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -50,6 +56,7 @@ fn init(args: InitArgs) {
         governance_canister_id: args.governance_canister_id.unwrap_or_else(mainnet_governance_id),
 
         rescue_controller: args.rescue_controller,
+        blackhole_armed: args.blackhole_armed,
 
         main_interval_seconds: args.main_interval_seconds.unwrap_or(86_400),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(86_400),
@@ -69,9 +76,14 @@ fn pre_upgrade() {
 }
 
 #[ic_cdk::post_upgrade]
-fn post_upgrade() {
+fn post_upgrade(args: Option<UpgradeArgs>) {
     // On upgrade, we expect stable state to exist.
-    let (st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
+    let (mut st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
+    if let Some(args) = args {
+        if args.blackhole_armed.is_some() {
+            st.config.blackhole_armed = args.blackhole_armed;
+        }
+    }
     crate::state::set_state(st);
     crate::scheduler::install_timers();
 }

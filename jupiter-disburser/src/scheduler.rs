@@ -417,13 +417,18 @@ async fn process_payout<L: LedgerClient>(
 async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
 
-    let (last_xfer_opt, rescue_controller, rescue_triggered) = state::with_state(|st| {
+    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered) = state::with_state(|st| {
         (
+            st.config.blackhole_armed.unwrap_or(false),
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
             st.rescue_triggered,
         )
     });
+
+    if !blackhole_armed {
+        return;
+    }
 
     let self_id = ic_cdk::api::canister_self();
     let desired_opt = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller);

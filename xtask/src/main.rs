@@ -277,6 +277,7 @@ fn cmd_setup() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{r3}";
+            blackhole_armed = opt true;
 
             main_interval_seconds = opt (60:nat64);
             rescue_interval_seconds = opt (60:nat64);    

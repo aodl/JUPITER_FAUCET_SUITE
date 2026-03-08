@@ -16,6 +16,7 @@
     ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
     governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
     rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
+    blackhole_armed = opt false;
     main_interval_seconds = opt 86400;
     rescue_interval_seconds = opt 86400;
   }

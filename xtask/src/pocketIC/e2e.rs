@@ -296,6 +296,7 @@ struct InitArg {
     governance_canister_id: Option<Principal>,
 
     rescue_controller: Principal,
+    blackhole_armed: Option<bool>,
 
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
@@ -1090,6 +1091,18 @@ fn set_self_only_controller(pic: &PocketIc, canister: Principal) -> Result<()> {
     Ok(())
 }
 
+fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
+    let current = pic.get_controllers(canister);
+    let sender = current
+        .get(0)
+        .cloned()
+        .unwrap_or_else(Principal::anonymous);
+
+    pic.set_controllers(canister, Some(sender), controllers)
+        .map_err(|e| anyhow!("set_controllers reject: {:?}", e))?;
+    Ok(())
+}
+
 // ------------------------- Tests -------------------------
 
 #[test]
@@ -1146,6 +1159,7 @@ fn e2e_nns_maturity_disbursement_lands_in_staging() -> Result<()> {
         governance_canister_id: Some(gov),
         // Rescue controller is explicit in all test installs.
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         // Keep timers effectively disabled in e2e (we drive execution manually).
         main_interval_seconds: Some(365 * 24 * 60 * 60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -1259,6 +1273,7 @@ fn e2e_full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -1408,6 +1423,7 @@ fn e2e_inflight_idempotency_no_double_initiation() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -1491,6 +1507,7 @@ fn e2e_upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -1595,6 +1612,7 @@ fn e2e_payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -1769,6 +1787,7 @@ fn e2e_hotkey_only_cannot_disburse_maturity() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -1845,6 +1864,7 @@ fn e2e_blackhole_timers_only_progresses_pipeline() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         // Let timers drive.
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -1980,6 +2000,7 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
+        blackhole_armed: Some(true),
         // Keep timers effectively disabled in e2e (we drive execution manually).
         main_interval_seconds: Some(365 * 24 * 60 * 60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -2031,9 +2052,68 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
 }
 
 
-
 #[test]
 #[ignore]
+fn e2e_blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_full_icp_pic();
+
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let controller = Principal::anonymous();
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 72, 1_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+
+    let wasm = build_disburser_wasm()?;
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
+        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: controller,
+        blackhole_armed: Some(false),
+        main_interval_seconds: Some(365 * 24 * 60 * 60),
+        rescue_interval_seconds: Some(365 * 24 * 60 * 60),
+    };
+
+    pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
+
+    set_controllers_exact(&pic, disburser_canister, vec![disburser_canister, controller])?;
+    let before = pic.get_controllers(disburser_canister);
+    if !(before.contains(&disburser_canister) && before.contains(&controller) && before.len() == 2) {
+        bail!("expected initial controllers=[self,rescue], got {:?}", before);
+    }
+
+    let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let _: () = update_call(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_set_last_successful_transfer_ts",
+        Some(now_secs),
+    )?;
+
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+
+    let after = pic.get_controllers(disburser_canister);
+    if after != before {
+        bail!(
+            "expected controllers to remain unchanged while blackhole_armed=false; before={:?} after={:?}",
+            before,
+            after
+        );
+    }
+
+    Ok(())
+}
+
 fn e2e_rescue_not_armed_before_first_successful_payout() -> Result<()> {
     require_ignored_flag()?;
 
@@ -2070,6 +2150,7 @@ fn e2e_rescue_not_armed_before_first_successful_payout() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
+        blackhole_armed: Some(true),
         main_interval_seconds: Some(365 * 24 * 60 * 60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -2148,6 +2229,7 @@ fn e2e_maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         // Disable suppression to make explicit ticks deterministic.
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -2301,6 +2383,7 @@ fn e2e_partial_execution_retry_duplicate_proof() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -2471,6 +2554,7 @@ fn e2e_long_downtime_catchup_does_not_double_initiate() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
@@ -2576,6 +2660,7 @@ fn e2e_simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
@@ -2676,6 +2761,7 @@ fn e2e_state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()>
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
@@ -2756,6 +2842,7 @@ fn e2e_inflight_idempotent_under_repeated_ticks() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -2832,6 +2919,7 @@ fn e2e_upgrade_persists_inflight() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -2937,6 +3025,7 @@ fn e2e_blackhole_smoke_timers_only() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         // Timers enabled (short); we will not call debug_main_tick.
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -3024,6 +3113,7 @@ fn e2e_age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         // Drive manually for determinism.
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
@@ -3265,6 +3355,7 @@ fn e2e_age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
@@ -3869,6 +3960,7 @@ fn e2e_age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
@@ -4004,6 +4096,7 @@ fn e2e_refresh_voting_power_after_successful_disbursement_initiation() -> Result
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_armed: None,
         main_interval_seconds: Some(365 * DAY_SECS),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };

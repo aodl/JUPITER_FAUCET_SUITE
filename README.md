@@ -53,6 +53,7 @@ The current production recipients are:
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
+- `blackhole_armed = opt false`
 - `main_interval_seconds = 86400`
 - `rescue_interval_seconds = 86400`
 
@@ -105,7 +106,7 @@ dfx canister install jupiter_disburser \
 
 ### Upgrade commands
 
-`jupiter-disburser` currently persists its configuration across upgrades. Ordinary code upgrades do not require an argument.
+`jupiter-disburser` persists its configuration across upgrades. Ordinary code upgrades do not require an argument. Blackhole self-management is intentionally installed in an unarmed state (`blackhole_armed = opt false`) until the canister is ready to self-blackhole.
 
 ```bash
 dfx canister install jupiter_disburser \
@@ -127,6 +128,28 @@ dfx canister install jupiter_sns_rewards \
   --network ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
+```
+
+### Arm or disarm blackhole self-management later
+
+When `jupiter-disburser` is ready to move from operator-controlled mode to self-managed blackholing, arm it with:
+
+```bash
+dfx canister install jupiter_disburser \
+  --network ic \
+  --mode upgrade \
+  --argument '(opt record { blackhole_armed = opt true; })' \
+  --wasm release-artifacts/jupiter_disburser.wasm.gz
+```
+
+To explicitly disarm it again:
+
+```bash
+dfx canister install jupiter_disburser \
+  --network ic \
+  --mode upgrade \
+  --argument '(opt record { blackhole_armed = opt false; })' \
+  --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
 ## Component documentation
