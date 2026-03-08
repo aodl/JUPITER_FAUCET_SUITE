@@ -349,8 +349,11 @@ fn build_disburser_wasm() -> Result<Vec<u8>> {
         bail!("cargo build (wasm) failed");
     }
 
-    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target/wasm32-unknown-unknown/release/jupiter_disburser.wasm");
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .context("CARGO_MANIFEST_DIR has no parent")?;
+
+    let p = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_disburser.wasm");
 
     let bytes = std::fs::read(&p).with_context(|| format!("reading wasm at {}", p.display()))?;
     let _ = DISBURSER_WASM_CACHE.set(bytes.clone());
