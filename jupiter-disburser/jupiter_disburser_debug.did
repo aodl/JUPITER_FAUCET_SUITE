@@ -20,12 +20,6 @@ type InitArgs = record {
   rescue_interval_seconds : opt nat64;
 };
 
-type Metrics = record {
-  prev_age_seconds : nat64;
-  last_successful_transfer_ts : opt nat64;
-  rescue_triggered : bool;
-};
-
 type DebugState = record {
   prev_age_seconds : nat64;
   last_successful_transfer_ts : opt nat64;
@@ -35,8 +29,6 @@ type DebugState = record {
 };
 
 service : (InitArgs) -> {
-  metrics : () -> (Metrics) query;
-
   debug_state : () -> (DebugState) query;
   debug_state_size_bytes : () -> (nat64) query;
 

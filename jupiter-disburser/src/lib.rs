@@ -88,22 +88,6 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     crate::scheduler::install_timers();
 }
 
-#[derive(CandidType, Deserialize)]
-pub struct Metrics {
-    pub prev_age_seconds: u64,
-    pub last_successful_transfer_ts: Option<u64>,
-    pub rescue_triggered: bool,
-}
-
-#[ic_cdk::query]
-fn metrics() -> Metrics {
-    crate::state::with_state(|st| Metrics {
-        prev_age_seconds: st.prev_age_seconds,
-        last_successful_transfer_ts: st.last_successful_transfer_ts,
-        rescue_triggered: st.rescue_triggered,
-    })
-}
-
 // ---------------- Debug-only API (feature-gated) ----------------
 
 #[cfg(feature = "debug_api")]

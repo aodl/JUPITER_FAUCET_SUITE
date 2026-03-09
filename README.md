@@ -1,6 +1,10 @@
 # Jupiter Faucet Suite
 
-Jupiter Faucet is a suite of Internet Computer canisters that routes NNS neuron rewards into a fixed downstream value flow.
+Jupiter Faucet is a suite of Internet Computer canisters utilising a max-staked NNS neuron that follows alpha-vote on all topics to maximise maturity. The purpose is to power unstoppable dapps by delivering a simple, set-and-forget, perpetual cycles top-up solution that's trustless, permissionless and immutable. The Internet Computer is designed for tamperproof, "unstoppable" on-chain services; Jupiter Faucet focuses on the practical part: making sure canisters don’t run out of cycles, even if nobody is maintaining the project.
+
+The top-up process is intentionally simple: transfer at least 0.1 ICP directly into the staking account of Jupiter Faucet's canister-controlled neuron and set your target canister ID as the transaction memo. You do not need to be the owner of the canister. That’s it. With your memo declaring a canister, that canister becomes the recipient of perpetual cycles top-ups, funded by the stake’s ongoing rewards (propotional to your ICP contribution and any further contributions made for that canister).
+
+[Adopters receive front-loaded JUP SNS airdrops.](https://jupiter-faucet.com/#intro)
 
 The core production canisters are:
 

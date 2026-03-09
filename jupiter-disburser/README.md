@@ -107,9 +107,11 @@ That file currently contains:
 
 ## Public interface
 
-Production builds expose:
+Production builds expose expose no endpoints. This can be confirmed before deploying a release build using `candid-extractor`.
 
-- `metrics() -> Metrics`
+```
+candid-extractor target/wasm32-unknown-unknown/release/jupiter_disburser.wasm > verify_no_endpoints.did
+```
 
 Debug-only methods used for local integration and PocketIC tests are gated behind the `debug_api` feature and are not intended for production deployment.
 
