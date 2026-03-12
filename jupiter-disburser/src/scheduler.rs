@@ -104,9 +104,6 @@ const MAIN_LOCK_LEASE_SECONDS: u64 = 15 * 60;
 
 fn try_acquire_main_lease(now_secs: u64) -> bool {
     state::with_state_mut(|st| {
-        // Self-heal legacy bool state from older deployments.
-        st.main_lock = false;
-
         let expires_at = st.main_lock_expires_at_ts.unwrap_or(0);
         if expires_at > now_secs {
             return false;
@@ -151,7 +148,6 @@ async fn main_tick() {
     if recently_ran {
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs; // extend suppression window
-            st.main_lock = false;
             st.main_lock_expires_at_ts = Some(0);
         });
         return;
@@ -245,7 +241,6 @@ async fn main_tick() {
 fn finish_main(now_secs: u64, err: Option<u32>) {
     state::with_state_mut(|st| {
         st.last_main_run_ts = now_secs;
-        st.main_lock = false;
         st.main_lock_expires_at_ts = Some(0);
     });
 
@@ -474,7 +469,6 @@ async fn rescue_tick() {
     state::with_state_mut(|st| {
         st.rescue_triggered = rescue_active;
         st.last_rescue_check_ts = now_secs;
-        st.rescue_lock = false;
     });
 }
 

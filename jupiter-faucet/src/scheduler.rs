@@ -26,7 +26,6 @@ fn log_error(code: u32) {
 fn log_cycles() { let cycles: u128 = ic_cdk::api::canister_cycle_balance(); ic_cdk::println!("Cycles: {}", cycles); }
 fn try_acquire_main_lease(now_secs: u64) -> bool {
     state::with_state_mut(|st| {
-        st.main_lock = false;
         let expires_at = st.main_lock_expires_at_ts.unwrap_or(0);
         if expires_at > now_secs { return false; }
         st.main_lock_expires_at_ts = Some(now_secs.saturating_add(MAIN_LOCK_LEASE_SECONDS));
@@ -56,7 +55,7 @@ async fn main_tick() {
 }
 
 fn finish_main(now_secs: u64, err: Option<u32>) {
-    state::with_state_mut(|st| { st.last_main_run_ts = now_secs; st.main_lock = false; st.main_lock_expires_at_ts = Some(0); });
+    state::with_state_mut(|st| { st.last_main_run_ts = now_secs; st.main_lock_expires_at_ts = Some(0); });
     if let Some(code) = err { log_error(code); }
     log_cycles();
 }
@@ -97,8 +96,14 @@ async fn send_and_notify(ledger: &impl LedgerClient, cmc: &impl CmcClient, pendi
     let arg = transfer_arg(to, pending.amount_e8s, fee_e8s, created_at_time_nanos);
     let ledger_res = match ledger.transfer(arg).await { Ok(r) => r, Err(_) => { increment_failed_topups(); return false; } };
     let block_index = match ledger_res {
-        Ok(block) => block.to_string().parse::<u64>().unwrap_or(0),
-        Err(TransferError::Duplicate { duplicate_of }) => duplicate_of.to_string().parse::<u64>().unwrap_or(0),
+        Ok(block) => match u64::try_from(block.0.clone()) {
+            Ok(block_index) => block_index,
+            Err(_) => { increment_failed_topups(); return false; }
+        },
+        Err(TransferError::Duplicate { duplicate_of }) => match u64::try_from(duplicate_of.0.clone()) {
+            Ok(block_index) => block_index,
+            Err(_) => { increment_failed_topups(); return false; }
+        },
         Err(_) => { increment_failed_topups(); return false; }
     };
     advance_created_at_time_nanos();

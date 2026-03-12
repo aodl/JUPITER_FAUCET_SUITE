@@ -58,11 +58,6 @@ pub struct State {
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
 
-    /// Legacy lock fields retained for stable-state compatibility.
-    /// Execution no longer depends on either boolean.
-    pub main_lock: bool,
-    pub rescue_lock: bool,
-
     /// Expiring lease used to suppress overlapping main ticks without risking a
     /// permanent wedge if execution stops after an await boundary.
     pub main_lock_expires_at_ts: Option<u64>,
@@ -83,8 +78,6 @@ impl State {
             last_successful_transfer_ts: None,
             last_rescue_check_ts: 0,
             rescue_triggered: false,
-            main_lock: false,
-            rescue_lock: false,
             main_lock_expires_at_ts: Some(0),
             payout_nonce: 1,
             payout_plan: None,

@@ -3,8 +3,6 @@ use candid::{Nat, Principal};
 use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
-use num_traits::ToPrimitive;
-
 use crate::clients::{ClientError, LedgerClient};
 
 pub struct IcrcLedgerCanister {
@@ -18,8 +16,8 @@ impl IcrcLedgerCanister {
 }
 
 fn nat_to_u64(n: &Nat) -> Result<u64, ClientError> {
-    n.0.to_u64()
-        .ok_or_else(|| ClientError::Convert(format!("Nat does not fit u64: {n}")))
+    u64::try_from(n.0.clone())
+        .map_err(|_| ClientError::Convert(format!("Nat does not fit u64: {n}")))
 }
 
 #[async_trait]
