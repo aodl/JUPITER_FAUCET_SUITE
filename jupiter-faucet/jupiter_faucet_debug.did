@@ -1,0 +1,47 @@
+type Account = record { owner : principal; subaccount : opt vec nat8 };
+
+type InitArgs = record {
+  staking_account : Account;
+  payout_subaccount : opt vec nat8;
+
+  ledger_canister_id : opt principal;
+  index_canister_id : opt principal;
+  cmc_canister_id : opt principal;
+
+  rescue_controller : principal;
+  blackhole_armed : opt bool;
+
+  main_interval_seconds : opt nat64;
+  rescue_interval_seconds : opt nat64;
+  min_tx_e8s : opt nat64;
+};
+
+type DebugAccounts = record { payout : Account; staking : Account };
+type DebugState = record {
+  last_successful_transfer_ts : opt nat64;
+  last_rescue_check_ts : nat64;
+  rescue_triggered : bool;
+  active_payout_job_present : bool;
+  pending_notification_present : bool;
+  last_summary_present : bool;
+};
+type Summary = record {
+  pot_start_e8s : nat64;
+  pot_remaining_e8s : nat64;
+  denom_staking_balance_e8s : nat64;
+  topped_up_count : nat64;
+  topped_up_sum_e8s : nat64;
+  topped_up_min_e8s : opt nat64;
+  topped_up_max_e8s : opt nat64;
+  failed_topups : nat64;
+  ignored_under_threshold : nat64;
+  ignored_bad_memo : nat64;
+  remainder_to_self_e8s : nat64;
+};
+service : (InitArgs) -> {
+  debug_accounts : () -> (DebugAccounts) query;
+  debug_last_summary : () -> (opt Summary) query;
+  debug_main_tick : () -> ();
+  debug_rescue_tick : () -> ();
+  debug_state : () -> (DebugState) query;
+};

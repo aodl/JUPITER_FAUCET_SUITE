@@ -9,4 +9,6 @@ members = [
   "xtask",
   "xtask/src/mocks/mock_icrc_ledger",
   "xtask/src/mocks/mock_nns_governance",
+  "xtask/src/mocks/mock_icp_index",
+  "xtask/src/mocks/mock_cmc",
 ]

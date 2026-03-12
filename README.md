@@ -20,7 +20,7 @@ These canisters are deployed on the Fiduciary subnet (`pzp6e-ekpqk-3c5x7-2h6so-n
 The system is intentionally split into narrowly scoped canisters:
 
 - `jupiter-disburser` controls a single NNS neuron, disburses maturity, and routes minted ICP according to a fixed policy.
-- `jupiter-faucet` receives the age-neutral base payout and, once implemented, will convert it into cycles top-ups for participating canisters. User / protocol stake top-ups into the reward neuron are currently recognized by `jupiter-disburser` via periodic best-effort `ClaimOrRefresh`; in the intended user flow, the deposit memo identifies the canister the user wants topped up.
+- `jupiter-faucet` receives the age-neutral base payout and converts it into cycles top-ups for participating canisters. User / protocol stake top-ups into the reward neuron are recognized via the faucet attribution flow, while `jupiter-disburser` continues the periodic best-effort `ClaimOrRefresh` work that keeps governance aware of fresh ICP sent into the neuron staking path.
 - `jupiter-sns-rewards` receives the primary age-bonus payout and will distribute it to JUP SNS stakers.
 - `jupiter-lifeline` is the recovery controller target for blackholed operational canisters.
 - `jupiter-faucet-frontend` is the placeholder for the public-facing asset canister.
@@ -70,7 +70,7 @@ A copy-pasteable mainnet install argument file lives at:
 ## Repository layout
 
 - `jupiter-disburser/` — NNS maturity routing canister
-- `jupiter-faucet/` — faucet placeholder / future cycles top-up canister
+- `jupiter-faucet/` — cycles top-up canister
 - `jupiter-sns-rewards/` — SNS rewards placeholder / future staking rewards canister
 - `jupiter-lifeline/` — minimal recovery canister
 - `jupiter-faucet-frontend/` — frontend placeholder canister

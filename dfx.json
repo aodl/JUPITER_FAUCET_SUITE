@@ -70,6 +70,42 @@
       "wasm": "release-artifacts/jupiter_faucet_frontend.wasm",
       "build": "./scripts/build-canister jupiter-faucet-frontend",
       "skip_cargo_audit": true
+    },
+    "jupiter_faucet_dbg": {
+      "type": "custom",
+      "candid": "jupiter-faucet/jupiter_faucet_debug.did",
+      "wasm": "target/wasm32-unknown-unknown/release/jupiter_faucet.wasm",
+      "build": "cargo build --target wasm32-unknown-unknown --release -p jupiter-faucet --features debug_api --locked",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_icp_index": {
+      "type": "rust",
+      "package": "mock-icp-index",
+      "candid": "xtask/src/mocks/mock_icp_index/mock_icp_index.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_cmc": {
+      "type": "rust",
+      "package": "mock-cmc",
+      "candid": "xtask/src/mocks/mock_cmc/mock_cmc.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
     }
   },
   "version": 1

@@ -4,8 +4,8 @@ version = "0.2.0"
 edition = "2021"
 
 [[test]]
-name = "pocketic_e2e"
-path = "../xtask/src/pocketIC/e2e.rs"
+name = "jupiter_disburser_integration"
+path = "../xtask/src/pocketIC/jupiter_disburser_integration.rs"
 
 [lib]
 crate-type = ["cdylib"]

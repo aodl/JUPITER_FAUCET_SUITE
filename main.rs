@@ -2,8 +2,9 @@ use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use num_traits::ToPrimitive;
-use std::env;
+use sha2::{Digest, Sha224};
 use std::collections::BTreeSet;
+use std::env;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
@@ -203,6 +204,152 @@ struct DebugState {
     payout_plan_present: bool,
 }
 
+#[derive(Debug, CandidType, Deserialize)]
+struct FaucetDebugState {
+    last_successful_transfer_ts: Option<u64>,
+    last_rescue_check_ts: u64,
+    rescue_triggered: bool,
+    active_payout_job_present: bool,
+    pending_notification_present: bool,
+    last_summary_present: bool,
+}
+
+#[derive(Debug, Clone, CandidType, Deserialize)]
+struct FaucetDebugAccounts {
+    payout: Account,
+    staking: Account,
+}
+
+#[derive(Debug, Clone, CandidType, Deserialize)]
+struct FaucetSummary {
+    pot_start_e8s: u64,
+    pot_remaining_e8s: u64,
+    denom_staking_balance_e8s: u64,
+    topped_up_count: u64,
+    topped_up_sum_e8s: u64,
+    topped_up_min_e8s: Option<u64>,
+    topped_up_max_e8s: Option<u64>,
+    failed_topups: u64,
+    ignored_under_threshold: u64,
+    ignored_bad_memo: u64,
+    remainder_to_self_e8s: u64,
+}
+
+#[derive(Debug, Clone, CandidType, Deserialize)]
+struct NotifyRecord {
+    canister_id: Principal,
+    block_index: u64,
+}
+
+fn account_identifier_text(account: &Account) -> String {
+    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
+    let mut hasher = Sha224::new();
+    hasher.update(b"\x0Aaccount-id");
+    hasher.update(account.owner.as_slice());
+    hasher.update(subaccount);
+    let hash = hasher.finalize();
+    let checksum = crc32fast::hash(&hash).to_be_bytes();
+    let mut bytes = [0u8; 32];
+    bytes[..4].copy_from_slice(&checksum);
+    bytes[4..].copy_from_slice(&hash);
+    hex::encode(bytes)
+}
+
+fn deploy_disburser_dbg() -> Result<()> {
+    let ledger_id = canister_id("mock_icrc_ledger")?;
+    let gov_id = canister_id("mock_nns_governance")?;
+    let rescue = principal_of_identity()?;
+
+    let r1 = Principal::management_canister();
+    let r2 = Principal::anonymous();
+    let r3 = rescue;
+
+    let args = format!(
+        r#"(record {{
+            neuron_id = 1:nat64;
+            normal_recipient = record {{ owner = principal "{r1}"; subaccount = null }};
+            age_bonus_recipient_1 = record {{ owner = principal "{r2}"; subaccount = null }};
+            age_bonus_recipient_2 = record {{ owner = principal "{r3}"; subaccount = null }};
+
+            ledger_canister_id = opt principal "{ledger_id}";
+            governance_canister_id = opt principal "{gov_id}";
+            rescue_controller = principal "{r3}";
+            blackhole_armed = opt true;
+
+            main_interval_seconds = opt (60:nat64);
+            rescue_interval_seconds = opt (60:nat64);
+        }},)"#,
+        r1 = r1.to_text(),
+        r2 = r2.to_text(),
+        r3 = r3.to_text(),
+    );
+
+    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &args])?;
+
+    let disb_id = canister_id("jupiter_disburser_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_disburser_dbg",
+        "--add-controller",
+        disb_id.trim(),
+    ])?;
+
+    Ok(())
+}
+
+fn deploy_faucet_dbg(mode: Option<&str>) -> Result<()> {
+    let ledger_id = canister_id("mock_icrc_ledger")?;
+    let index_id = canister_id("mock_icp_index")?;
+    let cmc_id = canister_id("mock_cmc")?;
+    let rescue = principal_of_identity()?;
+
+    let args = format!(
+        r#"(record {{
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_sub} }} }};
+            payout_subaccount = null;
+            ledger_canister_id = opt principal "{ledger_id}";
+            index_canister_id = opt principal "{index_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            rescue_controller = principal "{rescue}";
+            blackhole_armed = opt true;
+            main_interval_seconds = opt (60:nat64);
+            rescue_interval_seconds = opt (60:nat64);
+            min_tx_e8s = opt (10000000:nat64);
+        }},)"#,
+        staking_owner = Principal::anonymous().to_text(),
+        staking_sub = (0u8..32).map(|_| "7:nat8").collect::<Vec<_>>().join("; "),
+        ledger_id = ledger_id.trim(),
+        index_id = index_id.trim(),
+        cmc_id = cmc_id.trim(),
+        rescue = rescue.to_text(),
+    );
+
+    match mode {
+        Some(mode) => run_dfx(&["deploy", "jupiter_faucet_dbg", "--mode", mode, "--argument", &args])?,
+        None => run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &args])?,
+    };
+
+    let faucet_id = canister_id("jupiter_faucet_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_faucet_dbg",
+        "--add-controller",
+        faucet_id.trim(),
+    ])?;
+
+    Ok(())
+}
+
+fn reset_faucet_fixture() -> Result<FaucetDebugAccounts> {
+    let _: () = call_raw_noargs("mock_icrc_ledger", "debug_reset")?;
+    let _: () = call_raw_noargs("mock_icp_index", "debug_reset")?;
+    let _: () = call_raw_noargs("mock_cmc", "debug_reset")?;
+    deploy_faucet_dbg(Some("reinstall"))?;
+    call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")
+}
+
 fn ensure_identity() -> Result<()> {
     // If identity already exists, this returns OK.
     let list = Command::new("dfx")
@@ -243,9 +390,7 @@ fn ensure_identity() -> Result<()> {
 fn cmd_setup() -> Result<()> {
     ensure_identity()?;
 
-    // Stop any running local replica (ignore errors), then start clean.
     let _ = run_dfx(&["stop"]);
-    // start replica    
     {
         let mut start = Command::new("dfx");
         start.args(["start", "--background", "--clean"]);
@@ -257,47 +402,11 @@ fn cmd_setup() -> Result<()> {
 
     run_dfx(&["deploy", "mock_icrc_ledger"])?;
     run_dfx(&["deploy", "mock_nns_governance"])?;
+    run_dfx(&["deploy", "mock_icp_index"])?;
+    run_dfx(&["deploy", "mock_cmc"])?;
 
-    let ledger_id = canister_id("mock_icrc_ledger")?;
-    let gov_id = canister_id("mock_nns_governance")?;
-    let rescue = principal_of_identity()?;
-
-    // recipients: use three stable principals
-    let r1 = Principal::management_canister();
-    let r2 = Principal::anonymous();
-    let r3 = rescue;
-
-    let args = format!(
-        r#"(record {{
-            neuron_id = 1:nat64;
-            normal_recipient = record {{ owner = principal "{r1}"; subaccount = null }};
-            age_bonus_recipient_1 = record {{ owner = principal "{r2}"; subaccount = null }};
-            age_bonus_recipient_2 = record {{ owner = principal "{r3}"; subaccount = null }};
-    
-            ledger_canister_id = opt principal "{ledger_id}";
-            governance_canister_id = opt principal "{gov_id}";
-            rescue_controller = principal "{r3}";
-            blackhole_armed = opt true;
-
-            main_interval_seconds = opt (60:nat64);
-            rescue_interval_seconds = opt (60:nat64);    
-        }},)"#,
-        r1 = r1.to_text(),
-        r2 = r2.to_text(),
-        r3 = r3.to_text(),
-    );
-
-    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &args])?;
-
-    // IMPORTANT: allow canister to update its own controllers by making self a controller.
-    let disb_id = canister_id("jupiter_disburser_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_disburser_dbg",
-        "--add-controller",
-        disb_id.trim(),
-    ])?;
+    deploy_faucet_dbg(None)?;
+    deploy_disburser_dbg()?;
 
     Ok(())
 }
@@ -352,7 +461,7 @@ fn assert_controllers_eq(canister: &str, actual: &BTreeSet<String>, expected: &B
     );
 }
 
-fn cmd_test() -> Result<()> {
+fn cmd_test_disburser_integration() -> Result<()> {
     let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
 
     // Shared time base for scenarios that need it.
@@ -702,6 +811,181 @@ fn cmd_test() -> Result<()> {
     }
 }
 
+fn cmd_test_faucet_integration() -> Result<()> {
+    let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
+
+    run_scenario(&mut outcomes, "Faucet happy path: one eligible contribution top-ups beneficiary and returns remainder", || {
+        let accounts = reset_faucet_fixture()?;
+        let target = Principal::from_text(canister_id("mock_icp_index")?.trim())?;
+        let payout_credit = 100_000_000u64;
+        let denom = 400_000_000u64;
+        let contribution = 100_000_000u64;
+        let staking_id = account_identifier_text(&accounts.staking);
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, {}:nat64)", accounts.payout.owner.to_text(), payout_credit))?;
+        let staking_sub = accounts.staking.subaccount.expect("staking subaccount should be configured");
+        let sub_vec = staking_sub.iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = opt vec {{ {} }} }}, {}:nat64)", accounts.staking.owner.to_text(), sub_vec, denom))?;
+        let memo_vec = target.as_slice().iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", {}:nat64, opt vec {{ {} }})", staking_id, contribution, memo_vec))?;
+
+        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
+
+        let st: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
+        if st.active_payout_job_present || st.pending_notification_present || !st.last_summary_present {
+            bail!("expected completed payout job and persisted summary after happy path");
+        }
+
+        let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected faucet summary")?;
+        if summary.topped_up_count != 1 || summary.ignored_under_threshold != 0 || summary.ignored_bad_memo != 0 {
+            bail!("unexpected faucet summary counts: topped_up_count={}, ignored_under_threshold={}, ignored_bad_memo={}", summary.topped_up_count, summary.ignored_under_threshold, summary.ignored_bad_memo);
+        }
+        if summary.topped_up_sum_e8s != 24_990_000 || summary.remainder_to_self_e8s != 74_990_000 || summary.pot_remaining_e8s != 0 {
+            bail!("unexpected faucet summary amounts: topped_up_sum_e8s={}, remainder_to_self_e8s={}, pot_remaining_e8s={}", summary.topped_up_sum_e8s, summary.remainder_to_self_e8s, summary.pot_remaining_e8s);
+        }
+
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers.len() != 2 {
+            bail!("expected 2 ledger transfers (beneficiary + remainder), got {}", transfers.len());
+        }
+
+        let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
+        if notes.len() != 2 {
+            bail!("expected 2 CMC notifications, got {}", notes.len());
+        }
+
+        Ok(())
+    });
+
+    run_scenario(&mut outcomes, "Faucet replays full history on every new payout job", || {
+        let accounts = reset_faucet_fixture()?;
+        let target = Principal::from_text(canister_id("mock_icp_index")?.trim())?;
+        let staking_id = account_identifier_text(&accounts.staking);
+        let memo_vec = target.as_slice().iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+        let staking_sub = accounts.staking.subaccount.expect("staking subaccount should be configured");
+        let sub_vec = staking_sub.iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = opt vec {{ {} }} }}, 100000000:nat64)", accounts.staking.owner.to_text(), sub_vec))?;
+        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", 100000000:nat64, opt vec {{ {} }})", staking_id, memo_vec))?;
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, 40000000:nat64)", accounts.payout.owner.to_text()))?;
+        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
+        let first_summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
+        let first_summary = first_summary.context("expected first faucet summary")?;
+        if first_summary.topped_up_count != 1 || first_summary.topped_up_sum_e8s != 39_990_000 {
+            bail!("unexpected first summary: topped_up_count={}, topped_up_sum_e8s={}", first_summary.topped_up_count, first_summary.topped_up_sum_e8s);
+        }
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, 60000000:nat64)", accounts.payout.owner.to_text()))?;
+        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
+        let second_summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
+        let second_summary = second_summary.context("expected second faucet summary")?;
+        if second_summary.topped_up_count != 1 || second_summary.topped_up_sum_e8s != 59_990_000 {
+            bail!("expected historical contribution to be revisited on second run; got topped_up_count={}, topped_up_sum_e8s={}", second_summary.topped_up_count, second_summary.topped_up_sum_e8s);
+        }
+
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers.len() != 2 {
+            bail!("expected exactly 2 beneficiary transfers across two full-history runs, got {}", transfers.len());
+        }
+        let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
+        if notes.len() != 2 {
+            bail!("expected exactly 2 CMC notifications across two full-history runs, got {}", notes.len());
+        }
+        Ok(())
+    });
+
+    run_scenario(&mut outcomes, "Faucet scans past the first index page and still processes later eligible contributions", || {
+        let accounts = reset_faucet_fixture()?;
+        let target = Principal::from_text(canister_id("mock_icp_index")?.trim())?;
+        let staking_id = account_identifier_text(&accounts.staking);
+        let memo_good = target.as_slice().iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+        let memo_bad = b"bad-memo".iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+        let staking_sub = accounts.staking.subaccount.expect("staking subaccount should be configured");
+        let sub_vec = staking_sub.iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+
+        let total_denom = 638_000_000u64;
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, 63800000:nat64)", accounts.payout.owner.to_text()))?;
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = opt vec {{ {} }} }}, {}:nat64)", accounts.staking.owner.to_text(), sub_vec, total_denom))?;
+        let _: u64 = call_raw("mock_icp_index", "debug_append_repeated_transfer", &format!("(\"{}\", 498:nat64, 1000000:nat64, opt vec {{ {} }})", staking_id, memo_good))?;
+        let _: u64 = call_raw("mock_icp_index", "debug_append_repeated_transfer", &format!("(\"{}\", 2:nat64, 20000000:nat64, opt vec {{ {} }})", staking_id, memo_bad))?;
+        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", 100000000:nat64, opt vec {{ {} }})", staking_id, memo_good))?;
+
+        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
+        let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected summary after paginated scan")?;
+        if summary.ignored_under_threshold != 498 || summary.ignored_bad_memo != 2 || summary.topped_up_count != 1 {
+            bail!("expected paginated scan counts (498 under threshold, 2 bad memo, 1 top-up); got under_threshold={}, bad_memo={}, topped_up_count={}", summary.ignored_under_threshold, summary.ignored_bad_memo, summary.topped_up_count);
+        }
+        if summary.topped_up_sum_e8s != 9_990_000 || summary.remainder_to_self_e8s != 53_790_000 {
+            bail!("unexpected paginated summary amounts: topped_up_sum_e8s={}, remainder_to_self_e8s={}", summary.topped_up_sum_e8s, summary.remainder_to_self_e8s);
+        }
+
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers.len() != 2 {
+            bail!("expected 2 ledger transfers after paginated scan, got {}", transfers.len());
+        }
+        Ok(())
+    });
+
+    run_scenario(&mut outcomes, "Faucet retries pending CMC notification without duplicating the ledger transfer", || {
+        let accounts = reset_faucet_fixture()?;
+        let target = Principal::from_text(canister_id("mock_icp_index")?.trim())?;
+        let staking_id = account_identifier_text(&accounts.staking);
+        let memo_vec = target.as_slice().iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+        let staking_sub = accounts.staking.subaccount.expect("staking subaccount should be configured");
+        let sub_vec = staking_sub.iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, 80000000:nat64)", accounts.payout.owner.to_text()))?;
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = opt vec {{ {} }} }}, 80000000:nat64)", accounts.staking.owner.to_text(), sub_vec))?;
+        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", 80000000:nat64, opt vec {{ {} }})", staking_id, memo_vec))?;
+        let _: () = call_raw("mock_cmc", "debug_set_fail", "(true)")?;
+
+        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
+        let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
+        if !st1.active_payout_job_present || !st1.pending_notification_present {
+            bail!("expected active payout job with pending notification after retriable CMC error");
+        }
+        let transfers1: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers1.len() != 1 {
+            bail!("expected exactly one ledger transfer before retry, got {}", transfers1.len());
+        }
+        let notes1: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
+        if !notes1.is_empty() {
+            bail!("expected no successful CMC notifications while mock CMC is failing");
+        }
+
+        let _: () = call_raw("mock_cmc", "debug_set_fail", "(false)")?;
+        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
+        let st2: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
+        if st2.active_payout_job_present || st2.pending_notification_present || !st2.last_summary_present {
+            bail!("expected retry success to clear active job and persist summary");
+        }
+        let transfers2: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers2.len() != 1 {
+            bail!("expected retry to reuse the existing ledger transfer, got {} total transfers", transfers2.len());
+        }
+        let notes2: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
+        if notes2.len() != 1 {
+            bail!("expected exactly one successful CMC notification after retry, got {}", notes2.len());
+        }
+        Ok(())
+    });
+
+    let ok = print_summary(&outcomes);
+    if ok {
+        Ok(())
+    } else {
+        bail!("one or more faucet integration scenarios failed")
+    }
+}
+
+fn cmd_test() -> Result<()> {
+    cmd_test_disburser_integration()?;
+    cmd_test_faucet_integration()
+}
+
 fn cmd_test_all() -> Result<()> {
     cmd_test_all_impl(true)
 }
@@ -816,7 +1100,9 @@ fn main() -> Result<()> {
 	match cmd.as_str() {
 		"setup" => cmd_setup(),
 		"teardown" => cmd_teardown(),
-		"test" => cmd_test(), // integration scenarios only
+		"test-disburser" => cmd_test_disburser_integration(),
+		"test-faucet" => cmd_test_faucet_integration(),
+		"test" => cmd_test(), // dfx/mock integration scenarios only
 		"test-all" => cmd_test_all(), // dfx/mock integration + unit + PocketIC integration/e2e
 		"test-all-fast" => cmd_test_all_fast(), // dfx/mock integration + unit (no PocketIC)
 		"setup_test_teardown" => cmd_setup_test_teardown(),
@@ -826,9 +1112,11 @@ fn main() -> Result<()> {
 					"Usage: cargo run -p xtask -- <command>\n\n\
 					 Commands:\n\
 					 - setup\n\
-					 - test                  (integration scenarios)\n\
-					 - test-all              (dfx/mock integration + unit + PocketIC integration/e2e)\n\
-					 - test-all-fast         (dfx/mock integration + unit; skips PocketIC)\n\
+					 - test-disburser         (dfx/mock integration scenarios for jupiter-disburser)\n\
+					 - test-faucet            (dfx/mock integration scenarios for jupiter-faucet)\n\
+					 - test                   (all dfx/mock integration scenarios)\n\
+					 - test-all               (dfx/mock integration + unit + PocketIC integration/e2e)\n\
+					 - test-all-fast          (dfx/mock integration + unit; skips PocketIC)\n\
 					 - teardown\n\
 					 - setup_test_teardown        (setup + test-all-fast + teardown)\n\
 					 - setup_test_all_teardown    (setup + test-all + teardown)\n"

@@ -138,7 +138,7 @@ cargo test -p jupiter-disburser --lib
 ### PocketIC end-to-end tests
 
 ```bash
-RUST_TEST_THREADS=1 cargo test -p jupiter-disburser --test pocketic_e2e -- --ignored
+RUST_TEST_THREADS=1 cargo test -p jupiter-disburser --test jupiter_disburser_integration -- --ignored
 ```
 
 ## Reproducible build and deployment

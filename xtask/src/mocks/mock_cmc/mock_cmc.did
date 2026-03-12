@@ -1,0 +1,16 @@
+type NotifyTopUpArg = record { canister_id : principal; block_index : nat64 };
+type NotifyRecord = record { canister_id : principal; block_index : nat64 };
+type NotifyError = variant {
+  Refunded : record { reason : text; block_index : opt nat64 };
+  Processing;
+  TransactionTooOld : nat64;
+  InvalidTransaction : text;
+  Other : record { error_code : nat64; error_message : text };
+};
+type NotifyTopUpResult = variant { Ok : nat; Err : NotifyError };
+service : {
+  notify_top_up : (NotifyTopUpArg) -> (NotifyTopUpResult);
+  debug_reset : () -> ();
+  debug_set_fail : (bool) -> ();
+  debug_notifications : () -> (vec NotifyRecord) query;
+};

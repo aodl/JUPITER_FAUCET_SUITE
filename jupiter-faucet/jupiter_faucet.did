@@ -1,2 +1,19 @@
-service : {
+type Account = record { owner : principal; subaccount : opt vec nat8 };
+
+type InitArgs = record {
+  staking_account : Account;
+  payout_subaccount : opt vec nat8;
+
+  ledger_canister_id : opt principal;
+  index_canister_id : opt principal;
+  cmc_canister_id : opt principal;
+
+  rescue_controller : principal;
+  blackhole_armed : opt bool;
+
+  main_interval_seconds : opt nat64;
+  rescue_interval_seconds : opt nat64;
+  min_tx_e8s : opt nat64;
 };
+
+service : (InitArgs) -> {};
