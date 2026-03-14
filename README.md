@@ -1,12 +1,51 @@
 # Jupiter Faucet Suite
 
-Jupiter Faucet is a suite of Internet Computer canisters utilising a max-staked NNS neuron that follows alpha-vote on all topics to maximise maturity. The purpose is to power unstoppable dapps by delivering a simple, set-and-forget, perpetual cycles top-up solution that's trustless, permissionless and immutable. The Internet Computer is designed for tamperproof, "unstoppable" on-chain services; Jupiter Faucet focuses on the practical part: making sure canisters don’t run out of cycles, even if nobody is maintaining the project.
+Jupiter Faucet is a suite of Internet Computer canisters utilising a max-staked NNS neuron that follows [alpha-vote](https://dashboard.internetcomputer.org/neuron/2947465672511369) on all topics to maximise maturity. The purpose is to power unstoppable dapps by delivering a simple, set-and-forget, perpetual cycles top-up solution that's trustless, permissionless and immutable. The Internet Computer is designed for tamperproof, "unstoppable" on-chain services; Jupiter Faucet focuses on the practical part: making sure canisters don’t run out of cycles, even if nobody is maintaining the project.
 
 The top-up process is intentionally simple: transfer at least 0.1 ICP directly into the staking account of Jupiter Faucet's canister-controlled neuron and set your target canister ID as the transaction memo. You do not need to be the owner of the canister. That’s it. With your memo declaring a canister, that canister becomes the recipient of perpetual cycles top-ups, funded by the stake’s ongoing rewards (propotional to your ICP contribution and any further contributions made for that canister).
 
 [Adopters receive front-loaded JUP SNS airdrops.](https://jupiter-faucet.com/#intro)
 
-The core production canisters are:
+## Why the minimum tracked staking contribution is 0.1 ICP
+
+The faucet uses a minimum tracked staking contribution of **0.1 ICP**.
+
+This threshold is chosen so that a contributor’s attributable staking rewards still produce a **non-dust cycles top-up** under conservative assumptions.
+
+### Fee model
+
+Cycles top-ups are funded through the standard ICP → CMC top-up flow, which requires an ICP ledger transfer. That transfer pays the standard ICP ledger fee of **0.0001 ICP (10,000 e8s)**. Any attributable reward amount at or below that fee is effectively dust for top-up purposes.
+
+### Conservative reward assumption
+
+For policy purposes, this project assumes a **6% annual staking reward rate** as a conservative lower-bound planning assumption.
+
+At that rate, a **0.1 ICP** contribution produces an expected weekly reward of:
+
+`0.1 × 0.06 × 7 / 365 = 0.00011506849 ICP`
+
+After paying the **0.0001 ICP** ledger fee, that still leaves a positive amount for conversion into cycles:
+
+`0.00011506849 - 0.0001 = 0.00001506849 ICP`
+
+This means that, under a weekly payout cadence and a 6% APR assumption, **0.1 ICP is still above dust**.
+
+### Context on current and proposed tokenomics
+
+The 6% assumption is intentionally conservative relative to both the current and proposed reward environment discussed in DFINITY’s Mission 70 paper.
+
+The Mission 70 paper states that, at the time of writing in early 2026:
+
+- an **8-year neuron** earns about **12% APY**
+- the proposal would reduce the maximum dissolve delay from **8 years to 2 years**
+- existing neurons above 2 years would be **capped at 2 years**
+- a neuron at the new **2-year maximum** would earn about **7.0% APY**
+- neurons with the proposed **“8-year gang”** flag would receive a **10% reward boost**, bringing that to about **7.7% APY**
+- that special boost would remain in effect until the **end of 2030**, and would be lost once the neuron starts dissolving
+
+Actual realized staking rewards depend on live network tokenomics, neuron configuration, reward rules, governance participation, and future protocol changes. If you'd like to protect against rewards falling materially below this conservative assumption, you should consider contributing more than 0.1 ICP to perpetually fuel your canisters.
+
+## Core production canisters
 
 - `jupiter-disburser` (`uccpi-cqaaa-aaaar-qby3q-cai`)
 - `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
