@@ -104,7 +104,7 @@ pub struct DebugState {
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
     pub active_payout_job_present: bool,
-    pub pending_notification_present: bool,
+    pub retry_state_present: bool,
     pub last_summary_present: bool,
 }
 
@@ -116,6 +116,15 @@ pub struct DebugAccounts {
 }
 
 #[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugFootprint {
+    pub state_candid_bytes: u64,
+    pub active_payout_job_candid_bytes: u64,
+    pub retry_state_candid_bytes: u64,
+    pub last_summary_candid_bytes: u64,
+}
+
+#[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state() -> DebugState {
     crate::state::with_state(|st| DebugState {
@@ -123,7 +132,7 @@ fn debug_state() -> DebugState {
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
         active_payout_job_present: st.active_payout_job.is_some(),
-        pending_notification_present: st.active_payout_job.as_ref().and_then(|j| j.pending_notification.as_ref()).is_some(),
+        retry_state_present: st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).is_some(),
         last_summary_present: st.last_summary.is_some(),
     })
 }
@@ -144,6 +153,70 @@ fn debug_accounts() -> DebugAccounts {
         },
         staking: st.config.staking_account.clone(),
     })
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+fn debug_footprint() -> DebugFootprint {
+    crate::state::with_state(|st| DebugFootprint {
+        state_candid_bytes: candid::encode_one(st).expect("encode state").len() as u64,
+        active_payout_job_candid_bytes: st
+            .active_payout_job
+            .as_ref()
+            .map(|job| candid::encode_one(job).expect("encode active payout job").len() as u64)
+            .unwrap_or(0),
+        retry_state_candid_bytes: st
+            .active_payout_job
+            .as_ref()
+            .and_then(|job| job.retry_state.as_ref())
+            .map(|retry| candid::encode_one(retry).expect("encode retry state").len() as u64)
+            .unwrap_or(0),
+        last_summary_candid_bytes: st
+            .last_summary
+            .as_ref()
+            .map(|summary| candid::encode_one(summary).expect("encode summary").len() as u64)
+            .unwrap_or(0),
+    })
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_reset_runtime_state() {
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    crate::state::with_state_mut(|st| {
+        st.last_summary = None;
+        st.last_successful_transfer_ts = None;
+        st.last_rescue_check_ts = 0;
+        st.rescue_triggered = false;
+        st.main_lock_expires_at_ts = Some(0);
+        st.active_payout_job = None;
+        st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
+    });
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_last_successful_transfer_ts(ts: Option<u64>) {
+    crate::state::with_state_mut(|st| st.last_successful_transfer_ts = ts);
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_blackhole_armed(v: Option<bool>) {
+    crate::state::with_state_mut(|st| st.config.blackhole_armed = v);
+}
+
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_release_retry_backoff() {
+    crate::state::with_state_mut(|st| {
+        if let Some(job) = st.active_payout_job.as_mut() {
+            if let Some(retry) = job.retry_state.as_mut() {
+                retry.retry_at_secs = 0;
+            }
+        }
+    });
 }
 
 #[cfg(feature = "debug_api")]

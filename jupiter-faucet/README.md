@@ -30,7 +30,10 @@ Important properties of this flow:
 - every new payout job revisits the full contribution history
 - contributions are processed independently; they are not aggregated by beneficiary
 - the faucet does not buffer the full contribution set in memory
-- any remainder that cannot be allocated is sent to the faucet canister itself
+- malformed, under-threshold, dust, and other deterministic per-contribution failures are skipped immediately and do not block later contributions in the same payout job
+- ambiguous or plausibly transient failures are retried once after roughly 60 seconds; if the retry still fails, that contribution is skipped and the rest of the job continues
+- the faucet never retries forever and never aborts a payout job because a single contribution fails
+- skipped contributions do not block the payout job; any value not successfully allocated is handled by the existing payout-job accounting, including remainder-to-self behavior where applicable
 
 ## Public interface
 

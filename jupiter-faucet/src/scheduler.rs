@@ -8,12 +8,13 @@ use crate::clients::cmc::CyclesMintingCanister;
 use crate::clients::index::{account_identifier_text, IcpIndexCanister};
 use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CmcClient, IndexClient, LedgerClient};
-use crate::state::{ActivePayoutJob, PendingNotification, TransferKind};
+use crate::state::{ActivePayoutJob, PendingNotification, RetryState, RetryStep, TransferKind};
 use crate::{logic, policy, state};
 
 thread_local! { static LAST_ERR_CODE: RefCell<Option<u32>> = RefCell::new(None); }
 const PAGE_SIZE: u64 = 500;
 const MAIN_LOCK_LEASE_SECONDS: u64 = 15 * 60;
+const RETRY_DELAY_SECS: u64 = 60;
 
 fn log_error(code: u32) {
     LAST_ERR_CODE.with(|c| {
@@ -35,17 +36,19 @@ fn try_acquire_main_lease(now_secs: u64) -> bool {
 
 pub fn install_timers() {
     let (main_s, rescue_s) = state::with_state(|st| (st.config.main_interval_seconds, st.config.rescue_interval_seconds));
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async { main_tick().await; });
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async { main_tick(false).await; });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async { rescue_tick().await; });
 }
 
-async fn main_tick() {
+async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
     if !try_acquire_main_lease(now_secs) { return; }
-    let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-    let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
-    if recently_ran { finish_main(now_secs, None); return; }
+    if !force {
+        let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
+        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
+        if recently_ran { finish_main(now_secs, None); return; }
+    }
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let index = IcpIndexCanister::new(cfg.index_canister_id);
@@ -70,14 +73,34 @@ fn next_created_at_time_nanos() -> u64 {
 }
 fn advance_created_at_time_nanos() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_created_at_time_nanos = job.next_created_at_time_nanos.saturating_add(1); }); }
 fn increment_failed_topups() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.failed_topups = job.failed_topups.saturating_add(1); }); }
-fn set_pending_notification(pending: PendingNotification) { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.pending_notification = Some(pending); }); }
+fn set_retry_state(retry: RetryState) -> bool {
+    state::with_state_mut(|st| {
+        let Some(job) = st.active_payout_job.as_mut() else { return false; };
+        if job.retry_state.is_some() { return false; }
+        job.retry_state = Some(retry);
+        true
+    })
+}
+fn clear_retry_state() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.retry_state = None; }); }
+fn retry_state_due(now_secs: u64) -> bool {
+    state::with_state(|st| st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).map(|r| now_secs >= r.retry_at_secs).unwrap_or(false))
+}
+fn retry_state_present() -> bool { state::with_state(|st| st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).is_some()) }
 fn record_successful_notification(now_secs: u64, pending: &PendingNotification) {
     state::with_state_mut(|st| {
         st.last_successful_transfer_ts = Some(now_secs);
         if let Some(job) = st.active_payout_job.as_mut() { logic::apply_notified_transfer(job, pending); }
     });
 }
+fn record_transfer_outflow(pending: &PendingNotification) {
+    state::with_state_mut(|st| {
+        if let Some(job) = st.active_payout_job.as_mut() {
+            logic::record_ledger_accepted_transfer(job, pending);
+        }
+    });
+}
 fn finalize_completed_job() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.take() { st.last_summary = Some(logic::summary_from_job(&job)); }); }
+fn set_next_start(next_start: Option<u64>) { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_start = next_start; }); }
 
 fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64) -> TransferArg {
     let memo_bytes = logic::MEMO_TOP_UP_CANISTER_U64.to_be_bytes().to_vec();
@@ -91,38 +114,116 @@ fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nano
     }
 }
 
-async fn send_and_notify(ledger: &impl LedgerClient, cmc: &impl CmcClient, pending: PendingNotification, to: Account, fee_e8s: u64, now_secs: u64) -> bool {
-    let created_at_time_nanos = next_created_at_time_nanos();
-    let arg = transfer_arg(to, pending.amount_e8s, fee_e8s, created_at_time_nanos);
-    let ledger_res = match ledger.transfer(arg).await { Ok(r) => r, Err(_) => { increment_failed_topups(); return false; } };
-    let block_index = match ledger_res {
-        Ok(block) => match u64::try_from(block.0.clone()) {
-            Ok(block_index) => block_index,
-            Err(_) => { increment_failed_topups(); return false; }
-        },
-        Err(TransferError::Duplicate { duplicate_of }) => match u64::try_from(duplicate_of.0.clone()) {
-            Ok(block_index) => block_index,
-            Err(_) => { increment_failed_topups(); return false; }
-        },
-        Err(_) => { increment_failed_topups(); return false; }
-    };
-    advance_created_at_time_nanos();
-    let pending = PendingNotification { block_index, ..pending };
-    if cmc.notify_top_up(pending.beneficiary, pending.block_index).await.is_err() {
-        increment_failed_topups();
-        set_pending_notification(pending);
-        return false;
-    }
-    record_successful_notification(now_secs, &pending);
-    true
+fn deposit_account_for_pending(cmc_id: candid::Principal, pending: &PendingNotification) -> Account {
+    logic::cmc_deposit_account(cmc_id, pending.beneficiary)
 }
 
-async fn retry_pending_notification(cmc: &impl CmcClient, now_secs: u64) -> bool {
-    let pending = state::with_state(|st| st.active_payout_job.as_ref().and_then(|j| j.pending_notification.clone()));
-    let Some(pending) = pending else { return true; };
-    if cmc.notify_top_up(pending.beneficiary, pending.block_index).await.is_err() { increment_failed_topups(); return false; }
-    record_successful_notification(now_secs, &pending);
-    true
+fn schedule_transfer_retry(pending: PendingNotification, fee_e8s: u64, created_at_time_nanos: u64, now_secs: u64) -> bool {
+    set_retry_state(RetryState {
+        step: RetryStep::Transfer,
+        pending,
+        fee_e8s,
+        created_at_time_nanos,
+        retry_at_secs: now_secs.saturating_add(RETRY_DELAY_SECS),
+    })
+}
+
+fn schedule_notify_retry(pending: PendingNotification, now_secs: u64) -> bool {
+    set_retry_state(RetryState {
+        step: RetryStep::Notify,
+        pending,
+        fee_e8s: 0,
+        created_at_time_nanos: 0,
+        retry_at_secs: now_secs.saturating_add(RETRY_DELAY_SECS),
+    })
+}
+
+async fn send_and_notify(
+    ledger: &impl LedgerClient,
+    cmc: &impl CmcClient,
+    pending: PendingNotification,
+    to: Account,
+    fee_e8s: u64,
+    now_secs: u64,
+    allow_retry: bool,
+    created_at_override: Option<u64>,
+) {
+    let created_at_time_nanos = created_at_override.unwrap_or_else(next_created_at_time_nanos);
+    let arg = transfer_arg(to, pending.amount_e8s, fee_e8s, created_at_time_nanos);
+    let ledger_res = ledger.transfer(arg).await;
+    if created_at_override.is_none() {
+        advance_created_at_time_nanos();
+    }
+
+    let block_index = match ledger_res {
+        Err(_) => {
+            if allow_retry && schedule_transfer_retry(pending, fee_e8s, created_at_time_nanos, now_secs) {
+                return;
+            }
+            increment_failed_topups();
+            return;
+        }
+        Ok(Ok(block)) => match u64::try_from(block.0.clone()) {
+            Ok(v) => v,
+            Err(_) => { increment_failed_topups(); return; }
+        },
+        Ok(Err(TransferError::Duplicate { duplicate_of })) => match u64::try_from(duplicate_of.0.clone()) {
+            Ok(v) => v,
+            Err(_) => { increment_failed_topups(); return; }
+        },
+        Ok(Err(TransferError::TemporarilyUnavailable)) => {
+            if allow_retry && schedule_transfer_retry(pending, fee_e8s, created_at_time_nanos, now_secs) {
+                return;
+            }
+            increment_failed_topups();
+            return;
+        }
+        Ok(Err(_)) => {
+            increment_failed_topups();
+            return;
+        }
+    };
+
+    let accepted = PendingNotification { block_index, ..pending };
+    record_transfer_outflow(&accepted);
+    if cmc.notify_top_up(accepted.beneficiary, accepted.block_index).await.is_err() {
+        if allow_retry && schedule_notify_retry(accepted, now_secs) {
+            return;
+        }
+        increment_failed_topups();
+        return;
+    }
+    record_successful_notification(now_secs, &accepted);
+}
+
+async fn process_due_retry(ledger: &impl LedgerClient, cmc: &impl CmcClient, now_secs: u64) {
+    if !retry_state_due(now_secs) { return; }
+    let retry = state::with_state(|st| st.active_payout_job.as_ref().and_then(|j| j.retry_state.clone()));
+    let Some(retry) = retry else { return; };
+    clear_retry_state();
+    match retry.step {
+        RetryStep::Transfer => {
+            let cfg = state::with_state(|st| st.config.clone());
+            let to = deposit_account_for_pending(cfg.cmc_canister_id, &retry.pending);
+            send_and_notify(
+                ledger,
+                cmc,
+                retry.pending,
+                to,
+                retry.fee_e8s,
+                now_secs,
+                false,
+                Some(retry.created_at_time_nanos),
+            ).await;
+        }
+        RetryStep::Notify => {
+            if cmc.notify_top_up(retry.pending.beneficiary, retry.pending.block_index).await.is_ok() {
+                record_successful_notification(now_secs, &retry.pending);
+            } else {
+                increment_failed_topups();
+            }
+        }
+    }
 }
 
 fn ensure_active_job(now_nanos: u64, fee_e8s: u64, pot_start_e8s: u64, denom_e8s: u64) {
@@ -145,35 +246,40 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
         ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s);
     }
 
-    if !retry_pending_notification(cmc, now_secs).await { return false; }
+    process_due_retry(ledger, cmc, now_secs).await;
     let cfg = state::with_state(|st| st.config.clone());
     let staking_id = account_identifier_text(&cfg.staking_account);
 
     loop {
         let job = state::with_state(|st| st.active_payout_job.clone());
         let Some(job) = job else { return true; };
-        if job.pending_notification.is_some() {
-            if !retry_pending_notification(cmc, now_secs).await { return false; }
-            continue;
-        }
         if job.scan_complete {
-            if job.remainder_to_self_e8s > 0 { finalize_completed_job(); return true; }
-            let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.beneficiary_gross_sent_sum_e8s);
-            if remainder_gross_e8s <= job.fee_e8s { finalize_completed_job(); return true; }
-            let self_id = ic_cdk::api::canister_self();
-            let pending = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: remainder_gross_e8s, amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s), block_index: 0, next_start: None };
-            let to = logic::cmc_deposit_account(cfg.cmc_canister_id, self_id);
-            if !send_and_notify(ledger, cmc, pending, to, job.fee_e8s, now_secs).await { return false; }
+            if retry_state_present() {
+                return true;
+            }
+            let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
+            if remainder_gross_e8s > job.fee_e8s && job.remainder_to_self_e8s == 0 {
+                let self_id = ic_cdk::api::canister_self();
+                let pending = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: remainder_gross_e8s, amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s), block_index: 0, next_start: None };
+                let to = deposit_account_for_pending(cfg.cmc_canister_id, &pending);
+                send_and_notify(ledger, cmc, pending, to, job.fee_e8s, now_secs, true, None).await;
+                if retry_state_present() {
+                    return true;
+                }
+            }
             finalize_completed_job();
             return true;
         }
 
         let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await { Ok(v) => v, Err(_) => return false };
-        if resp.transactions.is_empty() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.scan_complete = true; }); continue; }
+        if resp.transactions.is_empty() {
+            state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.scan_complete = true; });
+            continue;
+        }
 
         for tx in &resp.transactions {
             let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
-                state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_start = Some(tx.id); });
+                set_next_start(Some(tx.id));
                 continue;
             };
             let snapshot = state::with_state(|st| {
@@ -183,16 +289,19 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
             match logic::evaluate_contribution(snapshot.0, snapshot.1, snapshot.2, snapshot.3, &contribution) {
                 logic::ContributionDecision::IgnoreUnderThreshold => state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(1); job.next_start = Some(tx.id); }),
                 logic::ContributionDecision::IgnoreBadMemo => state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(1); job.next_start = Some(tx.id); }),
-                logic::ContributionDecision::NoTransfer => state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_start = Some(tx.id); }),
+                logic::ContributionDecision::NoTransfer => set_next_start(Some(tx.id)),
                 logic::ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } => {
+                    set_next_start(Some(tx.id));
                     let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s, block_index: 0, next_start: Some(tx.id) };
-                    let to = logic::cmc_deposit_account(cfg.cmc_canister_id, beneficiary);
-                    if !send_and_notify(ledger, cmc, pending, to, snapshot.2, now_secs).await { return false; }
+                    let to = deposit_account_for_pending(cfg.cmc_canister_id, &pending);
+                    send_and_notify(ledger, cmc, pending, to, snapshot.2, now_secs, true, None).await;
                 }
             }
         }
         let last_id = resp.transactions.last().map(|t| t.id);
-        state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { if resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none() { job.scan_complete = true; } else { job.next_start = last_id; } });
+        state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
+            if resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none() { job.scan_complete = true; } else { job.next_start = last_id; }
+        });
     }
 }
 
@@ -213,6 +322,6 @@ async fn rescue_tick() {
 }
 
 #[cfg(feature = "debug_api")]
-pub async fn debug_main_tick_impl() { main_tick().await; }
+pub async fn debug_main_tick_impl() { main_tick(true).await; }
 #[cfg(feature = "debug_api")]
 pub async fn debug_rescue_tick_impl() { rescue_tick().await; }

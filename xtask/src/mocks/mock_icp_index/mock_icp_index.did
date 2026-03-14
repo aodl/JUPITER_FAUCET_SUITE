@@ -26,9 +26,16 @@ type GetResp = variant {
   Ok : record { balance : nat64; transactions : vec IndexTransactionWithId; oldest_tx_id : opt nat64 };
   Err : record { message : text };
 };
+type DebugGetCall = record {
+  account_identifier : text;
+  start : opt nat64;
+  max_results : nat64;
+  returned_count : nat64;
+};
 service : {
-  get_account_identifier_transactions : (GetArgs) -> (GetResp) query;
+  get_account_identifier_transactions : (GetArgs) -> (GetResp);
   debug_reset : () -> ();
   debug_append_transfer : (text, nat64, opt vec nat8) -> (nat64);
   debug_append_repeated_transfer : (text, nat64, nat64, opt vec nat8) -> (nat64);
+  debug_get_calls : () -> (vec DebugGetCall) query;
 };

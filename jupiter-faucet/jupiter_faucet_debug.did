@@ -17,12 +17,18 @@ type InitArgs = record {
 };
 
 type DebugAccounts = record { payout : Account; staking : Account };
+type DebugFootprint = record {
+  state_candid_bytes : nat64;
+  active_payout_job_candid_bytes : nat64;
+  retry_state_candid_bytes : nat64;
+  last_summary_candid_bytes : nat64;
+};
 type DebugState = record {
   last_successful_transfer_ts : opt nat64;
   last_rescue_check_ts : nat64;
   rescue_triggered : bool;
   active_payout_job_present : bool;
-  pending_notification_present : bool;
+  retry_state_present : bool;
   last_summary_present : bool;
 };
 type Summary = record {
@@ -40,7 +46,12 @@ type Summary = record {
 };
 service : (InitArgs) -> {
   debug_accounts : () -> (DebugAccounts) query;
+  debug_footprint : () -> (DebugFootprint) query;
   debug_last_summary : () -> (opt Summary) query;
+  debug_reset_runtime_state : () -> ();
+  debug_release_retry_backoff : () -> ();
+  debug_set_blackhole_armed : (opt bool) -> ();
+  debug_set_last_successful_transfer_ts : (opt nat64) -> ();
   debug_main_tick : () -> ();
   debug_rescue_tick : () -> ();
   debug_state : () -> (DebugState) query;

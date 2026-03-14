@@ -122,7 +122,7 @@ pub fn install_timers() {
         state::with_state(|st| (st.config.main_interval_seconds, st.config.rescue_interval_seconds));
 
     ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async {
-        main_tick().await;
+        main_tick(false).await;
     });
 
     ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async {
@@ -134,7 +134,7 @@ pub fn install_timers() {
 /// Logging:
 /// - always logs "Cycles: <amount>" once per run
 /// - logs only errors otherwise
-async fn main_tick() {
+async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
 
@@ -142,15 +142,17 @@ async fn main_tick() {
         return;
     }
 
-    // duplicate suppression if timer fires twice closely
-    let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-    let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
-    if recently_ran {
-        state::with_state_mut(|st| {
-            st.last_main_run_ts = now_secs; // extend suppression window
-            st.main_lock_expires_at_ts = Some(0);
-        });
-        return;
+    if !force {
+        // duplicate suppression if timer fires twice closely
+        let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
+        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
+        if recently_ran {
+            state::with_state_mut(|st| {
+                st.last_main_run_ts = now_secs; // extend suppression window
+                st.main_lock_expires_at_ts = Some(0);
+            });
+            return;
+        }
     }
 
     let mut err: Option<u32> = None;
@@ -474,7 +476,7 @@ async fn rescue_tick() {
 
 #[cfg(feature = "debug_api")]
 pub async fn debug_main_tick_impl() {
-    main_tick().await;
+    main_tick(true).await;
 }
 
 #[cfg(feature = "debug_api")]

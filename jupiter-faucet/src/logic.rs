@@ -68,12 +68,14 @@ pub fn evaluate_contribution(pot_start_e8s: u64, denom_e8s: u64, fee_e8s: u64, m
     ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(fee_e8s) }
 }
 
+pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
+    job.gross_outflow_e8s = job.gross_outflow_e8s.saturating_add(pending.gross_share_e8s);
+}
+
 pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
-    job.pending_notification = None;
-    job.next_start = pending.next_start;
+    job.retry_state = None;
     match pending.kind {
         TransferKind::Beneficiary => {
-            job.beneficiary_gross_sent_sum_e8s = job.beneficiary_gross_sent_sum_e8s.saturating_add(pending.gross_share_e8s);
             job.topped_up_count = job.topped_up_count.saturating_add(1);
             job.topped_up_sum_e8s = job.topped_up_sum_e8s.saturating_add(pending.amount_e8s);
             job.topped_up_min_e8s = Some(job.topped_up_min_e8s.map(|prev| prev.min(pending.amount_e8s)).unwrap_or(pending.amount_e8s));
@@ -84,11 +86,9 @@ pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotif
 }
 
 pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
-    let remainder_gross = if job.remainder_to_self_e8s == 0 { 0 } else { job.remainder_to_self_e8s.saturating_add(job.fee_e8s) };
-    let gross_sent = job.beneficiary_gross_sent_sum_e8s.saturating_add(remainder_gross);
     Summary {
         pot_start_e8s: job.pot_start_e8s,
-        pot_remaining_e8s: job.pot_start_e8s.saturating_sub(gross_sent),
+        pot_remaining_e8s: job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s),
         denom_staking_balance_e8s: job.denom_staking_balance_e8s,
         topped_up_count: job.topped_up_count,
         topped_up_sum_e8s: job.topped_up_sum_e8s,
@@ -104,16 +104,23 @@ pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{ActivePayoutJob, PendingNotification, TransferKind};
+    use crate::state::{ActivePayoutJob, PendingNotification, RetryState, RetryStep, TransferKind};
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
 
     #[test]
-    fn parser_accepts_raw_principal_text_only() {
+    fn parser_accepts_valid_principal_text_memo() {
         let p = principal("aaaaa-aa");
         assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
+    }
+
+    #[test]
+    fn parser_rejects_malformed_or_adversarial_memos() {
+        let p = principal("aaaaa-aa");
         assert_eq!(parse_beneficiary_from_memo(b"not-a-principal"), None);
         assert_eq!(parse_beneficiary_from_memo(b""), None);
+        assert_eq!(parse_beneficiary_from_memo(&p.as_slice()[..p.as_slice().len().saturating_sub(1)]), None);
+        assert_eq!(parse_beneficiary_from_memo(&vec![0xff; 64]), None);
     }
 
     #[test]
@@ -126,34 +133,189 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_contribution_preserves_streaming_semantics() {
+    fn contribution_below_threshold_is_ignored() {
+        let valid = principal("aaaaa-aa");
+        let c = Contribution { amount_e8s: 9_999_999, memo_bytes: Some(valid.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::IgnoreUnderThreshold);
+    }
+
+    #[test]
+    fn contribution_exactly_at_threshold_is_included() {
+        let valid = principal("aaaaa-aa");
+        let c = Contribution { amount_e8s: 10_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 5_000_000, amount_e8s: 4_990_000 });
+    }
+
+    #[test]
+    fn contribution_above_threshold_is_included() {
         let valid = principal("aaaaa-aa");
         let c = Contribution { amount_e8s: 400_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 200_000_000, amount_e8s: 199_990_000 });
     }
 
     #[test]
-    fn evaluate_contribution_counts_bad_and_small_memos() {
+    fn share_calculation_uses_current_pot_and_denominator() {
         let valid = principal("aaaaa-aa");
-        let small = Contribution { amount_e8s: 5_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
+        let c = Contribution { amount_e8s: 250_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(120_000_000, 600_000_000, 10_000, 10_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+    }
+
+    #[test]
+    fn evaluate_contribution_counts_bad_and_missing_memos() {
         let missing = Contribution { amount_e8s: 200_000_000, memo_bytes: None };
         let bad = Contribution { amount_e8s: 300_000_000, memo_bytes: Some(b"bad-memo".to_vec()) };
-        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &small), ContributionDecision::IgnoreUnderThreshold);
         assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &missing), ContributionDecision::IgnoreBadMemo);
         assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &bad), ContributionDecision::IgnoreBadMemo);
     }
 
     #[test]
-    fn summary_tracks_beneficiaries_and_remainder_without_buffering_transfers() {
+    fn separate_contributions_for_same_beneficiary_remain_separate() {
+        let beneficiary = principal("aaaaa-aa");
+        let first = Contribution { amount_e8s: 200_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
+        let second = Contribution { amount_e8s: 300_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
+        let first_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &first);
+        let second_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &second);
+        assert_eq!(first_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
+        assert_eq!(second_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 150_000_000, amount_e8s: 149_990_000 });
+    }
+
+    #[test]
+    fn distinct_beneficiaries_with_same_contribution_size_are_processed_independently() {
+        let a = principal("aaaaa-aa");
+        let b = principal("2vxsx-fae");
+        let amount_e8s = 200_000_000;
+        let eval_a = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &Contribution { amount_e8s, memo_bytes: Some(a.to_text().into_bytes()) });
+        let eval_b = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &Contribution { amount_e8s, memo_bytes: Some(b.to_text().into_bytes()) });
+        assert_eq!(eval_a, ContributionDecision::Eligible { beneficiary: a, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
+        assert_eq!(eval_b, ContributionDecision::Eligible { beneficiary: b, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
+    }
+
+    #[test]
+    fn rounding_behavior_is_deterministic() {
+        assert_eq!(compute_raw_share_e8s(1, 1, 3), 0);
+        assert_eq!(compute_raw_share_e8s(2, 5, 3), 3);
+        assert_eq!(compute_raw_share_e8s(2, 5, 3), compute_raw_share_e8s(2, 5, 3));
+        assert_eq!(compute_raw_share_e8s(333_333_333, 100_000_000, 1_000_000_000), 33_333_333);
+    }
+
+    #[test]
+    fn no_transfer_when_share_rounds_below_fee() {
+        let beneficiary = principal("aaaaa-aa");
+        let c = Contribution { amount_e8s: 10_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(10_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::NoTransfer);
+    }
+
+    #[test]
+    fn summary_tracks_separate_same_beneficiary_contributions_and_remainder_without_aggregation() {
         let a = principal("aaaaa-aa");
         let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut job = ActivePayoutJob::new(1, 10_000, 40_0000_0000, 10_0000_0000, 123);
-        apply_notified_transfer(&mut job, &PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10) });
-        apply_notified_transfer(&mut job, &PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 12_0000_0000, amount_e8s: 11_9999_0000, block_index: 2, next_start: Some(11) });
-        apply_notified_transfer(&mut job, &PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: 24_0000_0000, amount_e8s: 23_9999_0000, block_index: 3, next_start: None });
+        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10) };
+        let p2 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 12_0000_0000, amount_e8s: 11_9999_0000, block_index: 2, next_start: Some(11) };
+        let p3 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: 24_0000_0000, amount_e8s: 23_9999_0000, block_index: 3, next_start: None };
+        record_ledger_accepted_transfer(&mut job, &p1);
+        apply_notified_transfer(&mut job, &p1);
+        record_ledger_accepted_transfer(&mut job, &p2);
+        apply_notified_transfer(&mut job, &p2);
+        record_ledger_accepted_transfer(&mut job, &p3);
+        apply_notified_transfer(&mut job, &p3);
         let summary = summary_from_job(&job);
         assert_eq!(summary.topped_up_count, 2);
         assert_eq!(summary.remainder_to_self_e8s, 23_9999_0000);
         assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn summary_accounting_reconciles_pot_fees_and_remainder() {
+        let beneficiary = principal("aaaaa-aa");
+        let mut job = ActivePayoutJob::new(9, 10_000, 100_000_000, 500_000_000, 77);
+        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s: 40_000_000, amount_e8s: 39_990_000, block_index: 1, next_start: Some(1) };
+        let p2 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary, gross_share_e8s: 60_000_000, amount_e8s: 59_990_000, block_index: 2, next_start: None };
+        record_ledger_accepted_transfer(&mut job, &p1);
+        apply_notified_transfer(&mut job, &p1);
+        record_ledger_accepted_transfer(&mut job, &p2);
+        apply_notified_transfer(&mut job, &p2);
+        let summary = summary_from_job(&job);
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 39_990_000);
+        assert_eq!(summary.remainder_to_self_e8s, 59_990_000);
+        assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn same_beneficiary_with_identical_memo_bytes_is_evaluated_as_distinct_contributions() {
+        let beneficiary = principal("aaaaa-aa");
+        let memo = Some(beneficiary.to_text().into_bytes());
+        let first = Contribution { amount_e8s: 125_000_000, memo_bytes: memo.clone() };
+        let second = Contribution { amount_e8s: 125_000_000, memo_bytes: memo };
+        let first_eval = evaluate_contribution(200_000_000, 500_000_000, 10_000, 10_000_000, &first);
+        let second_eval = evaluate_contribution(200_000_000, 500_000_000, 10_000, 10_000_000, &second);
+        assert_eq!(first_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+        assert_eq!(second_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+    }
+
+    #[test]
+    fn zero_pot_or_zero_denominator_never_produces_a_transfer() {
+        let beneficiary = principal("aaaaa-aa");
+        let contribution = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(0, 500_000_000, 10_000, 10_000_000, &contribution), ContributionDecision::NoTransfer);
+        assert_eq!(evaluate_contribution(50_000_000, 0, 10_000, 10_000_000, &contribution), ContributionDecision::NoTransfer);
+    }
+
+
+    #[test]
+    fn accepted_but_unnotified_transfer_still_reduces_remaining_pot() {
+        let beneficiary = principal("aaaaa-aa");
+        let mut job = ActivePayoutJob::new(12, 10_000, 90_000_000, 200_000_000, 1);
+        let pending = PendingNotification {
+            kind: TransferKind::Beneficiary,
+            beneficiary,
+            gross_share_e8s: 30_000_000,
+            amount_e8s: 29_990_000,
+            block_index: 77,
+            next_start: Some(5),
+        };
+        record_ledger_accepted_transfer(&mut job, &pending);
+        let summary = summary_from_job(&job);
+        assert_eq!(summary.topped_up_count, 0);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.pot_remaining_e8s, 60_000_000);
+    }
+
+    #[test]
+    fn apply_notified_transfer_clears_pending_retry_without_rewinding_cursor() {
+        let beneficiary = principal("aaaaa-aa");
+        let mut job = ActivePayoutJob::new(7, 10_000, 100_000_000, 200_000_000, 999);
+        let pending = PendingNotification {
+            kind: TransferKind::Beneficiary,
+            beneficiary,
+            gross_share_e8s: 30_000_000,
+            amount_e8s: 29_990_000,
+            block_index: 55,
+            next_start: Some(42),
+        };
+        job.next_start = Some(42);
+        job.retry_state = Some(RetryState {
+            step: RetryStep::Notify,
+            pending: pending.clone(),
+            fee_e8s: 0,
+            created_at_time_nanos: 0,
+            retry_at_secs: 100,
+        });
+        record_ledger_accepted_transfer(&mut job, &pending);
+        apply_notified_transfer(&mut job, &pending);
+        assert!(job.retry_state.is_none());
+        assert_eq!(job.next_start, Some(42));
+        assert_eq!(job.topped_up_count, 1);
+        assert_eq!(job.topped_up_sum_e8s, 29_990_000);
+    }
+
+    #[test]
+    fn empty_completed_job_summary_keeps_full_pot_remaining_until_remainder_is_sent() {
+        let job = ActivePayoutJob::new(11, 10_000, 70_000_000, 200_000_000, 1);
+        let summary = summary_from_job(&job);
+        assert_eq!(summary.topped_up_count, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 0);
+        assert_eq!(summary.pot_remaining_e8s, 70_000_000);
     }
 }

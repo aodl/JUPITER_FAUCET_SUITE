@@ -32,6 +32,21 @@ pub struct PendingNotification {
     pub next_start: Option<u64>,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum RetryStep {
+    Transfer,
+    Notify,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub struct RetryState {
+    pub step: RetryStep,
+    pub pending: PendingNotification,
+    pub fee_e8s: u64,
+    pub created_at_time_nanos: u64,
+    pub retry_at_secs: u64,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     pub pot_start_e8s: u64,
@@ -47,7 +62,6 @@ pub struct Summary {
     pub remainder_to_self_e8s: u64,
 }
 
-
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct ActivePayoutJob {
     pub id: u64,
@@ -58,7 +72,7 @@ pub struct ActivePayoutJob {
     pub scan_complete: bool,
     pub ignored_under_threshold: u64,
     pub ignored_bad_memo: u64,
-    pub beneficiary_gross_sent_sum_e8s: u64,
+    pub gross_outflow_e8s: u64,
     pub topped_up_count: u64,
     pub topped_up_sum_e8s: u64,
     pub topped_up_min_e8s: Option<u64>,
@@ -66,7 +80,7 @@ pub struct ActivePayoutJob {
     pub failed_topups: u64,
     pub remainder_to_self_e8s: u64,
     pub next_created_at_time_nanos: u64,
-    pub pending_notification: Option<PendingNotification>,
+    pub retry_state: Option<RetryState>,
 }
 
 impl ActivePayoutJob {
@@ -80,7 +94,7 @@ impl ActivePayoutJob {
             scan_complete: false,
             ignored_under_threshold: 0,
             ignored_bad_memo: 0,
-            beneficiary_gross_sent_sum_e8s: 0,
+            gross_outflow_e8s: 0,
             topped_up_count: 0,
             topped_up_sum_e8s: 0,
             topped_up_min_e8s: None,
@@ -88,7 +102,7 @@ impl ActivePayoutJob {
             failed_topups: 0,
             remainder_to_self_e8s: 0,
             next_created_at_time_nanos: created_at_time_nanos,
-            pending_notification: None,
+            retry_state: None,
         }
     }
 }

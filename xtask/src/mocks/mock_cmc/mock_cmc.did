@@ -8,9 +8,18 @@ type NotifyError = variant {
   Other : record { error_code : nat64; error_message : text };
 };
 type NotifyTopUpResult = variant { Ok : nat; Err : NotifyError };
+type DebugNotifyBehavior = variant {
+  Ok;
+  Processing;
+  Refunded : record { reason : text; block_index : opt nat64 };
+  TransactionTooOld : nat64;
+  InvalidTransaction : text;
+  Other : record { error_code : nat64; error_message : text };
+};
 service : {
   notify_top_up : (NotifyTopUpArg) -> (NotifyTopUpResult);
   debug_reset : () -> ();
   debug_set_fail : (bool) -> ();
+  debug_set_script : (vec DebugNotifyBehavior) -> ();
   debug_notifications : () -> (vec NotifyRecord) query;
 };

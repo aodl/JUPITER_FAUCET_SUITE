@@ -2952,8 +2952,11 @@ dependencies = [
  "hex",
  "icrc-ledger-types",
  "num-traits",
+ "pocket-ic",
  "serde",
+ "serde_bytes",
  "sha2",
+ "slog",
 ]
 
 [[package]]

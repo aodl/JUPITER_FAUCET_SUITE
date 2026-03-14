@@ -5,6 +5,7 @@ use num_traits::ToPrimitive;
 use sha2::{Digest, Sha224};
 use std::collections::BTreeSet;
 use std::env;
+use std::fs::{self, OpenOptions};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
@@ -108,6 +109,13 @@ fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
     failed == 0
 }
 
+fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.is_empty()
+        || trimmed.contains("] Cycles: ")
+        || (trimmed.contains(" UTC: [Canister ") && trimmed.contains("] "))
+}
+
 fn run_host_in_dir(cmd: &str, args: &[&str], workdir: &str) -> Result<()> {
     eprintln!(
         "▶ {} {} {}",
@@ -137,21 +145,43 @@ fn run_dfx(args: &[&str]) -> Result<String> {
     cmd.args(["--identity", DFX_IDENTITY]);
     cmd.args(args);
 
-    eprintln!(
-        "▶ dfx {}",
+    let rendered_cmd = format!(
+        "dfx {}",
         cmd.get_args()
             .map(|s| s.to_string_lossy())
             .collect::<Vec<_>>()
             .join(" ")
     );
+    let verbose = env::var("VERBOSE_DFX")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if verbose {
+        eprintln!("▶ {rendered_cmd}");
+    }
 
     let output = cmd
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .output()
         .context("failed to spawn dfx")?;
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        for line in stderr.lines() {
+            if is_suppressed_dfx_success_stderr_line(line) {
+                continue;
+            }
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                eprintln!("{trimmed}");
+            }
+        }
+    } else if !stderr.trim().is_empty() {
+        eprint!("{stderr}");
+    }
+
     if !output.status.success() {
+        eprintln!("▶ {rendered_cmd}");
         bail!("dfx {:?} failed", args);
     }
 
@@ -210,7 +240,7 @@ struct FaucetDebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     active_payout_job_present: bool,
-    pending_notification_present: bool,
+    retry_state_present: bool,
     last_summary_present: bool,
 }
 
@@ -392,8 +422,24 @@ fn cmd_setup() -> Result<()> {
 
     let _ = run_dfx(&["stop"]);
     {
+        let repo = repo_root();
+        let dfx_dir = std::path::Path::new(&repo).join(".dfx");
+        fs::create_dir_all(&dfx_dir).context("failed to create .dfx directory for replica logs")?;
+        let replica_log_path = dfx_dir.join("xtask-replica.log");
+        let replica_log = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&replica_log_path)
+            .with_context(|| format!("failed to open replica log at {}", replica_log_path.display()))?;
+        let replica_log_err = replica_log
+            .try_clone()
+            .context("failed to clone replica log file handle")?;
+
         let mut start = Command::new("dfx");
         start.args(["start", "--background", "--clean"]);
+        start.stdout(Stdio::from(replica_log));
+        start.stderr(Stdio::from(replica_log_err));
         let status = start.status().context("dfx start failed")?;
         if !status.success() {
             bail!("dfx start failed");
@@ -832,7 +878,7 @@ fn cmd_test_faucet_integration() -> Result<()> {
         let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
 
         let st: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st.active_payout_job_present || st.pending_notification_present || !st.last_summary_present {
+        if st.active_payout_job_present || st.retry_state_present || !st.last_summary_present {
             bail!("expected completed payout job and persisted summary after happy path");
         }
 
@@ -944,8 +990,8 @@ fn cmd_test_faucet_integration() -> Result<()> {
 
         let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
         let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if !st1.active_payout_job_present || !st1.pending_notification_present {
-            bail!("expected active payout job with pending notification after retriable CMC error");
+        if !st1.active_payout_job_present || !st1.retry_state_present {
+            bail!("expected active payout job with retry state after retriable CMC error");
         }
         let transfers1: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if transfers1.len() != 1 {
@@ -959,7 +1005,7 @@ fn cmd_test_faucet_integration() -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_set_fail", "(false)")?;
         let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
         let st2: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st2.active_payout_job_present || st2.pending_notification_present || !st2.last_summary_present {
+        if st2.active_payout_job_present || st2.retry_state_present || !st2.last_summary_present {
             bail!("expected retry success to clear active job and persist summary");
         }
         let transfers2: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;

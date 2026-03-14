@@ -74,6 +74,14 @@ pub struct GetAccountIdentifierTransactionsResponse {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct DebugGetCall {
+    pub account_identifier: String,
+    pub start: Option<u64>,
+    pub max_results: u64,
+    pub returned_count: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum GetResp {
     Ok(GetAccountIdentifierTransactionsResponse),
     Err(GetAccountIdentifierTransactionsError),
@@ -83,6 +91,7 @@ pub enum GetResp {
 struct State {
     next_id: u64,
     txs: Vec<IndexTransactionWithId>,
+    get_calls: Vec<DebugGetCall>,
 }
 
 thread_local! {
@@ -92,10 +101,10 @@ thread_local! {
 #[ic_cdk::init]
 fn init() {}
 
-#[ic_cdk::query]
+#[ic_cdk::update]
 fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
     ST.with(|s| {
-        let st = s.borrow();
+        let mut st = s.borrow_mut();
         let start_idx = match args.start {
             None => 0,
             Some(last_seen) => st
@@ -119,6 +128,13 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
                 break;
             }
         }
+
+        st.get_calls.push(DebugGetCall {
+            account_identifier: args.account_identifier.clone(),
+            start: args.start,
+            max_results: args.max_results,
+            returned_count: out.len() as u64,
+        });
 
         GetResp::Ok(GetAccountIdentifierTransactionsResponse {
             balance: 0,
@@ -190,6 +206,11 @@ fn debug_append_repeated_transfer(to: String, count: u64, amount_e8s: u64, memo:
         }
         last_id
     })
+}
+
+#[ic_cdk::query]
+fn debug_get_calls() -> Vec<DebugGetCall> {
+    ST.with(|s| s.borrow().get_calls.clone())
 }
 
 ic_cdk::export_candid!();

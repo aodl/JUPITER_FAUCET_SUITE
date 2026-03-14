@@ -34,10 +34,27 @@ pub enum NotifyError {
     },
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum DebugNotifyBehavior {
+    Ok,
+    Processing,
+    Refunded {
+        reason: String,
+        block_index: Option<u64>,
+    },
+    TransactionTooOld(u64),
+    InvalidTransaction(String),
+    Other {
+        error_code: u64,
+        error_message: String,
+    },
+}
+
 #[derive(Default)]
 struct State {
     fail: bool,
     notifications: Vec<NotifyRecord>,
+    scripted_behaviors: Vec<DebugNotifyBehavior>,
 }
 
 thread_local! {
@@ -51,6 +68,34 @@ fn init() {}
 fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
     ST.with(|s| {
         let mut st = s.borrow_mut();
+        if let Some(behavior) = st.scripted_behaviors.first().cloned() {
+            st.scripted_behaviors.remove(0);
+            return match behavior {
+                DebugNotifyBehavior::Ok => {
+                    st.notifications.push(NotifyRecord {
+                        canister_id: arg.canister_id,
+                        block_index: arg.block_index,
+                    });
+                    NotifyTopUpResult::Ok(Nat::from(0_u8))
+                }
+                DebugNotifyBehavior::Processing => NotifyTopUpResult::Err(NotifyError::Processing),
+                DebugNotifyBehavior::Refunded { reason, block_index } => {
+                    NotifyTopUpResult::Err(NotifyError::Refunded { reason, block_index })
+                }
+                DebugNotifyBehavior::TransactionTooOld(v) => {
+                    NotifyTopUpResult::Err(NotifyError::TransactionTooOld(v))
+                }
+                DebugNotifyBehavior::InvalidTransaction(msg) => {
+                    NotifyTopUpResult::Err(NotifyError::InvalidTransaction(msg))
+                }
+                DebugNotifyBehavior::Other { error_code, error_message } => {
+                    NotifyTopUpResult::Err(NotifyError::Other {
+                        error_code,
+                        error_message,
+                    })
+                }
+            };
+        }
         if st.fail {
             return NotifyTopUpResult::Err(NotifyError::Processing);
         }
@@ -70,6 +115,11 @@ fn debug_reset() {
 #[ic_cdk::update]
 fn debug_set_fail(v: bool) {
     ST.with(|s| s.borrow_mut().fail = v);
+}
+
+#[ic_cdk::update]
+fn debug_set_script(behaviors: Vec<DebugNotifyBehavior>) {
+    ST.with(|s| s.borrow_mut().scripted_behaviors = behaviors);
 }
 
 #[ic_cdk::query]

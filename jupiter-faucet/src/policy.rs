@@ -51,4 +51,23 @@ mod tests {
         let got = desired_controllers(now, Some(100), self_id(), rescue_id()).unwrap();
         assert_eq!(got, vec![rescue_id(), self_id()]);
     }
+
+    #[test]
+    fn gray_window_returns_none() {
+        let now = 100 + HEALTHY_WINDOW_SECS + 1;
+        assert_eq!(desired_controllers(now, Some(100), self_id(), rescue_id()), None);
+    }
+
+    #[test]
+    fn healthy_boundary_is_self_only() {
+        let now = 100 + HEALTHY_WINDOW_SECS;
+        let got = desired_controllers(now, Some(100), self_id(), rescue_id()).unwrap();
+        assert_eq!(got, vec![self_id()]);
+    }
+
+    #[test]
+    fn broken_boundary_requires_strictly_more_than_broken_window() {
+        let now = 100 + BROKEN_WINDOW_SECS;
+        assert_eq!(desired_controllers(now, Some(100), self_id(), rescue_id()), None);
+    }
 }
