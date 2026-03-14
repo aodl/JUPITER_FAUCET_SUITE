@@ -1,22 +1,54 @@
 # Jupiter Lifeline
 
-`jupiter-lifeline` is the recovery controller target for blackholed Jupiter canisters.
+`jupiter-lifeline` is the recovery-controller canister for blackholed Jupiter operational canisters.
 
-## Current mainnet canister
+It exists so `jupiter-disburser` and `jupiter-faucet` can keep their normal controller sets narrow during healthy operation while still having a pre-positioned rescue target if their local rescue policy triggers.
 
-- canister id: `afisn-gqaaa-aaaar-qb4qa-cai`
+See the suite overview in [`../README.md`](../README.md).
+
+## Current mainnet canister recorded in this repo
+
+- canister ID: `afisn-gqaaa-aaaar-qb4qa-cai`
 - subnet: Fiduciary (`pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae`)
 
-## Purpose
+## Current implementation
 
-The canister is intentionally minimal. In steady state it only logs its cycle balance every 20 days.
+The implementation is intentionally minimal.
 
-If a lifeline event occurs, the expected response is to inspect the specific failure mode and upgrade `jupiter-lifeline` with targeted recovery logic for that incident.
+In steady state it:
 
-## Upgrade command
+- installs a timer on init/post-upgrade
+- logs its cycle balance every `20 days`
+- exposes no business logic beyond the empty canister interface generated from the module
 
-No install or upgrade argument is currently required.
+There is no built-in recovery workflow yet because the canister is intended to be upgraded with **incident-specific** recovery logic only if a real lifeline event occurs.
+
+## Role in the suite
+
+Today the canister’s practical role is to be the configured `rescue_controller` for:
+
+- `jupiter-disburser`
+- `jupiter-faucet`
+
+Those canisters decide for themselves when rescue should be activated. `jupiter-lifeline` is the target they add to their controller set when that happens.
+
+## Install and upgrade
+
+No install args or upgrade args are currently required.
+
+Example upgrade command:
 
 ```bash
-dfx canister install jupiter_lifeline   --network ic   --mode upgrade   --wasm release-artifacts/jupiter_lifeline.wasm.gz
+dfx canister install jupiter_lifeline \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_lifeline.wasm.gz
 ```
+
+## Build
+
+```bash
+cargo build -p jupiter-lifeline --target wasm32-unknown-unknown --release --locked
+```
+
+For canonical release artifacts, use the suite build scripts described in [`../README.md`](../README.md).

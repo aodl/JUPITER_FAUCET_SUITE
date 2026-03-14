@@ -1,119 +1,202 @@
 # Jupiter Disburser
 
-`jupiter-disburser` controls a single NNS neuron, disburses maturity to its own staging account, and then routes the minted ICP according to a fixed split policy.
+`jupiter-disburser` is the maturity-routing canister in the Jupiter Faucet Suite.
 
-## Current mainnet canister and recipients
+It controls one NNS neuron, periodically disburses maturity as ICP, and routes that ICP according to a fixed three-recipient policy:
 
-- canister id: `uccpi-cqaaa-aaaar-qby3q-cai`
-- neuron id: `11614578985374291210`
-- normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
-- age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
-- age bonus recipient 2: D-QUORUM known-neuron staking account on NNS Governance
-  - owner: `rrkah-fqaaa-aaaaa-aaaaq-cai`
-  - subaccount: `77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f`
-- rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
-- ledger canister: `ryjl3-tyaaa-aaaaa-aaaba-cai`
-- governance canister: `rrkah-fqaaa-aaaaa-aaaaq-cai`
-- blackhole armed: `false`
-- main interval: `86400`
-- rescue interval: `86400`
+- the **age-neutral base** payout goes to `jupiter-faucet`
+- **80% of the age-bonus** goes to `jupiter-sns-rewards`
+- **20% of the age-bonus** goes to the D-QUORUM neuron staking account
 
-The D-QUORUM recipient is intentional. Jupiter Disburser routes 20% of the age-bonus portion to the D-QUORUM staking account to support NNS due diligence and help fund NNS security.
+This canister is intentionally narrow in scope. It does not top up cycles directly and it does not expose a production public API.
 
-## What the canister does
+See the suite overview in [`../README.md`](../README.md).
 
-On each main cycle, the canister:
+## What it is responsible for
 
-1. reads the current neuron state
-2. finalizes any payout already staged on the ledger
-3. initiates a new maturity disbursement when no governance-side disbursement is already in flight
-4. records the neuron age at initiation time so the later split reflects the age that produced the reward
-5. refreshes voting power after a successful maturity-disbursement initiation
+`jupiter-disburser` owns four things:
 
-The production canister best-effort calls `ClaimOrRefresh` from `jupiter-disburser` on each successful main tick, after any payout / maturity-disbursement work for that run has completed. This keeps governance aware of fresh ICP sent into the neuron's staking subaccount by users or upstream protocol components, without requiring any user-side governance call. `RefreshVotingPower` is still used after successful maturity-disbursement initiation to keep voting power current.
+1. reading the NNS neuron state
+2. initiating `DisburseMaturity` to its own default ledger account
+3. splitting the resulting ICP across the configured recipients
+4. managing self-controller vs rescue-controller reconciliation when blackhole mode is armed
 
-When staged ICP is present, the canister derives:
+It also performs best-effort NNS maintenance calls that help the neuron reflect fresh staking-account deposits:
 
-- `base`
+- `RefreshVotingPower` after a successful maturity-disbursement initiation
+- `ClaimOrRefresh` on every successful main tick
+
+## Runtime model
+
+### Main tick sequence
+
+On each successful main tick, the canister does the following:
+
+1. acquires a short-lived main-tick lease so overlapping timer runs do not race
+2. reads the configured neuron from NNS Governance
+3. checks whether NNS already reports a maturity disbursement in progress
+4. if **no** disbursement is in flight:
+   - processes any staged ICP already sitting in the canister’s default ledger account
+   - initiates `DisburseMaturity` for **100%** of available maturity to the canister’s default account
+   - records the neuron age used for the *next* payout split
+   - best-effort calls `RefreshVotingPower`
+5. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
+6. logs only errors plus a single `Cycles: ...` line per run
+
+Default timer cadence:
+
+- `main_interval_seconds = 86400`
+- `rescue_interval_seconds = 86400`
+
+## Payout policy
+
+### Age multiplier
+
+The payout split is based on the neuron age captured when maturity disbursement is successfully initiated.
+
+The multiplier used by the code is:
+
+`1 + min(age, 4 years) / 16 years`
+
+So:
+
+- age `0` gives a multiplier of `1.0x`
+- age `4 years` gives a multiplier of `1.25x`
+- age above `4 years` is clamped and still gives `1.25x`
+
+### Base and bonus split
+
+Given a total staged ICP amount:
+
+- `base = floor(total / multiplier)`
 - `bonus = total - base`
-- `bonus_1 = 80% of bonus`
-- `bonus_2 = 20% of bonus`
+- `bonus80 = ceil(0.8 * bonus)`
+- `bonus20 = bonus - bonus80`
 
-The resulting transfers are executed with ICRC-1 ledger calls.
+That means the 80% side receives any rounding bias.
 
-## Design notes
+### Memo format for outgoing ICP transfers
 
-### Staging first, payout second
+Outgoing ledger transfers use a deterministic 16-byte memo:
 
-NNS Governance disburses maturity to a single destination per call. Jupiter Disburser always disburses to its own staging account first and only then performs the recipient split on the ledger side.
+- bytes `0..8` = payout ID, big-endian
+- bytes `8..16` = transfer index, big-endian
 
-That keeps the payout logic grounded in the amount actually minted and makes retries easier to reason about than repeated governance calls.
+This memo, together with deterministic `created_at_time`, is part of the duplicate-proof retry model.
 
-### Persistent payout plans
+## Transfer planning and retry semantics
 
-Before the first transfer is attempted, the canister persists a payout plan. If a transfer succeeds but execution stops before the plan is cleared, the next run can safely resume without recalculating the split from a partially-updated state.
+### Staging account
 
-### Main tick overlap protection
+The canister receives disbursed maturity into its **default ledger account** (`subaccount = None`).
 
-Main-tick overlap protection uses an expiring lease instead of a persistent boolean lock. If execution stops after an await boundary, the lease self-heals and the next scheduled run can proceed.
+If that balance is zero on a payout pass, any stale persisted payout plan is cleared and the payout stage succeeds immediately.
 
-### Lifeline-based disaster recovery
+### Persisted payout plan
 
-Jupiter Disburser is configured with a required `rescue_controller`. In production this is the principal of `jupiter-lifeline`.
+When staged ICP is present and there is no existing plan, the canister:
 
-The rescue path is intentionally independent of fresh ledger, governance, or canister-status checks. It uses the timestamp of the last confirmed successful transfer already stored in canister state and a management-canister controller update.
+1. reads the current ledger fee
+2. computes the gross three-way split from the full staged balance
+3. creates up to three planned transfers
+4. persists that plan in canister state before executing it
 
-If rescue escalation is required and the controller update fails, the canister retries on the next rescue interval. Failed rescue attempts do not consume a long backoff window.
+A planned transfer is only created if its gross share is **strictly greater** than the ledger fee. Shares at or below the fee are skipped and remain in staging.
 
-### Blackholing precondition
+### Execution behavior
 
-Do not blackhole `jupiter-disburser` until at least one successful payout has occurred.
+The canister then executes pending transfers in order until the plan completes or a transient failure occurs.
 
-The rescue policy is armed by the timestamp of the last confirmed successful transfer. Before that timestamp exists, the canister has no evidence that value flow was ever working and will not trigger the lifeline handoff.
+Important properties:
+
+- transfer status is persisted per transfer
+- `Duplicate` is treated as success and the duplicate block index is recorded
+- `TemporarilyUnavailable` keeps the plan and retries later
+- `BadFee`, `TooOld`, and `CreatedInFuture` clear the plan so the next run rebuilds it from the current fee and current staged balance
+- other failures leave the run incomplete and are retried later
+- once all plan entries are marked sent, the whole plan is cleared
+
+This gives the canister deterministic, duplicate-safe retry behavior without having to reconstruct intent from logs.
+
+## Rescue and blackhole policy
+
+### Intended controller model
+
+The intended healthy-state controller set for `jupiter-disburser` is:
+
+- `jupiter-disburser` itself
+
+When rescue is required, the canister widens that controller set to:
+
+- `jupiter-lifeline`
+- `jupiter-disburser`
+
+### Time windows
+
+When blackhole mode is armed, controller reconciliation follows this policy based on `last_successful_transfer_ts`:
+
+- healthy: `<= 7 days` since last successful transfer → self only
+- middle window: `> 7 days` and `<= 14 days` → no controller change
+- broken: `> 14 days` → rescue controller + self
+
+There is also a bootstrap rescue condition:
+
+- if blackhole mode has been armed for more than `14 days` and the canister has **never** recorded a successful transfer, rescue is forced with reason `BootstrapNoSuccess`
+
+### Operational precondition before blackholing
+
+Do **not** hand the canister off to self-only control until at least one successful payout transfer has occurred.
+
+Without a recorded successful transfer, the time-based rescue policy has no proof that value flow ever worked.
 
 ## Install-time configuration
 
-A copy-pasteable mainnet install argument file lives at:
+The init args are:
 
-- `mainnet-install-args.did`
+- `neuron_id`
+  - the NNS neuron controlled by this canister
+- `normal_recipient`
+  - recipient of the age-neutral base payout
+- `age_bonus_recipient_1`
+  - recipient of the 80% age-bonus share
+- `age_bonus_recipient_2`
+  - recipient of the 20% age-bonus share
+- `ledger_canister_id` (defaults to ICP Ledger)
+- `governance_canister_id` (defaults to NNS Governance)
+- `rescue_controller`
+- `blackhole_armed`
+- `main_interval_seconds`
+- `rescue_interval_seconds`
 
-That file currently contains:
+A copy-pasteable mainnet install args file is committed at:
 
-```candid
-(
-  record {
-    neuron_id = 11614578985374291210 : nat64;
-    normal_recipient = record {
-      owner = principal "acjuz-liaaa-aaaar-qb4qq-cai";
-      subaccount = null;
-    };
-    age_bonus_recipient_1 = record {
-      owner = principal "alk7f-5aaaa-aaaar-qb4ra-cai";
-      subaccount = null;
-    };
-    age_bonus_recipient_2 = record {
-      owner = principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
-      subaccount = opt vec { 119; 230; 61; 231; 43; 94; 51; 57; 234; 32; 244; 186; 243; 236; 43; 217; 33; 56; 221; 222; 13; 174; 182; 157; 181; 10; 204; 235; 56; 75; 223; 15 };
-    };
-    ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
-    governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
-    rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
-    blackhole_armed = opt false;
-    main_interval_seconds = opt 86400;
-    rescue_interval_seconds = opt 86400;
-  }
-)
-```
+- [`mainnet-install-args.did`](mainnet-install-args.did)
+
+### Current production wiring recorded in this repo
+
+The committed mainnet install args currently wire:
+
+- normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
+- age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
+- age bonus recipient 2: D-QUORUM staking account on NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` plus subaccount from the committed args file)
+- rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
+- ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
+- governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
+- `blackhole_armed = false`
+- `main_interval_seconds = 86400`
+- `rescue_interval_seconds = 86400`
 
 ## Public interface
 
-Production builds expose expose no endpoints. This can be confirmed before deploying a release build using `candid-extractor`.
+Production builds expose **no public methods**.
 
-```
+You can verify that with:
+
+```bash
 candid-extractor target/wasm32-unknown-unknown/release/jupiter_disburser.wasm > verify_no_endpoints.did
 ```
 
-Debug-only methods used for local integration and PocketIC tests are gated behind the `debug_api` feature and are not intended for production deployment.
+Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only.
 
 ## Build and test
 
@@ -135,20 +218,36 @@ cargo build -p jupiter-disburser --target wasm32-unknown-unknown --release --fea
 cargo test -p jupiter-disburser --lib
 ```
 
-### PocketIC end-to-end tests
+### Preferred integration and end-to-end entry points
 
 ```bash
-RUST_TEST_THREADS=1 cargo test -p jupiter-disburser --test jupiter_disburser_integration -- --ignored
+cargo run -p xtask -- disburser_dfx_integration
+cargo run -p xtask -- disburser_pocketic_integration
+cargo run -p xtask -- disburser_all
 ```
 
-## Reproducible build and deployment
+Those cover, among other things:
+
+- maturity disbursement landing in staging
+- payout-plan persistence and duplicate-proof retry
+- upgrade mid-flight behavior
+- blackhole timer progression
+- rescue-controller round-trips
+- age-bonus routing at 0y, 2y, and 4y
+- `ClaimOrRefresh` / `RefreshVotingPower` behavior
+
+For the broader test matrix, see [`../xtask/README.md`](../xtask/README.md).
+
+## Reproducible builds and deployment
+
+### Canonical release build
 
 ```bash
-chmod +x scripts/docker-build scripts/build-canister
-./scripts/docker-build
+chmod +x ../scripts/docker-build ../scripts/build-canister
+../scripts/docker-build
 ```
 
-Install the release artifact with:
+### Install release artifact
 
 ```bash
 dfx canister install jupiter_disburser \
@@ -157,18 +256,9 @@ dfx canister install jupiter_disburser \
   --argument-file jupiter-disburser/mainnet-install-args.did
 ```
 
-Before handing the canister off to self-management, apply the required canister settings while the deployment operator is still a controller:
+### Upgrade release artifact
 
-```bash
-dfx canister update-settings jupiter_disburser --network ic --log-visibility public
-dfx canister update-settings jupiter_disburser \
-  --network ic \
-  --add-controller uccpi-cqaaa-aaaar-qby3q-cai
-```
-
-That self-controller step is required because only controllers can change canister settings, and the rescue/controller-reconciliation path relies on `jupiter-disburser` being able to update its own controller set later.
-
-Upgrades preserve the existing configuration and do not require an argument. The current production install keeps self-blackholing unarmed until the canister is ready to hand off controller reconciliation to its internal rescue logic.
+Upgrades preserve existing state and do not require install args unless you are intentionally toggling upgrade-only settings.
 
 ```bash
 dfx canister install jupiter_disburser \
@@ -177,7 +267,9 @@ dfx canister install jupiter_disburser \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
-Arm blackhole self-management later with:
+### Toggle blackhole arming via upgrade args
+
+Arm:
 
 ```bash
 dfx canister install jupiter_disburser \
@@ -187,7 +279,7 @@ dfx canister install jupiter_disburser \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
-Disarm it again with:
+Disarm:
 
 ```bash
 dfx canister install jupiter_disburser \
@@ -197,7 +289,28 @@ dfx canister install jupiter_disburser \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
-After at least one successful payout has occurred and self-management is armed, hand the canister off to self-only control with:
+Clear a latched forced-rescue reason:
+
+```bash
+dfx canister install jupiter_disburser \
+  --network ic \
+  --mode upgrade \
+  --argument '(opt record { clear_forced_rescue = opt true; })' \
+  --wasm release-artifacts/jupiter_disburser.wasm.gz
+```
+
+### Controller handoff notes
+
+Before handing the canister off to self-management, the deployment operator must still configure canister settings such as public log visibility and add the canister as a controller of itself.
+
+Example:
+
+```bash
+dfx canister update-settings jupiter_disburser --network ic --log-visibility public
+dfx canister update-settings jupiter_disburser --network ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
+```
+
+After blackhole mode is armed and at least one successful payout transfer has been recorded, the operator can hand the canister off to self-only control:
 
 ```bash
 dfx canister update-settings jupiter_disburser \
@@ -205,4 +318,8 @@ dfx canister update-settings jupiter_disburser \
   --set-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
-Verification is performed by comparing the deployed module hash to the SHA-256 of `release-artifacts/jupiter_disburser.wasm` printed by `./scripts/docker-build`.
+## Related docs
+
+- suite overview: [`../README.md`](../README.md)
+- faucet mechanics: [`../jupiter-faucet/README.md`](../jupiter-faucet/README.md)
+- local testing: [`../xtask/README.md`](../xtask/README.md)

@@ -1,24 +1,43 @@
 # Jupiter SNS Rewards
 
-`jupiter-sns-rewards` is currently deployed as a placeholder canister.
+`jupiter-sns-rewards` is currently a placeholder canister in the Jupiter Faucet Suite.
 
-## Current mainnet canister
+Its present-day purpose is to reserve the production canister principal and default ledger account that receive the primary age-bonus ICP flow from `jupiter-disburser`.
 
-- canister id: `alk7f-5aaaa-aaaar-qb4ra-cai`
+See the suite overview in [`../README.md`](../README.md).
+
+## Current mainnet canister recorded in this repo
+
+- canister ID: `alk7f-5aaaa-aaaar-qb4ra-cai`
 - subnet: Fiduciary (`pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae`)
 
-This canister is the configured 80% age-bonus recipient for `jupiter-disburser`.
+## Current role in the live wiring
 
-The production intent is for `jupiter-sns-rewards` to receive that ICP flow and distribute it to JUP SNS stakers according to its own staking policy.
+`jupiter-disburser` sends **80% of the age-bonus portion** of each payout here.
+
+The age-bonus source, formula, and routing policy are documented in [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md).
 
 ## Current implementation
 
-The current implementation is intentionally minimal. It exists to reserve the canister principal and default account while the production SNS rewards logic is built.
+The current implementation is deliberately minimal:
+
+- no business logic
+- no public methods of its own
+- no install or upgrade args
+
+That makes it effectively a reserved deployment slot and account endpoint until the real SNS reward-distribution logic is implemented.
+
+## Intended future role
+
+The intended production role is to receive ICP from the disburser and distribute rewards to JUP SNS stakers according to a future staking/reward policy.
+
+That policy is not implemented in this repository yet.
 
 ## Upgrade command
 
-No install or upgrade argument is currently required.
-
 ```bash
-dfx canister install jupiter_sns_rewards   --network ic   --mode upgrade   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
+dfx canister install jupiter_sns_rewards \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
 ```

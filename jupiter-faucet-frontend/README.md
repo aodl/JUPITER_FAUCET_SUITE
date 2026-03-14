@@ -1,17 +1,30 @@
 # Jupiter Faucet Frontend
 
-`jupiter-faucet-frontend` is currently a deployable placeholder.
+`jupiter-faucet-frontend` is a placeholder frontend canister in the Jupiter Faucet Suite.
 
-The production intent is for this canister to serve the public-facing asset bundle for the Jupiter Faucet system.
+Its present-day purpose is simply to reserve the deployment slot for the eventual public-facing asset canister.
+
+See the suite overview in [`../README.md`](../README.md).
 
 ## Current implementation
 
-The current implementation is intentionally minimal. It exists to reserve the deployment slot while the frontend asset canister is built.
+The implementation is intentionally minimal:
+
+- no frontend assets yet
+- no business logic
+- no install or upgrade args
+
+## Intended future role
+
+The intended production role is to host the public frontend and asset bundle for the Jupiter Faucet system.
+
+That frontend is not implemented in this repository yet.
 
 ## Upgrade command
 
-No install or upgrade argument is currently required.
-
 ```bash
-dfx canister install jupiter_faucet_frontend   --network ic   --mode upgrade   --wasm release-artifacts/jupiter_faucet_frontend.wasm.gz
+dfx canister install jupiter_faucet_frontend \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_faucet_frontend.wasm.gz
 ```
