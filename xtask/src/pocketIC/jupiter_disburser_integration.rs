@@ -304,6 +304,11 @@ struct InitArg {
 
 // ------------------------- Debug API types -------------------------
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum ForcedRescueReason {
+    BootstrapNoSuccess,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     prev_age_seconds: u64,
@@ -311,6 +316,8 @@ struct DebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     payout_plan_present: bool,
+    blackhole_armed_since_ts: Option<u64>,
+    forced_rescue_reason: Option<ForcedRescueReason>,
 }
 
 // Logic constants (duplicated from crate::logic for E2E assertions)
@@ -2165,7 +2172,7 @@ fn e2e_blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_rescue_not_armed_before_first_successful_payout() -> Result<()> {
+fn e2e_bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -2229,16 +2236,16 @@ fn e2e_rescue_not_armed_before_first_successful_payout() -> Result<()> {
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
 
     let c1 = pic.get_controllers(disburser_canister);
-    if c1 != vec![disburser_canister] {
+    if !(c1.contains(&disburser_canister) && c1.contains(&controller) && c1.len() == 2) {
         bail!(
-            "expected rescue to remain unarmed before first successful payout; got controllers {:?}",
+            "expected bootstrap rescue to widen controllers before first successful payout; got {:?}",
             c1
         );
     }
 
     let dbg: DebugState = query_call(&pic, disburser_canister, Principal::anonymous(), "debug_state", ())?;
-    if dbg.rescue_triggered {
-        bail!("expected rescue_triggered=false before first successful payout");
+    if !dbg.rescue_triggered || dbg.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
+        bail!("expected bootstrap forced rescue to latch before first successful payout, got {:?}", dbg);
     }
 
     Ok(())

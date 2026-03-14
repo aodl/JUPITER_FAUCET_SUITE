@@ -86,6 +86,7 @@ struct FaucetInitArg {
     cmc_canister_id: Option<Principal>,
     rescue_controller: Principal,
     blackhole_armed: Option<bool>,
+    expected_first_staking_tx_id: Option<u64>,
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
@@ -111,6 +112,14 @@ struct DebugAccounts {
     staking: Account,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum ForcedRescueReason {
+    BootstrapNoSuccess,
+    IndexAnchorMissing,
+    IndexLatestInvariantBroken,
+    CmcZeroSuccessRuns,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     active_payout_job_present: bool,
@@ -119,6 +128,14 @@ struct DebugState {
     last_successful_transfer_ts: Option<u64>,
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
+    blackhole_armed_since_ts: Option<u64>,
+    forced_rescue_reason: Option<ForcedRescueReason>,
+    consecutive_index_anchor_failures: u8,
+    consecutive_index_latest_invariant_failures: u8,
+    consecutive_cmc_zero_success_runs: u8,
+    last_observed_staking_balance_e8s: Option<u64>,
+    last_observed_latest_tx_id: Option<u64>,
+    expected_first_staking_tx_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -216,6 +233,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
@@ -232,6 +250,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -337,6 +356,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
@@ -359,6 +379,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -468,6 +489,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
@@ -484,6 +506,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -601,6 +624,7 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
@@ -617,6 +641,7 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };

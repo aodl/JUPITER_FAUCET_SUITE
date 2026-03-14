@@ -10,10 +10,18 @@ type InitArgs = record {
 
   rescue_controller : principal;
   blackhole_armed : opt bool;
+  expected_first_staking_tx_id : opt nat64;
 
   main_interval_seconds : opt nat64;
   rescue_interval_seconds : opt nat64;
   min_tx_e8s : opt nat64;
+};
+
+type ForcedRescueReason = variant {
+  BootstrapNoSuccess;
+  IndexAnchorMissing;
+  IndexLatestInvariantBroken;
+  CmcZeroSuccessRuns;
 };
 
 type DebugAccounts = record { payout : Account; staking : Account };
@@ -30,6 +38,14 @@ type DebugState = record {
   active_payout_job_present : bool;
   retry_state_present : bool;
   last_summary_present : bool;
+  blackhole_armed_since_ts : opt nat64;
+  forced_rescue_reason : opt ForcedRescueReason;
+  consecutive_index_anchor_failures : nat8;
+  consecutive_index_latest_invariant_failures : nat8;
+  consecutive_cmc_zero_success_runs : nat8;
+  last_observed_staking_balance_e8s : opt nat64;
+  last_observed_latest_tx_id : opt nat64;
+  expected_first_staking_tx_id : opt nat64;
 };
 type Summary = record {
   pot_start_e8s : nat64;
@@ -51,6 +67,9 @@ service : (InitArgs) -> {
   debug_reset_runtime_state : () -> ();
   debug_release_retry_backoff : () -> ();
   debug_set_blackhole_armed : (opt bool) -> ();
+  debug_set_blackhole_armed_since_ts : (opt nat64) -> ();
+  debug_set_expected_first_staking_tx_id : (opt nat64) -> ();
+  debug_clear_forced_rescue : () -> ();
   debug_set_last_successful_transfer_ts : (opt nat64) -> ();
   debug_main_tick : () -> ();
   debug_rescue_tick : () -> ();

@@ -7,7 +7,7 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 
-use crate::state::State;
+use crate::state::{ForcedRescueReason, State};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -20,6 +20,7 @@ pub struct InitArgs {
 
     pub rescue_controller: Principal,
     pub blackhole_armed: Option<bool>,
+    pub expected_first_staking_tx_id: Option<u64>,
 
     pub main_interval_seconds: Option<u64>,
     pub rescue_interval_seconds: Option<u64>,
@@ -29,6 +30,7 @@ pub struct InitArgs {
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
     pub blackhole_armed: Option<bool>,
+    pub clear_forced_rescue: Option<bool>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -69,6 +71,7 @@ fn init(args: InitArgs) {
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
         rescue_controller: args.rescue_controller,
         blackhole_armed: args.blackhole_armed,
+        expected_first_staking_tx_id: args.expected_first_staking_tx_id,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(10_000_000),
@@ -87,10 +90,21 @@ fn pre_upgrade() {
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: Option<UpgradeArgs>) {
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     let (mut st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
     if let Some(args) = args {
-        if args.blackhole_armed.is_some() {
-            st.config.blackhole_armed = args.blackhole_armed;
+        if let Some(armed) = args.blackhole_armed {
+            st.config.blackhole_armed = Some(armed);
+            st.blackhole_armed_since_ts = if armed { Some(now_secs) } else { None };
+            if !armed {
+                st.rescue_triggered = false;
+            }
+        }
+        if args.clear_forced_rescue.unwrap_or(false) {
+            st.forced_rescue_reason = None;
+            st.consecutive_index_anchor_failures = Some(0);
+            st.consecutive_index_latest_invariant_failures = Some(0);
+            st.consecutive_cmc_zero_success_runs = Some(0);
         }
     }
     crate::state::set_state(st);
@@ -106,6 +120,14 @@ pub struct DebugState {
     pub active_payout_job_present: bool,
     pub retry_state_present: bool,
     pub last_summary_present: bool,
+    pub blackhole_armed_since_ts: Option<u64>,
+    pub forced_rescue_reason: Option<ForcedRescueReason>,
+    pub consecutive_index_anchor_failures: u8,
+    pub consecutive_index_latest_invariant_failures: u8,
+    pub consecutive_cmc_zero_success_runs: u8,
+    pub last_observed_staking_balance_e8s: Option<u64>,
+    pub last_observed_latest_tx_id: Option<u64>,
+    pub expected_first_staking_tx_id: Option<u64>,
 }
 
 #[cfg(feature = "debug_api")]
@@ -134,6 +156,14 @@ fn debug_state() -> DebugState {
         active_payout_job_present: st.active_payout_job.is_some(),
         retry_state_present: st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).is_some(),
         last_summary_present: st.last_summary.is_some(),
+        blackhole_armed_since_ts: st.blackhole_armed_since_ts,
+        forced_rescue_reason: st.forced_rescue_reason.clone(),
+        consecutive_index_anchor_failures: st.consecutive_index_anchor_failures.unwrap_or(0),
+        consecutive_index_latest_invariant_failures: st.consecutive_index_latest_invariant_failures.unwrap_or(0),
+        consecutive_cmc_zero_success_runs: st.consecutive_cmc_zero_success_runs.unwrap_or(0),
+        last_observed_staking_balance_e8s: st.last_observed_staking_balance_e8s,
+        last_observed_latest_tx_id: st.last_observed_latest_tx_id,
+        expected_first_staking_tx_id: st.config.expected_first_staking_tx_id,
     })
 }
 
@@ -188,6 +218,13 @@ fn debug_reset_runtime_state() {
         st.last_successful_transfer_ts = None;
         st.last_rescue_check_ts = 0;
         st.rescue_triggered = false;
+        st.blackhole_armed_since_ts = st.config.blackhole_armed.unwrap_or(false).then_some(now_secs);
+        st.forced_rescue_reason = None;
+        st.consecutive_index_anchor_failures = Some(0);
+        st.consecutive_index_latest_invariant_failures = Some(0);
+        st.consecutive_cmc_zero_success_runs = Some(0);
+        st.last_observed_staking_balance_e8s = None;
+        st.last_observed_latest_tx_id = None;
         st.main_lock_expires_at_ts = Some(0);
         st.active_payout_job = None;
         st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
@@ -203,9 +240,38 @@ fn debug_set_last_successful_transfer_ts(ts: Option<u64>) {
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_blackhole_armed(v: Option<bool>) {
-    crate::state::with_state_mut(|st| st.config.blackhole_armed = v);
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    crate::state::with_state_mut(|st| {
+        st.config.blackhole_armed = v;
+        st.blackhole_armed_since_ts = v.unwrap_or(false).then_some(now_secs);
+        if !v.unwrap_or(false) {
+            st.rescue_triggered = false;
+        }
+    });
 }
 
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_blackhole_armed_since_ts(ts: Option<u64>) {
+    crate::state::with_state_mut(|st| st.blackhole_armed_since_ts = ts);
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_expected_first_staking_tx_id(v: Option<u64>) {
+    crate::state::with_state_mut(|st| st.config.expected_first_staking_tx_id = v);
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_clear_forced_rescue() {
+    crate::state::with_state_mut(|st| {
+        st.forced_rescue_reason = None;
+        st.consecutive_index_anchor_failures = Some(0);
+        st.consecutive_index_latest_invariant_failures = Some(0);
+        st.consecutive_cmc_zero_success_runs = Some(0);
+    });
+}
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]

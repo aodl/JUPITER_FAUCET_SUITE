@@ -129,15 +129,30 @@ struct FaucetInitArg {
     cmc_canister_id: Option<Principal>,
     rescue_controller: Principal,
     blackhole_armed: Option<bool>,
+    expected_first_staking_tx_id: Option<u64>,
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct FaucetUpgradeArg {
+    blackhole_armed: Option<bool>,
+    clear_forced_rescue: Option<bool>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugAccounts {
     payout: Account,
     staking: Account,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum ForcedRescueReason {
+    BootstrapNoSuccess,
+    IndexAnchorMissing,
+    IndexLatestInvariantBroken,
+    CmcZeroSuccessRuns,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -148,6 +163,14 @@ struct DebugState {
     last_successful_transfer_ts: Option<u64>,
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
+    blackhole_armed_since_ts: Option<u64>,
+    forced_rescue_reason: Option<ForcedRescueReason>,
+    consecutive_index_anchor_failures: u8,
+    consecutive_index_latest_invariant_failures: u8,
+    consecutive_cmc_zero_success_runs: u8,
+    last_observed_staking_balance_e8s: Option<u64>,
+    last_observed_latest_tx_id: Option<u64>,
+    expected_first_staking_tx_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -277,6 +300,7 @@ impl FaucetEnv {
             cmc_canister_id: Some(cmc),
             rescue_controller: cmc,
             blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
             min_tx_e8s: Some(10_000_000),
@@ -338,6 +362,14 @@ impl FaucetEnv {
         update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_blackhole_armed", v)
     }
 
+    fn set_blackhole_armed_since_ts(&self, ts: Option<u64>) -> Result<()> {
+        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_blackhole_armed_since_ts", ts)
+    }
+
+    fn set_expected_first_staking_tx_id(&self, v: Option<u64>) -> Result<()> {
+        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_expected_first_staking_tx_id", v)
+    }
+
     fn rescue_tick(&self) -> Result<()> {
         update_noargs::<()>(&self.pic, self.faucet, Principal::anonymous(), "debug_rescue_tick")?;
         tick_n(&self.pic, 10);
@@ -394,9 +426,13 @@ impl FaucetEnv {
     }
 
     fn upgrade(&self) -> Result<()> {
+        self.upgrade_with_args(FaucetUpgradeArg { blackhole_armed: None, clear_forced_rescue: None })
+    }
+
+    fn upgrade_with_args(&self, args: FaucetUpgradeArg) -> Result<()> {
         let sender = self.pic.get_controllers(self.faucet).first().copied().unwrap_or(self.faucet);
         self.pic
-            .upgrade_canister(self.faucet, faucet_wasm()?, encode_one(())?, Some(sender))
+            .upgrade_canister(self.faucet, faucet_wasm()?, encode_one(Some(args))?, Some(sender))
             .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
         tick_n(&self.pic, 5);
         Ok(())
@@ -1160,6 +1196,219 @@ fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> 
                 footprint.state_candid_bytes
             );
         }
+    }
+
+    Ok(())
+}
+
+
+#[test]
+#[ignore]
+fn faucet_unarmed_rescue_broken_conditions_do_not_change_controllers() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_self_only_controller()?;
+    env.set_blackhole_armed(Some(false))?;
+    env.set_last_successful_transfer_ts(Some(0))?;
+    let before = env.controllers();
+
+    env.rescue_tick()?;
+
+    let after = env.controllers();
+    if after != before || after != vec![env.faucet] {
+        bail!("expected unarmed rescue tick under broken conditions to leave controllers unchanged, before={before:?} after={after:?}");
+    }
+    let st = env.state()?;
+    if st.rescue_triggered || st.forced_rescue_reason.is_some() {
+        bail!("expected unarmed broken-path rescue tick not to latch rescue state, got {:?}", st);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_self_only_controller()?;
+    env.set_blackhole_armed(Some(false))?;
+    env.set_expected_first_staking_tx_id(Some(1))?;
+    let before = env.controllers();
+
+    env.main_tick()?;
+    env.main_tick()?;
+
+    let st_after_latch = env.state()?;
+    if st_after_latch.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
+        bail!("expected missing anchor twice to latch forced rescue reason even while unarmed, got {:?}", st_after_latch);
+    }
+    let after_latch = env.controllers();
+    if after_latch != before || after_latch != vec![env.faucet] {
+        bail!("expected forced rescue reason while unarmed not to change controllers, before={before:?} after_latch={after_latch:?}");
+    }
+
+    env.rescue_tick()?;
+
+    let after_tick = env.controllers();
+    if after_tick != before || after_tick != vec![env.faucet] {
+        bail!("expected explicit rescue tick while unarmed and forced to leave controllers unchanged, before={before:?} after_tick={after_tick:?}");
+    }
+    let st_after_tick = env.state()?;
+    if st_after_tick.rescue_triggered {
+        bail!("expected unarmed forced rescue not to mark rescue_triggered, got {:?}", st_after_tick);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_self_only_controller()?;
+    env.set_blackhole_armed(Some(true))?;
+    env.set_blackhole_armed_since_ts(Some(0))?;
+    env.set_last_successful_transfer_ts(None)?;
+    env.advance_time_and_tick(15 * 24 * 60 * 60, 5);
+    env.rescue_tick()?;
+
+    let st = env.state()?;
+    if !st.rescue_triggered || st.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
+        bail!("expected bootstrap forced rescue to latch, got {:?}", st);
+    }
+    let mut controllers = env.controllers();
+    controllers.sort_by_key(|p| p.to_text());
+    let mut expected = vec![env.cmc, env.faucet];
+    expected.sort_by_key(|p| p.to_text());
+    if controllers != expected {
+        bail!("expected bootstrap rescue to widen controllers, got {controllers:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_self_only_controller()?;
+    env.set_blackhole_armed(Some(true))?;
+    env.set_expected_first_staking_tx_id(Some(1))?;
+
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if st1.consecutive_index_anchor_failures != 1 || st1.forced_rescue_reason.is_some() {
+        bail!("expected first missing-anchor observation to count once, got {:?}", st1);
+    }
+
+    env.main_tick()?;
+    let st2 = env.state()?;
+    if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
+        bail!("expected missing anchor twice to latch forced rescue, got {:?}", st2);
+    }
+    let mut controllers = env.controllers();
+    controllers.sort_by_key(|p| p.to_text());
+    let mut expected = vec![env.cmc, env.faucet];
+    expected.sort_by_key(|p| p.to_text());
+    if controllers != expected {
+        bail!("expected anchor-loss forced rescue to widen controllers, got {controllers:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+
+    env.set_self_only_controller()?;
+    env.set_blackhole_armed(Some(true))?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.main_tick()?;
+
+    env.credit_staking(50_000_000)?;
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if st1.consecutive_index_latest_invariant_failures != 1 || st1.forced_rescue_reason.is_some() {
+        bail!("expected first latest-invariant failure to count once, got {:?}", st1);
+    }
+
+    env.main_tick()?;
+    let st2 = env.state()?;
+    if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexLatestInvariantBroken) {
+        bail!("expected second latest-invariant failure to latch forced rescue, got {:?}", st2);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_self_only_controller()?;
+    env.set_blackhole_armed(Some(true))?;
+    env.set_cmc_fail(true)?;
+
+    for _ in 0..2 {
+        env.credit_payout(80_000_000)?;
+        env.credit_staking(80_000_000)?;
+        env.append_transfer(80_000_000, Some(Principal::from_text("aaaaa-aa")?.to_text().into_bytes()))?;
+        env.main_tick()?;
+        env.advance_time_and_tick(61, 20);
+        env.main_tick()?;
+    }
+
+    let st = env.state()?;
+    if st.forced_rescue_reason != Some(ForcedRescueReason::CmcZeroSuccessRuns) || st.consecutive_cmc_zero_success_runs < 2 {
+        bail!("expected two zero-success CMC runs to latch forced rescue, got {:?}", st);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_blackhole_armed(Some(true))?;
+    env.set_expected_first_staking_tx_id(Some(1))?;
+    env.main_tick()?;
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if st1.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
+        bail!("expected forced rescue before upgrade, got {:?}", st1);
+    }
+
+    env.upgrade()?;
+    let st2 = env.state()?;
+    if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
+        bail!("expected forced rescue to survive upgrade, got {:?}", st2);
+    }
+
+    env.upgrade_with_args(FaucetUpgradeArg { blackhole_armed: None, clear_forced_rescue: Some(true) })?;
+    let st3 = env.state()?;
+    if st3.forced_rescue_reason.is_some()
+        || st3.consecutive_index_anchor_failures != 0
+        || st3.consecutive_index_latest_invariant_failures != 0
+        || st3.consecutive_cmc_zero_success_runs != 0
+    {
+        bail!("expected forced rescue clear path to reset counters, got {:?}", st3);
     }
 
     Ok(())

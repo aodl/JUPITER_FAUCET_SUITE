@@ -424,12 +424,21 @@ async fn process_payout<L: LedgerClient>(
 async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
 
-    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered) = state::with_state(|st| {
+    state::with_state_mut(|st| {
+        if st.forced_rescue_reason.is_none()
+            && policy::bootstrap_rescue_due(now_secs, st.blackhole_armed_since_ts, st.last_successful_transfer_ts)
+        {
+            st.forced_rescue_reason = Some(state::ForcedRescueReason::BootstrapNoSuccess);
+        }
+    });
+
+    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered, forced_rescue_reason) = state::with_state(|st| {
         (
             st.config.blackhole_armed.unwrap_or(false),
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
             st.rescue_triggered,
+            st.forced_rescue_reason.clone(),
         )
     });
 
@@ -438,10 +447,13 @@ async fn rescue_tick() {
     }
 
     let self_id = ic_cdk::api::canister_self();
-    let desired_opt = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller);
-
-    let Some(mut desired) = desired_opt else {
-        return;
+    let mut desired = if forced_rescue_reason.is_some() {
+        vec![rescue_controller, self_id]
+    } else {
+        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller) else {
+            return;
+        };
+        desired
     };
 
     desired.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
@@ -449,8 +461,6 @@ async fn rescue_tick() {
 
     let rescue_active = desired.iter().any(|p| *p == rescue_controller);
 
-    // Healthy steady-state is already self-only. Avoid unnecessary management-canister
-    // calls unless rescue had previously widened the controller set.
     if !rescue_active && !rescue_triggered {
         return;
     }

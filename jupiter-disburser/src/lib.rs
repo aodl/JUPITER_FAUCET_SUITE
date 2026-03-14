@@ -8,7 +8,7 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 
-use crate::state::State;
+use crate::state::{ForcedRescueReason, State};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -31,6 +31,7 @@ pub struct InitArgs {
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
     pub blackhole_armed: Option<bool>,
+    pub clear_forced_rescue: Option<bool>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -47,48 +48,47 @@ fn init(args: InitArgs) {
 
     let cfg = crate::state::Config {
         neuron_id: args.neuron_id,
-
         normal_recipient: args.normal_recipient,
         age_bonus_recipient_1: args.age_bonus_recipient_1,
         age_bonus_recipient_2: args.age_bonus_recipient_2,
-
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         governance_canister_id: args.governance_canister_id.unwrap_or_else(mainnet_governance_id),
-
         rescue_controller: args.rescue_controller,
         blackhole_armed: args.blackhole_armed,
-
         main_interval_seconds: args.main_interval_seconds.unwrap_or(86_400),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(86_400),
     };
 
     let st = State::new(cfg, now_secs);
     crate::state::set_state(st);
-
     crate::scheduler::install_timers();
 }
 
 #[ic_cdk::pre_upgrade]
 fn pre_upgrade() {
     let st = crate::state::get_state();
-    // On upgrade, it's better to abort upgrade than continue with lost state.
     ic_cdk::storage::stable_save((st,)).expect("stable_save failed");
 }
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: Option<UpgradeArgs>) {
-    // On upgrade, we expect stable state to exist.
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     let (mut st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
     if let Some(args) = args {
-        if args.blackhole_armed.is_some() {
-            st.config.blackhole_armed = args.blackhole_armed;
+        if let Some(armed) = args.blackhole_armed {
+            st.config.blackhole_armed = Some(armed);
+            st.blackhole_armed_since_ts = if armed { Some(now_secs) } else { None };
+            if !armed {
+                st.rescue_triggered = false;
+            }
+        }
+        if args.clear_forced_rescue.unwrap_or(false) {
+            st.forced_rescue_reason = None;
         }
     }
     crate::state::set_state(st);
     crate::scheduler::install_timers();
 }
-
-// ---------------- Debug-only API (feature-gated) ----------------
 
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
@@ -98,6 +98,8 @@ pub struct DebugState {
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
     pub payout_plan_present: bool,
+    pub blackhole_armed_since_ts: Option<u64>,
+    pub forced_rescue_reason: Option<ForcedRescueReason>,
 }
 
 #[cfg(feature = "debug_api")]
@@ -109,20 +111,20 @@ fn debug_state() -> DebugState {
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
         payout_plan_present: st.payout_plan.is_some(),
+        blackhole_armed_since_ts: st.blackhole_armed_since_ts,
+        forced_rescue_reason: st.forced_rescue_reason.clone(),
     })
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state_size_bytes() -> u64 {
-    // stable_save uses candid encoding; this approximates stable state size.
     let st = crate::state::get_state();
     match candid::encode_one(st) {
         Ok(bytes) => bytes.len() as u64,
         Err(_) => 0,
     }
 }
-
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
@@ -154,7 +156,17 @@ fn debug_set_last_rescue_check_ts(ts: u64) {
     crate::state::with_state_mut(|st| st.last_rescue_check_ts = ts);
 }
 
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_blackhole_armed_since_ts(ts: Option<u64>) {
+    crate::state::with_state_mut(|st| st.blackhole_armed_since_ts = ts);
+}
 
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_clear_forced_rescue() {
+    crate::state::with_state_mut(|st| st.forced_rescue_reason = None);
+}
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
@@ -186,8 +198,4 @@ async fn debug_build_payout_plan() -> bool {
     crate::scheduler::debug_build_payout_plan_impl().await
 }
 
-
 ic_cdk::export_candid!();
-
-
-

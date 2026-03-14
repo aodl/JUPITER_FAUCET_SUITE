@@ -10,6 +10,7 @@ type InitArgs = record {
 
   rescue_controller : principal;
   blackhole_armed : opt bool;
+  expected_first_staking_tx_id : opt nat64;
 
   main_interval_seconds : opt nat64;
   rescue_interval_seconds : opt nat64;

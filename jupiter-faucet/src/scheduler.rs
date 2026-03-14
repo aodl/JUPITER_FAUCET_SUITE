@@ -5,10 +5,10 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use std::{cell::RefCell, time::Duration};
 
 use crate::clients::cmc::CyclesMintingCanister;
-use crate::clients::index::{account_identifier_text, IcpIndexCanister};
+use crate::clients::index::{account_identifier_text, GetAccountIdentifierTransactionsResponse, IcpIndexCanister};
 use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CmcClient, IndexClient, LedgerClient};
-use crate::state::{ActivePayoutJob, PendingNotification, RetryState, RetryStep, TransferKind};
+use crate::state::{ActivePayoutJob, ForcedRescueReason, PendingNotification, RetryState, RetryStep, TransferKind};
 use crate::{logic, policy, state};
 
 thread_local! { static LAST_ERR_CODE: RefCell<Option<u32>> = RefCell::new(None); }
@@ -54,6 +54,9 @@ async fn main_tick(force: bool) {
     let index = IcpIndexCanister::new(cfg.index_canister_id);
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
     let ok = process_payout(&ledger, &index, &cmc, now_nanos, now_secs).await;
+    if ok {
+        attempt_rescue(now_secs).await;
+    }
     finish_main(now_secs, if ok { None } else { Some(3001) });
 }
 
@@ -73,6 +76,20 @@ fn next_created_at_time_nanos() -> u64 {
 }
 fn advance_created_at_time_nanos() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_created_at_time_nanos = job.next_created_at_time_nanos.saturating_add(1); }); }
 fn increment_failed_topups() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.failed_topups = job.failed_topups.saturating_add(1); }); }
+fn increment_cmc_attempts() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.cmc_attempt_count = Some(job.cmc_attempt_count.unwrap_or(0).saturating_add(1)); }); }
+fn increment_cmc_successes() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.cmc_success_count = Some(job.cmc_success_count.unwrap_or(0).saturating_add(1)); }); }
+fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
+    state::with_state_mut(|st| {
+        if let Some(job) = st.active_payout_job.as_mut() {
+            if job.observed_oldest_tx_id.is_none() {
+                job.observed_oldest_tx_id = resp.oldest_tx_id;
+            }
+            if let Some(latest) = resp.transactions.last().map(|tx| tx.id) {
+                job.observed_latest_tx_id = Some(latest);
+            }
+        }
+    });
+}
 fn set_retry_state(retry: RetryState) -> bool {
     state::with_state_mut(|st| {
         let Some(job) = st.active_payout_job.as_mut() else { return false; };
@@ -91,6 +108,7 @@ fn record_successful_notification(now_secs: u64, pending: &PendingNotification) 
         st.last_successful_transfer_ts = Some(now_secs);
         if let Some(job) = st.active_payout_job.as_mut() { logic::apply_notified_transfer(job, pending); }
     });
+    increment_cmc_successes();
 }
 fn record_transfer_outflow(pending: &PendingNotification) {
     state::with_state_mut(|st| {
@@ -99,7 +117,14 @@ fn record_transfer_outflow(pending: &PendingNotification) {
         }
     });
 }
-fn finalize_completed_job() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.take() { st.last_summary = Some(logic::summary_from_job(&job)); }); }
+fn finalize_completed_job() {
+    state::with_state_mut(|st| {
+        if let Some(job) = st.active_payout_job.take() {
+            apply_job_health_observations(st, &job);
+            st.last_summary = Some(logic::summary_from_job(&job));
+        }
+    });
+}
 fn set_next_start(next_start: Option<u64>) { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_start = next_start; }); }
 
 fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64) -> TransferArg {
@@ -186,6 +211,7 @@ async fn send_and_notify(
 
     let accepted = PendingNotification { block_index, ..pending };
     record_transfer_outflow(&accepted);
+    increment_cmc_attempts();
     if cmc.notify_top_up(accepted.beneficiary, accepted.block_index).await.is_err() {
         if allow_retry && schedule_notify_retry(accepted, now_secs) {
             return;
@@ -217,6 +243,7 @@ async fn process_due_retry(ledger: &impl LedgerClient, cmc: &impl CmcClient, now
             ).await;
         }
         RetryStep::Notify => {
+            increment_cmc_attempts();
             if cmc.notify_top_up(retry.pending.beneficiary, retry.pending.block_index).await.is_ok() {
                 record_successful_notification(now_secs, &retry.pending);
             } else {
@@ -235,26 +262,149 @@ fn ensure_active_job(now_nanos: u64, fee_e8s: u64, pot_start_e8s: u64, denom_e8s
     });
 }
 
+async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_balance_e8s: u64) {
+    let first_page = match index
+        .get_account_identifier_transactions(staking_id.to_string(), None, 1)
+        .await
+    {
+        Ok(resp) => resp,
+        Err(_) => return,
+    };
+
+    state::with_state_mut(|st| apply_anchor_observation(st, first_page.oldest_tx_id));
+
+    let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
+    let prev_latest = state::with_state(|st| st.last_observed_latest_tx_id);
+    if prev_balance.is_none() {
+        let latest_tx_id = scan_latest_tx_id(index, staking_id.to_string(), None).await;
+        state::with_state_mut(|st| {
+            st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
+            st.last_observed_latest_tx_id = latest_tx_id;
+            st.consecutive_index_latest_invariant_failures = Some(0);
+        });
+        return;
+    }
+
+    if prev_balance == Some(denom_balance_e8s) {
+        return;
+    }
+
+    let latest_tx_id = scan_latest_tx_id(index, staking_id.to_string(), prev_latest).await;
+    state::with_state_mut(|st| apply_latest_observation(st, denom_balance_e8s, latest_tx_id));
+}
+
+async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: Option<u64>) -> Option<u64> {
+    let mut cursor = start;
+    let mut latest = start;
+    loop {
+        let resp = index
+            .get_account_identifier_transactions(staking_id.clone(), cursor, PAGE_SIZE)
+            .await
+            .ok()?;
+        let page_latest = resp.transactions.last().map(|tx| tx.id);
+        if page_latest.is_none() {
+            return latest;
+        }
+        latest = page_latest;
+        cursor = page_latest;
+        if resp.transactions.len() < PAGE_SIZE as usize {
+            return latest;
+        }
+    }
+}
+
+fn apply_anchor_observation(st: &mut state::State, observed_oldest: Option<u64>) {
+    let Some(expected_first) = st.config.expected_first_staking_tx_id else { return; };
+    if observed_oldest == Some(expected_first) {
+        st.consecutive_index_anchor_failures = Some(0);
+        return;
+    }
+    st.consecutive_index_anchor_failures = Some(st.consecutive_index_anchor_failures.unwrap_or(0).saturating_add(1));
+    if st.consecutive_index_anchor_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+        st.forced_rescue_reason = Some(ForcedRescueReason::IndexAnchorMissing);
+    }
+}
+
+fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, latest_tx_id: Option<u64>) {
+    match (st.last_observed_staking_balance_e8s, st.last_observed_latest_tx_id) {
+        (None, _) => {
+            st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
+            st.last_observed_latest_tx_id = latest_tx_id;
+            st.consecutive_index_latest_invariant_failures = Some(0);
+        }
+        (Some(prev_balance), _prev_latest_tx_id) if prev_balance == denom_balance_e8s => {}
+        (Some(_), prev_latest_tx_id) => {
+            let latest_changed = match (prev_latest_tx_id, latest_tx_id) {
+                (Some(prev), Some(latest)) => latest != prev,
+                (None, Some(_)) => true,
+                (_, None) => false,
+            };
+            if latest_changed {
+                st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
+                st.last_observed_latest_tx_id = latest_tx_id;
+                st.consecutive_index_latest_invariant_failures = Some(0);
+            } else {
+                st.consecutive_index_latest_invariant_failures = Some(st.consecutive_index_latest_invariant_failures.unwrap_or(0).saturating_add(1));
+                if st.consecutive_index_latest_invariant_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+                    st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestInvariantBroken);
+                }
+            }
+        }
+    }
+}
+
+fn apply_cmc_run_result(st: &mut state::State, attempts: u64, successes: u64) {
+    if attempts == 0 { return; }
+    if successes > 0 {
+        st.consecutive_cmc_zero_success_runs = Some(0);
+        return;
+    }
+    st.consecutive_cmc_zero_success_runs = Some(st.consecutive_cmc_zero_success_runs.unwrap_or(0).saturating_add(1));
+    if st.consecutive_cmc_zero_success_runs.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+        st.forced_rescue_reason = Some(ForcedRescueReason::CmcZeroSuccessRuns);
+    }
+}
+
+fn apply_job_health_observations(st: &mut state::State, job: &ActivePayoutJob) {
+    apply_anchor_observation(st, job.observed_oldest_tx_id);
+    apply_latest_observation(st, job.denom_staking_balance_e8s, job.observed_latest_tx_id);
+    apply_cmc_run_result(st, job.cmc_attempt_count.unwrap_or(0), job.cmc_success_count.unwrap_or(0));
+}
+
+fn maybe_latch_bootstrap_rescue(now_secs: u64) {
+    state::with_state_mut(|st| {
+        if st.forced_rescue_reason.is_none()
+            && policy::bootstrap_rescue_due(now_secs, st.blackhole_armed_since_ts, st.last_successful_transfer_ts)
+        {
+            st.forced_rescue_reason = Some(ForcedRescueReason::BootstrapNoSuccess);
+        }
+    });
+}
+
 async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cmc: &impl CmcClient, now_nanos: u64, now_secs: u64) -> bool {
+    let cfg = state::with_state(|st| st.config.clone());
+    let staking_id = account_identifier_text(&cfg.staking_account);
+
     if state::with_state(|st| st.active_payout_job.is_none()) {
-        let cfg = state::with_state(|st| st.config.clone());
         let fee_e8s = match ledger.fee_e8s().await { Ok(v) => v, Err(_) => return false };
         let pot_start_e8s = match ledger.balance_of_e8s(payout_account()).await { Ok(v) => v, Err(_) => return false };
-        if pot_start_e8s <= fee_e8s { return true; }
         let denom_e8s = match ledger.balance_of_e8s(cfg.staking_account.clone()).await { Ok(v) => v, Err(_) => return false };
-        if denom_e8s == 0 { return true; }
+        if pot_start_e8s <= fee_e8s || denom_e8s == 0 {
+            probe_index_health(index, &staking_id, denom_e8s).await;
+            maybe_latch_bootstrap_rescue(now_secs);
+            return true;
+        }
         ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s);
     }
 
     process_due_retry(ledger, cmc, now_secs).await;
-    let cfg = state::with_state(|st| st.config.clone());
-    let staking_id = account_identifier_text(&cfg.staking_account);
 
     loop {
         let job = state::with_state(|st| st.active_payout_job.clone());
-        let Some(job) = job else { return true; };
+        let Some(job) = job else { maybe_latch_bootstrap_rescue(now_secs); return true; };
         if job.scan_complete {
             if retry_state_present() {
+                maybe_latch_bootstrap_rescue(now_secs);
                 return true;
             }
             let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
@@ -264,14 +414,17 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
                 let to = deposit_account_for_pending(cfg.cmc_canister_id, &pending);
                 send_and_notify(ledger, cmc, pending, to, job.fee_e8s, now_secs, true, None).await;
                 if retry_state_present() {
+                    maybe_latch_bootstrap_rescue(now_secs);
                     return true;
                 }
             }
             finalize_completed_job();
+            maybe_latch_bootstrap_rescue(now_secs);
             return true;
         }
 
         let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await { Ok(v) => v, Err(_) => return false };
+        note_index_page(&resp);
         if resp.transactions.is_empty() {
             state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.scan_complete = true; });
             continue;
@@ -305,20 +458,37 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
     }
 }
 
-async fn rescue_tick() {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
-    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered) = state::with_state(|st| (st.config.blackhole_armed.unwrap_or(false), st.last_successful_transfer_ts, st.config.rescue_controller, st.rescue_triggered));
+async fn attempt_rescue(now_secs: u64) {
+    maybe_latch_bootstrap_rescue(now_secs);
+    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered, forced_reason) = state::with_state(|st| {
+        (
+            st.config.blackhole_armed.unwrap_or(false),
+            st.last_successful_transfer_ts,
+            st.config.rescue_controller,
+            st.rescue_triggered,
+            st.forced_rescue_reason.clone(),
+        )
+    });
     if !blackhole_armed { return; }
     let self_id = ic_cdk::api::canister_self();
-    let desired_opt = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller);
-    let Some(mut desired) = desired_opt else { return; };
+    let mut desired = if forced_reason.is_some() {
+        vec![rescue_controller, self_id]
+    } else {
+        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller) else { return; };
+        desired
+    };
     desired.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
     desired.dedup();
     let rescue_active = desired.iter().any(|p| *p == rescue_controller);
     if !rescue_active && !rescue_triggered { return; }
     let arg = UpdateSettingsArgs { canister_id: self_id, settings: CanisterSettings { controllers: Some(desired), ..Default::default() } };
     if update_settings(&arg).await.is_err() { log_error(3101); return; }
-    state::with_state_mut(|st| { st.last_rescue_check_ts = now_secs; st.rescue_triggered = true; });
+    state::with_state_mut(|st| { st.last_rescue_check_ts = now_secs; st.rescue_triggered = rescue_active; });
+}
+
+async fn rescue_tick() {
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    attempt_rescue(now_secs).await;
 }
 
 #[cfg(feature = "debug_api")]

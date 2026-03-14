@@ -20,12 +20,18 @@ type InitArgs = record {
   rescue_interval_seconds : opt nat64;
 };
 
+type ForcedRescueReason = variant {
+  BootstrapNoSuccess;
+};
+
 type DebugState = record {
   prev_age_seconds : nat64;
   last_successful_transfer_ts : opt nat64;
   last_rescue_check_ts : nat64;
   rescue_triggered : bool;
   payout_plan_present : bool;
+  blackhole_armed_since_ts : opt nat64;
+  forced_rescue_reason : opt ForcedRescueReason;
 };
 
 service : (InitArgs) -> {
@@ -37,10 +43,11 @@ service : (InitArgs) -> {
   debug_set_prev_age_seconds : (nat64) -> ();
   debug_set_last_successful_transfer_ts : (opt nat64) -> ();
   debug_set_last_rescue_check_ts : (nat64) -> ();
+  debug_set_blackhole_armed_since_ts : (opt nat64) -> ();
+  debug_clear_forced_rescue : () -> ();
   debug_set_pause_after_planning : (bool) -> ();
   debug_set_trap_after_successful_transfers : (opt nat32) -> ();
   debug_set_simulate_low_cycles : (bool) -> ();
   debug_set_skip_maturity_initiation : (bool) -> ();
   debug_build_payout_plan : () -> (bool);
 }
-

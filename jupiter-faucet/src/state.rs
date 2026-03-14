@@ -11,6 +11,7 @@ pub struct Config {
     pub cmc_canister_id: Principal,
     pub rescue_controller: Principal,
     pub blackhole_armed: Option<bool>,
+    pub expected_first_staking_tx_id: Option<u64>,
     pub main_interval_seconds: u64,
     pub rescue_interval_seconds: u64,
     pub min_tx_e8s: u64,
@@ -47,6 +48,14 @@ pub struct RetryState {
     pub retry_at_secs: u64,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum ForcedRescueReason {
+    BootstrapNoSuccess,
+    IndexAnchorMissing,
+    IndexLatestInvariantBroken,
+    CmcZeroSuccessRuns,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     pub pot_start_e8s: u64,
@@ -81,6 +90,10 @@ pub struct ActivePayoutJob {
     pub remainder_to_self_e8s: u64,
     pub next_created_at_time_nanos: u64,
     pub retry_state: Option<RetryState>,
+    pub observed_oldest_tx_id: Option<u64>,
+    pub observed_latest_tx_id: Option<u64>,
+    pub cmc_attempt_count: Option<u64>,
+    pub cmc_success_count: Option<u64>,
 }
 
 impl ActivePayoutJob {
@@ -103,6 +116,10 @@ impl ActivePayoutJob {
             remainder_to_self_e8s: 0,
             next_created_at_time_nanos: created_at_time_nanos,
             retry_state: None,
+            observed_oldest_tx_id: None,
+            observed_latest_tx_id: None,
+            cmc_attempt_count: Some(0),
+            cmc_success_count: Some(0),
         }
     }
 }
@@ -114,6 +131,13 @@ pub struct State {
     pub last_successful_transfer_ts: Option<u64>,
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
+    pub blackhole_armed_since_ts: Option<u64>,
+    pub forced_rescue_reason: Option<ForcedRescueReason>,
+    pub consecutive_index_anchor_failures: Option<u8>,
+    pub consecutive_index_latest_invariant_failures: Option<u8>,
+    pub consecutive_cmc_zero_success_runs: Option<u8>,
+    pub last_observed_staking_balance_e8s: Option<u64>,
+    pub last_observed_latest_tx_id: Option<u64>,
     pub main_lock_expires_at_ts: Option<u64>,
     pub payout_nonce: u64,
     pub active_payout_job: Option<ActivePayoutJob>,
@@ -122,12 +146,20 @@ pub struct State {
 
 impl State {
     pub fn new(config: Config, now_secs: u64) -> Self {
+        let blackhole_armed_since_ts = config.blackhole_armed.unwrap_or(false).then_some(now_secs);
         Self {
             config,
             last_summary: None,
             last_successful_transfer_ts: None,
             last_rescue_check_ts: 0,
             rescue_triggered: false,
+            blackhole_armed_since_ts,
+            forced_rescue_reason: None,
+            consecutive_index_anchor_failures: Some(0),
+            consecutive_index_latest_invariant_failures: Some(0),
+            consecutive_cmc_zero_success_runs: Some(0),
+            last_observed_staking_balance_e8s: None,
+            last_observed_latest_tx_id: None,
             main_lock_expires_at_ts: Some(0),
             payout_nonce: 1,
             active_payout_job: None,

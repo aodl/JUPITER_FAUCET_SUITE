@@ -256,6 +256,14 @@ struct TransferRecord {
     result: String,
 }
 
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum ForcedRescueReason {
+    BootstrapNoSuccess,
+    IndexAnchorMissing,
+    IndexLatestInvariantBroken,
+    CmcZeroSuccessRuns,
+}
+
 #[derive(Debug, CandidType, Deserialize)]
 struct DebugState {
     prev_age_seconds: u64,
@@ -263,6 +271,8 @@ struct DebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     payout_plan_present: bool,
+    blackhole_armed_since_ts: Option<u64>,
+    forced_rescue_reason: Option<ForcedRescueReason>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -279,6 +289,14 @@ struct FaucetDebugState {
     active_payout_job_present: bool,
     retry_state_present: bool,
     last_summary_present: bool,
+    blackhole_armed_since_ts: Option<u64>,
+    forced_rescue_reason: Option<ForcedRescueReason>,
+    consecutive_index_anchor_failures: u8,
+    consecutive_index_latest_invariant_failures: u8,
+    consecutive_cmc_zero_success_runs: u8,
+    last_observed_staking_balance_e8s: Option<u64>,
+    last_observed_latest_tx_id: Option<u64>,
+    expected_first_staking_tx_id: Option<u64>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -484,6 +502,7 @@ fn cmd_setup() -> Result<()> {
             cmc_canister_id = opt principal "{cmc_id}";
             rescue_controller = principal "{faucet_rescue}";
             blackhole_armed = opt false;
+            expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
             min_tx_e8s = opt (10000000:nat64);

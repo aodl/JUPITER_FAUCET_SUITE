@@ -29,8 +29,8 @@ pub enum TransferStatus {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct PlannedTransfer {
     pub to: Account,
-    pub gross_share_e8s: u64, // includes its own fee; used for accounting/logging
-    pub amount_e8s: u64,      // net amount in TransferArg.amount (gross - fee)
+    pub gross_share_e8s: u64,
+    pub amount_e8s: u64,
     pub created_at_time_nanos: u64,
     pub memo: Vec<u8>,
     pub status: TransferStatus,
@@ -44,44 +44,41 @@ pub struct PayoutPlan {
     pub transfers: Vec<PlannedTransfer>,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum ForcedRescueReason {
+    BootstrapNoSuccess,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct State {
     pub config: Config,
-
-    /// Stored at initiation time; used to split staging balance next cycle.
     pub prev_age_seconds: u64,
-
-    /// Updated on Ok/Duplicate transfers.
     pub last_successful_transfer_ts: Option<u64>,
-
-    /// Timestamp of the last successful controller update performed by rescue logic.
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
-
-    /// Expiring lease used to suppress overlapping main ticks without risking a
-    /// permanent wedge if execution stops after an await boundary.
+    pub blackhole_armed_since_ts: Option<u64>,
+    pub forced_rescue_reason: Option<ForcedRescueReason>,
     pub main_lock_expires_at_ts: Option<u64>,
-
-    /// Deterministic, persisted payout plan for idempotent retries.
     pub payout_nonce: u64,
     pub payout_plan: Option<PayoutPlan>,
-
-    /// Last time main tick ran successfully (for duplicate timer calls).
     pub last_main_run_ts: u64,
 }
 
 impl State {
     pub fn new(config: Config, now_secs: u64) -> Self {
+        let blackhole_armed_since_ts = config.blackhole_armed.unwrap_or(false).then_some(now_secs);
         Self {
             config,
             prev_age_seconds: 0,
             last_successful_transfer_ts: None,
             last_rescue_check_ts: 0,
             rescue_triggered: false,
+            blackhole_armed_since_ts,
+            forced_rescue_reason: None,
             main_lock_expires_at_ts: Some(0),
             payout_nonce: 1,
             payout_plan: None,
-            last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60), // far in past
+            last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
         }
     }
 }
