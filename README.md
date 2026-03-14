@@ -1,6 +1,8 @@
 # Jupiter Faucet Suite
 
-Jupiter Faucet Suite is a set of Internet Computer canisters that turns the recurring ICP output of one NNS neuron into two long-lived on-chain flows:
+Jupiter Faucet is a perpetual cycles top-up protocol for the Internet Computer - built to help canister smart contracts keep running indefinitely. The Internet Computer is designed for tamperproof, "unstoppable" on-chain services; Jupiter Faucet focuses on the practical part: making sure canisters don’t run out of cycles, even if nobody is maintaining the project.
+
+This repository contains the canisters that implement that protocol. In production, the suite turns the recurring ICP output of one NNS neuron into two long-lived on-chain flows:
 
 1. a **cycles top-up flow** for participating canisters, handled by `jupiter-faucet`
 2. an **age-bonus ICP flow** for Jupiter ecosystem rewards and NNS-aligned support, handled by `jupiter-disburser`
@@ -40,12 +42,11 @@ These production canister IDs are recorded in `canister_ids.json`:
 - `jupiter-faucet` — `acjuz-liaaa-aaaar-qb4qq-cai`
 - `jupiter-lifeline` — `afisn-gqaaa-aaaar-qb4qa-cai`
 - `jupiter-sns-rewards` — `alk7f-5aaaa-aaaar-qb4ra-cai`
+- `jupiter-faucet-frontend` — `gvey7-gyaaa-aaaar-qb4fq-cai`
 
 These core canisters are deployed on the Fiduciary subnet:
 
 - `pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae`
-
-`jupiter-faucet-frontend` exists in the workspace as a placeholder canister, but its production ID is not recorded in `canister_ids.json`.
 
 ## Canister map
 
@@ -103,7 +104,10 @@ A few components are intentionally minimal today:
 
 Those can largely be ignored when trying to understand the live operational path.
 
-One important repo gap is that the committed mainnet install arguments are only provided for `jupiter-disburser` (`jupiter-disburser/mainnet-install-args.did`). The faucet’s install-time configuration schema is documented in its README, but a production `mainnet-install-args.did` for `jupiter-faucet` is not currently committed in this repo.
+Committed production init-arg files now live alongside the operational canisters:
+
+- `jupiter-disburser/mainnet-install-args.did`
+- `jupiter-faucet/mainnet-install-args.did`
 
 ## Repository layout
 

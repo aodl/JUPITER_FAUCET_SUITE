@@ -1,10 +1,15 @@
 # Jupiter Faucet Frontend
 
-`jupiter-faucet-frontend` is a placeholder frontend canister in the Jupiter Faucet Suite.
+`jupiter-faucet-frontend` is the frontend/assets canister slot in the Jupiter Faucet Suite.
 
 Its present-day purpose is simply to reserve the deployment slot for the eventual public-facing asset canister.
 
 See the suite overview in [`../README.md`](../README.md).
+
+## Current mainnet canister recorded in this repo
+
+- canister ID: `gvey7-gyaaa-aaaar-qb4fq-cai`
+- subnet: Fiduciary (`pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae`)
 
 ## Current implementation
 

@@ -10,5 +10,8 @@
   },
   "jupiter_sns_rewards": {
     "ic": "alk7f-5aaaa-aaaar-qb4ra-cai"
+  },
+  "jupiter_faucet_frontend": {
+    "ic": "gvey7-gyaaa-aaaar-qb4fq-cai"
   }
 }

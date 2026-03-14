@@ -241,30 +241,24 @@ Init args:
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `0.1 ICP`)
 
-Example init-arg template:
+A copy-pasteable mainnet install args file is committed at:
 
-```candid
-(
-  record {
-    staking_account = record {
-      owner = principal "aaaaa-aa";
-      subaccount = null;
-    };
-    payout_subaccount = null;
-    ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
-    index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
-    cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
-    rescue_controller = principal "aaaaa-aa";
-    blackhole_armed = opt false;
-    expected_first_staking_tx_id = null;
-    main_interval_seconds = opt 604800;
-    rescue_interval_seconds = opt 86400;
-    min_tx_e8s = opt 10000000;
-  }
-)
-```
+- [`mainnet-install-args.did`](mainnet-install-args.did)
 
-Replace the placeholder principals with the real staking-account owner and rescue-controller values for your deployment. If the staking account or payout account uses subaccounts, switch the relevant `null` field(s) to 32-byte vectors.
+The committed mainnet install args wire the current production constants used by the suite:
+
+- staking account owner: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
+- staking account subaccount bytes:
+  `ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
+- expected first staking tx ID:
+  `390be24d51d6b006afcb9774585d6eb353e7cdbb72bc2b96f0978a5a1aab7ae5`
+- payout account: the faucet canister default account (`acjuz-liaaa-aaaar-qb4qq-cai`, with `payout_subaccount = null`)
+- rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
+- ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
+- index canister: ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
+- CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
+
+The file also commits the production timer defaults and the current `min_tx_e8s` threshold so the repo contains an end-to-end mainnet-value init blob for both operational canisters.
 
 ### Payout account
 
@@ -275,13 +269,7 @@ Outgoing ICP top-ups are sent from:
 
 The current suite wiring from `jupiter-disburser` targets the faucet’s default account.
 
-### About production install args
-
-The repo currently does **not** commit a `jupiter-faucet/mainnet-install-args.did` file.
-
-That means the README is the canonical source here for the install-time schema, but not for a complete production-value argument blob.
-
-## Upgrade-time configuration
+### Upgrade-time configuration
 
 Upgrade args currently support:
 
