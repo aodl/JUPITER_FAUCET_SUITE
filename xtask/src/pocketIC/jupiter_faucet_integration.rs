@@ -217,6 +217,11 @@ enum DebugNotifyBehavior {
     Other { error_code: u64, error_message: String },
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum DebugIndexGetBehavior {
+    Ok,
+    Err(String),
+}
 
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
@@ -319,6 +324,10 @@ impl FaucetEnv {
 
     fn set_ledger_next_error(&self, err: Option<DebugNextTransferError>) -> Result<()> {
         update_one(&self.pic, self.ledger, Principal::anonymous(), "debug_set_next_error", err)
+    }
+
+    fn set_index_get_script(&self, script: Vec<DebugIndexGetBehavior>) -> Result<()> {
+        update_one(&self.pic, self.index, Principal::anonymous(), "debug_set_get_script", script)
     }
 
     fn set_last_successful_transfer_ts(&self, ts: Option<u64>) -> Result<()> {
@@ -898,6 +907,187 @@ fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() ->
         if env.ledger_transfers()?.len() != 1 || env.notifications()?.len() != 1 {
             bail!("expected terminal typed CMC retry path to avoid duplicate transfer and finish with one notification");
         }
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accounting() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+    let faucet_id = env.faucet;
+
+    env.credit_payout(80_000_000)?;
+    env.credit_staking(80_000_000)?;
+    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
+
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if !st1.active_payout_job_present || !st1.retry_state_present {
+        bail!("expected first retriable ledger failure to leave retry state behind");
+    }
+    if !env.ledger_transfers()?.is_empty() || !env.notifications()?.is_empty() {
+        bail!("expected no completed transfer or notification before retry attempt");
+    }
+
+    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
+    env.advance_time_and_tick(61, 20);
+
+    let st2 = env.state()?;
+    if st2.active_payout_job_present || st2.retry_state_present {
+        bail!("expected exhausted retry path to clear in-flight state and complete the job");
+    }
+    let summary = env.summary()?;
+    if summary.failed_topups != 1 || summary.topped_up_count != 0 {
+        bail!(
+            "expected exhausted retry path to record one failed top-up and no beneficiary success, got failed_topups={} topped_up_count={}",
+            summary.failed_topups,
+            summary.topped_up_count
+        );
+    }
+    if summary.remainder_to_self_e8s != 79_990_000 || summary.pot_remaining_e8s != 0 {
+        bail!(
+            "expected exhausted retry path to finish via full remainder-to-self accounting, got remainder_to_self_e8s={} pot_remaining_e8s={}",
+            summary.remainder_to_self_e8s,
+            summary.pot_remaining_e8s
+        );
+    }
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != 1 {
+        bail!("expected only the fallback remainder transfer after retry exhaustion, got {} transfers", transfers.len());
+    }
+    let notes = env.notifications()?;
+    if notes.len() != 1 || notes[0].canister_id != faucet_id {
+        bail!("expected retry exhaustion to end with exactly one self notification, got {notes:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_same_job() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let failed_target = Principal::from_text("aaaaa-aa")?;
+    let success_target = Principal::from_text("2vxsx-fae")?;
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(160_000_000)?;
+    env.append_transfer(80_000_000, Some(failed_target.to_text().into_bytes()))?;
+    env.append_transfer(80_000_000, Some(success_target.to_text().into_bytes()))?;
+    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
+
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if !st1.active_payout_job_present || !st1.retry_state_present {
+        bail!("expected first contribution to leave retry state behind after retriable failure");
+    }
+    let notes_after_first = env.notifications()?;
+    let success_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == success_target).count();
+    let failed_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == failed_target).count();
+    if success_count_after_first != 1 || failed_count_after_first != 0 {
+        bail!(
+            "expected later contribution to succeed while earlier one waits in retry state, got success_count={} failed_count={}",
+            success_count_after_first,
+            failed_count_after_first
+        );
+    }
+
+    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
+    env.advance_time_and_tick(61, 20);
+
+    let st2 = env.state()?;
+    if st2.active_payout_job_present || st2.retry_state_present {
+        bail!("expected job to complete after exhausted retry on first contribution");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.failed_topups != 1 {
+        bail!(
+            "expected one later success and one exhausted retry failure, got topped_up_count={} failed_topups={}",
+            summary.topped_up_count,
+            summary.failed_topups
+        );
+    }
+    let notes = env.notifications()?;
+    let success_count = notes.iter().filter(|n| n.canister_id == success_target).count();
+    let failed_count = notes.iter().filter(|n| n.canister_id == failed_target).count();
+    if success_count != 1 || failed_count != 0 {
+        bail!(
+            "expected only the later contribution to notify successfully, got success_count={} failed_count={}",
+            success_count,
+            failed_count
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let first_target = Principal::from_text("aaaaa-aa")?;
+    let second_target = Principal::from_text("2vxsx-fae")?;
+
+    env.credit_payout(120_000_000)?;
+    env.credit_staking(800_000_000)?;
+    env.append_transfer(200_000_000, Some(first_target.to_text().into_bytes()))?;
+    env.append_repeated_transfer(499, 1_000_000, Some(first_target.to_text().into_bytes()))?;
+    env.append_transfer(101_000_000, Some(second_target.to_text().into_bytes()))?;
+    env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
+        DebugIndexGetBehavior::Ok,
+    ])?;
+
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if !st1.active_payout_job_present || st1.retry_state_present || st1.last_summary_present {
+        bail!("expected mid-scan index failure to preserve partial job state without retry state or final summary");
+    }
+    let notes_after_first = env.notifications()?;
+    let first_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == first_target).count();
+    let second_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == second_target).count();
+    if first_count_after_first != 1 || second_count_after_first != 0 {
+        bail!(
+            "expected first page work to complete before index failure, got first_count={} second_count={}",
+            first_count_after_first,
+            second_count_after_first
+        );
+    }
+
+    env.main_tick()?;
+    let st2 = env.state()?;
+    if st2.active_payout_job_present || st2.retry_state_present || !st2.last_summary_present {
+        bail!("expected second tick to resume and complete the job after index recovery");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 2 || summary.ignored_under_threshold != 499 {
+        bail!(
+            "expected resumed scan to preserve first-page work and finish second page, got topped_up_count={} ignored_under_threshold={}",
+            summary.topped_up_count,
+            summary.ignored_under_threshold
+        );
+    }
+    let notes = env.notifications()?;
+    let first_count = notes.iter().filter(|n| n.canister_id == first_target).count();
+    let second_count = notes.iter().filter(|n| n.canister_id == second_target).count();
+    if first_count != 1 || second_count != 1 {
+        bail!(
+            "expected resumed scan not to duplicate first-page work and to complete the later contribution, got first_count={} second_count={}",
+            first_count,
+            second_count
+        );
+    }
+    let calls = env.index_get_calls()?;
+    if calls.len() < 3 || calls[0].start.is_some() || calls[1].start.is_none() || calls[2].start != calls[1].start {
+        bail!("expected resume after failure to retry the same later-page cursor, got calls {calls:?}");
     }
 
     Ok(())

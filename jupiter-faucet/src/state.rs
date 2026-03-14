@@ -22,7 +22,7 @@ pub enum TransferKind {
     RemainderToSelf,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PendingNotification {
     pub kind: TransferKind,
     pub beneficiary: Principal,

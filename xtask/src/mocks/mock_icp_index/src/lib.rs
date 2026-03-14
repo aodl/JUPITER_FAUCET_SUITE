@@ -82,6 +82,12 @@ pub struct DebugGetCall {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+pub enum DebugGetBehavior {
+    Ok,
+    Err(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum GetResp {
     Ok(GetAccountIdentifierTransactionsResponse),
     Err(GetAccountIdentifierTransactionsError),
@@ -92,6 +98,7 @@ struct State {
     next_id: u64,
     txs: Vec<IndexTransactionWithId>,
     get_calls: Vec<DebugGetCall>,
+    scripted_get_behaviors: Vec<DebugGetBehavior>,
 }
 
 thread_local! {
@@ -105,6 +112,23 @@ fn init() {}
 fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
     ST.with(|s| {
         let mut st = s.borrow_mut();
+
+        let behavior = if st.scripted_get_behaviors.is_empty() {
+            None
+        } else {
+            Some(st.scripted_get_behaviors.remove(0))
+        };
+
+        if let Some(DebugGetBehavior::Err(message)) = behavior {
+            st.get_calls.push(DebugGetCall {
+                account_identifier: args.account_identifier.clone(),
+                start: args.start,
+                max_results: args.max_results,
+                returned_count: 0,
+            });
+            return GetResp::Err(GetAccountIdentifierTransactionsError { message });
+        }
+
         let start_idx = match args.start {
             None => 0,
             Some(last_seen) => st
@@ -211,6 +235,11 @@ fn debug_append_repeated_transfer(to: String, count: u64, amount_e8s: u64, memo:
 #[ic_cdk::query]
 fn debug_get_calls() -> Vec<DebugGetCall> {
     ST.with(|s| s.borrow().get_calls.clone())
+}
+
+#[ic_cdk::update]
+fn debug_set_get_script(behaviors: Vec<DebugGetBehavior>) {
+    ST.with(|s| s.borrow_mut().scripted_get_behaviors = behaviors);
 }
 
 ic_cdk::export_candid!();

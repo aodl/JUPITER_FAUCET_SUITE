@@ -82,6 +82,45 @@ fn label(layer: &str, component: &str, name: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestComponent {
+    Test,
+    Disburser,
+    Faucet,
+    E2e,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestScope {
+    Unit,
+    DfxIntegration,
+    PocketicIntegration,
+    All,
+}
+
+fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
+    use TestComponent::{Disburser, E2e, Faucet, Test};
+    use TestScope::{All, DfxIntegration, PocketicIntegration, Unit};
+
+    match cmd {
+        "disburser_unit" => Some((Disburser, Unit)),
+        "disburser_dfx_integration" => Some((Disburser, DfxIntegration)),
+        "disburser_pocketic_integration" => Some((Disburser, PocketicIntegration)),
+        "disburser_all" => Some((Disburser, All)),
+        "faucet_unit" => Some((Faucet, Unit)),
+        "faucet_dfx_integration" => Some((Faucet, DfxIntegration)),
+        "faucet_pocketic_integration" => Some((Faucet, PocketicIntegration)),
+        "faucet_all" => Some((Faucet, All)),
+        "e2e_all" => Some((E2e, All)),
+        "e2e_pocketic_integration" => Some((E2e, PocketicIntegration)),
+        "test_unit" => Some((Test, Unit)),
+        "test_dfx_integration" => Some((Test, DfxIntegration)),
+        "test_pocketic_integration" => Some((Test, PocketicIntegration)),
+        "test_all" => Some((Test, All)),
+        _ => None,
+    }
+}
+
 fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
     let passed = outcomes.iter().filter(|o| o.passed).count();
     let failed = outcomes.len().saturating_sub(passed);
@@ -122,13 +161,13 @@ fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
     failed == 0
 }
 
+
 fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.is_empty()
         || trimmed.contains("] Cycles: ")
         || (trimmed.contains(" UTC: [Canister ") && trimmed.contains("] "))
 }
-
 
 fn run_dfx(args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("dfx");
@@ -524,7 +563,7 @@ fn assert_controllers_eq(canister: &str, actual: &BTreeSet<String>, expected: &B
     );
 }
 
-fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
     // Shared time base for scenarios that need it.
     let now_secs = (std::time::SystemTime::now()
@@ -859,6 +898,10 @@ fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
+    Ok(())
+}
+
+fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_scenario(outcomes, label("dfx", "faucet", "same beneficiary contributions stay separate (no aggregation)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
@@ -1642,24 +1685,214 @@ fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_test() -> Result<()> {
-    let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
-    run_dfx_scenarios(&mut outcomes)?;
+fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_dfx_disburser_scenarios(outcomes)?;
+    run_dfx_faucet_scenarios(outcomes)?;
+    Ok(())
+}
+
+
+fn finish_outcomes(outcomes: Vec<ScenarioOutcome>, failure_message: &str, success_message: &str) -> Result<()> {
     let ok = print_summary(&outcomes);
     if ok {
+        eprintln!("{GREEN}{BOLD}✅ {success_message}{RESET}\n");
         Ok(())
     } else {
-        bail!("one or more dfx integration scenarios failed")
+        bail!("{failure_message}")
     }
 }
 
-fn cmd_test_all() -> Result<()> {
-    cmd_test_all_impl(true)
+fn run_unit_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "disburser",
+        "cargo",
+        &["test", "-p", "jupiter-disburser", "--lib", "--", "--color", "always"],
+        &root,
+        &[],
+    )
 }
 
-fn cmd_test_all_fast() -> Result<()> {
-    // Same as test-all, but skips PocketIC integration/e2e (useful for quick iterations).
-    cmd_test_all_impl(false)
+fn run_unit_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "faucet",
+        "cargo",
+        &["test", "-p", "jupiter-faucet", "--lib", "--", "--color", "always"],
+        &root,
+        &[],
+    )
+}
+
+fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    run_cargo_test_suite(
+        outcomes,
+        "pocketic",
+        "disburser",
+        "cargo",
+        &["test", "-p", "jupiter-disburser", "--test", "jupiter_disburser_integration", "--", "--ignored", "--color", "always"],
+        &root,
+        &common_env,
+    )
+}
+
+fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    run_cargo_test_suite(
+        outcomes,
+        "pocketic",
+        "faucet",
+        "cargo",
+        &["test", "-p", "jupiter-faucet", "--test", "jupiter_faucet_integration", "--", "--ignored", "--color", "always"],
+        &root,
+        &common_env,
+    )
+}
+
+fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    run_cargo_test_suite(
+        outcomes,
+        "e2e",
+        "",
+        "cargo",
+        &["test", "-p", "jupiter-faucet", "--test", "e2e", "--", "--ignored", "--color", "always"],
+        &root,
+        &common_env,
+    )
+}
+
+fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestComponent) -> Result<()> {
+    match component {
+        TestComponent::Test => {
+            run_unit_disburser_suite(outcomes)?;
+            run_unit_faucet_suite(outcomes)?;
+        }
+        TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
+        TestComponent::Faucet => run_unit_faucet_suite(outcomes)?,
+        TestComponent::E2e => bail!("e2e_unit is not supported; use e2e_all"),
+    }
+    Ok(())
+}
+
+fn run_dfx_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestComponent) -> Result<()> {
+    match component {
+        TestComponent::Test => run_dfx_scenarios(outcomes)?,
+        TestComponent::Disburser => run_dfx_disburser_scenarios(outcomes)?,
+        TestComponent::Faucet => run_dfx_faucet_scenarios(outcomes)?,
+        TestComponent::E2e => bail!("e2e_dfx_integration is not supported; use e2e_all"),
+    }
+    Ok(())
+}
+
+fn run_pocketic_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestComponent) -> Result<()> {
+    match component {
+        TestComponent::Test => {
+            run_pocketic_disburser_suite(outcomes)?;
+            run_pocketic_faucet_suite(outcomes)?;
+            run_e2e_suite(outcomes)?;
+        }
+        TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,
+        TestComponent::Faucet => run_pocketic_faucet_suite(outcomes)?,
+        TestComponent::E2e => run_e2e_suite(outcomes)?,
+    }
+    Ok(())
+}
+
+fn scoped_command_needs_dfx_env(component: TestComponent, scope: TestScope) -> bool {
+    match scope {
+        TestScope::DfxIntegration => true,
+        TestScope::All => component != TestComponent::E2e,
+        TestScope::Unit | TestScope::PocketicIntegration => false,
+    }
+}
+
+fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> {
+    let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
+
+    match scope {
+        TestScope::Unit => run_unit_component(&mut outcomes, component)?,
+        TestScope::DfxIntegration => run_dfx_component(&mut outcomes, component)?,
+        TestScope::PocketicIntegration => run_pocketic_component(&mut outcomes, component)?,
+        TestScope::All => match component {
+            TestComponent::Test => {
+                run_dfx_component(&mut outcomes, component)?;
+                run_unit_component(&mut outcomes, component)?;
+                run_pocketic_component(&mut outcomes, component)?;
+            }
+            TestComponent::Disburser | TestComponent::Faucet => {
+                run_unit_component(&mut outcomes, component)?;
+                run_dfx_component(&mut outcomes, component)?;
+                run_pocketic_component(&mut outcomes, component)?;
+            }
+            TestComponent::E2e => run_e2e_suite(&mut outcomes)?,
+        },
+    }
+
+    let failure_message = match (component, scope) {
+        (TestComponent::Test, TestScope::Unit) => "one or more unit test suites failed",
+        (TestComponent::Test, TestScope::DfxIntegration) => "one or more dfx integration scenario suites failed",
+        (TestComponent::Test, TestScope::PocketicIntegration) => "one or more pocketic integration or e2e suites failed",
+        (TestComponent::Test, TestScope::All) => "one or more tests failed across dfx, unit, pocketic, or e2e layers",
+        (TestComponent::Disburser, TestScope::Unit) => "the disburser unit test suite failed",
+        (TestComponent::Disburser, TestScope::DfxIntegration) => "one or more disburser dfx integration scenarios failed",
+        (TestComponent::Disburser, TestScope::PocketicIntegration) => "the disburser pocketic integration suite failed",
+        (TestComponent::Disburser, TestScope::All) => "one or more disburser test suites failed",
+        (TestComponent::Faucet, TestScope::Unit) => "the faucet unit test suite failed",
+        (TestComponent::Faucet, TestScope::DfxIntegration) => "one or more faucet dfx integration scenarios failed",
+        (TestComponent::Faucet, TestScope::PocketicIntegration) => "the faucet pocketic integration suite failed",
+        (TestComponent::Faucet, TestScope::All) => "one or more faucet test suites failed",
+        (TestComponent::E2e, TestScope::PocketicIntegration) | (TestComponent::E2e, TestScope::All) => "the e2e suite failed",
+        _ => "the selected xtask command failed",
+    };
+
+    let success_message = match (component, scope) {
+        (TestComponent::Test, TestScope::Unit) => "test_unit complete",
+        (TestComponent::Test, TestScope::DfxIntegration) => "test_dfx_integration complete",
+        (TestComponent::Test, TestScope::PocketicIntegration) => "test_pocketic_integration complete",
+        (TestComponent::Test, TestScope::All) => "test_all complete",
+        (TestComponent::Disburser, TestScope::Unit) => "disburser_unit complete",
+        (TestComponent::Disburser, TestScope::DfxIntegration) => "disburser_dfx_integration complete",
+        (TestComponent::Disburser, TestScope::PocketicIntegration) => "disburser_pocketic_integration complete",
+        (TestComponent::Disburser, TestScope::All) => "disburser_all complete",
+        (TestComponent::Faucet, TestScope::Unit) => "faucet_unit complete",
+        (TestComponent::Faucet, TestScope::DfxIntegration) => "faucet_dfx_integration complete",
+        (TestComponent::Faucet, TestScope::PocketicIntegration) => "faucet_pocketic_integration complete",
+        (TestComponent::Faucet, TestScope::All) => "faucet_all complete",
+        (TestComponent::E2e, TestScope::PocketicIntegration) => "e2e_pocketic_integration complete",
+        (TestComponent::E2e, TestScope::All) => "e2e_all complete",
+        _ => "xtask command complete",
+    };
+
+    finish_outcomes(outcomes, failure_message, success_message)
+}
+
+fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
+    if !scoped_command_needs_dfx_env(component, scope) {
+        return run_scoped_command(component, scope);
+    }
+
+    cmd_setup()?;
+    let run_res = run_scoped_command(component, scope);
+    let teardown_res = cmd_teardown();
+
+    match (run_res, teardown_res) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(run_err), Ok(())) => Err(run_err),
+        (Ok(()), Err(teardown_err)) => Err(teardown_err),
+        (Err(run_err), Err(teardown_err)) => {
+            eprintln!("⚠️ teardown also failed after scoped dfx run: {teardown_err:#}");
+            Err(run_err)
+        }
+    }
 }
 
 
@@ -1885,131 +2118,43 @@ fn run_cargo_test_suite(
     Ok(())
 }
 
-fn cmd_test_all_impl(include_pocketic: bool) -> Result<()> {
-    let root = repo_root();
-    let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
 
-    run_dfx_scenarios(&mut outcomes)?;
-
-    run_cargo_test_suite(
-        &mut outcomes,
-        "unit",
-        "disburser",
-        "cargo",
-        &["test", "-p", "jupiter-disburser", "--lib", "--", "--color", "always"],
-        &root,
-        &[],
-    )?;
-
-    run_cargo_test_suite(
-        &mut outcomes,
-        "unit",
-        "faucet",
-        "cargo",
-        &["test", "-p", "jupiter-faucet", "--lib", "--", "--color", "always"],
-        &root,
-        &[],
-    )?;
-
-    if include_pocketic {
-        let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
-
-        run_cargo_test_suite(
-            &mut outcomes,
-            "pocketic",
-            "disburser",
-            "cargo",
-            &["test", "-p", "jupiter-disburser", "--test", "jupiter_disburser_integration", "--", "--ignored", "--color", "always"],
-            &root,
-            &common_env,
-        )?;
-
-        run_cargo_test_suite(
-            &mut outcomes,
-            "pocketic",
-            "faucet",
-            "cargo",
-            &["test", "-p", "jupiter-faucet", "--test", "jupiter_faucet_integration", "--", "--ignored", "--color", "always"],
-            &root,
-            &common_env,
-        )?;
-
-        run_cargo_test_suite(
-            &mut outcomes,
-            "e2e",
-            "",
-            "cargo",
-            &["test", "-p", "jupiter-faucet", "--test", "e2e", "--", "--ignored", "--color", "always"],
-            &root,
-            &common_env,
-        )?;
-
-    }
-
-    let ok = print_summary(&outcomes);
-    if ok {
-        eprintln!("{GREEN}{BOLD}✅ test-all complete{RESET}
-");
-        Ok(())
-    } else {
-        bail!("one or more tests failed across dfx, unit, pocketic, or e2e layers")
-    }
-}
-
-fn cmd_setup_test_all_teardown() -> Result<()> {
-    cmd_setup()?;
-
-    let test_res = cmd_test_all(); // includes PocketIC integration + end-to-end
-    let td_res = cmd_teardown();
-
-    match (test_res, td_res) {
-        (Ok(_), Ok(_)) => Ok(()),
-        (Err(test_err), Ok(_)) => Err(test_err),
-        (Ok(_), Err(td_err)) => Err(td_err),
-        (Err(test_err), Err(td_err)) => {
-            eprintln!("⚠️ teardown also failed after test error: {td_err:?}");
-            Err(test_err)
-        }
-    }
-}
-
-fn cmd_setup_test_teardown() -> Result<()> {
-    cmd_setup()?;
-    // Fast path: dfx/mock integration scenarios + unit tests (skips PocketIC integration/e2e)
-    let test = cmd_test_all_fast();
-    let td = cmd_teardown();
-    if let Err(e) = td {
-        eprintln!("⚠️ teardown error: {e:?}");
-    }
-    test
-}
 
 fn main() -> Result<()> {
     let cmd = env::args().nth(1).unwrap_or_else(|| "help".to_string());
-	match cmd.as_str() {
-		"setup" => cmd_setup(),
-		"teardown" => cmd_teardown(),
-		"test" => cmd_test(), // integration scenarios only
-		"test-all" => cmd_test_all(), // dfx/mock integration + unit + PocketIC integration/e2e
-		"test-all-fast" => cmd_test_all_fast(), // dfx/mock integration + unit (no PocketIC)
-		"setup_test_teardown" => cmd_setup_test_teardown(),
-		"setup_test_all_teardown" => cmd_setup_test_all_teardown(),
-		_ => {
-				eprintln!(
-					"Usage: cargo run -p xtask -- <command>\n\n\
-					 Commands:\n\
-					 - setup\n\
-					 - test                  (integration scenarios)\n\
-					 - test-all              (dfx/mock integration + unit + PocketIC integration/e2e)\n\
-					 - test-all-fast         (dfx/mock integration + unit; skips PocketIC)\n\
-					 - teardown\n\
-					 - setup_test_teardown        (setup + test-all-fast + teardown)\n\
-					 - setup_test_all_teardown    (setup + test-all + teardown)\n"
-				);
-			Ok(())
-		}
-	}
+    if let Some((component, scope)) = parse_scoped_command(&cmd) {
+        return cmd_scoped(component, scope);
+    }
+
+    match cmd.as_str() {
+        "setup" => cmd_setup(),
+        "teardown" => cmd_teardown(),
+        _ => {
+            eprintln!(
+                "Usage: cargo run -p xtask -- <command>
+
+                 Utility commands:
+                 - setup
+                 - teardown
+
+                 Scoped commands:
+                 - disburser_unit
+                 - disburser_dfx_integration
+                 - disburser_pocketic_integration
+                 - disburser_all
+                 - faucet_unit
+                 - faucet_dfx_integration
+                 - faucet_pocketic_integration
+                 - faucet_all
+                 - e2e_all
+                 - e2e_pocketic_integration
+                 - test_unit
+                 - test_dfx_integration
+                 - test_pocketic_integration
+                 - test_all
+"
+            );
+            Ok(())
+        }
+    }
 }
-
-
-

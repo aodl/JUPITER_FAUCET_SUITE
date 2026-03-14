@@ -109,13 +109,6 @@ fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
     failed == 0
 }
 
-fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.is_empty()
-        || trimmed.contains("] Cycles: ")
-        || (trimmed.contains(" UTC: [Canister ") && trimmed.contains("] "))
-}
-
 fn run_host_in_dir(cmd: &str, args: &[&str], workdir: &str) -> Result<()> {
     eprintln!(
         "▶ {} {} {}",
@@ -136,6 +129,13 @@ fn run_host_in_dir(cmd: &str, args: &[&str], workdir: &str) -> Result<()> {
         bail!("{cmd} {:?} failed with status {:?}", args, status);
     }
     Ok(())
+}
+
+fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.is_empty()
+        || trimmed.contains("] Cycles: ")
+        || (trimmed.contains(" UTC: [Canister ") && trimmed.contains("] "))
 }
 
 fn run_dfx(args: &[&str]) -> Result<String> {

@@ -32,10 +32,12 @@ type DebugGetCall = record {
   max_results : nat64;
   returned_count : nat64;
 };
+type DebugGetBehavior = variant { Ok; Err : text };
 service : {
   get_account_identifier_transactions : (GetArgs) -> (GetResp);
   debug_reset : () -> ();
   debug_append_transfer : (text, nat64, opt vec nat8) -> (nat64);
   debug_append_repeated_transfer : (text, nat64, nat64, opt vec nat8) -> (nat64);
   debug_get_calls : () -> (vec DebugGetCall) query;
+  debug_set_get_script : (vec DebugGetBehavior) -> ();
 };

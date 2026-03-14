@@ -73,7 +73,9 @@ pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &Pend
 }
 
 pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
-    job.retry_state = None;
+    if job.retry_state.as_ref().map(|retry| retry.pending == *pending).unwrap_or(false) {
+        job.retry_state = None;
+    }
     match pending.kind {
         TransferKind::Beneficiary => {
             job.topped_up_count = job.topped_up_count.saturating_add(1);
@@ -308,6 +310,42 @@ mod tests {
         assert_eq!(job.next_start, Some(42));
         assert_eq!(job.topped_up_count, 1);
         assert_eq!(job.topped_up_sum_e8s, 29_990_000);
+    }
+
+    #[test]
+    fn apply_notified_transfer_does_not_clear_unrelated_retry_state() {
+        let beneficiary = principal("aaaaa-aa");
+        let other_beneficiary = principal("2vxsx-fae");
+        let mut job = ActivePayoutJob::new(8, 10_000, 100_000_000, 200_000_000, 1_000);
+        let retry_pending = PendingNotification {
+            kind: TransferKind::Beneficiary,
+            beneficiary,
+            gross_share_e8s: 30_000_000,
+            amount_e8s: 29_990_000,
+            block_index: 55,
+            next_start: Some(42),
+        };
+        let later_success = PendingNotification {
+            kind: TransferKind::Beneficiary,
+            beneficiary: other_beneficiary,
+            gross_share_e8s: 20_000_000,
+            amount_e8s: 19_990_000,
+            block_index: 56,
+            next_start: Some(43),
+        };
+        job.retry_state = Some(RetryState {
+            step: RetryStep::Transfer,
+            pending: retry_pending.clone(),
+            fee_e8s: 10_000,
+            created_at_time_nanos: 123,
+            retry_at_secs: 100,
+        });
+        record_ledger_accepted_transfer(&mut job, &later_success);
+        apply_notified_transfer(&mut job, &later_success);
+        assert!(job.retry_state.is_some());
+        assert_eq!(job.retry_state.as_ref().map(|r| r.pending.clone()), Some(retry_pending));
+        assert_eq!(job.topped_up_count, 1);
+        assert_eq!(job.topped_up_sum_e8s, 19_990_000);
     }
 
     #[test]
