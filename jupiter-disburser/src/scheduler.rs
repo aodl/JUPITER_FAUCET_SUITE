@@ -100,18 +100,50 @@ fn log_cycles() {
     ic_cdk::println!("Cycles: {}", cycles);
 }
 
-const MAIN_LOCK_LEASE_SECONDS: u64 = 15 * 60;
+struct MainGuard {
+    active: bool,
+}
 
-fn try_acquire_main_lease(now_secs: u64) -> bool {
-    state::with_state_mut(|st| {
-        let expires_at = st.main_lock_expires_at_ts.unwrap_or(0);
-        if expires_at > now_secs {
-            return false;
+impl MainGuard {
+    fn acquire() -> Option<Self> {
+        state::with_state_mut(|st| {
+            if st.main_lock_expires_at_ts.unwrap_or(0) != 0 {
+                return None;
+            }
+            // Stored as 0/1 for stable-state compatibility with existing deployments.
+            st.main_lock_expires_at_ts = Some(1);
+            Some(Self { active: true })
+        })
+    }
+
+    fn release(&mut self) {
+        if !self.active {
+            return;
+        }
+        state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(0));
+        self.active = false;
+    }
+
+    fn finish(mut self, now_secs: u64, err: Option<u32>) {
+        state::with_state_mut(|st| {
+            st.last_main_run_ts = now_secs;
+            st.main_lock_expires_at_ts = Some(0);
+        });
+        self.active = false;
+
+        if let Some(code) = err {
+            log_error(code);
         }
 
-        st.main_lock_expires_at_ts = Some(now_secs.saturating_add(MAIN_LOCK_LEASE_SECONDS));
-        true
-    })
+        // Always print cycles line (the only non-error informational log).
+        log_cycles();
+    }
+}
+
+impl Drop for MainGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 /// Install two independent interval timers:
@@ -137,20 +169,30 @@ pub fn install_timers() {
 async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
+    let cfg = state::with_state(|st| st.config.clone());
+    let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
+    let gov = NnsGovernanceCanister::new(cfg.governance_canister_id);
+    run_main_tick_with_clients(force, now_nanos, now_secs, &cfg, &ledger, &gov).await;
+}
 
-    if !try_acquire_main_lease(now_secs) {
+async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
+    force: bool,
+    now_nanos: u64,
+    now_secs: u64,
+    cfg: &state::Config,
+    ledger: &L,
+    gov: &G,
+) {
+    let Some(guard) = MainGuard::acquire() else {
         return;
-    }
+    };
 
     if !force {
         // duplicate suppression if timer fires twice closely
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
         let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
-            state::with_state_mut(|st| {
-                st.last_main_run_ts = now_secs; // extend suppression window
-                st.main_lock_expires_at_ts = Some(0);
-            });
+            guard.finish(now_secs, None);
             return;
         }
     }
@@ -161,20 +203,16 @@ async fn main_tick(force: bool) {
     if debug_simulate_low_cycles() {
         // Debug-only: simulate low cycles by refusing to perform any external calls.
         err = Some(1004);
-        finish_main(now_secs, err);
+        guard.finish(now_secs, err);
         return;
     }
-
-    let cfg = state::with_state(|st| st.config.clone());
-    let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
-    let gov = NnsGovernanceCanister::new(cfg.governance_canister_id);
 
     // Read neuron info (source of truth for whether a disbursement is still in progress)
     let neuron = match gov.get_full_neuron(cfg.neuron_id).await {
         Ok(n) => n,
         Err(_) => {
             err = Some(1001);
-            finish_main(now_secs, err);
+            guard.finish(now_secs, err);
             return;
         }
     };
@@ -187,10 +225,10 @@ async fn main_tick(force: bool) {
 
     if !in_flight {
         // 1) payout stage
-        let payout_ok = process_payout(&ledger, &cfg, now_nanos, now_secs).await;
+        let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
         if !payout_ok {
             err = Some(1002);
-            finish_main(now_secs, err);
+            guard.finish(now_secs, err);
             return;
         }
 
@@ -200,7 +238,7 @@ async fn main_tick(force: bool) {
             if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
                 log_error(1006);
             }
-            finish_main(now_secs, err);
+            guard.finish(now_secs, err);
             return;
         }
 
@@ -215,7 +253,7 @@ async fn main_tick(force: bool) {
         if !disb_ok {
             // do not update prev_age_seconds if initiation failed
             err = Some(1003);
-            finish_main(now_secs, err);
+            guard.finish(now_secs, err);
             return;
         }
 
@@ -237,21 +275,7 @@ async fn main_tick(force: bool) {
         log_error(1006);
     }
 
-    finish_main(now_secs, err);
-}
-
-fn finish_main(now_secs: u64, err: Option<u32>) {
-    state::with_state_mut(|st| {
-        st.last_main_run_ts = now_secs;
-        st.main_lock_expires_at_ts = Some(0);
-    });
-
-    if let Some(code) = err {
-        log_error(code);
-    }
-
-    // Always print cycles line (the only non-error informational log).
-    log_cycles();
+    guard.finish(now_secs, err);
 }
 
 /// PAYOUT:
@@ -482,6 +506,116 @@ async fn rescue_tick() {
         st.rescue_triggered = rescue_active;
         st.last_rescue_check_ts = now_secs;
     });
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use candid::Principal;
+    use crate::nns_types::{GovernanceError, Neuron};
+    use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
+    use std::future::{pending, Future};
+    use std::pin::Pin;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    struct UnexpectedLedger;
+
+    #[async_trait]
+    impl LedgerClient for UnexpectedLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { panic!("ledger should not be called") }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { panic!("ledger should not be called") }
+        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> { panic!("ledger should not be called") }
+    }
+
+    struct PendingGovernance {
+        get_full_neuron_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl GovernanceClient for PendingGovernance {
+        async fn get_full_neuron(&self, _neuron_id: u64) -> Result<Neuron, GovernanceError> {
+            self.get_full_neuron_calls.fetch_add(1, Ordering::SeqCst);
+            pending::<Result<Neuron, GovernanceError>>().await
+        }
+
+        async fn disburse_maturity_to_account(
+            &self,
+            _neuron_id: u64,
+            _percentage: u32,
+            _to_owner: Principal,
+            _to_subaccount: Option<Vec<u8>>,
+        ) -> Result<Option<u64>, GovernanceError> {
+            panic!("disburse_maturity_to_account should not be called")
+        }
+
+        async fn refresh_voting_power(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
+            panic!("refresh_voting_power should not be called")
+        }
+
+        async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
+            panic!("claim_or_refresh_neuron should not be called")
+        }
+    }
+
+    fn test_config() -> state::Config {
+        state::Config {
+            neuron_id: 1,
+            normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
+            age_bonus_recipient_1: Account { owner: Principal::anonymous(), subaccount: None },
+            age_bonus_recipient_2: Account { owner: Principal::anonymous(), subaccount: None },
+            ledger_canister_id: Principal::anonymous(),
+            governance_canister_id: Principal::anonymous(),
+            rescue_controller: Principal::anonymous(),
+            blackhole_armed: Some(false),
+            main_interval_seconds: 60,
+            rescue_interval_seconds: 60,
+        }
+    }
+
+    fn noop_waker() -> Waker {
+        unsafe fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VTABLE) }
+        unsafe fn wake(_: *const ()) {}
+        unsafe fn wake_by_ref(_: *const ()) {}
+        unsafe fn drop(_: *const ()) {}
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+        unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
+    }
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        future.poll(&mut cx)
+    }
+
+    #[test]
+    fn main_lock_prevents_overlap_after_old_lease_window_passes() {
+        let now_secs = 1_000_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = UnexpectedLedger;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gov = PendingGovernance { get_full_neuron_calls: calls.clone() };
+
+        let first_now_nanos = now_secs * 1_000_000_000;
+        let mut fut1 = Box::pin(run_main_tick_with_clients(false, first_now_nanos, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut1.as_mut()), Poll::Pending));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(1));
+
+        let second_now_secs = now_secs + (15 * 60) + 1;
+        let second_now_nanos = second_now_secs * 1_000_000_000;
+        let mut fut2 = Box::pin(run_main_tick_with_clients(false, second_now_nanos, second_now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut2.as_mut()), Poll::Ready(())));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(1));
+
+        drop(fut1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+    }
 }
 
 #[cfg(feature = "debug_api")]

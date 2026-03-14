@@ -62,8 +62,9 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::unbounded_wait(self.gov_id, "manage_neuron")
+        let resp = Call::bounded_wait(self.gov_id, "manage_neuron")
             .with_arg(req)
+            .change_timeout(60)
             .await
             .map_err(|e| GovernanceError {
                 error_message: format!("call failed: {e:?}"),
@@ -92,8 +93,9 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::unbounded_wait(self.gov_id, "manage_neuron")
+        let resp = Call::bounded_wait(self.gov_id, "manage_neuron")
             .with_arg(req)
+            .change_timeout(60)
             .await
             .map_err(|e| GovernanceError {
                 error_message: format!("call failed: {e:?}"),
@@ -124,8 +126,9 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::unbounded_wait(self.gov_id, "manage_neuron")
+        let resp = Call::bounded_wait(self.gov_id, "manage_neuron")
             .with_arg(req)
+            .change_timeout(60)
             .await
             .map_err(|e| GovernanceError {
                 error_message: format!("call failed: {e:?}"),

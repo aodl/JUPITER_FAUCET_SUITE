@@ -138,6 +138,7 @@ pub struct State {
     pub consecutive_cmc_zero_success_runs: Option<u8>,
     pub last_observed_staking_balance_e8s: Option<u64>,
     pub last_observed_latest_tx_id: Option<u64>,
+    // Legacy field name retained for stable-memory compatibility; used as 0/1 lock state.
     pub main_lock_expires_at_ts: Option<u64>,
     pub payout_nonce: u64,
     pub active_payout_job: Option<ActivePayoutJob>,

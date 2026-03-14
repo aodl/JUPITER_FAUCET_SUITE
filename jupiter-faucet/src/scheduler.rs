@@ -13,7 +13,6 @@ use crate::{logic, policy, state};
 
 thread_local! { static LAST_ERR_CODE: RefCell<Option<u32>> = RefCell::new(None); }
 const PAGE_SIZE: u64 = 500;
-const MAIN_LOCK_LEASE_SECONDS: u64 = 15 * 60;
 const RETRY_DELAY_SECS: u64 = 60;
 
 fn log_error(code: u32) {
@@ -25,13 +24,46 @@ fn log_error(code: u32) {
     });
 }
 fn log_cycles() { let cycles: u128 = ic_cdk::api::canister_cycle_balance(); ic_cdk::println!("Cycles: {}", cycles); }
-fn try_acquire_main_lease(now_secs: u64) -> bool {
-    state::with_state_mut(|st| {
-        let expires_at = st.main_lock_expires_at_ts.unwrap_or(0);
-        if expires_at > now_secs { return false; }
-        st.main_lock_expires_at_ts = Some(now_secs.saturating_add(MAIN_LOCK_LEASE_SECONDS));
-        true
-    })
+
+struct MainGuard {
+    active: bool,
+}
+
+impl MainGuard {
+    fn acquire() -> Option<Self> {
+        state::with_state_mut(|st| {
+            if st.main_lock_expires_at_ts.unwrap_or(0) != 0 {
+                return None;
+            }
+            // Stored as 0/1 for stable-state compatibility with existing deployments.
+            st.main_lock_expires_at_ts = Some(1);
+            Some(Self { active: true })
+        })
+    }
+
+    fn release(&mut self) {
+        if !self.active {
+            return;
+        }
+        state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(0));
+        self.active = false;
+    }
+
+    fn finish(mut self, now_secs: u64, err: Option<u32>) {
+        state::with_state_mut(|st| {
+            st.last_main_run_ts = now_secs;
+            st.main_lock_expires_at_ts = Some(0);
+        });
+        self.active = false;
+        if let Some(code) = err { log_error(code); }
+        log_cycles();
+    }
+}
+
+impl Drop for MainGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 pub fn install_timers() {
@@ -43,27 +75,35 @@ pub fn install_timers() {
 async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
-    if !try_acquire_main_lease(now_secs) { return; }
-    if !force {
-        let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
-        if recently_ran { finish_main(now_secs, None); return; }
-    }
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let index = IcpIndexCanister::new(cfg.index_canister_id);
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
-    let ok = process_payout(&ledger, &index, &cmc, now_nanos, now_secs).await;
+    run_main_tick_with_clients(force, now_nanos, now_secs, &ledger, &index, &cmc).await;
+}
+
+async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClient>(
+    force: bool,
+    now_nanos: u64,
+    now_secs: u64,
+    ledger: &L,
+    index: &I,
+    cmc: &C,
+) {
+    let Some(guard) = MainGuard::acquire() else { return; };
+    if !force {
+        let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
+        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
+        if recently_ran {
+            guard.finish(now_secs, None);
+            return;
+        }
+    }
+    let ok = process_payout(ledger, index, cmc, now_nanos, now_secs).await;
     if ok {
         attempt_rescue(now_secs).await;
     }
-    finish_main(now_secs, if ok { None } else { Some(3001) });
-}
-
-fn finish_main(now_secs: u64, err: Option<u32>) {
-    state::with_state_mut(|st| { st.last_main_run_ts = now_secs; st.main_lock_expires_at_ts = Some(0); });
-    if let Some(code) = err { log_error(code); }
-    log_cycles();
+    guard.finish(now_secs, if ok { None } else { Some(3001) });
 }
 
 fn payout_account() -> Account {
@@ -489,6 +529,129 @@ async fn attempt_rescue(now_secs: u64) {
 async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     attempt_rescue(now_secs).await;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use candid::Principal;
+    use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
+    use std::future::{pending, Future};
+    use std::pin::Pin;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    struct UnexpectedLedger;
+
+    #[async_trait]
+    impl LedgerClient for UnexpectedLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { panic!("ledger should not be called") }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { panic!("ledger should not be called") }
+        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> { panic!("ledger should not be called") }
+    }
+
+    struct UnexpectedIndex;
+
+    #[async_trait]
+    impl IndexClient for UnexpectedIndex {
+        async fn get_account_identifier_transactions(
+            &self,
+            _account_identifier: String,
+            _start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            panic!("index should not be called")
+        }
+    }
+
+    struct PendingCmc {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl CmcClient for PendingCmc {
+        async fn notify_top_up(&self, _canister_id: Principal, _block_index: u64) -> Result<(), crate::clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            pending::<Result<(), crate::clients::ClientError>>().await
+        }
+    }
+
+    fn test_config() -> state::Config {
+        state::Config {
+            staking_account: Account { owner: Principal::anonymous(), subaccount: None },
+            payout_subaccount: None,
+            ledger_canister_id: Principal::anonymous(),
+            index_canister_id: Principal::anonymous(),
+            cmc_canister_id: Principal::anonymous(),
+            rescue_controller: Principal::anonymous(),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: 60,
+            rescue_interval_seconds: 60,
+            min_tx_e8s: 1,
+        }
+    }
+
+    fn noop_waker() -> Waker {
+        unsafe fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VTABLE) }
+        unsafe fn wake(_: *const ()) {}
+        unsafe fn wake_by_ref(_: *const ()) {}
+        unsafe fn drop(_: *const ()) {}
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+        unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
+    }
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        future.poll(&mut cx)
+    }
+
+    #[test]
+    fn main_lock_prevents_overlap_after_old_lease_window_passes() {
+        let now_secs = 1_000_u64;
+        let mut st = state::State::new(test_config(), now_secs);
+        let mut job = ActivePayoutJob::new(1, 10_000, 1_000_000, 2_000_000, now_secs * 1_000_000_000);
+        job.retry_state = Some(RetryState {
+            step: RetryStep::Notify,
+            pending: PendingNotification {
+                kind: TransferKind::Beneficiary,
+                beneficiary: Principal::anonymous(),
+                gross_share_e8s: 100_000,
+                amount_e8s: 90_000,
+                block_index: 7,
+                next_start: None,
+            },
+            fee_e8s: 0,
+            created_at_time_nanos: 0,
+            retry_at_secs: 0,
+        });
+        st.active_payout_job = Some(job);
+        state::set_state(st);
+
+        let ledger = UnexpectedLedger;
+        let index = UnexpectedIndex;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cmc = PendingCmc { calls: calls.clone() };
+
+        let first_now_nanos = now_secs * 1_000_000_000;
+        let mut fut1 = Box::pin(run_main_tick_with_clients(false, first_now_nanos, now_secs, &ledger, &index, &cmc));
+        assert!(matches!(poll_once(fut1.as_mut()), Poll::Pending));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(1));
+
+        let second_now_secs = now_secs + (15 * 60) + 1;
+        let second_now_nanos = second_now_secs * 1_000_000_000;
+        let mut fut2 = Box::pin(run_main_tick_with_clients(false, second_now_nanos, second_now_secs, &ledger, &index, &cmc));
+        assert!(matches!(poll_once(fut2.as_mut()), Poll::Ready(())));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(1));
+
+        drop(fut1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+    }
 }
 
 #[cfg(feature = "debug_api")]

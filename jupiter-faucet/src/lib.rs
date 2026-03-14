@@ -107,6 +107,7 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
             st.consecutive_cmc_zero_success_runs = Some(0);
         }
     }
+    st.main_lock_expires_at_ts = Some(0);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
 }

@@ -86,6 +86,7 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
             st.forced_rescue_reason = None;
         }
     }
+    st.main_lock_expires_at_ts = Some(0);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
 }

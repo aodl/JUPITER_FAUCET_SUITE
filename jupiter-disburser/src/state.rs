@@ -58,6 +58,7 @@ pub struct State {
     pub rescue_triggered: bool,
     pub blackhole_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<ForcedRescueReason>,
+    // Legacy field name retained for stable-memory compatibility; used as 0/1 lock state.
     pub main_lock_expires_at_ts: Option<u64>,
     pub payout_nonce: u64,
     pub payout_plan: Option<PayoutPlan>,

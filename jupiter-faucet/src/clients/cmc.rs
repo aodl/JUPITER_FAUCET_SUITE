@@ -49,8 +49,9 @@ impl CmcClient for CyclesMintingCanister {
             block_index,
         };
 
-        let result: NotifyTopUpResult = Call::unbounded_wait(self.cmc_id, "notify_top_up")
+        let result: NotifyTopUpResult = Call::bounded_wait(self.cmc_id, "notify_top_up")
             .with_arg(&arg)
+            .change_timeout(60)
             .await
             .map_err(|e| ClientError::Call(format!("notify_top_up transport failed: {e:?}")))?
             .candid()
