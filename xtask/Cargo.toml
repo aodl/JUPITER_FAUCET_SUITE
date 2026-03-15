@@ -17,3 +17,15 @@ sha2 = "0.10"
 pocket-ic = "12.0.0"
 serde_bytes = "0.11"
 slog = "2"
+
+[[test]]
+name = "jupiter_faucet_integration"
+path = "src/pocketIC/jupiter_faucet_integration.rs"
+
+[[test]]
+name = "jupiter_disburser_integration"
+path = "src/pocketIC/jupiter_disburser_integration.rs"
+
+[[test]]
+name = "e2e"
+path = "src/pocketIC/e2e.rs"

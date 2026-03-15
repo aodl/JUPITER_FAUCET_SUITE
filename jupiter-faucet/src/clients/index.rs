@@ -25,7 +25,12 @@ pub fn account_identifier_text(account: &Account) -> String {
 pub struct IndexTimeStamp { pub timestamp_nanos: u64 }
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct Tokens { e8s: u64 }
-impl Tokens { pub fn e8s(&self) -> u64 { self.e8s } pub fn new(e8s: u64) -> Self { Self { e8s } } }
+impl Tokens {
+    pub fn e8s(&self) -> u64 { self.e8s }
+
+    #[cfg(test)]
+    pub fn new(e8s: u64) -> Self { Self { e8s } }
+}
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum IndexOperation {

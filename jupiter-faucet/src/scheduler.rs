@@ -189,7 +189,6 @@ fn take_due_retry_state(now_secs: u64) -> Option<RetryState> {
 fn retry_state_due(now_secs: u64) -> bool {
     state::with_state(|st| st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).map(|r| now_secs >= r.retry_at_secs).unwrap_or(false))
 }
-fn retry_state_present() -> bool { state::with_state(|st| st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).is_some()) }
 fn any_retry_present() -> bool {
     state::with_state(|st| {
         st.active_payout_job.as_ref().map(|j| {

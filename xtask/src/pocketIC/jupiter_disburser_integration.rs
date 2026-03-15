@@ -1163,7 +1163,7 @@ fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<P
 
 #[test]
 #[ignore]
-fn e2e_nns_maturity_disbursement_lands_in_staging() -> Result<()> {
+fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -1281,7 +1281,7 @@ fn e2e_nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
+fn full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -1442,7 +1442,7 @@ let st = debug_state(&pic, disburser_canister)?;
 
 #[test]
 #[ignore]
-fn e2e_inflight_idempotency_no_double_initiation() -> Result<()> {
+fn inflight_idempotency_no_double_initiation() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -1526,7 +1526,7 @@ fn e2e_inflight_idempotency_no_double_initiation() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
+fn upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -1623,7 +1623,7 @@ fn e2e_upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
+fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -1802,7 +1802,7 @@ fn e2e_payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_hotkey_only_cannot_disburse_maturity() -> Result<()> {
+fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -1874,7 +1874,7 @@ fn e2e_hotkey_only_cannot_disburse_maturity() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_blackhole_timers_only_progresses_pipeline() -> Result<()> {
+fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -2020,7 +2020,7 @@ fn e2e_blackhole_timers_only_progresses_pipeline() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
+fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -2110,7 +2110,7 @@ fn e2e_rescue_controller_roundtrip_real_management_canister() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
+fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2172,7 +2172,7 @@ fn e2e_blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
+fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
@@ -2253,7 +2253,7 @@ fn e2e_bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
+fn maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2411,7 +2411,7 @@ fn e2e_maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_partial_execution_retry_duplicate_proof() -> Result<()> {
+fn partial_execution_retry_duplicate_proof() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2577,7 +2577,7 @@ fn e2e_partial_execution_retry_duplicate_proof() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_long_downtime_catchup_does_not_double_initiate() -> Result<()> {
+fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2684,7 +2684,7 @@ fn e2e_long_downtime_catchup_does_not_double_initiate() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
+fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2785,7 +2785,7 @@ fn e2e_simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
+fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2876,7 +2876,7 @@ fn e2e_state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()>
 
 #[test]
 #[ignore]
-fn e2e_inflight_idempotent_under_repeated_ticks() -> Result<()> {
+fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2953,7 +2953,7 @@ fn e2e_inflight_idempotent_under_repeated_ticks() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_upgrade_persists_inflight() -> Result<()> {
+fn upgrade_persists_inflight() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -3054,7 +3054,7 @@ fn e2e_upgrade_persists_inflight() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_blackhole_smoke_timers_only() -> Result<()> {
+fn blackhole_smoke_timers_only() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -3137,7 +3137,7 @@ fn e2e_blackhole_smoke_timers_only() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
+fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -3383,7 +3383,7 @@ bonus1_net_e8s: b1_delta,
 
 #[test]
 #[ignore]
-fn e2e_age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
+fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -3712,7 +3712,7 @@ fn e2e_age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
+fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -4118,7 +4118,7 @@ fn e2e_age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
+fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -4181,7 +4181,7 @@ fn e2e_claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
 
 #[test]
 #[ignore]
-fn e2e_refresh_voting_power_after_successful_disbursement_initiation() -> Result<()> {
+fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()> {
     require_ignored_flag()?;
 
     let icp_features = IcpFeatures {
