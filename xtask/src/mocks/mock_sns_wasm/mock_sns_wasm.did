@@ -1,0 +1,7 @@
+type DeployedSns = record { root_canister_id : opt principal };
+type ListDeployedSnsesResponse = record { instances : vec DeployedSns };
+service : {
+  list_deployed_snses : (record {}) -> (ListDeployedSnsesResponse);
+  debug_reset : () -> ();
+  debug_set_roots : (vec principal) -> ();
+}

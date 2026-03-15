@@ -60,6 +60,15 @@ cargo run -p xtask -- faucet_pocketic_integration
 cargo run -p xtask -- faucet_all
 ```
 
+### Historian commands
+
+```bash
+cargo run -p xtask -- historian_unit
+cargo run -p xtask -- historian_dfx_integration
+cargo run -p xtask -- historian_pocketic_integration
+cargo run -p xtask -- historian_all
+```
+
 ### End-to-end commands
 
 ```bash
@@ -181,3 +190,8 @@ But once you need mocks, debug canisters, local replica setup, or the ignored Po
 - suite overview: [`../README.md`](../README.md)
 - disburser details: [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md)
 - faucet details: [`../jupiter-faucet/README.md`](../jupiter-faucet/README.md)
+
+
+SNS coverage for historian is currently mock-based.
+
+**TODO:** Revisit the historian SNS test path once the repo contains the actual Jupiter SNS configuration and local deployment/testing flow.

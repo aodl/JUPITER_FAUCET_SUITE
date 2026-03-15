@@ -5,7 +5,8 @@ Jupiter Faucet is a perpetual cycles top-up protocol for the Internet Computer -
 This repository contains the canisters that implement that protocol. In production, the suite turns the recurring ICP output of one NNS neuron into two long-lived on-chain flows:
 
 1. a **cycles top-up flow** for participating canisters, handled by `jupiter-faucet`
-2. an **age-bonus ICP flow** for Jupiter ecosystem rewards and NNS-aligned support, handled by `jupiter-disburser`
+2. a **historical indexing and observability flow** for tracked canisters, handled by `jupiter-historian`
+3. an **age-bonus ICP flow** for Jupiter ecosystem rewards and NNS-aligned support, handled by `jupiter-disburser`
 
 The design goal is to make the core payout path boring, predictable, and hard to tamper with. The operational canisters are narrowly scoped, intended to be self-managed after rollout, and paired with a separate recovery canister so the normal path can stay effectively immutable without becoming unrecoverable.
 
@@ -60,6 +61,11 @@ Receives the base ICP flow from `jupiter-disburser`, scans a configured staking 
 
 See [`jupiter-faucet/README.md`](jupiter-faucet/README.md).
 
+### `jupiter-historian`
+Indexes staking-account contributions, keeps the distinct memo-derived canister set, records capped contribution history, and records weekly cycles observations from blackhole status and optional SNS root summaries.
+
+See [`jupiter-historian/README.md`](jupiter-historian/README.md).
+
 ### `jupiter-lifeline`
 Minimal recovery canister intended to hold the rescue-controller role for blackholed operational canisters.
 
@@ -102,6 +108,8 @@ A few components are intentionally minimal today:
 - `jupiter-sns-rewards`
 - `jupiter-faucet-frontend`
 
+A follow-up TODO for the new historian module is to revisit mock-based SNS test coverage once the Jupiter Faucet Suite's own SNS configuration is represented in-repo.
+
 Those can largely be ignored when trying to understand the live operational path.
 
 Committed production init-arg files now live alongside the operational canisters:
@@ -116,6 +124,7 @@ Committed production init-arg files now live alongside the operational canisters
 - `jupiter-lifeline/` — recovery canister
 - `jupiter-sns-rewards/` — placeholder rewards canister
 - `jupiter-faucet-frontend/` — placeholder frontend canister
+- `jupiter-historian/` — contribution and cycles-history canister
 - `xtask/` — local orchestration, mocks, integration suites, and end-to-end suites
 - `scripts/` — reproducible build helpers
 - `release-artifacts/` — generated build output

@@ -106,6 +106,61 @@
           "name": "candid:service"
         }
       ]
+    },
+    "jupiter_historian": {
+      "type": "custom",
+      "candid": "jupiter-historian/jupiter_historian.did",
+      "wasm": "release-artifacts/jupiter_historian.wasm",
+      "build": "./scripts/build-canister jupiter-historian",
+      "skip_cargo_audit": true
+    },
+    "jupiter_historian_dbg": {
+      "type": "custom",
+      "candid": "jupiter-historian/jupiter_historian_debug.did",
+      "wasm": "target/wasm32-unknown-unknown/release/jupiter_historian.wasm",
+      "build": "cargo build --target wasm32-unknown-unknown --release -p jupiter-historian --features debug_api --locked",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_blackhole": {
+      "type": "rust",
+      "package": "mock-blackhole",
+      "candid": "xtask/src/mocks/mock_blackhole/mock_blackhole.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_sns_wasm": {
+      "type": "rust",
+      "package": "mock-sns-wasm",
+      "candid": "xtask/src/mocks/mock_sns_wasm/mock_sns_wasm.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
+    },
+    "mock_sns_root": {
+      "type": "rust",
+      "package": "mock-sns-root",
+      "candid": "xtask/src/mocks/mock_sns_root/mock_sns_root.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
     }
   },
   "version": 1

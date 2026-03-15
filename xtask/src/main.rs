@@ -87,6 +87,7 @@ enum TestComponent {
     Test,
     Disburser,
     Faucet,
+    Historian,
     E2e,
 }
 
@@ -99,7 +100,7 @@ enum TestScope {
 }
 
 fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
-    use TestComponent::{Disburser, E2e, Faucet, Test};
+    use TestComponent::{Disburser, E2e, Faucet, Historian, Test};
     use TestScope::{All, DfxIntegration, PocketicIntegration, Unit};
 
     match cmd {
@@ -111,6 +112,10 @@ fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
         "faucet_dfx_integration" => Some((Faucet, DfxIntegration)),
         "faucet_pocketic_integration" => Some((Faucet, PocketicIntegration)),
         "faucet_all" => Some((Faucet, All)),
+        "historian_unit" => Some((Historian, Unit)),
+        "historian_dfx_integration" => Some((Historian, DfxIntegration)),
+        "historian_pocketic_integration" => Some((Historian, PocketicIntegration)),
+        "historian_all" => Some((Historian, All)),
         "e2e_all" => Some((E2e, All)),
         "e2e_pocketic_integration" => Some((E2e, PocketicIntegration)),
         "test_unit" => Some((Test, Unit)),
@@ -315,6 +320,58 @@ struct FaucetSummary {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
+enum HistorianCanisterSource {
+    MemoContribution,
+    SnsDiscovery,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianCanisterListItem {
+    canister_id: Principal,
+    sources: Vec<HistorianCanisterSource>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianListCanistersResponse {
+    items: Vec<HistorianCanisterListItem>,
+    next_start_after: Option<Principal>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianContributionSample {
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+    counts_toward_faucet: bool,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianContributionHistoryPage {
+    items: Vec<HistorianContributionSample>,
+    next_start_after_tx_id: Option<u64>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+enum HistorianCyclesSampleSource {
+    BlackholeStatus,
+    SelfCanister,
+    SnsRootSummary,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianCyclesSample {
+    timestamp_nanos: u64,
+    cycles: Nat,
+    source: HistorianCyclesSampleSource,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianCyclesHistoryPage {
+    items: Vec<HistorianCyclesSample>,
+    next_start_after_ts: Option<u64>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
 struct NotifyRecord {
     canister_id: Principal,
     block_index: u64,
@@ -408,7 +465,7 @@ fn ensure_identity() -> Result<()> {
     Ok(())
 }
 
-fn cmd_setup() -> Result<()> {
+fn cmd_setup_common() -> Result<()> {
     ensure_identity()?;
 
     // Stop any running local replica (ignore errors), then start clean.
@@ -440,15 +497,185 @@ fn cmd_setup() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn faucet_staking_account() -> Account {
+    Account {
+        owner: Principal::anonymous(),
+        subaccount: Some([9u8; 32]),
+    }
+}
+
+fn cmd_setup_disburser_dfx() -> Result<()> {
+    cmd_setup_common()?;
+
+    run_dfx(&["deploy", "mock_icrc_ledger"])?;
+    run_dfx(&["deploy", "mock_nns_governance"])?;
+
+    let ledger_id = canister_id("mock_icrc_ledger")?;
+    let gov_id = canister_id("mock_nns_governance")?;
+    let rescue = principal_of_identity()?;
+
+    let r1 = Principal::management_canister();
+    let r2 = Principal::anonymous();
+    let r3 = rescue;
+
+    let args = format!(
+        r#"(record {{
+            neuron_id = 1:nat64;
+            normal_recipient = record {{ owner = principal "{r1}"; subaccount = null }};
+            age_bonus_recipient_1 = record {{ owner = principal "{r2}"; subaccount = null }};
+            age_bonus_recipient_2 = record {{ owner = principal "{r3}"; subaccount = null }};
+
+            ledger_canister_id = opt principal "{ledger_id}";
+            governance_canister_id = opt principal "{gov_id}";
+            rescue_controller = principal "{r3}";
+            blackhole_armed = opt true;
+
+            main_interval_seconds = opt (31536000:nat64);
+            rescue_interval_seconds = opt (31536000:nat64);
+        }},)"#,
+        r1 = r1.to_text(),
+        r2 = r2.to_text(),
+        r3 = r3.to_text(),
+    );
+
+    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &args])?;
+
+    let disb_id = canister_id("jupiter_disburser_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_disburser_dbg",
+        "--add-controller",
+        disb_id.trim(),
+    ])?;
+
+    Ok(())
+}
+
+fn cmd_setup_faucet_dfx() -> Result<()> {
+    cmd_setup_common()?;
+
+    run_dfx(&["deploy", "mock_icrc_ledger"])?;
+    run_dfx(&["deploy", "mock_icp_index"])?;
+    run_dfx(&["deploy", "mock_cmc"])?;
+
+    let ledger_id = canister_id("mock_icrc_ledger")?;
+    let index_id = canister_id("mock_icp_index")?;
+    let cmc_id = canister_id("mock_cmc")?;
+    let faucet_staking_account = faucet_staking_account();
+    let faucet_rescue = Principal::from_text(cmc_id.trim())?;
+    let faucet_args = format!(
+        r#"(record {{
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            payout_subaccount = null;
+            ledger_canister_id = opt principal "{ledger_id}";
+            index_canister_id = opt principal "{index_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            rescue_controller = principal "{faucet_rescue}";
+            blackhole_armed = opt false;
+            expected_first_staking_tx_id = null;
+            main_interval_seconds = opt (31536000:nat64);
+            rescue_interval_seconds = opt (31536000:nat64);
+            min_tx_e8s = opt (10000000:nat64);
+        }},)"#,
+        staking_owner = faucet_staking_account.owner.to_text(),
+        staking_subaccount = faucet_staking_account
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; "),
+        faucet_rescue = faucet_rescue.to_text(),
+    );
+
+    run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
+
+    let faucet_id = canister_id("jupiter_faucet_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_faucet_dbg",
+        "--add-controller",
+        faucet_id.trim(),
+    ])?;
+
+    Ok(())
+}
+
+fn cmd_setup_historian_dfx() -> Result<()> {
+    cmd_setup_common()?;
+
+    run_dfx(&["deploy", "mock_icp_index"])?;
+    run_dfx(&["deploy", "mock_blackhole"])?;
+    run_dfx(&["deploy", "mock_sns_wasm"])?;
+    run_dfx(&["deploy", "mock_sns_root"])?;
+
+    let index_id = canister_id("mock_icp_index")?;
+    let blackhole_id = canister_id("mock_blackhole")?;
+    let sns_wasm_id = canister_id("mock_sns_wasm")?;
+
+    let faucet_staking_account = faucet_staking_account();
+
+    let historian_args = format!(
+        r#"(record {{
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            ledger_canister_id = null;
+            index_canister_id = opt principal "{index_id}";
+            blackhole_canister_id = opt principal "{blackhole_id}";
+            sns_wasm_canister_id = opt principal "{sns_wasm_id}";
+            enable_sns_tracking = opt true;
+            scan_interval_seconds = opt (31536000:nat64);
+            cycles_interval_seconds = opt (1:nat64);
+            min_tx_e8s = opt (10000000:nat64);
+            max_cycles_entries_per_canister = opt (100:nat32);
+            max_contribution_entries_per_canister = opt (100:nat32);
+            max_index_pages_per_tick = opt (10:nat32);
+            max_canisters_per_cycles_tick = opt (10:nat32);
+        }},)"#,
+        staking_owner = faucet_staking_account.owner.to_text(),
+        staking_subaccount = faucet_staking_account
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; "),
+    );
+    run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
+
+    let historian_id = canister_id("jupiter_historian_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_historian_dbg",
+        "--add-controller",
+        historian_id.trim(),
+    ])?;
+
+    Ok(())
+}
+
+fn cmd_setup() -> Result<()> {
+    cmd_setup_common()?;
+
     run_dfx(&["deploy", "mock_icrc_ledger"])?;
     run_dfx(&["deploy", "mock_nns_governance"])?;
     run_dfx(&["deploy", "mock_icp_index"])?;
     run_dfx(&["deploy", "mock_cmc"])?;
+    run_dfx(&["deploy", "mock_blackhole"])?;
+    run_dfx(&["deploy", "mock_sns_wasm"])?;
+    run_dfx(&["deploy", "mock_sns_root"])?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
     let index_id = canister_id("mock_icp_index")?;
     let cmc_id = canister_id("mock_cmc")?;
+    let blackhole_id = canister_id("mock_blackhole")?;
+    let sns_wasm_id = canister_id("mock_sns_wasm")?;
     let rescue = principal_of_identity()?;
 
     // recipients: use three stable principals
@@ -488,10 +715,7 @@ fn cmd_setup() -> Result<()> {
         disb_id.trim(),
     ])?;
 
-    let faucet_staking_account = Account {
-        owner: Principal::anonymous(),
-        subaccount: Some([9u8; 32]),
-    };
+    let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
     let faucet_args = format!(
         r#"(record {{
@@ -520,6 +744,33 @@ fn cmd_setup() -> Result<()> {
 
     run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
 
+    let historian_args = format!(
+        r#"(record {{
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            ledger_canister_id = opt principal "{ledger_id}";
+            index_canister_id = opt principal "{index_id}";
+            blackhole_canister_id = opt principal "{blackhole_id}";
+            sns_wasm_canister_id = opt principal "{sns_wasm_id}";
+            enable_sns_tracking = opt true;
+            scan_interval_seconds = opt (31536000:nat64);
+            cycles_interval_seconds = opt (1:nat64);
+            min_tx_e8s = opt (10000000:nat64);
+            max_cycles_entries_per_canister = opt (100:nat32);
+            max_contribution_entries_per_canister = opt (100:nat32);
+            max_index_pages_per_tick = opt (10:nat32);
+            max_canisters_per_cycles_tick = opt (10:nat32);
+        }},)"#,
+        staking_owner = faucet_staking_account.owner.to_text(),
+        staking_subaccount = faucet_staking_account
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; "),
+    );
+    run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
+
     let faucet_id = canister_id("jupiter_faucet_dbg")?;
     run_dfx(&[
         "canister",
@@ -527,6 +778,15 @@ fn cmd_setup() -> Result<()> {
         "jupiter_faucet_dbg",
         "--add-controller",
         faucet_id.trim(),
+    ])?;
+
+    let historian_id = canister_id("jupiter_historian_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_historian_dbg",
+        "--add-controller",
+        historian_id.trim(),
     ])?;
 
     Ok(())
@@ -921,14 +1181,16 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 }
 
 fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
+
     run_scenario(outcomes, label("dfx", "faucet", "same beneficiary contributions stay separate (no aggregation)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -971,8 +1233,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1022,8 +1284,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let good_memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1093,8 +1355,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1152,8 +1414,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let beneficiary_a = Principal::from_text(canister_id("mock_cmc")?.trim())?;
         let beneficiary_b = Principal::anonymous();
         let memo_a = opt_blob_to_candid(Some(beneficiary_a.to_text().as_bytes()));
@@ -1242,8 +1504,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1278,8 +1540,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1314,8 +1576,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
 
         let _: () = call_raw(
             "mock_icrc_ledger",
@@ -1357,8 +1619,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1414,8 +1676,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1464,8 +1726,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
-        let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-        let staking_id = account_identifier_text(&accounts.staking);
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
         let target = Principal::anonymous();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1704,9 +1966,141 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     Ok(())
 }
 
+fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let target = Principal::from_text("aaaaa-aa")?;
+
+    run_scenario(outcomes, label("dfx", "historian", "indexes memo-derived contribution exactly once"), || {
+        let _: () = call_raw_noargs("mock_icp_index", "debug_reset")?;
+        let _: () = call_raw_noargs("mock_blackhole", "debug_reset")?;
+        let listed_before: HistorianListCanistersResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_canisters",
+            "(record { start_after = null; limit = opt (10:nat32); source_filter = null })",
+        )?;
+        if !listed_before.items.is_empty() {
+            bail!("expected empty historian canister list at scenario start");
+        }
+
+        let staking = Account {
+            owner: Principal::anonymous(),
+            subaccount: Some([9u8; 32]),
+        };
+        let staking_id = account_identifier_text(&staking);
+        let memo = format!(
+            "opt vec {{ {} }}",
+            target
+                .to_text()
+                .as_bytes()
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let append_args = format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo);
+        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &append_args)?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let listed: HistorianListCanistersResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_canisters",
+            "(record { start_after = null; limit = opt (10:nat32); source_filter = null })",
+        )?;
+        if listed.items.len() != 1 || listed.items[0].canister_id != target {
+            bail!("unexpected historian list response: {:?}", listed.items.iter().map(|i| i.canister_id.to_text()).collect::<Vec<_>>());
+        }
+
+        let history: HistorianContributionHistoryPage = call_raw(
+            "jupiter_historian_dbg",
+            "get_contribution_history",
+            &format!(
+                r#"(record {{ canister_id = principal "{}"; start_after_tx_id = null; limit = opt (10:nat32); descending = opt false }})"#,
+                target.to_text()
+            ),
+        )?;
+        if history.items.len() != 1 || history.items[0].tx_id != 1 {
+            bail!("expected one indexed contribution, got {}", history.items.len());
+        }
+
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let history2: HistorianContributionHistoryPage = call_raw(
+            "jupiter_historian_dbg",
+            "get_contribution_history",
+            &format!(
+                r#"(record {{ canister_id = principal "{}"; start_after_tx_id = null; limit = opt (10:nat32); descending = opt false }})"#,
+                target.to_text()
+            ),
+        )?;
+        if history2.items.len() != 1 {
+            bail!("expected historian not to duplicate contributions, got {}", history2.items.len());
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("dfx", "historian", "weekly sweep records blackhole cycles"), || {
+        let blackhole_id = canister_id("mock_blackhole")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(
+                r#"(principal "{}", opt (1234:nat), vec {{ principal "{}" }})"#,
+                target.to_text(),
+                blackhole_id.trim()
+            ),
+        )?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_last_completed_cycles_sweep_ts", "(null)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let cycles: HistorianCyclesHistoryPage = call_raw(
+            "jupiter_historian_dbg",
+            "get_cycles_history",
+            &format!(
+                r#"(record {{ canister_id = principal "{}"; start_after_ts = null; limit = opt (10:nat32); descending = opt false }})"#,
+                target.to_text()
+            ),
+        )?;
+        if cycles.items.is_empty() {
+            bail!("expected historian cycles history entry");
+        }
+        if cycles.items[0].cycles != Nat::from(1234u64) {
+            bail!("unexpected cycles value: {:?}", cycles.items[0].cycles);
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("dfx", "historian", "SNS discovery adds summary-tracked canisters"), || {
+        let sns_root = Principal::from_text(canister_id("mock_sns_root")?.trim())?;
+        let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
+        let _: () = call_raw(
+            "mock_sns_wasm",
+            "debug_set_roots",
+            &format!(r#"(vec {{ principal "{}" }})"#, sns_root.to_text()),
+        )?;
+        let summary_args = format!(
+            r#"(record {{ root = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (1000:nat) }} }}; governance = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (2000:nat) }} }}; ledger = null; swap = null; index = null; dapps = vec {{}}; archives = vec {{}} }})"#,
+            sns_root.to_text(),
+            governance.to_text()
+        );
+        let _: () = call_raw("mock_sns_root", "debug_set_summary", &summary_args)?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_last_sns_discovery_ts", "(null)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let listed: HistorianListCanistersResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_canisters",
+            "(record { start_after = null; limit = opt (20:nat32); source_filter = opt variant { SnsDiscovery } })",
+        )?;
+        if listed.items.iter().all(|item| item.canister_id != governance) {
+            bail!("expected SNS-discovered governance canister in historian results");
+        }
+        Ok(())
+    });
+
+    Ok(())
+}
+
 fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_dfx_disburser_scenarios(outcomes)?;
     run_dfx_faucet_scenarios(outcomes)?;
+    run_dfx_historian_scenarios(outcomes)?;
     Ok(())
 }
 
@@ -1747,6 +2141,19 @@ fn run_unit_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     )
 }
 
+fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "historian",
+        "cargo",
+        &["test", "-p", "jupiter-historian", "--lib", "--", "--color", "always"],
+        &root,
+        &[],
+    )
+}
+
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
@@ -1775,6 +2182,20 @@ fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
     )
 }
 
+fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    run_cargo_test_suite(
+        outcomes,
+        "pocketic",
+        "historian",
+        "cargo",
+        &["test", "-p", "jupiter-historian", "--test", "jupiter_historian_integration", "--", "--ignored", "--color", "always"],
+        &root,
+        &common_env,
+    )
+}
+
 fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
@@ -1794,9 +2215,11 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
         TestComponent::Test => {
             run_unit_disburser_suite(outcomes)?;
             run_unit_faucet_suite(outcomes)?;
+            run_unit_historian_suite(outcomes)?;
         }
         TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_unit_faucet_suite(outcomes)?,
+        TestComponent::Historian => run_unit_historian_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_unit is not supported; use e2e_all"),
     }
     Ok(())
@@ -1807,6 +2230,7 @@ fn run_dfx_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompone
         TestComponent::Test => run_dfx_scenarios(outcomes)?,
         TestComponent::Disburser => run_dfx_disburser_scenarios(outcomes)?,
         TestComponent::Faucet => run_dfx_faucet_scenarios(outcomes)?,
+        TestComponent::Historian => run_dfx_historian_scenarios(outcomes)?,
         TestComponent::E2e => bail!("e2e_dfx_integration is not supported; use e2e_all"),
     }
     Ok(())
@@ -1817,10 +2241,12 @@ fn run_pocketic_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCo
         TestComponent::Test => {
             run_pocketic_disburser_suite(outcomes)?;
             run_pocketic_faucet_suite(outcomes)?;
+            run_pocketic_historian_suite(outcomes)?;
             run_e2e_suite(outcomes)?;
         }
         TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_pocketic_faucet_suite(outcomes)?,
+        TestComponent::Historian => run_pocketic_historian_suite(outcomes)?,
         TestComponent::E2e => run_e2e_suite(outcomes)?,
     }
     Ok(())
@@ -1847,7 +2273,7 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
                 run_unit_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
             }
-            TestComponent::Disburser | TestComponent::Faucet => {
+            TestComponent::Disburser | TestComponent::Faucet | TestComponent::Historian => {
                 run_unit_component(&mut outcomes, component)?;
                 run_dfx_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
@@ -1869,6 +2295,10 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
         (TestComponent::Faucet, TestScope::DfxIntegration) => "one or more faucet dfx integration scenarios failed",
         (TestComponent::Faucet, TestScope::PocketicIntegration) => "the faucet pocketic integration suite failed",
         (TestComponent::Faucet, TestScope::All) => "one or more faucet test suites failed",
+        (TestComponent::Historian, TestScope::Unit) => "the historian unit test suite failed",
+        (TestComponent::Historian, TestScope::DfxIntegration) => "one or more historian dfx integration scenarios failed",
+        (TestComponent::Historian, TestScope::PocketicIntegration) => "the historian pocketic integration suite failed",
+        (TestComponent::Historian, TestScope::All) => "one or more historian test suites failed",
         (TestComponent::E2e, TestScope::PocketicIntegration) | (TestComponent::E2e, TestScope::All) => "the e2e suite failed",
         _ => "the selected xtask command failed",
     };
@@ -1886,6 +2316,10 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
         (TestComponent::Faucet, TestScope::DfxIntegration) => "faucet_dfx_integration complete",
         (TestComponent::Faucet, TestScope::PocketicIntegration) => "faucet_pocketic_integration complete",
         (TestComponent::Faucet, TestScope::All) => "faucet_all complete",
+        (TestComponent::Historian, TestScope::Unit) => "historian_unit complete",
+        (TestComponent::Historian, TestScope::DfxIntegration) => "historian_dfx_integration complete",
+        (TestComponent::Historian, TestScope::PocketicIntegration) => "historian_pocketic_integration complete",
+        (TestComponent::Historian, TestScope::All) => "historian_all complete",
         (TestComponent::E2e, TestScope::PocketicIntegration) => "e2e_pocketic_integration complete",
         (TestComponent::E2e, TestScope::All) => "e2e_all complete",
         _ => "xtask command complete",
@@ -1899,7 +2333,13 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
         return run_scoped_command(component, scope);
     }
 
-    cmd_setup()?;
+    let setup_res = match (component, scope) {
+        (TestComponent::Disburser, TestScope::DfxIntegration | TestScope::All) => cmd_setup_disburser_dfx(),
+        (TestComponent::Faucet, TestScope::DfxIntegration | TestScope::All) => cmd_setup_faucet_dfx(),
+        (TestComponent::Historian, TestScope::DfxIntegration | TestScope::All) => cmd_setup_historian_dfx(),
+        _ => cmd_setup(),
+    };
+    setup_res?;
     let run_res = run_scoped_command(component, scope);
     let teardown_res = cmd_teardown();
 
@@ -2165,6 +2605,10 @@ fn main() -> Result<()> {
                  - faucet_dfx_integration
                  - faucet_pocketic_integration
                  - faucet_all
+                 - historian_unit
+                 - historian_dfx_integration
+                 - historian_pocketic_integration
+                 - historian_all
                  - e2e_all
                  - e2e_pocketic_integration
                  - test_unit

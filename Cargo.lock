@@ -1077,6 +1077,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "jupiter-historian"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candid",
+ "crc32fast",
+ "hex",
+ "ic-cdk",
+ "ic-cdk-timers",
+ "icrc-ledger-types",
+ "num-traits",
+ "pocket-ic",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "slog",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "jupiter-lifeline"
 version = "0.1.0"
 dependencies = [
@@ -1229,6 +1250,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mock-blackhole"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "mock-cmc"
 version = "0.1.0"
 dependencies = [
@@ -1259,6 +1290,25 @@ dependencies = [
 
 [[package]]
 name = "mock-nns-governance"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "serde",
+]
+
+[[package]]
+name = "mock-sns-root"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
+name = "mock-sns-wasm"
 version = "0.1.0"
 dependencies = [
  "candid",

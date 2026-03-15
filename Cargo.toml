@@ -4,6 +4,7 @@ members = [
   "jupiter-disburser",
   "jupiter-lifeline",
   "jupiter-faucet",
+  "jupiter-historian",
   "jupiter-sns-rewards",
   "jupiter-faucet-frontend",
   "xtask",
@@ -11,4 +12,7 @@ members = [
   "xtask/src/mocks/mock_nns_governance",
   "xtask/src/mocks/mock_icp_index",
   "xtask/src/mocks/mock_cmc",
+  "xtask/src/mocks/mock_blackhole",
+  "xtask/src/mocks/mock_sns_wasm",
+  "xtask/src/mocks/mock_sns_root",
 ]

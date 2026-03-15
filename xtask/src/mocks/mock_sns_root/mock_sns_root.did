@@ -1,0 +1,15 @@
+type SnsCanisterStatus = record { cycles : opt nat };
+type SnsCanisterSummary = record { canister_id : opt principal; status : opt SnsCanisterStatus };
+type GetSnsCanistersSummaryResponse = record {
+  root : opt SnsCanisterSummary;
+  governance : opt SnsCanisterSummary;
+  ledger : opt SnsCanisterSummary;
+  swap : opt SnsCanisterSummary;
+  index : opt SnsCanisterSummary;
+  dapps : vec SnsCanisterSummary;
+  archives : vec SnsCanisterSummary;
+};
+service : {
+  get_sns_canisters_summary : (record { update_canister_list : opt bool }) -> (GetSnsCanistersSummaryResponse);
+  debug_set_summary : (GetSnsCanistersSummaryResponse) -> ();
+}

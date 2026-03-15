@@ -1,0 +1,9 @@
+type BlackholeSettings = record { controllers : vec principal };
+type BlackholeCanisterStatus = record { cycles : nat; settings : BlackholeSettings };
+type DebugStatus = record { canister_id : principal; cycles : nat; controllers : vec principal };
+service : {
+  canister_status : (record { canister_id : principal }) -> (BlackholeCanisterStatus);
+  debug_reset : () -> ();
+  debug_set_status : (principal, opt nat, vec principal) -> ();
+  debug_statuses : () -> (vec DebugStatus) query;
+}

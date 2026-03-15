@@ -41,3 +41,8 @@ dfx canister install jupiter_sns_rewards \
   --mode upgrade \
   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
 ```
+
+
+## Future historian / SNS testing note
+
+**TODO:** Revisit `jupiter-historian` SNS integration testing once the Jupiter Faucet Suite's own SNS configuration is represented in this repository. At that point the current mock-based SNS historian tests should be supplemented with Jupiter-specific SNS smoke/integration coverage driven from the in-repo SNS configuration.
