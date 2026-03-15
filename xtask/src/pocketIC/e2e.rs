@@ -250,6 +250,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -378,6 +379,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -504,6 +506,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -638,6 +641,7 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };

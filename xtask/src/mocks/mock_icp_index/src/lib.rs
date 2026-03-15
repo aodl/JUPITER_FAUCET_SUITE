@@ -243,3 +243,57 @@ fn debug_set_get_script(behaviors: Vec<DebugGetBehavior>) {
 }
 
 ic_cdk::export_candid!();
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transfer_tx(id: u64, to: &str) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    to: to.to_string(),
+                    fee: Tokens { e8s: 10_000 },
+                    from: "sender".to_string(),
+                    amount: Tokens { e8s: 1 },
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: None,
+            },
+        }
+    }
+
+    #[test]
+    fn start_cursor_is_exclusive_of_last_seen_transaction_id() {
+        ST.with(|s| {
+            let mut st = s.borrow_mut();
+            st.next_id = 3;
+            st.txs = vec![
+                transfer_tx(1, "target"),
+                transfer_tx(2, "target"),
+                transfer_tx(3, "target"),
+            ];
+            st.get_calls.clear();
+            st.scripted_get_behaviors.clear();
+        });
+
+        let resp = get_account_identifier_transactions(GetArgs {
+            account_identifier: "target".to_string(),
+            start: Some(2),
+            max_results: 10,
+        });
+
+        match resp {
+            GetResp::Ok(ok) => {
+                let ids: Vec<u64> = ok.transactions.into_iter().map(|tx| tx.id).collect();
+                assert_eq!(ids, vec![3]);
+            }
+            GetResp::Err(err) => panic!("unexpected error: {}", err.message),
+        }
+    }
+}

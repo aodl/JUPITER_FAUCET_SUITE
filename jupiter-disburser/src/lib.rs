@@ -70,10 +70,7 @@ fn pre_upgrade() {
     ic_cdk::storage::stable_save((st,)).expect("stable_save failed");
 }
 
-#[ic_cdk::post_upgrade]
-fn post_upgrade(args: Option<UpgradeArgs>) {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
-    let (mut st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
+pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) {
     if let Some(args) = args {
         if let Some(armed) = args.blackhole_armed {
             st.config.blackhole_armed = Some(armed);
@@ -87,6 +84,13 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
         }
     }
     st.main_lock_expires_at_ts = Some(0);
+}
+
+#[ic_cdk::post_upgrade]
+fn post_upgrade(args: Option<UpgradeArgs>) {
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let (mut st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
+    apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
 }

@@ -3,16 +3,11 @@ use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{GovernanceClient, LedgerClient};
 use crate::{logic, policy, state};
 
-use candid::Nat;
+use candid::{Nat, Principal};
 use ic_cdk::management_canister::{update_settings, CanisterSettings, UpdateSettingsArgs};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use std::{cell::RefCell, time::Duration};
-
-thread_local! {
-    // Prevent repeated identical error spam from eating the small log buffer.
-    static LAST_ERR_CODE: RefCell<Option<u32>> = RefCell::new(None);
-}
 
 #[cfg(feature = "debug_api")]
 thread_local! {
@@ -85,19 +80,30 @@ fn debug_maybe_abort_after_successful_transfer() -> bool {
 }
 
 fn log_error(code: u32) {
-    LAST_ERR_CODE.with(|c| {
-        let mut c = c.borrow_mut();
-        if *c == Some(code) {
-            return;
-        }
-        *c = Some(code);
-        ic_cdk::println!("ERR:{}", code);
-    });
+    ic_cdk::println!("ERR:{}", code);
 }
 
 fn log_cycles() {
-    let cycles: u128 = ic_cdk::api::canister_cycle_balance();
-    ic_cdk::println!("Cycles: {}", cycles);
+    #[cfg(test)]
+    {
+        return;
+    }
+    #[cfg(not(test))]
+    {
+        let cycles: u128 = ic_cdk::api::canister_cycle_balance();
+        ic_cdk::println!("Cycles: {}", cycles);
+    }
+}
+
+fn self_canister_principal() -> Principal {
+    #[cfg(test)]
+    {
+        Principal::anonymous()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::canister_self()
+    }
 }
 
 struct MainGuard {
@@ -242,7 +248,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
             return;
         }
 
-        let canister_owner = ic_cdk::api::canister_self();
+        let canister_owner = self_canister_principal();
         let age_seconds = now_secs.saturating_sub(neuron.aging_since_timestamp_seconds);
 
         let disb_ok = gov
@@ -292,7 +298,7 @@ async fn process_payout<L: LedgerClient>(
     DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|c| *c.borrow_mut() = 0);
 
     let staging = Account {
-        owner: ic_cdk::api::canister_self(),
+        owner: self_canister_principal(),
         subaccount: None,
     };
 
@@ -470,7 +476,7 @@ async fn rescue_tick() {
         return;
     }
 
-    let self_id = ic_cdk::api::canister_self();
+    let self_id = self_canister_principal();
     let mut desired = if forced_rescue_reason.is_some() {
         vec![rescue_controller, self_id]
     } else {
@@ -516,9 +522,10 @@ mod tests {
     use candid::Principal;
     use crate::nns_types::{GovernanceError, Neuron};
     use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
+    use std::collections::VecDeque;
     use std::future::{pending, Future};
     use std::pin::Pin;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     struct UnexpectedLedger;
@@ -532,6 +539,88 @@ mod tests {
 
     struct PendingGovernance {
         get_full_neuron_calls: Arc<AtomicUsize>,
+    }
+
+    struct ZeroBalanceLedger;
+
+    #[async_trait]
+    impl LedgerClient for ZeroBalanceLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { panic!("fee_e8s should not be called") }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { Ok(0) }
+        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            panic!("transfer should not be called")
+        }
+    }
+
+    struct ScriptedGovernance {
+        get_full_neuron_results: Mutex<VecDeque<Result<Neuron, GovernanceError>>>,
+        disburse_results: Mutex<VecDeque<Result<Option<u64>, GovernanceError>>>,
+        get_full_neuron_calls: AtomicUsize,
+        disburse_calls: AtomicUsize,
+        claim_or_refresh_calls: AtomicUsize,
+    }
+
+    impl ScriptedGovernance {
+        fn new(
+            get_full_neuron_results: Vec<Result<Neuron, GovernanceError>>,
+            disburse_results: Vec<Result<Option<u64>, GovernanceError>>,
+        ) -> Self {
+            Self {
+                get_full_neuron_results: Mutex::new(get_full_neuron_results.into()),
+                disburse_results: Mutex::new(disburse_results.into()),
+                get_full_neuron_calls: AtomicUsize::new(0),
+                disburse_calls: AtomicUsize::new(0),
+                claim_or_refresh_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn get_full_neuron_calls(&self) -> usize {
+            self.get_full_neuron_calls.load(Ordering::SeqCst)
+        }
+
+        fn disburse_calls(&self) -> usize {
+            self.disburse_calls.load(Ordering::SeqCst)
+        }
+
+        fn claim_or_refresh_calls(&self) -> usize {
+            self.claim_or_refresh_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl GovernanceClient for ScriptedGovernance {
+        async fn get_full_neuron(&self, _neuron_id: u64) -> Result<Neuron, GovernanceError> {
+            self.get_full_neuron_calls.fetch_add(1, Ordering::SeqCst);
+            self.get_full_neuron_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("missing get_full_neuron result")
+        }
+
+        async fn disburse_maturity_to_account(
+            &self,
+            _neuron_id: u64,
+            _percentage: u32,
+            _to_owner: Principal,
+            _to_subaccount: Option<Vec<u8>>,
+        ) -> Result<Option<u64>, GovernanceError> {
+            self.disburse_calls.fetch_add(1, Ordering::SeqCst);
+            self.disburse_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("missing disburse result")
+        }
+
+        async fn refresh_voting_power(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
+            Ok(())
+        }
+
+        async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
+            self.claim_or_refresh_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -616,6 +705,73 @@ mod tests {
         drop(fut1);
         assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
     }
+
+    #[test]
+    fn post_upgrade_clears_inflight_lock_and_allows_next_tick() {
+        let now_secs = 1_200_u64;
+        let mut st = state::State::new(test_config(), now_secs);
+        st.main_lock_expires_at_ts = Some(1);
+        crate::apply_upgrade_args_to_state(&mut st, None, now_secs + 1);
+        state::set_state(st);
+
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = UnexpectedLedger;
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                aging_since_timestamp_seconds: 0,
+                maturity_disbursements_in_progress: Some(vec![crate::nns_types::MaturityDisbursement { amount_e8s: Some(1) }]),
+            })],
+            vec![],
+        );
+
+        let mut fut = Box::pin(run_main_tick_with_clients(false, (now_secs + 1) * 1_000_000_000, now_secs + 1, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert_eq!(gov.get_full_neuron_calls(), 1);
+        assert_eq!(gov.disburse_calls(), 0);
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
+        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+    }
+
+    #[test]
+    fn ambiguous_initiation_is_reconciled_via_in_flight_neuron_state() {
+        let now_secs = 2_000_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = ZeroBalanceLedger;
+        let gov = ScriptedGovernance::new(
+            vec![
+                Ok(Neuron {
+                    aging_since_timestamp_seconds: 100,
+                    maturity_disbursements_in_progress: None,
+                }),
+                Ok(Neuron {
+                    aging_since_timestamp_seconds: 100,
+                    maturity_disbursements_in_progress: Some(vec![crate::nns_types::MaturityDisbursement { amount_e8s: Some(50) }]),
+                }),
+            ],
+            vec![Err(GovernanceError {
+                error_message: "bounded wait timed out".to_string(),
+                error_type: 1,
+            })],
+        );
+
+        let mut first = Box::pin(run_main_tick_with_clients(false, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(())));
+        assert_eq!(gov.get_full_neuron_calls(), 1);
+        assert_eq!(gov.disburse_calls(), 1);
+        assert_eq!(gov.claim_or_refresh_calls(), 0);
+        assert_eq!(state::with_state(|st| st.prev_age_seconds), 0, "failed initiation must not update prev_age_seconds");
+
+        let later_secs = now_secs + 61;
+        let mut second = Box::pin(run_main_tick_with_clients(false, later_secs * 1_000_000_000, later_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(second.as_mut()), Poll::Ready(())));
+        assert_eq!(gov.get_full_neuron_calls(), 2);
+        assert_eq!(gov.disburse_calls(), 1, "in-flight source-of-truth state must suppress a second initiation");
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
+    }
 }
 
 #[cfg(feature = "debug_api")]
@@ -635,7 +791,7 @@ pub async fn debug_build_payout_plan_impl() -> bool {
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
 
     let staging = Account {
-        owner: ic_cdk::api::canister_self(),
+        owner: self_canister_principal(),
         subaccount: None,
     };
 

@@ -106,6 +106,7 @@ pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clients::index::{IndexOperation, IndexTransaction, IndexTransactionWithId, Tokens};
     use crate::state::{ActivePayoutJob, PendingNotification, RetryState, RetryStep, TransferKind};
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
@@ -123,6 +124,62 @@ mod tests {
         assert_eq!(parse_beneficiary_from_memo(b""), None);
         assert_eq!(parse_beneficiary_from_memo(&p.as_slice()[..p.as_slice().len().saturating_sub(1)]), None);
         assert_eq!(parse_beneficiary_from_memo(&vec![0xff; 64]), None);
+    }
+
+
+    #[test]
+    fn parser_accepts_whitespace_padded_principal_text_memo() {
+        let p = principal("aaaaa-aa");
+        let memo = format!("  {}\n", p.to_text());
+        assert_eq!(parse_beneficiary_from_memo(memo.as_bytes()), Some(p));
+    }
+
+    #[test]
+    fn empty_icrc1_memo_does_not_fall_back_to_numeric_memo() {
+        let staking = "staking-account".to_string();
+        let tx = IndexTransactionWithId {
+            id: 7,
+            transaction: IndexTransaction {
+                memo: u64::from_be_bytes(*b"aaaaa-aa"),
+                icrc1_memo: Some(vec![]),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".to_string(),
+                    amount: Tokens::new(123),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: None,
+            },
+        };
+        let contribution = memo_bytes_from_index_tx(&tx, &staking).expect("matching transfer should be surfaced");
+        assert_eq!(contribution.memo_bytes, None);
+    }
+
+    #[test]
+    fn numeric_memo_falls_back_to_eight_byte_principal_text() {
+        let staking = "staking-account".to_string();
+        let expected = principal("aaaaa-aa");
+        let tx = IndexTransactionWithId {
+            id: 8,
+            transaction: IndexTransaction {
+                memo: u64::from_be_bytes(*b"aaaaa-aa"),
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".to_string(),
+                    amount: Tokens::new(123),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: None,
+            },
+        };
+        let contribution = memo_bytes_from_index_tx(&tx, &staking).expect("matching transfer should be surfaced");
+        assert_eq!(contribution.memo_bytes, Some(expected.to_text().into_bytes()));
+        assert_eq!(parse_beneficiary_from_memo(contribution.memo_bytes.as_deref().unwrap()), Some(expected));
     }
 
     #[test]
