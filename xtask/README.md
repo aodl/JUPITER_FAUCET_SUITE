@@ -69,6 +69,14 @@ cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
 
+Historian and E2E PocketIC coverage builds the vendored `third_party/ic-blackhole` source with:
+
+```bash
+nix-build --arg pkgs 'import (builtins.fetchTarball "https://github.com/NixOS/nixpkgs/archive/refs/heads/nixos-21.11.tar.gz") {}'
+```
+
+So those commands require `nix-build` to be available.
+
 ### End-to-end commands
 
 ```bash

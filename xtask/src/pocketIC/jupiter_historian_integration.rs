@@ -3,6 +3,9 @@ use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, 
 use icrc_ledger_types::icrc1::account::Account;
 use pocket_ic::{PocketIc, PocketIcBuilder};
 use sha2::{Digest, Sha224};
+
+#[path = "real_blackhole.rs"]
+mod real_blackhole;
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -32,19 +35,28 @@ fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<
 }
 
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
-static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_WASM_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> { build_wasm_cached(&INDEX_WASM, "mock-icp-index", None) }
-fn blackhole_wasm() -> Result<Vec<u8>> { build_wasm_cached(&BLACKHOLE_WASM, "mock-blackhole", None) }
 fn sns_wasm_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_WASM_WASM, "mock-sns-wasm", None) }
 fn sns_root_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_ROOT_WASM, "mock-sns-root", None) }
 fn historian_wasm() -> Result<Vec<u8>> { build_wasm_cached(&HISTORIAN_WASM, "jupiter-historian", Some("debug_api")) }
 
 fn tick_n(pic: &PocketIc, n: usize) {
     for _ in 0..n { pic.tick(); }
+}
+
+fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
+    let sender = pic
+        .get_controllers(canister)
+        .first()
+        .copied()
+        .unwrap_or(Principal::anonymous());
+    pic.set_controllers(canister, Some(sender), controllers)
+        .map_err(|e| anyhow!("set_controllers reject: {e:?}"))?;
+    Ok(())
 }
 
 fn update_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(pic: &PocketIc, canister: Principal, sender: Principal, method: &str, arg: A) -> Result<R> {
@@ -245,7 +257,8 @@ impl Harness {
             pic.add_cycles(canister, 5_000_000_000_000);
         }
         pic.install_canister(index, index_wasm()?, vec![], None);
-        pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
+        pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
+        set_controllers_exact(&pic, blackhole, vec![blackhole])?;
         pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
 
         let staking_account = Account { owner: Principal::anonymous(), subaccount: Some([9u8; 32]) };
@@ -284,10 +297,9 @@ impl Harness {
 fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = h.blackhole;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 42u64, Some(target.to_text().into_bytes())))?)?;
-    let _: () = update_bytes(&h.pic, h.blackhole, Principal::anonymous(), "debug_set_status", encode_args((target, Some(Nat::from(777u64)), vec![h.blackhole]))?)?;
 
     h.tick();
     let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
@@ -308,7 +320,7 @@ fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
 
     let cycles: CyclesHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_cycles_history", GetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(cycles.items.len(), 1);
-    assert_eq!(cycles.items[0].cycles, 777u128);
+    assert!(cycles.items[0].cycles > 0);
     assert!(matches!(cycles.items[0].source, CyclesSampleSource::BlackholeStatus));
     Ok(())
 }
@@ -360,10 +372,9 @@ fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> 
 fn historian_upgrade_preserves_histories() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = h.blackhole;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 42u64, Some(target.to_text().into_bytes())))?)?;
-    let _: () = update_bytes(&h.pic, h.blackhole, Principal::anonymous(), "debug_set_status", encode_args((target, Some(Nat::from(999u64)), vec![h.blackhole]))?)?;
     h.tick();
     let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
 
@@ -381,6 +392,6 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
     assert_eq!(contribs.items.len(), 1);
     let cycles: CyclesHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_cycles_history", GetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(cycles.items.len(), 1);
-    assert_eq!(cycles.items[0].cycles, 999u128);
+    assert!(cycles.items[0].cycles > 0);
     Ok(())
 }

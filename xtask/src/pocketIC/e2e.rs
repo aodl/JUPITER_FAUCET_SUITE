@@ -3,6 +3,9 @@ use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, 
 use icrc_ledger_types::icrc1::account::Account;
 use pocket_ic::{PocketIc, PocketIcBuilder};
 use sha2::{Digest, Sha224};
+
+#[path = "real_blackhole.rs"]
+mod real_blackhole;
 use std::process::Command;
 use std::time::Duration;
 
@@ -29,6 +32,17 @@ fn tick_n(pic: &PocketIc, n: usize) {
     for _ in 0..n {
         pic.tick();
     }
+}
+
+fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
+    let sender = pic
+        .get_controllers(canister)
+        .first()
+        .copied()
+        .unwrap_or(Principal::anonymous());
+    pic.set_controllers(canister, Some(sender), controllers)
+        .map_err(|e| anyhow!("set_controllers reject: {e:?}"))?;
+    Ok(())
 }
 
 fn update_bytes<R: for<'de> Deserialize<'de> + CandidType>(
@@ -233,10 +247,10 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
+        expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -250,13 +264,12 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = faucet;
     let staking_id = account_identifier_text(&staking_account);
     let denom_e8s = 250_000_000u64;
     let pot_e8s = 100_000_000u64;
@@ -356,10 +369,10 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
+        expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -379,13 +392,12 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = faucet;
     let staking_id = account_identifier_text(&staking_account);
     let denom_e8s = 300_000_000u64;
 
@@ -489,10 +501,10 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
+        expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -506,13 +518,12 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = faucet;
     let staking_id = account_identifier_text(&staking_account);
     let _: () = update_bytes(
         &pic,
@@ -624,10 +635,10 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
+        expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm.clone(), encode_one(faucet_init)?, None);
 
@@ -641,13 +652,12 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = faucet;
     let staking_id = account_identifier_text(&staking_account);
     let _: () = update_bytes(
         &pic,
@@ -784,6 +794,34 @@ struct HistorianContributionHistoryPage {
     next_start_after_tx_id: Option<u64>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum HistorianCyclesSampleSource {
+    BlackholeStatus,
+    SelfCanister,
+    SnsRootSummary,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianCyclesSample {
+    timestamp_nanos: u64,
+    cycles: u128,
+    source: HistorianCyclesSampleSource,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianCyclesHistoryPage {
+    items: Vec<HistorianCyclesSample>,
+    next_start_after_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianGetCyclesHistoryArgs {
+    canister_id: Principal,
+    start_after_ts: Option<u64>,
+    limit: Option<u32>,
+    descending: Option<bool>,
+}
+
 #[test]
 #[ignore]
 fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
@@ -793,7 +831,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
     let cmc_wasm = build_wasm("mock-cmc", None)?;
-    let blackhole_wasm = build_wasm("mock-blackhole", None)?;
+    let blackhole_wasm = real_blackhole::real_blackhole_wasm()?;
     let faucet_wasm = build_wasm("jupiter-faucet", Some("debug_api"))?;
     let disburser_wasm = build_wasm("jupiter-disburser", Some("debug_api"))?;
     let historian_wasm = build_wasm("jupiter-historian", Some("debug_api"))?;
@@ -816,6 +854,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     pic.install_canister(index, index_wasm, vec![], None);
     pic.install_canister(cmc, cmc_wasm, vec![], None);
     pic.install_canister(blackhole, blackhole_wasm, vec![], None);
+    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
 
     let staking_account = Account { owner: Principal::anonymous(), subaccount: Some([11u8; 32]) };
     let faucet_init = FaucetInitArg {
@@ -826,10 +865,10 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         cmc_canister_id: Some(cmc),
         rescue_controller: faucet,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(10_000_000),
+        expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -860,17 +899,15 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
         blackhole_armed: Some(false),
-        expected_first_staking_tx_id: None,
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = blackhole;
     let staking_id = account_identifier_text(&staking_account);
     let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((staking_account.clone(), 80_000_000u64))?)?;
     let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 80_000_000u64, Some(target.to_text().into_bytes())))?)?;
-    let _: () = update_bytes(&pic, blackhole, Principal::anonymous(), "debug_set_status", encode_args((target, Some(Nat::from(1234u64)), vec![blackhole])))?;
 
     let disburser_staging = Account { owner: disburser, subaccount: None };
     let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((disburser_staging, 80_000_000u64))?)?;
@@ -888,6 +925,11 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let contributions: HistorianContributionHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_contribution_history", HistorianGetContributionHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(contributions.items.len(), 1);
     assert!(contributions.items[0].counts_toward_faucet);
+
+    let cycles: HistorianCyclesHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_cycles_history", HistorianGetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
+    assert_eq!(cycles.items.len(), 1);
+    assert!(cycles.items[0].cycles > 0);
+    assert!(matches!(cycles.items[0].source, HistorianCyclesSampleSource::BlackholeStatus));
 
     let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {

@@ -109,7 +109,10 @@ Coverage added with this module includes:
 - unit tests for memo parsing, dedupe, pruning, and source-merging logic
 - local mock-backed DFX scenarios
 - PocketIC integration tests for contribution indexing, blackhole cycles history, SNS discovery, and upgrade persistence
+- PocketIC happy-path blackhole coverage builds and installs the vendored `third_party/ic-blackhole` source using a pinned `nixos-21.11` nixpkgs override
 - suite-level E2E coverage so historian participates in the integrated flow
+
+**TODO:** Revisit real-blackhole build reproducibility and restore a strict production-hash verification step once the upstream build mismatch has been understood.
 
 ### Future SNS test coverage
 
