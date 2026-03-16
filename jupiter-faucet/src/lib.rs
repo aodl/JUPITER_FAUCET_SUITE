@@ -19,6 +19,7 @@ pub struct InitArgs {
     pub cmc_canister_id: Option<Principal>,
 
     pub rescue_controller: Principal,
+    pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
     pub expected_first_staking_tx_id: Option<u64>,
 
@@ -29,6 +30,7 @@ pub struct InitArgs {
 
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
+    pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
     pub clear_forced_rescue: Option<bool>,
 }
@@ -43,6 +45,10 @@ fn mainnet_index_id() -> Principal {
 
 fn mainnet_cmc_id() -> Principal {
     Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").expect("invalid hardcoded cmc principal")
+}
+
+fn mainnet_blackhole_id() -> Principal {
+    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
 }
 
 fn decode_subaccount_opt(v: Option<Vec<u8>>) -> Result<Option<[u8; 32]>, String> {
@@ -70,6 +76,7 @@ fn init(args: InitArgs) {
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
         rescue_controller: args.rescue_controller,
+        blackhole_controller: Some(args.blackhole_controller.unwrap_or_else(mainnet_blackhole_id)),
         blackhole_armed: args.blackhole_armed,
         expected_first_staking_tx_id: args.expected_first_staking_tx_id,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
@@ -90,6 +97,9 @@ fn pre_upgrade() {
 
 pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) {
     if let Some(args) = args {
+        if let Some(blackhole_controller) = args.blackhole_controller {
+            st.config.blackhole_controller = Some(blackhole_controller);
+        }
         if let Some(armed) = args.blackhole_armed {
             st.config.blackhole_armed = Some(armed);
             st.blackhole_armed_since_ts = if armed { Some(now_secs) } else { None };
@@ -125,6 +135,7 @@ pub struct DebugState {
     pub active_payout_job_present: bool,
     pub retry_state_present: bool,
     pub last_summary_present: bool,
+    pub blackhole_controller: Option<Principal>,
     pub blackhole_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<ForcedRescueReason>,
     pub consecutive_index_anchor_failures: u8,
@@ -161,6 +172,7 @@ fn debug_state() -> DebugState {
         active_payout_job_present: st.active_payout_job.is_some(),
         retry_state_present: st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).is_some(),
         last_summary_present: st.last_summary.is_some(),
+        blackhole_controller: st.config.blackhole_controller,
         blackhole_armed_since_ts: st.blackhole_armed_since_ts,
         forced_rescue_reason: st.forced_rescue_reason.clone(),
         consecutive_index_anchor_failures: st.consecutive_index_anchor_failures.unwrap_or(0),

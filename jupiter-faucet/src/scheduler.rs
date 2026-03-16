@@ -590,27 +590,30 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
 
 async fn attempt_rescue(now_secs: u64) {
     maybe_latch_bootstrap_rescue(now_secs);
-    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered, forced_reason) = state::with_state(|st| {
+    let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_reason) = state::with_state(|st| {
         (
             st.config.blackhole_armed.unwrap_or(false),
+            st.config.blackhole_controller,
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
-            st.rescue_triggered,
             st.forced_rescue_reason.clone(),
         )
     });
     if !blackhole_armed { return; }
+    let Some(blackhole_controller) = blackhole_controller else {
+        log_error(3107);
+        return;
+    };
     let self_id = self_canister_principal();
     let mut desired = if forced_reason.is_some() {
-        vec![rescue_controller, self_id]
+        vec![blackhole_controller, rescue_controller, self_id]
     } else {
-        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller) else { return; };
+        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, Some(blackhole_controller), rescue_controller) else { return; };
         desired
     };
     desired.sort_by(|a: &Principal, b: &Principal| a.to_text().cmp(&b.to_text()));
     desired.dedup();
     let rescue_active = desired.iter().any(|p| *p == rescue_controller);
-    if !rescue_active && !rescue_triggered { return; }
     let arg = UpdateSettingsArgs { canister_id: self_id, settings: CanisterSettings { controllers: Some(desired), ..Default::default() } };
     if update_settings(&arg).await.is_err() { log_error(3101); return; }
     state::with_state_mut(|st| { st.last_rescue_check_ts = now_secs; st.rescue_triggered = rescue_active; });
@@ -821,6 +824,7 @@ mod tests {
             index_canister_id: Principal::anonymous(),
             cmc_canister_id: Principal::anonymous(),
             rescue_controller: Principal::anonymous(),
+            blackhole_controller: Some(Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: 60,

@@ -120,7 +120,7 @@ For `disburser_dfx_integration`, the scenario set currently covers behavior such
 - bonus split math on the happy path
 - payout-plan preservation across temporary failures
 - plan rebuild on `BadFee`
-- rescue-controller invariants
+- blackhole/rescue-controller invariants
 - dust remaining in staging
 
 For `faucet_dfx_integration`, the scenario set currently covers behavior such as:
@@ -130,7 +130,7 @@ For `faucet_dfx_integration`, the scenario set currently covers behavior such as
 - page-boundary scanning across large histories
 - notify retry without duplicate transfer
 - remainder-to-self behavior
-- rescue invariants before first success and after broken/healthy transitions
+- rescue invariants before first success and after broken/healthy controller transitions
 
 ### `*_pocketic_integration`
 
@@ -143,7 +143,7 @@ Examples covered by the current PocketIC suites include:
 - disburser upgrade mid-flight preserving state
 - duplicate-proof transfer completion after partial execution
 - blackhole timer-only progression
-- rescue-controller round-trips
+- blackhole/rescue-controller round-trips
 - age-bonus behavior at multiple neuron ages
 - faucet retry persistence across upgrades
 - bounded state footprint under repeated replays

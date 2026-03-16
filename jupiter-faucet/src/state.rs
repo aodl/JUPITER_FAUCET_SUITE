@@ -10,6 +10,7 @@ pub struct Config {
     pub index_canister_id: Principal,
     pub cmc_canister_id: Principal,
     pub rescue_controller: Principal,
+    pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
     pub expected_first_staking_tx_id: Option<u64>,
     pub main_interval_seconds: u64,

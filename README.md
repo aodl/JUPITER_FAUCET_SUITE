@@ -87,9 +87,9 @@ The operational path is designed around **self-management plus rescue handoff**,
 
 In practice that means:
 
-- `jupiter-disburser` and `jupiter-faucet` are intended to reconcile to **self-only controllers** during healthy operation
+- `jupiter-disburser` and `jupiter-faucet` are intended to reconcile to **self + blackhole controllers** during healthy operation
 - each canister persists enough local state to decide when value flow has stopped for long enough to justify rescue
-- once the local rescue policy triggers, the canister widens its controller set to include `jupiter-lifeline`
+- once the local rescue policy triggers, the canister widens its controller set to include `jupiter-lifeline` alongside `self + blackhole`
 
 This matters because the suite wants two properties at once:
 

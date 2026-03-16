@@ -14,6 +14,7 @@ pub struct Config {
     pub governance_canister_id: Principal,
 
     pub rescue_controller: Principal,
+    pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
 
     pub main_interval_seconds: u64,

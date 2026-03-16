@@ -9,6 +9,7 @@ type InitArgs = record {
   cmc_canister_id : opt principal;
 
   rescue_controller : principal;
+  blackhole_controller : opt principal;
   blackhole_armed : opt bool;
   expected_first_staking_tx_id : opt nat64;
 
@@ -38,6 +39,7 @@ type DebugState = record {
   active_payout_job_present : bool;
   retry_state_present : bool;
   last_summary_present : bool;
+  blackhole_controller : opt principal;
   blackhole_armed_since_ts : opt nat64;
   forced_rescue_reason : opt ForcedRescueReason;
   consecutive_index_anchor_failures : nat8;

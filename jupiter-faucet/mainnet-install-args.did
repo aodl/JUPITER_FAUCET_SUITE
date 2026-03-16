@@ -14,6 +14,7 @@
     index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
     cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
     rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
+    blackhole_controller = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
     blackhole_armed = null;
     expected_first_staking_tx_id = opt "390be24d51d6b006afcb9774585d6eb353e7cdbb72bc2b96f0978a5a1aab7ae5";
     main_interval_seconds = opt 604800;

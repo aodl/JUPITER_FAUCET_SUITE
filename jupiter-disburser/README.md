@@ -125,19 +125,21 @@ This gives the canister deterministic, duplicate-safe retry behavior without hav
 The intended healthy-state controller set for `jupiter-disburser` is:
 
 - `jupiter-disburser` itself
+- the canonical blackhole canister
 
 When rescue is required, the canister widens that controller set to:
 
 - `jupiter-lifeline`
+- the canonical blackhole canister
 - `jupiter-disburser`
 
 ### Time windows
 
 When blackhole mode is armed, controller reconciliation follows this policy based on `last_successful_transfer_ts`:
 
-- healthy: `<= 7 days` since last successful transfer → self only
+- healthy: `<= 7 days` since last successful transfer → blackhole + self
 - middle window: `> 7 days` and `<= 14 days` → no controller change
-- broken: `> 14 days` → rescue controller + self
+- broken: `> 14 days` → blackhole + rescue controller + self
 
 There is also a bootstrap rescue condition:
 
@@ -145,7 +147,7 @@ There is also a bootstrap rescue condition:
 
 ### Operational precondition before blackholing
 
-Do **not** hand the canister off to self-only control until at least one successful payout transfer has occurred.
+Do **not** rely on the healthy blackhole+self controller posture until at least one successful payout transfer has occurred.
 
 Without a recorded successful transfer, the time-based rescue policy has no proof that value flow ever worked.
 
@@ -164,6 +166,7 @@ The init args are:
 - `ledger_canister_id` (defaults to ICP Ledger)
 - `governance_canister_id` (defaults to NNS Governance)
 - `rescue_controller`
+- `blackhole_controller`
 - `blackhole_armed`
 - `main_interval_seconds`
 - `rescue_interval_seconds`
@@ -180,6 +183,7 @@ The committed mainnet install args currently wire:
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
 - age bonus recipient 2: D-QUORUM staking account on NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` plus subaccount from the committed args file)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
+- blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
 - `blackhole_armed = false`
@@ -232,7 +236,7 @@ Those cover, among other things:
 - payout-plan persistence and duplicate-proof retry
 - upgrade mid-flight behavior
 - blackhole timer progression
-- rescue-controller round-trips
+- blackhole/rescue-controller round-trips
 - age-bonus routing at 0y, 2y, and 4y
 - `ClaimOrRefresh` / `RefreshVotingPower` behavior
 
@@ -269,6 +273,8 @@ dfx canister install jupiter_disburser \
 
 ### Toggle blackhole arming via upgrade args
 
+Upgrade args may also set `blackhole_controller` when migrating an older deployment onto the canonical blackhole-backed controller model.
+
 Arm:
 
 ```bash
@@ -301,7 +307,7 @@ dfx canister install jupiter_disburser \
 
 ### Controller handoff notes
 
-Before handing the canister off to self-management, the deployment operator must still configure canister settings such as public log visibility and add the canister as a controller of itself.
+Before handing the canister off to self-management, the deployment operator must still configure canister settings such as public log visibility and ensure the canister is a controller of itself before the healthy controller set converges to `self + blackhole`.
 
 Example:
 
@@ -310,12 +316,13 @@ dfx canister update-settings jupiter_disburser --network ic --log-visibility pub
 dfx canister update-settings jupiter_disburser --network ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
-After blackhole mode is armed and at least one successful payout transfer has been recorded, the operator can hand the canister off to self-only control:
+After blackhole mode is armed and at least one successful payout transfer has been recorded, the operator can hand the canister off to the healthy `self + blackhole` controller set:
 
 ```bash
 dfx canister update-settings jupiter_disburser \
   --network ic \
-  --set-controller uccpi-cqaaa-aaaar-qby3q-cai
+  --set-controller uccpi-cqaaa-aaaar-qby3q-cai \
+  --add-controller e3mmv-5qaaa-aaaah-aadma-cai
 ```
 
 ## Related docs

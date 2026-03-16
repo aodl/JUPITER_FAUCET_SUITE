@@ -296,6 +296,7 @@ struct InitArg {
     governance_canister_id: Option<Principal>,
 
     rescue_controller: Principal,
+    blackhole_controller: Option<Principal>,
     blackhole_armed: Option<bool>,
 
     main_interval_seconds: Option<u64>,
@@ -316,6 +317,7 @@ struct DebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     payout_plan_present: bool,
+    blackhole_controller: Option<Principal>,
     blackhole_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
 }
@@ -1135,14 +1137,18 @@ fn build_pic() -> PocketIc {
         .build()
 }
 
-fn set_self_only_controller(pic: &PocketIc, canister: Principal) -> Result<()> {
+fn test_blackhole_controller() -> Principal {
+    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()
+}
+
+fn set_blackholed_controllers(pic: &PocketIc, canister: Principal) -> Result<()> {
     let current = pic.get_controllers(canister);
     let sender = current
         .get(0)
         .cloned()
         .unwrap_or_else(Principal::anonymous);
 
-    pic.set_controllers(canister, Some(sender), vec![canister])
+    pic.set_controllers(canister, Some(sender), vec![test_blackhole_controller(), canister])
         .map_err(|e| anyhow!("set_controllers reject: {:?}", e))?;
     Ok(())
 }
@@ -1215,6 +1221,7 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
         governance_canister_id: Some(gov),
         // Rescue controller is explicit in all test installs.
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         // Keep timers effectively disabled in e2e (we drive execution manually).
         main_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -1224,7 +1231,7 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
     // Allow the disburser canister to manage its own controllers (like production).
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // NOTE: no hotkey needed because the disburser canister is the neuron controller.
 
@@ -1329,6 +1336,7 @@ fn full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -1336,8 +1344,8 @@ fn full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
-    // Production posture: self-only controller.
-    set_self_only_controller(&pic, disburser_canister)?;
+    // Production posture: blackhole+self controller.
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let staging = Account { owner: disburser_canister, subaccount: None };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
@@ -1479,13 +1487,14 @@ fn inflight_idempotency_no_double_initiation() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let staging = Account { owner: disburser_canister, subaccount: None };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
@@ -1563,6 +1572,7 @@ fn upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -1571,7 +1581,7 @@ fn upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
     pic.install_canister(disburser_canister, wasm.clone(), encode_one(init)?, None);
 
     // Self-only controller so we can stop/start using the canister principal.
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Initiate.
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
@@ -1668,13 +1678,14 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Fund staging with a known amount that guarantees 3 transfers at max bonus.
     let fee_e8s = icrc1_fee(&pic, ledger)?;
@@ -1843,6 +1854,7 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -1920,6 +1932,7 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         // Let timers drive.
         main_interval_seconds: Some(60),
@@ -1928,8 +1941,8 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
-    // Blackhole posture: self-only controller.
-    set_self_only_controller(&pic, disburser_canister)?;
+    // Blackhole posture: blackhole+self controller.
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // (Do not force prev_age here; it is overwritten on initiation.)
 
@@ -2056,6 +2069,7 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(true),
         // Keep timers effectively disabled in e2e (we drive execution manually).
         main_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -2064,11 +2078,11 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
-    // Start fully blackholed (self-only controller).
-    set_self_only_controller(&pic, disburser_canister)?;
+    // Start fully blackholed (blackhole+self controller).
+    set_blackholed_controllers(&pic, disburser_canister)?;
     let c0 = pic.get_controllers(disburser_canister);
-    if c0 != vec![disburser_canister] {
-        bail!("expected self-only controller at start, got {:?}", c0);
+    if !(c0.contains(&disburser_canister) && c0.contains(&test_blackhole_controller()) && c0.len() == 2) {
+        bail!("expected blackhole+self controller at start, got {:?}", c0);
     }
 
     // Simulate broken: last_successful_transfer_ts far in the past.
@@ -2085,11 +2099,11 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
 
     let c1 = pic.get_controllers(disburser_canister);
-    if !(c1.contains(&disburser_canister) && c1.contains(&controller) && c1.len() == 2) {
-        bail!("expected controllers=[self,rescue], got {:?}", c1);
+    if !(c1.contains(&disburser_canister) && c1.contains(&test_blackhole_controller()) && c1.contains(&controller) && c1.len() == 3) {
+        bail!("expected controllers=[blackhole,self,rescue], got {:?}", c1);
     }
 
-    // Now simulate healthy: recent successful transfer => must re-blackhole to self-only.
+    // Now simulate healthy: recent successful transfer => must re-blackhole to blackhole+self.
     let _: () = update_call(
         &pic,
         disburser_canister,
@@ -2100,8 +2114,8 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
 
     let c2 = pic.get_controllers(disburser_canister);
-    if c2 != vec![disburser_canister] {
-        bail!("expected controllers to return to self-only after healthy tick, got {:?}", c2);
+    if !(c2.contains(&disburser_canister) && c2.contains(&test_blackhole_controller()) && c2.len() == 2) {
+        bail!("expected controllers to return to blackhole+self after healthy tick, got {:?}", c2);
     }
 
     Ok(())
@@ -2134,6 +2148,7 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(365 * 24 * 60 * 60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -2144,7 +2159,7 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
     set_controllers_exact(&pic, disburser_canister, vec![disburser_canister, controller])?;
     let before = pic.get_controllers(disburser_canister);
     if !(before.contains(&disburser_canister) && before.contains(&controller) && before.len() == 2) {
-        bail!("expected initial controllers=[self,rescue], got {:?}", before);
+        bail!("expected initial controllers to remain [self,rescue] while unarmed, got {:?}", before);
     }
 
     let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
@@ -2208,6 +2223,7 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(true),
         main_interval_seconds: Some(365 * 24 * 60 * 60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -2215,10 +2231,10 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
     let c0 = pic.get_controllers(disburser_canister);
-    if c0 != vec![disburser_canister] {
-        bail!("expected self-only controller at start, got {:?}", c0);
+    if !(c0.contains(&disburser_canister) && c0.contains(&test_blackhole_controller()) && c0.len() == 2) {
+        bail!("expected blackhole+self controller at start, got {:?}", c0);
     }
 
     // No successful payout has ever been recorded.
@@ -2236,7 +2252,7 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
 
     let c1 = pic.get_controllers(disburser_canister);
-    if !(c1.contains(&disburser_canister) && c1.contains(&controller) && c1.len() == 2) {
+    if !(c1.contains(&disburser_canister) && c1.contains(&test_blackhole_controller()) && c1.contains(&controller) && c1.len() == 3) {
         bail!(
             "expected bootstrap rescue to widen controllers before first successful payout; got {:?}",
             c1
@@ -2287,6 +2303,7 @@ fn maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         // Disable suppression to make explicit ticks deterministic.
         main_interval_seconds: Some(60),
@@ -2294,7 +2311,7 @@ fn maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let staging = Account { owner: disburser_canister, subaccount: None };
@@ -2441,13 +2458,14 @@ fn partial_execution_retry_duplicate_proof() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let staging = Account { owner: disburser_canister, subaccount: None };
@@ -2612,13 +2630,14 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Simulate long downtime (no timers fire while stopped).
     stop_canister_as(&pic, disburser_canister, disburser_canister)?;
@@ -2718,13 +2737,14 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Payout-only mode for this test.
     debug_set_skip_maturity_initiation(&pic, disburser_canister, true)?;
@@ -2819,13 +2839,14 @@ fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Payout-only mode: we do not want the test to be gated on 7-day maturity finalization.
     debug_set_skip_maturity_initiation(&pic, disburser_canister, true)?;
@@ -2900,13 +2921,14 @@ fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Initiate disbursement.
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
@@ -2977,6 +2999,7 @@ fn upgrade_persists_inflight() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -2985,7 +3008,7 @@ fn upgrade_persists_inflight() -> Result<()> {
     pic.install_canister(disburser_canister, wasm.clone(), encode_one(init)?, None);
 
     // Self-only controller so we can stop/start using the canister principal.
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
 
     // Initiate disbursement.
@@ -3083,6 +3106,7 @@ fn blackhole_smoke_timers_only() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         // Timers enabled (short); we will not call debug_main_tick.
         main_interval_seconds: Some(60),
@@ -3091,8 +3115,8 @@ fn blackhole_smoke_timers_only() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
 
-    // Blackhole posture: self-only controllers.
-    set_self_only_controller(&pic, disburser_canister)?;
+    // Blackhole posture: blackhole+self controllers.
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let staging = Account { owner: disburser_canister, subaccount: None };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
@@ -3171,6 +3195,7 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         // Drive manually for determinism.
         main_interval_seconds: Some(60),
@@ -3178,7 +3203,7 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let staging = Account { owner: disburser_canister, subaccount: None };
@@ -3413,6 +3438,7 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
@@ -3491,7 +3517,7 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     }
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
     
     // Initiate maturity disbursement via the disburser. In PocketIC, the in-flight entry may take
     // a couple of ticks to surface, so we retry a few times.
@@ -4018,13 +4044,14 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
     debug_set_skip_maturity_initiation(&pic, disburser_canister, true)?;
     debug_set_prev_age_seconds(&pic, disburser_canister, age_used_4)?;
 
@@ -4141,13 +4168,14 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(365 * DAY_SECS),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
     let before_stake = before.cached_neuron_stake_e8s;
@@ -4217,13 +4245,14 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(365 * DAY_SECS),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
-    set_self_only_controller(&pic, disburser_canister)?;
+    set_blackholed_controllers(&pic, disburser_canister)?;
 
     let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
     let before_refresh = before

@@ -14,6 +14,7 @@ type InitArgs = record {
   governance_canister_id : opt principal;
 
   rescue_controller : principal;
+  blackhole_controller : opt principal;
   blackhole_armed : opt bool;
 
   main_interval_seconds : opt nat64;

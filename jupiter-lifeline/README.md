@@ -2,7 +2,7 @@
 
 `jupiter-lifeline` is the recovery-controller canister for blackholed Jupiter operational canisters.
 
-It exists so `jupiter-disburser` and `jupiter-faucet` can keep their normal controller sets narrow during healthy operation while still having a pre-positioned rescue target if their local rescue policy triggers.
+It exists so `jupiter-disburser` and `jupiter-faucet` can keep their normal controller sets narrow during healthy operation (`self + blackhole`) while still having a pre-positioned rescue target if their local rescue policy triggers.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -30,7 +30,7 @@ Today the canister’s practical role is to be the configured `rescue_controller
 - `jupiter-disburser`
 - `jupiter-faucet`
 
-Those canisters decide for themselves when rescue should be activated. `jupiter-lifeline` is the target they add to their controller set when that happens.
+Those canisters decide for themselves when rescue should be activated. `jupiter-lifeline` is the additional controller they add alongside the existing `self + blackhole` controller set when that happens.
 
 ## Install and upgrade
 

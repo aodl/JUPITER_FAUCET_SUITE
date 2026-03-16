@@ -7,7 +7,10 @@ use candid::{Nat, Principal};
 use ic_cdk::management_canister::{update_settings, CanisterSettings, UpdateSettingsArgs};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
-use std::{cell::RefCell, time::Duration};
+use std::time::Duration;
+
+#[cfg(feature = "debug_api")]
+use std::cell::RefCell;
 
 #[cfg(feature = "debug_api")]
 thread_local! {
@@ -445,8 +448,8 @@ async fn process_payout<L: LedgerClient>(
 /// RESCUE TICK:
 /// - errors-only logs
 /// - policy-driven decision:
-///   * healthy => controllers=[self] when rescue is currently active
-///   * broken  => controllers=[rescue,self]
+///   * healthy => controllers=[blackhole,self]
+///   * broken  => controllers=[blackhole,rescue,self]
 ///
 /// This path is intentionally driven by persisted local state plus a management-canister
 /// controller update. It does not require fresh ledger, governance, or canister-status
@@ -462,12 +465,12 @@ async fn rescue_tick() {
         }
     });
 
-    let (blackhole_armed, last_xfer_opt, rescue_controller, rescue_triggered, forced_rescue_reason) = state::with_state(|st| {
+    let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_rescue_reason) = state::with_state(|st| {
         (
             st.config.blackhole_armed.unwrap_or(false),
+            st.config.blackhole_controller,
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
-            st.rescue_triggered,
             st.forced_rescue_reason.clone(),
         )
     });
@@ -476,11 +479,16 @@ async fn rescue_tick() {
         return;
     }
 
+    let Some(blackhole_controller) = blackhole_controller else {
+        log_error(2003);
+        return;
+    };
+
     let self_id = self_canister_principal();
     let mut desired = if forced_rescue_reason.is_some() {
-        vec![rescue_controller, self_id]
+        vec![blackhole_controller, rescue_controller, self_id]
     } else {
-        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller) else {
+        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, Some(blackhole_controller), rescue_controller) else {
             return;
         };
         desired
@@ -490,10 +498,6 @@ async fn rescue_tick() {
     desired.dedup();
 
     let rescue_active = desired.iter().any(|p| *p == rescue_controller);
-
-    if !rescue_active && !rescue_triggered {
-        return;
-    }
 
     let arg = UpdateSettingsArgs {
         canister_id: self_id,
@@ -658,6 +662,7 @@ mod tests {
             ledger_canister_id: Principal::anonymous(),
             governance_canister_id: Principal::anonymous(),
             rescue_controller: Principal::anonymous(),
+            blackhole_controller: Some(Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()),
             blackhole_armed: Some(false),
             main_interval_seconds: 60,
             rescue_interval_seconds: 60,

@@ -191,19 +191,21 @@ Active payout jobs, retry state, summaries, and rescue-relevant observations are
 The intended healthy-state controller set for `jupiter-faucet` is:
 
 - `jupiter-faucet` itself
+- the canonical blackhole canister
 
 When rescue is required, the controller set becomes:
 
 - `jupiter-lifeline`
+- the canonical blackhole canister
 - `jupiter-faucet`
 
 ### Time-based windows
 
 When blackhole mode is armed, time-based controller reconciliation follows the same windows as the disburser:
 
-- healthy: `<= 7 days` since last successful top-up notification → self only
+- healthy: `<= 7 days` since last successful top-up notification → blackhole + self
 - middle window: `> 7 days` and `<= 14 days` → no controller change
-- broken: `> 14 days` → rescue controller + self
+- broken: `> 14 days` → blackhole + rescue controller + self
 
 There is also a bootstrap rescue condition:
 
@@ -234,6 +236,7 @@ Init args:
 - `index_canister_id` (defaults to ICP Index)
 - `cmc_canister_id` (defaults to the Cycles Minting Canister)
 - `rescue_controller`
+- `blackhole_controller`
 - `blackhole_armed` (optional)
 - `expected_first_staking_tx_id` (optional)
   - a safety anchor for the oldest expected staking-account tx visible through the index canister
@@ -254,6 +257,7 @@ The committed mainnet install args wire the current production constants used by
   `390be24d51d6b006afcb9774585d6eb353e7cdbb72bc2b96f0978a5a1aab7ae5`
 - payout account: the faucet canister default account (`acjuz-liaaa-aaaar-qb4qq-cai`, with `payout_subaccount = null`)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
+- blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - index canister: ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
@@ -273,6 +277,7 @@ The current suite wiring from `jupiter-disburser` targets the faucet’s default
 
 Upgrade args currently support:
 
+- `blackhole_controller`
 - `blackhole_armed`
 - `clear_forced_rescue`
 
@@ -280,6 +285,7 @@ Example upgrade-arg template:
 
 ```candid
 (opt record {
+  blackhole_controller = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
   blackhole_armed = opt true;
   clear_forced_rescue = opt false;
 })
@@ -349,7 +355,7 @@ For the suite-wide matrix, see [`../xtask/README.md`](../xtask/README.md).
 
 ### Before blackholing
 
-Do not hand the canister off to self-only control until it has recorded at least one successful top-up notification.
+Do not rely on the healthy `self + blackhole` controller set until the canister has recorded at least one successful top-up notification.
 
 ### When reading payout behavior
 
