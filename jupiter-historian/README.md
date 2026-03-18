@@ -102,19 +102,118 @@ Optional:
 
 Defaults follow the current suite conventions and mainnet public-system canister IDs.
 
-## Testing
+### Mainnet install args committed in this repo
 
-Coverage added with this module includes:
+The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently configures:
 
-- unit tests for memo parsing, dedupe, pruning, and source-merging logic
-- local mock-backed DFX scenarios
-- PocketIC integration tests for contribution indexing, blackhole cycles history, SNS discovery, and upgrade persistence
-- PocketIC happy-path blackhole coverage builds and installs the vendored `third_party/ic-blackhole` source via its pinned `make repro-build` path
-- suite-level E2E coverage so historian participates in the integrated flow
-- PocketIC historian coverage also exercises the vendored blackhole reproducibility/hash verification path
+- the Jupiter staking account as the contribution source
+- default ICP Ledger, ICP Index, canonical blackhole, and SNS-WASM canister IDs by leaving those principals as `null`
+- `enable_sns_tracking = false`
+- `scan_interval_seconds = 600`
+- `cycles_interval_seconds = 604800`
+- `min_tx_e8s = 10_000_000`
+- `max_cycles_entries_per_canister = 100`
+- `max_contribution_entries_per_canister = 100`
+- `max_index_pages_per_tick = 10`
+- `max_canisters_per_cycles_tick = 25`
 
-The vendored `ic-blackhole` build is now expected to be reproducible, and the historian PocketIC flow runs the corresponding ignored hash-verification test when invoked through the suite harness.
+That file is intended to be the copy-pasteable install/upgrade argument source for an IC deployment of the historian.
 
-### Future SNS test coverage
+## Build and test
+
+### Local development build
+
+This is useful for iterative local work, but it is **not** the canonical reproducible release workflow used for production artifacts:
+
+```bash
+cargo build -p jupiter-historian --target wasm32-unknown-unknown --release --locked
+```
+
+### Local debug-interface build
+
+This enables the debug-only API surface for local integration work. It is also **not** the canonical reproducible release workflow:
+
+```bash
+cargo build -p jupiter-historian --target wasm32-unknown-unknown --release --features debug_api --locked
+```
+
+### Tests
+
+Run specific tests with the following xtask commands:
+
+```bash
+cargo run -p xtask -- historian_unit
+cargo run -p xtask -- historian_dfx_integration
+cargo run -p xtask -- historian_pocketic_integration
+cargo run -p xtask -- e2e_pocketic_integration
+```
+
+Run all jupiter-historian tests with:
+
+```bash
+cargo run -p xtask -- historian_all
+```
+
+Those cover, among other things:
+
+- memo-derived contribution indexing without duplicate replay
+- weekly blackhole-based cycles sampling
+- SNS discovery and SNS-root-summary cycles sampling
+- state preservation across historian upgrades
+- suite-level coordination with the faucet staking flow
+- reproducible blackhole wasm verification before PocketIC installation
+
+For the broader test matrix, see [`../xtask/README.md`](../xtask/README.md).
+
+## Reproducible builds and deployment
+
+### Canonical reproducible release build
+
+For production artifacts, use the pinned Docker-based workflow from the repo root:
+
+```bash
+chmod +x ../scripts/docker-build ../scripts/build-canister
+../scripts/docker-build
+```
+
+This uses `../Dockerfile.repro`, which pins the base image digest, Rust toolchain, and `ic-wasm` version, then runs `../scripts/build-canister` inside that controlled environment.
+
+It produces the canonical release artifacts under `../release-artifacts/`, including:
+
+- `release-artifacts/jupiter_historian.wasm`
+- `release-artifacts/jupiter_historian.wasm.gz`
+- corresponding `.sha256` files
+
+### Install canonical release artifact on the IC
+
+Fresh install:
+
+```bash
+dfx canister install jupiter_historian \
+  --network ic \
+  --wasm release-artifacts/jupiter_historian.wasm.gz \
+  --argument-file jupiter-historian/mainnet-install-args.did
+```
+
+Upgrade:
+
+```bash
+dfx canister install jupiter_historian \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_historian.wasm.gz \
+  --argument-file jupiter-historian/mainnet-install-args.did
+```
+
+## Debug interface
+
+The production canister exposes the query interface described above.
+
+Additional debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC testing only. The debug Candid surface is committed at:
+
+- [`jupiter_historian_debug.did`](jupiter_historian_debug.did)
+
+## Future SNS test coverage
 
 **TODO:** Revisit `jupiter-historian` SNS integration testing once the Jupiter Faucet Suite’s own SNS configuration is represented in this repository. At that point, replace or supplement mock-based SNS historian tests with Jupiter-specific SNS smoke/integration coverage using the in-repo SNS configuration.
+

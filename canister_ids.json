@@ -5,13 +5,16 @@
   "jupiter_faucet": {
     "ic": "acjuz-liaaa-aaaar-qb4qq-cai"
   },
+  "jupiter_faucet_frontend": {
+    "ic": "gvey7-gyaaa-aaaar-qb4fq-cai"
+  },
+  "jupiter_historian": {
+    "ic": "j5gs6-uiaaa-aaaar-qb5cq-cai"
+  },
   "jupiter_lifeline": {
     "ic": "afisn-gqaaa-aaaar-qb4qa-cai"
   },
   "jupiter_sns_rewards": {
     "ic": "alk7f-5aaaa-aaaar-qb4ra-cai"
-  },
-  "jupiter_faucet_frontend": {
-    "ic": "gvey7-gyaaa-aaaar-qb4fq-cai"
   }
 }
