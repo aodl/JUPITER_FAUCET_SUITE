@@ -69,13 +69,20 @@ cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
 
-Historian and E2E PocketIC coverage builds the vendored `third_party/ic-blackhole` source with:
+Historian and E2E PocketIC coverage builds the vendored `third_party/ic-blackhole` source through its pinned reproducible build path:
 
 ```bash
-nix-build --arg pkgs 'import (builtins.fetchTarball "https://github.com/NixOS/nixpkgs/archive/refs/heads/nixos-21.11.tar.gz") {}'
+cd third_party/ic-blackhole
+make repro-build
 ```
 
-So those commands require `nix-build` to be available.
+So those commands require `make` and `nix-build` to be available.
+
+If you want to exercise the reproducibility/hash check directly, the historian PocketIC suite runs the ignored real-blackhole verification test via:
+
+```bash
+cargo test -p jupiter-historian --test jupiter_historian_integration -- --ignored --nocapture
+```
 
 ### End-to-end commands
 
