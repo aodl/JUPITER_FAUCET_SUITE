@@ -43,7 +43,7 @@ These production canister IDs are recorded in `canister_ids.json`:
 - `jupiter-faucet` — `acjuz-liaaa-aaaar-qb4qq-cai`
 - `jupiter-lifeline` — `afisn-gqaaa-aaaar-qb4qa-cai`
 - `jupiter-sns-rewards` — `alk7f-5aaaa-aaaar-qb4ra-cai`
-- `jupiter-faucet-frontend` — `gvey7-gyaaa-aaaar-qb4fq-cai`
+- `jupiter-faucet-frontend` — `jufzc-caaaa-aaaar-qb5da-cai`
 
 These core canisters are deployed on the Fiduciary subnet:
 
@@ -77,7 +77,7 @@ Current placeholder canister that receives the primary age-bonus ICP flow. It is
 See [`jupiter-sns-rewards/README.md`](jupiter-sns-rewards/README.md).
 
 ### `jupiter-faucet-frontend`
-Current placeholder for the eventual public asset/frontend canister.
+Serves the public Jupiter Faucet frontend as a certified-asset Rust canister, with the site assets embedded into the module and served with HTTP certification.
 
 See [`jupiter-faucet-frontend/README.md`](jupiter-faucet-frontend/README.md).
 
@@ -103,10 +103,9 @@ The detailed rescue conditions differ slightly between the disburser and the fau
 
 ## Current placeholders and deliberate omissions
 
-A few components are intentionally minimal today:
+One component is intentionally minimal today:
 
 - `jupiter-sns-rewards`
-- `jupiter-faucet-frontend`
 
 A follow-up TODO for the new historian module is to revisit mock-based SNS test coverage once the Jupiter Faucet Suite's own SNS configuration is represented in-repo.
 
@@ -123,7 +122,7 @@ Committed production init-arg files now live alongside the operational canisters
 - `jupiter-faucet/` — cycles top-up canister
 - `jupiter-lifeline/` — recovery canister
 - `jupiter-sns-rewards/` — placeholder rewards canister
-- `jupiter-faucet-frontend/` — placeholder frontend canister
+- `jupiter-faucet-frontend/` — public frontend canister and embedded assets
 - `jupiter-historian/` — contribution and cycles-history canister
 - `xtask/` — local orchestration, mocks, integration suites, and end-to-end suites
 - `scripts/` — reproducible build helpers

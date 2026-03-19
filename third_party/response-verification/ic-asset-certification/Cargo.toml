@@ -1,0 +1,21 @@
+[package]
+name = "ic-asset-certification"
+version = "3.0.3"
+edition = "2021"
+authors = ["DFINITY Stiftung"]
+repository = "https://github.com/dfinity/response-verification"
+homepage = "https://github.com/dfinity/response-verification#readme"
+license = "Apache-2.0"
+description = "Certification for static assets served over HTTP on the Internet Computer"
+readme = "README.md"
+documentation = "https://docs.rs/ic-asset-certification"
+categories = ["api-bindings", "data-structures", "algorithms", "cryptography::cryptocurrencies"]
+keywords = ["internet-computer", "agent", "utility", "icp", "dfinity"]
+include = ["src", "Cargo.toml", "LICENSE", "README.md"]
+
+[dependencies]
+http = "1"
+ic-certification = { path = "../ic-certification" }
+ic-http-certification = { path = "../ic-http-certification" }
+thiserror = "1"
+globset = "0.4"

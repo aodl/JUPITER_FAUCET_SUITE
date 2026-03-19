@@ -1,0 +1,243 @@
+/* Top navbar behaviour and styling */
+
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20000;
+  padding: 16px 40px;
+  opacity: 0;
+  transform: translateY(-12px);
+  pointer-events: none;
+  transition:
+    opacity 220ms ease-out,
+    transform 220ms ease-out;
+  font-size: 16px;
+}
+
+.navbar--visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.navbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Nav buttons */
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.nav-item {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #fff;
+  padding: 6px 12px;
+  text-transform: uppercase;
+  text-decoration: none;
+  letter-spacing: 0.08em;
+  font-size: 14px;
+  border-radius: 999px;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.nav-item:hover {
+  border-color: #fff;
+  transform: translateY(-1px);
+}
+
+.nav-item:active {
+  transform: translateY(0);
+}
+
+/* Clicked / active state: filled white */
+.nav-item.nav-item--active {
+  background: #fff;
+  color: #0b0e13;
+}
+
+/* Paginated pages inside the panel */
+.nav-panel-page {
+  display: none;
+}
+
+.nav-panel-page.is-active {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+/* Optional: if a page still gets tall, allow internal scrolling */
+.nav-panel-page.is-active {
+  max-height: 40vh;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+/* Dots navigation */
+.nav-panel-dots {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  margin-top: auto; 
+  padding-top: 12px;
+}
+
+.nav-panel-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  transition: transform 120ms ease, background-color 160ms ease, opacity 160ms ease;
+  opacity: 0.9;
+}
+
+.nav-panel-dot:hover {
+  transform: scale(1.1);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.nav-panel-dot.is-active {
+  background: #fff;
+  opacity: 1;
+}
+
+.nav-panel-dot:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+}
+
+/* Info pane */
+
+.nav-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  z-index: 19000;
+}
+
+.nav-panel-backdrop.is-open {
+  display: flex;
+}
+
+.nav-panel {
+  min-width: min(640px, 90dvw);
+  min-height: 50vh;
+  max-width: 50dvw;
+  padding: 24px 28px 22px;
+  border-radius: 16px;
+  background: rgba(11, 14, 19, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(14px);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nav-panel-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Only the active section is shown */
+.nav-panel-section {
+  display: none;
+}
+
+.nav-panel-section--active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.nav-panel-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nav-panel-content {
+  font-size: 16px;
+  line-height: 1.6;
+  opacity: 0.9;
+}
+
+.nav-panel-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.8;
+  transition: opacity 150ms ease;
+  text-decoration: none;
+}
+
+.nav-panel-close:hover {
+  opacity: 1;
+}
+
+/* Small screens tweaks */
+
+@media (max-width: 600px) {
+  .navbar {
+    padding: 12px 20px;
+  }
+
+  .nav-links {
+    gap: 10px;
+  }
+
+  .nav-item {
+    font-size: 10px;
+    padding: 4px 10px;
+  }
+
+  .nav-panel {
+    min-width: min(90dvw, 480px);
+    padding: 20px 18px 18px;
+  }
+}

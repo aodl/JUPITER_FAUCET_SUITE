@@ -1,0 +1,92 @@
+/* The big SVG with Jupiter + orbiting particles */
+
+.background-orbit{
+  width: 100%;
+  height: 150dvw;
+  display: block;
+  position: absolute;
+  top: 0;
+  z-index: -1;
+}
+
+/* Visor */
+
+#visor,
+#visor_glow{
+  position: absolute;
+  top: 0px;
+  padding-top: 68.1%;
+  left: 34.4%;
+  width: 18.2%;
+  z-index: 10000;
+}
+
+#visor_glow{
+  transition: opacity 1s ease-in-out;
+  animation: fade1 5s infinite ease-in-out alternate;
+  opacity: 0;
+  z-index: 10001;
+}
+
+@keyframes fade1{
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+/* Glow labels */
+
+.neon{
+  font-size: 3dvw;
+  font-weight: bold;
+  color: #fff;
+  animation: pulse 5s ease-in-out infinite alternate;
+}
+
+.neon-label{
+  position: absolute;
+}
+
+.neon-top{
+  top: 0px;
+  padding-top: 75%;
+  left: 54dvw;
+}
+
+.neon-ups{
+  top: 0px;
+  padding-top: 78%;
+  left: 57dvw;
+}
+
+@media (max-width: 1024px) {
+  /* Hide certain elements on mobile */
+  #visor, #visor_glow, .neon {
+    display: none;
+  }
+}
+
+@keyframes pulse{
+  0% {
+    opacity: .3;
+    text-shadow:
+      0 0 40px #ff0,
+      0 0 80px #ff0,
+      0 0 90px #ff0,
+      0 0 100px #ff0,
+      0 0 150px #ff0;
+    filter: saturate(.9);
+  }
+  100% {
+    opacity: .85;
+    text-shadow:
+      0 0 5px #fff,
+      0 0 10px #fff,
+      0 0 20px #fff,
+      0 0 40px #ff0,
+      0 0 80px #ff0,
+      0 0 90px #ff0,
+      0 0 100px #ff0,
+      0 0 150px #ff0;
+    filter: saturate(1.2);
+  }
+}

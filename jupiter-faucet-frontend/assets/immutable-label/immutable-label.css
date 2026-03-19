@@ -1,0 +1,21 @@
+.immutable-label{
+  position: absolute;
+  top: 0px;
+  padding-top: 42%;
+  right: 35%;
+  width: 39%;
+  filter: brightness(1.1) contrast(3.4) saturate(1.2);
+}
+
+.immutable-label img{
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@media (max-width: 1024px) {
+  /* Hide certain elements on mobile */
+  .immutable-label {
+    display: none;
+  }
+}

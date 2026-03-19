@@ -1,0 +1,87 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="-20 -20 320 100">
+
+  <style>
+    /* Slight blur to soften the neon text edges */
+    .immutable-text{
+      filter: blur(0.8px);
+    }
+  </style>
+
+  <defs>
+    <!-- Orange-to-yellow neon gradient for the text -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F60"/>
+      <stop offset="30%" stop-color="#FD0"/>
+      <stop offset="100%" stop-color="#F60"/>
+    </linearGradient>
+
+    <!-- Glow filter: layered blurs to create a neon halo -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="3" result="blur1"/>
+      <feGaussianBlur stdDeviation="8" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Radial gradient for moving spotlights: bright center, fading edges -->
+    <radialGradient id="spotlightGrad" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFF" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#FFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Path for the curved "IMMUTABLE" text -->
+    <path id="textPath" d="M0 47C50 94 186 47 197-1" fill="none" stroke="none"/>
+
+    <!-- Clipping path so spotlights only show inside the letters -->
+    <clipPath id="textClip">
+      <text font-family="sans-serif" font-weight="bold" font-size="15" fill="#000">
+        <textPath href="#textPath" startOffset="25%">I  M  M  U  T  A  B  L  E</textPath>
+      </text>
+    </clipPath>
+  </defs>
+
+  <!-- Curved neon "IMMUTABLE" label -->
+  <text
+    class="immutable-text"
+    fill="url(#textGradient)"
+    font-family="sans-serif"
+    font-weight="bold"
+    font-size="15"
+    filter="url(#glow)">
+    <textPath href="#textPath" startOffset="25%">I  M  M  U  T  A  B  L  E</textPath>
+  </text>
+
+  <!-- Moving spotlight circles, clipped to the text shape -->
+  <g clip-path="url(#textClip)">
+    <circle cx="-10" cy="30" r="20" fill="url(#spotlightGrad)">
+      <!-- Horizontal sweep with slow vertical oscillation -->
+      <animate attributeName="cx" from="-10" to="320" dur="300s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="30;70;30;70" dur="350s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-10" cy="30" r="20" fill="url(#spotlightGrad)">
+      <animate attributeName="cx" from="-10" to="320" dur="200s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="30;70;30;70" dur="250s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-10" cy="30" r="5" fill="url(#spotlightGrad)">
+      <animate attributeName="cx" from="-10" to="320" dur="120s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="30;70;30;70" dur="170s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-10" cy="30" r="5" fill="url(#spotlightGrad)">
+      <animate attributeName="cx" from="-10" to="320" dur="100s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="30;70;30;70" dur="150s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-10" cy="30" r="4" fill="url(#spotlightGrad)">
+      <animate attributeName="cx" from="-10" to="320" dur="50s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="30;70;30;70" dur="100s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-10" cy="30" r="4" fill="url(#spotlightGrad)">
+      <animate attributeName="cx" from="-10" to="320" dur="80s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="30;70;30;70" dur="90s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+</svg>

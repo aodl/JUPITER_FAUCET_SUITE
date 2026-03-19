@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JUPITER FAUCET</title>
+
+  <link rel="icon" href="/favicon.ico?v=__ASSET_VERSION__">
+
+  <!-- Styles: global first, then component-specific -->
+  <link rel="stylesheet" href="base.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="navbar.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="hero.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="background-orbit/background-orbit.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="background-orbit/text-band/text-band.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="immutable-label/immutable-label.css?v=__ASSET_VERSION__" />
+
+  <!-- Scripts: background orbit + 3D band -->
+  <script src="navbar.js?v=__ASSET_VERSION__" defer></script>
+  <script src="hero.js?v=__ASSET_VERSION__" defer></script>
+  <script src="background-orbit/background-orbit.js?v=__ASSET_VERSION__" defer></script>
+  <script src="background-orbit/text-band/text-band.js?v=__ASSET_VERSION__" defer></script>
+</head>
+<body>
+  <!-- Top navigation bar -->
+  <header class="navbar" id="navbar">
+    <nav class="navbar-inner">
+      <div class="nav-links">
+        <a href="#about" class="nav-item" data-panel="about">About</a>
+        <a href="#how-it-works" class="nav-item" data-panel="how-it-works">How it works</a>
+        <a href="#partners" class="nav-item" data-panel="partners">Partners</a>
+      </div>
+    </nav>
+  </header>
+
+  <!-- Info pane opened by nav buttons -->
+  <div class="nav-panel-backdrop" id="nav-panel-backdrop">
+    <section class="nav-panel" role="dialog" aria-modal="true">
+      <a href="#intro" class="nav-panel-close" aria-label="Close panel">&times;</a>
+      <div class="nav-panel-body">
+        <!-- About -->
+        <article
+          class="nav-panel-section"
+          data-panel="about"
+          id="nav-panel-about"
+        >
+          <h2 class="nav-panel-title">About</h2>
+            <div class="nav-panel-page is-active" data-page="0">
+              <p class="nav-panel-content">
+                <strong>Jupiter Faucet</strong> is a perpetual cycles top-up protocol for the
+                Internet Computer - built to help canister smart contracts keep running
+                <strong>indefinitely</strong>. The Internet
+                Computer is designed for tamperproof, "unstoppable" on-chain services; Jupiter
+                Faucet focuses on the practical part: making sure canisters don’t run out of
+                cycles, <strong>even if nobody is maintaining the project</strong>.
+              </p>
+            </div>
+
+            <div class="nav-panel-page" data-page="1">
+              <p class="nav-panel-content">
+                The perpetual top-up workflow is intentionally designed to be so simple that anyone can
+                carry it out as a <strong>one-off operation</strong> directly from the <strong>NNS dapp</strong> 
+                using the enhanced transfer <em>and memo</em> flow - no further setup required.
+              </p>
+  
+              <p class="nav-panel-content">
+                Jupiter Faucet is built to propel <strong>big burners</strong>, including
+                cycle-intensive on-chain AI workloads such as <strong><a
+                  href="https://web-3-words.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >WORDY</a
+                ></strong>,
+                helping projects get the most out of ICP→cycles conversion over the long run.
+              </p>
+            </div>
+
+            <div class="nav-panel-page" data-page="2">            
+              <p class="nav-panel-content">
+                Open source, reproducible builds will be published soon, along with further announcements. 
+                These include decentralization of peripheral components via an SNS launch. The core component 
+                will be blackholed, with a worst-case scenario lifeline built into the canister. The lifeline mechanism is 
+                capable of temporarily reassigning its controller to the SNS DAO in the event that a breaking 
+                change has been applied to network dependencies (protocol canisters running in system subnets) preventing disbursals. 
+                Similarly the mechanism is capable of blackholing itself once disbursals begin flowing again.
+              </p>
+            
+              <p class="nav-panel-content">
+                <strong>Status:</strong> Jupiter Faucet is in the final phases of development,
+                with a planned launch within <strong>Q2 2026</strong>.
+              </p>
+            </div>
+            
+            <div class="nav-panel-dots" role="tablist">
+              <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
+              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Page 3" aria-selected="false"></button>
+            </div>
+        </article>
+
+        <!-- How it works -->
+        <article
+          class="nav-panel-section"
+          data-panel="how-it-works"
+          id="nav-panel-how-it-works"
+        >
+          <h2 class="nav-panel-title">How it works</h2>
+            <div class="nav-panel-page is-active" data-page="0">
+              <p class="nav-panel-content">
+                The top-up process is intentionally simple: transfer at least
+                <strong>0.1 ICP</strong> directly into the staking account of
+                <a
+                  href="https://dashboard.internetcomputer.org/neuron/11614578985374291210"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Jupiter Faucet's canister-controlled neuron</a
+                >
+                and set your <strong>target canister ID</strong> as the transaction
+                <strong>memo</strong>. You do not need to be the owner of the canister.
+              </p>
+
+              <p class="nav-panel-content">
+                That’s it. With your memo declaring a canister, that canister becomes the recipient
+                of <strong>perpetual cycles top-ups</strong>, funded by the stake’s ongoing
+                rewards (proportional to your ICP contribution and any further contributions made for that canister). 
+                A monitoring workflow will soon be introduced for visualising the impact of your perpetual top-ups.
+              </p>
+
+              <p class="nav-panel-content">
+                While stake contributions can be made today, we recommend waiting for protocol completion (estimated Q2 2026).
+              </p>
+            </div>
+              
+            <div class="nav-panel-page" data-page="1">      
+              <p class="nav-panel-content">
+                <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
+                maturity generated from contributed stake is used to perpetually burn ICP, mint cycles,
+                and top up the declared canister over time.
+              </p>
+
+              <p class="nav-panel-content">
+                <strong>Age bonus maturity:</strong> the age-bonus component (between
+                <strong>0% and 20%</strong> of total maturity depending on stake age) is split
+                into:
+                <br />
+                • <strong>0%–16%</strong> distributed to <strong>SNS JUP stakers</strong> in the form of newly minted <strong>nICP</strong>
+                <br />
+                • <strong>0%–4%</strong> restaked into the
+                <a
+                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  ><strong>D-QUORUM</strong></a
+                >
+                neuron to help fund decentralized due diligence of NNS proposals.
+              </p>
+            </div>
+              
+            <div class="nav-panel-page" data-page="2">              
+              <p class="nav-panel-content">
+                <strong>Coming soon:</strong> detailed step-by-step instructions. 
+				Jupiter Faucet is in the final stages of development.
+              </p>
+              
+              <p class="nav-panel-content">
+                <strong>Also coming soon:</strong> SNS launch, and periodic JUP airdrops for users who have contributed
+                ICP to Jupiter Faucet's canister-controlled neuron, front-loaded to encourage earlier contributions
+              </p>
+            </div>
+            
+            <div class="nav-panel-dots" role="tablist">
+              <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
+              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Page 3" aria-selected="false"></button>
+            </div>
+
+        </article>
+        
+        <!-- Partners -->        
+        <article
+          class="nav-panel-section"
+          data-panel="partners"
+          id="nav-panel-partners"
+        >
+          <h2 class="nav-panel-title">Partners</h2>
+
+          <div class="nav-panel-page is-active" data-page="0">              
+            <p class="nav-panel-content">
+              Jupiter Faucet is helping to propel <strong>big burners</strong>: projects with
+              meaningful, continuous cycles demand (on-chain AI and other
+              high-throughput workloads). By making perpetual top-ups "set-and-forget", we
+              aim to reduce operational friction and help these applications scale on the
+              Internet Computer.
+            </p>
+		  </div>
+ 
+          <div class="nav-panel-page" data-page="1">               
+            <p class="nav-panel-content">
+              <strong>Life On Ledger</strong> has so far been a stealth mode project and is still under development.
+              It has a strong relationship to Jupiter Faucet's early contributors, and a huge demand for cycles. In short, 
+              Life On Ledger is a massive multi-player online game in the form of an unstoppable cellular automata.
+              It supports up to 100K simultaneous players (potentially more with some further work) each competing to claim more territory
+              than their competitors in a perpetual war. To support its long-term growth, 
+              the upcoming <strong>LOL SNS DAO</strong> will be the recipient of a
+              <strong>10% allocation</strong> of JUP genesis tokens.
+            </p>
+
+            <p class="nav-panel-content"> 
+              We're confident LOL's high burn rate and affinity for a VERY large community of CA fanatics will help put the IC on the map for good.
+            </p>
+		  </div>
+		   
+          <div class="nav-panel-page" data-page="2">              
+            <p class="nav-panel-content">
+              We also recognize that unstoppable smart contracts depend on the safety and
+              resilience of the network they run on. That’s why we support
+                <a
+                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  ><strong>D-QUORUM</strong></a
+                >, and why a small portion of age-bonus maturity (0 - 4% of total maturity depending on age) is
+              restaked into the D-QUORUM neuron to help bootstrap protocol-funded,
+              decentralised due diligence of NNS proposals, to strengthen Internet
+              Computer governance over time.
+            </p>
+		  </div>
+
+          <div class="nav-panel-page" data-page="3">
+            <p class="nav-panel-content">
+              The future is arriving faster than many are ready for, and onchain governance will revolve just as much around
+              capable onchain AI as it does around human participation and off-chain tooling. 
+              A stealth-mode AI project that is currently under development (and goes by more than one name) will be 
+              the recipient of an additional 15% allocation of JUP genesis tokens. This project stands to become the largest burner
+              on the IC, while helping to secure the network and inform human voters of network activity in 
+              a trust-minimised way. This project demands significant resources which will be ongoing. Jupiter Faucet will help it get there.
+            </p>
+          </div>
+            
+          <div class="nav-panel-page" data-page="4">              
+            <p class="nav-panel-content">          
+              Stimulating the adoption of liquid staking tokens is also an important goal. 
+              We believe <strong>nICP</strong> will help insulate ICP from price volatility.
+              Issuing JUP rewards as nICP also helps users maximise long-term gains with minimal effort or opportunity cost. 
+              As the IC's leading liquid staking protocol,              
+                 <a
+                  href="https://waterneuron.fi/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  ><strong>WaterNeuron</strong></a
+                >'s nICP is the go-to choice.
+            </p>
+		  </div>
+		  
+          <div class="nav-panel-page" data-page="5">              
+		    <p class="nav-panel-content">        
+              <strong>We believe these strategic alliances will help decentralize Jupiter Faucet at genesis
+              and beyond, while also helping to elevate and secure the
+              Internet Computer - for the benefit of everyone building on it, everyone
+              staked on it, and everyone holding valuable on-chain assets.</strong>
+            </p>
+		  </div>
+		  
+          <div class="nav-panel-dots" role="tablist">
+            <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
+            <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="2" aria-label="Page 3" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="3" aria-label="Page 4" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="4" aria-label="Page 5" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="5" aria-label="Page 6" aria-selected="false"></button>
+          </div> 
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <!-- Visor + glow -->
+  <img id="visor" src="background-orbit/visor.png?v=__ASSET_VERSION__" alt="">
+  <img id="visor_glow" src="background-orbit/visor-glow.png?v=__ASSET_VERSION__" alt="">
+
+  <!-- Neon “TOP UPS” labels -->
+  <div class="neon neon-label neon-top">TOP</div>
+  <div class="neon neon-label neon-ups">UPS</div>
+
+  <!-- Main titles -->
+  <h1 class="title-main title-jupiter bottom-fade-widget">JUPITER</h1>
+  <h1 class="title-main title-faucet bottom-fade-widget">FAUCET</h1>
+
+  <!-- Tagline with diagonal left gutter -->
+  <div class="tagline bottom-fade-widget">
+    <p class="diagonal-wrap">
+      <span class="slope" aria-hidden="true"></span>
+      Powers unstoppable dapps running on a public <b>World Computer</b> by delivering a simple, set-and-forget, perpetual top-up solution that's trustless, permissionless and immutable. Adopters receive front-loaded <b>JUP SNS airdrops. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="#how-it-works" data-panel="how-it-works">How?</a></b>
+    </p>
+  </div>
+
+  <!-- Use inline SVG so that JS can sync the timeline  -->
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 1024 1536"
+    preserveAspectRatio="xMinYMin slice"
+    id="background-orbit"
+    class="background-orbit">
+  
+    <style>
+    /* Softly glowing particles that travel along the swirl path */
+    .particle{
+      filter: blur(1px);
+      opacity: 0.8;
+    }
+    </style>
+  
+    <defs>
+    <!-- Curved path for particles to follow -->
+    <path id="swirl-1" class="guide"
+      d="M833 497C846 478 851 472 860 443 871.6667 398 849 394 838 384 773 356.3333 700 387 647 361 590 330 611 290 526 247 499 237 388 200 299 294 216 382 267 477 157 525 62 582 276 600 534 519" />
+  
+    <!-- Base particle shape -->
+    <g id="p">
+      <circle r="2" fill="#FFF9A9" class="particle" />
+    </g>
+    </defs>
+  
+    <g class="glow">
+    <use href="#p" opacity="0">
+      <animateMotion
+      dur="600s"
+      begin="0s"
+      repeatCount="indefinite"
+      rotate="auto">
+      <mpath href="#swirl-1" />
+      </animateMotion>
+      <animate
+      attributeName="opacity"
+      dur="600s"
+      begin="0s"
+      repeatCount="indefinite"
+      keyTimes="0; 0.083; 0.117; 0.417; 0.45; 1"
+      values="0; 0; 1; 1; 0; 0" />
+    </use>
+  
+    <use href="#p" opacity="0">
+      <animateMotion
+      dur="400s"
+      begin="0s"
+      repeatCount="indefinite"
+      rotate="auto">
+      <mpath href="#swirl-1" />
+      </animateMotion>
+      <animate
+      attributeName="opacity"
+      dur="400s"
+      begin="0s"
+      repeatCount="indefinite"
+      keyTimes="0; 0.05; 0.125; 0.60; 0.70; 1"
+      values="0; 0; 1; 1; 0; 0" />
+    </use>
+  
+    <use href="#p" opacity="0">
+      <animateMotion
+      dur="1200s"
+      begin="0s"
+      repeatCount="indefinite"
+      rotate="auto">
+      <mpath href="#swirl-1" />
+      </animateMotion>
+      <animate
+      attributeName="opacity"
+      dur="1200s"
+      begin="0s"
+      repeatCount="indefinite"
+      keyTimes="0; 0.10; 0.14; 0.45; 0.50; 1"
+      values="0; 0; 1; 1; 0; 0" />
+    </use>
+  
+    </g>
+  </svg>
+
+
+  <!-- Curved “IMMUTABLE” label -->
+  <div class="immutable-label">
+    <img
+      id="immutable-label-svg"
+      src="immutable-label/immutable-label.svg?v=__ASSET_VERSION__"
+      alt=""
+      aria-hidden="true" />
+  </div>
+
+  <!-- 3D text band -->
+  <div class="band-container">
+    <div class="rig" id="rig">
+      <div class="band" id="band"></div>
+    </div>
+  </div>
+  <div class="measure" id="measure"></div>
+  <div id="intro"></div>
+</body>
+</html>

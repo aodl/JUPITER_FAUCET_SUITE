@@ -1,0 +1,24 @@
+[package]
+name = "ic-certification"
+version = "3.0.3"
+edition = "2021"
+authors = ["DFINITY Stiftung"]
+repository = "https://github.com/dfinity/response-verification"
+homepage = "https://github.com/dfinity/response-verification#readme"
+license = "Apache-2.0"
+description = "Types related to the Internet Computer Public Specification."
+readme = "README.md"
+documentation = "https://docs.rs/ic-certification"
+categories = ["api-bindings", "data-structures", "algorithms", "cryptography::cryptocurrencies"]
+keywords = ["internet-computer", "agent", "utility", "icp", "dfinity"]
+include = ["src", "Cargo.toml", "LICENSE", "README.md"]
+
+[dependencies]
+hex = "0.4"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"], optional = true }
+serde_bytes = { version = "0.11", optional = true }
+
+[features]
+serde = ["dep:serde", "dep:serde_bytes"]
+default = ["serde"]

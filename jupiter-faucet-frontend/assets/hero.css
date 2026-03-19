@@ -1,0 +1,63 @@
+/* Titles */
+
+.title-main{
+  position: fixed;
+  font-size: 10dvw;
+  text-shadow: #ffcc00 0.06dvw 0 0.6dvw;
+}
+
+.title-jupiter{
+  bottom: 30px;
+  padding-bottom: 26%;
+  left: 48dvw;
+}
+
+.title-faucet{
+  bottom: 30px;
+  padding-bottom: 13%;
+  left: 45dvw;
+}
+
+#intro{
+  position: absolute;
+  bottom: -100%;
+  height: 0px;
+}
+
+/* Tagline */
+
+.tagline{
+  position: fixed;
+  bottom: 30px;
+  left: 30dvw;
+  font-size: 1.97dvw;
+  font-weight: 400;
+  width: 51dvw;
+  text-align: justify;
+  text-shadow: #ffcc00 0.01dvw 0 0.1dvw;
+}
+
+.bottom-fade-widget {
+  /* Start hidden and slightly lower */
+  opacity: 0;
+  /* Helps keep the motion smooth */
+  will-change: opacity;
+}
+
+.tagline a{
+  color: #fff;
+}
+
+.diagonal-wrap{
+  line-height: 1.6;
+}
+
+/* The floated shape that creates the diagonal left “gutter” */
+.diagonal-wrap .slope{
+  float: left;
+  width: 10dvw;          /* max indent on the first line */
+  height: 10dvw;         /* must be tall enough for your paragraph */
+  shape-outside: polygon(0 0, 100% 0, 0 100%);
+  -webkit-shape-outside: polygon(0 0, 100% 0, 0 100%); /* Safari */
+  shape-margin: 0.75rem;   /* gap between text and the diagonal */
+}
