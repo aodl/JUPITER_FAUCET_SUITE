@@ -11,18 +11,8 @@ body{
   place-items: center;
   gap: 28px;
   color: #fff;
-  background: #1C0901;
+  background-color: #1C0901;
   font: 500 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
-  background-image: url('background-orbit/background-orbit.jpg?v=__ASSET_VERSION__');
-  background-size: 100% auto;
-  background-repeat: repeat-y;
-}
-
-/* Mobile-specific background image */
-@media (max-width: 1024px) {
-  body {
-    background-image: url('background-orbit/background-orbit-mobile.jpg?v=__ASSET_VERSION__');
-  }
 }
 
 a {

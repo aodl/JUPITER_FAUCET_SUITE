@@ -124,6 +124,15 @@ fn certify_all_assets() {
             encodings: vec![],
         },
         AssetConfig::Pattern {
+            pattern: "**/*.webp".to_string(),
+            content_type: Some("image/webp".to_string()),
+            headers: get_asset_headers(vec![(
+                "cache-control".to_string(),
+                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+            )]),
+            encodings: vec![],
+        },
+        AssetConfig::Pattern {
             pattern: "**/*.svg".to_string(),
             content_type: Some("image/svg+xml".to_string()),
             headers: get_asset_headers(vec![(
