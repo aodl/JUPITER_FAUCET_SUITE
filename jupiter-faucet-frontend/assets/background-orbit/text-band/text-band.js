@@ -174,5 +174,9 @@
     requestAnimationFrame(animate);
   }
 
-  document.addEventListener("DOMContentLoaded", initBand);
+  if (document.readyState === "complete") {
+    initBand();
+  } else {
+    window.addEventListener("load", initBand, { once: true });
+  }
 })();

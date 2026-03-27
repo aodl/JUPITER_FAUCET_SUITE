@@ -91,6 +91,8 @@ struct HistorianInitArg {
     staking_account: Account,
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
+    cmc_canister_id: Option<Principal>,
+    faucet_canister_id: Option<Principal>,
     blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
     enable_sns_tracking: Option<bool>,
@@ -115,6 +117,8 @@ struct HistorianUpgradeArg {
     max_canisters_per_cycles_tick: Option<u32>,
     blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
+    cmc_canister_id: Option<Principal>,
+    faucet_canister_id: Option<Principal>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -223,6 +227,78 @@ struct GetSnsCanistersSummaryResponse {
     dapps: Vec<SnsCanisterSummary>,
     archives: Vec<SnsCanisterSummary>,
 }
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct PublicCounts {
+    registered_canister_count: u64,
+    qualifying_contribution_count: u64,
+    icp_burned_e8s: u64,
+    sns_discovered_canister_count: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct PublicStatus {
+    staking_account: Account,
+    ledger_canister_id: Principal,
+    last_index_run_ts: Option<u64>,
+    index_interval_seconds: u64,
+    last_completed_cycles_sweep_ts: Option<u64>,
+    cycles_interval_seconds: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RegisteredCanisterSummarySort {
+    CanisterIdAsc,
+    LastContributionDesc,
+    QualifyingContributionCountDesc,
+    TotalQualifyingContributedDesc,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct ListRegisteredCanisterSummariesArgs {
+    page: Option<u32>,
+    page_size: Option<u32>,
+    sort: Option<RegisteredCanisterSummarySort>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RegisteredCanisterSummary {
+    canister_id: Principal,
+    sources: Vec<CanisterSource>,
+    qualifying_contribution_count: u64,
+    total_qualifying_contributed_e8s: u64,
+    last_contribution_ts: Option<u64>,
+    latest_cycles: Option<u128>,
+    last_cycles_probe_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListRegisteredCanisterSummariesResponse {
+    items: Vec<RegisteredCanisterSummary>,
+    page: u32,
+    page_size: u32,
+    total: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct ListRecentContributionsArgs {
+    limit: Option<u32>,
+    qualifying_only: Option<bool>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RecentContributionListItem {
+    canister_id: Principal,
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+    counts_toward_faucet: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListRecentContributionsResponse {
+    items: Vec<RecentContributionListItem>,
+}
+
 
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
@@ -242,6 +318,7 @@ struct Harness {
     pic: PocketIc,
     index: Principal,
     blackhole: Principal,
+    cmc: Principal,
     sns_wasm: Principal,
     historian: Principal,
 }
@@ -252,8 +329,9 @@ impl Harness {
         let index = pic.create_canister();
         let blackhole = pic.create_canister();
         let sns_wasm = pic.create_canister();
+        let cmc = pic.create_canister();
         let historian = pic.create_canister();
-        for canister in [index, blackhole, sns_wasm, historian] {
+        for canister in [index, blackhole, sns_wasm, cmc, historian] {
             pic.add_cycles(canister, 5_000_000_000_000);
         }
         pic.install_canister(index, index_wasm()?, vec![], None);
@@ -266,6 +344,8 @@ impl Harness {
             staking_account,
             ledger_canister_id: Some(index),
             index_canister_id: Some(index),
+            cmc_canister_id: Some(cmc),
+            faucet_canister_id: Some(blackhole),
             blackhole_canister_id: Some(blackhole),
             sns_wasm_canister_id: Some(sns_wasm),
             enable_sns_tracking: Some(enable_sns_tracking),
@@ -278,7 +358,7 @@ impl Harness {
             max_canisters_per_cycles_tick: Some(10),
         };
         pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
-        Ok(Self { pic, index, blackhole, sns_wasm, historian })
+        Ok(Self { pic, index, blackhole, cmc, sns_wasm, historian })
     }
 
     fn staking_identifier(&self) -> Result<String> {
@@ -290,6 +370,15 @@ impl Harness {
         self.pic.advance_time(Duration::from_secs(2));
         tick_n(&self.pic, 5);
     }
+}
+
+fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
+    let bytes = principal.as_slice();
+    let mut out = [0u8; 32];
+    out[0] = bytes.len() as u8;
+    let len = bytes.len().min(31);
+    out[1..1 + len].copy_from_slice(&bytes[..len]);
+    out
 }
 
 #[test]
@@ -393,5 +482,170 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
     let cycles: CyclesHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_cycles_history", GetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(cycles.items.len(), 1);
     assert!(cycles.items[0].cycles > 0);
+    Ok(())
+}
+
+
+#[test]
+#[ignore]
+fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let target = h.blackhole;
+    let staking_id = h.staking_identifier()?;
+
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id.clone(), 42u64, Some(target.to_text().into_bytes())))?,
+    )?;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id, 5u64, Some(target.to_text().into_bytes())))?,
+    )?;
+    let burn_account = account_identifier_text(&Account { owner: h.cmc, subaccount: Some(principal_to_subaccount(target)) });
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((burn_account, 42u64, Option::<Vec<u8>>::None))?,
+    )?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.qualifying_contribution_count, 1);
+    assert_eq!(counts.icp_burned_e8s, 42);
+    assert_eq!(counts.sns_discovered_canister_count, 0);
+
+    let status: PublicStatus = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_status", ())?;
+    assert_eq!(status.staking_account.owner, Principal::anonymous());
+    assert_eq!(status.staking_account.subaccount, Some([9u8; 32]));
+    assert_eq!(status.ledger_canister_id, h.index);
+    assert_eq!(status.index_interval_seconds, 60);
+    assert_eq!(status.cycles_interval_seconds, 1);
+    assert!(status.last_index_run_ts.is_some());
+
+    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc),
+        },
+    )?;
+    assert_eq!(registered.total, 1);
+    assert_eq!(registered.items.len(), 1);
+    assert_eq!(registered.items[0].canister_id, target);
+    assert_eq!(registered.items[0].sources, vec![CanisterSource::MemoContribution]);
+    assert_eq!(registered.items[0].qualifying_contribution_count, 1);
+    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 42);
+    assert!(registered.items[0].last_contribution_ts.is_some());
+    assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
+    assert!(registered.items[0].last_cycles_probe_ts.is_some());
+
+    let recent_all: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent_all.items.len(), 2);
+    assert_eq!(recent_all.items[0].tx_id, 2);
+    assert_eq!(recent_all.items[0].amount_e8s, 5);
+    assert!(!recent_all.items[0].counts_toward_faucet);
+    assert_eq!(recent_all.items[1].tx_id, 1);
+    assert_eq!(recent_all.items[1].amount_e8s, 42);
+    assert!(recent_all.items[1].counts_toward_faucet);
+
+    let recent_qualifying: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(true),
+        },
+    )?;
+    assert_eq!(recent_qualifying.items.len(), 1);
+    assert_eq!(recent_qualifying.items[0].tx_id, 1);
+    assert_eq!(recent_qualifying.items[0].canister_id, target);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(true)?;
+    let sns_root = h.pic.create_canister();
+    h.pic.add_cycles(sns_root, 5_000_000_000_000);
+    h.pic.install_canister(sns_root, sns_root_wasm()?, vec![], None);
+
+    let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
+    let dapp = Principal::from_text("2vxsx-fae")?;
+
+    let summary = GetSnsCanistersSummaryResponse {
+        root: Some(SnsCanisterSummary { canister_id: Some(sns_root), status: Some(SnsCanisterStatus { cycles: Some(Nat::from(1000u64)) }) }),
+        governance: Some(SnsCanisterSummary { canister_id: Some(governance), status: Some(SnsCanisterStatus { cycles: Some(Nat::from(2000u64)) }) }),
+        ledger: None,
+        swap: None,
+        index: None,
+        dapps: vec![SnsCanisterSummary { canister_id: Some(dapp), status: Some(SnsCanisterStatus { cycles: Some(Nat::from(3000u64)) }) }],
+        archives: vec![],
+    };
+    let _: () = update_one(&h.pic, sns_root, Principal::anonymous(), "debug_set_summary", summary)?;
+    let _: () = update_one(&h.pic, h.sns_wasm, Principal::anonymous(), "debug_set_roots", vec![sns_root])?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.qualifying_contribution_count, 0);
+    assert_eq!(counts.icp_burned_e8s, 0);
+    assert!(counts.sns_discovered_canister_count >= 3);
+
+    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        },
+    )?;
+    assert_eq!(registered.total, 0);
+    assert!(registered.items.is_empty());
+
+    let recent: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert!(recent.items.is_empty());
     Ok(())
 }

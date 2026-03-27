@@ -20,6 +20,7 @@
     const panelTriggers = Array.from(document.querySelectorAll("a[data-panel]"));
 
     const backdrop = document.getElementById("nav-panel-backdrop");
+    const metricRail = document.getElementById("landing-live-summary");
     const closeBtn = document.querySelector(".nav-panel-close");
     const sections = Array.from(document.querySelectorAll(".nav-panel-section"));
 
@@ -47,35 +48,33 @@
     function updateNavbarVisibility() {
       const currentY = window.scrollY || 0;
 
-      // If a pane is open, navbar must always be visible
+      const setVisible = (visible) => {
+        navbar.classList.toggle("navbar--visible", visible);
+        metricRail?.classList.toggle("metric-rail--visible", visible);
+      };
+
       if (backdrop.classList.contains("is-open")) {
-        navbar.classList.add("navbar--visible");
+        setVisible(true);
         lastScrollY = currentY;
         return;
       }
 
-      // Always show near the very top of the page
       if (currentY <= VISIBILITY_SCROLL_THRESHOLD) {
-        navbar.classList.add("navbar--visible");
+        setVisible(true);
         lastScrollY = currentY;
         return;
       }
 
       const delta = currentY - lastScrollY;
-
       if (Math.abs(delta) < SCROLL_DELTA_TOLERANCE) return;
 
-      if (delta > 0) {
-        navbar.classList.remove("navbar--visible"); // scrolling down
-      } else {
-        navbar.classList.add("navbar--visible"); // scrolling up
-      }
-
+      setVisible(delta <= 0);
       lastScrollY = currentY;
     }
 
     if (window.scrollY <= VISIBILITY_SCROLL_THRESHOLD) {
       navbar.classList.add("navbar--visible");
+      metricRail?.classList.add("metric-rail--visible");
     }
     window.addEventListener("scroll", updateNavbarVisibility, { passive: true });
 
@@ -173,12 +172,20 @@
     });
 
     // ---- Open/close panel ----
+    function clearPanelHash() {
+      if (!window.location.hash) return;
+      const cleanUrl = `${window.location.pathname}${window.location.search}`;
+      history.replaceState(null, "", cleanUrl);
+    }
+
     function openPanel(key) {
       if (!key) return;
 
       setActiveSection(key);
       backdrop.classList.add("is-open");
+      document.body.classList.add("nav-panel-open");
       navbar.classList.add("navbar--visible");
+      metricRail?.classList.add("metric-rail--visible");
 
       // Reset to page 1 whenever opening a section
       const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
@@ -190,6 +197,7 @@
 
     function closePanel() {
       backdrop.classList.remove("is-open");
+      document.body.classList.remove("nav-panel-open");
       panelTriggers.forEach((btn) => btn.classList.remove("nav-item--active"));
       sections.forEach((section) => {
         section.classList.remove("nav-panel-section--active");
@@ -201,7 +209,9 @@
         });
       });
 
+      clearPanelHash();
       updateNavbarVisibility();
+      metricRail?.classList.toggle("metric-rail--visible", navbar.classList.contains("navbar--visible"));
 
       // restore focus to the trigger button that opened the panel
       requestAnimationFrame(() => {
@@ -225,7 +235,14 @@
     }
 
     panelTriggers.forEach((btn) => {
-      btn.addEventListener("click", () => handleTriggerClick(btn));
+      btn.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        const key = btn.getAttribute("data-panel");
+        if (key && window.location.hash !== `#${key}`) {
+          history.replaceState(null, "", `#${key}`);
+        }
+        handleTriggerClick(btn);
+      });
     });
 
     closeBtn.addEventListener("click", closePanel);

@@ -7,9 +7,6 @@ edition = "2021"
 name = "jupiter_historian_integration"
 path = "../xtask/src/pocketIC/jupiter_historian_integration.rs"
 
-[[test]]
-name = "e2e"
-path = "../xtask/src/pocketIC/e2e.rs"
 
 [lib]
 crate-type = ["cdylib"]
@@ -41,3 +38,4 @@ serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 icrc-ledger-types = "0.1.12"
 crc32fast = "1"
+futures = "0.3"

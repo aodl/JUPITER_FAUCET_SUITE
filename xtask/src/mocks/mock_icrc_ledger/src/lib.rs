@@ -1,4 +1,5 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
+use sha2::{Digest, Sha224};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
 use num_traits::ToPrimitive;
@@ -66,6 +67,32 @@ fn nat_u64(n: &Nat) -> u64 {
     n.0.to_u64().unwrap_or(u64::MAX)
 }
 
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct BinaryAccountBalanceArgs {
+    pub account: Vec<u8>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct Tokens {
+    pub e8s: u64,
+}
+
+fn account_identifier_bytes(a: &Account) -> [u8; 32] {
+    let subaccount = a.subaccount.unwrap_or([0u8; 32]);
+    let mut hasher = Sha224::new();
+    hasher.update(b"\x0Aaccount-id");
+    hasher.update(a.owner.as_slice());
+    hasher.update(subaccount);
+    let hash = hasher.finalize();
+    let checksum = crc32fast::hash(&hash).to_be_bytes();
+    let mut bytes = [0u8; 32];
+    bytes[..4].copy_from_slice(&checksum);
+    bytes[4..].copy_from_slice(&hash);
+    bytes
+}
+
+
 #[ic_cdk::init]
 fn init() {}
 
@@ -80,6 +107,26 @@ fn icrc1_balance_of(a: Account) -> Nat {
         let st = s.borrow();
         let bal = *st.balances.get(&key(&a)).unwrap_or(&0);
         Nat::from(bal)
+    })
+}
+
+#[ic_cdk::query]
+fn account_balance(args: BinaryAccountBalanceArgs) -> Tokens {
+    let requested = args.account;
+    ST.with(|s| {
+        let st = s.borrow();
+        let mut e8s: u64 = 0;
+        for (acct, bal) in st.balances.iter() {
+            let account = Account {
+                owner: acct.owner,
+                subaccount: acct.sub,
+            };
+            if account_identifier_bytes(&account).as_slice() == requested.as_slice() {
+                e8s = (*bal).try_into().unwrap_or(u64::MAX);
+                break;
+            }
+        }
+        Tokens { e8s }
     })
 }
 

@@ -749,6 +749,8 @@ struct HistorianInitArg {
     staking_account: Account,
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
+    cmc_canister_id: Option<Principal>,
+    faucet_canister_id: Option<Principal>,
     blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
     enable_sns_tracking: Option<bool>,
@@ -836,6 +838,78 @@ struct HistorianGetCyclesHistoryArgs {
     descending: Option<bool>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianPublicCounts {
+    registered_canister_count: u64,
+    qualifying_contribution_count: u64,
+    icp_burned_e8s: u64,
+    sns_discovered_canister_count: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianPublicStatus {
+    staking_account: Account,
+    ledger_canister_id: Principal,
+    last_index_run_ts: Option<u64>,
+    index_interval_seconds: u64,
+    last_completed_cycles_sweep_ts: Option<u64>,
+    cycles_interval_seconds: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum HistorianRegisteredCanisterSummarySort {
+    CanisterIdAsc,
+    LastContributionDesc,
+    QualifyingContributionCountDesc,
+    TotalQualifyingContributedDesc,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct HistorianListRegisteredCanisterSummariesArgs {
+    page: Option<u32>,
+    page_size: Option<u32>,
+    sort: Option<HistorianRegisteredCanisterSummarySort>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianRegisteredCanisterSummary {
+    canister_id: Principal,
+    sources: Vec<CanisterSource>,
+    qualifying_contribution_count: u64,
+    total_qualifying_contributed_e8s: u64,
+    last_contribution_ts: Option<u64>,
+    latest_cycles: Option<u128>,
+    last_cycles_probe_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianListRegisteredCanisterSummariesResponse {
+    items: Vec<HistorianRegisteredCanisterSummary>,
+    page: u32,
+    page_size: u32,
+    total: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct HistorianListRecentContributionsArgs {
+    limit: Option<u32>,
+    qualifying_only: Option<bool>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianRecentContributionListItem {
+    canister_id: Principal,
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+    counts_toward_faucet: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HistorianListRecentContributionsResponse {
+    items: Vec<HistorianRecentContributionListItem>,
+}
+
 #[test]
 #[ignore]
 fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
@@ -891,6 +965,8 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         staking_account: staking_account.clone(),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
+        cmc_canister_id: Some(cmc),
+        faucet_canister_id: Some(faucet),
         blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: None,
         enable_sns_tracking: Some(false),
@@ -946,6 +1022,58 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(cycles.items.len(), 1);
     assert!(cycles.items[0].cycles > 0);
     assert!(matches!(cycles.items[0].source, HistorianCyclesSampleSource::BlackholeStatus));
+
+    let expected_burned_e8s = 0u64;
+
+    let counts: HistorianPublicCounts = query_one(&pic, historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.qualifying_contribution_count, 1);
+    assert_eq!(counts.icp_burned_e8s, expected_burned_e8s);
+    assert_eq!(counts.sns_discovered_canister_count, 0);
+
+    let status: HistorianPublicStatus = query_one(&pic, historian, Principal::anonymous(), "get_public_status", ())?;
+    assert_eq!(status.staking_account, staking_account);
+    assert_eq!(status.ledger_canister_id, ledger);
+    assert_eq!(status.index_interval_seconds, 60);
+    assert_eq!(status.cycles_interval_seconds, 1);
+    assert!(status.last_index_run_ts.is_some());
+    assert!(status.last_completed_cycles_sweep_ts.is_some());
+
+    let registered: HistorianListRegisteredCanisterSummariesResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        HistorianListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(HistorianRegisteredCanisterSummarySort::TotalQualifyingContributedDesc),
+        },
+    )?;
+    assert_eq!(registered.total, 1);
+    assert_eq!(registered.items.len(), 1);
+    assert_eq!(registered.items[0].canister_id, target);
+    assert_eq!(registered.items[0].qualifying_contribution_count, 1);
+    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 80_000_000);
+    assert!(registered.items[0].last_contribution_ts.is_some());
+    assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
+    assert!(registered.items[0].last_cycles_probe_ts.is_some());
+
+    let recent: HistorianListRecentContributionsResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        HistorianListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 1);
+    assert_eq!(recent.items[0].canister_id, target);
+    assert_eq!(recent.items[0].tx_id, 1);
+    assert_eq!(recent.items[0].amount_e8s, 80_000_000);
+    assert!(recent.items[0].counts_toward_faucet);
 
     let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {

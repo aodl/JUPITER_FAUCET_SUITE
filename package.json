@@ -1,0 +1,20 @@
+{
+  "name": "jupiter-faucet-suite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:frontend": "node jupiter-faucet-frontend/frontend-src/build-frontend.mjs",
+    "smoke:historian": "node scripts/smoke-historian.mjs",
+    "test:frontend-dashboard": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.test.mjs",
+    "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs"
+  },
+  "dependencies": {
+    "@dfinity/agent": "2.4.1",
+    "@dfinity/candid": "2.4.1",
+    "@dfinity/principal": "2.4.1",
+    "@noble/hashes": "1.8.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.4"
+  }
+}

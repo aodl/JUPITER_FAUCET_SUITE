@@ -27,3 +27,9 @@ dist/
 .env
 
 release-artifacts/
+
+!jupiter-faucet-frontend/frontend-src/declarations/
+!jupiter-faucet-frontend/frontend-src/declarations/**
+
+# frontend build artifacts
+jupiter-faucet-frontend/assets/generated/

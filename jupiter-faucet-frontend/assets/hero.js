@@ -38,5 +38,14 @@
 
   window.addEventListener("scroll", updateBottomFade, { passive: true });
   window.addEventListener("resize", updateBottomFade);
-  updateBottomFade();
+
+  function initBottomFade() {
+    requestAnimationFrame(updateBottomFade);
+  }
+
+  if (document.readyState === "complete") {
+    initBottomFade();
+  } else {
+    window.addEventListener("load", initBottomFade, { once: true });
+  }
 })();

@@ -242,7 +242,29 @@ where
 }
 
 fn canister_id(name: &str) -> Result<String> {
-    run_dfx(&["canister", "id", name])
+    let out = run_dfx(&["canister", "id", name])?;
+    Ok(out.trim().to_string())
+}
+
+fn local_replica_host() -> String {
+    if let Ok(host) = env::var("DFX_LOCAL_HOST") {
+        let trimmed = host.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    match run_dfx(&["info", "webserver-port"]) {
+        Ok(port) => {
+            let port = port.trim();
+            if port.is_empty() {
+                "http://localhost:4943".to_string()
+            } else {
+                format!("http://localhost:{port}")
+            }
+        }
+        Err(_) => "http://localhost:4943".to_string(),
+    }
 }
 
 fn principal_of_identity() -> Result<Principal> {
@@ -372,6 +394,125 @@ struct HistorianCyclesHistoryPage {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
+struct HistorianPublicCounts {
+    registered_canister_count: u64,
+    qualifying_contribution_count: u64,
+    icp_burned_e8s: u64,
+    sns_discovered_canister_count: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianPublicStatus {
+    staking_account: Account,
+    ledger_canister_id: Principal,
+    last_index_run_ts: Option<u64>,
+    index_interval_seconds: u64,
+    last_completed_cycles_sweep_ts: Option<u64>,
+    cycles_interval_seconds: u64,
+}
+
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianRegisteredCanisterSummary {
+    canister_id: Principal,
+    qualifying_contribution_count: u64,
+    total_qualifying_contributed_e8s: u64,
+    last_contribution_ts: Option<u64>,
+    latest_cycles: Option<Nat>,
+    last_cycles_probe_ts: Option<u64>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct ListRegisteredCanisterSummariesResponse {
+    items: Vec<HistorianRegisteredCanisterSummary>,
+    page: u32,
+    page_size: u32,
+    total: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RecentContributionListItem {
+    canister_id: Principal,
+    tx_id: u64,
+    amount_e8s: u64,
+    counts_toward_faucet: bool,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct ListRecentContributionsResponse {
+    items: Vec<RecentContributionListItem>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpected {
+    stakeE8s: String,
+    counts: FrontendDashboardExpectedCounts,
+    status: FrontendDashboardExpectedStatus,
+    registered: FrontendDashboardExpectedRegistered,
+    recent: FrontendDashboardExpectedRecent,
+    errors: FrontendDashboardExpectedErrors,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedCounts {
+    registeredCanisterCount: String,
+    qualifyingContributionCount: String,
+    icpBurnedE8s: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedStatus {
+    ledgerCanisterId: String,
+    indexIntervalSeconds: String,
+    cyclesIntervalSeconds: String,
+    stakingAccountIdentifier: String,
+    lastIndexRunTsPresent: bool,
+    lastCyclesSweepTsPresent: bool,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedRegistered {
+    total: String,
+    items: Vec<FrontendDashboardExpectedRegisteredItem>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedRegisteredItem {
+    canisterId: String,
+    qualifyingContributionCount: String,
+    totalQualifyingContributedE8s: String,
+    lastContributionTsPresent: bool,
+    latestCycles: Option<String>,
+    lastCyclesProbeTsPresent: bool,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedRecent {
+    items: Vec<FrontendDashboardExpectedRecentItem>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedRecentItem {
+    canisterId: String,
+    txId: String,
+    amountE8s: String,
+    countsTowardFaucet: bool,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, serde::Serialize)]
+struct FrontendDashboardExpectedErrors {
+    stake: Option<String>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
 struct NotifyRecord {
     canister_id: Principal,
     block_index: u64,
@@ -384,6 +525,11 @@ struct IndexGetCall {
     max_results: u64,
     returned_count: u64,
 }
+
+fn nat_plain_string(value: &Nat) -> String {
+    value.to_string().replace('_', "")
+}
+
 
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
@@ -595,7 +741,11 @@ fn cmd_setup_faucet_dfx() -> Result<()> {
             .map(|b| b.to_string())
             .collect::<Vec<_>>()
             .join("; "),
+        ledger_id = ledger_id.trim(),
+        index_id = index_id.trim(),
+        cmc_id = cmc_id.trim(),
         faucet_rescue = faucet_rescue.to_text(),
+        blackhole_id = blackhole_id.trim(),
     );
 
     run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
@@ -615,12 +765,16 @@ fn cmd_setup_faucet_dfx() -> Result<()> {
 fn cmd_setup_historian_dfx() -> Result<()> {
     cmd_setup_common()?;
 
+    run_dfx(&["deploy", "mock_icrc_ledger"])?;
     run_dfx(&["deploy", "mock_icp_index"])?;
+    run_dfx(&["deploy", "mock_cmc"])?;
     run_dfx(&["deploy", "mock_blackhole"])?;
     run_dfx(&["deploy", "mock_sns_wasm"])?;
     run_dfx(&["deploy", "mock_sns_root"])?;
 
+    let ledger_id = canister_id("mock_icrc_ledger")?;
     let index_id = canister_id("mock_icp_index")?;
+    let cmc_id = canister_id("mock_cmc")?;
     let blackhole_id = canister_id("mock_blackhole")?;
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
 
@@ -629,8 +783,10 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     let historian_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
-            ledger_canister_id = null;
+            ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            faucet_canister_id = opt principal "{blackhole_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
             enable_sns_tracking = opt true;
@@ -642,6 +798,11 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             max_index_pages_per_tick = opt (10:nat32);
             max_canisters_per_cycles_tick = opt (10:nat32);
         }},)"#,
+        ledger_id = ledger_id.trim(),
+        index_id = index_id.trim(),
+        cmc_id = cmc_id.trim(),
+        blackhole_id = blackhole_id.trim(),
+        sns_wasm_id = sns_wasm_id.trim(),
         staking_owner = faucet_staking_account.owner.to_text(),
         staking_subaccount = faucet_staking_account
             .subaccount
@@ -684,7 +845,6 @@ fn cmd_setup() -> Result<()> {
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
     let rescue = principal_of_identity()?;
 
-    // recipients: use three stable principals
     let r1 = Principal::management_canister();
     let r2 = Principal::anonymous();
     let r3 = rescue;
@@ -708,11 +868,13 @@ fn cmd_setup() -> Result<()> {
         r1 = r1.to_text(),
         r2 = r2.to_text(),
         r3 = r3.to_text(),
+        ledger_id = ledger_id.trim(),
+        gov_id = gov_id.trim(),
+        blackhole_id = blackhole_id.trim(),
     );
 
     run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &args])?;
 
-    // IMPORTANT: allow canister to update its own controllers by making self a controller.
     let disb_id = canister_id("jupiter_disburser_dbg")?;
     run_dfx(&[
         "canister",
@@ -747,16 +909,31 @@ fn cmd_setup() -> Result<()> {
             .map(|b| b.to_string())
             .collect::<Vec<_>>()
             .join("; "),
+        ledger_id = ledger_id.trim(),
+        index_id = index_id.trim(),
+        cmc_id = cmc_id.trim(),
         faucet_rescue = faucet_rescue.to_text(),
+        blackhole_id = blackhole_id.trim(),
     );
 
     run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
+
+    let faucet_id = canister_id("jupiter_faucet_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_faucet_dbg",
+        "--add-controller",
+        faucet_id.trim(),
+    ])?;
 
     let historian_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            faucet_canister_id = opt principal "{faucet_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
             enable_sns_tracking = opt true;
@@ -776,17 +953,14 @@ fn cmd_setup() -> Result<()> {
             .map(|b| b.to_string())
             .collect::<Vec<_>>()
             .join("; "),
+        ledger_id = ledger_id.trim(),
+        index_id = index_id.trim(),
+        cmc_id = cmc_id.trim(),
+        faucet_id = faucet_id.trim(),
+        blackhole_id = blackhole_id.trim(),
+        sns_wasm_id = sns_wasm_id.trim(),
     );
     run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
-
-    let faucet_id = canister_id("jupiter_faucet_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_faucet_dbg",
-        "--add-controller",
-        faucet_id.trim(),
-    ])?;
 
     let historian_id = canister_id("jupiter_historian_dbg")?;
     run_dfx(&[
@@ -1977,12 +2151,52 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     Ok(())
 }
 
+fn run_frontend_dashboard_local_fixture(expected: &FrontendDashboardExpected) -> Result<()> {
+    ensure_frontend_dashboard_node_modules()?;
+    let root = repo_root();
+    let historian_id = canister_id("jupiter_historian_dbg")?;
+    let output = Command::new("node")
+        .args([
+            "--test",
+            "jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs",
+        ])
+        .env("FRONTEND_DASHBOARD_TEST_HOST", local_replica_host())
+        .env("FRONTEND_DASHBOARD_TEST_HISTORIAN_CANISTER_ID", historian_id.trim())
+        .env(
+            "FRONTEND_DASHBOARD_EXPECTED_JSON",
+            serde_json::to_string(expected).context("serialize frontend dashboard expectations")?,
+        )
+        .current_dir(&root)
+        .output()
+        .context("failed to run local frontend dashboard fixture test")?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.trim().is_empty() {
+            eprintln!("{}", stdout.trim_end());
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim_end());
+        }
+        bail!("local frontend dashboard fixture test failed");
+    }
+    Ok(())
+}
+
+
+fn reset_historian_local_replica_state() -> Result<()> {
+    let _: () = call_raw_noargs("mock_icp_index", "debug_reset")?;
+    let _: () = call_raw_noargs("mock_blackhole", "debug_reset")?;
+    let _: () = call_raw_noargs("mock_icrc_ledger", "debug_reset")?;
+    let _: () = call_raw_noargs("jupiter_historian_dbg", "debug_reset_derived_state")?;
+    Ok(())
+}
+
 fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let target = Principal::from_text("aaaaa-aa")?;
 
     run_scenario(outcomes, label("dfx", "historian", "indexes memo-derived contribution exactly once"), || {
-        let _: () = call_raw_noargs("mock_icp_index", "debug_reset")?;
-        let _: () = call_raw_noargs("mock_blackhole", "debug_reset")?;
+        reset_historian_local_replica_state()?;
         let listed_before: HistorianListCanistersResponse = call_raw(
             "jupiter_historian_dbg",
             "list_canisters",
@@ -2049,6 +2263,24 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
     });
 
     run_scenario(outcomes, label("dfx", "historian", "weekly sweep records blackhole cycles"), || {
+        reset_historian_local_replica_state()?;
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let memo = format!(
+            "opt vec {{ {} }}",
+            target
+                .to_text()
+                .as_bytes()
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+        )?;
         let blackhole_id = canister_id("mock_blackhole")?;
         let _: () = call_raw(
             "mock_blackhole",
@@ -2079,6 +2311,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
     });
 
     run_scenario(outcomes, label("dfx", "historian", "SNS discovery adds summary-tracked canisters"), || {
+        reset_historian_local_replica_state()?;
         let sns_root = Principal::from_text(canister_id("mock_sns_root")?.trim())?;
         let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
         let _: () = call_raw(
@@ -2102,6 +2335,498 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         if listed.items.iter().all(|item| item.canister_id != governance) {
             bail!("expected SNS-discovered governance canister in historian results");
         }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader matches local replica fixture"), || {
+        reset_historian_local_replica_state()?;
+
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let sub_vec = staking
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let target = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+        let blackhole_id = canister_id("mock_blackhole")?;
+        let ledger_id = canister_id("mock_icrc_ledger")?;
+
+        let _: () = call_raw(
+            "mock_icrc_ledger",
+            "debug_credit",
+            &format!(
+                r#"(record {{ owner = principal "{}"; subaccount = opt vec {{ {} }} }}, 123000000:nat64)"#,
+                staking.owner.to_text(),
+                sub_vec
+            ),
+        )?;
+
+        let memo = format!(
+            "opt vec {{ {} }}",
+            target
+                .to_text()
+                .as_bytes()
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+        )?;
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 5000000:nat64, {})"#, staking_id, memo),
+        )?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(
+                r#"(principal "{}", opt (1234:nat), vec {{ principal "{}" }})"#,
+                target.to_text(),
+                blackhole_id.trim()
+            ),
+        )?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_last_completed_cycles_sweep_ts", "(null)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
+        if counts.registered_canister_count != 1
+            || counts.qualifying_contribution_count != 1
+            || counts.icp_burned_e8s != 0
+        {
+            bail!(
+                "unexpected historian public counts fixture: registered={} qualifying={} burned={}",
+                counts.registered_canister_count,
+                counts.qualifying_contribution_count,
+                counts.icp_burned_e8s
+            );
+        }
+
+        let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_registered_canister_summaries",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+        )?;
+        let recent: ListRecentContributionsResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_recent_contributions",
+            "(record { limit = opt (10:nat32); qualifying_only = opt false })",
+        )?;
+
+        if registered.items.len() != 1 || recent.items.len() != 2 {
+            bail!(
+                "unexpected fixture table sizes: registered={} recent={}",
+                registered.items.len(),
+                recent.items.len()
+            );
+        }
+
+        let expected = FrontendDashboardExpected {
+            stakeE8s: "123000000".to_string(),
+            counts: FrontendDashboardExpectedCounts {
+                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+            },
+            status: FrontendDashboardExpectedStatus {
+                ledgerCanisterId: ledger_id.trim().to_string(),
+                indexIntervalSeconds: status.index_interval_seconds.to_string(),
+                cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
+                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
+                lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
+            },
+            registered: FrontendDashboardExpectedRegistered {
+                total: registered.total.to_string(),
+                items: registered
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRegisteredItem {
+                        canisterId: item.canister_id.to_text(),
+                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
+                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
+                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
+                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
+                    })
+                    .collect(),
+            },
+            recent: FrontendDashboardExpectedRecent {
+                items: recent
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRecentItem {
+                        canisterId: item.canister_id.to_text(),
+                        txId: item.tx_id.to_string(),
+                        amountE8s: item.amount_e8s.to_string(),
+                        countsTowardFaucet: item.counts_toward_faucet,
+                    })
+                    .collect(),
+            },
+            errors: FrontendDashboardExpectedErrors { stake: None },
+        };
+
+        run_frontend_dashboard_local_fixture(&expected)?;
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader keeps burned ICP at zero for contribution-only fixtures"), || {
+        reset_historian_local_replica_state()?;
+
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let sub_vec = staking
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let target = Principal::from_text(canister_id("jupiter_faucet_dbg")?.trim())?;
+        let ledger_id = canister_id("mock_icrc_ledger")?;
+
+        let _: () = call_raw(
+            "mock_icrc_ledger",
+            "debug_credit",
+            &format!(
+                r#"(record {{ owner = principal "{}"; subaccount = opt vec {{ {} }} }}, 123000000:nat64)"#,
+                staking.owner.to_text(),
+                sub_vec
+            ),
+        )?;
+
+        let memo = format!(
+            "opt vec {{ {} }}",
+            target
+                .to_text()
+                .as_bytes()
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+        )?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
+        if counts.registered_canister_count != 1
+            || counts.qualifying_contribution_count != 1
+            || counts.icp_burned_e8s != 0
+        {
+            bail!(
+                "unexpected contribution-only fixture public counts: registered={} qualifying={} burned={}",
+                counts.registered_canister_count,
+                counts.qualifying_contribution_count,
+                counts.icp_burned_e8s
+            );
+        }
+
+        let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_registered_canister_summaries",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+        )?;
+        let recent: ListRecentContributionsResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_recent_contributions",
+            "(record { limit = opt (10:nat32); qualifying_only = opt false })",
+        )?;
+
+        let expected = FrontendDashboardExpected {
+            stakeE8s: "123000000".to_string(),
+            counts: FrontendDashboardExpectedCounts {
+                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+            },
+            status: FrontendDashboardExpectedStatus {
+                ledgerCanisterId: ledger_id.trim().to_string(),
+                indexIntervalSeconds: status.index_interval_seconds.to_string(),
+                cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
+                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
+                lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
+            },
+            registered: FrontendDashboardExpectedRegistered {
+                total: registered.total.to_string(),
+                items: registered
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRegisteredItem {
+                        canisterId: item.canister_id.to_text(),
+                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
+                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
+                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
+                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
+                    })
+                    .collect(),
+            },
+            recent: FrontendDashboardExpectedRecent {
+                items: recent
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRecentItem {
+                        canisterId: item.canister_id.to_text(),
+                        txId: item.tx_id.to_string(),
+                        amountE8s: item.amount_e8s.to_string(),
+                        countsTowardFaucet: item.counts_toward_faucet,
+                    })
+                    .collect(),
+            },
+            errors: FrontendDashboardExpectedErrors { stake: None },
+        };
+
+        run_frontend_dashboard_local_fixture(&expected)?;
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader preserves zero burned and qualifying counts for non-qualifying memo fixture"), || {
+        reset_historian_local_replica_state()?;
+
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let sub_vec = staking
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let target = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+        let ledger_id = canister_id("mock_icrc_ledger")?;
+
+        let _: () = call_raw(
+            "mock_icrc_ledger",
+            "debug_credit",
+            &format!(
+                r#"(record {{ owner = principal "{}"; subaccount = opt vec {{ {} }} }}, 5000000:nat64)"#,
+                staking.owner.to_text(),
+                sub_vec
+            ),
+        )?;
+
+        let memo = format!(
+            "opt vec {{ {} }}",
+            target
+                .to_text()
+                .as_bytes()
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 5000000:nat64, {})"#, staking_id, memo),
+        )?;
+        let blackhole_id = canister_id("mock_blackhole")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(
+                r#"(principal "{}", opt (777:nat), vec {{ principal "{}" }})"#,
+                target.to_text(),
+                blackhole_id.trim()
+            ),
+        )?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_last_completed_cycles_sweep_ts", "(null)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
+        if counts.registered_canister_count != 1
+            || counts.qualifying_contribution_count != 0
+            || counts.icp_burned_e8s != 0
+        {
+            bail!(
+                "unexpected non-qualifying fixture public counts: registered={} qualifying={} burned={}",
+                counts.registered_canister_count,
+                counts.qualifying_contribution_count,
+                counts.icp_burned_e8s
+            );
+        }
+
+        let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_registered_canister_summaries",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+        )?;
+        let recent: ListRecentContributionsResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_recent_contributions",
+            "(record { limit = opt (10:nat32); qualifying_only = opt false })",
+        )?;
+
+        if registered.items.len() != 1 || recent.items.len() != 1 {
+            bail!(
+                "unexpected non-qualifying fixture table sizes: registered={} recent={}",
+                registered.items.len(),
+                recent.items.len()
+            );
+        }
+
+        let expected = FrontendDashboardExpected {
+            stakeE8s: "5000000".to_string(),
+            counts: FrontendDashboardExpectedCounts {
+                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+            },
+            status: FrontendDashboardExpectedStatus {
+                ledgerCanisterId: ledger_id.trim().to_string(),
+                indexIntervalSeconds: status.index_interval_seconds.to_string(),
+                cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
+                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
+                lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
+            },
+            registered: FrontendDashboardExpectedRegistered {
+                total: registered.total.to_string(),
+                items: registered
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRegisteredItem {
+                        canisterId: item.canister_id.to_text(),
+                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
+                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
+                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
+                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
+                    })
+                    .collect(),
+            },
+            recent: FrontendDashboardExpectedRecent {
+                items: recent
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRecentItem {
+                        canisterId: item.canister_id.to_text(),
+                        txId: item.tx_id.to_string(),
+                        amountE8s: item.amount_e8s.to_string(),
+                        countsTowardFaucet: item.counts_toward_faucet,
+                    })
+                    .collect(),
+            },
+            errors: FrontendDashboardExpectedErrors { stake: None },
+        };
+
+        run_frontend_dashboard_local_fixture(&expected)?;
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader excludes SNS-only canisters from registered totals"), || {
+        reset_historian_local_replica_state()?;
+
+        let sns_root = Principal::from_text(canister_id("mock_sns_root")?.trim())?;
+        let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
+        let ledger_id = canister_id("mock_icrc_ledger")?;
+        let _: () = call_raw(
+            "mock_sns_wasm",
+            "debug_set_roots",
+            &format!(r#"(vec {{ principal "{}" }})"#, sns_root.to_text()),
+        )?;
+        let summary_args = format!(
+            r#"(record {{ root = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (1000:nat) }} }}; governance = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (2000:nat) }} }}; ledger = null; swap = null; index = null; dapps = vec {{}}; archives = vec {{}} }})"#,
+            sns_root.to_text(),
+            governance.to_text()
+        );
+        let _: () = call_raw("mock_sns_root", "debug_set_summary", &summary_args)?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_last_sns_discovery_ts", "(null)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
+        if counts.registered_canister_count != 0
+            || counts.qualifying_contribution_count != 0
+            || counts.icp_burned_e8s != 0
+        {
+            bail!(
+                "unexpected SNS-only fixture public counts: registered={} qualifying={} burned={}",
+                counts.registered_canister_count,
+                counts.qualifying_contribution_count,
+                counts.icp_burned_e8s
+            );
+        }
+        if counts.sns_discovered_canister_count < 2 {
+            bail!(
+                "expected SNS-only fixture to expose discovered canisters, got {}",
+                counts.sns_discovered_canister_count
+            );
+        }
+
+        let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_registered_canister_summaries",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+        )?;
+        let recent: ListRecentContributionsResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_recent_contributions",
+            "(record { limit = opt (10:nat32); qualifying_only = opt false })",
+        )?;
+
+        let expected = FrontendDashboardExpected {
+            stakeE8s: "0".to_string(),
+            counts: FrontendDashboardExpectedCounts {
+                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+            },
+            status: FrontendDashboardExpectedStatus {
+                ledgerCanisterId: ledger_id.trim().to_string(),
+                indexIntervalSeconds: status.index_interval_seconds.to_string(),
+                cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
+                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
+                lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
+            },
+            registered: FrontendDashboardExpectedRegistered {
+                total: registered.total.to_string(),
+                items: registered
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRegisteredItem {
+                        canisterId: item.canister_id.to_text(),
+                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
+                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
+                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
+                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
+                    })
+                    .collect(),
+            },
+            recent: FrontendDashboardExpectedRecent {
+                items: recent
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRecentItem {
+                        canisterId: item.canister_id.to_text(),
+                        txId: item.tx_id.to_string(),
+                        amountE8s: item.amount_e8s.to_string(),
+                        countsTowardFaucet: item.counts_toward_faucet,
+                    })
+                    .collect(),
+            },
+            errors: FrontendDashboardExpectedErrors { stake: None },
+        };
+
+        run_frontend_dashboard_local_fixture(&expected)?;
         Ok(())
     });
 
@@ -2165,6 +2890,47 @@ fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     )
 }
 
+
+fn ensure_frontend_dashboard_node_modules() -> Result<()> {
+    let root = repo_root();
+    let marker = std::path::Path::new(&root).join("node_modules").join("@icp-sdk").join("core");
+    if marker.exists() {
+        return Ok(());
+    }
+
+    let output = Command::new("npm")
+        .args(["install", "--no-fund", "--no-audit", "--silent"])
+        .current_dir(&root)
+        .output()
+        .context("failed to run npm install for frontend dashboard tests")?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.trim().is_empty() {
+            eprintln!("{}", stdout.trim_end());
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim_end());
+        }
+        bail!("npm install failed for frontend dashboard tests");
+    }
+    Ok(())
+}
+
+fn run_frontend_historian_dashboard_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    ensure_frontend_dashboard_node_modules()?;
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "frontend-historian",
+        "npm",
+        &["run", "test:frontend-dashboard"],
+        &root,
+        &[],
+    )
+}
+
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
@@ -2215,7 +2981,7 @@ fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         "e2e",
         "",
         "cargo",
-        &["test", "-p", "jupiter-faucet", "--test", "e2e", "--", "--ignored", "--color", "always"],
+        &["test", "-p", "xtask", "--test", "e2e", "--", "--ignored", "--color", "always"],
         &root,
         &common_env,
     )
@@ -2227,10 +2993,14 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
             run_unit_disburser_suite(outcomes)?;
             run_unit_faucet_suite(outcomes)?;
             run_unit_historian_suite(outcomes)?;
+            run_frontend_historian_dashboard_suite(outcomes)?;
         }
         TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_unit_faucet_suite(outcomes)?,
-        TestComponent::Historian => run_unit_historian_suite(outcomes)?,
+        TestComponent::Historian => {
+            run_unit_historian_suite(outcomes)?;
+            run_frontend_historian_dashboard_suite(outcomes)?;
+        }
         TestComponent::E2e => bail!("e2e_unit is not supported; use e2e_all"),
     }
     Ok(())

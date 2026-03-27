@@ -21,8 +21,33 @@ export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${REPO_ROOT}=/build"
 mkdir -p release-artifacts
 
 FRONTEND_ASSET_TOKEN="__ASSET_VERSION__"
+FRONTEND_BUNDLE_TOKEN="__APP_BUNDLE_PATH__"
+FRONTEND_BUNDLE_MANIFEST="jupiter-faucet-frontend/assets/generated/frontend-bundle.json"
 FRONTEND_RENDER_TMP=""
 declare -a FRONTEND_RENDERED_FILES=()
+
+ensure_frontend_node_modules() {
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to build the frontend bundle" >&2
+    exit 1
+  fi
+
+  local needs_install=0
+  if [[ ! -d node_modules ]]; then
+    needs_install=1
+  elif ! npm ls --depth=0 @dfinity/agent @dfinity/candid @dfinity/principal @noble/hashes esbuild >/dev/null 2>&1; then
+    needs_install=1
+  fi
+
+  if [[ "$needs_install" -eq 1 ]]; then
+    npm install --no-fund --no-audit
+  fi
+}
+
+build_frontend_bundle() {
+  ensure_frontend_node_modules
+  npm run build:frontend
+}
 
 compute_asset_version() {
   if [[ -n "${ASSET_VERSION:-}" ]]; then
@@ -30,33 +55,62 @@ compute_asset_version() {
     return
   fi
 
-  local short_sha="nogit"
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    short_sha="$(git rev-parse --short=12 HEAD)"
-  fi
+  python3 - <<'PY'
+from pathlib import Path
+import hashlib
 
-  SHORT_SHA="$short_sha" python3 - <<'PY'
-import datetime
-import os
+roots = [
+    Path('jupiter-faucet-frontend/assets'),
+    Path('jupiter-faucet-frontend/assets/generated'),
+    Path('jupiter-faucet-frontend/frontend-src/src'),
+    Path('jupiter-faucet-frontend/frontend-src/test'),
+    Path('jupiter-faucet-frontend/frontend-src/build-frontend.mjs'),
+    Path('scripts/build-canister'),
+]
 
-epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "1700000000"))
-short_sha = os.environ.get("SHORT_SHA", "nogit")
-date = datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
-print(f"{date}-{short_sha}")
+h = hashlib.sha256()
+for root in roots:
+    if not root.exists():
+        continue
+    paths = sorted(root.rglob('*')) if root.is_dir() else [root]
+    for path in paths:
+        if not path.is_file():
+            continue
+        rel = path.as_posix().encode('utf-8')
+        h.update(rel)
+        h.update(b'\0')
+        h.update(path.read_bytes())
+        h.update(b'\0')
+
+print(f"frontend-{h.hexdigest()[:12]}")
 PY
 }
 
 render_frontend_assets() {
-  local asset_version
+  local asset_version bundle_path
   asset_version="$(compute_asset_version)"
 
+  if [[ ! -f "$FRONTEND_BUNDLE_MANIFEST" ]]; then
+    echo "missing frontend bundle manifest: $FRONTEND_BUNDLE_MANIFEST" >&2
+    exit 1
+  fi
+
+  bundle_path="$(python3 - <<'PY'
+from pathlib import Path
+import json
+manifest = json.loads(Path('jupiter-faucet-frontend/assets/generated/frontend-bundle.json').read_text())
+print(manifest['bundlePath'])
+PY
+)"
+
   echo "Using jupiter-faucet-frontend asset version: ${asset_version}"
+  echo "Using jupiter-faucet-frontend bundle path: ${bundle_path}"
 
   FRONTEND_RENDER_TMP="$(mktemp -d)"
   mapfile -t FRONTEND_RENDERED_FILES < <(python3 - <<'PY'
 from pathlib import Path
 
-token = "__ASSET_VERSION__"
+tokens = ["__ASSET_VERSION__", "__APP_BUNDLE_PATH__"]
 for path in sorted(Path("jupiter-faucet-frontend/assets").rglob("*")):
     if not path.is_file():
         continue
@@ -64,15 +118,10 @@ for path in sorted(Path("jupiter-faucet-frontend/assets").rglob("*")):
         text = path.read_text()
     except UnicodeDecodeError:
         continue
-    if token in text:
+    if any(token in text for token in tokens):
         print(path.as_posix())
 PY
 )
-
-  if [[ ${#FRONTEND_RENDERED_FILES[@]} -eq 0 ]]; then
-    echo "warning: no frontend asset files contained ${FRONTEND_ASSET_TOKEN}" >&2
-    return
-  fi
 
   local file backup_path backup_dir
   for file in "${FRONTEND_RENDERED_FILES[@]}"; do
@@ -80,14 +129,18 @@ PY
     backup_dir="$(dirname "$backup_path")"
     mkdir -p "$backup_dir"
     cp "$file" "$backup_path"
-    python3 - "$file" "$FRONTEND_ASSET_TOKEN" "$asset_version" <<'PY'
+    python3 - "$file" "$FRONTEND_ASSET_TOKEN" "$asset_version" "$FRONTEND_BUNDLE_TOKEN" "$bundle_path" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
-token = sys.argv[2]
-value = sys.argv[3]
-path.write_text(path.read_text().replace(token, value))
+asset_token = sys.argv[2]
+asset_value = sys.argv[3]
+bundle_token = sys.argv[4]
+bundle_value = sys.argv[5]
+text = path.read_text()
+text = text.replace(asset_token, asset_value).replace(bundle_token, bundle_value)
+path.write_text(text)
 PY
   done
 }
@@ -153,6 +206,7 @@ build_selected() {
       build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "jupiter-sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards"
       ;;
     jupiter-faucet-frontend)
+      build_frontend_bundle
       render_frontend_assets
       build_one "jupiter-faucet-frontend" "jupiter-faucet-frontend" "jupiter_faucet_frontend" "jupiter-faucet-frontend/jupiter_faucet_frontend.did" "jupiter_faucet_frontend"
       restore_frontend_assets

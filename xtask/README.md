@@ -147,6 +147,16 @@ These exercise real canister execution more deeply and are where the repo curren
 
 Examples covered by the current PocketIC suites include:
 
+For historian specifically, the PocketIC coverage now includes public-read-model assertions for:
+
+- `get_public_counts`
+- `get_public_status`
+- `list_registered_canister_summaries`
+- `list_recent_contributions`
+
+That complements the shared-frontend-module tests run under `historian_unit`, which validate the exact dashboard actor/query construction used by the production frontend.
+
+
 - disburser upgrade mid-flight preserving state
 - duplicate-proof transfer completion after partial execution
 - blackhole timer-only progression

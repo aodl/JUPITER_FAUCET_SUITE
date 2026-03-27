@@ -2,14 +2,46 @@ use candid::Nat;
 use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;
-use crate::clients::index::{account_identifier_text, IcpIndexCanister};
+use crate::clients::index::{account_identifier_text, IcpIndexCanister, IndexOperation};
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::{BlackholeClient, IndexClient, SnsRootClient, SnsWasmClient};
-use crate::logic;
-use crate::state::{self, ActiveCyclesSweep, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource};
+use crate::{logic, mainnet_cmc_id};
+use crate::state::{self, ActiveCyclesSweep, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, RecentBurn, RecentContribution};
 
 const PAGE_SIZE: u64 = 500;
+const MAX_RECENT_CONTRIBUTIONS: usize = 250;
+const MAX_RECENT_BURNS: usize = 250;
+
+fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
+    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
+}
+
+fn burn_sort_key(item: &RecentBurn) -> (u64, u64) {
+    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
+}
+
+fn push_recent_contribution(recent: &mut Vec<RecentContribution>, item: RecentContribution) {
+    if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
+        return;
+    }
+    recent.push(item);
+    recent.sort_by(|a, b| contribution_sort_key(b).cmp(&contribution_sort_key(a)));
+    if recent.len() > MAX_RECENT_CONTRIBUTIONS {
+        recent.truncate(MAX_RECENT_CONTRIBUTIONS);
+    }
+}
+
+fn push_recent_burn(recent: &mut Vec<RecentBurn>, item: RecentBurn) {
+    if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
+        return;
+    }
+    recent.push(item);
+    recent.sort_by(|a, b| burn_sort_key(b).cmp(&burn_sort_key(a)));
+    if recent.len() > MAX_RECENT_BURNS {
+        recent.truncate(MAX_RECENT_BURNS);
+    }
+}
 
 fn nat_to_u128(n: &Nat) -> Option<u128> {
     use num_traits::ToPrimitive;
@@ -65,6 +97,7 @@ impl Drop for MainGuard {
 
 pub fn install_timers() {
     let interval_s = state::with_state(|st| st.config.scan_interval_seconds);
+    ic_cdk_timers::set_timer(Duration::from_secs(1), async { main_tick(true).await; });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(interval_s.max(60)), || async { main_tick(false).await; });
 }
 
@@ -104,6 +137,7 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     sns_root: &R,
 ) -> Result<(), String> {
     process_contribution_indexing(index, now_secs).await?;
+    process_burn_indexing(index).await?;
 
     let (enable_sns_tracking, last_sns_discovery_ts, last_completed_cycles_sweep_ts, active_present, interval_secs) = state::with_state(|st| (
         st.config.enable_sns_tracking,
@@ -160,6 +194,21 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                     if inserted {
                         let meta = st.per_canister_meta.entry(contribution.beneficiary).or_insert_with(CanisterMeta::default);
                         logic::apply_contribution_seen(meta, contribution.timestamp_nanos, now_secs);
+                        if contribution.counts_toward_faucet {
+                            let count = st.qualifying_contribution_count.get_or_insert(0);
+                            *count = count.saturating_add(1);
+                        }
+                        let recent = st.recent_contributions.get_or_insert_with(Vec::new);
+                        push_recent_contribution(
+                            recent,
+                            RecentContribution {
+                                canister_id: contribution.beneficiary,
+                                tx_id: contribution.tx_id,
+                                timestamp_nanos: contribution.timestamp_nanos,
+                                amount_e8s: contribution.amount_e8s,
+                                counts_toward_faucet: contribution.counts_toward_faucet,
+                            },
+                        );
                     }
                 });
             }
@@ -170,6 +219,86 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
             break;
         }
     }
+    state::with_state_mut(|st| st.last_index_run_ts = Some(now_secs));
+    Ok(())
+}
+
+async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> {
+    let (max_pages_per_tick, cmc_id, targets) = state::with_state(|st| (
+        st.config.max_index_pages_per_tick.max(1),
+        st.config.cmc_canister_id.clone().unwrap_or_else(mainnet_cmc_id),
+        crate::burn_target_canisters(st).into_iter().collect::<Vec<_>>(),
+    ));
+
+    for canister_id in targets {
+        let deposit_account = logic::cmc_deposit_account(cmc_id, canister_id);
+        let deposit_account_id = account_identifier_text(&deposit_account);
+        let mut cursor = state::with_state(|st| st.per_canister_meta.get(&canister_id).and_then(|m| m.last_burn_tx_id));
+        for _ in 0..max_pages_per_tick {
+            let page = index
+                .get_account_identifier_transactions(deposit_account_id.clone(), cursor, PAGE_SIZE)
+                .await
+                .map_err(|e| format!("burn index call failed: {e}"))?;
+            if page.transactions.is_empty() {
+                break;
+            }
+
+            let mut last_seen = cursor;
+            let mut added = 0u64;
+            let mut recent_burns = Vec::new();
+            for tx in page.transactions.iter() {
+                if cursor.map(|prev| tx.id <= prev).unwrap_or(false) {
+                    continue;
+                }
+                last_seen = Some(tx.id);
+                match &tx.transaction.operation {
+                    IndexOperation::Transfer { to, amount, .. } if to == &deposit_account_id => {
+                        let amount_e8s = amount.e8s();
+                        added = added.saturating_add(amount_e8s);
+                        recent_burns.push(RecentBurn {
+                            canister_id,
+                            tx_id: tx.id,
+                            timestamp_nanos: tx.transaction.timestamp.as_ref().or(tx.transaction.created_at_time.as_ref()).map(|ts| ts.timestamp_nanos),
+                            amount_e8s,
+                        });
+                    }
+                    IndexOperation::Burn { amount, .. } => {
+                        let amount_e8s = amount.e8s();
+                        added = added.saturating_add(amount_e8s);
+                        recent_burns.push(RecentBurn {
+                            canister_id,
+                            tx_id: tx.id,
+                            timestamp_nanos: tx.transaction.timestamp.as_ref().or(tx.transaction.created_at_time.as_ref()).map(|ts| ts.timestamp_nanos),
+                            amount_e8s,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            state::with_state_mut(|st| {
+                let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+                if let Some(last_seen) = last_seen {
+                    meta.last_burn_tx_id = Some(last_seen);
+                }
+                if added > 0 {
+                    meta.burned_e8s = meta.burned_e8s.saturating_add(added);
+                    let total = st.icp_burned_e8s.get_or_insert(0);
+                    *total = total.saturating_add(added);
+                    let recent = st.recent_burns.get_or_insert_with(Vec::new);
+                    for burn in recent_burns {
+                        push_recent_burn(recent, burn);
+                    }
+                }
+            });
+
+            cursor = last_seen;
+            if page.transactions.len() < PAGE_SIZE as usize {
+                break;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -298,4 +427,268 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clients::index::{GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens};
+    use crate::state::{Config, State};
+    use async_trait::async_trait;
+    use futures::executor::block_on;
+    use icrc_ledger_types::icrc1::account::Account;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    fn principal(text: &str) -> candid::Principal {
+        candid::Principal::from_text(text).unwrap()
+    }
+
+    fn sample_account() -> Account {
+        Account { owner: principal("aaaaa-aa"), subaccount: None }
+    }
+
+    fn configure_state(max_index_pages_per_tick: u32) -> String {
+        let account = sample_account();
+        let staking_id = account_identifier_text(&account);
+        state::set_state(State::new(
+            Config {
+                staking_account: account,
+                ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
+                index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
+                cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
+                faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
+                blackhole_canister_id: principal("e3mmv-5qaaa-aaaah-aadma-cai"),
+                sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
+                enable_sns_tracking: false,
+                scan_interval_seconds: 600,
+                cycles_interval_seconds: 604800,
+                min_tx_e8s: 100,
+                max_cycles_entries_per_canister: 100,
+                max_contribution_entries_per_canister: 100,
+                max_index_pages_per_tick,
+                max_canisters_per_cycles_tick: 25,
+            },
+            0,
+        ));
+        staking_id
+    }
+
+    fn transfer_to_staking_tx(id: u64, staking_id: &str, beneficiary: candid::Principal, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(beneficiary.to_text().into_bytes()),
+                operation: IndexOperation::Transfer {
+                    to: staking_id.to_string(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(amount_e8s),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
+            },
+        }
+    }
+
+
+    fn transfer_to_account_tx(id: u64, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    to: to.to_string(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(amount_e8s),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
+            },
+        }
+    }
+
+    struct MockIndexClient {
+        pages: Mutex<VecDeque<GetAccountIdentifierTransactionsResponse>>,
+        calls: Mutex<Vec<(String, Option<u64>, u64)>>,
+    }
+
+    impl MockIndexClient {
+        fn new(pages: Vec<GetAccountIdentifierTransactionsResponse>) -> Self {
+            Self {
+                pages: Mutex::new(pages.into()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<(String, Option<u64>, u64)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl IndexClient for MockIndexClient {
+        async fn get_account_identifier_transactions(
+            &self,
+            account_identifier: String,
+            start: Option<u64>,
+            max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            self.calls.lock().unwrap().push((account_identifier, start, max_results));
+            Ok(self
+                .pages
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(GetAccountIdentifierTransactionsResponse {
+                    balance: 0,
+                    transactions: Vec::new(),
+                    oldest_tx_id: None,
+                }))
+        }
+    }
+
+    #[test]
+    fn indexing_single_qualifying_contribution_updates_counts() {
+        let staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 150,
+            transactions: vec![transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000)],
+            oldest_tx_id: Some(42),
+        }]);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.last_indexed_staking_tx_id, Some(42));
+            assert_eq!(st.qualifying_contribution_count, Some(1));
+            assert_eq!(st.icp_burned_e8s, Some(0));
+            assert_eq!(st.recent_contributions.as_ref().unwrap().len(), 1);
+            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 42);
+            assert_eq!(st.last_index_run_ts, Some(200));
+            assert!(st.canister_sources.get(&beneficiary).unwrap().contains(&CanisterSource::MemoContribution));
+        });
+    }
+
+    #[test]
+    fn indexing_duplicate_tx_does_not_double_count() {
+        let staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let tx = transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000);
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 150,
+                transactions: vec![tx.clone()],
+                oldest_tx_id: Some(42),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 150,
+                transactions: vec![tx],
+                oldest_tx_id: Some(42),
+            },
+        ]);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+        block_on(process_contribution_indexing(&mock, 201)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.qualifying_contribution_count, Some(1));
+            assert_eq!(st.icp_burned_e8s, Some(0));
+            assert_eq!(st.recent_contributions.as_ref().unwrap().len(), 1);
+        });
+    }
+
+    #[test]
+    fn indexing_uses_cursor_and_keeps_recent_contributions_descending() {
+        let staking_id = configure_state(1);
+        let first_canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let second_canister = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 300,
+                transactions: vec![transfer_to_staking_tx(10, &staking_id, first_canister, 100, 100_000_000_000)],
+                oldest_tx_id: Some(10),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 300,
+                transactions: vec![transfer_to_staking_tx(11, &staking_id, second_canister, 200, 300_000_000_000)],
+                oldest_tx_id: Some(11),
+            },
+        ]);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+        block_on(process_contribution_indexing(&mock, 201)).unwrap();
+
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].1, None);
+        assert_eq!(calls[1].1, Some(10));
+
+        state::with_state(|st| {
+            let recent = st.recent_contributions.as_ref().unwrap();
+            assert_eq!(recent.len(), 2);
+            assert_eq!(recent[0].tx_id, 11);
+            assert_eq!(recent[1].tx_id, 10);
+            assert_eq!(st.last_indexed_staking_tx_id, Some(11));
+        });
+    }
+
+    #[test]
+    fn burn_indexing_counts_cmc_deposit_transfers_not_contributions() {
+        let _staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.canister_sources.insert(
+                beneficiary,
+                crate::logic::merge_sources(None, CanisterSource::MemoContribution),
+            );
+            st.distinct_canisters.insert(beneficiary);
+        });
+        let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![],
+                oldest_tx_id: None,
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 150,
+                transactions: vec![transfer_to_account_tx(77, &cmc_account_id, 150, 123_000_000_000)],
+                oldest_tx_id: Some(77),
+            },
+        ]);
+
+        block_on(process_burn_indexing(&mock)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.icp_burned_e8s, Some(150));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(150));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(77));
+        });
+    }
+
+    #[test]
+    fn contribution_indexing_does_not_inflate_burned_totals() {
+        let staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 150,
+            transactions: vec![transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000)],
+            oldest_tx_id: Some(42),
+        }]);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.qualifying_contribution_count, Some(1));
+            assert_eq!(st.icp_burned_e8s, Some(0));
+        });
+    }
+
 }

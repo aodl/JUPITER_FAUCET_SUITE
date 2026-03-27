@@ -7,7 +7,6 @@
 
   <link rel="icon" href="/favicon.ico?v=__ASSET_VERSION__">
 
-  <script src="preload-firstpaint.js?v=__ASSET_VERSION__"></script>
 
   <style>
     html,
@@ -25,6 +24,87 @@
       background-repeat: repeat-y, repeat-y, repeat-y;
     }
 
+
+    .metric-rail {
+      position: fixed !important;
+      top: 0 !important;
+      right: 40px !important;
+      z-index: 19500 !important;
+      width: auto !important;
+      display: block !important;
+      text-align: right !important;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(-12px);
+      transition: opacity 220ms ease-out, transform 220ms ease-out;
+    }
+
+    .metric-rail.metric-rail--visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .metric-rail-list {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-end !important;
+      gap: 10px !important;
+      padding-top: 76px !important;
+      box-sizing: border-box !important;
+    }
+
+    .metric-rail-link {
+      display: inline-flex !important;
+      align-items: baseline !important;
+      justify-content: flex-end !important;
+      gap: 10px !important;
+      text-align: right !important;
+      white-space: nowrap !important;
+      max-width: min(42vw, 520px);
+    }
+
+    .metric-rail-link-label {
+      opacity: 0.92;
+    }
+
+    .metric-rail-link-value {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    @media (max-width: 900px) {
+      .metric-rail {
+        top: 0 !important;
+        right: 20px !important;
+      }
+
+      .metric-rail-list {
+        padding-top: 60px !important;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .metric-rail {
+        top: 0 !important;
+        right: 12px !important;
+      }
+
+      .metric-rail-list {
+        padding-top: 52px !important;
+        gap: 0 !important;
+      }
+
+      .metric-rail-link {
+        align-items: center !important;
+        max-width: min(78vw, 360px);
+        white-space: normal !important;
+      }
+    }
+
     @media (max-width: 1024px) {
       body {
         background-image:
@@ -39,6 +119,7 @@
   <link rel="stylesheet" href="base.css?v=__ASSET_VERSION__" />
   <link rel="stylesheet" href="navbar.css?v=__ASSET_VERSION__" />
   <link rel="stylesheet" href="hero.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="metrics.css?v=__ASSET_VERSION__" />
   <link rel="stylesheet" href="background-orbit/background-orbit.css?v=__ASSET_VERSION__" />
   <link rel="stylesheet" href="background-orbit/text-band/text-band.css?v=__ASSET_VERSION__" />
   <link rel="stylesheet" href="immutable-label/immutable-label.css?v=__ASSET_VERSION__" />
@@ -48,6 +129,7 @@
   <script src="hero.js?v=__ASSET_VERSION__" defer></script>
   <script src="background-orbit/background-orbit.js?v=__ASSET_VERSION__" defer></script>
   <script src="background-orbit/text-band/text-band.js?v=__ASSET_VERSION__" defer></script>
+  <script type="module" src="__APP_BUNDLE_PATH__"></script>
 </head>
 <body>
   <!-- Top navigation bar -->
@@ -61,10 +143,31 @@
     </nav>
   </header>
 
+  <aside class="metric-rail" id="landing-live-summary" aria-label="Live metrics summary">
+    <div class="metric-rail-list">
+      <a href="#metric-stake" class="metric-rail-link nav-item" data-panel="metric-stake">
+        <span class="metric-rail-link-label">Jupiter Stake</span>
+        <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
+      </a>
+      <a href="#metric-burned" class="metric-rail-link nav-item" data-panel="metric-burned">
+        <span class="metric-rail-link-label">Burned</span>
+        <strong class="metric-rail-link-value"><span id="landing-icp-burned">—</span><span class="metric-status" id="landing-icp-burned-status" hidden aria-hidden="true"></span></strong>
+      </a>
+      <a href="#metric-registered" class="metric-rail-link nav-item" data-panel="metric-registered">
+        <span class="metric-rail-link-label">Canisters/Principals</span>
+        <strong class="metric-rail-link-value"><span id="landing-registered-canisters">—</span><span class="metric-status" id="landing-registered-canisters-status" hidden aria-hidden="true"></span></strong>
+      </a>
+      <a href="#metric-commitments" class="metric-rail-link nav-item" data-panel="metric-commitments">
+        <span class="metric-rail-link-label">Commitments</span>
+        <strong class="metric-rail-link-value"><span id="landing-qualifying-contributions">—</span><span class="metric-status" id="landing-qualifying-contributions-status" hidden aria-hidden="true"></span></strong>
+      </a>
+    </div>
+  </aside>
+
   <!-- Info pane opened by nav buttons -->
   <div class="nav-panel-backdrop" id="nav-panel-backdrop">
     <section class="nav-panel" role="dialog" aria-modal="true">
-      <a href="#intro" class="nav-panel-close" aria-label="Close panel">&times;</a>
+      <button type="button" class="nav-panel-close" aria-label="Close panel">&times;</button>
       <div class="nav-panel-body">
         <!-- About -->
         <article
@@ -147,6 +250,17 @@
                 <strong>memo</strong>. You do not need to be the owner of the canister.
               </p>
 
+              <div class="pane-inline-block">
+                <div class="pane-inline-header">
+                  <strong>Staking account</strong>
+                  <button class="pane-copy-button" id="copy-how-staking-account" type="button">Copy</button>
+                </div>
+                <code class="pane-inline-code" id="how-staking-account-address">—</code>
+                <p class="pane-inline-help">
+                  Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field.
+                </p>
+              </div>
+
               <p class="nav-panel-content">
                 That’s it. With your memo declaring a canister, that canister becomes the recipient
                 of <strong>perpetual cycles top-ups</strong>, funded by the stake’s ongoing
@@ -204,6 +318,99 @@
 
         </article>
         
+        <article class="nav-panel-section" data-panel="metric-stake" id="nav-panel-metric-stake">
+          <h2 class="nav-panel-title">Jupiter Stake</h2>
+          <p class="nav-panel-subtitle">Direct ICP ledger balance plus public NNS neuron details on demand.</p>
+          <dl class="pane-detail-grid" id="stake-neuron-details">
+            <div><dt>Neuron ID</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-neuron-id-link" href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer"><span id="stake-neuron-id">11614578985374291210</span></a></dd></div>
+            <div><dt>Current stake</dt><dd class="pane-detail-value"><span id="stake-pane-balance"></span><span class="metric-status" id="stake-pane-balance-status" hidden aria-hidden="true"></span></dd></div>
+            <div><dt>Age</dt><dd class="pane-detail-value"><span id="stake-neuron-age"></span><span class="metric-status" id="stake-neuron-age-status" hidden aria-hidden="true"></span></dd></div>
+            <div><dt>Publicly readable</dt><dd class="pane-detail-value"><span id="stake-neuron-public"></span><span class="metric-status" id="stake-neuron-public-status" hidden aria-hidden="true"></span></dd></div>
+            <div><dt>Created</dt><dd class="pane-detail-value"><span id="stake-neuron-created"></span><span class="metric-status" id="stake-neuron-created-status" hidden aria-hidden="true"></span></dd></div>
+            <div><dt>Voting power refreshed</dt><dd class="pane-detail-value"><span id="stake-neuron-refresh"></span><span class="metric-status" id="stake-neuron-refresh-status" hidden aria-hidden="true"></span></dd></div>
+            <div><dt>Follows</dt><dd class="pane-detail-value mono"><span id="stake-neuron-followees"></span><span class="metric-status" id="stake-neuron-followees-status" hidden aria-hidden="true"></span></dd></div>
+            <div><dt>Staking account</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-pane-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><span id="stake-pane-account"></span></a></dd></div>
+          </dl>
+          <p class="pane-status-note" id="stake-neuron-note" hidden></p>
+        </article>
+
+        <article class="nav-panel-section" data-panel="metric-burned" id="nav-panel-metric-burned">
+          <h2 class="nav-panel-title">Burned</h2>
+          <p class="nav-panel-subtitle" id="burned-pane-subtitle">Loading next historian run…</p>
+          <div class="pane-table-wrap">
+            <table class="pane-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Amount</th>
+                  <th>Type</th>
+                  <th>Tx</th>
+                </tr>
+              </thead>
+              <tbody id="burn-transactions-body">
+                <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pane-pagination">
+            <button class="pane-page-button" id="burn-prev-page" type="button">Previous</button>
+            <span id="burn-page-info">Page 1</span>
+            <button class="pane-page-button" id="burn-next-page" type="button">Next</button>
+          </div>
+        </article>
+
+        <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">
+          <h2 class="nav-panel-title">Canisters/Principals</h2>
+          <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
+          <div class="pane-table-wrap">
+            <table class="pane-table">
+              <thead>
+                <tr>
+                  <th>Canister/Principal</th>
+                  <th>Commitments</th>
+                  <th>Total ICP</th>
+                  <th>Latest cycles</th>
+                </tr>
+              </thead>
+              <tbody id="registered-pane-body">
+                <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pane-pagination">
+            <button class="pane-page-button" id="registered-prev-page" type="button">Previous</button>
+            <span id="registered-page-info">Page 1</span>
+            <button class="pane-page-button" id="registered-next-page" type="button">Next</button>
+          </div>
+        </article>
+
+        <article class="nav-panel-section" data-panel="metric-commitments" id="nav-panel-metric-commitments">
+          <h2 class="nav-panel-title">Commitments</h2>
+          <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
+          <p class="nav-panel-content">The headline metric counts only qualifying commitments. A commitment qualifies when the memo names a canister/principal and the contribution is at least <strong>0.1 ICP</strong>. The table below shows all indexed memo-linked commitments, including non-qualifying ones.</p>
+          <div class="pane-table-wrap">
+            <table class="pane-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Amount</th>
+                  <th>Canister/Principal</th>
+                  <th>Qualifies</th>
+                  <th>Tx</th>
+                </tr>
+              </thead>
+              <tbody id="commitments-pane-body">
+                <tr><td colspan="5" class="empty-cell">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pane-pagination">
+            <button class="pane-page-button" id="commitments-prev-page" type="button">Previous</button>
+            <span id="commitments-page-info">Page 1</span>
+            <button class="pane-page-button" id="commitments-next-page" type="button">Next</button>
+          </div>
+        </article>
+
         <!-- Partners -->        
         <article
           class="nav-panel-section"

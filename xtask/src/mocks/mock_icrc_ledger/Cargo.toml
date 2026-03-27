@@ -12,3 +12,5 @@ serde = { version = "1", features = ["derive"] }
 ic-cdk = "0.19"
 icrc-ledger-types = "0.1.12"
 num-traits = "0.2"
+sha2 = "0.10"
+crc32fast = "1"

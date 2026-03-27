@@ -20,6 +20,10 @@ type TransferError = variant {
   GenericError : record { error_code : nat; message : text };
 };
 
+type Tokens = record { e8s : nat64 };
+
+type BinaryAccountBalanceArgs = record { account : vec nat8 };
+
 type TransferRecord = record {
   from : Account;
   to : Account;
@@ -39,6 +43,7 @@ type DebugNextTransferError = variant {
 };
 
 service : {
+  account_balance : (BinaryAccountBalanceArgs) -> (Tokens) query;
   icrc1_fee : () -> (nat) query;
   icrc1_balance_of : (Account) -> (nat) query;
   icrc1_transfer : (TransferArg) -> (variant { Ok : nat; Err : TransferError });

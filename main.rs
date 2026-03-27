@@ -1100,10 +1100,10 @@ fn cmd_test_all_impl(include_pocketic: bool) -> Result<()> {
             &[("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")],
         )?;
 
-        eprintln!("\n{BOLD}=== PocketIC end-to-end: cargo test -p jupiter-faucet --test e2e -- --ignored ==={RESET}");
+        eprintln!("\n{BOLD}=== PocketIC end-to-end: cargo test -p xtask --test e2e -- --ignored ==={RESET}");
         run_host_in_dir_env(
             "cargo",
-            &["test", "-p", "jupiter-faucet", "--test", "e2e", "--", "--ignored"],
+            &["test", "-p", "xtask", "--test", "e2e", "--", "--ignored"],
             &root,
             &[("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")],
         )?;

@@ -87,6 +87,17 @@ fn certify_all_assets() {
             aliased_by: vec!["/".to_string()],
             encodings: compressed_encodings.clone(),
         },
+        AssetConfig::File {
+            path: "live-metrics.html".to_string(),
+            content_type: Some("text/html".to_string()),
+            headers: get_asset_headers(vec![(
+                "cache-control".to_string(),
+                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+            )]),
+            fallback_for: vec![],
+            aliased_by: vec![],
+            encodings: compressed_encodings.clone(),
+        },
         AssetConfig::Pattern {
             pattern: "**/*.js".to_string(),
             content_type: Some("text/javascript".to_string()),
@@ -240,7 +251,7 @@ fn get_asset_headers(additional_headers: Vec<HeaderField>) -> Vec<HeaderField> {
         ("x-content-type-options".to_string(), "nosniff".to_string()),
         (
             "content-security-policy".to_string(),
-            "default-src 'self';              base-uri 'self';              img-src 'self' data:;              style-src 'self' 'unsafe-inline';              style-src-attr 'unsafe-inline';              form-action 'self';              object-src 'none';              frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com;              upgrade-insecure-requests"
+            "default-src 'self';              connect-src 'self' https://icp0.io https://*.icp0.io;              base-uri 'self';              img-src 'self' data:;              style-src 'self' 'unsafe-inline';              style-src-attr 'unsafe-inline';              form-action 'self';              object-src 'none';              frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com;              upgrade-insecure-requests"
                 .to_string(),
         ),
         ("referrer-policy".to_string(), "no-referrer".to_string()),

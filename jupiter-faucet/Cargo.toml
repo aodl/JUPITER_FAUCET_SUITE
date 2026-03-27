@@ -7,9 +7,6 @@ edition = "2021"
 name = "jupiter_faucet_integration"
 path = "../xtask/src/pocketIC/jupiter_faucet_integration.rs"
 
-[[test]]
-name = "e2e"
-path = "../xtask/src/pocketIC/e2e.rs"
 
 [lib]
 crate-type = ["cdylib"]

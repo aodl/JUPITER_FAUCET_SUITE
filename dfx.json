@@ -29,7 +29,15 @@
         {
           "name": "candid:service"
         }
-      ]
+      ],
+      "declarations": {
+        "bindings": [
+          "js",
+          "ts",
+          "did"
+        ],
+        "output": "jupiter-faucet-frontend/frontend-src/declarations/mock_icrc_ledger"
+      }
     },
     "mock_nns_governance": {
       "type": "rust",
@@ -112,7 +120,15 @@
       "candid": "jupiter-historian/jupiter_historian.did",
       "wasm": "release-artifacts/jupiter_historian.wasm",
       "build": "./scripts/build-canister jupiter-historian",
-      "skip_cargo_audit": true
+      "skip_cargo_audit": true,
+      "declarations": {
+        "bindings": [
+          "js",
+          "ts",
+          "did"
+        ],
+        "output": "jupiter-faucet-frontend/frontend-src/declarations/jupiter_historian"
+      }
     },
     "jupiter_historian_dbg": {
       "type": "custom",

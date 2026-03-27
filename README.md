@@ -145,6 +145,8 @@ That produces canonical release artifacts under `release-artifacts/`.
 ./scripts/build-canister all
 ```
 
+The frontend build now also requires Node.js/npm because the browser bundle is produced before the Rust asset canister is compiled.
+
 Or build a single canister, for example:
 
 ```bash
