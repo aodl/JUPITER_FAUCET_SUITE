@@ -1,4 +1,4 @@
-import { Actor } from '@dfinity/agent';
+import { Actor } from '@icp-sdk/core/agent';
 import { idlFactory } from './jupiter_historian.did.js';
 
 export { idlFactory } from './jupiter_historian.did.js';

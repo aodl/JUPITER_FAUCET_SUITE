@@ -1,4 +1,4 @@
-import { Actor } from '@dfinity/agent';
+import { Actor } from '@icp-sdk/core/agent';
 import { idlFactory } from './nns_governance.did.js';
 
 export { idlFactory } from './nns_governance.did.js';

@@ -2,7 +2,7 @@
 
 `jupiter-faucet-frontend` is the public asset canister for the Jupiter Faucet Suite.
 
-It serves the landing page and a lightweight live-metrics pointer page as certified assets from the Rust asset canister, while the browser-side dashboard logic now uses generated declarations and a browser-compatible `@dfinity/agent` transport.
+It serves the landing page and a lightweight live-metrics pointer page as certified assets from the Rust asset canister, while the browser-side dashboard logic now uses generated declarations and a browser-compatible `@icp-sdk/core/agent` transport.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -16,7 +16,7 @@ See the suite overview in [`../README.md`](../README.md).
 The frontend keeps the existing certified-asset Rust canister, but the live metrics implementation now follows the normal ICP browser path:
 
 - declarations are generated from `dfx generate`
-- the browser uses generated declarations with `@dfinity/agent`
+- the browser uses generated declarations with `@icp-sdk/core/agent`
 - actors are created with `Actor.createActor(...)`
 - live metrics come from Candid query calls, not from custom `http_request` JSON routes
 

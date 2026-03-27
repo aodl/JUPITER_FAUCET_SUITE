@@ -9,9 +9,7 @@
     "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs"
   },
   "dependencies": {
-    "@dfinity/agent": "2.4.1",
-    "@dfinity/candid": "2.4.1",
-    "@dfinity/principal": "2.4.1",
+    "@icp-sdk/core": "5.0.0",
     "@noble/hashes": "1.8.0"
   },
   "devDependencies": {

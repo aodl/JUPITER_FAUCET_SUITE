@@ -1,4 +1,4 @@
-import { HttpAgent } from '@dfinity/agent';
+import { HttpAgent } from '@icp-sdk/core/agent';
 import { sha224 } from '@noble/hashes/sha2.js';
 import { createActor as createHistorianActor } from '../declarations/jupiter_historian/index.js';
 import { createActor as createLedgerActor } from '../declarations/mock_icrc_ledger/index.js';
@@ -96,7 +96,10 @@ async function getOrCreateAgent({ host, local, agent }) {
   const key = `${host}::${local ? 'local' : 'remote'}`;
   if (!agentPromises.has(key)) {
     agentPromises.set(key, (async () => {
-      const httpAgent = new HttpAgent({ host });
+      const httpAgent = await HttpAgent.create({
+        host,
+        verifyQuerySignatures: false,
+      });
       if (local) {
         try {
           await httpAgent.fetchRootKey();

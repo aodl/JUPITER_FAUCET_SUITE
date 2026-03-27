@@ -1,4 +1,4 @@
-import { HttpAgent } from '@dfinity/agent';
+import { HttpAgent } from '@icp-sdk/core/agent';
 import {
   FRONTEND_HINT,
   normalizeError,
@@ -437,7 +437,10 @@ function renderLandingPanes(data, neuron = null) {
 }
 
 async function loadNeuronDetails({ host, local }) {
-  const agent = new HttpAgent({ host });
+  const agent = await HttpAgent.create({
+    host,
+    verifyQuerySignatures: false,
+  });
   if (local) {
     try {
       await agent.fetchRootKey();

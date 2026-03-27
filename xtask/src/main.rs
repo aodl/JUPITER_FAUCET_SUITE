@@ -2894,7 +2894,7 @@ fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 fn ensure_frontend_dashboard_node_modules() -> Result<()> {
     let root = repo_root();
     let root_path = std::path::Path::new(&root);
-    let marker = root_path.join("node_modules").join("@dfinity").join("agent");
+    let marker = root_path.join("node_modules").join("@icp-sdk").join("core");
     let package_json = root_path.join("package.json");
     let package_lock = root_path.join("package-lock.json");
     let stamp = root_path

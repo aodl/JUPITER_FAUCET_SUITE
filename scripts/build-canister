@@ -35,7 +35,7 @@ ensure_frontend_node_modules() {
   local needs_install=0
   if [[ ! -d node_modules ]]; then
     needs_install=1
-  elif ! npm ls --depth=0 @dfinity/agent @dfinity/candid @dfinity/principal @noble/hashes esbuild >/dev/null 2>&1; then
+  elif ! npm ls --depth=0 @icp-sdk/core @noble/hashes esbuild >/dev/null 2>&1; then
     needs_install=1
   fi
 

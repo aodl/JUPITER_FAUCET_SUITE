@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { HttpAgent } from '@dfinity/agent';
+import { HttpAgent } from '@icp-sdk/core/agent';
 import { sha224 } from '@noble/hashes/sha2.js';
 import { createActor as createHistorianActor } from '../jupiter-faucet-frontend/frontend-src/declarations/jupiter_historian/index.js';
 import { createActor as createLedgerActor } from '../jupiter-faucet-frontend/frontend-src/declarations/mock_icrc_ledger/index.js';
@@ -89,7 +89,10 @@ async function main() {
   const historianCanisterId = args.historian;
   if (!historianCanisterId) usage();
 
-  const agent = new HttpAgent({ host });
+  const agent = await HttpAgent.create({
+    host,
+    verifyQuerySignatures: false,
+  });
   const historian = createHistorianActor(historianCanisterId, { agent });
 
   const [status, counts] = await Promise.all([

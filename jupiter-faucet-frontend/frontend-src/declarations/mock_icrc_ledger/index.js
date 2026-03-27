@@ -1,4 +1,4 @@
-import { Actor } from '@dfinity/agent';
+import { Actor } from '@icp-sdk/core/agent';
 import { idlFactory } from './mock_icrc_ledger.did.js';
 
 export { idlFactory } from './mock_icrc_ledger.did.js';
