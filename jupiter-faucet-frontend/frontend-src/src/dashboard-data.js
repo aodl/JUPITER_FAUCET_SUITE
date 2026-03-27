@@ -4,6 +4,9 @@ import { createActor as createHistorianActor } from '../declarations/jupiter_his
 import { createActor as createLedgerActor } from '../declarations/mock_icrc_ledger/index.js';
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with public live-metrics query methods.';
+export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
+export const RECENT_CONTRIBUTION_LIMIT = 100;
+export const RECENT_BURN_LIMIT = 100;
 
 const agentPromises = new Map();
 
@@ -128,15 +131,15 @@ export async function loadDashboardData({
     historian.get_public_status(),
     historian.list_registered_canister_summaries({
       page: [0],
-      page_size: [100],
+      page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
       sort: [{ TotalQualifyingContributedDesc: null }],
     }),
     historian.list_recent_contributions({
-      limit: [100],
+      limit: [RECENT_CONTRIBUTION_LIMIT],
       qualifying_only: [false],
     }),
     typeof historian.list_recent_burns === 'function'
-      ? historian.list_recent_burns({ limit: [100] })
+      ? historian.list_recent_burns({ limit: [RECENT_BURN_LIMIT] })
       : Promise.resolve({ items: [] }),
   ]);
 

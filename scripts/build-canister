@@ -40,7 +40,11 @@ ensure_frontend_node_modules() {
   fi
 
   if [[ "$needs_install" -eq 1 ]]; then
-    npm install --no-fund --no-audit
+    if [[ -f package-lock.json ]]; then
+      npm ci --no-fund --no-audit
+    else
+      npm install --no-fund --no-audit
+    fi
   fi
 }
 

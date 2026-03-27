@@ -2893,16 +2893,57 @@ fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
 fn ensure_frontend_dashboard_node_modules() -> Result<()> {
     let root = repo_root();
-    let marker = std::path::Path::new(&root).join("node_modules").join("@icp-sdk").join("core");
+    let root_path = std::path::Path::new(&root);
+    let marker = root_path.join("node_modules").join("@dfinity").join("agent");
+    let package_json = root_path.join("package.json");
+    let package_lock = root_path.join("package-lock.json");
+    let stamp = root_path
+        .join("node_modules")
+        .join(".frontend-dashboard-deps-stamp");
+
+    let package_json_contents = std::fs::read_to_string(&package_json)
+        .with_context(|| format!("failed to read {}", package_json.display()))?;
+    let package_lock_contents = if package_lock.exists() {
+        Some(
+            std::fs::read_to_string(&package_lock)
+                .with_context(|| format!("failed to read {}", package_lock.display()))?,
+        )
+    } else {
+        None
+    };
+    let expected_stamp = if let Some(package_lock_contents) = &package_lock_contents {
+        format!(
+            "package.json\n{}\n---\npackage-lock.json\n{}",
+            package_json_contents,
+            package_lock_contents,
+        )
+    } else {
+        format!("package.json\n{}", package_json_contents)
+    };
+
     if marker.exists() {
-        return Ok(());
+        if let Ok(existing_stamp) = std::fs::read_to_string(&stamp) {
+            if existing_stamp == expected_stamp {
+                return Ok(());
+            }
+        }
     }
 
+    let npm_args = if package_lock.exists() {
+        vec!["ci", "--no-fund", "--no-audit", "--silent"]
+    } else {
+        vec!["install", "--no-fund", "--no-audit", "--silent"]
+    };
+
+    eprintln!(
+        "frontend dashboard tests: refreshing npm dependencies via npm {}",
+        npm_args[0]
+    );
     let output = Command::new("npm")
-        .args(["install", "--no-fund", "--no-audit", "--silent"])
+        .args(&npm_args)
         .current_dir(&root)
         .output()
-        .context("failed to run npm install for frontend dashboard tests")?;
+        .with_context(|| format!("failed to run npm {} for frontend dashboard tests", npm_args[0]))?;
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2912,8 +2953,15 @@ fn ensure_frontend_dashboard_node_modules() -> Result<()> {
         if !stderr.trim().is_empty() {
             eprintln!("{}", stderr.trim_end());
         }
-        bail!("npm install failed for frontend dashboard tests");
+        bail!("npm {} failed for frontend dashboard tests", npm_args[0]);
     }
+
+    if let Some(parent) = stamp.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&stamp, expected_stamp)
+        .with_context(|| format!("failed to write {}", stamp.display()))?;
     Ok(())
 }
 

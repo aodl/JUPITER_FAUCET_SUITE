@@ -6,6 +6,9 @@ import {
   accountIdentifierHex,
   loadDashboardData,
   summaryMetricsUnavailable,
+  REGISTERED_SUMMARY_PAGE_SIZE,
+  RECENT_CONTRIBUTION_LIMIT,
+  RECENT_BURN_LIMIT,
 } from '../src/dashboard-data.js';
 
 function principal(text) {
@@ -55,7 +58,7 @@ function registeredResponse() {
       },
     ],
     page: 0n,
-    page_size: 50n,
+    page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
     total: 1n,
   };
 }
@@ -101,7 +104,7 @@ test('loadDashboardData uses the shared frontend actor query shapes and native l
       return recentResponse();
     },
     async list_recent_burns() {
-      calls.push(['burns', { limit: [100] }]);
+      calls.push(['burns', { limit: [RECENT_BURN_LIMIT] }]);
       return { items: [] };
     },
   };
@@ -134,14 +137,14 @@ test('loadDashboardData uses the shared frontend actor query shapes and native l
   assert.deepEqual(calls[1], ['status']);
   assert.deepEqual(calls[2], ['registered', {
     page: [0],
-    page_size: [50],
+    page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
     sort: [{ TotalQualifyingContributedDesc: null }],
   }]);
   assert.deepEqual(calls[3], ['recent', {
-    limit: [100],
+    limit: [RECENT_CONTRIBUTION_LIMIT],
     qualifying_only: [false],
   }]);
-  assert.deepEqual(calls[4], ['burns', { limit: [100] }]);
+  assert.deepEqual(calls[4], ['burns', { limit: [RECENT_BURN_LIMIT] }]);
   assert.equal(Buffer.from(accountBalanceArg.account).toString('hex'), '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3');
   assert.equal(data.stakeE8s, 123_456_789n);
   assert.equal(data.counts.icp_burned_e8s, 400_000_000n);
@@ -213,7 +216,7 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
     historianActor: {
       async get_public_counts() { return historianCounts({ registered_canister_count: 0n, qualifying_contribution_count: 0n, icp_burned_e8s: 0n }); },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: 50n, total: 0n }; },
+      async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
       async list_recent_contributions() { return { items: [] }; },
       async list_recent_burns() { return { items: [] }; },
     },
@@ -261,7 +264,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
             last_cycles_probe_ts: [],
           }],
           page: 0n,
-          page_size: 50n,
+          page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
           total: 1n,
         };
       },
@@ -312,7 +315,7 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
         });
       },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: 50n, total: 0n }; },
+      async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
       async list_recent_contributions() { return { items: [] }; },
       async list_recent_burns() { return { items: [] }; },
     },
