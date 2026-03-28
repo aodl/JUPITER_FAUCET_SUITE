@@ -266,6 +266,63 @@ body.nav-panel-open .metric-rail {
   opacity: 0.9;
 }
 
+.pane-inline-tooltip-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane-inline-tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.pane-fixed-tooltip {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+}
+
+.pane-fixed-tooltip-card {
+  width: min(420px, 100%);
+  margin: 0 auto;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 12, 18, 0.96);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+  display: grid;
+  gap: 10px;
+}
+
+.pane-fixed-tooltip-text {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pane-fixed-tooltip-close {
+  justify-self: end;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+}
+
 
 .pane-inline-tooltip {
   position: relative;

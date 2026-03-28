@@ -349,13 +349,16 @@ function paginate(kind, items, renderRow, emptyMessage, colspan) {
 
 
 function renderCyclesUnavailableCell() {
+  const tooltip = 'Blackhole controller required for cycles observability.';
   return `
-    <span class="pane-inline-tooltip">
+    <span class="pane-inline-tooltip-fallback">
       <span>unavailable</span>
-      <button class="pane-inline-tooltip-button" type="button" aria-label="Cycles visibility help">i</button>
-      <span class="pane-inline-tooltip-bubble">
-        Needs a controlling <a class="pane-external-link" href="https://dashboard.internetcomputer.org/canister/e3mmv-5qaaa-aaaah-aadma-cai" target="_blank" rel="noopener noreferrer">blackhole canister</a> for <a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole?tab=readme-ov-file#version-000" target="_blank" rel="noopener noreferrer">cycles visibility</a> (<code>canister_status</code>).
-      </span>
+      <button
+        class="pane-inline-tooltip-icon"
+        type="button"
+        data-tooltip-text="${escapeHtml(tooltip)}"
+        aria-label="Cycles observability help"
+      >i</button>
     </span>`;
 }
 
@@ -385,6 +388,56 @@ function renderCommitmentTimestampCell(item) {
   const href = commitmentTransactionHref(item);
   if (!href) return label;
   return `<a class="pane-external-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+
+let inlineTooltipPopover = null;
+
+function ensureInlineTooltipPopover() {
+  if (inlineTooltipPopover) return inlineTooltipPopover;
+  const popover = document.createElement('div');
+  popover.className = 'pane-fixed-tooltip';
+  popover.hidden = true;
+  popover.innerHTML = `
+    <div class="pane-fixed-tooltip-card" role="status" aria-live="polite">
+      <div class="pane-fixed-tooltip-text" id="pane-fixed-tooltip-text"></div>
+      <button class="pane-fixed-tooltip-close" type="button" aria-label="Close help">Close</button>
+    </div>`;
+  document.body.appendChild(popover);
+  popover.querySelector('.pane-fixed-tooltip-close')?.addEventListener('click', () => {
+    popover.hidden = true;
+  });
+  inlineTooltipPopover = popover;
+  return popover;
+}
+
+function showInlineTooltipPopover(message) {
+  const popover = ensureInlineTooltipPopover();
+  const textNode = popover.querySelector('#pane-fixed-tooltip-text');
+  if (textNode) textNode.textContent = message;
+  popover.hidden = false;
+}
+
+function bindInlineTooltipFallbacks() {
+  document.addEventListener('click', (event) => {
+    const trigger = event.target instanceof Element ? event.target.closest('[data-tooltip-text]') : null;
+    const popover = inlineTooltipPopover;
+    if (trigger) {
+      event.preventDefault();
+      event.stopPropagation();
+      showInlineTooltipPopover(trigger.getAttribute('data-tooltip-text') || '');
+      return;
+    }
+    if (popover && !popover.hidden) {
+      const inside = event.target instanceof Element && event.target.closest('.pane-fixed-tooltip-card');
+      if (!inside) popover.hidden = true;
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && inlineTooltipPopover && !inlineTooltipPopover.hidden) {
+      inlineTooltipPopover.hidden = true;
+    }
+  });
 }
 
 function renderRegisteredPane(data) {
@@ -428,13 +481,12 @@ function renderBurnsPane(data) {
     items,
     (item) => `
       <tr>
-        <td>${escapeHtml(formatTimestampNanos(item.timestamp_nanos?.[0]))}</td>
+        <td>${renderCommitmentTimestampCell(item)}</td>
         <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
         <td>Burn</td>
-        <td class="mono">${escapeHtml(formatInteger(item.tx_id))}</td>
       </tr>`,
     paneEmptyMessage(data, 'burns', 'No burn transactions indexed yet.'),
-    4,
+    3,
   );
 }
 
@@ -563,6 +615,8 @@ async function initLandingPage() {
     renderLandingPanes(null, null);
   }
 }
+
+bindInlineTooltipFallbacks();
 
 if (document.getElementById('landing-live-summary')) {
   initLandingPage();
