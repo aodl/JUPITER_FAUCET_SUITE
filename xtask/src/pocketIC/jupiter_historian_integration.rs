@@ -287,7 +287,8 @@ struct ListRecentContributionsArgs {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RecentContributionListItem {
-    canister_id: Principal,
+    canister_id: Option<Principal>,
+    memo_text: Option<String>,
     tx_id: u64,
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
@@ -585,7 +586,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     )?;
     assert_eq!(recent_qualifying.items.len(), 1);
     assert_eq!(recent_qualifying.items[0].tx_id, 1);
-    assert_eq!(recent_qualifying.items[0].canister_id, target);
+    assert_eq!(recent_qualifying.items[0].canister_id, Some(target));
     Ok(())
 }
 

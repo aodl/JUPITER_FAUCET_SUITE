@@ -898,11 +898,13 @@ struct HistorianListRecentContributionsArgs {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianRecentContributionListItem {
-    canister_id: Principal,
+    canister_id: Option<Principal>,
+    memo_text: Option<String>,
     tx_id: u64,
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
     counts_toward_faucet: bool,
+    tx_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1070,7 +1072,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         },
     )?;
     assert_eq!(recent.items.len(), 1);
-    assert_eq!(recent.items[0].canister_id, target);
+    assert_eq!(recent.items[0].canister_id, Some(target));
     assert_eq!(recent.items[0].tx_id, 1);
     assert_eq!(recent.items[0].amount_e8s, 80_000_000);
     assert!(recent.items[0].counts_toward_faucet);

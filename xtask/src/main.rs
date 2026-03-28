@@ -432,7 +432,8 @@ struct ListRegisteredCanisterSummariesResponse {
 
 #[derive(Debug, CandidType, Deserialize)]
 struct RecentContributionListItem {
-    canister_id: Principal,
+    canister_id: Option<Principal>,
+    memo_text: Option<String>,
     tx_id: u64,
     amount_e8s: u64,
     counts_toward_faucet: bool,
@@ -779,6 +780,46 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
 
     let faucet_staking_account = faucet_staking_account();
+    let faucet_rescue = Principal::from_text(cmc_id.trim())?;
+    let faucet_args = format!(
+        r#"(record {{
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            payout_subaccount = null;
+            ledger_canister_id = opt principal "{ledger_id}";
+            index_canister_id = opt principal "{index_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            rescue_controller = principal "{faucet_rescue}";
+            blackhole_controller = opt principal "{blackhole_id}";
+            blackhole_armed = opt false;
+            expected_first_staking_tx_id = null;
+            main_interval_seconds = opt (31536000:nat64);
+            rescue_interval_seconds = opt (31536000:nat64);
+            min_tx_e8s = opt (10000000:nat64);
+        }},)"#,
+        staking_owner = faucet_staking_account.owner.to_text(),
+        staking_subaccount = faucet_staking_account
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; "),
+        ledger_id = ledger_id.trim(),
+        index_id = index_id.trim(),
+        cmc_id = cmc_id.trim(),
+        faucet_rescue = faucet_rescue.to_text(),
+        blackhole_id = blackhole_id.trim(),
+    );
+    run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
+
+    let faucet_id = canister_id("jupiter_faucet_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_faucet_dbg",
+        "--add-controller",
+        faucet_id.trim(),
+    ])?;
 
     let historian_args = format!(
         r#"(record {{
@@ -786,7 +827,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
-            faucet_canister_id = opt principal "{blackhole_id}";
+            faucet_canister_id = opt principal "{faucet_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
             enable_sns_tracking = opt true;
@@ -801,6 +842,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
+        faucet_id = faucet_id.trim(),
         blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
         staking_owner = faucet_staking_account.owner.to_text(),
@@ -2464,7 +2506,12 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .items
                     .iter()
                     .map(|item| FrontendDashboardExpectedRecentItem {
-                        canisterId: item.canister_id.to_text(),
+                        canisterId: item
+                            .canister_id
+                            .as_ref()
+                            .map(|principal| principal.to_text())
+                            .or_else(|| item.memo_text.clone())
+                            .unwrap_or_default(),
                         txId: item.tx_id.to_string(),
                         amountE8s: item.amount_e8s.to_string(),
                         countsTowardFaucet: item.counts_toward_faucet,
@@ -2581,7 +2628,12 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .items
                     .iter()
                     .map(|item| FrontendDashboardExpectedRecentItem {
-                        canisterId: item.canister_id.to_text(),
+                        canisterId: item
+                            .canister_id
+                            .as_ref()
+                            .map(|principal| principal.to_text())
+                            .or_else(|| item.memo_text.clone())
+                            .unwrap_or_default(),
                         txId: item.tx_id.to_string(),
                         amountE8s: item.amount_e8s.to_string(),
                         countsTowardFaucet: item.counts_toward_faucet,
@@ -2716,7 +2768,12 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .items
                     .iter()
                     .map(|item| FrontendDashboardExpectedRecentItem {
-                        canisterId: item.canister_id.to_text(),
+                        canisterId: item
+                            .canister_id
+                            .as_ref()
+                            .map(|principal| principal.to_text())
+                            .or_else(|| item.memo_text.clone())
+                            .unwrap_or_default(),
                         txId: item.tx_id.to_string(),
                         amountE8s: item.amount_e8s.to_string(),
                         countsTowardFaucet: item.counts_toward_faucet,
@@ -2816,7 +2873,12 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .items
                     .iter()
                     .map(|item| FrontendDashboardExpectedRecentItem {
-                        canisterId: item.canister_id.to_text(),
+                        canisterId: item
+                            .canister_id
+                            .as_ref()
+                            .map(|principal| principal.to_text())
+                            .or_else(|| item.memo_text.clone())
+                            .unwrap_or_default(),
                         txId: item.tx_id.to_string(),
                         amountE8s: item.amount_e8s.to_string(),
                         countsTowardFaucet: item.counts_toward_faucet,

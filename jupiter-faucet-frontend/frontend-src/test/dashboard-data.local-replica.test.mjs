@@ -72,7 +72,12 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
     for (let i = 0; i < expected.recent.items.length; i += 1) {
       const actual = data.recent.items[i];
       const exp = expected.recent.items[i];
-      assert.equal(actual.canister_id.toText(), exp.canisterId);
+      const actualPrincipal = Array.isArray(actual.canister_id) ? actual.canister_id[0] : actual.canister_id;
+      const actualMemoText = Array.isArray(actual.memo_text) ? actual.memo_text[0] : actual.memo_text;
+      const actualCanister = actualPrincipal
+        ? actualPrincipal.toText()
+        : (actualMemoText ?? '');
+      assert.equal(actualCanister, exp.canisterId);
       assert.equal(asString(actual.tx_id), exp.txId);
       assert.equal(asString(actual.amount_e8s), exp.amountE8s);
       assert.equal(actual.counts_toward_faucet, exp.countsTowardFaucet);

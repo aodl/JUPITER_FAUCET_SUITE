@@ -165,11 +165,13 @@ pub struct ListRecentContributionsArgs {
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct RecentContributionListItem {
-    pub canister_id: Principal,
+    pub canister_id: Option<Principal>,
+    pub memo_text: Option<String>,
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
+    pub tx_hash: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -308,7 +310,7 @@ fn fallback_icp_burned_e8s(st: &State) -> u64 {
         .fold(0u64, |acc, meta| acc.saturating_add(meta.burned_e8s))
 }
 
-fn fallback_recent_contributions(st: &State) -> Vec<RecentContribution> {
+fn fallback_recent_contributions_state(st: &State) -> Vec<RecentContribution> {
     let mut items: Vec<_> = st
         .contribution_history
         .iter()
@@ -319,9 +321,46 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContribution> {
                 timestamp_nanos: item.timestamp_nanos,
                 amount_e8s: item.amount_e8s,
                 counts_toward_faucet: item.counts_toward_faucet,
+                tx_hash: None,
             })
         })
         .collect();
+    items.sort_by(|a, b| {
+        let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
+        let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
+        b_key.cmp(&a_key)
+    });
+    items.truncate(250);
+    items
+}
+
+fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> {
+    let mut items: Vec<_> = st
+        .contribution_history
+        .iter()
+        .flat_map(|(canister_id, history)| {
+            history.iter().cloned().map(|item| RecentContributionListItem {
+                canister_id: Some(*canister_id),
+                memo_text: Some(canister_id.to_text()),
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+                counts_toward_faucet: item.counts_toward_faucet,
+                tx_hash: None,
+            })
+        })
+        .collect();
+    if let Some(invalid) = &st.recent_invalid_contributions {
+        items.extend(invalid.iter().cloned().map(|item| RecentContributionListItem {
+            canister_id: None,
+            memo_text: Some(item.memo_text),
+            tx_id: item.tx_id,
+            timestamp_nanos: item.timestamp_nanos,
+            amount_e8s: item.amount_e8s,
+            counts_toward_faucet: false,
+            tx_hash: item.tx_hash,
+        }));
+    }
     items.sort_by(|a, b| {
         let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
         let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
@@ -348,7 +387,10 @@ fn initialize_derived_state_if_missing(st: &mut State) {
         st.icp_burned_e8s = Some(fallback_icp_burned_e8s(st));
     }
     if st.recent_contributions.is_none() {
-        st.recent_contributions = Some(fallback_recent_contributions(st));
+        st.recent_contributions = Some(fallback_recent_contributions_state(st));
+    }
+    if st.recent_invalid_contributions.is_none() {
+        st.recent_invalid_contributions = Some(Vec::new());
     }
     if st.last_index_run_ts.is_none() {
         st.last_index_run_ts = Some(st.last_main_run_ts);
@@ -647,26 +689,45 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
     state::with_state(|st| {
         let limit = args.limit.unwrap_or(20).clamp(1, 100) as usize;
         let qualifying_only = args.qualifying_only.unwrap_or(false);
-        let mut items = st
-            .recent_contributions
-            .clone()
-            .unwrap_or_else(|| fallback_recent_contributions(st));
-        if qualifying_only {
-            items.retain(|item| item.counts_toward_faucet);
-        }
-        items.truncate(limit);
-        ListRecentContributionsResponse {
-            items: items
-                .into_iter()
+        let mut items: Vec<RecentContributionListItem> = if let Some(recent) = &st.recent_contributions {
+            let mut merged: Vec<RecentContributionListItem> = recent
+                .iter()
+                .cloned()
                 .map(|item| RecentContributionListItem {
-                    canister_id: item.canister_id,
+                    canister_id: Some(item.canister_id),
+                    memo_text: Some(item.canister_id.to_text()),
                     tx_id: item.tx_id,
+                    tx_hash: item.tx_hash,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
                     counts_toward_faucet: item.counts_toward_faucet,
                 })
-                .collect(),
+                .collect();
+            if let Some(invalid) = &st.recent_invalid_contributions {
+                merged.extend(invalid.iter().cloned().map(|item| RecentContributionListItem {
+                    canister_id: None,
+                    memo_text: Some(item.memo_text),
+                    tx_id: item.tx_id,
+                    tx_hash: item.tx_hash,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: false,
+                }));
+            }
+            merged.sort_by(|a, b| {
+                let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
+                let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
+                b_key.cmp(&a_key)
+            });
+            merged
+        } else {
+            fallback_recent_contributions(st)
+        };
+        if qualifying_only {
+            items.retain(|item| item.counts_toward_faucet);
         }
+        items.truncate(limit);
+        ListRecentContributionsResponse { items }
     })
 }
 
@@ -768,6 +829,7 @@ fn debug_reset_derived_state() {
         st.qualifying_contribution_count = Some(0);
         st.icp_burned_e8s = Some(0);
         st.recent_contributions = Some(Vec::new());
+        st.recent_invalid_contributions = Some(Vec::new());
         st.recent_burns = Some(Vec::new());
         st.last_index_run_ts = Some(0);
     });
@@ -776,7 +838,7 @@ fn debug_reset_derived_state() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{CanisterMeta, CyclesSampleSource};
+    use crate::state::{CanisterMeta, CyclesSampleSource, InvalidContribution};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn principal(text: &str) -> Principal {
@@ -830,6 +892,7 @@ mod tests {
             qualifying_contribution_count: None,
             icp_burned_e8s: None,
             recent_contributions: None,
+            recent_invalid_contributions: None,
             recent_burns: None,
             last_index_run_ts: None,
         }
@@ -1021,6 +1084,64 @@ mod tests {
         });
         assert_eq!(response.total, 0);
         assert!(response.items.is_empty());
+    }
+
+    #[test]
+    fn list_recent_contributions_returns_qualifying_and_non_qualifying_commitments() {
+        let qualifying = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
+        let low_amount = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
+        let mut st = base_state();
+        st.recent_contributions = Some(vec![
+            RecentContribution {
+                canister_id: qualifying,
+                tx_id: 11,
+                timestamp_nanos: Some(11),
+                amount_e8s: 20_000_000,
+                counts_toward_faucet: true,
+                tx_hash: Some("hash-qualifying".to_string()),
+            },
+            RecentContribution {
+                canister_id: low_amount,
+                tx_id: 10,
+                timestamp_nanos: Some(10),
+                amount_e8s: 5_000_000,
+                counts_toward_faucet: false,
+                tx_hash: Some("hash-low".to_string()),
+            },
+        ]);
+        st.recent_invalid_contributions = Some(vec![InvalidContribution {
+            tx_id: 12,
+            timestamp_nanos: Some(12),
+            amount_e8s: 20_000_000,
+            tx_hash: Some("hash-invalid".to_string()),
+            memo_text: "not-a-principal".to_string(),
+        }]);
+        state::set_state(st);
+
+        let all = list_recent_contributions(ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        });
+        assert_eq!(all.items.len(), 3);
+        assert_eq!(all.items[0].tx_id, 12);
+        assert_eq!(all.items[0].canister_id, None);
+        assert_eq!(all.items[0].memo_text.as_deref(), Some("not-a-principal"));
+        assert_eq!(all.items[0].tx_hash.as_deref(), Some("hash-invalid"));
+        assert!(!all.items[0].counts_toward_faucet);
+        assert_eq!(all.items[1].tx_id, 11);
+        assert_eq!(all.items[1].canister_id, Some(qualifying));
+        assert!(all.items[1].counts_toward_faucet);
+        assert_eq!(all.items[2].tx_id, 10);
+        assert_eq!(all.items[2].canister_id, Some(low_amount));
+        assert!(!all.items[2].counts_toward_faucet);
+
+        let qualifying_only = list_recent_contributions(ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(true),
+        });
+        assert_eq!(qualifying_only.items.len(), 1);
+        assert_eq!(qualifying_only.items[0].tx_id, 11);
+        assert!(qualifying_only.items[0].counts_toward_faucet);
     }
 
     #[test]

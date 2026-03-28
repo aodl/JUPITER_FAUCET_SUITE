@@ -52,6 +52,17 @@ pub struct ContributionSample {
     pub counts_toward_faucet: bool,
 }
 
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct InvalidContribution {
+    pub tx_id: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub amount_e8s: u64,
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+    pub memo_text: String,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct RecentContribution {
     pub canister_id: Principal,
@@ -59,6 +70,8 @@ pub struct RecentContribution {
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
+    #[serde(default)]
+    pub tx_hash: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -150,6 +163,8 @@ pub struct StableState {
     #[serde(default)]
     pub recent_contributions: Option<Vec<RecentContribution>>,
     #[serde(default)]
+    pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
+    #[serde(default)]
     pub recent_burns: Option<Vec<RecentBurn>>,
     #[serde(default)]
     pub last_index_run_ts: Option<u64>,
@@ -171,6 +186,7 @@ pub struct State {
     pub qualifying_contribution_count: Option<u64>,
     pub icp_burned_e8s: Option<u64>,
     pub recent_contributions: Option<Vec<RecentContribution>>,
+    pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
     pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
 }
@@ -193,6 +209,7 @@ impl State {
             qualifying_contribution_count: Some(0),
             icp_burned_e8s: Some(0),
             recent_contributions: Some(Vec::new()),
+            recent_invalid_contributions: Some(Vec::new()),
             recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
         }
@@ -301,6 +318,7 @@ impl From<State> for StableState {
             qualifying_contribution_count: value.qualifying_contribution_count,
             icp_burned_e8s: value.icp_burned_e8s,
             recent_contributions: value.recent_contributions,
+            recent_invalid_contributions: value.recent_invalid_contributions,
             recent_burns: value.recent_burns,
             last_index_run_ts: value.last_index_run_ts,
         }
@@ -329,6 +347,7 @@ impl From<StableState> for State {
             qualifying_contribution_count: value.qualifying_contribution_count,
             icp_burned_e8s: value.icp_burned_e8s,
             recent_contributions: value.recent_contributions,
+            recent_invalid_contributions: value.recent_invalid_contributions,
             recent_burns: value.recent_burns,
             last_index_run_ts: value.last_index_run_ts,
         }

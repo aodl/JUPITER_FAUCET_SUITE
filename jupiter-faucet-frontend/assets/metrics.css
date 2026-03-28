@@ -202,6 +202,15 @@ body.nav-panel-open .metric-rail {
   line-height: 1.5;
 }
 
+
+.pane-inline-code-link {
+  display: block;
+}
+
+.pane-inline-code-link:hover {
+  opacity: 0.92;
+}
+
 .pane-inline-help {
   margin: 10px 0 0;
   font-size: 14px;
@@ -255,6 +264,62 @@ body.nav-panel-open .metric-rail {
 
 .pane-external-link:hover {
   opacity: 0.9;
+}
+
+
+.pane-inline-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane-inline-tooltip-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: help;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+}
+
+.pane-inline-tooltip-bubble {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(320px, 70vw);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 12, 18, 0.94);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+  z-index: 10;
+  text-align: left;
+}
+
+.pane-inline-tooltip:hover .pane-inline-tooltip-bubble,
+.pane-inline-tooltip:focus-within .pane-inline-tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.pane-inline-tooltip-bubble code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 
 .pane-table-wrap {

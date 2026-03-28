@@ -255,7 +255,7 @@
                   <strong>Staking account</strong>
                   <button class="pane-copy-button" id="copy-how-staking-account" type="button">Copy</button>
                 </div>
-                <code class="pane-inline-code" id="how-staking-account-address">—</code>
+                <a class="pane-external-link pane-inline-code-link mono" id="how-staking-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="how-staking-account-address">22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d</code></a>
                 <p class="pane-inline-help">
                   Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field <br/>(<b>Ctrl + k</b>, and search '<b>memo</b>' if the field is not yet visible).
                 </p>
@@ -387,7 +387,7 @@
         <article class="nav-panel-section" data-panel="metric-commitments" id="nav-panel-metric-commitments">
           <h2 class="nav-panel-title">Commitments</h2>
           <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">The headline metric counts only qualifying commitments. A commitment qualifies when the memo names a canister/principal and the contribution is at least <strong>0.1 ICP</strong>. The table below shows all indexed memo-linked commitments, including non-qualifying ones.</p>
+          <p class="nav-panel-content">A commitment qualifies when the memo names a canister/principal and the contribution is at least <strong>0.1 ICP</strong>. The table below shows all indexed staking-account commitments, including non-qualifying and invalid-memo entries.</p>
           <div class="pane-table-wrap">
             <table class="pane-table">
               <thead>
@@ -396,11 +396,10 @@
                   <th>Amount</th>
                   <th>Canister/Principal</th>
                   <th>Qualifies</th>
-                  <th>Tx</th>
                 </tr>
               </thead>
               <tbody id="commitments-pane-body">
-                <tr><td colspan="5" class="empty-cell">Loading…</td></tr>
+                <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
               </tbody>
             </table>
           </div>

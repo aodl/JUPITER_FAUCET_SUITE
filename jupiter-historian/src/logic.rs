@@ -1,4 +1,5 @@
 use candid::Principal;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
@@ -11,14 +12,118 @@ pub struct IndexedContribution {
     pub amount_e8s: u64,
     pub timestamp_nanos: Option<u64>,
     pub counts_toward_faucet: bool,
+    pub tx_hash: Option<String>,
 }
 
-pub fn parse_beneficiary_from_memo(bytes: &[u8]) -> Option<Principal> {
-    let memo_text = std::str::from_utf8(bytes).ok()?.trim();
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexedInvalidContribution {
+    pub tx_id: u64,
+    pub amount_e8s: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub memo_text: String,
+    pub tx_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexedContributionEntry {
+    Valid(IndexedContribution),
+    Invalid(IndexedInvalidContribution),
+}
+
+
+fn encode_varint(mut value: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+    out
+}
+
+fn push_length_delimited(tag: u8, bytes: &[u8], out: &mut Vec<u8>) {
+    out.push(tag);
+    out.extend(encode_varint(bytes.len() as u64));
+    out.extend(bytes);
+}
+
+fn decode_account_identifier(hex_text: &str) -> Option<Vec<u8>> {
+    hex::decode(hex_text).ok()
+}
+
+fn encode_icp_transfer_transaction(tx: &IndexTransactionWithId) -> Option<Vec<u8>> {
+    let (to, fee, from, amount) = match &tx.transaction.operation {
+        IndexOperation::Transfer { to, fee, from, amount, .. } => (to, fee.e8s(), from, amount.e8s()),
+        _ => return None,
+    };
+    let from_bytes = decode_account_identifier(from)?;
+    let to_bytes = decode_account_identifier(to)?;
+
+    let mut encoded_from = Vec::new();
+    push_length_delimited(0x0a, &from_bytes, &mut encoded_from);
+
+    let mut encoded_to = Vec::new();
+    push_length_delimited(0x0a, &to_bytes, &mut encoded_to);
+
+    let mut encoded_amount = Vec::new();
+    encoded_amount.push(0x08);
+    encoded_amount.extend(encode_varint(amount));
+
+    let mut encoded_fee = Vec::new();
+    encoded_fee.push(0x08);
+    encoded_fee.extend(encode_varint(fee));
+
+    let mut encoded_transfer = Vec::new();
+    push_length_delimited(0x0a, &encoded_from, &mut encoded_transfer);
+    push_length_delimited(0x12, &encoded_to, &mut encoded_transfer);
+    push_length_delimited(0x1a, &encoded_amount, &mut encoded_transfer);
+    push_length_delimited(0x22, &encoded_fee, &mut encoded_transfer);
+
+    let mut encoded_operation = Vec::new();
+    push_length_delimited(0x1a, &encoded_transfer, &mut encoded_operation);
+
+    let mut encoded_memo = Vec::new();
+    if tx.transaction.memo != 0 {
+        encoded_memo.push(0x08);
+        encoded_memo.extend(encode_varint(tx.transaction.memo));
+    }
+
+    let mut encoded_timestamp = Vec::new();
+    if let Some(created_at_time) = tx.transaction.created_at_time.as_ref() {
+        encoded_timestamp.push(0x08);
+        encoded_timestamp.extend(encode_varint(created_at_time.timestamp_nanos));
+    }
+
+    let mut encoded_transaction = Vec::new();
+    encoded_transaction.extend(encoded_operation);
+    push_length_delimited(0x22, &encoded_memo, &mut encoded_transaction);
+    push_length_delimited(0x32, &encoded_timestamp, &mut encoded_transaction);
+    Some(encoded_transaction)
+}
+
+pub fn transaction_hash_hex(tx: &IndexTransactionWithId) -> Option<String> {
+    let encoded_transaction = encode_icp_transfer_transaction(tx)?;
+    Some(hex::encode(Sha256::digest(encoded_transaction)))
+}
+
+pub fn memo_text_from_bytes(bytes: &[u8]) -> Option<String> {
+    let memo_text = std::str::from_utf8(bytes).ok()?.trim().to_string();
     if memo_text.is_empty() {
         return None;
     }
-    Principal::from_text(memo_text).ok()
+    Some(memo_text)
+}
+
+#[cfg(test)]
+pub fn parse_beneficiary_from_memo(bytes: &[u8]) -> Option<Principal> {
+    let memo_text = memo_text_from_bytes(bytes)?;
+    Principal::from_text(&memo_text).ok()
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
@@ -38,17 +143,28 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id:
     }
 }
 
-pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedContribution> {
+pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedContributionEntry> {
     let (tx_id, memo_opt, amount_e8s, timestamp_nanos) = memo_bytes_from_index_tx(tx, staking_account_id)?;
     let memo = memo_opt?;
-    let beneficiary = parse_beneficiary_from_memo(&memo)?;
-    Some(IndexedContribution {
-        tx_id,
-        beneficiary,
-        amount_e8s,
-        timestamp_nanos,
-        counts_toward_faucet: amount_e8s >= min_tx_e8s,
-    })
+    let memo_text = memo_text_from_bytes(&memo)?;
+    if let Ok(beneficiary) = Principal::from_text(&memo_text) {
+        Some(IndexedContributionEntry::Valid(IndexedContribution {
+            tx_id,
+            beneficiary,
+            amount_e8s,
+            timestamp_nanos,
+            counts_toward_faucet: amount_e8s >= min_tx_e8s,
+            tx_hash: transaction_hash_hex(tx),
+        }))
+    } else {
+        Some(IndexedContributionEntry::Invalid(IndexedInvalidContribution {
+            tx_id,
+            amount_e8s,
+            timestamp_nanos,
+            memo_text,
+            tx_hash: transaction_hash_hex(tx),
+        }))
+    }
 }
 
 pub fn merge_sources(existing: Option<&BTreeSet<CanisterSource>>, add: CanisterSource) -> BTreeSet<CanisterSource> {
@@ -141,7 +257,7 @@ mod tests {
 
     #[test]
     fn indexed_contribution_uses_icrc1_memo_and_threshold_flag() {
-        let staking = "staking".to_string();
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
         let beneficiary = principal("aaaaa-aa");
         let tx = IndexTransactionWithId {
             id: 1,
@@ -151,7 +267,7 @@ mod tests {
                 operation: IndexOperation::Transfer {
                     to: staking.clone(),
                     fee: Tokens::new(10_000),
-                    from: "sender".into(),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
                     amount: Tokens::new(50),
                     spender: None,
                 },
@@ -160,9 +276,45 @@ mod tests {
             },
         };
         let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
-        assert_eq!(c.beneficiary, beneficiary);
-        assert!(!c.counts_toward_faucet);
-        assert_eq!(c.timestamp_nanos, Some(99));
+        match c {
+            IndexedContributionEntry::Valid(c) => {
+                assert_eq!(c.beneficiary, beneficiary);
+                assert!(!c.counts_toward_faucet);
+                assert_eq!(c.timestamp_nanos, Some(99));
+                assert!(c.tx_hash.as_ref().map(|v| v.len() == 64).unwrap_or(false));
+            }
+            IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),
+        }
+    }
+
+
+    #[test]
+    fn transaction_hash_is_derived_for_invalid_memo_transfers() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 2,
+            transaction: IndexTransaction {
+                memo: 7,
+                icrc1_memo: Some(b"not-a-principal".to_vec()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
+                    amount: Tokens::new(50),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 123 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedContributionEntry::Invalid(c) => {
+                assert_eq!(c.memo_text, "not-a-principal");
+                assert!(c.tx_hash.as_ref().map(|v| v.len() == 64).unwrap_or(false));
+            }
+            IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
+        }
     }
 
     #[test]

@@ -13,6 +13,7 @@ const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
 const ALPHA_VOTE_NEURON_ID = '2947465672511369';
 const TABLE_PAGE_SIZE = 6;
+const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 
 const tableState = {
   registered: { page: 0, items: [] },
@@ -234,10 +235,8 @@ function renderLandingUnavailable(errorMessage = 'Live metrics unavailable') {
   setHidden('landing-live-unavailable', true);
 }
 
-function renderHowItWorksAccount(data) {
-  const stakingAddress = data?.status ? accountIdentifierHex(data.status.staking_account) : DASH;
-  setText('how-staking-account-address', stakingAddress);
-  setCopyButton('copy-how-staking-account', () => stakingAddress);
+function renderHowItWorksAccount() {
+  setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT_HEX);
 }
 
 function formatFolloweeLinks(neuron) {
@@ -251,7 +250,7 @@ function formatFolloweeLinks(neuron) {
 }
 
 function renderStakePane(data, neuron, { neuronLoading = false, neuronError = null, dataLoading = false } = {}) {
-  const stakingAddress = data?.status ? accountIdentifierHex(data.status.staking_account) : '';
+  const stakingAddress = data?.status ? accountIdentifierHex(data.status.staking_account) : JUPITER_STAKING_ACCOUNT_HEX;
   setLink('stake-pane-account-link', {
     href: stakingAddress ? `https://dashboard.internetcomputer.org/account/${stakingAddress}` : '',
     text: stakingAddress,
@@ -348,6 +347,46 @@ function paginate(kind, items, renderRow, emptyMessage, colspan) {
   if (next) next.disabled = state.page >= totalPages - 1;
 }
 
+
+function renderCyclesUnavailableCell() {
+  return `
+    <span class="pane-inline-tooltip">
+      <span>unavailable</span>
+      <button class="pane-inline-tooltip-button" type="button" aria-label="Cycles visibility help">i</button>
+      <span class="pane-inline-tooltip-bubble">
+        Needs a controlling <a class="pane-external-link" href="https://dashboard.internetcomputer.org/canister/e3mmv-5qaaa-aaaah-aadma-cai" target="_blank" rel="noopener noreferrer">blackhole canister</a> for <a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole?tab=readme-ov-file#version-000" target="_blank" rel="noopener noreferrer">cycles visibility</a> (<code>canister_status</code>).
+      </span>
+    </span>`;
+}
+
+function formatCommitmentTarget(item) {
+  const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
+  if (canister) {
+    return escapeHtml(formatPrincipal(canister));
+  }
+  const memoText = Array.isArray(item?.memo_text) ? item.memo_text[0] : item?.memo_text;
+  return escapeHtml(memoText || 'invalid principal');
+}
+
+function commitmentTransactionHref(item) {
+  const txHash = Array.isArray(item?.tx_hash) ? item.tx_hash[0] : item?.tx_hash;
+  const txIndex = item?.tx_id;
+  if (txHash) {
+    return `https://dashboard.internetcomputer.org/transaction/${encodeURIComponent(txHash)}?index=${encodeURIComponent(String(txIndex))}`;
+  }
+  if (txIndex !== undefined && txIndex !== null) {
+    return `https://dashboard.internetcomputer.org/transaction/${encodeURIComponent(String(txIndex))}`;
+  }
+  return '';
+}
+
+function renderCommitmentTimestampCell(item) {
+  const label = escapeHtml(formatTimestampNanos(item.timestamp_nanos?.[0]));
+  const href = commitmentTransactionHref(item);
+  if (!href) return label;
+  return `<a class="pane-external-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
 function renderRegisteredPane(data) {
   const items = data?.registered?.items || [];
   paginate(
@@ -355,10 +394,10 @@ function renderRegisteredPane(data) {
     items,
     (item) => `
       <tr>
-        <td class="mono">${escapeHtml(formatPrincipal(item.canister_id))}</td>
+        <td class="mono">${formatCommitmentTarget(item)}</td>
         <td>${escapeHtml(formatInteger(item.qualifying_contribution_count))}</td>
         <td>${escapeHtml(formatIcpE8s(item.total_qualifying_contributed_e8s))}</td>
-        <td>${escapeHtml(formatCycles(item.latest_cycles?.[0]))}</td>
+        <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
       </tr>`,
     paneEmptyMessage(data, 'registered', 'No canisters/principals indexed yet.'),
     4,
@@ -372,14 +411,13 @@ function renderCommitmentsPane(data) {
     items,
     (item) => `
       <tr>
-        <td>${escapeHtml(formatTimestampNanos(item.timestamp_nanos?.[0]))}</td>
+        <td>${renderCommitmentTimestampCell(item)}</td>
         <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
-        <td class="mono">${escapeHtml(formatPrincipal(item.canister_id))}</td>
+        <td class="mono">${formatCommitmentTarget(item)}</td>
         <td>${item.counts_toward_faucet ? 'Yes' : 'No'}</td>
-        <td class="mono">${escapeHtml(formatInteger(item.tx_id))}</td>
       </tr>`,
     paneEmptyMessage(data, 'recent', 'No commitments indexed yet.'),
-    5,
+    4,
   );
 }
 
@@ -428,7 +466,7 @@ function bindPaginationButtons() {
 function renderLandingPanes(data, neuron = null) {
   window.__JUPITER_LANDING_DATA__ = data;
   window.__JUPITER_NEURON_ERROR__ = neuronState.error;
-  renderHowItWorksAccount(data);
+  renderHowItWorksAccount();
   renderStakePane(data, neuron);
   renderPaneSubtitles(data);
   renderRegisteredPane(data);

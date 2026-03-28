@@ -52,11 +52,13 @@ export const idlFactory = ({ IDL }) => {
     qualifying_only: IDL.Opt(IDL.Bool),
   });
   const RecentContributionListItem = IDL.Record({
-    canister_id: IDL.Principal,
+    canister_id: IDL.Opt(IDL.Principal),
+    memo_text: IDL.Opt(IDL.Text),
     tx_id: IDL.Nat64,
     timestamp_nanos: IDL.Opt(IDL.Nat64),
     amount_e8s: IDL.Nat64,
     counts_toward_faucet: IDL.Bool,
+    tx_hash: IDL.Opt(IDL.Text),
   });
   const ListRecentContributionsResponse = IDL.Record({
     items: IDL.Vec(RecentContributionListItem),

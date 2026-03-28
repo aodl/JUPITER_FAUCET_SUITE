@@ -7,10 +7,11 @@ use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::{BlackholeClient, IndexClient, SnsRootClient, SnsWasmClient};
 use crate::{logic, mainnet_cmc_id};
-use crate::state::{self, ActiveCyclesSweep, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, RecentBurn, RecentContribution};
+use crate::state::{self, ActiveCyclesSweep, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, InvalidContribution, RecentBurn, RecentContribution};
 
 const PAGE_SIZE: u64 = 500;
 const MAX_RECENT_CONTRIBUTIONS: usize = 250;
+const MAX_RECENT_INVALID_CONTRIBUTIONS: usize = 250;
 const MAX_RECENT_BURNS: usize = 250;
 
 fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
@@ -29,6 +30,17 @@ fn push_recent_contribution(recent: &mut Vec<RecentContribution>, item: RecentCo
     recent.sort_by(|a, b| contribution_sort_key(b).cmp(&contribution_sort_key(a)));
     if recent.len() > MAX_RECENT_CONTRIBUTIONS {
         recent.truncate(MAX_RECENT_CONTRIBUTIONS);
+    }
+}
+
+fn push_recent_invalid_contribution(recent: &mut Vec<InvalidContribution>, item: InvalidContribution) {
+    if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
+        return;
+    }
+    recent.push(item);
+    recent.sort_by(|a, b| (b.timestamp_nanos.unwrap_or(0), b.tx_id).cmp(&(a.timestamp_nanos.unwrap_or(0), a.tx_id)));
+    if recent.len() > MAX_RECENT_INVALID_CONTRIBUTIONS {
+        recent.truncate(MAX_RECENT_INVALID_CONTRIBUTIONS);
     }
 }
 
@@ -174,39 +186,55 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
         }
         for tx in page.transactions.iter() {
             if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
-                state::with_state_mut(|st| {
-                    st.distinct_canisters.insert(contribution.beneficiary);
-                    st.canister_sources.insert(
-                        contribution.beneficiary,
-                        logic::merge_sources(st.canister_sources.get(&contribution.beneficiary), CanisterSource::MemoContribution),
-                    );
-                    let history = st.contribution_history.entry(contribution.beneficiary).or_default();
-                    let inserted = logic::push_contribution(
-                        history,
-                        crate::state::ContributionSample {
-                            tx_id: contribution.tx_id,
-                            timestamp_nanos: contribution.timestamp_nanos,
-                            amount_e8s: contribution.amount_e8s,
-                            counts_toward_faucet: contribution.counts_toward_faucet,
-                        },
-                        cfg.max_contribution_entries_per_canister,
-                    );
-                    if inserted {
-                        let meta = st.per_canister_meta.entry(contribution.beneficiary).or_insert_with(CanisterMeta::default);
-                        logic::apply_contribution_seen(meta, contribution.timestamp_nanos, now_secs);
-                        if contribution.counts_toward_faucet {
-                            let count = st.qualifying_contribution_count.get_or_insert(0);
-                            *count = count.saturating_add(1);
-                        }
-                        let recent = st.recent_contributions.get_or_insert_with(Vec::new);
-                        push_recent_contribution(
-                            recent,
-                            RecentContribution {
-                                canister_id: contribution.beneficiary,
+                state::with_state_mut(|st| match contribution {
+                    logic::IndexedContributionEntry::Valid(contribution) => {
+                        st.distinct_canisters.insert(contribution.beneficiary);
+                        st.canister_sources.insert(
+                            contribution.beneficiary,
+                            logic::merge_sources(st.canister_sources.get(&contribution.beneficiary), CanisterSource::MemoContribution),
+                        );
+                        let history = st.contribution_history.entry(contribution.beneficiary).or_default();
+                        let inserted = logic::push_contribution(
+                            history,
+                            crate::state::ContributionSample {
                                 tx_id: contribution.tx_id,
                                 timestamp_nanos: contribution.timestamp_nanos,
                                 amount_e8s: contribution.amount_e8s,
                                 counts_toward_faucet: contribution.counts_toward_faucet,
+                            },
+                            cfg.max_contribution_entries_per_canister,
+                        );
+                        if inserted {
+                            let meta = st.per_canister_meta.entry(contribution.beneficiary).or_insert_with(CanisterMeta::default);
+                            logic::apply_contribution_seen(meta, contribution.timestamp_nanos, now_secs);
+                            if contribution.counts_toward_faucet {
+                                let count = st.qualifying_contribution_count.get_or_insert(0);
+                                *count = count.saturating_add(1);
+                            }
+                            let recent = st.recent_contributions.get_or_insert_with(Vec::new);
+                            push_recent_contribution(
+                                recent,
+                                RecentContribution {
+                                    canister_id: contribution.beneficiary,
+                                    tx_id: contribution.tx_id,
+                                    timestamp_nanos: contribution.timestamp_nanos,
+                                    amount_e8s: contribution.amount_e8s,
+                                    counts_toward_faucet: contribution.counts_toward_faucet,
+                                    tx_hash: contribution.tx_hash,
+                                },
+                            );
+                        }
+                    }
+                    logic::IndexedContributionEntry::Invalid(contribution) => {
+                        let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
+                        push_recent_invalid_contribution(
+                            recent,
+                            InvalidContribution {
+                                tx_id: contribution.tx_id,
+                                timestamp_nanos: contribution.timestamp_nanos,
+                                amount_e8s: contribution.amount_e8s,
+                                tx_hash: contribution.tx_hash,
+                                memo_text: contribution.memo_text,
                             },
                         );
                     }
@@ -474,6 +502,25 @@ mod tests {
         staking_id
     }
 
+    fn transfer_to_staking_memo_tx(id: u64, staking_id: &str, memo: Vec<u8>, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(memo),
+                operation: IndexOperation::Transfer {
+                    to: staking_id.to_string(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(amount_e8s),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
+            },
+        }
+    }
+
     fn transfer_to_staking_tx(id: u64, staking_id: &str, beneficiary: candid::Principal, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
@@ -636,6 +683,33 @@ mod tests {
             assert_eq!(recent[0].tx_id, 11);
             assert_eq!(recent[1].tx_id, 10);
             assert_eq!(st.last_indexed_staking_tx_id, Some(11));
+        });
+    }
+
+    #[test]
+    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_recent_list() {
+        let staking_id = configure_state(10);
+        let qualifying = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let low_amount = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 410,
+            transactions: vec![
+                transfer_to_staking_tx(42, &staking_id, qualifying, 150, 123_000_000_000),
+                transfer_to_staking_tx(43, &staking_id, low_amount, 50, 124_000_000_000),
+                transfer_to_staking_memo_tx(44, &staking_id, b"not-a-principal".to_vec(), 210, 125_000_000_000),
+            ],
+            oldest_tx_id: Some(42),
+        }]);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.qualifying_contribution_count, Some(1));
+            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(2));
+            assert_eq!(st.recent_invalid_contributions.as_ref().map(|items| items.len()), Some(1));
+            let invalid = &st.recent_invalid_contributions.as_ref().unwrap()[0];
+            assert_eq!(invalid.tx_id, 44);
+            assert_eq!(invalid.memo_text, "not-a-principal");
         });
     }
 

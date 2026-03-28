@@ -7,11 +7,13 @@ type ContributionSample = record {
   counts_toward_faucet : bool;
 };
 type RecentContributionListItem = record {
-  canister_id : principal;
+  canister_id : opt principal;
+  memo_text : opt text;
   tx_id : nat64;
   timestamp_nanos : opt nat64;
   amount_e8s : nat64;
   counts_toward_faucet : bool;
+  tx_hash : opt text;
 };
 type CyclesSampleSource = variant { BlackholeStatus; SelfCanister; SnsRootSummary };
 type CyclesSample = record {
