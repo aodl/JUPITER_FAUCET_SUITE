@@ -8,7 +8,7 @@ This is the canister that turns “someone deposited ICP into the reward neuron�
 
 See the suite overview in [`../README.md`](../README.md).
 
-## What it is responsible for
+## Role in the suite
 
 `jupiter-faucet` owns five things:
 
@@ -16,11 +16,20 @@ See the suite overview in [`../README.md`](../README.md).
 2. scanning that account through the ICP index canister
 3. interpreting eligible transfer memos as beneficiary canister principals
 4. converting a payout pot of ICP into proportional per-contribution top-ups
-5. managing its own blackhole/recovery policy once armed
+5. managing its own blackhole / recovery policy once armed
 
-It does **not** control the NNS neuron itself. The disburser canister is responsible for producing the ICP that the faucet spends.
+It does **not** control the NNS neuron itself. `jupiter-disburser` is responsible for producing the ICP that the faucet spends.
 
-## High-level model
+## External dependencies
+
+By default the canister talks to:
+
+- ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
+- ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
+- Cycles Minting Canister / CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
+- canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`) when blackhole mode is configured / armed
+
+## High-level payout model
 
 Each payout job works from two snapshots taken at the beginning of the job:
 
@@ -38,7 +47,7 @@ If `gross_share` is greater than the current ledger fee, the faucet:
 1. sends `gross_share - fee` ICP to the beneficiary’s CMC deposit subaccount
 2. calls `notify_top_up`
 
-If not, that contribution is simply skipped for that payout job.
+If not, that contribution is skipped for that payout job and the unallocated value remains available for the end-of-job remainder path.
 
 ## Beneficiary attribution rules
 
@@ -57,6 +66,7 @@ Memo handling is intentionally simple and code-driven:
 - empty memo = invalid
 - malformed memo = invalid
 - memo that is not valid principal text = invalid
+- whitespace around principal text is tolerated because the parser trims before decoding
 
 Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not block later transfers.
 
@@ -69,8 +79,6 @@ The default minimum tracked contribution is:
 Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`.
 
 ## Important payout semantics
-
-These are the most important design properties to understand.
 
 ### 1) Every new payout job rescans the full history
 
@@ -88,19 +96,45 @@ So if the same beneficiary appears twice in staking-account history, the faucet 
 
 ### 3) The denominator is the staking-account balance snapshot
 
-The proportional split is based on the staking account’s balance at job start, not on a sum the faucet reconstructs in memory from transfer history.
+The proportional split is based on the staking account’s balance at job start, not on a sum the faucet reconstructs from history in memory.
 
-That is why the code also contains index-health invariants around the observed oldest/latest transaction IDs.
+That is why the code also contains index-health invariants around the observed oldest / latest transaction IDs.
 
 ### 4) The payout pot is snapshotted once per job
 
-A job uses the payout account balance captured at the beginning of the job. It does not dynamically rescale shares mid-run based on whatever later transfers may have arrived.
+A job uses the payout-account balance captured at the beginning of the job. It does not dynamically rescale shares mid-run based on whatever later transfers may have arrived.
 
 ### 5) Any unallocated remainder stays useful
 
 At the end of a completed payout job, any remainder that was not successfully allocated to beneficiaries can be sent as a **remainder-to-self** CMC top-up, as long as the remaining gross amount is greater than the ledger fee.
 
-## Deposit account used for top-ups
+### 6) A computed share at or below the fee is not a failure
+
+When `gross_share <= fee`, the contribution is classified as `NoTransfer`.
+
+That means:
+
+- it is not counted as `ignored_under_threshold`
+- it is not counted as `ignored_bad_memo`
+- it is not counted as a failed top-up
+- its economic value remains available to the remainder path
+
+## Accounts and transfer details
+
+### Staking account
+
+The staking account is the input side of the faucet. Incoming transfers into this account define contribution history.
+
+### Payout account
+
+Outgoing top-ups are sent from:
+
+- the canister default account if `payout_subaccount` is omitted
+- the configured subaccount if `payout_subaccount` is provided
+
+The current suite wiring from `jupiter-disburser` targets the faucet’s default account.
+
+### Deposit account used for top-ups
 
 For a beneficiary canister principal `P`, the faucet transfers ICP to the CMC deposit account:
 
@@ -115,7 +149,22 @@ The subaccount layout is:
 
 That matches the standard top-up pattern used before calling `notify_top_up`.
 
+### Outgoing ledger transfer memo
+
+The faucet uses a fixed ledger memo equal to `TopUpCanister` (`1_347_768_404` as a `u64`) for its ICP transfers into the CMC deposit accounts.
+
 ## Runtime model
+
+### Timer cadence
+
+Default timers are:
+
+- `main_interval_seconds = 7 days`
+- `rescue_interval_seconds = 1 day`
+- retry backoff = about `60 seconds`
+- index page size = `500`
+
+Each timer interval is clamped to at least 60 seconds by the runtime code.
 
 ### Main tick sequence
 
@@ -125,8 +174,8 @@ On each successful main tick, the canister:
 2. enforces a minimum gap between automatic runs
 3. if no active payout job exists, snapshots:
    - current ledger fee
-   - payout account balance
-   - staking account balance
+   - payout-account balance
+   - staking-account balance
 4. if the payout pot is too small or the denominator is zero, it performs only index-health probing and bootstrap-rescue checks
 5. otherwise, creates an `ActivePayoutJob`
 6. processes any due retry first
@@ -136,29 +185,24 @@ On each successful main tick, the canister:
 10. when scanning is complete, optionally sends the remainder-to-self top-up
 11. finalizes the job into a persisted summary and applies health observations
 
-Default timer cadence:
-
-- `main_interval_seconds = 7 days`
-- `rescue_interval_seconds = 1 day`
-- retry backoff = about `60 seconds`
-- index page size = `500`
-
 ## Retry and failure behavior
 
 The faucet is deliberately strict about bounded retries.
 
-### Retry state
+### Persisted job state
 
-Only a minimal retry record is persisted. It stores:
+An active payout job persists:
 
-- whether the retry is for the **ledger transfer** step or the **CMC notify** step
-- the pending beneficiary/top-up details
-- the original fee and `created_at_time` when needed
-- the timestamp after which the retry may run
+- the pot and denominator snapshots
+- the scan cursor (`next_start`)
+- aggregate counters used for the eventual summary
+- CMC attempt / success counters used by rescue heuristics
+- the currently active retry item, if any
+- an optional queued list of later retry items discovered during the same job
 
 ### What is retried
 
-The faucet has a single deferred retry path for either of these boundaries:
+The faucet has a deferred retry path for exactly these two ambiguous boundaries:
 
 - ledger transfer failed before a block index was obtained
 - CMC `notify_top_up` failed after a ledger transfer had already been accepted
@@ -167,7 +211,7 @@ The faucet has a single deferred retry path for either of these boundaries:
 
 If the ledger replies with `Duplicate`, the faucet reuses the returned block index and continues with `notify_top_up` instead of sending a second transfer.
 
-That keeps the ledger/CMC boundary safe across retries and upgrades.
+That keeps the ledger / CMC boundary safe across retries and upgrades.
 
 ### Bounded retry policy
 
@@ -176,9 +220,9 @@ The faucet does **not** retry forever.
 Behavior is:
 
 - first ambiguous failure → persist retry state and retry once later
-- retry still fails → count the contribution as failed and continue the job
+- retry still fails → count that contribution as failed and continue the job
 
-A single bad contribution therefore cannot wedge the whole payout job.
+Retries are scheduled for roughly `60 seconds` later. A single bad contribution therefore cannot wedge the whole payout job.
 
 ### Upgrade safety
 
@@ -188,7 +232,7 @@ Active payout jobs, retry state, summaries, and rescue-relevant observations are
 
 ### Intended controller model
 
-The intended healthy-state controller set for `jupiter-faucet` is:
+The intended healthy-state controller set is:
 
 - `jupiter-faucet` itself
 - the canonical blackhole canister
@@ -224,19 +268,19 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 
 These latches are persisted and can be cleared via upgrade args when appropriate.
 
-## Install-time configuration
+## Install-time and upgrade-time configuration
 
-Init args:
+### Init args
 
 - `staking_account`
   - the account whose incoming transfers define contribution history
 - `payout_subaccount` (optional)
   - the faucet account subaccount to spend from; if omitted the canister default account is used
-- `ledger_canister_id` (defaults to ICP Ledger)
-- `index_canister_id` (defaults to ICP Index)
-- `cmc_canister_id` (defaults to the Cycles Minting Canister)
+- `ledger_canister_id` (optional; defaults to ICP Ledger)
+- `index_canister_id` (optional; defaults to ICP Index)
+- `cmc_canister_id` (optional; defaults to the Cycles Minting Canister)
 - `rescue_controller`
-- `blackhole_controller`
+- `blackhole_controller` (optional; defaults to canonical blackhole)
 - `blackhole_armed` (optional)
 - `expected_first_staking_tx_id` (optional)
   - a safety anchor for the oldest expected staking-account tx visible through the index canister
@@ -244,9 +288,22 @@ Init args:
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `0.1 ICP`)
 
-A copy-pasteable mainnet install args file is committed at:
+A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
 
-- [`mainnet-install-args.did`](mainnet-install-args.did)
+### Upgrade args
+
+Upgrade args currently support:
+
+- `blackhole_controller`
+- `blackhole_armed`
+- `clear_forced_rescue`
+
+`clear_forced_rescue = true` clears:
+
+- the latched forced-rescue reason
+- the related consecutive-failure counters
+
+### Current production wiring recorded in this repo
 
 The committed mainnet install args wire the current production constants used by the suite:
 
@@ -261,44 +318,13 @@ The committed mainnet install args wire the current production constants used by
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - index canister: ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
+- `main_interval_seconds = 604800`
+- `rescue_interval_seconds = 86400`
+- `min_tx_e8s = 10000000`
 
-The file also commits the production timer defaults and the current `min_tx_e8s` threshold so the repo contains an end-to-end mainnet-value init blob for both operational canisters.
+## Public interface
 
-### Payout account
-
-Outgoing ICP top-ups are sent from:
-
-- the canister default account if `payout_subaccount` is omitted
-- the configured subaccount if `payout_subaccount` is provided
-
-The current suite wiring from `jupiter-disburser` targets the faucet’s default account.
-
-### Upgrade-time configuration
-
-Upgrade args currently support:
-
-- `blackhole_controller`
-- `blackhole_armed`
-- `clear_forced_rescue`
-
-Example upgrade-arg template:
-
-```candid
-(opt record {
-  blackhole_controller = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
-  blackhole_armed = opt true;
-  clear_forced_rescue = opt false;
-})
-```
-
-`clear_forced_rescue = true` clears:
-
-- the latched forced rescue reason
-- the related consecutive-failure counters
-
-## Payout summary and debug surfaces
-
-Production builds expose no public methods.
+Production builds expose **no public methods**.
 
 Debug builds expose helper surfaces behind `debug_api`, including:
 
@@ -306,9 +332,11 @@ Debug builds expose helper surfaces behind `debug_api`, including:
 - `debug_last_summary`
 - `debug_accounts`
 - `debug_footprint`
-- debug methods for forcing timer runs and manipulating retry/rescue state during tests
+- debug methods for forcing timer runs and manipulating retry / rescue state during tests
 
-These are for local integration and PocketIC tests only.
+These are for local integration and PocketIC tests only. The committed debug Candid file is:
+
+- [`jupiter_faucet_debug.did`](jupiter_faucet_debug.did)
 
 ## Build and test
 
@@ -330,7 +358,7 @@ cargo build -p jupiter-faucet --target wasm32-unknown-unknown --release --featur
 cargo test -p jupiter-faucet --lib
 ```
 
-### Preferred integration and end-to-end entry points
+### Preferred integration and PocketIC entry points
 
 ```bash
 cargo run -p xtask -- faucet_dfx_integration
@@ -373,4 +401,5 @@ Treat the memo requirement as canonical:
 
 - suite overview: [`../README.md`](../README.md)
 - disburser mechanics: [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md)
+- historian read model: [`../jupiter-historian/README.md`](../jupiter-historian/README.md)
 - local testing: [`../xtask/README.md`](../xtask/README.md)

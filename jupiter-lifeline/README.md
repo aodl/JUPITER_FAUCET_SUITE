@@ -1,8 +1,8 @@
 # Jupiter Lifeline
 
-`jupiter-lifeline` is the recovery-controller canister for blackholed Jupiter operational canisters.
+`jupiter-lifeline` is the recovery canister in the Jupiter Faucet Suite.
 
-It exists so `jupiter-disburser` and `jupiter-faucet` can keep their normal controller sets narrow during healthy operation (`self + blackhole`) while still having a pre-positioned rescue target if their local rescue policy triggers.
+Its current job is deliberately minimal: exist as the configured rescue controller principal for operational canisters that would otherwise converge toward `self + blackhole` control while healthy.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -13,30 +13,34 @@ See the suite overview in [`../README.md`](../README.md).
 
 ## Current implementation
 
-The implementation is intentionally minimal.
+Today the implementation is intentionally tiny:
 
-In steady state it:
+- no public methods
+- no recovery workflow baked into the module
+- a timer that logs `Cycles: <amount>` every 20 days
+- `init` and `post_upgrade` only reinstall that timer
 
-- installs a timer on init/post-upgrade
-- logs its cycle balance every `20 days`
-- exposes no business logic beyond the empty canister interface generated from the module
-
-There is no built-in recovery workflow yet because the canister is intended to be upgraded with **incident-specific** recovery logic only if a real lifeline event occurs.
+The underlying assumption is that real rescue logic should be added only in the specific failure scenario that actually occurs.
 
 ## Role in the suite
 
-Today the canister’s practical role is to be the configured `rescue_controller` for:
+During healthy operation, `jupiter-disburser` and `jupiter-faucet` are expected to reconcile to `self + blackhole` controller sets.
 
-- `jupiter-disburser`
-- `jupiter-faucet`
+If their local rescue policy concludes that value flow is broken, they widen their controller sets to include `jupiter-lifeline`.
 
-Those canisters decide for themselves when rescue should be activated. `jupiter-lifeline` is the additional controller they add alongside the existing `self + blackhole` controller set when that happens.
+That means this canister is mostly a **reserved rescue principal** today, not an active coordinator.
 
 ## Install and upgrade
 
-No install args or upgrade args are currently required.
+Fresh install:
 
-Example upgrade command:
+```bash
+dfx canister install jupiter_lifeline \
+  --network ic \
+  --wasm release-artifacts/jupiter_lifeline.wasm.gz
+```
+
+Upgrade:
 
 ```bash
 dfx canister install jupiter_lifeline \
@@ -48,7 +52,13 @@ dfx canister install jupiter_lifeline \
 ## Build
 
 ```bash
-cargo build -p jupiter-lifeline --target wasm32-unknown-unknown --release --locked
+./scripts/build-canister jupiter-lifeline
 ```
 
-For canonical release artifacts, use the suite build scripts described in [`../README.md`](../README.md).
+For canonical reproducible artifacts, use the repo-root Docker workflow described in [`../README.md`](../README.md).
+
+## Related docs
+
+- suite overview: [`../README.md`](../README.md)
+- disburser rescue policy: [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md)
+- faucet rescue policy: [`../jupiter-faucet/README.md`](../jupiter-faucet/README.md)

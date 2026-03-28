@@ -10,6 +10,26 @@ It wraps three different layers of validation:
 
 Using `xtask` keeps the command surface stable and avoids having to remember which mocks, features, identities, and ignored tests need to be wired together manually.
 
+## What `xtask` does not cover
+
+`xtask` is focused on Rust / canister / PocketIC / local-`dfx` orchestration.
+
+Browser-only frontend tests still live in npm scripts:
+
+```bash
+npm run test:frontend-dashboard
+npm run test:frontend-dashboard-local
+```
+
+## Prerequisites
+
+Commonly useful tools for `xtask` workflows are:
+
+- Rust / Cargo
+- `dfx`
+- Node.js / npm for frontend-specific scripts outside `xtask`
+- `make` and `nix-build` for historian and suite-level PocketIC paths that build the vendored real blackhole canister reproducibly
+
 ## What `setup` does
 
 ```bash
@@ -20,10 +40,24 @@ cargo run -p xtask -- setup
 
 - creating a dedicated non-interactive identity named `xtask-dev` if needed
 - starting the local replica
-- deploying the mock canisters used by the integration scenarios
-- deploying the debug builds of the Jupiter canisters with the expected local arguments
+- deploying the mock canisters used by the integration scenarios:
+  - `mock_icrc_ledger`
+  - `mock_nns_governance`
+  - `mock_icp_index`
+  - `mock_cmc`
+  - `mock_blackhole`
+  - `mock_sns_wasm`
+  - `mock_sns_root`
+- deploying the debug builds of:
+  - `jupiter_disburser_dbg`
+  - `jupiter_faucet_dbg`
+  - `jupiter_historian_dbg`
+- wiring those debug canisters to the local mocks with the expected init args
+- adding each debug canister as a controller of itself so local controller-transition tests can run cleanly
 
-In normal use you usually do **not** need to call `setup` directly because scoped `dfx` commands do it automatically.
+The deployed debug canisters intentionally use long timer intervals in most local scenarios so tests can drive the runtime explicitly through debug methods instead of waiting for ambient timers.
+
+In normal use you usually do **not** need to call `setup` directly because the scoped `dfx` commands do it automatically.
 
 ## What `teardown` does
 
@@ -69,21 +103,6 @@ cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
 
-Historian and E2E PocketIC coverage builds the vendored `third_party/ic-blackhole` source through its pinned reproducible build path:
-
-```bash
-cd third_party/ic-blackhole
-make repro-build
-```
-
-So those commands require `make` and `nix-build` to be available.
-
-If you want to exercise the reproducibility/hash check directly, the historian PocketIC suite runs the ignored real-blackhole verification test via:
-
-```bash
-cargo test -p jupiter-historian --test jupiter_historian_integration -- --ignored --nocapture
-```
-
 ### End-to-end commands
 
 ```bash
@@ -118,26 +137,17 @@ These scenarios are especially useful for validating:
 
 - install-time configuration wiring
 - local debug endpoints
-- ledger/governance/index/CMC interactions through mocks
+- ledger / governance / index / CMC interactions through mocks
 - controller-change behavior against a local management canister
 
-For `disburser_dfx_integration`, the scenario set currently covers behavior such as:
+Examples currently covered include:
 
-- in-flight disbursement no-op behavior
-- bonus split math on the happy path
-- payout-plan preservation across temporary failures
-- plan rebuild on `BadFee`
-- blackhole/rescue-controller invariants
-- dust remaining in staging
-
-For `faucet_dfx_integration`, the scenario set currently covers behavior such as:
-
-- same-beneficiary contributions staying separate
-- full-history replay on each new payout job
-- page-boundary scanning across large histories
-- notify retry without duplicate transfer
-- remainder-to-self behavior
-- rescue invariants before first success and after broken/healthy controller transitions
+- disburser in-flight disbursement no-op behavior
+- disburser bonus split math and payout-plan rebuild on `BadFee`
+- faucet full-history replay on each new payout job
+- faucet notify retry without duplicate transfer
+- faucet rescue invariants before first success and after broken / healthy controller transitions
+- historian indexing, burn tracking, SNS discovery, and frontend-facing public-read-model behavior
 
 ### `*_pocketic_integration`
 
@@ -147,24 +157,20 @@ These exercise real canister execution more deeply and are where the repo curren
 
 Examples covered by the current PocketIC suites include:
 
-For historian specifically, the PocketIC coverage now includes public-read-model assertions for:
-
-- `get_public_counts`
-- `get_public_status`
-- `list_registered_canister_summaries`
-- `list_recent_contributions`
-
-That complements the shared-frontend-module tests run under `historian_unit`, which validate the exact dashboard actor/query construction used by the production frontend.
-
-
 - disburser upgrade mid-flight preserving state
 - duplicate-proof transfer completion after partial execution
 - blackhole timer-only progression
-- blackhole/rescue-controller round-trips
+- blackhole / rescue-controller round-trips
 - age-bonus behavior at multiple neuron ages
 - faucet retry persistence across upgrades
-- bounded state footprint under repeated replays
+- bounded faucet state footprint under repeated replays
 - forced rescue latching for index-anchor, latest-tx invariant, and zero-success CMC runs
+- historian public-read-model assertions for:
+  - `get_public_counts`
+  - `get_public_status`
+  - `list_registered_canister_summaries`
+  - `list_recent_contributions`
+  - `list_recent_burns`
 
 ### `e2e_pocketic_integration`
 
@@ -176,6 +182,23 @@ The current E2E coverage includes:
 - repeated disburser payouts feeding faucet full-history replay
 - retry safety across the disburser → faucet → CMC boundary
 - faucet upgrade during retry-state recovery
+
+## Reproducible blackhole requirement in historian / E2E suites
+
+Historian and E2E PocketIC coverage build the vendored `third_party/ic-blackhole` source through its pinned reproducible build path:
+
+```bash
+cd third_party/ic-blackhole
+make repro-build
+```
+
+So those commands require `make` and `nix-build` to be available.
+
+If you want to exercise the reproducibility / hash check directly, the historian PocketIC suite runs the ignored real-blackhole verification test via:
+
+```bash
+cargo test -p jupiter-historian --test jupiter_historian_integration -- --ignored --nocapture
+```
 
 ## Recommended usage
 
@@ -197,6 +220,7 @@ cargo run -p xtask -- test_all
 ```bash
 cargo run -p xtask -- disburser_all
 cargo run -p xtask -- faucet_all
+cargo run -p xtask -- historian_all
 ```
 
 ## Relationship to raw `cargo test`
@@ -206,6 +230,7 @@ You can still run crate-level tests directly, for example:
 ```bash
 cargo test -p jupiter-disburser --lib
 cargo test -p jupiter-faucet --lib
+cargo test -p jupiter-historian --lib
 ```
 
 But once you need mocks, debug canisters, local replica setup, or the ignored PocketIC suites, `xtask` is the intended abstraction.
@@ -215,8 +240,5 @@ But once you need mocks, debug canisters, local replica setup, or the ignored Po
 - suite overview: [`../README.md`](../README.md)
 - disburser details: [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md)
 - faucet details: [`../jupiter-faucet/README.md`](../jupiter-faucet/README.md)
-
-
-SNS coverage for historian is currently mock-based.
-
-**TODO:** Revisit the historian SNS test path once the repo contains the actual Jupiter SNS configuration and local deployment/testing flow.
+- historian details: [`../jupiter-historian/README.md`](../jupiter-historian/README.md)
+- frontend details: [`../jupiter-faucet-frontend/README.md`](../jupiter-faucet-frontend/README.md)

@@ -87,17 +87,6 @@ fn certify_all_assets() {
             aliased_by: vec!["/".to_string()],
             encodings: compressed_encodings.clone(),
         },
-        AssetConfig::File {
-            path: "live-metrics.html".to_string(),
-            content_type: Some("text/html".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
-            fallback_for: vec![],
-            aliased_by: vec![],
-            encodings: compressed_encodings.clone(),
-        },
         AssetConfig::Pattern {
             pattern: "**/*.js".to_string(),
             content_type: Some("text/javascript".to_string()),

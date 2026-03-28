@@ -5,28 +5,47 @@
 It controls one NNS neuron, periodically disburses maturity as ICP, and routes that ICP according to a fixed three-recipient policy:
 
 - the **age-neutral base** payout goes to `jupiter-faucet`
-- **80% of the age-bonus** goes to `jupiter-sns-rewards`
-- **20% of the age-bonus** goes to the D-QUORUM neuron staking account
+- **80% of the age bonus** goes to `jupiter-sns-rewards`
+- **20% of the age bonus** goes to the D-QUORUM neuron staking account
 
-This canister is intentionally narrow in scope. It does not top up cycles directly and it does not expose a production public API.
+This canister is intentionally narrow in scope. It does not top up cycles directly and it does not expose a public production API.
 
 See the suite overview in [`../README.md`](../README.md).
 
-## What it is responsible for
+## Role in the suite
 
 `jupiter-disburser` owns four things:
 
-1. reading the NNS neuron state
-2. initiating `DisburseMaturity` to its own default ledger account
-3. splitting the resulting ICP across the configured recipients
-4. managing self-controller vs rescue-controller reconciliation when blackhole mode is armed
+1. reading the configured NNS neuron
+2. initiating `DisburseMaturity` to its own default ICP ledger account
+3. splitting staged ICP into the configured recipients
+4. reconciling healthy vs rescue controller sets when blackhole mode is armed
 
-It also performs best-effort NNS maintenance calls that help the neuron reflect fresh staking-account deposits:
+It also performs two best-effort NNS maintenance calls that are useful but intentionally non-blocking:
 
 - `RefreshVotingPower` after a successful maturity-disbursement initiation
 - `ClaimOrRefresh` on every successful main tick
 
+## External dependencies
+
+By default the canister talks to:
+
+- ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
+- NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
+- canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`) when blackhole mode is configured / armed
+
+All three can be overridden at install time except the blackhole default itself, which is only used when no explicit controller is provided.
+
 ## Runtime model
+
+### Timer cadence
+
+Default timers are:
+
+- `main_interval_seconds = 86400` (daily)
+- `rescue_interval_seconds = 86400` (daily)
+
+Each timer interval is clamped to at least 60 seconds by the runtime code.
 
 ### Main tick sequence
 
@@ -38,23 +57,34 @@ On each successful main tick, the canister does the following:
 4. if **no** disbursement is in flight:
    - processes any staged ICP already sitting in the canister’s default ledger account
    - initiates `DisburseMaturity` for **100%** of available maturity to the canister’s default account
-   - records the neuron age used for the *next* payout split
+   - records the neuron age that will be used for the *next* payout split
    - best-effort calls `RefreshVotingPower`
 5. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
 6. logs only errors plus a single `Cycles: ...` line per run
 
-Default timer cadence:
+A successful main tick therefore has two distinct responsibilities:
 
-- `main_interval_seconds = 86400`
-- `rescue_interval_seconds = 86400`
+- finish routing any ICP that has already landed in the staging account
+- try to initiate the next maturity disbursement if NNS says none is already in flight
 
 ## Payout policy
 
+### Staging account
+
+The canister receives disbursed maturity into its **default ledger account**:
+
+- owner = `jupiter-disburser`
+- subaccount = `None`
+
+The code always treats that default account as the staging area for pending ICP.
+
+If the staged balance is zero on a payout pass, any stale persisted payout plan is cleared and the payout stage succeeds immediately.
+
 ### Age multiplier
 
-The payout split is based on the neuron age captured when maturity disbursement is successfully initiated.
+The split depends on the neuron age captured when `DisburseMaturity` is successfully initiated.
 
-The multiplier used by the code is:
+The code uses:
 
 `1 + min(age, 4 years) / 16 years`
 
@@ -73,24 +103,20 @@ Given a total staged ICP amount:
 - `bonus80 = ceil(0.8 * bonus)`
 - `bonus20 = bonus - bonus80`
 
-That means the 80% side receives any rounding bias.
+That means the 80% side receives the rounding bias.
 
-### Memo format for outgoing ICP transfers
+### Outgoing transfer memo format
 
 Outgoing ledger transfers use a deterministic 16-byte memo:
 
 - bytes `0..8` = payout ID, big-endian
 - bytes `8..16` = transfer index, big-endian
 
-This memo, together with deterministic `created_at_time`, is part of the duplicate-proof retry model.
+The code also uses deterministic `created_at_time` values derived from the payout-plan creation time and transfer index.
+
+Together, those two fields are part of the duplicate-proof retry model.
 
 ## Transfer planning and retry semantics
-
-### Staging account
-
-The canister receives disbursed maturity into its **default ledger account** (`subaccount = None`).
-
-If that balance is zero on a payout pass, any stale persisted payout plan is cleared and the payout stage succeeds immediately.
 
 ### Persisted payout plan
 
@@ -101,33 +127,33 @@ When staged ICP is present and there is no existing plan, the canister:
 3. creates up to three planned transfers
 4. persists that plan in canister state before executing it
 
-A planned transfer is only created if its gross share is **strictly greater** than the ledger fee. Shares at or below the fee are skipped and remain in staging.
+A planned transfer is only created if its gross share is **strictly greater** than the ledger fee. Shares at or below the fee are skipped and remain in staging for a later payout stage.
 
 ### Execution behavior
 
-The canister then executes pending transfers in order until the plan completes or a transient failure occurs.
+The canister executes pending transfers in order until the plan completes or a retry-worthy failure occurs.
 
 Important properties:
 
 - transfer status is persisted per transfer
-- `Duplicate` is treated as success and the duplicate block index is recorded
+- `Duplicate` is treated as success and the returned block index is recorded
 - `TemporarilyUnavailable` keeps the plan and retries later
 - `BadFee`, `TooOld`, and `CreatedInFuture` clear the plan so the next run rebuilds it from the current fee and current staged balance
-- other failures leave the run incomplete and are retried later
-- once all plan entries are marked sent, the whole plan is cleared
+- transport / call failures abort the run and leave the plan for a later retry
+- once all transfers are marked sent, the whole plan is cleared
 
-This gives the canister deterministic, duplicate-safe retry behavior without having to reconstruct intent from logs.
+This gives deterministic, duplicate-safe retry behavior without reconstructing intent from logs.
 
 ## Rescue and blackhole policy
 
 ### Intended controller model
 
-The intended healthy-state controller set for `jupiter-disburser` is:
+The intended healthy-state controller set is:
 
 - `jupiter-disburser` itself
 - the canonical blackhole canister
 
-When rescue is required, the canister widens that controller set to:
+When rescue is required, the controller set widens to:
 
 - `jupiter-lifeline`
 - the canonical blackhole canister
@@ -147,13 +173,13 @@ There is also a bootstrap rescue condition:
 
 ### Operational precondition before blackholing
 
-Do **not** rely on the healthy blackhole+self controller posture until at least one successful payout transfer has occurred.
+Do **not** rely on the healthy `self + blackhole` controller posture until at least one successful payout transfer has occurred.
 
-Without a recorded successful transfer, the time-based rescue policy has no proof that value flow ever worked.
+Without a recorded successful transfer, the time-based rescue logic has no proof that value flow ever worked.
 
-## Install-time configuration
+## Install-time and upgrade-time configuration
 
-The init args are:
+### Init args
 
 - `neuron_id`
   - the NNS neuron controlled by this canister
@@ -163,17 +189,25 @@ The init args are:
   - recipient of the 80% age-bonus share
 - `age_bonus_recipient_2`
   - recipient of the 20% age-bonus share
-- `ledger_canister_id` (defaults to ICP Ledger)
-- `governance_canister_id` (defaults to NNS Governance)
+- `ledger_canister_id` (optional; defaults to ICP Ledger)
+- `governance_canister_id` (optional; defaults to NNS Governance)
 - `rescue_controller`
+- `blackhole_controller` (optional; defaults to canonical blackhole)
+- `blackhole_armed` (optional)
+- `main_interval_seconds` (optional; defaults to 86400)
+- `rescue_interval_seconds` (optional; defaults to 86400)
+
+A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
+
+### Upgrade args
+
+Upgrades currently support:
+
 - `blackhole_controller`
 - `blackhole_armed`
-- `main_interval_seconds`
-- `rescue_interval_seconds`
+- `clear_forced_rescue`
 
-A copy-pasteable mainnet install args file is committed at:
-
-- [`mainnet-install-args.did`](mainnet-install-args.did)
+`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history.
 
 ### Current production wiring recorded in this repo
 
@@ -181,7 +215,7 @@ The committed mainnet install args currently wire:
 
 - normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
-- age bonus recipient 2: D-QUORUM staking account on NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` plus subaccount from the committed args file)
+- age bonus recipient 2: D-QUORUM staking account on NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` plus the committed subaccount bytes)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
 - blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
@@ -194,13 +228,18 @@ The committed mainnet install args currently wire:
 
 Production builds expose **no public methods**.
 
-You can verify that with:
+Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. The committed debug Candid file is:
 
-```bash
-candid-extractor target/wasm32-unknown-unknown/release/jupiter_disburser.wasm > verify_no_endpoints.did
-```
+- [`jupiter_disburser_debug.did`](jupiter_disburser_debug.did)
 
-Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only.
+Useful debug helpers include:
+
+- `debug_state`
+- `debug_state_size_bytes`
+- `debug_main_tick`
+- `debug_rescue_tick`
+- `debug_build_payout_plan`
+- debug-only state shims for simulating rescue and payout edge cases
 
 ## Build and test
 
@@ -222,7 +261,7 @@ cargo build -p jupiter-disburser --target wasm32-unknown-unknown --release --fea
 cargo test -p jupiter-disburser --lib
 ```
 
-### Preferred integration and end-to-end entry points
+### Preferred integration and PocketIC entry points
 
 ```bash
 cargo run -p xtask -- disburser_dfx_integration
@@ -236,8 +275,8 @@ Those cover, among other things:
 - payout-plan persistence and duplicate-proof retry
 - upgrade mid-flight behavior
 - blackhole timer progression
-- blackhole/rescue-controller round-trips
-- age-bonus routing at 0y, 2y, and 4y
+- blackhole / rescue-controller round-trips
+- age-bonus routing at multiple neuron ages
 - `ClaimOrRefresh` / `RefreshVotingPower` behavior
 
 For the broader test matrix, see [`../xtask/README.md`](../xtask/README.md).
@@ -262,7 +301,7 @@ dfx canister install jupiter_disburser \
 
 ### Upgrade release artifact
 
-Upgrades preserve existing state and do not require install args unless you are intentionally toggling upgrade-only settings.
+Upgrades preserve existing state and do not require args unless you are intentionally toggling upgrade-only settings.
 
 ```bash
 dfx canister install jupiter_disburser \
@@ -272,8 +311,6 @@ dfx canister install jupiter_disburser \
 ```
 
 ### Toggle blackhole arming via upgrade args
-
-Upgrade args may also set `blackhole_controller` when migrating an older deployment onto the canonical blackhole-backed controller model.
 
 Arm:
 
@@ -307,7 +344,7 @@ dfx canister install jupiter_disburser \
 
 ### Controller handoff notes
 
-Before handing the canister off to self-management, the deployment operator must still configure canister settings such as public log visibility and ensure the canister is a controller of itself before the healthy controller set converges to `self + blackhole`.
+Before handing the canister off to self-management, the operator still needs to configure canister settings such as public log visibility and ensure the canister is a controller of itself.
 
 Example:
 
@@ -329,4 +366,5 @@ dfx canister update-settings jupiter_disburser \
 
 - suite overview: [`../README.md`](../README.md)
 - faucet mechanics: [`../jupiter-faucet/README.md`](../jupiter-faucet/README.md)
+- historian read model: [`../jupiter-historian/README.md`](../jupiter-historian/README.md)
 - local testing: [`../xtask/README.md`](../xtask/README.md)

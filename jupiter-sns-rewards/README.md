@@ -1,8 +1,6 @@
 # Jupiter SNS Rewards
 
-`jupiter-sns-rewards` is currently a placeholder canister in the Jupiter Faucet Suite.
-
-Its present-day purpose is to reserve the production canister principal and default ledger account that receive the primary age-bonus ICP flow from `jupiter-disburser`.
+`jupiter-sns-rewards` is the current placeholder rewards canister in the Jupiter Faucet Suite.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -13,27 +11,36 @@ See the suite overview in [`../README.md`](../README.md).
 
 ## Current role in the live wiring
 
-`jupiter-disburser` sends **80% of the age-bonus portion** of each payout here.
+Today this canister is the configured recipient for **80% of the disburser’s age-bonus ICP flow**.
 
-The age-bonus source, formula, and routing policy are documented in [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md).
+Its main practical role right now is to reserve the production canister principal and its default ledger account so that reward-distribution logic can be added later without changing the live routing destination.
 
 ## Current implementation
 
-The current implementation is deliberately minimal:
+The implementation is intentionally empty:
 
-- no business logic
-- no public methods of its own
-- no install or upgrade args
+- no public methods
+- no timers
+- no stable state
+- `init` and `post_upgrade` are both no-ops
 
-That makes it effectively a reserved deployment slot and account endpoint until the real SNS reward-distribution logic is implemented.
+That means the canister is currently a principal / account placeholder, not a live reward-distribution engine.
 
 ## Intended future role
 
-The intended production role is to receive ICP from the disburser and distribute rewards to JUP SNS stakers according to a future staking/reward policy.
+Once Jupiter-specific SNS reward logic lands, this canister is the natural place for that distribution policy to live because the disburser already routes the primary age-bonus flow here.
 
-That policy is not implemented in this repository yet.
+Until then, it can largely be ignored when trying to understand the current operational path.
 
-## Upgrade command
+## Build and upgrade
+
+Build:
+
+```bash
+./scripts/build-canister jupiter-sns-rewards
+```
+
+Upgrade:
 
 ```bash
 dfx canister install jupiter_sns_rewards \
@@ -42,7 +49,12 @@ dfx canister install jupiter_sns_rewards \
   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
 ```
 
-
 ## Future historian / SNS testing note
 
-**TODO:** Revisit `jupiter-historian` SNS integration testing once the Jupiter Faucet Suite's own SNS configuration is represented in this repository. At that point the current mock-based SNS historian tests should be supplemented with Jupiter-specific SNS smoke/integration coverage driven from the in-repo SNS configuration.
+Historian SNS coverage is currently generic and mock-based. Once the actual Jupiter SNS configuration is represented in-repo, the historian and end-to-end test paths should be extended to cover the live Jupiter SNS reward topology specifically.
+
+## Related docs
+
+- suite overview: [`../README.md`](../README.md)
+- disburser routing policy: [`../jupiter-disburser/README.md`](../jupiter-disburser/README.md)
+- historian notes: [`../jupiter-historian/README.md`](../jupiter-historian/README.md)
