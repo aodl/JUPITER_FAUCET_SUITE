@@ -86,8 +86,7 @@ The faucet does **not** permanently checkpoint “already attributed” staking 
 
 Instead, each new payout job rescans the staking account history from the beginning and re-evaluates contributions against the new payout-pot snapshot.
 
-Only the **currently active** job persists scan cursor and retry state.
-
+Only the **currently active** job persists the scan cursor and aggregate counters. 
 ### 2) Contributions are not aggregated
 
 Each eligible contribution is processed independently, even when multiple contributions map to the same beneficiary.
@@ -161,10 +160,9 @@ Default timers are:
 
 - `main_interval_seconds = 7 days`
 - `rescue_interval_seconds = 1 day`
-- retry backoff = about `60 seconds`
 - index page size = `500`
 
-Each timer interval is clamped to at least 60 seconds by the runtime code.
+Each timer interval is clamped to at least 60 seconds by the runtime code. There is no separate retry timer: retries are attempted inline during the same payout pass.
 
 ### Main tick sequence
 
@@ -178,16 +176,16 @@ On each successful main tick, the canister:
    - staking-account balance
 4. if the payout pot is too small or the denominator is zero, it performs only index-health probing and bootstrap-rescue checks
 5. otherwise, creates an `ActivePayoutJob`
-6. processes any due retry first
-7. scans the staking account through the ICP index canister, page by page
-8. evaluates each eligible incoming transfer independently
-9. for each eligible beneficiary contribution, performs ledger transfer then `notify_top_up`
+6. scans the staking account through the ICP index canister, page by page
+7. evaluates each eligible incoming transfer independently
+8. for each eligible beneficiary contribution, performs ledger transfer then `notify_top_up`
+9. if an ambiguous transfer or notify failure occurs, retries that one step immediately once in-line
 10. when scanning is complete, optionally sends the remainder-to-self top-up
 11. finalizes the job into a persisted summary and applies health observations
 
 ## Retry and failure behavior
 
-The faucet is deliberately strict about bounded retries.
+The faucet performs top-ups on a **best-effort** basis. A payout job attempts to convert the current payout pot into beneficiary top-ups, but it does not guarantee that every individually eligible contribution will be topped up during that run.
 
 ### Persisted job state
 
@@ -197,36 +195,33 @@ An active payout job persists:
 - the scan cursor (`next_start`)
 - aggregate counters used for the eventual summary
 - CMC attempt / success counters used by rescue heuristics
-- the currently active retry item, if any
-- an optional queued list of later retry items discovered during the same job
+
+The runtime does **not** persist deferred retry work.
 
 ### What is retried
 
-The faucet has a deferred retry path for exactly these two ambiguous boundaries:
+The faucet retries at most once, immediately and inline, at these two ambiguous boundaries:
 
 - ledger transfer failed before a block index was obtained
 - CMC `notify_top_up` failed after a ledger transfer had already been accepted
 
 ### Duplicate-proof behavior
 
-If the ledger replies with `Duplicate`, the faucet reuses the returned block index and continues with `notify_top_up` instead of sending a second transfer.
-
-That keeps the ledger / CMC boundary safe across retries and upgrades.
+If the ledger replies with `Duplicate`, the faucet reuses the returned block index and continues with `notify_top_up` instead of sending a second transfer. Immediate transfer retries reuse the same transfer identity (`memo` + `created_at_time`) so duplicate detection remains safe.
 
 ### Bounded retry policy
 
-The faucet does **not** retry forever.
+The faucet does **not** retry forever and does **not** buffer a retry queue in memory. Behavior is:
 
-Behavior is:
+- first ambiguous failure → retry that step once immediately, inline
+- retry still fails → count that contribution as failed and continue with the next record
 
-- first ambiguous failure → persist retry state and retry once later
-- retry still fails → count that contribution as failed and continue the job
+This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible contributions may fail in a given run and be reflected only in the summary counters.
 
-Retries are scheduled for roughly `60 seconds` later. A single bad contribution therefore cannot wedge the whole payout job.
 
-### Upgrade safety
+### Logging policy
 
-Active payout jobs, retry state, summaries, and rescue-relevant observations are persisted across upgrades.
+To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups`, not one log line per failed beneficiary top-up attempt.
 
 ## Rescue and blackhole policy
 
@@ -332,7 +327,7 @@ Debug builds expose helper surfaces behind `debug_api`, including:
 - `debug_last_summary`
 - `debug_accounts`
 - `debug_footprint`
-- debug methods for forcing timer runs and manipulating retry / rescue state during tests
+- debug methods for forcing timer runs and manipulating rescue state during tests
 
 These are for local integration and PocketIC tests only. The committed debug Candid file is:
 
@@ -368,12 +363,10 @@ cargo run -p xtask -- faucet_all
 
 Those cover, among other things:
 
-- retry persistence for both transfer and notify steps
-- duplicate-safe notify retry without duplicate ledger transfer
+- immediate duplicate-safe retry for ambiguous transfer and notify failures
 - full-history replay on each new job
 - page-boundary scanning across large histories
 - same-beneficiary contributions staying separate
-- upgrade mid-job / mid-retry behavior
 - bounded state footprint across repeated runs
 - rescue-controller round-trips and forced-rescue latching
 

@@ -6,7 +6,8 @@
     "build:frontend": "node jupiter-faucet-frontend/frontend-src/build-frontend.mjs",
     "smoke:historian": "node scripts/smoke-historian.mjs",
     "test:frontend-dashboard": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.test.mjs",
-    "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs"
+    "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs",
+    "verify:reproducible-artifacts": "./scripts/verify-reproducible-artifacts"
   },
   "dependencies": {
     "@icp-sdk/core": "5.0.0",

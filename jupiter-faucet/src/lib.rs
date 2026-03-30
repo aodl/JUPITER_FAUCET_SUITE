@@ -7,7 +7,7 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 
-use crate::state::{ForcedRescueReason, State};
+use crate::state::State;
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -133,11 +133,10 @@ pub struct DebugState {
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
     pub active_payout_job_present: bool,
-    pub retry_state_present: bool,
     pub last_summary_present: bool,
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed_since_ts: Option<u64>,
-    pub forced_rescue_reason: Option<ForcedRescueReason>,
+    pub forced_rescue_reason: Option<crate::state::ForcedRescueReason>,
     pub consecutive_index_anchor_failures: u8,
     pub consecutive_index_latest_invariant_failures: u8,
     pub consecutive_cmc_zero_success_runs: u8,
@@ -158,7 +157,6 @@ pub struct DebugAccounts {
 pub struct DebugFootprint {
     pub state_candid_bytes: u64,
     pub active_payout_job_candid_bytes: u64,
-    pub retry_state_candid_bytes: u64,
     pub last_summary_candid_bytes: u64,
 }
 
@@ -170,7 +168,6 @@ fn debug_state() -> DebugState {
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
         active_payout_job_present: st.active_payout_job.is_some(),
-        retry_state_present: st.active_payout_job.as_ref().and_then(|j| j.retry_state.as_ref()).is_some(),
         last_summary_present: st.last_summary.is_some(),
         blackhole_controller: st.config.blackhole_controller,
         blackhole_armed_since_ts: st.blackhole_armed_since_ts,
@@ -211,12 +208,6 @@ fn debug_footprint() -> DebugFootprint {
             .active_payout_job
             .as_ref()
             .map(|job| candid::encode_one(job).expect("encode active payout job").len() as u64)
-            .unwrap_or(0),
-        retry_state_candid_bytes: st
-            .active_payout_job
-            .as_ref()
-            .and_then(|job| job.retry_state.as_ref())
-            .map(|retry| candid::encode_one(retry).expect("encode retry state").len() as u64)
             .unwrap_or(0),
         last_summary_candid_bytes: st
             .last_summary
@@ -290,17 +281,7 @@ fn debug_clear_forced_rescue() {
     });
 }
 
-#[cfg(feature = "debug_api")]
-#[ic_cdk::update]
-fn debug_release_retry_backoff() {
-    crate::state::with_state_mut(|st| {
-        if let Some(job) = st.active_payout_job.as_mut() {
-            if let Some(retry) = job.retry_state.as_mut() {
-                retry.retry_at_secs = 0;
-            }
-        }
-    });
-}
+
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]

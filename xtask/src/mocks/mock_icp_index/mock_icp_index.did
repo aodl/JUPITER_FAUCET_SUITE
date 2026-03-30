@@ -12,6 +12,7 @@ type IndexOperation = variant {
   Burn : record { from : text; amount : Tokens; spender : opt text };
   Mint : record { to : text; amount : Tokens };
   Transfer : record { to : text; fee : Tokens; from : text; amount : Tokens; spender : opt text };
+  TransferFrom : record { to : text; fee : Tokens; from : text; amount : Tokens; spender : text };
 };
 type IndexTransaction = record {
   memo : nat64;

@@ -345,4 +345,27 @@ mod tests {
         assert!(merged.contains(&CanisterSource::MemoContribution));
         assert!(should_skip_blackhole_for_sources(&merged));
     }
+    #[test]
+    fn transfer_from_transactions_do_not_count_as_staking_contributions() {
+        let tx = IndexTransactionWithId {
+            id: 42,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"aaaaa-aa".to_vec()),
+                operation: IndexOperation::TransferFrom {
+                    to: "staking-account".to_string(),
+                    fee: Tokens::new(10_000),
+                    from: "from-account".to_string(),
+                    amount: Tokens::new(1_000_000),
+                    spender: "spender-account".to_string(),
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 123 }),
+                timestamp: Some(IndexTimeStamp { timestamp_nanos: 456 }),
+            },
+        };
+        assert!(memo_bytes_from_index_tx(&tx, "staking-account").is_none());
+        assert!(indexed_contribution_from_tx(&tx, "staking-account", 1).is_none());
+    }
+
+
 }

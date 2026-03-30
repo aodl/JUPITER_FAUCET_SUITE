@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "$REPO_ROOT"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required to verify reproducible release artifacts" >&2
+  exit 1
+fi
+
+workdir="$(mktemp -d)"
+image_a="jupiter-faucet-suite-repro-a-$$"
+image_b="jupiter-faucet-suite-repro-b-$$"
+cid_a=""
+cid_b=""
+cleanup() {
+  rm -rf "$workdir"
+  if [[ -n "$cid_a" ]]; then docker rm -f "$cid_a" >/dev/null 2>&1 || true; fi
+  if [[ -n "$cid_b" ]]; then docker rm -f "$cid_b" >/dev/null 2>&1 || true; fi
+  docker image rm -f "$image_a" "$image_b" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker build --file Dockerfile.repro --target artifact --tag "$image_a" . >/dev/null
+cid_a="$(docker create "$image_a")"
+docker cp "$cid_a:/release-artifacts/." "$workdir/run-a"
+docker rm "$cid_a" >/dev/null
+cid_a=""
+
+docker build --file Dockerfile.repro --target artifact --tag "$image_b" . >/dev/null
+cid_b="$(docker create "$image_b")"
+docker cp "$cid_b:/release-artifacts/." "$workdir/run-b"
+docker rm "$cid_b" >/dev/null
+cid_b=""
+
+(
+  cd "$workdir/run-a"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) > "$workdir/run-a.sha256"
+(
+  cd "$workdir/run-b"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) > "$workdir/run-b.sha256"
+
+if ! diff -u "$workdir/run-a.sha256" "$workdir/run-b.sha256"; then
+  echo "release artifacts are not reproducible" >&2
+  exit 1
+fi
+
+echo "release artifacts are reproducible"

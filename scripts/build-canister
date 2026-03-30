@@ -32,6 +32,11 @@ ensure_frontend_node_modules() {
     exit 1
   fi
 
+  if [[ ! -f package-lock.json ]]; then
+    echo "package-lock.json is required for reproducible frontend builds" >&2
+    exit 1
+  fi
+
   local needs_install=0
   if [[ ! -d node_modules ]]; then
     needs_install=1
@@ -40,11 +45,7 @@ ensure_frontend_node_modules() {
   fi
 
   if [[ "$needs_install" -eq 1 ]]; then
-    if [[ -f package-lock.json ]]; then
-      npm ci --no-fund --no-audit
-    else
-      npm install --no-fund --no-audit
-    fi
+    npm ci --no-fund --no-audit
   fi
 }
 

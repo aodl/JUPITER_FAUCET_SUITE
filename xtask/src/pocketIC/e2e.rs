@@ -139,7 +139,6 @@ enum ForcedRescueReason {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     active_payout_job_present: bool,
-    retry_state_present: bool,
     last_summary_present: bool,
     last_successful_transfer_ts: Option<u64>,
     last_rescue_check_ts: u64,
@@ -184,6 +183,16 @@ struct FaucetSummary {
 struct NotifyRecord {
     canister_id: Principal,
     block_index: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum DebugNotifyBehavior {
+    Ok,
+    Processing,
+    Refunded { reason: String, block_index: Option<u64> },
+    TransactionTooOld(u64),
+    InvalidTransaction(String),
+    Other { error_code: u64, error_message: String },
 }
 
 fn nat_to_u64(n: &Nat) -> Result<u64> {
@@ -563,44 +572,32 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
-    let _: () = update_one(&pic, cmc, Principal::anonymous(), "debug_set_fail", true)?;
+    let _: () = update_one(
+        &pic,
+        cmc,
+        Principal::anonymous(),
+        "debug_set_script",
+        vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok],
+    )?;
     let transfers_before_faucet: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
-    let st1: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
-    if !st1.active_payout_job_present || !st1.retry_state_present {
-        bail!("expected faucet to persist a retry state when CMC fails in suite retry path");
+    let st: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
+    if st.active_payout_job_present || !st.last_summary_present {
+        bail!("expected faucet inline retry path to complete within one suite tick");
     }
-    let transfers_after_first: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
-    if transfers_after_first.len() != transfers_before_faucet.len().saturating_add(1) {
+    let transfers_after: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    if transfers_after.len() != transfers_before_faucet.len().saturating_add(1) {
         bail!(
-            "expected exactly one additional faucet beneficiary transfer before retry; before={} after={}",
+            "expected exactly one additional faucet beneficiary transfer after inline retry; before={} after={}",
             transfers_before_faucet.len(),
-            transfers_after_first.len()
-        );
-    }
-
-    let _: () = update_one(&pic, cmc, Principal::anonymous(), "debug_set_fail", false)?;
-    pic.advance_time(Duration::from_secs(61));
-    let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
-    tick_n(&pic, 10);
-
-    let st2: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
-    if st2.active_payout_job_present || st2.retry_state_present {
-        bail!("expected suite retry path to clear retry state after recovery");
-    }
-    let transfers_after_retry: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
-    if transfers_after_retry.len() != transfers_after_first.len() {
-        bail!(
-            "expected suite retry path not to duplicate faucet beneficiary transfer; first={} retry={}",
-            transfers_after_first.len(),
-            transfers_after_retry.len()
+            transfers_after.len()
         );
     }
     let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {
-        bail!("expected one eventual target notification after suite retry recovery, got {notes:?}");
+        bail!("expected one eventual target notification after suite inline retry recovery, got {notes:?}");
     }
 
     Ok(())
@@ -609,7 +606,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
 
 #[test]
 #[ignore]
-fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
+fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<()> {
     require_ignored_flag()?;
     let pic = PocketIcBuilder::new().with_application_subnet().build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
@@ -699,14 +696,20 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
-    let _: () = update_one(&pic, cmc, Principal::anonymous(), "debug_set_fail", true)?;
+    let _: () = update_one(
+        &pic,
+        cmc,
+        Principal::anonymous(),
+        "debug_set_script",
+        vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok],
+    )?;
     let transfers_before_faucet: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
     let st1: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
-    if !st1.active_payout_job_present || !st1.retry_state_present {
-        bail!("expected retry state before faucet upgrade in suite path");
+    if st1.active_payout_job_present || !st1.last_summary_present {
+        bail!("expected inline retry path to complete before faucet upgrade in suite path");
     }
     let transfers_after_first: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     if transfers_after_first.len() != transfers_before_faucet.len().saturating_add(1) {
@@ -719,26 +722,16 @@ fn suite_upgrade_faucet_mid_retry_state_preserves_recovery() -> Result<()> {
     tick_n(&pic, 10);
 
     let st2: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
-    if !st2.active_payout_job_present || !st2.retry_state_present {
-        bail!("expected retry state to survive faucet upgrade in suite path");
+    if st2.active_payout_job_present || !st2.last_summary_present {
+        bail!("expected completed inline retry recovery to remain quiescent after upgrade");
     }
-
-    let _: () = update_one(&pic, cmc, Principal::anonymous(), "debug_set_fail", false)?;
-    pic.advance_time(Duration::from_secs(61));
-    let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
-    tick_n(&pic, 10);
-
-    let st3: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
-    if st3.active_payout_job_present || st3.retry_state_present {
-        bail!("expected upgraded faucet to clear retry state after recovery");
-    }
-    let transfers_after_retry: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
-    if transfers_after_retry.len() != transfers_after_first.len() {
-        bail!("expected suite upgrade retry path to avoid duplicate beneficiary transfer");
+    let transfers_after_upgrade: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    if transfers_after_upgrade.len() != transfers_after_first.len() {
+        bail!("expected suite upgrade path not to duplicate faucet beneficiary transfer");
     }
     let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {
-        bail!("expected exactly one beneficiary notification after post-upgrade retry, got {notes:?}");
+        bail!("expected exactly one beneficiary notification to remain after post-upgrade check, got {notes:?}");
     }
 
     Ok(())

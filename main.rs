@@ -240,7 +240,6 @@ struct FaucetDebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     active_payout_job_present: bool,
-    retry_state_present: bool,
     last_summary_present: bool,
 }
 
@@ -878,7 +877,7 @@ fn cmd_test_faucet_integration() -> Result<()> {
         let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
 
         let st: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st.active_payout_job_present || st.retry_state_present || !st.last_summary_present {
+        if st.active_payout_job_present || !st.last_summary_present {
             bail!("expected completed payout job and persisted summary after happy path");
         }
 
@@ -986,31 +985,16 @@ fn cmd_test_faucet_integration() -> Result<()> {
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, 80000000:nat64)", accounts.payout.owner.to_text()))?;
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = opt vec {{ {} }} }}, 80000000:nat64)", accounts.staking.owner.to_text(), sub_vec))?;
         let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", 80000000:nat64, opt vec {{ {} }})", staking_id, memo_vec))?;
-        let _: () = call_raw("mock_cmc", "debug_set_fail", "(true)")?;
+        let _: () = call_raw("mock_cmc", "debug_set_script", "(vec { variant { Processing }; variant { Ok } })")?;
 
-        let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
-        let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if !st1.active_payout_job_present || !st1.retry_state_present {
-            bail!("expected active payout job with retry state after retriable CMC error");
-        }
-        let transfers1: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-        if transfers1.len() != 1 {
-            bail!("expected exactly one ledger transfer before retry, got {}", transfers1.len());
-        }
-        let notes1: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
-        if !notes1.is_empty() {
-            bail!("expected no successful CMC notifications while mock CMC is failing");
-        }
-
-        let _: () = call_raw("mock_cmc", "debug_set_fail", "(false)")?;
         let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
         let st2: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st2.active_payout_job_present || st2.retry_state_present || !st2.last_summary_present {
-            bail!("expected retry success to clear active job and persist summary");
+        if st2.active_payout_job_present || !st2.last_summary_present {
+            bail!("expected inline notify retry to clear active job and persist summary");
         }
         let transfers2: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-        if transfers2.len() != 1 {
-            bail!("expected retry to reuse the existing ledger transfer, got {} total transfers", transfers2.len());
+        if transfers2.len() != 2 {
+            bail!("expected beneficiary + remainder transfers after inline retry, got {} total transfers", transfers2.len());
         }
         let notes2: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
         if notes2.len() != 1 {

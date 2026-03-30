@@ -73,9 +73,6 @@ pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &Pend
 }
 
 pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
-    if job.retry_state.as_ref().map(|retry| retry.pending == *pending).unwrap_or(false) {
-        job.retry_state = None;
-    }
     match pending.kind {
         TransferKind::Beneficiary => {
             job.topped_up_count = job.topped_up_count.saturating_add(1);
@@ -107,7 +104,7 @@ pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
 mod tests {
     use super::*;
     use crate::clients::index::{IndexOperation, IndexTransaction, IndexTransactionWithId, Tokens};
-    use crate::state::{ActivePayoutJob, PendingNotification, RetryState, RetryStep, TransferKind};
+    use crate::state::{ActivePayoutJob, PendingNotification, TransferKind};
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
 
@@ -155,6 +152,28 @@ mod tests {
         };
         let contribution = memo_bytes_from_index_tx(&tx, &staking).expect("matching transfer should be surfaced");
         assert_eq!(contribution.memo_bytes, None);
+    }
+
+    #[test]
+    fn transfer_from_transactions_are_not_treated_as_contributions() {
+        let staking = "staking-account".to_string();
+        let tx = IndexTransactionWithId {
+            id: 9,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"aaaaa-aa".to_vec()),
+                operation: IndexOperation::TransferFrom {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".to_string(),
+                    amount: Tokens::new(123),
+                    spender: "spender".to_string(),
+                },
+                created_at_time: None,
+                timestamp: None,
+            },
+        };
+        assert!(memo_bytes_from_index_tx(&tx, &staking).is_none());
     }
 
     #[test]
@@ -341,68 +360,88 @@ mod tests {
         assert_eq!(summary.pot_remaining_e8s, 60_000_000);
     }
 
-    #[test]
-    fn apply_notified_transfer_clears_pending_retry_without_rewinding_cursor() {
-        let beneficiary = principal("aaaaa-aa");
-        let mut job = ActivePayoutJob::new(7, 10_000, 100_000_000, 200_000_000, 999);
-        let pending = PendingNotification {
-            kind: TransferKind::Beneficiary,
-            beneficiary,
-            gross_share_e8s: 30_000_000,
-            amount_e8s: 29_990_000,
-            block_index: 55,
-            next_start: Some(42),
-        };
-        job.next_start = Some(42);
-        job.retry_state = Some(RetryState {
-            step: RetryStep::Notify,
-            pending: pending.clone(),
-            fee_e8s: 0,
-            created_at_time_nanos: 0,
-            retry_at_secs: 100,
-        });
-        record_ledger_accepted_transfer(&mut job, &pending);
-        apply_notified_transfer(&mut job, &pending);
-        assert!(job.retry_state.is_none());
-        assert_eq!(job.next_start, Some(42));
-        assert_eq!(job.topped_up_count, 1);
-        assert_eq!(job.topped_up_sum_e8s, 29_990_000);
-    }
 
     #[test]
-    fn apply_notified_transfer_does_not_clear_unrelated_retry_state() {
-        let beneficiary = principal("aaaaa-aa");
-        let other_beneficiary = principal("2vxsx-fae");
-        let mut job = ActivePayoutJob::new(8, 10_000, 100_000_000, 200_000_000, 1_000);
-        let retry_pending = PendingNotification {
-            kind: TransferKind::Beneficiary,
-            beneficiary,
-            gross_share_e8s: 30_000_000,
-            amount_e8s: 29_990_000,
-            block_index: 55,
-            next_start: Some(42),
-        };
-        let later_success = PendingNotification {
-            kind: TransferKind::Beneficiary,
-            beneficiary: other_beneficiary,
-            gross_share_e8s: 20_000_000,
-            amount_e8s: 19_990_000,
-            block_index: 56,
-            next_start: Some(43),
-        };
-        job.retry_state = Some(RetryState {
-            step: RetryStep::Transfer,
-            pending: retry_pending.clone(),
-            fee_e8s: 10_000,
-            created_at_time_nanos: 123,
-            retry_at_secs: 100,
-        });
-        record_ledger_accepted_transfer(&mut job, &later_success);
-        apply_notified_transfer(&mut job, &later_success);
-        assert!(job.retry_state.is_some());
-        assert_eq!(job.retry_state.as_ref().map(|r| r.pending.clone()), Some(retry_pending));
-        assert_eq!(job.topped_up_count, 1);
-        assert_eq!(job.topped_up_sum_e8s, 19_990_000);
+    fn pot_conservation_holds_across_mixed_outcomes() {
+        fn lcg(seed: &mut u64) -> u64 {
+            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *seed
+        }
+
+        let mut seed = 0x5eed_u64;
+        for case in 0..64_u64 {
+            let pot_start_e8s = 100_000_000 + (lcg(&mut seed) % 900_000_000);
+            let denom_staking_balance_e8s = 1 + (lcg(&mut seed) % 1_000_000_000);
+            let fee_e8s = 10_000;
+            let mut job = ActivePayoutJob::new(case + 1, fee_e8s, pot_start_e8s, denom_staking_balance_e8s, case + 1);
+            let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
+
+            let beneficiaries = [
+                principal("aaaaa-aa"),
+                principal("2vxsx-fae"),
+                principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+                principal("r7inp-6aaaa-aaaaa-aaabq-cai"),
+                principal("qjdve-lqaaa-aaaaa-aaaeq-cai"),
+                principal("qoctq-giaaa-aaaaa-aaaea-cai"),
+            ];
+            let contribution_count = 1 + (lcg(&mut seed) % 6) as usize;
+            for i in 0..contribution_count {
+                let beneficiary = beneficiaries[i % beneficiaries.len()];
+                let contribution = Contribution {
+                    amount_e8s: 1 + (lcg(&mut seed) % 500_000_000),
+                    memo_bytes: Some(beneficiary.to_text().into_bytes()),
+                };
+                if let ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } =
+                    evaluate_contribution(pot_start_e8s, denom_staking_balance_e8s, fee_e8s, 1, &contribution)
+                {
+                    if job.gross_outflow_e8s.saturating_add(gross_share_e8s) > job.pot_start_e8s {
+                        job.failed_topups = job.failed_topups.saturating_add(1);
+                        continue;
+                    }
+                    let pending = PendingNotification {
+                        kind: TransferKind::Beneficiary,
+                        beneficiary,
+                        gross_share_e8s,
+                        amount_e8s,
+                        block_index: i as u64,
+                        next_start: Some(i as u64),
+                    };
+                    record_ledger_accepted_transfer(&mut job, &pending);
+                    if lcg(&mut seed) & 1 == 0 {
+                        apply_notified_transfer(&mut job, &pending);
+                    } else {
+                        job.failed_topups = job.failed_topups.saturating_add(1);
+                    }
+                }
+            }
+
+            let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
+            if remainder_gross_e8s > fee_e8s {
+                let remainder = PendingNotification {
+                    kind: TransferKind::RemainderToSelf,
+                    beneficiary: self_id,
+                    gross_share_e8s: remainder_gross_e8s,
+                    amount_e8s: remainder_gross_e8s.saturating_sub(fee_e8s),
+                    block_index: 10_000 + case,
+                    next_start: None,
+                };
+                record_ledger_accepted_transfer(&mut job, &remainder);
+                apply_notified_transfer(&mut job, &remainder);
+            }
+
+            let summary = summary_from_job(&job);
+            assert_eq!(summary.pot_start_e8s, pot_start_e8s);
+            assert_eq!(job.gross_outflow_e8s.saturating_add(summary.pot_remaining_e8s), pot_start_e8s,
+                "accepted gross outflow plus remaining pot should conserve the pot even across mixed notify outcomes");
+            if summary.remainder_to_self_e8s > 0 {
+                assert_eq!(summary.pot_remaining_e8s, 0, "once a remainder transfer is sent there should be no pot left in-state");
+            }
+            assert!(summary.pot_remaining_e8s <= fee_e8s || summary.remainder_to_self_e8s == 0,
+                "only fee-sized dust may remain undistributed before a remainder transfer is recorded");
+            assert!(summary.topped_up_sum_e8s <= job.gross_outflow_e8s,
+                "notified beneficiary net payouts cannot exceed accepted gross outflow");
+            assert!(summary.remainder_to_self_e8s <= pot_start_e8s);
+        }
     }
 
     #[test]

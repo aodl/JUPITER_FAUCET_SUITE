@@ -43,6 +43,7 @@ pub enum IndexOperation {
     Burn { from: String, amount: Tokens, spender: Option<String> },
     Mint { to: String, amount: Tokens },
     Transfer { to: String, fee: Tokens, from: String, amount: Tokens, spender: Option<String> },
+    TransferFrom { to: String, fee: Tokens, from: String, amount: Tokens, spender: String },
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -112,6 +113,51 @@ impl IndexClient for IcpIndexCanister {
         match decoded {
             GetAccountIdentifierTransactionsResult::Ok(r) => Ok(r),
             GetAccountIdentifierTransactionsResult::Err(e) => Err(ClientError::Call(e.message)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candid_decodes_transfer_from_transactions() {
+        let encoded = candid::encode_one(GetAccountIdentifierTransactionsResult::Ok(
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(41),
+                transactions: vec![IndexTransactionWithId {
+                    id: 42,
+                    transaction: IndexTransaction {
+                        memo: 0,
+                        icrc1_memo: None,
+                        operation: IndexOperation::TransferFrom {
+                            to: "to-account".to_string(),
+                            fee: Tokens::new(10_000),
+                            from: "from-account".to_string(),
+                            amount: Tokens::new(123_456),
+                            spender: "spender-account".to_string(),
+                        },
+                        created_at_time: Some(IndexTimeStamp { timestamp_nanos: 123 }),
+                        timestamp: Some(IndexTimeStamp { timestamp_nanos: 456 }),
+                    },
+                }],
+            },
+        ))
+        .expect("encoding should succeed");
+
+        let decoded: GetAccountIdentifierTransactionsResult =
+            candid::decode_one(&encoded).expect("decoding should succeed");
+        match decoded {
+            GetAccountIdentifierTransactionsResult::Ok(resp) => match &resp.transactions[0].transaction.operation {
+                IndexOperation::TransferFrom { spender, amount, .. } => {
+                    assert_eq!(spender, "spender-account");
+                    assert_eq!(amount.e8s(), 123_456);
+                }
+                other => panic!("expected TransferFrom, got {other:?}"),
+            },
+            other => panic!("expected Ok result, got {other:?}"),
         }
     }
 }

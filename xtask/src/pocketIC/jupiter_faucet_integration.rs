@@ -160,7 +160,6 @@ enum ForcedRescueReason {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     active_payout_job_present: bool,
-    retry_state_present: bool,
     last_summary_present: bool,
     last_successful_transfer_ts: Option<u64>,
     last_rescue_check_ts: u64,
@@ -180,7 +179,6 @@ struct DebugState {
 struct DebugFootprint {
     state_candid_bytes: u64,
     active_payout_job_candid_bytes: u64,
-    retry_state_candid_bytes: u64,
     last_summary_candid_bytes: u64,
 }
 
@@ -361,6 +359,10 @@ impl FaucetEnv {
         update_one(&self.pic, self.ledger, Principal::anonymous(), "debug_set_next_error", err)
     }
 
+    fn set_ledger_error_script(&self, errs: Vec<DebugNextTransferError>) -> Result<()> {
+        update_one(&self.pic, self.ledger, Principal::anonymous(), "debug_set_error_script", errs)
+    }
+
     fn set_index_get_script(&self, script: Vec<DebugIndexGetBehavior>) -> Result<()> {
         update_one(&self.pic, self.index, Principal::anonymous(), "debug_set_get_script", script)
     }
@@ -461,32 +463,18 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
     env.credit_staking(80_000_000)?;
     env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
 
-    env.set_cmc_fail(true)?;
+    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
     env.main_tick()?;
 
-    let st1 = env.state()?;
-    if !st1.active_payout_job_present || !st1.retry_state_present {
-        bail!("expected an active payout job with a persisted retry state after CMC failure");
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected no notifications while mock CMC is failing");
-    }
-    if env.ledger_transfers()?.len() != 1 {
-        bail!("expected exactly one ledger transfer before retry");
-    }
-
-    env.set_cmc_fail(false)?;
-    env.advance_time_and_tick(61, 20);
-
-    let st2 = env.state()?;
-    if st2.active_payout_job_present || st2.retry_state_present {
-        bail!("expected active payout job to clear after retry success");
+    let st = env.state()?;
+    if st.active_payout_job_present || !st.last_summary_present {
+        bail!("expected inline notify retry to complete within one tick without persisted retry state");
     }
     if env.notifications()?.len() != 1 {
-        bail!("expected exactly one CMC notification after retry success");
+        bail!("expected exactly one CMC notification after inline retry success");
     }
     if env.ledger_transfers()?.len() != 1 {
-        bail!("expected retry success to avoid any duplicate ledger transfer");
+        bail!("expected inline notify retry to avoid any duplicate ledger transfer");
     }
 
     Ok(())
@@ -503,25 +491,17 @@ fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks
     env.credit_staking(80_000_000)?;
     env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
 
-    env.set_cmc_fail(true)?;
+    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
     env.main_tick()?;
     env.main_tick()?;
     env.main_tick()?;
 
     let transfers = env.ledger_transfers()?;
     if transfers.len() != 1 {
-        bail!("expected retry-state retries to avoid duplicate ledger transfers, got {} transfers", transfers.len());
-    }
-
-    env.set_cmc_fail(false)?;
-    env.advance_time_and_tick(61, 20);
-
-    let transfers_after = env.ledger_transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected retry success to avoid duplicate beneficiary transfer, got {} total transfers", transfers_after.len());
+        bail!("expected inline notify retry to avoid duplicate ledger transfers across repeated ticks, got {} transfers", transfers.len());
     }
     if env.notifications()?.len() != 1 {
-        bail!("expected exactly one notification after recovery");
+        bail!("expected exactly one notification after inline recovery");
     }
 
     Ok(())
@@ -529,7 +509,7 @@ fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks
 
 #[test]
 #[ignore]
-fn faucet_upgrade_preserves_retry_state_and_retries_without_duplicate_transfer() -> Result<()> {
+fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
@@ -537,35 +517,35 @@ fn faucet_upgrade_preserves_retry_state_and_retries_without_duplicate_transfer()
     env.credit_payout(90_000_000)?;
     env.credit_staking(90_000_000)?;
     env.append_transfer(90_000_000, Some(target.to_text().into_bytes()))?;
+    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
 
-    env.set_cmc_fail(true)?;
     env.main_tick()?;
 
     let st_before = env.state()?;
-    if !st_before.retry_state_present {
-        bail!("expected retry state before upgrade");
+    if st_before.active_payout_job_present || !st_before.last_summary_present {
+        bail!("expected inline retry path to complete before upgrade");
     }
     let transfers_before = env.ledger_transfers()?;
     if transfers_before.len() != 1 {
         bail!("expected a single beneficiary ledger transfer before upgrade, got {}", transfers_before.len());
     }
+    if env.notifications()?.len() != 1 {
+        bail!("expected one completed notification before upgrade");
+    }
 
     env.upgrade()?;
 
     let st_after = env.state()?;
-    if !st_after.active_payout_job_present || !st_after.retry_state_present {
-        bail!("expected retry state to survive upgrade");
+    if st_after.active_payout_job_present || !st_after.last_summary_present {
+        bail!("expected completed inline retry recovery to remain quiescent across upgrade");
     }
-
-    env.set_cmc_fail(false)?;
-    env.advance_time_and_tick(61, 20);
 
     let transfers_after = env.ledger_transfers()?;
     if transfers_after.len() != 1 {
-        bail!("expected upgrade retry to avoid duplicate beneficiary transfer, got {}", transfers_after.len());
+        bail!("expected upgrade not to duplicate beneficiary transfer, got {}", transfers_after.len());
     }
     if env.notifications()?.len() != 1 {
-        bail!("expected exactly one notification after post-upgrade retry");
+        bail!("expected exactly one notification to remain after upgrade");
     }
 
     Ok(())
@@ -663,36 +643,40 @@ fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_w
     let first = Principal::from_text("aaaaa-aa")?;
     let second = Principal::from_text("2vxsx-fae")?;
 
-    env.credit_staking(200_000_000)?;
-    env.append_transfer(100_000_000, Some(first.to_text().into_bytes()))?;
-    env.append_transfer(100_000_000, Some(second.to_text().into_bytes()))?;
-    env.credit_payout(100_000_000)?;
-    env.set_cmc_script(vec![DebugNotifyBehavior::Ok, DebugNotifyBehavior::Processing])?;
+    env.credit_staking(800_000_000)?;
+    env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
+    env.append_repeated_transfer(499, 1_000_000, Some(first.to_text().into_bytes()))?;
+    env.append_transfer(101_000_000, Some(second.to_text().into_bytes()))?;
+    env.credit_payout(120_000_000)?;
+    env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
+        DebugIndexGetBehavior::Ok,
+    ])?;
+
     env.main_tick()?;
 
     let st = env.state()?;
-    if !st.active_payout_job_present || !st.retry_state_present {
-        bail!("expected partial progress with retry state after scripted second-call failure");
+    if !st.active_payout_job_present || st.last_summary_present {
+        bail!("expected partial progress with an active job cursor and no final summary after mid-scan index failure");
     }
     let notifications_before = env.notifications()?;
     if notifications_before.iter().filter(|n| n.canister_id == first).count() != 1 {
         bail!("expected first beneficiary to be fully processed before upgrade");
     }
-    let transfers_before = env.ledger_transfers()?;
-    if transfers_before.len() != 2 {
-        bail!("expected two beneficiary ledger transfers before upgrade, got {}", transfers_before.len());
+    if notifications_before.iter().filter(|n| n.canister_id == second).count() != 0 {
+        bail!("expected second beneficiary not to be processed before upgrade");
     }
 
     env.upgrade()?;
-    env.set_cmc_fail(false)?;
-    env.advance_time_and_tick(61, 20);
+    env.main_tick()?;
 
     let notifications_after = env.notifications()?;
     if notifications_after.iter().filter(|n| n.canister_id == first).count() != 1 {
         bail!("expected first beneficiary not to be replayed within the same active job after upgrade");
     }
     if notifications_after.iter().filter(|n| n.canister_id == second).count() != 1 {
-        bail!("expected second beneficiary to complete exactly once after upgrade retry");
+        bail!("expected second beneficiary to complete exactly once after upgrade resume");
     }
     let summary = env.summary()?;
     if summary.topped_up_count != 2 {
@@ -725,7 +709,7 @@ fn faucet_large_history_repeated_runs_keep_state_footprint_bounded() -> Result<(
     }
 
     let final_footprint = env.footprint()?;
-    if final_footprint.active_payout_job_candid_bytes != 0 || final_footprint.retry_state_candid_bytes != 0 {
+    if final_footprint.active_payout_job_candid_bytes != 0 {
         bail!("expected no in-flight state after large repeated runs");
     }
     if final_footprint.state_candid_bytes > baseline.state_candid_bytes.saturating_add(512) {
@@ -802,7 +786,7 @@ fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()
 
 #[test]
 #[ignore]
-fn faucet_retry_state_footprint_returns_to_baseline_after_retry() -> Result<()> {
+fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
@@ -812,29 +796,18 @@ fn faucet_retry_state_footprint_returns_to_baseline_after_retry() -> Result<()> 
     env.credit_staking(80_000_000)?;
     env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
 
-    env.set_cmc_fail(true)?;
+    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
     env.main_tick()?;
 
-    let during_failure = env.footprint()?;
-    if during_failure.retry_state_candid_bytes == 0 || during_failure.active_payout_job_candid_bytes == 0 {
-        bail!("expected retry state footprint to become visible while notify retry is pending");
+    let after_run = env.footprint()?;
+    if after_run.active_payout_job_candid_bytes != 0 {
+        bail!("expected inline retry policy not to leave any persisted in-flight footprint");
     }
-    if during_failure.state_candid_bytes <= baseline.state_candid_bytes {
-        bail!("expected persisted retry state to be larger than baseline while retry state exists");
-    }
-
-    env.set_cmc_fail(false)?;
-    env.advance_time_and_tick(61, 20);
-
-    let after_retry = env.footprint()?;
-    if after_retry.active_payout_job_candid_bytes != 0 || after_retry.retry_state_candid_bytes != 0 {
-        bail!("expected retry success to clear all in-flight footprint");
-    }
-    if after_retry.state_candid_bytes > baseline.state_candid_bytes.saturating_add(512) {
+    if after_run.state_candid_bytes > baseline.state_candid_bytes.saturating_add(1024) {
         bail!(
-            "expected post-retry footprint to return near baseline; baseline={} after_retry={}",
+            "expected inline retry path to return near baseline footprint; baseline={} after_run={}",
             baseline.state_candid_bytes,
-            after_retry.state_candid_bytes
+            after_run.state_candid_bytes
         );
     }
 
@@ -843,7 +816,7 @@ fn faucet_retry_state_footprint_returns_to_baseline_after_retry() -> Result<()> 
 
 #[test]
 #[ignore]
-fn faucet_ledger_temporary_failure_before_transfer_resumes_with_retry_state() -> Result<()> {
+fn faucet_ledger_temporary_failure_before_transfer_recovers_inline() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
@@ -854,22 +827,15 @@ fn faucet_ledger_temporary_failure_before_transfer_resumes_with_retry_state() ->
     env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
 
     env.main_tick()?;
-    let st1 = env.state()?;
-    if !st1.active_payout_job_present || !st1.retry_state_present {
-        bail!("expected temporary ledger failure before transfer to schedule exactly one deferred retry");
+    let st = env.state()?;
+    if st.active_payout_job_present || !st.last_summary_present {
+        bail!("expected temporary ledger failure before transfer to be retried inline and finish within one tick");
     }
-    if !env.ledger_transfers()?.is_empty() {
-        bail!("expected no ledger transfers while temporary ledger failure is injected");
+    if env.ledger_transfers()?.len() != 1 {
+        bail!("expected exactly one beneficiary transfer after inline recovery");
     }
-
-    env.set_ledger_next_error(None)?;
-    env.advance_time_and_tick(61, 20);
-    let st2 = env.state()?;
-    if st2.active_payout_job_present || st2.retry_state_present {
-        bail!("expected payout job to clear after successful retry");
-    }
-    if env.ledger_transfers()?.len() != 1 || env.notifications()?.len() != 1 {
-        bail!("expected exactly one eventual transfer and notification after retry recovery");
+    if env.notifications()?.len() != 1 {
+        bail!("expected one beneficiary notification after inline recovery");
     }
 
     Ok(())
@@ -900,6 +866,49 @@ fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfe
     let summary = env.summary()?;
     if summary.topped_up_count != 1 {
         bail!("expected duplicate ledger result to still count as a completed beneficiary top-up, got {}", summary.topped_up_count);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extra_transfer() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+
+    env.credit_payout(80_000_000)?;
+    env.credit_staking(80_000_000)?;
+    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.set_ledger_error_script(vec![
+        DebugNextTransferError::TemporarilyUnavailable,
+        DebugNextTransferError::Duplicate { duplicate_of: 56 },
+    ])?;
+
+    env.main_tick()?;
+    let st = env.state()?;
+    if st.active_payout_job_present || !st.last_summary_present {
+        bail!("expected duplicate-on-inline-retry path to finish within one tick");
+    }
+    let transfers = env.ledger_transfers()?;
+    if !transfers.is_empty() {
+        bail!("expected duplicate-on-inline-retry path not to create any fresh mock-ledger transfers, got {} transfers", transfers.len());
+    }
+    let notes = env.notifications()?;
+    let beneficiary_count = notes.iter().filter(|n| n.canister_id == target).count();
+    let self_count = notes.iter().filter(|n| n.canister_id == env.faucet).count();
+    if beneficiary_count != 1 || self_count != 0 || notes.iter().find(|n| n.canister_id == target).map(|n| n.block_index) != Some(56) {
+        bail!("expected one beneficiary notification with duplicate block index 56 and no self notification in the full-pot case, got {notes:?}");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.failed_topups != 0 || summary.remainder_to_self_e8s != 0 {
+        bail!(
+            "expected duplicate-on-inline-retry path to count as success with no remainder in the full-pot case, got topped_up_count={} failed_topups={} remainder_to_self_e8s={}",
+            summary.topped_up_count,
+            summary.failed_topups,
+            summary.remainder_to_self_e8s
+        );
     }
 
     Ok(())
@@ -938,21 +947,12 @@ fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() ->
         env.set_cmc_script(script)?;
 
         env.main_tick()?;
-        let st1 = env.state()?;
-        if !st1.active_payout_job_present || !st1.retry_state_present {
-            bail!("expected terminal typed CMC error to schedule a single deferred notify retry");
-        }
-        if env.ledger_transfers()?.len() != 1 || !env.notifications()?.is_empty() {
-            bail!("expected one beneficiary transfer and no completed notifications before retry");
-        }
-
-        env.advance_time_and_tick(61, 20);
-        let st2 = env.state()?;
-        if st2.active_payout_job_present || st2.retry_state_present {
-            bail!("expected later retry success to clear terminal typed CMC error path");
+        let st = env.state()?;
+        if st.active_payout_job_present || !st.last_summary_present {
+            bail!("expected terminal typed CMC error to be retried inline and complete within one tick");
         }
         if env.ledger_transfers()?.len() != 1 || env.notifications()?.len() != 1 {
-            bail!("expected terminal typed CMC retry path to avoid duplicate transfer and finish with one notification");
+            bail!("expected terminal typed CMC inline retry path to avoid duplicate transfer and finish with one notification");
         }
     }
 
@@ -970,46 +970,38 @@ fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accoun
     env.credit_payout(80_000_000)?;
     env.credit_staking(80_000_000)?;
     env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
-    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
+    env.set_ledger_error_script(vec![
+        DebugNextTransferError::TemporarilyUnavailable,
+        DebugNextTransferError::TemporarilyUnavailable,
+    ])?;
 
     env.main_tick()?;
-    let st1 = env.state()?;
-    if !st1.active_payout_job_present || !st1.retry_state_present {
-        bail!("expected first retriable ledger failure to leave retry state behind");
-    }
-    if !env.ledger_transfers()?.is_empty() || !env.notifications()?.is_empty() {
-        bail!("expected no completed transfer or notification before retry attempt");
-    }
-
-    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
-    env.advance_time_and_tick(61, 20);
-
-    let st2 = env.state()?;
-    if st2.active_payout_job_present || st2.retry_state_present {
-        bail!("expected exhausted retry path to clear in-flight state and complete the job");
+    let st = env.state()?;
+    if st.active_payout_job_present || !st.last_summary_present {
+        bail!("expected exhausted inline retry path to complete the job within one tick");
     }
     let summary = env.summary()?;
     if summary.failed_topups != 1 || summary.topped_up_count != 0 {
         bail!(
-            "expected exhausted retry path to record one failed top-up and no beneficiary success, got failed_topups={} topped_up_count={}",
+            "expected exhausted inline retry path to record one failed top-up and no beneficiary success, got failed_topups={} topped_up_count={}",
             summary.failed_topups,
             summary.topped_up_count
         );
     }
     if summary.remainder_to_self_e8s != 79_990_000 || summary.pot_remaining_e8s != 0 {
         bail!(
-            "expected exhausted retry path to finish via full remainder-to-self accounting, got remainder_to_self_e8s={} pot_remaining_e8s={}",
+            "expected exhausted inline retry path to finish via full remainder-to-self accounting, got remainder_to_self_e8s={} pot_remaining_e8s={}",
             summary.remainder_to_self_e8s,
             summary.pot_remaining_e8s
         );
     }
     let transfers = env.ledger_transfers()?;
     if transfers.len() != 1 {
-        bail!("expected only the fallback remainder transfer after retry exhaustion, got {} transfers", transfers.len());
+        bail!("expected only the fallback remainder transfer after inline retry exhaustion, got {} transfers", transfers.len());
     }
     let notes = env.notifications()?;
     if notes.len() != 1 || notes[0].canister_id != faucet_id {
-        bail!("expected retry exhaustion to end with exactly one self notification, got {notes:?}");
+        bail!("expected inline retry exhaustion to end with exactly one self notification, got {notes:?}");
     }
 
     Ok(())
@@ -1022,53 +1014,47 @@ fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_s
     let env = FaucetEnv::new()?;
     let failed_target = Principal::from_text("aaaaa-aa")?;
     let success_target = Principal::from_text("2vxsx-fae")?;
+    let faucet_id = env.faucet;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(160_000_000)?;
     env.append_transfer(80_000_000, Some(failed_target.to_text().into_bytes()))?;
     env.append_transfer(80_000_000, Some(success_target.to_text().into_bytes()))?;
-    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
+    env.set_ledger_error_script(vec![
+        DebugNextTransferError::TemporarilyUnavailable,
+        DebugNextTransferError::TemporarilyUnavailable,
+    ])?;
 
     env.main_tick()?;
-    let st1 = env.state()?;
-    if !st1.active_payout_job_present || !st1.retry_state_present {
-        bail!("expected first contribution to leave retry state behind after retriable failure");
-    }
-    let notes_after_first = env.notifications()?;
-    let success_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == success_target).count();
-    let failed_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == failed_target).count();
-    if success_count_after_first != 1 || failed_count_after_first != 0 {
-        bail!(
-            "expected later contribution to succeed while earlier one waits in retry state, got success_count={} failed_count={}",
-            success_count_after_first,
-            failed_count_after_first
-        );
-    }
-
-    env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
-    env.advance_time_and_tick(61, 20);
-
-    let st2 = env.state()?;
-    if st2.active_payout_job_present || st2.retry_state_present {
-        bail!("expected job to complete after exhausted retry on first contribution");
+    let st = env.state()?;
+    if st.active_payout_job_present || !st.last_summary_present {
+        bail!("expected inline retry exhaustion on the first contribution not to leave work behind");
     }
     let summary = env.summary()?;
     if summary.topped_up_count != 1 || summary.failed_topups != 1 {
         bail!(
-            "expected one later success and one exhausted retry failure, got topped_up_count={} failed_topups={}",
+            "expected one later success and one exhausted inline retry failure, got topped_up_count={} failed_topups={}",
             summary.topped_up_count,
             summary.failed_topups
         );
     }
+    if summary.remainder_to_self_e8s != 49_990_000 {
+        bail!("expected remaining half of the pot to be returned to self, got {}", summary.remainder_to_self_e8s);
+    }
     let notes = env.notifications()?;
     let success_count = notes.iter().filter(|n| n.canister_id == success_target).count();
     let failed_count = notes.iter().filter(|n| n.canister_id == failed_target).count();
-    if success_count != 1 || failed_count != 0 {
+    let self_count = notes.iter().filter(|n| n.canister_id == faucet_id).count();
+    if success_count != 1 || failed_count != 0 || self_count != 1 {
         bail!(
-            "expected only the later contribution to notify successfully, got success_count={} failed_count={}",
+            "expected only the later contribution and the self remainder to notify successfully, got success_count={} failed_count={} self_count={}",
             success_count,
-            failed_count
+            failed_count,
+            self_count
         );
+    }
+    if env.ledger_transfers()?.len() != 2 {
+        bail!("expected one beneficiary transfer plus one self remainder transfer after inline retry exhaustion");
     }
 
     Ok(())
@@ -1095,8 +1081,8 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
 
     env.main_tick()?;
     let st1 = env.state()?;
-    if !st1.active_payout_job_present || st1.retry_state_present || st1.last_summary_present {
-        bail!("expected mid-scan index failure to preserve partial job state without retry state or final summary");
+    if !st1.active_payout_job_present || st1.last_summary_present {
+        bail!("expected mid-scan index failure to preserve partial job state without a final summary");
     }
     let notes_after_first = env.notifications()?;
     let first_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == first_target).count();
@@ -1111,7 +1097,7 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
 
     env.main_tick()?;
     let st2 = env.state()?;
-    if st2.active_payout_job_present || st2.retry_state_present || !st2.last_summary_present {
+    if st2.active_payout_job_present || !st2.last_summary_present {
         bail!("expected second tick to resume and complete the job after index recovery");
     }
     let summary = env.summary()?;
@@ -1197,7 +1183,7 @@ fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> 
             bail!("expected replay {run} to top up the same 5 qualifying entries, got {}", summary.topped_up_count);
         }
         let footprint = env.footprint()?;
-        if footprint.active_payout_job_candid_bytes != 0 || footprint.retry_state_candid_bytes != 0 {
+        if footprint.active_payout_job_candid_bytes != 0 {
             bail!("expected replay {run} to finish without residual in-flight state");
         }
         if footprint.state_candid_bytes > baseline.state_candid_bytes.saturating_add(512) {

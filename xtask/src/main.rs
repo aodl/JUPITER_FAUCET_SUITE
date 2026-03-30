@@ -314,7 +314,6 @@ struct FaucetDebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     active_payout_job_present: bool,
-    retry_state_present: bool,
     last_summary_present: bool,
     blackhole_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
@@ -1575,7 +1574,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "notify retry persists minimal retry state and does not duplicate transfer"), || {
+    run_scenario(outcomes, label("dfx", "faucet", "notify retry completes inline without duplicate transfer"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -1602,33 +1601,23 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
         )?;
 
-        let _: () = call_raw("mock_cmc", "debug_set_fail", "(true)")?;
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
+        let _: () = call_raw("mock_cmc", "debug_set_script", "(vec { variant { Processing }; variant { Ok } })")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
 
         let st: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if !st.active_payout_job_present || !st.retry_state_present {
-            bail!("expected active payout job with retry state after CMC retry path");
+        if st.active_payout_job_present || !st.last_summary_present {
+            bail!("expected inline notify retry to complete within one tick");
         }
-
-        let transfers_before: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-        if transfers_before.len() != 1 {
-            bail!("expected only one beneficiary transfer while notify is retrying, got {}", transfers_before.len());
-        }
-
-        let _: () = call_raw("mock_cmc", "debug_set_fail", "(false)")?;
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_release_retry_backoff")?;
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
 
         let transfers_after: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if transfers_after.len() != 1 {
-            bail!("expected retry success to avoid duplicate beneficiary transfers, got {} total transfers", transfers_after.len());
+            bail!("expected exactly one beneficiary transfer after inline notify retry, got {} total transfers", transfers_after.len());
         }
 
         let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
         let beneficiary_notes = notes.iter().filter(|n| n.canister_id == target).count();
         if beneficiary_notes != 1 {
-            bail!("expected exactly one successful beneficiary notification after recovery, got {beneficiary_notes}");
+            bail!("expected exactly one successful beneficiary notification after inline retry, got {beneficiary_notes}");
         }
 
         Ok(())
@@ -1748,7 +1737,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let st: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st.active_payout_job_present || st.retry_state_present || st.last_summary_present {
+        if st.active_payout_job_present || st.last_summary_present {
             bail!("expected zero payout pot to avoid creating any payout job or summary");
         }
         let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
@@ -1789,7 +1778,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let st: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st.active_payout_job_present || st.retry_state_present || st.last_summary_present {
+        if st.active_payout_job_present || st.last_summary_present {
             bail!("expected payout pot <= fee to avoid creating any payout job or summary");
         }
 
@@ -1839,7 +1828,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "temporary pre-transfer ledger failure gets one deferred retry without blocking the job"), || {
+    run_scenario(outcomes, label("dfx", "faucet", "temporary pre-transfer ledger failure is retried inline without blocking the job"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -1873,24 +1862,12 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if !st1.active_payout_job_present || !st1.retry_state_present {
-            bail!("expected temporary pre-transfer failure to schedule a single deferred retry without blocking the job");
-        }
-        let transfers_before: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-        if !transfers_before.is_empty() {
-            bail!("expected no ledger transfers while temporary failure is injected before transfer");
-        }
-
-        let _: () = call_raw("mock_icrc_ledger", "debug_set_next_error", "(null)")?;
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_release_retry_backoff")?;
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
-        let st2: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st2.active_payout_job_present || st2.retry_state_present {
-            bail!("expected resumable payout job to clear after successful retry");
+        if st1.active_payout_job_present || !st1.last_summary_present {
+            bail!("expected temporary pre-transfer failure to be retried inline and finish within one tick");
         }
         let transfers_after: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if transfers_after.len() != 1 {
-            bail!("expected exactly one beneficiary transfer after recovery, got {}", transfers_after.len());
+            bail!("expected exactly one beneficiary transfer after inline recovery, got {}", transfers_after.len());
         }
 
         Ok(())
@@ -1980,23 +1957,12 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if !st1.active_payout_job_present || !st1.retry_state_present {
-            bail!("expected Processing response to persist retry state for retry");
-        }
-        let transfers_before: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-        if transfers_before.len() != 1 {
-            bail!("expected only one beneficiary transfer before Processing retry, got {}", transfers_before.len());
-        }
-
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_release_retry_backoff")?;
-        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
-        let st2: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-        if st2.active_payout_job_present || st2.retry_state_present {
-            bail!("expected Processing retry to clear once notify succeeds");
+        if st1.active_payout_job_present || !st1.last_summary_present {
+            bail!("expected Processing response to be retried inline and complete within one tick");
         }
         let transfers_after: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if transfers_after.len() != 1 {
-            bail!("expected Processing retry to avoid duplicate ledger transfer, got {}", transfers_after.len());
+            bail!("expected Processing retry path to avoid duplicate beneficiary transfer, got {}", transfers_after.len());
         }
         let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
         if notes.len() != 1 || notes[0].canister_id != target {
@@ -2051,27 +2017,12 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
             let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-            if !st1.active_payout_job_present || !st1.retry_state_present {
-                bail!("expected {label} response to persist retry state for safe retry");
-            }
-            let transfers_before: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-            if transfers_before.len() != 1 {
-                bail!("expected {label} path to perform exactly one beneficiary transfer before retry, got {}", transfers_before.len());
-            }
-            let notes_before: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
-            if !notes_before.is_empty() {
-                bail!("expected no completed notifications before {label} retry succeeds");
-            }
-
-            let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_release_retry_backoff")?;
-            let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
-            let st2: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-            if st2.active_payout_job_present || st2.retry_state_present {
-                bail!("expected {label} retry to clear once a later notify succeeds");
+            if st1.active_payout_job_present || !st1.last_summary_present {
+                bail!("expected {label} response to be retried inline and finish within one tick");
             }
             let transfers_after: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
             if transfers_after.len() != 1 {
-                bail!("expected {label} retry path to avoid duplicate ledger transfer, got {}", transfers_after.len());
+                bail!("expected {label} path to avoid duplicate beneficiary transfer, got {}", transfers_after.len());
             }
             let notes_after: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
             if notes_after.len() != 1 || notes_after[0].canister_id != target {
@@ -2116,8 +2067,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
             let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
-            if st1.active_payout_job_present || st1.retry_state_present {
-                bail!("expected {label} ledger rejection to be skipped immediately without leaving retry state behind");
+            if st1.active_payout_job_present {
+                bail!("expected {label} ledger rejection to be skipped immediately without leaving active job behind");
             }
             let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
             let summary = summary.context("expected faucet summary after deterministic ledger rejection")?;

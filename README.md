@@ -62,6 +62,8 @@ The live value-moving path is:
 7. For each eligible contribution whose computed share is larger than the ledger fee, the faucet sends ICP to the beneficiary’s CMC deposit subaccount and then calls `notify_top_up`.
 8. The CMC converts those deposits into cycles top-ups.
 
+The faucet top-up path is intentionally **best effort**. Each eligible contribution is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. A failed contribution is counted in the run summary and the job continues rather than buffering deferred retry work.
+
 For the exact split math, memo formats, retry semantics, and rescue logic, the component READMEs are the canonical source:
 
 - [`jupiter-disburser/README.md`](jupiter-disburser/README.md)
@@ -103,6 +105,10 @@ See [`jupiter-faucet/README.md`](jupiter-faucet/README.md) for the exact rules a
   - no public methods
 
 That split is intentional: the value-moving canisters stay narrow; the public read surface lives in the historian and frontend.
+
+## Build reproducibility
+
+The release build expects a committed `package-lock.json` and uses `npm ci` for the frontend bundle path. A helper script, `scripts/verify-reproducible-artifacts`, rebuilds the release artifact twice and diffs the resulting file hashes so reproducibility can be checked in CI or before cutting a release.
 
 ## Production canisters recorded in this repo
 

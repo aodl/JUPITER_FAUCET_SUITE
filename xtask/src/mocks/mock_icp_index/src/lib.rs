@@ -37,6 +37,13 @@ pub enum IndexOperation {
         amount: Tokens,
         spender: Option<String>,
     },
+    TransferFrom {
+        to: String,
+        fee: Tokens,
+        from: String,
+        amount: Tokens,
+        spender: String,
+    },
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

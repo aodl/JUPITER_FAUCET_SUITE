@@ -4,7 +4,7 @@ use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
 use num_traits::ToPrimitive;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct AccountKey {
@@ -53,6 +53,7 @@ pub struct TransferRecord {
 struct LedgerState {
     fee_e8s: u64,
     next_error: Option<DebugNextTransferError>,
+    next_error_script: VecDeque<DebugNextTransferError>,
     balances: HashMap<AccountKey, u128>,
     next_block: u64,
     dedup: HashMap<DedupKey, u64>,
@@ -132,8 +133,11 @@ fn account_balance(args: BinaryAccountBalanceArgs) -> Tokens {
 
 #[ic_cdk::update]
 fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
-    // Inject next error if set
-    if let Some(err) = ST.with(|s| s.borrow_mut().next_error.take()) {
+    // Inject scripted error if set, otherwise a one-shot next error.
+    if let Some(err) = ST.with(|s| {
+        let mut st = s.borrow_mut();
+        st.next_error_script.pop_front().or_else(|| st.next_error.take())
+    }) {
         return Err(match err {
             DebugNextTransferError::TemporarilyUnavailable => TransferError::TemporarilyUnavailable,
             DebugNextTransferError::TooOld => TransferError::TooOld,
@@ -271,6 +275,15 @@ fn debug_set_fee(fee_e8s: u64) {
 #[ic_cdk::update]
 fn debug_set_next_error(err: Option<DebugNextTransferError>) {
     ST.with(|s| s.borrow_mut().next_error = err);
+}
+
+#[ic_cdk::update]
+fn debug_set_error_script(errs: Vec<DebugNextTransferError>) {
+    ST.with(|s| {
+        let mut st = s.borrow_mut();
+        st.next_error = None;
+        st.next_error_script = errs.into();
+    });
 }
 
 #[ic_cdk::update]

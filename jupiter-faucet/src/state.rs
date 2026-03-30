@@ -34,20 +34,6 @@ pub struct PendingNotification {
     pub next_start: Option<u64>,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub enum RetryStep {
-    Transfer,
-    Notify,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
-pub struct RetryState {
-    pub step: RetryStep,
-    pub pending: PendingNotification,
-    pub fee_e8s: u64,
-    pub created_at_time_nanos: u64,
-    pub retry_at_secs: u64,
-}
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum ForcedRescueReason {
@@ -90,8 +76,6 @@ pub struct ActivePayoutJob {
     pub failed_topups: u64,
     pub remainder_to_self_e8s: u64,
     pub next_created_at_time_nanos: u64,
-    pub retry_state: Option<RetryState>,
-    pub retry_queue: Option<Vec<RetryState>>,
     pub observed_oldest_tx_id: Option<u64>,
     pub observed_latest_tx_id: Option<u64>,
     pub cmc_attempt_count: Option<u64>,
@@ -117,8 +101,6 @@ impl ActivePayoutJob {
             failed_topups: 0,
             remainder_to_self_e8s: 0,
             next_created_at_time_nanos: created_at_time_nanos,
-            retry_state: None,
-            retry_queue: None,
             observed_oldest_tx_id: None,
             observed_latest_tx_id: None,
             cmc_attempt_count: Some(0),
