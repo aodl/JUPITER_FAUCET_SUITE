@@ -26,7 +26,7 @@ The historian scans the same staking account that `jupiter-faucet` uses.
 
 Unlike the faucet, it keeps an incremental cursor and does not rescan old staking transfers after they have already been indexed.
 
-For each eligible transfer **to** the staking account it can derive:
+For each eligible incoming `Transfer` **to** the staking account (`TransferFrom` records are ignored) it can derive:
 
 - transaction ID
 - timestamp (from index timestamp when available, otherwise created-at time if available)
@@ -38,6 +38,7 @@ Memo handling mirrors the faucet’s input rules:
 
 - prefer `icrc1_memo`
 - otherwise fall back to the legacy numeric memo bytes when the numeric memo is non-zero
+- if `icrc1_memo` is present but empty, do **not** fall back to the numeric memo
 - trim UTF-8 text before trying to parse principal text
 
 If the memo decodes to principal text, the contribution is attached to that canister.
@@ -131,6 +132,17 @@ Production methods:
   - recent ICP burn feed used by the frontend
 
 The public read model is intentionally richer than the raw history methods because the production frontend should not need to reconstruct aggregate dashboard state in the browser.
+
+### Default paging / limit behavior
+
+The main public queries use these code-backed defaults:
+
+- `list_canisters`: default `limit = 50`
+- `get_cycles_history`: default `limit = 100`
+- `get_contribution_history`: default `limit = 100`
+- `list_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
+- `list_recent_contributions`: default `limit = 20`, clamped to `1..=100`
+- `list_recent_burns`: default `limit = 20`, clamped to `1..=100`
 
 ## Timers and driver model
 

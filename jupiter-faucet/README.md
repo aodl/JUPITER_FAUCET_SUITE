@@ -53,7 +53,7 @@ If not, that contribution is skipped for that payout job and the unallocated val
 
 A staking-account transaction only contributes to attribution if all of the following are true:
 
-1. it is an incoming transfer **to** the configured `staking_account`
+1. it is an incoming `Transfer` **to** the configured `staking_account` (`TransferFrom` records are ignored)
 2. the transferred amount is at least `min_tx_e8s`
 3. the memo can be decoded as principal text for a beneficiary canister
 
@@ -63,6 +63,7 @@ Memo handling is intentionally simple and code-driven:
 
 - first preference: `icrc1_memo`
 - fallback: legacy numeric memo bytes if `icrc1_memo` is absent and the numeric memo is non-zero
+- an empty `icrc1_memo` is treated as empty / invalid and does **not** fall back to the numeric memo
 - empty memo = invalid
 - malformed memo = invalid
 - memo that is not valid principal text = invalid
@@ -278,7 +279,8 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `blackhole_controller` (optional; defaults to canonical blackhole)
 - `blackhole_armed` (optional)
 - `expected_first_staking_tx_id` (optional)
-  - a safety anchor for the oldest expected staking-account tx visible through the index canister
+  - a safety anchor for the oldest expected staking-account transaction **ID** visible through the index canister
+  - type: `opt nat64`
 - `main_interval_seconds` (optional; defaults to 7 days)
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `0.1 ICP`)
@@ -306,7 +308,7 @@ The committed mainnet install args wire the current production constants used by
 - staking account subaccount bytes:
   `ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 - expected first staking tx ID:
-  `390be24d51d6b006afcb9774585d6eb353e7cdbb72bc2b96f0978a5a1aab7ae5`
+  intended to be an oldest-transaction **ID** anchor (`opt nat64`), not a hash / string; verify the committed `mainnet-install-args.did` value before using it
 - payout account: the faucet canister default account (`acjuz-liaaa-aaaar-qb4qq-cai`, with `payout_subaccount = null`)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
 - blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)

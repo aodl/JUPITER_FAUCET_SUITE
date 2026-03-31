@@ -82,6 +82,9 @@ Important details that matter in practice:
 
 - the faucet prefers `icrc1_memo`
 - if `icrc1_memo` is absent, it falls back to the legacy numeric memo bytes when that numeric memo is non-zero
+- if `icrc1_memo` is present but empty, the faucet does **not** fall back to the legacy numeric memo
+- only incoming `Transfer` records **to** the staking account are treated as contributions; `TransferFrom` records are ignored
+- whitespace around principal text is tolerated because the parser trims before decoding
 - empty, malformed, or non-principal memos are ignored
 - contributions below `min_tx_e8s` are ignored
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record

@@ -27,6 +27,13 @@ Asset responses are certified and content-typed through the Rust asset router.
 
 The `/metrics` endpoint is intentionally served with certification skipped by policy because it is a simple canister-local diagnostics surface rather than part of the browser dashboard data model.
 
+The canister also applies a deliberate cache policy:
+
+- `index.html`, `/.well-known/ic-domains`, and `/metrics` are served with `cache-control: public, no-cache, no-store`
+- hashed JS / CSS assets are served with `cache-control: public, max-age=31536000, immutable`
+
+Asset responses also carry the canister’s standard security headers, including HSTS, `X-Content-Type-Options: nosniff`, a restrictive Content Security Policy, and COEP / COOP / CORP headers.
+
 ## Frontend architecture
 
 The frontend keeps the certified-asset Rust canister, but the in-page dashboard data path now follows the normal ICP browser path:
@@ -101,6 +108,7 @@ That step will:
 2. bundle `frontend-src/src/main.js` to a content-hashed file
 3. stamp asset-version and bundle placeholders into the static assets
 4. compile the Rust asset canister
+5. restore the placeholder-stamped source assets after the build completes
 
 Example asset-version override:
 
