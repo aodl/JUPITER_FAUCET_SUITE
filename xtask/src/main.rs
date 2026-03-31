@@ -3048,9 +3048,23 @@ fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     )
 }
 
+fn run_repo_validation_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "repo",
+        "",
+        "./scripts/validate-mainnet-install-args",
+        &[],
+        &root,
+        &[],
+    )
+}
+
 fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestComponent) -> Result<()> {
     match component {
         TestComponent::Test => {
+            run_repo_validation_suite(outcomes)?;
             run_unit_disburser_suite(outcomes)?;
             run_unit_faucet_suite(outcomes)?;
             run_unit_historian_suite(outcomes)?;

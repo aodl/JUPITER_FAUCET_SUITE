@@ -16,7 +16,7 @@
     rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
     blackhole_controller = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
     blackhole_armed = null;
-    expected_first_staking_tx_id = opt "390be24d51d6b006afcb9774585d6eb353e7cdbb72bc2b96f0978a5a1aab7ae5";
+    expected_first_staking_tx_id = opt (31118741 : nat64);
     main_interval_seconds = opt 604800;
     rescue_interval_seconds = opt 86400;
     min_tx_e8s = opt 10000000;

@@ -279,6 +279,13 @@ struct FaucetEnv {
 
 impl FaucetEnv {
     fn new() -> Result<Self> {
+        Self::new_with_init_overrides(|_| {})
+    }
+
+    fn new_with_init_overrides<F>(edit_init: F) -> Result<Self>
+    where
+        F: FnOnce(&mut FaucetInitArg),
+    {
         let pic = PocketIcBuilder::new().with_application_subnet().build();
         let ledger = pic.create_canister();
         let index = pic.create_canister();
@@ -299,7 +306,7 @@ impl FaucetEnv {
         };
         let blackhole_controller = test_blackhole_controller();
 
-        let init = FaucetInitArg {
+        let mut init = FaucetInitArg {
             staking_account: staking_account.clone(),
             payout_subaccount: None,
             ledger_canister_id: Some(ledger),
@@ -313,6 +320,7 @@ impl FaucetEnv {
             rescue_interval_seconds: Some(60),
             min_tx_e8s: Some(10_000_000),
         };
+        edit_init(&mut init);
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
 
         let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
@@ -1284,6 +1292,136 @@ fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected bootstrap rescue to widen controllers, got {controllers:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_init_args_preserve_expected_first_staking_tx_id() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.expected_first_staking_tx_id = Some(42);
+    })?;
+
+    let st = env.state()?;
+    if st.expected_first_staking_tx_id != Some(42) {
+        bail!("expected install arg expected_first_staking_tx_id to round-trip into state, got {:?}", st);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
+    require_ignored_flag()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+    let expected_first_tx_id = 1u64;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.blackhole_armed = Some(true);
+        init.expected_first_staking_tx_id = Some(expected_first_tx_id);
+    })?;
+
+    env.set_blackholed_controllers()?;
+    env.credit_payout(80_000_000)?;
+    env.credit_staking(80_000_000)?;
+    let observed_first_tx_id = env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    if observed_first_tx_id != expected_first_tx_id {
+        bail!("expected first mocked staking tx id {expected_first_tx_id}, got {observed_first_tx_id}");
+    }
+
+    env.main_tick()?;
+    let st = env.state()?;
+    if st.forced_rescue_reason.is_some() || st.consecutive_index_anchor_failures != 0 {
+        bail!("expected matching first tx anchor to stay healthy, got {:?}", st);
+    }
+    if st.last_successful_transfer_ts.is_none() {
+        bail!("expected matching first tx anchor scenario to complete a successful top-up, got {:?}", st);
+    }
+    let mut controllers = env.controllers();
+    controllers.sort_by_key(|p| p.to_text());
+    let mut expected = vec![env.blackhole_controller, env.faucet];
+    expected.sort_by_key(|p| p.to_text());
+    if controllers != expected {
+        bail!("expected matching first tx anchor to keep healthy blackhole+self controllers, got {controllers:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Result<()> {
+    require_ignored_flag()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.blackhole_armed = Some(true);
+        init.expected_first_staking_tx_id = Some(2);
+    })?;
+
+    env.set_blackholed_controllers()?;
+    env.credit_payout(80_000_000)?;
+    env.credit_staking(80_000_000)?;
+    let observed_first_tx_id = env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    if observed_first_tx_id != 1 {
+        bail!("expected first mocked staking tx id 1, got {observed_first_tx_id}");
+    }
+
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if st1.consecutive_index_anchor_failures != 1 || st1.forced_rescue_reason.is_some() {
+        bail!("expected first wrong-anchor observation to count once without latching rescue, got {:?}", st1);
+    }
+
+    env.main_tick()?;
+    let st2 = env.state()?;
+    if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
+        bail!("expected wrong first tx anchor to latch forced rescue after the second observation, got {:?}", st2);
+    }
+    let mut controllers = env.controllers();
+    controllers.sort_by_key(|p| p.to_text());
+    let mut expected = vec![env.blackhole_controller, env.cmc, env.faucet];
+    expected.sort_by_key(|p| p.to_text());
+    if controllers != expected {
+        bail!("expected wrong first tx anchor to widen controllers, got {controllers:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Result<()> {
+    require_ignored_flag()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.blackhole_armed = Some(true);
+        init.expected_first_staking_tx_id = Some(1);
+    })?;
+
+    env.set_blackholed_controllers()?;
+    env.main_tick()?;
+    let st1 = env.state()?;
+    if st1.consecutive_index_anchor_failures != 1 || st1.forced_rescue_reason.is_some() {
+        bail!("expected first missing-anchor observation before any transfer to count once, got {:?}", st1);
+    }
+
+    env.credit_payout(80_000_000)?;
+    env.credit_staking(80_000_000)?;
+    let first_tx_id = env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    if first_tx_id != 1 {
+        bail!("expected first mocked staking tx id 1, got {first_tx_id}");
+    }
+
+    env.main_tick()?;
+    let st2 = env.state()?;
+    if st2.consecutive_index_anchor_failures != 0 || st2.forced_rescue_reason.is_some() {
+        bail!("expected anchor failure counter to reset once the observed oldest tx matches before latching rescue, got {:?}", st2);
+    }
+    if st2.last_successful_transfer_ts.is_none() {
+        bail!("expected healed anchor scenario to complete a successful top-up, got {:?}", st2);
     }
 
     Ok(())

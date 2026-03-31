@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+MAINNET = {
+    "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+    "index": "qhbym-qaaaa-aaaaa-aaafq-cai",
+    "governance": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+    "cmc": "rkp4c-7iaaa-aaaaa-aaaca-cai",
+    "blackhole": "e3mmv-5qaaa-aaaah-aadma-cai",
+    "sns_wasm": "qaa6y-5yaaa-aaaaa-aaafa-cai",
+}
+
+CANISTER_IDS = json.loads((REPO_ROOT / "canister_ids.json").read_text())
+PROD = {
+    "jupiter_disburser": CANISTER_IDS["jupiter_disburser"]["ic"],
+    "jupiter_faucet": CANISTER_IDS["jupiter_faucet"]["ic"],
+    "jupiter_historian": CANISTER_IDS["jupiter_historian"]["ic"],
+    "jupiter_lifeline": CANISTER_IDS["jupiter_lifeline"]["ic"],
+    "jupiter_sns_rewards": CANISTER_IDS["jupiter_sns_rewards"]["ic"],
+}
+
+EXPECTED_DQUORUM_SUBACCOUNT = (
+    'opt vec { 119; 230; 61; 231; 43; 94; 51; 57; 234; 32; 244; 186; 243; 236; 43; 217; '
+    '33; 56; 221; 222; 13; 174; 182; 157; 181; 10; 204; 235; 56; 75; 223; 15 }'
+)
+
+
+def fail(msg: str) -> None:
+    print(f"mainnet install-args validation failed: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def require_contains(text: str, needle: str, context: str) -> None:
+    if needle not in text:
+        fail(f"{context} is missing `{needle}`")
+
+
+def validate_disburser() -> None:
+    path = REPO_ROOT / "jupiter-disburser" / "mainnet-install-args.did"
+    text = path.read_text()
+    require_contains(text, 'neuron_id = 11614578985374291210 : nat64;', str(path))
+    require_contains(text, f'owner = principal "{PROD["jupiter_faucet"]}";', str(path))
+    require_contains(text, f'owner = principal "{PROD["jupiter_sns_rewards"]}";', str(path))
+    require_contains(text, f'owner = principal "{MAINNET["governance"]}";', str(path))
+    require_contains(text, f'subaccount = {EXPECTED_DQUORUM_SUBACCOUNT};', str(path))
+    require_contains(text, f'ledger_canister_id = opt principal "{MAINNET["ledger"]}";', str(path))
+    require_contains(text, f'governance_canister_id = opt principal "{MAINNET["governance"]}";', str(path))
+    require_contains(text, f'rescue_controller = principal "{PROD["jupiter_lifeline"]}";', str(path))
+    require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
+
+
+def validate_faucet() -> None:
+    path = REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did"
+    text = path.read_text()
+    require_contains(text, f'ledger_canister_id = opt principal "{MAINNET["ledger"]}";', str(path))
+    require_contains(text, f'index_canister_id = opt principal "{MAINNET["index"]}";', str(path))
+    require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
+    require_contains(text, f'rescue_controller = principal "{PROD["jupiter_lifeline"]}";', str(path))
+    require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
+
+    match = re.search(r"expected_first_staking_tx_id\s*=\s*([^;]+);", text)
+    if not match:
+        fail(f"{path} is missing `expected_first_staking_tx_id`")
+    value = match.group(1).strip()
+    if value == "null":
+        return
+    if re.fullmatch(r"opt\s+\(?\s*\d+(?:\s*:\s*nat64)?\s*\)?", value):
+        return
+    fail(
+        f"{path} has invalid `expected_first_staking_tx_id` value `{value}`; expected `null` or `opt <nat64>`"
+    )
+
+
+def validate_historian() -> None:
+    path = REPO_ROOT / "jupiter-historian" / "mainnet-install-args.did"
+    text = path.read_text()
+    require_contains(text, f'ledger_canister_id = opt principal "{MAINNET["ledger"]}";', str(path))
+    require_contains(text, f'index_canister_id = opt principal "{MAINNET["index"]}";', str(path))
+    require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
+    require_contains(text, f'faucet_canister_id = opt principal "{PROD["jupiter_faucet"]}";', str(path))
+    require_contains(text, f'blackhole_canister_id = opt principal "{MAINNET["blackhole"]}";', str(path))
+    require_contains(text, f'sns_wasm_canister_id = opt principal "{MAINNET["sns_wasm"]}";', str(path))
+
+
+def main() -> None:
+    validate_disburser()
+    validate_faucet()
+    validate_historian()
+    print("mainnet install-args look consistent with the committed mainnet wiring")
+
+
+if __name__ == "__main__":
+    main()
