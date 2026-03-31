@@ -2,11 +2,12 @@
 
 [Jupiter Faucet](https://jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol for the Internet Computer. Its goal is simple: turn a durable ICP source into durable cycles for canisters, while keeping the value-moving path narrow, deterministic, and hard to tamper with.
 
-In the current production design, one NNS neuron is the economic source of truth. The suite uses that neuron’s recurring maturity to sustain two long-lived value flows, alongside a separate observability path:
+In the current production design, one NNS neuron is the economic source of truth. The suite uses that neuron’s recurring maturity to sustain two long-lived on-chain flows:
 
 1. a **cycles top-up flow** for participating canisters, handled by `jupiter-faucet`
 2. an **age-bonus ICP flow** for Jupiter ecosystem rewards and NNS-aligned support, handled by `jupiter-disburser`
-3. a **historical indexing and observability path** for tracked canisters, handled by `jupiter-historian`
+
+These flows are supported by `jupiter-historian`, which provides historical indexing and observability for tracked canisters and faucet-related activity.
 
 The operational canisters are intentionally small and specialized. The normal path is designed to settle into self-management plus canonical blackhole control, with a separate recovery canister available if value flow stops for long enough that rescue is justified.
 

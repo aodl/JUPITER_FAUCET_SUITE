@@ -59,6 +59,8 @@ For each burn target it tracks:
 - cumulative burned ICP in e8s
 - recent burn items for the public dashboard
 
+The burn-target set is intentionally broader than just "currently memo-valid canisters": it includes memo-derived canisters, the configured faucet canister itself when present, and any canister that already has prior burn state recorded in historian storage. That lets burn tracking continue even if an older canister stops receiving fresh contributions.
+
 This burn indexing is what allows the frontend to show recent “ICP burned into cycles” activity rather than only stake-side contributions.
 
 ### Cycles history
@@ -75,6 +77,8 @@ The historian supports three observation sources:
   - for the historian canister’s own balance sample
 
 The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses blackhole status plus SNS root summaries instead.
+
+One subtle but important implementation detail: each cycles sweep always includes the historian canister **itself** as a `SelfCanister` sample target, while canisters whose source set includes `SnsDiscovery` are skipped by the normal blackhole sweep and are expected to get their cycles observations from SNS root summaries instead.
 
 ### SNS discovery
 
@@ -126,8 +130,10 @@ Production methods:
   - dashboard status, including staking account and configured ledger canister ID
 - `list_registered_canister_summaries`
   - paged / sorted summary list used by the frontend registry table
+  - default sort is `TotalQualifyingContributedDesc`
 - `list_recent_contributions`
   - recent valid and invalid contribution feed used by the frontend
+  - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and the original trimmed `memo_text` preserved
 - `list_recent_burns`
   - recent ICP burn feed used by the frontend
 

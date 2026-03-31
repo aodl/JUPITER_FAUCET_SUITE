@@ -40,7 +40,7 @@ The frontend keeps the certified-asset Rust canister, but the in-page dashboard 
 
 - declarations are generated from `dfx generate`
 - the browser uses generated declarations with `@icp-sdk/core/agent`
-- actors are created with `Actor.createActor(...)`
+- actors are created through the generated `createActor(...)` helpers
 - dashboard data comes from Candid query calls, not from custom `/dashboard/*` JSON routes
 
 The browser-side source lives under:
@@ -52,6 +52,22 @@ The bundled output is written to:
 
 - `assets/generated/app.<content-hash>.js`
 - `assets/generated/frontend-bundle.json`
+
+### Runtime config and canister ID resolution
+
+The browser bundle is built with a tiny runtime config object that currently carries:
+
+- `network`
+- `historianCanisterId`
+- `frontendCanisterId`
+
+During the build, those values are resolved in this order:
+
+1. explicit `CANISTER_ID_<NAME>` environment variables
+2. `canister_ids.json` for the selected network
+3. fallback `ic` / `local` entries when present
+
+The selected network comes from `DFX_NETWORK`, then `JUPITER_FRONTEND_NETWORK`, and otherwise defaults to `ic`.
 
 ## Data sources
 
@@ -83,6 +99,17 @@ The loader attempts:
 The frontend also reads the Jupiter neuron directly from NNS Governance so it can show neuron metadata such as age, creation timestamp, refresh timestamp, and followees.
 
 No browser requests are made to custom `/dashboard/*` routes.
+
+### Dashboard loader behavior
+
+The browser data loader is intentionally defensive:
+
+- it fetches historian counts, status, registered-canister summaries, recent contributions, and recent burns concurrently
+- it only instantiates the ledger actor after historian status reveals the staking account and ledger canister ID
+- it preserves partial success, so one failed dashboard query does not blank the whole page
+- it explicitly detects the "all requested historian methods are missing" shape and flags that as a likely outdated historian deployment
+
+That behavior matters in practice because the frontend is expected to keep rendering as much live state as it can even during partial upgrades or mismatched deployments.
 
 ## Build
 
@@ -138,11 +165,23 @@ npm run test:frontend-dashboard
 npm run test:frontend-dashboard-local
 ```
 
+The checked-in Node tests cover the highest-value browser-side invariants, including:
+
+- stable account-identifier derivation for the staking account path
+- the exact historian query shapes and limits the dashboard loader issues
+- native-ledger balance reads with `icrc1_balance_of` fallback
+- graceful handling of zero-valued metrics
+- detection of an outdated historian interface when every required public method is missing
+
+The local-replica variant is fixture-driven: it compares the live loader result against an expected JSON snapshot provided through environment variables.
+
 There is also a small historian smoke helper:
 
 ```bash
 npm run smoke:historian
 ```
+
+That helper queries the historian plus the referenced ledger canister, prints a compact JSON summary, and warns when obviously suspicious states are observed (for example, a non-zero staking balance alongside all-zero public counts).
 
 ## Upgrade command
 

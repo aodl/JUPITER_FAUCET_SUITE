@@ -155,6 +155,15 @@ Runs the heavier PocketIC suites.
 
 These exercise real canister execution more deeply and are where the repo currently validates many of its strongest behavioral guarantees.
 
+The heavier suites live under `xtask/src/pocketIC/`:
+
+- `jupiter_disburser_integration.rs`
+- `jupiter_faucet_integration.rs`
+- `jupiter_historian_integration.rs`
+- `e2e.rs`
+
+The mock canisters used by the local-`dfx` scenarios live under `xtask/src/mocks/`.
+
 Examples covered by the current PocketIC suites include:
 
 - disburser upgrade mid-flight preserving state
