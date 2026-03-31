@@ -54,6 +54,7 @@ static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn ledger_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&LEDGER_WASM, "mock-icrc-ledger", None)
@@ -66,6 +67,9 @@ fn cmc_wasm() -> Result<Vec<u8>> {
 }
 fn faucet_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&FAUCET_WASM, "jupiter-faucet", Some("debug_api"))
+}
+fn lifeline_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(&LIFELINE_WASM, "jupiter-lifeline", None)
 }
 
 fn tick_n(pic: &PocketIc, n: usize) {
@@ -270,6 +274,7 @@ struct FaucetEnv {
     ledger: Principal,
     index: Principal,
     cmc: Principal,
+    lifeline: Principal,
     faucet: Principal,
     blackhole_controller: Principal,
     staking_account: Account,
@@ -290,15 +295,17 @@ impl FaucetEnv {
         let ledger = pic.create_canister();
         let index = pic.create_canister();
         let cmc = pic.create_canister();
+        let lifeline = pic.create_canister();
         let faucet = pic.create_canister();
 
-        for c in [ledger, index, cmc, faucet] {
+        for c in [ledger, index, cmc, lifeline, faucet] {
             pic.add_cycles(c, 5_000_000_000_000);
         }
 
         pic.install_canister(ledger, ledger_wasm()?, vec![], None);
         pic.install_canister(index, index_wasm()?, vec![], None);
         pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(lifeline, lifeline_wasm()?, vec![], None);
 
         let staking_account = Account {
             owner: Principal::anonymous(),
@@ -312,7 +319,7 @@ impl FaucetEnv {
             ledger_canister_id: Some(ledger),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
-            rescue_controller: cmc,
+            rescue_controller: lifeline,
             blackhole_controller: Some(blackhole_controller),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
@@ -331,6 +338,7 @@ impl FaucetEnv {
             ledger,
             index,
             cmc,
+            lifeline,
             faucet,
             blackhole_controller,
             staking_account,
@@ -1152,7 +1160,7 @@ fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<(
 
     let mut broken = env.controllers();
     broken.sort_by_key(|p| p.to_text());
-    let mut expected_broken = vec![env.blackhole_controller, env.cmc, env.faucet];
+    let mut expected_broken = vec![env.blackhole_controller, env.lifeline, env.faucet];
     expected_broken.sort_by_key(|p| p.to_text());
     if broken != expected_broken {
         bail!("expected broken rescue path to widen controllers to [blackhole,self,rescue], got {broken:?}");
@@ -1288,7 +1296,7 @@ fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.cmc, env.faucet];
+    let mut expected = vec![env.blackhole_controller, env.lifeline, env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected bootstrap rescue to widen controllers, got {controllers:?}");
@@ -1382,7 +1390,7 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.cmc, env.faucet];
+    let mut expected = vec![env.blackhole_controller, env.lifeline, env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected wrong first tx anchor to widen controllers, got {controllers:?}");
@@ -1450,7 +1458,7 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.cmc, env.faucet];
+    let mut expected = vec![env.blackhole_controller, env.lifeline, env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected anchor-loss forced rescue to widen controllers, got {controllers:?}");
