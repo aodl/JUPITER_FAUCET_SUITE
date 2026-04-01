@@ -111,6 +111,7 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             st.forced_rescue_reason = None;
             st.consecutive_index_anchor_failures = Some(0);
             st.consecutive_index_latest_invariant_failures = Some(0);
+            st.consecutive_index_latest_unreadable_failures = Some(0);
             st.consecutive_cmc_zero_success_runs = Some(0);
         }
     }
@@ -139,6 +140,7 @@ pub struct DebugState {
     pub forced_rescue_reason: Option<crate::state::ForcedRescueReason>,
     pub consecutive_index_anchor_failures: u8,
     pub consecutive_index_latest_invariant_failures: u8,
+    pub consecutive_index_latest_unreadable_failures: u8,
     pub consecutive_cmc_zero_success_runs: u8,
     pub last_observed_staking_balance_e8s: Option<u64>,
     pub last_observed_latest_tx_id: Option<u64>,
@@ -174,6 +176,7 @@ fn debug_state() -> DebugState {
         forced_rescue_reason: st.forced_rescue_reason.clone(),
         consecutive_index_anchor_failures: st.consecutive_index_anchor_failures.unwrap_or(0),
         consecutive_index_latest_invariant_failures: st.consecutive_index_latest_invariant_failures.unwrap_or(0),
+        consecutive_index_latest_unreadable_failures: st.consecutive_index_latest_unreadable_failures.unwrap_or(0),
         consecutive_cmc_zero_success_runs: st.consecutive_cmc_zero_success_runs.unwrap_or(0),
         last_observed_staking_balance_e8s: st.last_observed_staking_balance_e8s,
         last_observed_latest_tx_id: st.last_observed_latest_tx_id,
@@ -230,6 +233,7 @@ fn debug_reset_runtime_state() {
         st.forced_rescue_reason = None;
         st.consecutive_index_anchor_failures = Some(0);
         st.consecutive_index_latest_invariant_failures = Some(0);
+        st.consecutive_index_latest_unreadable_failures = Some(0);
         st.consecutive_cmc_zero_success_runs = Some(0);
         st.last_observed_staking_balance_e8s = None;
         st.last_observed_latest_tx_id = None;
@@ -277,6 +281,7 @@ fn debug_clear_forced_rescue() {
         st.forced_rescue_reason = None;
         st.consecutive_index_anchor_failures = Some(0);
         st.consecutive_index_latest_invariant_failures = Some(0);
+        st.consecutive_index_latest_unreadable_failures = Some(0);
         st.consecutive_cmc_zero_success_runs = Some(0);
     });
 }

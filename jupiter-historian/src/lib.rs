@@ -171,7 +171,6 @@ pub struct RecentContributionListItem {
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
-    pub tx_hash: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -321,7 +320,6 @@ fn fallback_recent_contributions_state(st: &State) -> Vec<RecentContribution> {
                 timestamp_nanos: item.timestamp_nanos,
                 amount_e8s: item.amount_e8s,
                 counts_toward_faucet: item.counts_toward_faucet,
-                tx_hash: None,
             })
         })
         .collect();
@@ -346,7 +344,6 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> 
                 timestamp_nanos: item.timestamp_nanos,
                 amount_e8s: item.amount_e8s,
                 counts_toward_faucet: item.counts_toward_faucet,
-                tx_hash: None,
             })
         })
         .collect();
@@ -358,7 +355,6 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> 
             timestamp_nanos: item.timestamp_nanos,
             amount_e8s: item.amount_e8s,
             counts_toward_faucet: false,
-            tx_hash: item.tx_hash,
         }));
     }
     items.sort_by(|a, b| {
@@ -697,7 +693,6 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
                     canister_id: Some(item.canister_id),
                     memo_text: Some(item.canister_id.to_text()),
                     tx_id: item.tx_id,
-                    tx_hash: item.tx_hash,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
                     counts_toward_faucet: item.counts_toward_faucet,
@@ -708,7 +703,6 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
                     canister_id: None,
                     memo_text: Some(item.memo_text),
                     tx_id: item.tx_id,
-                    tx_hash: item.tx_hash,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
                     counts_toward_faucet: false,
@@ -1098,7 +1092,6 @@ mod tests {
                 timestamp_nanos: Some(11),
                 amount_e8s: 20_000_000,
                 counts_toward_faucet: true,
-                tx_hash: Some("hash-qualifying".to_string()),
             },
             RecentContribution {
                 canister_id: low_amount,
@@ -1106,14 +1099,12 @@ mod tests {
                 timestamp_nanos: Some(10),
                 amount_e8s: 5_000_000,
                 counts_toward_faucet: false,
-                tx_hash: Some("hash-low".to_string()),
             },
         ]);
         st.recent_invalid_contributions = Some(vec![InvalidContribution {
             tx_id: 12,
             timestamp_nanos: Some(12),
             amount_e8s: 20_000_000,
-            tx_hash: Some("hash-invalid".to_string()),
             memo_text: "not-a-principal".to_string(),
         }]);
         state::set_state(st);
@@ -1126,7 +1117,6 @@ mod tests {
         assert_eq!(all.items[0].tx_id, 12);
         assert_eq!(all.items[0].canister_id, None);
         assert_eq!(all.items[0].memo_text.as_deref(), Some("not-a-principal"));
-        assert_eq!(all.items[0].tx_hash.as_deref(), Some("hash-invalid"));
         assert!(!all.items[0].counts_toward_faucet);
         assert_eq!(all.items[1].tx_id, 11);
         assert_eq!(all.items[1].canister_id, Some(qualifying));

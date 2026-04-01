@@ -514,8 +514,8 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
         &h.pic,
         h.index,
         Principal::anonymous(),
-        "debug_append_transfer",
-        encode_args((burn_account, 42u64, Option::<Vec<u8>>::None))?,
+        "debug_append_burn",
+        encode_args((burn_account, 42u64))?,
     )?;
 
     h.tick();

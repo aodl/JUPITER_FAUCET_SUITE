@@ -258,7 +258,9 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 - `IndexAnchorMissing`
   - if `expected_first_staking_tx_id` is configured and the observed oldest staking-account tx ID does not match it twice in a row
 - `IndexLatestInvariantBroken`
-  - if the staking-account balance changes but the observed latest tx ID does not change, twice in a row
+  - if the staking-account balance changes and the latest staking-account tx ID is successfully read but does not change, twice in a row
+- `IndexLatestUnreadable`
+  - if the staking-account balance changes and the canister cannot confirm the latest staking-account tx ID, twice in a row
 - `CmcZeroSuccessRuns`
   - if two payout jobs in a row make CMC attempts but record zero successful top-up notifications
 

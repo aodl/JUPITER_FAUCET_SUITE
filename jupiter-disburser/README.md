@@ -59,13 +59,11 @@ On each successful main tick, the canister does the following:
    - initiates `DisburseMaturity` for **100%** of available maturity to the canister’s default account
    - records the neuron age that will be used for the *next* payout split
    - best-effort calls `RefreshVotingPower`
-5. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
-6. logs only errors plus a single `Cycles: ...` line per run
+5. if a maturity disbursement **is** already in flight, the canister intentionally skips payout processing and does not initiate another disbursement
+6. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
+7. logs only errors plus a single `Cycles: ...` line per run
 
-A successful main tick therefore has two distinct responsibilities:
-
-- finish routing any ICP that has already landed in the staging account
-- try to initiate the next maturity disbursement if NNS says none is already in flight
+The skip while in flight is intentional. The current implementation stores exactly one captured age snapshot (`prev_age_seconds`) and later uses that snapshot when staged ICP is split. By refusing to overlap payout work with an already in-flight maturity disbursement, the canister avoids applying the wrong captured age to staged ICP from a different disbursement cycle.
 
 ## Payout policy
 

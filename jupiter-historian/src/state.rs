@@ -58,8 +58,6 @@ pub struct InvalidContribution {
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
-    #[serde(default)]
-    pub tx_hash: Option<String>,
     pub memo_text: String,
 }
 
@@ -70,8 +68,6 @@ pub struct RecentContribution {
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
-    #[serde(default)]
-    pub tx_hash: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]

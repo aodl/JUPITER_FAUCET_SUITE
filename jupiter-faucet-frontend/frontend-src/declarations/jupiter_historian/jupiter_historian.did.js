@@ -58,7 +58,6 @@ export const idlFactory = ({ IDL }) => {
     timestamp_nanos: IDL.Opt(IDL.Nat64),
     amount_e8s: IDL.Nat64,
     counts_toward_faucet: IDL.Bool,
-    tx_hash: IDL.Opt(IDL.Text),
   });
   const ListRecentContributionsResponse = IDL.Record({
     items: IDL.Vec(RecentContributionListItem),

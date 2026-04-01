@@ -1,5 +1,4 @@
 use candid::Principal;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
@@ -12,7 +11,6 @@ pub struct IndexedContribution {
     pub amount_e8s: u64,
     pub timestamp_nanos: Option<u64>,
     pub counts_toward_faucet: bool,
-    pub tx_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,7 +19,6 @@ pub struct IndexedInvalidContribution {
     pub amount_e8s: u64,
     pub timestamp_nanos: Option<u64>,
     pub memo_text: String,
-    pub tx_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,87 +27,6 @@ pub enum IndexedContributionEntry {
     Invalid(IndexedInvalidContribution),
 }
 
-
-fn encode_varint(mut value: u64) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let mut byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        out.push(byte);
-        if value == 0 {
-            break;
-        }
-    }
-    out
-}
-
-fn push_length_delimited(tag: u8, bytes: &[u8], out: &mut Vec<u8>) {
-    out.push(tag);
-    out.extend(encode_varint(bytes.len() as u64));
-    out.extend(bytes);
-}
-
-fn decode_account_identifier(hex_text: &str) -> Option<Vec<u8>> {
-    hex::decode(hex_text).ok()
-}
-
-fn encode_icp_transfer_transaction(tx: &IndexTransactionWithId) -> Option<Vec<u8>> {
-    let (to, fee, from, amount) = match &tx.transaction.operation {
-        IndexOperation::Transfer { to, fee, from, amount, .. } => (to, fee.e8s(), from, amount.e8s()),
-        _ => return None,
-    };
-    let from_bytes = decode_account_identifier(from)?;
-    let to_bytes = decode_account_identifier(to)?;
-
-    let mut encoded_from = Vec::new();
-    push_length_delimited(0x0a, &from_bytes, &mut encoded_from);
-
-    let mut encoded_to = Vec::new();
-    push_length_delimited(0x0a, &to_bytes, &mut encoded_to);
-
-    let mut encoded_amount = Vec::new();
-    encoded_amount.push(0x08);
-    encoded_amount.extend(encode_varint(amount));
-
-    let mut encoded_fee = Vec::new();
-    encoded_fee.push(0x08);
-    encoded_fee.extend(encode_varint(fee));
-
-    let mut encoded_transfer = Vec::new();
-    push_length_delimited(0x0a, &encoded_from, &mut encoded_transfer);
-    push_length_delimited(0x12, &encoded_to, &mut encoded_transfer);
-    push_length_delimited(0x1a, &encoded_amount, &mut encoded_transfer);
-    push_length_delimited(0x22, &encoded_fee, &mut encoded_transfer);
-
-    let mut encoded_operation = Vec::new();
-    push_length_delimited(0x1a, &encoded_transfer, &mut encoded_operation);
-
-    let mut encoded_memo = Vec::new();
-    if tx.transaction.memo != 0 {
-        encoded_memo.push(0x08);
-        encoded_memo.extend(encode_varint(tx.transaction.memo));
-    }
-
-    let mut encoded_timestamp = Vec::new();
-    if let Some(created_at_time) = tx.transaction.created_at_time.as_ref() {
-        encoded_timestamp.push(0x08);
-        encoded_timestamp.extend(encode_varint(created_at_time.timestamp_nanos));
-    }
-
-    let mut encoded_transaction = Vec::new();
-    encoded_transaction.extend(encoded_operation);
-    push_length_delimited(0x22, &encoded_memo, &mut encoded_transaction);
-    push_length_delimited(0x32, &encoded_timestamp, &mut encoded_transaction);
-    Some(encoded_transaction)
-}
-
-pub fn transaction_hash_hex(tx: &IndexTransactionWithId) -> Option<String> {
-    let encoded_transaction = encode_icp_transfer_transaction(tx)?;
-    Some(hex::encode(Sha256::digest(encoded_transaction)))
-}
 
 pub fn memo_text_from_bytes(bytes: &[u8]) -> Option<String> {
     let memo_text = std::str::from_utf8(bytes).ok()?.trim().to_string();
@@ -154,7 +70,6 @@ pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account
             amount_e8s,
             timestamp_nanos,
             counts_toward_faucet: amount_e8s >= min_tx_e8s,
-            tx_hash: transaction_hash_hex(tx),
         }))
     } else {
         Some(IndexedContributionEntry::Invalid(IndexedInvalidContribution {
@@ -162,7 +77,6 @@ pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account
             amount_e8s,
             timestamp_nanos,
             memo_text,
-            tx_hash: transaction_hash_hex(tx),
         }))
     }
 }
@@ -281,7 +195,6 @@ mod tests {
                 assert_eq!(c.beneficiary, beneficiary);
                 assert!(!c.counts_toward_faucet);
                 assert_eq!(c.timestamp_nanos, Some(99));
-                assert!(c.tx_hash.as_ref().map(|v| v.len() == 64).unwrap_or(false));
             }
             IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),
         }
@@ -289,7 +202,7 @@ mod tests {
 
 
     #[test]
-    fn transaction_hash_is_derived_for_invalid_memo_transfers() {
+    fn invalid_memo_transfers_still_surface_without_transaction_hashes() {
         let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
         let tx = IndexTransactionWithId {
             id: 2,
@@ -311,7 +224,6 @@ mod tests {
         match c {
             IndexedContributionEntry::Invalid(c) => {
                 assert_eq!(c.memo_text, "not-a-principal");
-                assert!(c.tx_hash.as_ref().map(|v| v.len() == 64).unwrap_or(false));
             }
             IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
         }

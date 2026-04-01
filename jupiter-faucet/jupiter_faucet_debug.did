@@ -22,6 +22,7 @@ type ForcedRescueReason = variant {
   BootstrapNoSuccess;
   IndexAnchorMissing;
   IndexLatestInvariantBroken;
+  IndexLatestUnreadable;
   CmcZeroSuccessRuns;
 };
 
@@ -42,6 +43,7 @@ type DebugState = record {
   forced_rescue_reason : opt ForcedRescueReason;
   consecutive_index_anchor_failures : nat8;
   consecutive_index_latest_invariant_failures : nat8;
+  consecutive_index_latest_unreadable_failures : nat8;
   consecutive_cmc_zero_success_runs : nat8;
   last_observed_staking_balance_e8s : opt nat64;
   last_observed_latest_tx_id : opt nat64;

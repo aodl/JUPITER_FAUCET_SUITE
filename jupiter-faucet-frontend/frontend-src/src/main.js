@@ -372,11 +372,7 @@ function formatCommitmentTarget(item) {
 }
 
 function commitmentTransactionHref(item) {
-  const txHash = Array.isArray(item?.tx_hash) ? item.tx_hash[0] : item?.tx_hash;
   const txIndex = item?.tx_id;
-  if (txHash) {
-    return `https://dashboard.internetcomputer.org/transaction/${encodeURIComponent(txHash)}?index=${encodeURIComponent(String(txIndex))}`;
-  }
   if (txIndex !== undefined && txIndex !== null) {
     return `https://dashboard.internetcomputer.org/transaction/${encodeURIComponent(String(txIndex))}`;
   }

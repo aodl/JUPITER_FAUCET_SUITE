@@ -13,7 +13,6 @@ type RecentContributionListItem = record {
   timestamp_nanos : opt nat64;
   amount_e8s : nat64;
   counts_toward_faucet : bool;
-  tx_hash : opt text;
 };
 type CyclesSampleSource = variant { BlackholeStatus; SelfCanister; SnsRootSummary };
 type CyclesSample = record {

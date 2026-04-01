@@ -50,9 +50,9 @@ The operational canisters are intentionally small and specialized. The normal pa
 The live value-moving path is:
 
 1. `jupiter-disburser` controls one NNS neuron.
-2. On a successful main tick, it first drains any already-disbursed ICP sitting in its own default ledger account according to the currently persisted payout plan, if one exists.
-3. If NNS does **not** already report a maturity disbursement in flight, the disburser initiates `DisburseMaturity` for **100%** of available maturity to its own default ledger account.
-4. On the next payout stage, that staged ICP is split into:
+2. When NNS reports that no maturity disbursement is currently in flight, the disburser first drains any already-disbursed ICP sitting in its own default ledger account according to the currently persisted payout plan, if one exists.
+3. In that same no-overlap case, the disburser then initiates `DisburseMaturity` for **100%** of available maturity to its own default ledger account.
+4. When that staged ICP is later paid out, it is split into:
    - the **age-neutral base** share for `jupiter-faucet`
    - **80% of the age bonus** for `jupiter-sns-rewards`
    - **20% of the age bonus** for the D-QUORUM neuron staking account

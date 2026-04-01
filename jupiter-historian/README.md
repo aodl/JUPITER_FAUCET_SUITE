@@ -32,7 +32,6 @@ For each eligible incoming `Transfer` **to** the staking account (`TransferFrom`
 - timestamp (from index timestamp when available, otherwise created-at time if available)
 - transfer amount
 - whether the contribution counts toward faucet eligibility under the current `min_tx_e8s`
-- a transaction hash (for recent-contribution surfaces)
 
 Memo handling mirrors the faucet’s input rules:
 
@@ -61,7 +60,7 @@ For each burn target it tracks:
 
 The burn-target set is intentionally broader than just "currently memo-valid canisters": it includes memo-derived canisters, the configured faucet canister itself when present, and any canister that already has prior burn state recorded in historian storage. That lets burn tracking continue even if an older canister stops receiving fresh contributions.
 
-This burn indexing is what allows the frontend to show recent “ICP burned into cycles” activity rather than only stake-side contributions.
+This burn indexing keys off actual `Burn` records on the CMC deposit account history, so merely transferring ICP into the deposit account does not count as “burned into cycles” until the ledger records the burn.
 
 ### Cycles history
 

@@ -148,10 +148,11 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
 
         let mut out = Vec::new();
         for tx in st.txs[start_idx..].iter() {
-            let include = matches!(
-                &tx.transaction.operation,
-                IndexOperation::Transfer { to, .. } if to == &args.account_identifier
-            );
+            let include = match &tx.transaction.operation {
+                IndexOperation::Transfer { to, .. } => to == &args.account_identifier,
+                IndexOperation::Burn { from, .. } => from == &args.account_identifier,
+                _ => false,
+            };
             if include {
                 out.push(tx.clone());
             }
@@ -195,6 +196,32 @@ fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> 
                     to,
                     fee: Tokens { e8s: 10_000 },
                     from: "mock-sender".to_string(),
+                    amount: Tokens { e8s: amount_e8s },
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp {
+                    timestamp_nanos: ic_cdk::api::time() as u64,
+                }),
+            },
+        });
+        id
+    })
+}
+
+#[ic_cdk::update]
+fn debug_append_burn(from: String, amount_e8s: u64) -> u64 {
+    ST.with(|s| {
+        let mut st = s.borrow_mut();
+        st.next_id = st.next_id.saturating_add(1);
+        let id = st.next_id;
+        st.txs.push(IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Burn {
+                    from,
                     amount: Tokens { e8s: amount_e8s },
                     spender: None,
                 },

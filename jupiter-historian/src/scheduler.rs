@@ -220,7 +220,6 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                                     timestamp_nanos: contribution.timestamp_nanos,
                                     amount_e8s: contribution.amount_e8s,
                                     counts_toward_faucet: contribution.counts_toward_faucet,
-                                    tx_hash: contribution.tx_hash,
                                 },
                             );
                         }
@@ -233,7 +232,6 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                                 tx_id: contribution.tx_id,
                                 timestamp_nanos: contribution.timestamp_nanos,
                                 amount_e8s: contribution.amount_e8s,
-                                tx_hash: contribution.tx_hash,
                                 memo_text: contribution.memo_text,
                             },
                         );
@@ -280,16 +278,6 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
                 }
                 last_seen = Some(tx.id);
                 match &tx.transaction.operation {
-                    IndexOperation::Transfer { to, amount, .. } if to == &deposit_account_id => {
-                        let amount_e8s = amount.e8s();
-                        added = added.saturating_add(amount_e8s);
-                        recent_burns.push(RecentBurn {
-                            canister_id,
-                            tx_id: tx.id,
-                            timestamp_nanos: tx.transaction.timestamp.as_ref().or(tx.transaction.created_at_time.as_ref()).map(|ts| ts.timestamp_nanos),
-                            amount_e8s,
-                        });
-                    }
                     IndexOperation::Burn { amount, .. } => {
                         let amount_e8s = amount.e8s();
                         added = added.saturating_add(amount_e8s);
@@ -560,6 +548,24 @@ mod tests {
         }
     }
 
+
+    fn burn_tx(id: u64, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Burn {
+                    from: "sender".into(),
+                    amount: Tokens::new(amount_e8s),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
+            },
+        }
+    }
+
     struct MockIndexClient {
         pages: Mutex<VecDeque<GetAccountIdentifierTransactionsResponse>>,
         calls: Mutex<Vec<(String, Option<u64>, u64)>>,
@@ -714,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn burn_indexing_counts_cmc_deposit_transfers_not_contributions() {
+    fn burn_indexing_counts_only_actual_burn_entries() {
         let _staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
         state::with_state_mut(|st| {
@@ -741,9 +747,48 @@ mod tests {
         block_on(process_burn_indexing(&mock)).unwrap();
 
         state::with_state(|st| {
+            assert_eq!(st.icp_burned_e8s, Some(0));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(0));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(77));
+        });
+    }
+
+    #[test]
+    fn burn_indexing_counts_burn_once_even_when_transfer_precedes_it() {
+        let _staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.canister_sources.insert(
+                beneficiary,
+                crate::logic::merge_sources(None, CanisterSource::MemoContribution),
+            );
+            st.distinct_canisters.insert(beneficiary);
+        });
+        let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![],
+                oldest_tx_id: None,
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 150,
+                transactions: vec![
+                    transfer_to_account_tx(77, &cmc_account_id, 150, 123_000_000_000),
+                    burn_tx(78, 150, 124_000_000_000),
+                ],
+                oldest_tx_id: Some(77),
+            },
+        ]);
+
+        block_on(process_burn_indexing(&mock)).unwrap();
+
+        state::with_state(|st| {
             assert_eq!(st.icp_burned_e8s, Some(150));
             assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(150));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(77));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(78));
+            assert_eq!(st.recent_burns.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(st.recent_burns.as_ref().unwrap()[0].tx_id, 78);
         });
     }
 

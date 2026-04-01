@@ -556,6 +556,35 @@ mod tests {
         }
     }
 
+
+    struct CountingLedger {
+        balance: u64,
+        transfer_calls: AtomicUsize,
+    }
+
+    impl CountingLedger {
+        fn new(balance: u64) -> Self {
+            Self {
+                balance,
+                transfer_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn transfer_calls(&self) -> usize {
+            self.transfer_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl LedgerClient for CountingLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(10_000) }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { Ok(self.balance) }
+        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.transfer_calls.fetch_add(1, Ordering::SeqCst);
+            panic!("transfer should not be called")
+        }
+    }
+
     struct ScriptedGovernance {
         get_full_neuron_results: Mutex<VecDeque<Result<Neuron, GovernanceError>>>,
         disburse_results: Mutex<VecDeque<Result<Option<u64>, GovernanceError>>>,
@@ -737,6 +766,31 @@ mod tests {
         assert_eq!(gov.disburse_calls(), 0);
         assert_eq!(gov.claim_or_refresh_calls(), 1);
         assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+    }
+
+    #[test]
+    fn staged_balance_is_left_untouched_while_maturity_disbursement_is_in_flight() {
+        let now_secs = 1_900_u64;
+        let mut st = state::State::new(test_config(), now_secs);
+        st.prev_age_seconds = 777;
+        state::set_state(st);
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = CountingLedger::new(50_000_000);
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                aging_since_timestamp_seconds: 100,
+                maturity_disbursements_in_progress: Some(vec![crate::nns_types::MaturityDisbursement { amount_e8s: Some(50) }]),
+            })],
+            vec![],
+        );
+
+        let mut fut = Box::pin(run_main_tick_with_clients(false, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert_eq!(ledger.transfer_calls(), 0, "staged ICP must not be routed while a disbursement is already in flight");
+        assert_eq!(gov.disburse_calls(), 0, "in-flight source-of-truth state must suppress a second initiation");
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
+        assert_eq!(state::with_state(|st| st.prev_age_seconds), 777, "skipped ticks must preserve the previously captured age snapshot");
     }
 
     #[test]
