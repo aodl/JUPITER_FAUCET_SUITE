@@ -158,10 +158,22 @@ The relevant `declarations` output paths are configured in `dfx.json`.
 
 ## Frontend-only tests
 
-Browser/data-loader tests currently live in npm scripts rather than `xtask`:
+These browser/data-loader checks can now be driven through `xtask` as well:
 
 ```bash
+cargo run -p xtask -- frontend_setup
+cargo run -p xtask -- frontend_unit
+cargo run -p xtask -- frontend_dfx_integration
+cargo run -p xtask -- frontend_all
+```
+
+The direct npm entry points remain available:
+
+```bash
+npm run setup:frontend
 npm run test:frontend-dashboard
+npm run test:frontend-neuron
+npm run test:frontend-unit
 npm run test:frontend-dashboard-local
 ```
 

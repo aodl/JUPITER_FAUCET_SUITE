@@ -2,22 +2,33 @@
 
 `xtask` is the preferred entry point for local orchestration and test execution in this repository.
 
-It wraps three different layers of validation:
+It wraps four different layers of validation:
 
 - fast Rust unit tests
+- browser/data-loader frontend unit tests
 - local `dfx` integration scenarios against debug canisters and mocks
 - PocketIC integration / end-to-end suites
 
 Using `xtask` keeps the command surface stable and avoids having to remember which mocks, features, identities, and ignored tests need to be wired together manually.
 
-## What `xtask` does not cover
+## Frontend coverage in `xtask`
 
-`xtask` is focused on Rust / canister / PocketIC / local-`dfx` orchestration.
-
-Browser-only frontend tests still live in npm scripts:
+`xtask` now includes the checked-in frontend Node tests as a first-class component:
 
 ```bash
-npm run test:frontend-dashboard
+cargo run -p xtask -- frontend_setup
+cargo run -p xtask -- frontend_unit
+cargo run -p xtask -- frontend_dfx_integration
+cargo run -p xtask -- frontend_all
+```
+
+The frontend `xtask` commands auto-install or refresh repo-root Node dependencies when they are missing or stale, and `frontend_setup` lets you do that preflight explicitly.
+
+The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask`:
+
+```bash
+npm run setup:frontend
+npm run test:frontend-unit
 npm run test:frontend-dashboard-local
 ```
 
@@ -27,7 +38,7 @@ Commonly useful tools for `xtask` workflows are:
 
 - Rust / Cargo
 - `dfx`
-- Node.js / npm for frontend-specific scripts outside `xtask`
+- Node.js / npm for frontend unit tests and local frontend scripts
 - `make` and `nix-build` for historian and suite-level PocketIC paths that build the vendored real blackhole canister reproducibly
 
 ## What `setup` does
@@ -74,6 +85,7 @@ cargo run -p xtask -- teardown
 ```bash
 cargo run -p xtask -- setup
 cargo run -p xtask -- teardown
+cargo run -p xtask -- frontend_setup
 ```
 
 ### Disburser commands

@@ -4,8 +4,11 @@
   "type": "module",
   "scripts": {
     "build:frontend": "node jupiter-faucet-frontend/frontend-src/build-frontend.mjs",
+    "setup:frontend": "npm ci --no-fund --no-audit --silent",
     "smoke:historian": "node scripts/smoke-historian.mjs",
     "test:frontend-dashboard": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.test.mjs",
+    "test:frontend-neuron": "node --test jupiter-faucet-frontend/frontend-src/test/neuron-details-controller.test.mjs",
+    "test:frontend-unit": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.test.mjs jupiter-faucet-frontend/frontend-src/test/neuron-details-controller.test.mjs",
     "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs",
     "verify:reproducible-artifacts": "./scripts/verify-reproducible-artifacts"
   },

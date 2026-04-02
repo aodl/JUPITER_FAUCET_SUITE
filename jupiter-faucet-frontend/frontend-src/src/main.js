@@ -6,6 +6,7 @@ import {
   loadDashboardData,
 } from './dashboard-data.js';
 import { createActor as createGovernanceActor } from '../declarations/nns_governance/index.js';
+import { createNeuronDetailsController } from './neuron-details-controller.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -21,12 +22,6 @@ const tableState = {
   burn: { page: 0, items: [] },
 };
 
-const neuronState = {
-  inFlight: false,
-  loaded: false,
-  value: null,
-  error: null,
-};
 
 function isLocalHost() {
   const host = window.location.hostname;
@@ -547,30 +542,17 @@ async function loadNeuronDetails({ host, local }) {
   return response.full_neurons?.[0] || null;
 }
 
+const neuronDetailsController = createNeuronDetailsController({
+  loadNeuronDetails: () => loadNeuronDetails({ host: window.location.origin, local: isLocalHost() }),
+  renderStakePane,
+  renderStakeNeuronStatus,
+  normalizeError,
+});
+
+const neuronState = neuronDetailsController.state;
+
 async function ensureNeuronDetailsLoaded(data) {
-  if (neuronState.inFlight || neuronState.loaded) return;
-  neuronState.inFlight = true;
-  renderStakePane(data, null, { neuronLoading: true });
-  renderStakeNeuronStatus({ loading: true });
-  try {
-    const neuron = await loadNeuronDetails({ host: window.location.origin, local: isLocalHost() });
-    neuronState.loaded = true;
-    neuronState.value = neuron;
-    neuronState.error = neuron ? null : 'Public neuron details unavailable';
-    window.__JUPITER_NEURON_ERROR__ = neuronState.error;
-    renderStakePane(data, neuron, { neuronError: neuronState.error });
-    renderStakeNeuronStatus({ error: neuronState.error });
-  } catch (error) {
-    neuronState.loaded = false;
-    neuronState.value = null;
-    neuronState.error = normalizeError(error);
-    window.__JUPITER_NEURON_ERROR__ = neuronState.error;
-    renderStakePane(data, null, { neuronError: neuronState.error });
-    renderStakeNeuronStatus({ error: neuronState.error });
-    console.info('Public neuron details unavailable; core dashboard metrics load independently.', error);
-  } finally {
-    neuronState.inFlight = false;
-  }
+  await neuronDetailsController.ensureLoaded(data);
 }
 
 function bindNeuronDetailsLoader(data) {

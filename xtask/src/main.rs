@@ -88,6 +88,7 @@ enum TestComponent {
     Disburser,
     Faucet,
     Historian,
+    Frontend,
     E2e,
 }
 
@@ -100,7 +101,7 @@ enum TestScope {
 }
 
 fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
-    use TestComponent::{Disburser, E2e, Faucet, Historian, Test};
+    use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Test};
     use TestScope::{All, DfxIntegration, PocketicIntegration, Unit};
 
     match cmd {
@@ -116,6 +117,9 @@ fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
         "historian_dfx_integration" => Some((Historian, DfxIntegration)),
         "historian_pocketic_integration" => Some((Historian, PocketicIntegration)),
         "historian_all" => Some((Historian, All)),
+        "frontend_unit" => Some((Frontend, Unit)),
+        "frontend_dfx_integration" => Some((Frontend, DfxIntegration)),
+        "frontend_all" => Some((Frontend, All)),
         "e2e_all" => Some((E2e, All)),
         "e2e_pocketic_integration" => Some((E2e, PocketicIntegration)),
         "test_unit" => Some((Test, Unit)),
@@ -2145,7 +2149,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 }
 
 fn run_frontend_dashboard_local_fixture(expected: &FrontendDashboardExpected) -> Result<()> {
-    ensure_frontend_dashboard_node_modules()?;
+    ensure_frontend_node_modules()?;
     let root = repo_root();
     let historian_id = canister_id("jupiter_historian_dbg")?;
     let output = Command::new("node")
@@ -2182,6 +2186,155 @@ fn reset_historian_local_replica_state() -> Result<()> {
     let _: () = call_raw_noargs("mock_blackhole", "debug_reset")?;
     let _: () = call_raw_noargs("mock_icrc_ledger", "debug_reset")?;
     let _: () = call_raw_noargs("jupiter_historian_dbg", "debug_reset_derived_state")?;
+    Ok(())
+}
+
+fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_scenario(outcomes, label("dfx", "frontend", "dashboard loader matches local replica fixture"), || {
+        reset_historian_local_replica_state()?;
+
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let sub_vec = staking
+            .subaccount
+            .unwrap()
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let target = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+        let blackhole_id = canister_id("mock_blackhole")?;
+        let ledger_id = canister_id("mock_icrc_ledger")?;
+
+        let _: () = call_raw(
+            "mock_icrc_ledger",
+            "debug_credit",
+            &format!(
+                r#"(record {{ owner = principal "{}"; subaccount = opt vec {{ {} }} }}, 123000000:nat64)"#,
+                staking.owner.to_text(),
+                sub_vec
+            ),
+        )?;
+
+        let memo = format!(
+            "opt vec {{ {} }}",
+            target
+                .to_text()
+                .as_bytes()
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+        )?;
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 5000000:nat64, {})"#, staking_id, memo),
+        )?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(
+                r#"(principal "{}", opt (1234:nat), vec {{ principal "{}" }})"#,
+                target.to_text(),
+                blackhole_id.trim()
+            ),
+        )?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_last_completed_cycles_sweep_ts", "(null)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
+        if counts.registered_canister_count != 1
+            || counts.qualifying_contribution_count != 1
+            || counts.icp_burned_e8s != 0
+        {
+            bail!(
+                "unexpected historian public counts fixture: registered={} qualifying={} burned={}",
+                counts.registered_canister_count,
+                counts.qualifying_contribution_count,
+                counts.icp_burned_e8s
+            );
+        }
+
+        let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_registered_canister_summaries",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+        )?;
+        let recent: ListRecentContributionsResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_recent_contributions",
+            "(record { limit = opt (10:nat32); qualifying_only = opt false })",
+        )?;
+
+        if registered.items.len() != 1 || recent.items.len() != 2 {
+            bail!(
+                "unexpected fixture table sizes: registered={} recent={}",
+                registered.items.len(),
+                recent.items.len()
+            );
+        }
+
+        let expected = FrontendDashboardExpected {
+            stakeE8s: "123000000".to_string(),
+            counts: FrontendDashboardExpectedCounts {
+                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+            },
+            status: FrontendDashboardExpectedStatus {
+                ledgerCanisterId: ledger_id.trim().to_string(),
+                indexIntervalSeconds: status.index_interval_seconds.to_string(),
+                cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
+                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
+                lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
+            },
+            registered: FrontendDashboardExpectedRegistered {
+                total: registered.total.to_string(),
+                items: registered
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRegisteredItem {
+                        canisterId: item.canister_id.to_text(),
+                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
+                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
+                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
+                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
+                    })
+                    .collect(),
+            },
+            recent: FrontendDashboardExpectedRecent {
+                items: recent
+                    .items
+                    .iter()
+                    .map(|item| FrontendDashboardExpectedRecentItem {
+                        canisterId: item
+                            .canister_id
+                            .as_ref()
+                            .map(|principal| principal.to_text())
+                            .or_else(|| item.memo_text.clone())
+                            .unwrap_or_default(),
+                        txId: item.tx_id.to_string(),
+                        amountE8s: item.amount_e8s.to_string(),
+                        countsTowardFaucet: item.counts_toward_faucet,
+                    })
+                    .collect(),
+            },
+            errors: FrontendDashboardExpectedErrors { stake: None },
+        };
+
+        run_frontend_dashboard_local_fixture(&expected)?;
+        Ok(())
+    });
+
     Ok(())
 }
 
@@ -2850,6 +3003,7 @@ fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_dfx_disburser_scenarios(outcomes)?;
     run_dfx_faucet_scenarios(outcomes)?;
     run_dfx_historian_scenarios(outcomes)?;
+    run_dfx_frontend_scenarios(outcomes)?;
     Ok(())
 }
 
@@ -2904,7 +3058,7 @@ fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 }
 
 
-fn ensure_frontend_dashboard_node_modules() -> Result<()> {
+fn ensure_frontend_node_modules() -> Result<()> {
     let root = repo_root();
     let root_path = std::path::Path::new(&root);
     let marker = root_path.join("node_modules").join("@icp-sdk").join("core");
@@ -2912,7 +3066,7 @@ fn ensure_frontend_dashboard_node_modules() -> Result<()> {
     let package_lock = root_path.join("package-lock.json");
     let stamp = root_path
         .join("node_modules")
-        .join(".frontend-dashboard-deps-stamp");
+        .join(".frontend-deps-stamp");
 
     let package_json_contents = std::fs::read_to_string(&package_json)
         .with_context(|| format!("failed to read {}", package_json.display()))?;
@@ -2949,14 +3103,14 @@ fn ensure_frontend_dashboard_node_modules() -> Result<()> {
     };
 
     eprintln!(
-        "frontend dashboard tests: refreshing npm dependencies via npm {}",
+        "frontend tests: refreshing npm dependencies via npm {}",
         npm_args[0]
     );
     let output = Command::new("npm")
         .args(&npm_args)
         .current_dir(&root)
         .output()
-        .with_context(|| format!("failed to run npm {} for frontend dashboard tests", npm_args[0]))?;
+        .with_context(|| format!("failed to run npm {} for frontend tests", npm_args[0]))?;
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2966,7 +3120,7 @@ fn ensure_frontend_dashboard_node_modules() -> Result<()> {
         if !stderr.trim().is_empty() {
             eprintln!("{}", stderr.trim_end());
         }
-        bail!("npm {} failed for frontend dashboard tests", npm_args[0]);
+        bail!("npm {} failed for frontend tests", npm_args[0]);
     }
 
     if let Some(parent) = stamp.parent() {
@@ -2978,18 +3132,29 @@ fn ensure_frontend_dashboard_node_modules() -> Result<()> {
     Ok(())
 }
 
-fn run_frontend_historian_dashboard_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
-    ensure_frontend_dashboard_node_modules()?;
+fn cmd_frontend_setup() -> Result<()> {
+    ensure_frontend_node_modules()?;
+    eprintln!("frontend_setup complete");
+    Ok(())
+}
+
+fn run_frontend_unit_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    ensure_frontend_node_modules()?;
     let root = repo_root();
     run_cargo_test_suite(
         outcomes,
         "unit",
-        "frontend-historian",
+        "frontend",
         "npm",
-        &["run", "test:frontend-dashboard"],
+        &["run", "test:frontend-unit"],
         &root,
         &[],
     )
+}
+
+fn run_frontend_dfx_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    ensure_frontend_node_modules()?;
+    run_dfx_frontend_scenarios(outcomes)
 }
 
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
@@ -3068,14 +3233,12 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
             run_unit_disburser_suite(outcomes)?;
             run_unit_faucet_suite(outcomes)?;
             run_unit_historian_suite(outcomes)?;
-            run_frontend_historian_dashboard_suite(outcomes)?;
+            run_frontend_unit_suite(outcomes)?;
         }
         TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_unit_faucet_suite(outcomes)?,
-        TestComponent::Historian => {
-            run_unit_historian_suite(outcomes)?;
-            run_frontend_historian_dashboard_suite(outcomes)?;
-        }
+        TestComponent::Historian => run_unit_historian_suite(outcomes)?,
+        TestComponent::Frontend => run_frontend_unit_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_unit is not supported; use e2e_all"),
     }
     Ok(())
@@ -3087,6 +3250,7 @@ fn run_dfx_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompone
         TestComponent::Disburser => run_dfx_disburser_scenarios(outcomes)?,
         TestComponent::Faucet => run_dfx_faucet_scenarios(outcomes)?,
         TestComponent::Historian => run_dfx_historian_scenarios(outcomes)?,
+        TestComponent::Frontend => run_frontend_dfx_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_dfx_integration is not supported; use e2e_all"),
     }
     Ok(())
@@ -3103,6 +3267,7 @@ fn run_pocketic_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCo
         TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_pocketic_faucet_suite(outcomes)?,
         TestComponent::Historian => run_pocketic_historian_suite(outcomes)?,
+        TestComponent::Frontend => bail!("frontend_pocketic_integration is not supported; use frontend_all or frontend_dfx_integration"),
         TestComponent::E2e => run_e2e_suite(outcomes)?,
     }
     Ok(())
@@ -3134,6 +3299,10 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
                 run_dfx_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
             }
+            TestComponent::Frontend => {
+                run_unit_component(&mut outcomes, component)?;
+                run_dfx_component(&mut outcomes, component)?;
+            }
             TestComponent::E2e => run_e2e_suite(&mut outcomes)?,
         },
     }
@@ -3155,6 +3324,9 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
         (TestComponent::Historian, TestScope::DfxIntegration) => "one or more historian dfx integration scenarios failed",
         (TestComponent::Historian, TestScope::PocketicIntegration) => "the historian pocketic integration suite failed",
         (TestComponent::Historian, TestScope::All) => "one or more historian test suites failed",
+        (TestComponent::Frontend, TestScope::Unit) => "the frontend unit test suite failed",
+        (TestComponent::Frontend, TestScope::DfxIntegration) => "one or more frontend dfx integration scenarios failed",
+        (TestComponent::Frontend, TestScope::All) => "one or more frontend test suites failed",
         (TestComponent::E2e, TestScope::PocketicIntegration) | (TestComponent::E2e, TestScope::All) => "the e2e suite failed",
         _ => "the selected xtask command failed",
     };
@@ -3176,6 +3348,9 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
         (TestComponent::Historian, TestScope::DfxIntegration) => "historian_dfx_integration complete",
         (TestComponent::Historian, TestScope::PocketicIntegration) => "historian_pocketic_integration complete",
         (TestComponent::Historian, TestScope::All) => "historian_all complete",
+        (TestComponent::Frontend, TestScope::Unit) => "frontend_unit complete",
+        (TestComponent::Frontend, TestScope::DfxIntegration) => "frontend_dfx_integration complete",
+        (TestComponent::Frontend, TestScope::All) => "frontend_all complete",
         (TestComponent::E2e, TestScope::PocketicIntegration) => "e2e_pocketic_integration complete",
         (TestComponent::E2e, TestScope::All) => "e2e_all complete",
         _ => "xtask command complete",
@@ -3193,6 +3368,7 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
         (TestComponent::Disburser, TestScope::DfxIntegration | TestScope::All) => cmd_setup_disburser_dfx(),
         (TestComponent::Faucet, TestScope::DfxIntegration | TestScope::All) => cmd_setup_faucet_dfx(),
         (TestComponent::Historian, TestScope::DfxIntegration | TestScope::All) => cmd_setup_historian_dfx(),
+        (TestComponent::Frontend, TestScope::DfxIntegration | TestScope::All) => cmd_setup_historian_dfx(),
         _ => cmd_setup(),
     };
     setup_res?;
@@ -3444,6 +3620,7 @@ fn main() -> Result<()> {
     match cmd.as_str() {
         "setup" => cmd_setup(),
         "teardown" => cmd_teardown(),
+        "frontend_setup" => cmd_frontend_setup(),
         _ => {
             eprintln!(
                 "Usage: cargo run -p xtask -- <command>
@@ -3451,6 +3628,7 @@ fn main() -> Result<()> {
                  Utility commands:
                  - setup
                  - teardown
+                 - frontend_setup
 
                  Scoped commands:
                  - disburser_unit
@@ -3465,6 +3643,9 @@ fn main() -> Result<()> {
                  - historian_dfx_integration
                  - historian_pocketic_integration
                  - historian_all
+                 - frontend_unit
+                 - frontend_dfx_integration
+                 - frontend_all
                  - e2e_all
                  - e2e_pocketic_integration
                  - test_unit

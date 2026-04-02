@@ -223,10 +223,20 @@ cargo run -p xtask -- test_pocketic_integration
 cargo run -p xtask -- test_all
 ```
 
-Browser-only frontend tests live in npm scripts rather than `xtask`:
+Frontend-focused browser/data-loader tests are also available through `xtask` now:
 
 ```bash
-npm run test:frontend-dashboard
+cargo run -p xtask -- frontend_setup
+cargo run -p xtask -- frontend_unit
+cargo run -p xtask -- frontend_dfx_integration
+cargo run -p xtask -- frontend_all
+```
+
+The underlying npm entry points still work when you want to run just the Node tests directly:
+
+```bash
+npm run setup:frontend
+npm run test:frontend-unit
 npm run test:frontend-dashboard-local
 ```
 
