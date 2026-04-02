@@ -399,6 +399,10 @@ impl FaucetEnv {
         update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_expected_first_staking_tx_id", v)
     }
 
+    fn set_trap_after_successful_transfers(&self, n: Option<u32>) -> Result<()> {
+        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_trap_after_successful_transfers", n)
+    }
+
     fn rescue_tick(&self) -> Result<()> {
         update_noargs::<()>(&self.pic, self.faucet, Principal::anonymous(), "debug_rescue_tick")?;
         tick_n(&self.pic, 10);
@@ -697,6 +701,117 @@ fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_w
     let summary = env.summary()?;
     if summary.topped_up_count != 2 {
         bail!("expected two completed beneficiary top-ups after resume, got {}", summary.topped_up_count);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_for_weekly_interval() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
+    })?;
+    let first = Principal::from_text("aaaaa-aa")?;
+    let second = Principal::from_text("2vxsx-fae")?;
+
+    env.credit_staking(800_000_000)?;
+    env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
+    env.append_repeated_transfer(499, 1_000_000, Some(first.to_text().into_bytes()))?;
+    env.append_transfer(101_000_000, Some(second.to_text().into_bytes()))?;
+    env.credit_payout(120_000_000)?;
+    env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
+        DebugIndexGetBehavior::Ok,
+    ])?;
+
+    env.main_tick()?;
+
+    let st_before = env.state()?;
+    if !st_before.active_payout_job_present || st_before.last_summary_present {
+        bail!("expected partial progress with an active job cursor and no final summary before upgrade");
+    }
+    env.upgrade()?;
+
+    let st_after_upgrade = env.state()?;
+    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
+        bail!("expected active payout job to remain persisted immediately after upgrade before the one-shot resume tick fires");
+    }
+
+    env.advance_time_and_tick(1, 20);
+
+    let notifications_after = env.notifications()?;
+    if notifications_after.iter().filter(|n| n.canister_id == first).count() != 1 {
+        bail!("expected first beneficiary not to be replayed by the automatic post-upgrade resume tick");
+    }
+    if notifications_after.iter().filter(|n| n.canister_id == second).count() != 1 {
+        bail!("expected second beneficiary to complete exactly once via the automatic post-upgrade resume tick");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 2 {
+        bail!("expected automatic post-upgrade resume to finish the active job without waiting for the weekly interval, got {} completed top-ups", summary.topped_up_count);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_transfer() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
+        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
+    })?;
+    let target = Principal::from_text("aaaaa-aa")?;
+
+    env.credit_payout(80_000_000)?;
+    env.credit_staking(80_000_000)?;
+    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+
+    env.set_trap_after_successful_transfers(Some(1))?;
+    env.main_tick()?;
+
+    let st_mid = env.state()?;
+    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
+        bail!("expected injected interruption to leave an active payout job without final summary before upgrade");
+    }
+    let transfers_mid = env.ledger_transfers()?;
+    if transfers_mid.len() != 1 {
+        bail!("expected exactly one beneficiary ledger transfer to land before upgrade, got {}", transfers_mid.len());
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected interruption before notify_top_up to leave no CMC notifications before upgrade");
+    }
+
+    env.upgrade()?;
+
+    let st_after_upgrade = env.state()?;
+    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
+        bail!("expected interrupted payout job to remain persisted immediately after upgrade before auto-resume fires");
+    }
+
+    env.advance_time_and_tick(1, 20);
+
+    let transfers_after = env.ledger_transfers()?;
+    if transfers_after.len() != 1 {
+        bail!("expected post-upgrade recovery to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
+    }
+    let notes = env.notifications()?;
+    if notes.len() != 1 || notes[0].canister_id != target {
+        bail!("expected exactly one beneficiary notification after post-upgrade recovery, got {notes:?}");
+    }
+
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 79_990_000 || summary.failed_topups != 0 {
+        bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
+    }
+
+    let st_done = env.state()?;
+    if st_done.active_payout_job_present || !st_done.last_summary_present {
+        bail!("expected post-upgrade recovery to finalize the interrupted payout job");
     }
 
     Ok(())

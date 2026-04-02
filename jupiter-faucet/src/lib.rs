@@ -125,6 +125,7 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
+    crate::scheduler::schedule_immediate_resume_if_needed();
 }
 
 #[cfg(feature = "debug_api")]
@@ -286,7 +287,11 @@ fn debug_clear_forced_rescue() {
     });
 }
 
-
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
+    crate::scheduler::debug_set_trap_after_successful_transfers(n);
+}
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]

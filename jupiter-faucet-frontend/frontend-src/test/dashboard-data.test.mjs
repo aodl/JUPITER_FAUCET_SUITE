@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Principal } from '@icp-sdk/core/principal';
+import { HttpAgent } from '@icp-sdk/core/agent';
 
 import {
   accountIdentifierHex,
   loadDashboardData,
+  resetAgentCacheForTests,
   summaryMetricsUnavailable,
   REGISTERED_SUMMARY_PAGE_SIZE,
   RECENT_CONTRIBUTION_LIMIT,
@@ -206,6 +208,106 @@ test('loadDashboardData flags an outdated historian interface when every public 
   assert.equal(data.historianLikelyOutdated, true);
   assert.equal(data.stakeE8s, null);
   assert.equal(summaryMetricsUnavailable(data), true);
+});
+
+
+test('loadDashboardData enables query signature verification when it creates an agent', async () => {
+  resetAgentCacheForTests();
+  const originalCreate = HttpAgent.create;
+  const seen = [];
+  try {
+    HttpAgent.create = async (options) => {
+      seen.push(options);
+      return {
+        async fetchRootKey() {},
+      };
+    };
+
+    const data = await loadDashboardData({
+      historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+      host: 'https://icp0.io',
+      historianActorFactory: (_canisterId, { agent }) => {
+        assert.equal(typeof agent.fetchRootKey, 'function');
+        return {
+          async get_public_counts() { return historianCounts(); },
+          async get_public_status() { return historianStatus(); },
+          async list_registered_canister_summaries() { return registeredResponse(); },
+          async list_recent_contributions() { return recentResponse(); },
+          async list_recent_burns() { return { items: [] }; },
+        };
+      },
+      ledgerActorFactory: () => ({
+        async account_balance() { return { e8s: 1n }; },
+        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+      }),
+    });
+
+    assert.equal(data.stakeE8s, 1n);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].host, 'https://icp0.io');
+    assert.equal(seen[0].verifyQuerySignatures, true);
+  } finally {
+    HttpAgent.create = originalCreate;
+    resetAgentCacheForTests();
+  }
+});
+
+test('loadDashboardData evicts failed agent initialization from cache so the next attempt can retry', async () => {
+  resetAgentCacheForTests();
+  const originalCreate = HttpAgent.create;
+  let attempts = 0;
+  try {
+    HttpAgent.create = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('transient agent creation failure');
+      }
+      return {
+        async fetchRootKey() {},
+      };
+    };
+
+    await assert.rejects(
+      loadDashboardData({
+        historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+        host: 'https://icp0.io',
+        historianActorFactory: () => ({
+          async get_public_counts() { return historianCounts(); },
+          async get_public_status() { return historianStatus(); },
+          async list_registered_canister_summaries() { return registeredResponse(); },
+          async list_recent_contributions() { return recentResponse(); },
+          async list_recent_burns() { return { items: [] }; },
+        }),
+        ledgerActorFactory: () => ({
+          async account_balance() { return { e8s: 1n }; },
+          async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+        }),
+      }),
+      /transient agent creation failure/,
+    );
+
+    const data = await loadDashboardData({
+      historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+      host: 'https://icp0.io',
+      historianActorFactory: () => ({
+        async get_public_counts() { return historianCounts(); },
+        async get_public_status() { return historianStatus(); },
+        async list_registered_canister_summaries() { return registeredResponse(); },
+        async list_recent_contributions() { return recentResponse(); },
+        async list_recent_burns() { return { items: [] }; },
+      }),
+      ledgerActorFactory: () => ({
+        async account_balance() { return { e8s: 2n }; },
+        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+      }),
+    });
+
+    assert.equal(attempts, 2);
+    assert.equal(data.stakeE8s, 2n);
+  } finally {
+    HttpAgent.create = originalCreate;
+    resetAgentCacheForTests();
+  }
 });
 
 test('loadDashboardData preserves zero values as loaded metrics instead of treating them as unavailable', async () => {

@@ -10,7 +10,7 @@ use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
 use crate::state::{
-    CanisterMeta, CanisterSource, Config, ContributionSample, CyclesSample,
+    CanisterMeta, CanisterSource, Config, ContributionSample, CyclesSample, RecentBurn,
     RecentContribution, StableState, State,
 };
 
@@ -332,6 +332,32 @@ fn fallback_recent_contributions_state(st: &State) -> Vec<RecentContribution> {
     items
 }
 
+fn fallback_recent_burns_state(st: &State) -> Vec<RecentBurn> {
+    let mut items: Vec<_> = st
+        .per_canister_meta
+        .iter()
+        .filter_map(|(canister_id, meta)| {
+            let tx_id = meta.last_burn_tx_id?;
+            if meta.burned_e8s == 0 {
+                return None;
+            }
+            Some(RecentBurn {
+                canister_id: *canister_id,
+                tx_id,
+                timestamp_nanos: None,
+                amount_e8s: meta.burned_e8s,
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
+        let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
+        b_key.cmp(&a_key)
+    });
+    items.truncate(250);
+    items
+}
+
 fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> {
     let mut items: Vec<_> = st
         .contribution_history
@@ -387,6 +413,9 @@ fn initialize_derived_state_if_missing(st: &mut State) {
     }
     if st.recent_invalid_contributions.is_none() {
         st.recent_invalid_contributions = Some(Vec::new());
+    }
+    if st.recent_burns.is_none() {
+        st.recent_burns = Some(fallback_recent_burns_state(st));
     }
     if st.last_index_run_ts.is_none() {
         st.last_index_run_ts = Some(st.last_main_run_ts);
@@ -890,6 +919,30 @@ mod tests {
             recent_burns: None,
             last_index_run_ts: None,
         }
+    }
+
+    #[test]
+    fn initialize_derived_state_reconstructs_recent_burns_from_legacy_meta() {
+        let canister = principal("aaaaa-aa");
+        let mut st = base_state();
+        st.per_canister_meta.insert(
+            canister,
+            CanisterMeta {
+                last_burn_tx_id: Some(77),
+                burned_e8s: 123_456_789,
+                ..CanisterMeta::default()
+            },
+        );
+
+        initialize_derived_state_if_missing(&mut st);
+
+        assert_eq!(st.icp_burned_e8s, Some(123_456_789));
+        let burns = st.recent_burns.clone().expect("recent burns should be reconstructed");
+        assert_eq!(burns.len(), 1);
+        assert_eq!(burns[0].canister_id, canister);
+        assert_eq!(burns[0].tx_id, 77);
+        assert_eq!(burns[0].amount_e8s, 123_456_789);
+        assert_eq!(burns[0].timestamp_nanos, None);
     }
 
     #[test]

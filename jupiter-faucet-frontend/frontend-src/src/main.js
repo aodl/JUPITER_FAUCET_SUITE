@@ -22,7 +22,7 @@ const tableState = {
 };
 
 const neuronState = {
-  requested: false,
+  inFlight: false,
   loaded: false,
   value: null,
   error: null,
@@ -525,7 +525,7 @@ function renderLandingPanes(data, neuron = null) {
 async function loadNeuronDetails({ host, local }) {
   const agent = await HttpAgent.create({
     host,
-    verifyQuerySignatures: false,
+    verifyQuerySignatures: true,
   });
   if (local) {
     try {
@@ -548,8 +548,8 @@ async function loadNeuronDetails({ host, local }) {
 }
 
 async function ensureNeuronDetailsLoaded(data) {
-  if (neuronState.requested) return;
-  neuronState.requested = true;
+  if (neuronState.inFlight || neuronState.loaded) return;
+  neuronState.inFlight = true;
   renderStakePane(data, null, { neuronLoading: true });
   renderStakeNeuronStatus({ loading: true });
   try {
@@ -561,11 +561,15 @@ async function ensureNeuronDetailsLoaded(data) {
     renderStakePane(data, neuron, { neuronError: neuronState.error });
     renderStakeNeuronStatus({ error: neuronState.error });
   } catch (error) {
+    neuronState.loaded = false;
+    neuronState.value = null;
     neuronState.error = normalizeError(error);
     window.__JUPITER_NEURON_ERROR__ = neuronState.error;
     renderStakePane(data, null, { neuronError: neuronState.error });
     renderStakeNeuronStatus({ error: neuronState.error });
     console.info('Public neuron details unavailable; core dashboard metrics load independently.', error);
+  } finally {
+    neuronState.inFlight = false;
   }
 }
 

@@ -34,6 +34,18 @@ pub struct PendingNotification {
     pub next_start: Option<u64>,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum PendingTransferPhase {
+    AwaitingTransfer,
+    TransferAccepted,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PendingTransfer {
+    pub notification: PendingNotification,
+    pub created_at_time_nanos: u64,
+    pub phase: PendingTransferPhase,
+}
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum ForcedRescueReason {
@@ -76,6 +88,8 @@ pub struct ActivePayoutJob {
     pub topped_up_max_e8s: Option<u64>,
     pub failed_topups: u64,
     pub remainder_to_self_e8s: u64,
+    #[serde(default)]
+    pub pending_transfer: Option<PendingTransfer>,
     pub next_created_at_time_nanos: u64,
     pub observed_oldest_tx_id: Option<u64>,
     pub observed_latest_tx_id: Option<u64>,
@@ -101,6 +115,7 @@ impl ActivePayoutJob {
             topped_up_max_e8s: None,
             failed_topups: 0,
             remainder_to_self_e8s: 0,
+            pending_transfer: None,
             next_created_at_time_nanos: created_at_time_nanos,
             observed_oldest_tx_id: None,
             observed_latest_tx_id: None,

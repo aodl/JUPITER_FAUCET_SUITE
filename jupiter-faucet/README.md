@@ -163,7 +163,8 @@ Default timers are:
 - `rescue_interval_seconds = 1 day`
 - index page size = `500`
 
-Each timer interval is clamped to at least 60 seconds by the runtime code. There is no separate retry timer: retries are attempted inline during the same payout pass.
+Each interval timer is clamped to at least 60 seconds by the runtime code. On `post_upgrade`, if an `ActivePayoutJob` already exists, the faucet also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the regular 7-day cadence. There is no separate retry timer: retries are attempted inline during the same payout pass.
+The PocketIC integration suite includes an end-to-end upgrade test that interrupts a live payout after the ledger transfer lands but before the faucet persists acceptance/notify progress, then upgrades and verifies duplicate-proof recovery to a single final notification.
 
 ### Main tick sequence
 
@@ -196,8 +197,9 @@ An active payout job persists:
 - the scan cursor (`next_start`)
 - aggregate counters used for the eventual summary
 - CMC attempt / success counters used by rescue heuristics
+- the currently in-flight top-up phase (`AwaitingTransfer` vs `TransferAccepted`) together with the original `created_at_time`, so an upgrade can resume safely at the ledger or notify boundary
 
-The runtime does **not** persist deferred retry work.
+The runtime still does **not** buffer an unbounded deferred retry queue; it only persists the single in-flight transfer/notify phase for the active job.
 
 ### What is retried
 

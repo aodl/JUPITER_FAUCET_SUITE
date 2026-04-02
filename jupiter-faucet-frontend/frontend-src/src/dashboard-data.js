@@ -91,14 +91,18 @@ export function accountIdentifierHex(account) {
   return bytesToHex(accountIdentifierBytes(account));
 }
 
+export function resetAgentCacheForTests() {
+  agentPromises.clear();
+}
+
 async function getOrCreateAgent({ host, local, agent }) {
   if (agent) return agent;
   const key = `${host}::${local ? 'local' : 'remote'}`;
   if (!agentPromises.has(key)) {
-    agentPromises.set(key, (async () => {
+    const agentPromise = (async () => {
       const httpAgent = await HttpAgent.create({
         host,
-        verifyQuerySignatures: false,
+        verifyQuerySignatures: true,
       });
       if (local) {
         try {
@@ -108,7 +112,13 @@ async function getOrCreateAgent({ host, local, agent }) {
         }
       }
       return httpAgent;
-    })());
+    })();
+    agentPromise.catch(() => {
+      if (agentPromises.get(key) === agentPromise) {
+        agentPromises.delete(key);
+      }
+    });
+    agentPromises.set(key, agentPromise);
   }
   return agentPromises.get(key);
 }
