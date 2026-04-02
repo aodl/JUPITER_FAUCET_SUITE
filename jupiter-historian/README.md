@@ -54,7 +54,8 @@ The historian also indexes ICP burns by scanning the CMC deposit accounts for:
 
 For each burn target it tracks:
 
-- the last indexed burn transaction ID
+- the last scanned deposit-account transaction ID (used as the pagination cursor)
+- the last actual burn transaction ID
 - cumulative burned ICP in e8s
 - recent burn items for the public dashboard
 

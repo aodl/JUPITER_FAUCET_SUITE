@@ -224,7 +224,7 @@ This keeps memory bounded and avoids long-lived paused payout jobs. It also mean
 
 ### Logging policy
 
-To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups`, not one log line per failed beneficiary top-up attempt.
+To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups`, not one log line per failed beneficiary top-up attempt. The `failed_topups` counter is beneficiary-only; a failed remainder-to-self cleanup transfer does not increment it.
 
 ## Rescue and blackhole policy
 
@@ -264,7 +264,7 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 - `IndexLatestUnreadable`
   - if the staking-account balance changes and the canister cannot confirm the latest staking-account tx ID, twice in a row
 - `CmcZeroSuccessRuns`
-  - if two payout jobs in a row make CMC attempts but record zero successful top-up notifications
+  - if two completed payout jobs in a row make beneficiary CMC notify attempts but record zero successful beneficiary top-up notifications
 
 These latches are persisted and can be cleared via upgrade args when appropriate.
 

@@ -259,7 +259,11 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
     for canister_id in targets {
         let deposit_account = logic::cmc_deposit_account(cmc_id, canister_id);
         let deposit_account_id = account_identifier_text(&deposit_account);
-        let mut cursor = state::with_state(|st| st.per_canister_meta.get(&canister_id).and_then(|m| m.last_burn_tx_id));
+        let mut cursor = state::with_state(|st| {
+            st.per_canister_meta
+                .get(&canister_id)
+                .and_then(|m| m.last_burn_scan_tx_id.or(m.last_burn_tx_id))
+        });
         for _ in 0..max_pages_per_tick {
             let page = index
                 .get_account_identifier_transactions(deposit_account_id.clone(), cursor, PAGE_SIZE)
@@ -270,6 +274,7 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
             }
 
             let mut last_seen = cursor;
+            let mut last_actual_burn_tx_id = None;
             let mut added = 0u64;
             let mut recent_burns = Vec::new();
             for tx in page.transactions.iter() {
@@ -281,6 +286,7 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
                     IndexOperation::Burn { amount, .. } => {
                         let amount_e8s = amount.e8s();
                         added = added.saturating_add(amount_e8s);
+                        last_actual_burn_tx_id = Some(tx.id);
                         recent_burns.push(RecentBurn {
                             canister_id,
                             tx_id: tx.id,
@@ -295,7 +301,10 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
             state::with_state_mut(|st| {
                 let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                 if let Some(last_seen) = last_seen {
-                    meta.last_burn_tx_id = Some(last_seen);
+                    meta.last_burn_scan_tx_id = Some(last_seen);
+                }
+                if let Some(last_actual_burn_tx_id) = last_actual_burn_tx_id {
+                    meta.last_burn_tx_id = Some(last_actual_burn_tx_id);
                 }
                 if added > 0 {
                     meta.burned_e8s = meta.burned_e8s.saturating_add(added);
@@ -749,7 +758,8 @@ mod tests {
         state::with_state(|st| {
             assert_eq!(st.icp_burned_e8s, Some(0));
             assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(0));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(77));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), None);
+            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_scan_tx_id), Some(77));
         });
     }
 
@@ -787,8 +797,68 @@ mod tests {
             assert_eq!(st.icp_burned_e8s, Some(150));
             assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(150));
             assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(78));
+            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_scan_tx_id), Some(78));
             assert_eq!(st.recent_burns.as_ref().map(|items| items.len()), Some(1));
             assert_eq!(st.recent_burns.as_ref().unwrap()[0].tx_id, 78);
+        });
+    }
+
+    #[test]
+    fn burn_indexing_uses_scan_cursor_without_promoting_non_burns_to_last_burn() {
+        let _staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.canister_sources.insert(
+                beneficiary,
+                crate::logic::merge_sources(None, CanisterSource::MemoContribution),
+            );
+            st.distinct_canisters.insert(beneficiary);
+        });
+        let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
+        let mock = MockIndexClient::new(vec![
+            // first run: faucet target
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![],
+                oldest_tx_id: None,
+            },
+            // first run: beneficiary target sees a transfer into the CMC deposit account
+            GetAccountIdentifierTransactionsResponse {
+                balance: 150,
+                transactions: vec![transfer_to_account_tx(77, &cmc_account_id, 150, 123_000_000_000)],
+                oldest_tx_id: Some(77),
+            },
+            // second run: faucet target
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![],
+                oldest_tx_id: None,
+            },
+            // second run: beneficiary target resumes from the scan cursor and sees the burn
+            GetAccountIdentifierTransactionsResponse {
+                balance: 300,
+                transactions: vec![burn_tx(78, 150, 124_000_000_000)],
+                oldest_tx_id: Some(77),
+            },
+        ]);
+
+        block_on(process_burn_indexing(&mock)).unwrap();
+        block_on(process_burn_indexing(&mock)).unwrap();
+
+        let calls = mock.calls();
+        let beneficiary_starts: Vec<_> = calls
+            .iter()
+            .filter(|(account_id, _, _)| account_id == &cmc_account_id)
+            .map(|(_, start, _)| *start)
+            .collect();
+        assert_eq!(beneficiary_starts, vec![None, Some(77)], "beneficiary scans should resume from the last scanned tx without treating it as the last actual burn");
+
+        state::with_state(|st| {
+            let meta = st.per_canister_meta.get(&beneficiary).expect("beneficiary meta should exist");
+            assert_eq!(meta.last_burn_tx_id, Some(78));
+            assert_eq!(meta.last_burn_scan_tx_id, Some(78));
+            assert_eq!(meta.burned_e8s, 150);
+            assert_eq!(st.icp_burned_e8s, Some(150));
         });
     }
 

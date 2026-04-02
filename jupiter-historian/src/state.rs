@@ -94,6 +94,8 @@ pub struct CanisterMeta {
     #[serde(default)]
     pub last_burn_tx_id: Option<u64>,
     #[serde(default)]
+    pub last_burn_scan_tx_id: Option<u64>,
+    #[serde(default)]
     pub burned_e8s: u64,
 }
 
@@ -134,6 +136,8 @@ pub struct StableCanisterMeta {
     pub last_cycles_probe_result: Option<CyclesProbeResult>,
     #[serde(default)]
     pub last_burn_tx_id: Option<u64>,
+    #[serde(default)]
+    pub last_burn_scan_tx_id: Option<u64>,
     #[serde(default)]
     pub burned_e8s: Option<u64>,
 }
@@ -274,6 +278,7 @@ impl From<CanisterMeta> for StableCanisterMeta {
             last_cycles_probe_ts: value.last_cycles_probe_ts,
             last_cycles_probe_result: value.last_cycles_probe_result,
             last_burn_tx_id: value.last_burn_tx_id,
+            last_burn_scan_tx_id: value.last_burn_scan_tx_id,
             burned_e8s: Some(value.burned_e8s),
         }
     }
@@ -287,6 +292,7 @@ impl From<StableCanisterMeta> for CanisterMeta {
             last_cycles_probe_ts: value.last_cycles_probe_ts,
             last_cycles_probe_result: value.last_cycles_probe_result,
             last_burn_tx_id: value.last_burn_tx_id,
+            last_burn_scan_tx_id: value.last_burn_scan_tx_id.or(value.last_burn_tx_id),
             burned_e8s: value.burned_e8s.unwrap_or(0),
         }
     }

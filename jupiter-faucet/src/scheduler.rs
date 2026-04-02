@@ -228,8 +228,23 @@ fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
         created_at_time_nanos
     })
 }
-fn increment_cmc_attempts() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.cmc_attempt_count = Some(job.cmc_attempt_count.unwrap_or(0).saturating_add(1)); }); }
-fn increment_cmc_successes() { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.cmc_success_count = Some(job.cmc_success_count.unwrap_or(0).saturating_add(1)); }); }
+fn increment_cmc_attempts(pending: &PendingNotification) {
+    if pending.kind != TransferKind::Beneficiary {
+        return;
+    }
+    state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
+        job.cmc_attempt_count = Some(job.cmc_attempt_count.unwrap_or(0).saturating_add(1));
+    });
+}
+
+fn increment_cmc_successes(pending: &PendingNotification) {
+    if pending.kind != TransferKind::Beneficiary {
+        return;
+    }
+    state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
+        job.cmc_success_count = Some(job.cmc_success_count.unwrap_or(0).saturating_add(1));
+    });
+}
 
 fn current_pending_transfer() -> Option<PendingTransfer> {
     state::with_state(|st| st.active_payout_job.as_ref().and_then(|job| job.pending_transfer.clone()))
@@ -262,7 +277,9 @@ fn mark_pending_transfer_accepted(block_index: u64) -> Option<PendingNotificatio
 fn clear_pending_transfer_failed() {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
-            job.failed_topups = job.failed_topups.saturating_add(1);
+            if matches!(job.pending_transfer.as_ref().map(|pending| &pending.notification.kind), Some(TransferKind::Beneficiary)) {
+                job.failed_topups = job.failed_topups.saturating_add(1);
+            }
             job.pending_transfer = None;
         }
     });
@@ -304,7 +321,7 @@ async fn transfer_once(ledger: &impl LedgerClient, arg: TransferArg) -> Transfer
 }
 
 async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> bool {
-    increment_cmc_attempts();
+    increment_cmc_attempts(pending);
     cmc.notify_top_up(pending.beneficiary, pending.block_index).await.is_ok()
 }
 fn record_successful_notification(now_secs: u64, pending: &PendingNotification) {
@@ -315,7 +332,7 @@ fn record_successful_notification(now_secs: u64, pending: &PendingNotification) 
             job.pending_transfer = None;
         }
     });
-    increment_cmc_successes();
+    increment_cmc_successes(pending);
 }
 fn finalize_completed_job() {
     let summary = state::with_state_mut(|st| {
@@ -352,12 +369,18 @@ async fn drive_pending_transfer(
     cmc: &impl CmcClient,
     cmc_id: Principal,
     fee_e8s: u64,
+    now_nanos: u64,
     now_secs: u64,
 ) -> bool {
     let Some(staged) = current_pending_transfer() else { return true; };
 
     let accepted = match staged.phase {
         PendingTransferPhase::AwaitingTransfer => {
+            if !created_at_time_is_valid_for_ledger(staged.created_at_time_nanos, now_nanos) {
+                clear_pending_transfer_failed();
+                return true;
+            }
+
             let to = deposit_account_for_pending(cmc_id, &staged.notification);
             let first_arg = transfer_arg(
                 to.clone(),
@@ -420,7 +443,7 @@ async fn send_and_notify(
 ) -> bool {
     let created_at_time_nanos = allocate_created_at_time_nanos(now_nanos);
     stage_pending_transfer(pending, created_at_time_nanos);
-    drive_pending_transfer(ledger, cmc, cmc_id, fee_e8s, now_secs).await
+    drive_pending_transfer(ledger, cmc, cmc_id, fee_e8s, now_nanos, now_secs).await
 }
 
 fn ensure_active_job(now_nanos: u64, fee_e8s: u64, pot_start_e8s: u64, denom_e8s: u64) {
@@ -586,25 +609,7 @@ fn apply_cmc_run_result(st: &mut state::State, attempts: u64, successes: u64) {
 fn apply_job_health_observations(st: &mut state::State, job: &ActivePayoutJob) {
     apply_anchor_observation(st, job.observed_oldest_tx_id);
     apply_latest_observation(st, job.denom_staking_balance_e8s, LatestScan::Read(job.observed_latest_tx_id));
-}
-
-
-fn note_cmc_run_result(start_attempts: u64, start_successes: u64, end_attempts: u64, end_successes: u64) {
-    let attempts = end_attempts.saturating_sub(start_attempts);
-    let successes = end_successes.saturating_sub(start_successes);
-    if attempts == 0 {
-        return;
-    }
-    state::with_state_mut(|st| apply_cmc_run_result(st, attempts, successes));
-}
-
-fn current_job_cmc_counts() -> (u64, u64) {
-    state::with_state(|st| {
-        st.active_payout_job
-            .as_ref()
-            .map(|job| (job.cmc_attempt_count.unwrap_or(0), job.cmc_success_count.unwrap_or(0)))
-            .unwrap_or((0, 0))
-    })
+    apply_cmc_run_result(st, job.cmc_attempt_count.unwrap_or(0), job.cmc_success_count.unwrap_or(0));
 }
 
 fn maybe_latch_bootstrap_rescue(now_secs: u64) {
@@ -633,19 +638,11 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
         ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s);
     }
 
-    let start_cmc = state::with_state(|st| {
-        st.active_payout_job
-            .as_ref()
-            .map(|job| (job.cmc_attempt_count.unwrap_or(0), job.cmc_success_count.unwrap_or(0)))
-            .unwrap_or((0, 0))
-    });
-
-
     loop {
         let job = state::with_state(|st| st.active_payout_job.clone());
         let Some(job) = job else { maybe_latch_bootstrap_rescue(now_secs); return true; };
         if job.pending_transfer.is_some() {
-            if !drive_pending_transfer(ledger, cmc, cfg.cmc_canister_id, job.fee_e8s, now_secs).await {
+            if !drive_pending_transfer(ledger, cmc, cfg.cmc_canister_id, job.fee_e8s, now_nanos, now_secs).await {
                 return true;
             }
             continue;
@@ -659,8 +656,6 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
                     return true;
                 }
             }
-            let (end_attempts, end_successes) = current_job_cmc_counts();
-            note_cmc_run_result(start_cmc.0, start_cmc.1, end_attempts, end_successes);
             finalize_completed_job();
             maybe_latch_bootstrap_rescue(now_secs);
             return true;
@@ -668,11 +663,7 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
 
         let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
             Ok(v) => v,
-            Err(_) => {
-                let (end_attempts, end_successes) = current_job_cmc_counts();
-                note_cmc_run_result(start_cmc.0, start_cmc.1, end_attempts, end_successes);
-                return false;
-            }
+            Err(_) => return false,
         };
         note_index_page(&resp);
         if resp.transactions.is_empty() {
@@ -1238,8 +1229,122 @@ mod tests {
         assert!(state::with_state(|st| st.active_payout_job.is_none()));
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized after retry exhaustion");
         assert_eq!(summary.remainder_to_self_e8s, 0);
-        assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn completed_job_counts_beneficiary_zero_success_once_even_if_interrupted_across_ticks() {
+        let now_secs = 4_050_u64;
+        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let cfg = test_config();
+        let mut st = state::State::new(cfg.clone(), now_secs);
+        let mut job = ActivePayoutJob::new(40, 10_000, 10_000, 1, now_secs * 1_000_000_000);
+        job.pending_transfer = Some(PendingTransfer {
+            notification: PendingNotification {
+                kind: TransferKind::Beneficiary,
+                beneficiary,
+                gross_share_e8s: 10_000,
+                amount_e8s: 0,
+                block_index: 99,
+                next_start: Some(99),
+            },
+            created_at_time_nanos: now_secs * 1_000_000_000,
+            phase: PendingTransferPhase::TransferAccepted,
+        });
+        st.active_payout_job = Some(job);
+        state::set_state(st);
+
+        let ledger = ScriptedLedger::new(vec![]);
+        let first_tick_cmc = ScriptedCmc::new(vec![CmcStep::Err, CmcStep::Err]);
+        let index = ScriptedIndex::new(vec![IndexResponseStep::Err]);
+
+        assert!(!run_ready(process_payout(&ledger, &index, &first_tick_cmc, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 0, "accepted pending notifications should not resend ledger transfers");
+        assert_eq!(first_tick_cmc.call_count(), 2);
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_cmc_zero_success_runs, Some(0));
+            let job = st.active_payout_job.as_ref().expect("job should remain active until it completes");
+            assert!(job.pending_transfer.is_none());
+            assert_eq!(job.cmc_attempt_count, Some(2));
+            assert_eq!(job.cmc_success_count, Some(0));
+        });
+
+        state::with_state_mut(|st| st.active_payout_job.as_mut().expect("job should still exist").scan_complete = true);
+        let second_tick_cmc = ScriptedCmc::new(vec![]);
+        assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &second_tick_cmc, now_secs * 1_000_000_000, now_secs)));
+
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_cmc_zero_success_runs, Some(1));
+            assert!(st.active_payout_job.is_none());
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+    }
+
+    #[test]
+    fn remainder_success_does_not_reset_beneficiary_zero_success_streak() {
+        let now_secs = 4_060_u64;
+        let cfg = test_config();
+        let mut st = state::State::new(cfg.clone(), now_secs);
+        st.consecutive_cmc_zero_success_runs = Some(1);
+        let mut job = ActivePayoutJob::new(41, 10_000, 80_000_000, 1, now_secs * 1_000_000_000);
+        job.scan_complete = true;
+        job.cmc_attempt_count = Some(2);
+        job.cmc_success_count = Some(0);
+        st.active_payout_job = Some(job);
+        state::set_state(st);
+
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(123)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &cmc, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert_eq!(cmc.call_count(), 1);
+
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_cmc_zero_success_runs, Some(2));
+            assert_eq!(st.forced_rescue_reason, Some(ForcedRescueReason::CmcZeroSuccessRuns));
+            let summary = st.last_summary.as_ref().expect("summary should be finalized");
+            assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
+            assert_eq!(summary.failed_topups, 0);
+        });
+    }
+
+    #[test]
+    fn stale_pending_transfer_fails_without_reusing_an_expired_created_at_time() {
+        let now_secs = 3 * 24 * 60 * 60;
+        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let stale_created_at_nanos = (now_secs - 2 * 24 * 60 * 60) * 1_000_000_000;
+        let cfg = test_config();
+        let mut st = state::State::new(cfg.clone(), now_secs);
+        let mut job = ActivePayoutJob::new(42, 10_000, 80_000_000, 1, stale_created_at_nanos);
+        job.pending_transfer = Some(PendingTransfer {
+            notification: PendingNotification {
+                kind: TransferKind::Beneficiary,
+                beneficiary,
+                gross_share_e8s: 40_000_000,
+                amount_e8s: 39_990_000,
+                block_index: 0,
+                next_start: Some(7),
+            },
+            created_at_time_nanos: stale_created_at_nanos,
+            phase: PendingTransferPhase::AwaitingTransfer,
+        });
+        st.active_payout_job = Some(job);
+        state::set_state(st);
+
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+        let index = ScriptedIndex::new(vec![IndexResponseStep::Err]);
+
+        assert!(!run_ready(process_payout(&ledger, &index, &cmc, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 0, "expired created_at_time should fail before touching the ledger");
+        assert_eq!(cmc.call_count(), 0);
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().expect("job should remain active for operator inspection");
+            assert!(job.pending_transfer.is_none());
+            assert_eq!(job.failed_topups, 1);
+        });
     }
 
     #[test]
