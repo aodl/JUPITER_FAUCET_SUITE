@@ -339,6 +339,8 @@ These are for local integration and PocketIC tests only. The committed debug Can
 
 - [`jupiter_faucet_debug.did`](jupiter_faucet_debug.did)
 
+Notable fault-injection helpers include both `debug_set_trap_after_successful_transfers` (simulated early abort) and `debug_set_real_trap_after_successful_transfers` (actual post-await trap) for upgrade-boundary PocketIC tests.
+
 ## Build and test
 
 ### Production build

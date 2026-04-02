@@ -49,6 +49,7 @@ service : (InitArgs) -> {
   debug_clear_forced_rescue : () -> ();
   debug_set_pause_after_planning : (bool) -> ();
   debug_set_trap_after_successful_transfers : (opt nat32) -> ();
+  debug_set_real_trap_after_successful_transfers : (opt nat32) -> ();
   debug_set_simulate_low_cycles : (bool) -> ();
   debug_set_skip_maturity_initiation : (bool) -> ();
   debug_build_payout_plan : () -> (bool);

@@ -142,6 +142,8 @@ Important properties:
 
 This gives deterministic, duplicate-safe retry behavior without reconstructing intent from logs.
 
+On `post_upgrade`, if a persisted payout plan already exists, the canister also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the normal main interval.
+
 ## Rescue and blackhole policy
 
 ### Intended controller model
@@ -237,6 +239,8 @@ Useful debug helpers include:
 - `debug_main_tick`
 - `debug_rescue_tick`
 - `debug_build_payout_plan`
+- `debug_set_trap_after_successful_transfers` (simulated early-abort fault injection)
+- `debug_set_real_trap_after_successful_transfers` (actual post-await trap fault injection)
 - debug-only state shims for simulating rescue and payout edge cases
 
 ## Build and test

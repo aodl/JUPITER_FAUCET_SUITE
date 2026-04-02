@@ -469,6 +469,21 @@ fn debug_set_trap_after_successful_transfers(
     Ok(())
 }
 
+fn debug_set_real_trap_after_successful_transfers(
+    pic: &PocketIc,
+    canister: Principal,
+    n: Option<u32>,
+) -> Result<()> {
+    let _: () = update_call(
+        pic,
+        canister,
+        Principal::anonymous(),
+        "debug_set_real_trap_after_successful_transfers",
+        n,
+    )?;
+    Ok(())
+}
+
 fn debug_set_simulate_low_cycles(pic: &PocketIc, canister: Principal, enabled: bool) -> Result<()> {
     let _: () = update_call(
         pic,
@@ -1214,9 +1229,9 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         // Rescue controller is explicit in all test installs.
@@ -2588,6 +2603,167 @@ fn partial_execution_retry_duplicate_proof() -> Result<()> {
     let dbg2 = debug_state(&pic, disburser_canister)?;
     if dbg2.payout_plan_present {
         bail!("expected payout plan to be cleared after successful retry");
+    }
+
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let controller = disburser_canister;
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 103, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+
+    let wasm = build_disburser_wasm()?;
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: None,
+        main_interval_seconds: Some(7 * DAY_SECS),
+        rescue_interval_seconds: Some(365 * DAY_SECS),
+    };
+
+    pic.install_canister(disburser_canister, wasm.clone(), encode_one(init.clone())?, None);
+    set_blackholed_controllers(&pic, disburser_canister)?;
+
+    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging_before = icrc1_balance(&pic, ledger, &staging)?;
+
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let (seen, _n) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
+    if !seen {
+        bail!("expected in-flight disbursement before staging-credit phase");
+    }
+
+    stop_canister_as(&pic, disburser_canister, disburser_canister)?;
+    advance_days(&pic, 8);
+    let staging_balance = wait_for_staging_credit(&pic, ledger, &staging, staging_before)?;
+    if staging_balance <= staging_before {
+        bail!("expected staged ICP before payout-plan recovery test");
+    }
+
+    let n_post = get_full_neuron(&pic, gov, controller, neuron_id)?;
+    let inflight_now = n_post
+        .maturity_disbursements_in_progress
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if inflight_now {
+        bail!("expected no in-flight disbursement before payout-plan recovery test");
+    }
+
+    start_canister_as(&pic, disburser_canister, disburser_canister)?;
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+    let forced_age = MAX_AGE_FOR_BONUS_SECS;
+    debug_set_prev_age_seconds(&pic, disburser_canister, forced_age)?;
+
+    let (_gross, planned) = expected_plan_payout_transfers(
+        staging_balance,
+        fee_e8s,
+        forced_age,
+        &init.normal_recipient,
+        &init.age_bonus_recipient_1,
+        &init.age_bonus_recipient_2,
+    );
+    let expected_gross_sent: u64 = planned.iter().map(|p| p.gross_share_e8s).sum();
+
+    let rn_before = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
+    let rb1_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
+    let rb2_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
+
+    debug_set_pause_after_planning(&pic, disburser_canister, true)?;
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let dbg_planned = debug_state(&pic, disburser_canister)?;
+    if !dbg_planned.payout_plan_present {
+        bail!("expected payout plan to be present after planning pause");
+    }
+
+    debug_set_pause_after_planning(&pic, disburser_canister, false)?;
+    debug_set_real_trap_after_successful_transfers(&pic, disburser_canister, Some(1))?;
+    let trapped = update_noargs::<()>(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick");
+    if trapped.is_ok() {
+        bail!("expected debug_main_tick to reject after injected real trap");
+    }
+    tick_n(&pic, 10);
+
+    let rn_mid = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
+    if rn_mid.saturating_sub(rn_before) == 0 {
+        bail!("expected at least one transfer to land before injected real trap");
+    }
+    let dbg_mid = debug_state(&pic, disburser_canister)?;
+    if !dbg_mid.payout_plan_present {
+        bail!("expected payout plan to remain present after injected real trap");
+    }
+
+    pic.upgrade_canister(
+        disburser_canister,
+        wasm,
+        encode_one(())?,
+        Some(disburser_canister),
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
+    tick_n(&pic, 5);
+
+    let dbg_after_upgrade = debug_state(&pic, disburser_canister)?;
+    if !dbg_after_upgrade.payout_plan_present {
+        bail!("expected trapped payout plan to remain persisted immediately after upgrade before auto-resume fires");
+    }
+
+    advance_and_tick(&pic, 1, 20);
+
+    let rn_after = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
+    let rb1_after = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
+    let rb2_after = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
+
+    for p in &planned {
+        let (before, after) = if p.to == init.normal_recipient {
+            (rn_before, rn_after)
+        } else if p.to == init.age_bonus_recipient_1 {
+            (rb1_before, rb1_after)
+        } else if p.to == init.age_bonus_recipient_2 {
+            (rb2_before, rb2_after)
+        } else {
+            bail!("planned transfer targets unknown account: {:?}", p.to);
+        };
+
+        let got = after.saturating_sub(before);
+        if got != p.amount_e8s {
+            bail!(
+                "recipient balance mismatch after post-upgrade auto-resume for {:?}: expected +{}, got +{}",
+                p.to,
+                p.amount_e8s,
+                got
+            );
+        }
+    }
+
+    let staging_post = icrc1_balance(&pic, ledger, &staging)?;
+    let expected_staging_post = staging_balance.saturating_sub(expected_gross_sent);
+    if staging_post != expected_staging_post {
+        bail!("staging mismatch after post-upgrade auto-resume: expected {expected_staging_post}, got {staging_post}");
+    }
+
+    let dbg_done = debug_state(&pic, disburser_canister)?;
+    if dbg_done.payout_plan_present {
+        bail!("expected payout plan to be cleared after post-upgrade auto-resume");
     }
 
     Ok(())

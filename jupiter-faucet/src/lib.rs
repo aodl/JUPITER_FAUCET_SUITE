@@ -295,6 +295,12 @@ fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
+fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
+    crate::scheduler::debug_set_real_trap_after_successful_transfers(n);
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
 async fn debug_main_tick() {
     crate::scheduler::debug_main_tick_impl().await;
 }

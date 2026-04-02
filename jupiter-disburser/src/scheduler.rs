@@ -18,6 +18,7 @@ thread_local! {
     // These are intentionally *not* persisted in stable memory.
     static DEBUG_PAUSE_AFTER_PLANNING: RefCell<bool> = RefCell::new(false);
     static DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
+    static DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
     static DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK: RefCell<u32> = RefCell::new(0);
 
     // Simulates "canister too low on cycles" without depending on PocketIC cycle accounting.
@@ -37,6 +38,11 @@ pub fn debug_set_pause_after_planning(enabled: bool) {
 #[cfg(feature = "debug_api")]
 pub fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
     DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow_mut() = n);
+}
+
+#[cfg(feature = "debug_api")]
+pub fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
+    DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow_mut() = n);
 }
 
 #[cfg(feature = "debug_api")]
@@ -65,9 +71,19 @@ fn debug_skip_maturity_initiation() -> bool {
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_maybe_abort_after_successful_transfer() -> bool {
-    let maybe_n = DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
-    let Some(n) = maybe_n else { return false };
+enum DebugSuccessfulTransferInjection {
+    None,
+    Abort,
+    Trap,
+}
+
+#[cfg(feature = "debug_api")]
+fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+    let abort_after_n = DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
+    let trap_after_n = DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
+    if abort_after_n.is_none() && trap_after_n.is_none() {
+        return DebugSuccessfulTransferInjection::None;
+    }
 
     let count = DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|c| {
         let mut c = c.borrow_mut();
@@ -75,11 +91,16 @@ fn debug_maybe_abort_after_successful_transfer() -> bool {
         *c
     });
 
-    // Instead of trapping (which can leave persisted async lock state behind),
-    // abort the payout tick *after* the ledger reply but *before* persisting
-    // the transfer status. This simulates a crash and forces the next run to
-    // observe a Duplicate and complete deterministically.
-    count == n
+    // The abort path intentionally leaves the persisted plan untouched so the next run can observe
+    // Duplicate and complete deterministically. The trap path is stricter and is used by PocketIC
+    // tests to exercise the actual post-await rollback boundary.
+    if trap_after_n == Some(count) {
+        return DebugSuccessfulTransferInjection::Trap;
+    }
+    if abort_after_n == Some(count) {
+        return DebugSuccessfulTransferInjection::Abort;
+    }
+    DebugSuccessfulTransferInjection::None
 }
 
 fn log_error(code: u32) {
@@ -168,6 +189,16 @@ pub fn install_timers() {
 
     ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async {
         rescue_tick().await;
+    });
+}
+
+pub fn schedule_immediate_resume_if_needed() {
+    let has_payout_plan = state::with_state(|st| st.payout_plan.is_some());
+    if !has_payout_plan {
+        return;
+    }
+    ic_cdk_timers::set_timer(Duration::from_secs(1), async {
+        main_tick(true).await;
     });
 }
 
@@ -402,7 +433,11 @@ async fn process_payout<L: LedgerClient>(
         match res {
             Ok(block) => {
                 #[cfg(feature = "debug_api")]
-                if debug_maybe_abort_after_successful_transfer() { return false; }
+                match debug_successful_transfer_injection() {
+                    DebugSuccessfulTransferInjection::None => {}
+                    DebugSuccessfulTransferInjection::Abort => return false,
+                    DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful disburser transfer"),
+                };
                 let block_str = block.to_string();
                 state::with_state_mut(|st| {
                     if let Some(p) = st.payout_plan.as_mut() {
@@ -415,7 +450,11 @@ async fn process_payout<L: LedgerClient>(
             }
             Err(TransferError::Duplicate { duplicate_of }) => {
                 #[cfg(feature = "debug_api")]
-                if debug_maybe_abort_after_successful_transfer() { return false; }
+                match debug_successful_transfer_injection() {
+                    DebugSuccessfulTransferInjection::None => {}
+                    DebugSuccessfulTransferInjection::Abort => return false,
+                    DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful disburser transfer"),
+                };
                 let block_str = duplicate_of.to_string();
                 state::with_state_mut(|st| {
                     if let Some(p) = st.payout_plan.as_mut() {

@@ -71,6 +71,17 @@ fn log_cycles_once_per_week(cycles: u128) {
     }
 }
 
+fn log_error(message: &str) {
+    #[cfg(test)]
+    {
+        let _ = message;
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::println!("ERR:{}", message);
+    }
+}
+
 struct MainGuard {
     active: bool,
 }
@@ -136,7 +147,9 @@ pub async fn main_tick(force: bool) {
     let sns_wasm = SnsWasmCanister::new(sns_wasm_id);
     let sns_root = SnsRootCanister;
 
-    let _ = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root).await;
+    if let Err(err) = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root).await {
+        log_error(&format!("historian main tick failed: {err}"));
+    }
     guard.finish(now_secs);
 }
 
@@ -239,6 +252,9 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                 });
             }
             cursor = Some(tx.id);
+            // Historian dedupe relies on this cursor remaining monotonic in normal operation. The
+            // retained per-canister history only protects against duplicate delivery within the
+            // retained window; older tx_ids are considered already indexed once the cursor passes them.
             state::with_state_mut(|st| st.last_indexed_staking_tx_id = cursor);
         }
         if page.transactions.len() < PAGE_SIZE as usize {

@@ -73,6 +73,7 @@ service : (InitArgs) -> {
   debug_clear_forced_rescue : () -> ();
   debug_set_last_successful_transfer_ts : (opt nat64) -> ();
   debug_set_trap_after_successful_transfers : (opt nat32) -> ();
+  debug_set_real_trap_after_successful_transfers : (opt nat32) -> ();
   debug_main_tick : () -> ();
   debug_rescue_tick : () -> ();
   debug_state : () -> (DebugState) query;

@@ -24,6 +24,7 @@ use std::cell::RefCell;
 #[cfg(feature = "debug_api")]
 thread_local! {
     static DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
+    static DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
     static DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK: RefCell<u32> = RefCell::new(0);
 }
 
@@ -33,14 +34,29 @@ pub fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
 }
 
 #[cfg(feature = "debug_api")]
+pub fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
+    DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow_mut() = n);
+}
+
+#[cfg(feature = "debug_api")]
 fn debug_reset_successful_transfer_counter() {
     DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|v| *v.borrow_mut() = 0);
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_maybe_abort_after_successful_transfer() -> bool {
-    let maybe_n = DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
-    let Some(n) = maybe_n else { return false };
+enum DebugSuccessfulTransferInjection {
+    None,
+    Abort,
+    Trap,
+}
+
+#[cfg(feature = "debug_api")]
+fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+    let abort_after_n = DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
+    let trap_after_n = DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
+    if abort_after_n.is_none() && trap_after_n.is_none() {
+        return DebugSuccessfulTransferInjection::None;
+    }
 
     let count = DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|c| {
         let mut c = c.borrow_mut();
@@ -48,15 +64,28 @@ fn debug_maybe_abort_after_successful_transfer() -> bool {
         *c
     });
 
-    count == n
+    if trap_after_n == Some(count) {
+        return DebugSuccessfulTransferInjection::Trap;
+    }
+    if abort_after_n == Some(count) {
+        return DebugSuccessfulTransferInjection::Abort;
+    }
+    DebugSuccessfulTransferInjection::None
 }
 
 #[cfg(not(feature = "debug_api"))]
 fn debug_reset_successful_transfer_counter() {}
 
 #[cfg(not(feature = "debug_api"))]
-fn debug_maybe_abort_after_successful_transfer() -> bool {
-    false
+enum DebugSuccessfulTransferInjection {
+    None,
+    Abort,
+    Trap,
+}
+
+#[cfg(not(feature = "debug_api"))]
+fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+    DebugSuccessfulTransferInjection::None
 }
 
 #[cfg(test)]
@@ -280,6 +309,8 @@ fn clear_pending_transfer_failed() {
             if matches!(job.pending_transfer.as_ref().map(|pending| &pending.notification.kind), Some(TransferKind::Beneficiary)) {
                 job.failed_topups = job.failed_topups.saturating_add(1);
             }
+            // Remainder-to-self top-ups are intentional best-effort cleanup only. They are not
+            // counted as beneficiary failures and should not bias rescue / summary policy.
             job.pending_transfer = None;
         }
     });
@@ -410,9 +441,11 @@ async fn drive_pending_transfer(
                 }
             };
 
-            if debug_maybe_abort_after_successful_transfer() {
-                return false;
-            }
+            match debug_successful_transfer_injection() {
+                DebugSuccessfulTransferInjection::None => {}
+                DebugSuccessfulTransferInjection::Abort => return false,
+                DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful faucet transfer"),
+            };
 
             match mark_pending_transfer_accepted(block_index) {
                 Some(accepted) => accepted,
