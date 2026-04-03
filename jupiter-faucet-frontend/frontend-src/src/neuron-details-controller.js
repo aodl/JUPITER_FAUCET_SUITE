@@ -28,10 +28,12 @@ export function createNeuronDetailsController({
     value: null,
     error: null,
   };
+  let generation = 0;
 
   return {
     state,
     reset() {
+      generation += 1;
       state.inFlight = false;
       state.loaded = false;
       state.value = null;
@@ -41,10 +43,12 @@ export function createNeuronDetailsController({
     async ensureLoaded(data) {
       if (state.inFlight || state.loaded) return;
       state.inFlight = true;
+      const requestGeneration = generation;
       renderStakePane(data, null, { neuronLoading: true });
       renderStakeNeuronStatus({ loading: true });
       try {
         const neuron = await loadNeuronDetails();
+        if (requestGeneration !== generation) return;
         state.loaded = true;
         state.value = neuron;
         state.error = neuron ? null : 'Public neuron details unavailable';
@@ -52,6 +56,7 @@ export function createNeuronDetailsController({
         renderStakePane(data, neuron, { neuronError: state.error });
         renderStakeNeuronStatus({ error: state.error });
       } catch (error) {
+        if (requestGeneration !== generation) return;
         state.loaded = false;
         state.value = null;
         state.error = normalizeError(error);
@@ -60,7 +65,9 @@ export function createNeuronDetailsController({
         renderStakeNeuronStatus({ error: state.error });
         console.info('Public neuron details unavailable; core dashboard metrics load independently.', error);
       } finally {
-        state.inFlight = false;
+        if (requestGeneration === generation) {
+          state.inFlight = false;
+        }
       }
     },
   };

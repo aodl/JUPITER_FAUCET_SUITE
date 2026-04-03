@@ -24,7 +24,7 @@ cargo run -p xtask -- frontend_all
 
 The frontend `xtask` commands auto-install or refresh repo-root Node dependencies when they are missing or stale, and `frontend_setup` lets you do that preflight explicitly.
 
-The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask`:
+The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every `frontend-src/test/*.test.mjs` file):
 
 ```bash
 npm run setup:frontend

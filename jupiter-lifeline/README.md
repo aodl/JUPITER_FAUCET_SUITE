@@ -2,7 +2,7 @@
 
 `jupiter-lifeline` is the recovery canister in the Jupiter Faucet Suite.
 
-Its current job is deliberately minimal: exist as the configured rescue controller principal for operational canisters that would otherwise converge toward `self + blackhole` control while healthy.
+Its current job is deliberately minimal: exist as the configured rescue controller principal for operational canisters that would otherwise converge toward `self + blackhole` control while healthy. The production intent is that this principal is governed by the SNS DAO rather than any individual.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -28,7 +28,7 @@ During healthy operation, `jupiter-disburser` and `jupiter-faucet` are expected 
 
 If their local rescue policy concludes that value flow is broken, they widen their controller sets to include `jupiter-lifeline`.
 
-That means this canister is mostly a **reserved rescue principal** today, not an active coordinator.
+That means this canister is mostly a **reserved rescue principal** today, not an active coordinator. In the intended production model, it serves as the DAO-governed recovery hook for the suite rather than as a point of unilateral human control.
 
 ## Install and upgrade
 

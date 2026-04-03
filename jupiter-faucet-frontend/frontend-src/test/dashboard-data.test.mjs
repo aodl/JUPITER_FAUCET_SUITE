@@ -464,6 +464,61 @@ test('loadDashboardData tolerates a historian build that lacks list_recent_burns
   assert.equal(data.hasAnyFailure, false);
 });
 
+test('loadDashboardData returns structured failures when historian actor construction throws synchronously', async () => {
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActorFactory: () => {
+      throw new Error('historian actor construction failed');
+    },
+  });
+
+  assert.equal(data.counts, null);
+  assert.equal(data.status, null);
+  assert.equal(data.registered, null);
+  assert.equal(data.recent, null);
+  assert.equal(data.burns, null);
+  assert.equal(data.stakeE8s, null);
+  assert.equal(data.hasAnyFailure, true);
+  assert.equal(data.errors.counts, 'historian actor construction failed');
+  assert.equal(data.errors.status, 'historian actor construction failed');
+  assert.equal(data.errors.registered, 'historian actor construction failed');
+  assert.equal(data.errors.recent, 'historian actor construction failed');
+  assert.equal(data.errors.burns, 'historian actor construction failed');
+  assert.equal(data.errors.stake, 'Stake unavailable');
+  assert.equal(data.historianAllRejected, true);
+  assert.equal(data.historianLikelyOutdated, false);
+});
+
+test('loadDashboardData preserves historian data when ledger actor construction throws synchronously', async () => {
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_burns() { return { items: [] }; },
+    },
+    ledgerActorFactory: () => {
+      throw new Error('ledger actor construction failed');
+    },
+  });
+
+  assert.deepEqual(data.counts, historianCounts());
+  assert.deepEqual(data.status, historianStatus());
+  assert.deepEqual(data.registered, registeredResponse());
+  assert.deepEqual(data.recent, recentResponse());
+  assert.deepEqual(data.burns, { items: [] });
+  assert.equal(data.stakeE8s, null);
+  assert.equal(data.errors.stake, 'ledger actor construction failed');
+  assert.equal(data.hasAnyFailure, true);
+});
+
+
 test('loadDashboardData preserves partial dashboard data when get_public_status fails', async () => {
   let ledgerCreated = false;
   const data = await loadDashboardData({

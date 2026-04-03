@@ -304,6 +304,11 @@ Upgrade args currently support:
 - the latched forced-rescue reason
 - the related consecutive-failure counters
 
+It intentionally does **not** force an immediate controller rewrite during `post_upgrade`.
+The intended meaning is that, after DAO-directed recovery and a successful upgrade,
+the previous forced-rescue latch is no longer authoritative. The next rescue evaluation
+recomputes controller posture from current state and current policy inputs.
+
 ### Current production wiring recorded in this repo
 
 The committed mainnet install args wire the current production constants used by the suite:

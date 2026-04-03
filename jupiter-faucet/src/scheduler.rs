@@ -1380,7 +1380,7 @@ mod tests {
         assert_eq!(ledger.transfer_calls(), 0, "expired created_at_time should fail before touching the ledger");
         assert_eq!(cmc.call_count(), 0);
         state::with_state(|st| {
-            let job = st.active_payout_job.as_ref().expect("job should remain active for operator inspection");
+            let job = st.active_payout_job.as_ref().expect("job should remain active for inspection");
             assert!(job.pending_transfer.is_none());
             assert_eq!(job.failed_topups, 1);
         });

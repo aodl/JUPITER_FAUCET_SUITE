@@ -209,7 +209,7 @@ Upgrades currently support:
 - `blackhole_armed`
 - `clear_forced_rescue`
 
-`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history.
+`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. It also intentionally does **not** force an immediate controller rewrite during `post_upgrade`; after DAO-directed recovery and a successful upgrade, the next rescue evaluation recomputes controller posture from current state and current policy inputs.
 
 ### Current production wiring recorded in this repo
 
@@ -348,7 +348,7 @@ dfx canister install jupiter_disburser \
 
 ### Controller handoff notes
 
-Before handing the canister off to self-management, the operator still needs to configure canister settings such as public log visibility and ensure the canister is a controller of itself.
+Before handing the canister off to self-management, the DAO-governed deployment flow still needs to configure canister settings such as public log visibility and ensure the canister is a controller of itself.
 
 Example:
 
@@ -357,7 +357,7 @@ dfx canister update-settings jupiter_disburser --network ic --log-visibility pub
 dfx canister update-settings jupiter_disburser --network ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
-After blackhole mode is armed and at least one successful payout transfer has been recorded, the operator can hand the canister off to the healthy `self + blackhole` controller set:
+After blackhole mode is armed and at least one successful payout transfer has been recorded, the DAO-governed deployment flow can hand the canister off to the healthy `self + blackhole` controller set:
 
 ```bash
 dfx canister update-settings jupiter_disburser \

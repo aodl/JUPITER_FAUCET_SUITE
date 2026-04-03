@@ -137,7 +137,32 @@ export async function loadDashboardData({
   }
 
   const resolvedAgent = await getOrCreateAgent({ host, local, agent });
-  const historian = historianActor || historianActorFactory(historianCanisterId, { agent: resolvedAgent });
+
+  let historian;
+  try {
+    historian = historianActor || historianActorFactory(historianCanisterId, { agent: resolvedAgent });
+  } catch (error) {
+    const reason = normalizeError(error);
+    return {
+      counts: null,
+      status: null,
+      registered: null,
+      recent: null,
+      burns: null,
+      stakeE8s: null,
+      hasAnyFailure: true,
+      errors: {
+        counts: reason,
+        status: reason,
+        registered: reason,
+        recent: reason,
+        burns: reason,
+        stake: 'Stake unavailable',
+      },
+      historianAllRejected: true,
+      historianLikelyOutdated: isMethodMissingError(error),
+    };
+  }
 
   const [countsResult, statusResult, registeredResult, recentResult, burnsResult] = await Promise.allSettled([
     historian.get_public_counts(),
@@ -158,25 +183,33 @@ export async function loadDashboardData({
 
   let stakeResult = { status: 'rejected', reason: new Error('Stake unavailable') };
   if (statusResult.status === 'fulfilled') {
-    const ledger = ledgerActorFactory(statusResult.value.ledger_canister_id.toText(), {
-      agent: resolvedAgent,
-    });
-    const stakingAccount = statusResult.value.staking_account;
-    const stakeAccountId = accountIdentifierBytes(stakingAccount);
-    stakeResult = await ledger
-      .account_balance({ account: stakeAccountId })
-      .then((value) => ({ status: 'fulfilled', value: value.e8s }))
-      .catch(async (nativeReason) => {
-        try {
-          const fallbackValue = await ledger.icrc1_balance_of(stakingAccount);
-          return { status: 'fulfilled', value: fallbackValue };
-        } catch (icrcReason) {
-          return {
-            status: 'rejected',
-            reason: new Error(`Stake unavailable via native ledger account_balance (${normalizeError(nativeReason)}) and icrc1_balance_of (${normalizeError(icrcReason)})`),
-          };
-        }
+    let ledger;
+    try {
+      ledger = ledgerActorFactory(statusResult.value.ledger_canister_id.toText(), {
+        agent: resolvedAgent,
       });
+    } catch (error) {
+      ledger = null;
+      stakeResult = { status: 'rejected', reason: error };
+    }
+    if (ledger) {
+      const stakingAccount = statusResult.value.staking_account;
+      const stakeAccountId = accountIdentifierBytes(stakingAccount);
+      stakeResult = await ledger
+        .account_balance({ account: stakeAccountId })
+        .then((value) => ({ status: 'fulfilled', value: value.e8s }))
+        .catch(async (nativeReason) => {
+          try {
+            const fallbackValue = await ledger.icrc1_balance_of(stakingAccount);
+            return { status: 'fulfilled', value: fallbackValue };
+          } catch (icrcReason) {
+            return {
+              status: 'rejected',
+              reason: new Error(`Stake unavailable via native ledger account_balance (${normalizeError(nativeReason)}) and icrc1_balance_of (${normalizeError(icrcReason)})`),
+            };
+          }
+        });
+    }
   }
 
   const errors = {

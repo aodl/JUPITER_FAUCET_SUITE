@@ -64,6 +64,12 @@ compute_asset_version() {
 from pathlib import Path
 import hashlib
 
+# This is a single frontend-wide cache-busting token, not a per-file hash.
+# We intentionally version all static asset URLs together so any relevant
+# frontend/build input change forces clients onto a coherent asset set.
+# The generated JS bundle is additionally content-addressed by filename.
+# Note: test and build-script changes are included on purpose as part of
+# this coarse-grained invalidation strategy.
 roots = [
     Path('jupiter-faucet-frontend/assets'),
     Path('jupiter-faucet-frontend/assets/generated'),

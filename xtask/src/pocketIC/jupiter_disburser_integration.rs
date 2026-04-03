@@ -303,6 +303,13 @@ struct InitArg {
     rescue_interval_seconds: Option<u64>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct UpgradeArg {
+    blackhole_controller: Option<Principal>,
+    blackhole_armed: Option<bool>,
+    clear_forced_rescue: Option<bool>,
+}
+
 // ------------------------- Debug API types -------------------------
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -2281,6 +2288,85 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[ignore]
+fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let controller = Principal::anonymous();
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 100, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+
+    let normal_recipient = pic.create_canister();
+    let age_bonus_recipient_1 = pic.create_canister();
+    let age_bonus_recipient_2 = pic.create_canister();
+
+    let wasm = build_disburser_wasm()?;
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: Account { owner: normal_recipient, subaccount: None },
+        age_bonus_recipient_1: Account { owner: age_bonus_recipient_1, subaccount: None },
+        age_bonus_recipient_2: Account { owner: age_bonus_recipient_2, subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: controller,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: Some(true),
+        main_interval_seconds: Some(60),
+        rescue_interval_seconds: Some(365 * 24 * 60 * 60),
+    };
+
+    pic.install_canister(disburser_canister, wasm.clone(), encode_one(init)?, None);
+    set_blackholed_controllers(&pic, disburser_canister)?;
+
+    pic.advance_time(Duration::from_secs(30 * DAY_SECS));
+    pic.tick();
+
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+    let before_upgrade = debug_state(&pic, disburser_canister)?;
+    if before_upgrade.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
+        bail!("expected forced rescue before upgrade, got {:?}", before_upgrade);
+    }
+
+    pic.upgrade_canister(
+        disburser_canister,
+        wasm.clone(),
+        encode_one(())?,
+        Some(controller),
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
+    tick_n(&pic, 5);
+
+    let after_upgrade = debug_state(&pic, disburser_canister)?;
+    if after_upgrade.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
+        bail!("expected forced rescue to survive upgrade, got {:?}", after_upgrade);
+    }
+
+    pic.upgrade_canister(
+        disburser_canister,
+        wasm,
+        encode_one(Some(UpgradeArg { blackhole_controller: None, blackhole_armed: None, clear_forced_rescue: Some(true) }))?,
+        Some(controller),
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
+    tick_n(&pic, 5);
+
+    let after_clear = debug_state(&pic, disburser_canister)?;
+    if after_clear.forced_rescue_reason.is_some() {
+        bail!("expected clear_forced_rescue upgrade path to clear forced rescue latch, got {:?}", after_clear);
+    }
+
+    Ok(())
+}
+
 
 #[test]
 #[ignore]

@@ -184,6 +184,8 @@ The checked-in Node tests cover the highest-value browser-side invariants, inclu
 - native-ledger balance reads with `icrc1_balance_of` fallback
 - graceful handling of zero-valued metrics
 - detection of an outdated historian interface when every required public method is missing
+- stale neuron-detail responses being ignored after a controller reset
+- DOM helper cleanup when a previously available link becomes unavailable
 
 The local-replica variant is fixture-driven: it compares the live loader result against an expected JSON snapshot provided through environment variables.
 

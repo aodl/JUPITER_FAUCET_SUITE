@@ -98,3 +98,72 @@ test('neuron details does not launch a duplicate request while one is already in
   assert.deepEqual(controller.state.value, { id: 'neuron-2' });
   assert.equal(controller.state.error, null);
 });
+
+
+test('neuron details ignores a stale in-flight completion after reset and allows a fresh reload', async () => {
+  const paneCalls = [];
+  const statusCalls = [];
+  const globalErrors = [];
+  const releases = [];
+  let attempts = 0;
+
+  const controller = createNeuronDetailsController({
+    loadNeuronDetails: async () => {
+      attempts += 1;
+      return new Promise((resolve) => {
+        releases.push(resolve);
+      });
+    },
+    renderStakePane: (data, neuron, options = {}) => {
+      paneCalls.push({ data, neuron, options });
+    },
+    renderStakeNeuronStatus: (options = {}) => {
+      statusCalls.push(options);
+    },
+    normalizeError: (error) => `normalized:${error.message}`,
+    setGlobalNeuronError: (value) => {
+      globalErrors.push(value);
+    },
+  });
+
+  const staleLoad = controller.ensureLoaded({ marker: 'first' });
+  assert.equal(controller.state.inFlight, true);
+  assert.equal(attempts, 1);
+
+  controller.reset();
+  assert.equal(controller.state.inFlight, false);
+  assert.equal(controller.state.loaded, false);
+  assert.equal(controller.state.value, null);
+  assert.equal(controller.state.error, null);
+
+  const freshLoad = controller.ensureLoaded({ marker: 'second' });
+  assert.equal(controller.state.inFlight, true);
+  assert.equal(attempts, 2);
+
+  releases[0]({ id: 'stale-neuron' });
+  await staleLoad;
+
+  assert.equal(controller.state.inFlight, true);
+  assert.equal(controller.state.loaded, false);
+  assert.equal(controller.state.value, null);
+  assert.equal(controller.state.error, null);
+
+  releases[1]({ id: 'fresh-neuron' });
+  await freshLoad;
+
+  assert.equal(controller.state.inFlight, false);
+  assert.equal(controller.state.loaded, true);
+  assert.deepEqual(controller.state.value, { id: 'fresh-neuron' });
+  assert.equal(controller.state.error, null);
+  assert.deepEqual(globalErrors, [null, null]);
+  assert.deepEqual(statusCalls, [
+    { loading: true },
+    { loading: true },
+    { error: null },
+  ]);
+  assert.deepEqual(paneCalls.map(({ data, neuron, options }) => ({ marker: data.marker, neuron, options })), [
+    { marker: 'first', neuron: null, options: { neuronLoading: true } },
+    { marker: 'second', neuron: null, options: { neuronLoading: true } },
+    { marker: 'second', neuron: { id: 'fresh-neuron' }, options: { neuronError: null } },
+  ]);
+});

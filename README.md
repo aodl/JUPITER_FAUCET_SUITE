@@ -9,7 +9,7 @@ In the current production design, one NNS neuron is the economic source of truth
 
 These flows are supported by `jupiter-historian`, which provides historical indexing and observability for tracked canisters and faucet-related activity.
 
-The operational canisters are intentionally small and specialized. The normal path is designed to settle into self-management plus canonical blackhole control, with a separate recovery canister available if value flow stops for long enough that rescue is justified.
+The operational canisters are intentionally small and specialized. The normal path is designed to settle into self-management plus canonical blackhole control, with a separate recovery canister available if value flow stops for long enough that rescue is justified. The production intent is that this lifeline principal is governed by the SNS DAO rather than any individual.
 
 ## System map
 
@@ -41,6 +41,7 @@ The operational canisters are intentionally small and specialized. The normal pa
 
 - `jupiter-lifeline`
   - minimal recovery canister intended to be added as a controller only when rescue is required
+  - production intent is for this principal to be governed by the SNS DAO
 - `jupiter-sns-rewards`
   - current placeholder recipient for the primary age-bonus ICP flow
   - present today mainly to reserve the production principal and default ledger account until reward logic lands
@@ -144,7 +145,7 @@ The frontend also depends on generated JS declarations for the historian and a l
 
 ## Blackholing and recovery model
 
-The suite is designed around **self-management plus rescue handoff**, not around leaving operational canisters permanently operator-controlled.
+The suite is designed around **self-management plus rescue handoff**, not around leaving operational canisters permanently under unilateral human control.
 
 In practice that means:
 
@@ -232,7 +233,7 @@ cargo run -p xtask -- frontend_dfx_integration
 cargo run -p xtask -- frontend_all
 ```
 
-The underlying npm entry points still work when you want to run just the Node tests directly:
+The underlying npm entry points still work when you want to run just the Node tests directly (`test:frontend-unit` auto-discovers every `frontend-src/test/*.test.mjs` file):
 
 ```bash
 npm run setup:frontend

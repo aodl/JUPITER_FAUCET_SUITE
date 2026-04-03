@@ -108,6 +108,11 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             }
         }
         if args.clear_forced_rescue.unwrap_or(false) {
+            // Clearing forced rescue is a DAO acknowledgement that the prior latch
+            // is no longer authoritative after recovery and upgrade.
+            // We intentionally do not force an immediate controller rewrite here;
+            // the next rescue evaluation recomputes controller posture from current
+            // state and current policy inputs.
             st.forced_rescue_reason = None;
             st.consecutive_index_anchor_failures = Some(0);
             st.consecutive_index_latest_invariant_failures = Some(0);
