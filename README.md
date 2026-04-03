@@ -92,6 +92,8 @@ Important details that matter in practice:
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record
 - each new payout job rescans the full staking history against a fresh payout-pot snapshot
 
+The production minimum is intentionally **1 ICP** so beneficiary-registry spam stays expensive. Historian keeps a durable registry of memo-derived beneficiaries so it can efficiently monitor and display later cycle top-up activity; a much lower threshold would let an attacker register huge numbers of canisters very cheaply.
+
 See [`jupiter-faucet/README.md`](jupiter-faucet/README.md) for the exact rules and examples.
 
 ## What each canister exposes in production

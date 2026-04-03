@@ -344,7 +344,7 @@ fn deploy_faucet_dbg(mode: Option<&str>) -> Result<()> {
             blackhole_armed = opt true;
             main_interval_seconds = opt (60:nat64);
             rescue_interval_seconds = opt (60:nat64);
-            min_tx_e8s = opt (10000000:nat64);
+            min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = Principal::anonymous().to_text(),
         staking_sub = (0u8..32).map(|_| "7:nat8").collect::<Vec<_>>().join("; "),

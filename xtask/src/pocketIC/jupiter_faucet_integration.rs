@@ -325,7 +325,7 @@ impl FaucetEnv {
             expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
-            min_tx_e8s: Some(10_000_000),
+            min_tx_e8s: Some(100_000_000),
         };
         edit_init(&mut init);
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
@@ -397,6 +397,10 @@ impl FaucetEnv {
 
     fn set_expected_first_staking_tx_id(&self, v: Option<u64>) -> Result<()> {
         update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_expected_first_staking_tx_id", v)
+    }
+
+    fn set_main_lock_expires_at_ts(&self, ts: Option<u64>) -> Result<()> {
+        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_main_lock_expires_at_ts", ts)
     }
 
     fn set_trap_after_successful_transfers(&self, n: Option<u32>) -> Result<()> {
@@ -483,9 +487,9 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
     env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
     env.main_tick()?;
@@ -511,9 +515,9 @@ fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
     env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
     env.main_tick()?;
@@ -771,9 +775,9 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
     })?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
     env.set_trap_after_successful_transfers(Some(1))?;
     env.main_tick()?;
@@ -809,7 +813,7 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
     }
 
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 79_990_000 || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.failed_topups != 0 {
         bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
@@ -832,9 +836,9 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
     })?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
     env.set_real_trap_after_successful_transfers(Some(1))?;
     let trapped = update_noargs::<()>(&env.pic, env.faucet, Principal::anonymous(), "debug_main_tick");
@@ -874,7 +878,7 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
     }
 
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 79_990_000 || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.failed_topups != 0 {
         bail!("unexpected summary after post-upgrade real-trap recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
@@ -931,9 +935,9 @@ fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() ->
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
     env.advance_time_and_tick(30, 10);
     let st_before = env.state()?;
@@ -960,9 +964,9 @@ fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.main_tick()?;
 
     let notes_after_first = env.notifications()?;
@@ -992,9 +996,9 @@ fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
     let target = Principal::from_text("aaaaa-aa")?;
 
     let baseline = env.footprint()?;
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
     env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
     env.main_tick()?;
@@ -1021,9 +1025,9 @@ fn faucet_ledger_temporary_failure_before_transfer_recovers_inline() -> Result<(
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.set_ledger_next_error(Some(DebugNextTransferError::TemporarilyUnavailable))?;
 
     env.main_tick()?;
@@ -1048,9 +1052,9 @@ fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfe
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.set_ledger_next_error(Some(DebugNextTransferError::Duplicate { duplicate_of: 55 }))?;
 
     env.main_tick()?;
@@ -1078,9 +1082,9 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("aaaaa-aa")?;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.set_ledger_error_script(vec![
         DebugNextTransferError::TemporarilyUnavailable,
         DebugNextTransferError::Duplicate { duplicate_of: 56 },
@@ -1141,9 +1145,9 @@ fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() ->
         update_noargs::<()>(&env.pic, env.cmc, Principal::anonymous(), "debug_reset")?;
         update_noargs::<()>(&env.pic, env.faucet, Principal::anonymous(), "debug_reset_runtime_state")?;
 
-        env.credit_payout(80_000_000)?;
-        env.credit_staking(80_000_000)?;
-        env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+        env.credit_payout(100_000_000)?;
+        env.credit_staking(100_000_000)?;
+        env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
         env.set_cmc_script(script)?;
 
         env.main_tick()?;
@@ -1167,9 +1171,9 @@ fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accoun
     let target = Principal::from_text("aaaaa-aa")?;
     let faucet_id = env.faucet;
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.set_ledger_error_script(vec![
         DebugNextTransferError::TemporarilyUnavailable,
         DebugNextTransferError::TemporarilyUnavailable,
@@ -1188,7 +1192,7 @@ fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accoun
             summary.topped_up_count
         );
     }
-    if summary.remainder_to_self_e8s != 79_990_000 || summary.pot_remaining_e8s != 0 {
+    if summary.remainder_to_self_e8s != 99_990_000 || summary.pot_remaining_e8s != 0 {
         bail!(
             "expected exhausted inline retry path to finish via full remainder-to-self accounting, got remainder_to_self_e8s={} pot_remaining_e8s={}",
             summary.remainder_to_self_e8s,
@@ -1217,9 +1221,9 @@ fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_s
     let faucet_id = env.faucet;
 
     env.credit_payout(100_000_000)?;
-    env.credit_staking(160_000_000)?;
-    env.append_transfer(80_000_000, Some(failed_target.to_text().into_bytes()))?;
-    env.append_transfer(80_000_000, Some(success_target.to_text().into_bytes()))?;
+    env.credit_staking(200_000_000)?;
+    env.append_transfer(100_000_000, Some(failed_target.to_text().into_bytes()))?;
+    env.append_transfer(100_000_000, Some(success_target.to_text().into_bytes()))?;
     env.set_ledger_error_script(vec![
         DebugNextTransferError::TemporarilyUnavailable,
         DebugNextTransferError::TemporarilyUnavailable,
@@ -1517,9 +1521,9 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
     })?;
 
     env.set_blackholed_controllers()?;
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    let observed_first_tx_id = env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    let observed_first_tx_id = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     if observed_first_tx_id != expected_first_tx_id {
         bail!("expected first mocked staking tx id {expected_first_tx_id}, got {observed_first_tx_id}");
     }
@@ -1554,9 +1558,9 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
     })?;
 
     env.set_blackholed_controllers()?;
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    let observed_first_tx_id = env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    let observed_first_tx_id = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     if observed_first_tx_id != 1 {
         bail!("expected first mocked staking tx id 1, got {observed_first_tx_id}");
     }
@@ -1600,9 +1604,9 @@ fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Re
         bail!("expected first missing-anchor observation before any transfer to count once, got {:?}", st1);
     }
 
-    env.credit_payout(80_000_000)?;
-    env.credit_staking(80_000_000)?;
-    let first_tx_id = env.append_transfer(80_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    let first_tx_id = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     if first_tx_id != 1 {
         bail!("expected first mocked staking tx id 1, got {first_tx_id}");
     }
@@ -1691,9 +1695,9 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     env.set_cmc_fail(true)?;
 
     for _ in 0..2 {
-        env.credit_payout(80_000_000)?;
-        env.credit_staking(80_000_000)?;
-        env.append_transfer(80_000_000, Some(Principal::from_text("aaaaa-aa")?.to_text().into_bytes()))?;
+        env.credit_payout(100_000_000)?;
+        env.credit_staking(100_000_000)?;
+        env.append_transfer(100_000_000, Some(Principal::from_text("aaaaa-aa")?.to_text().into_bytes()))?;
         env.main_tick()?;
         env.advance_time_and_tick(61, 20);
         env.main_tick()?;
@@ -1702,6 +1706,49 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     let st = env.state()?;
     if st.forced_rescue_reason != Some(ForcedRescueReason::CmcZeroSuccessRuns) || st.consecutive_cmc_zero_success_runs < 2 {
         bail!("expected two zero-success CMC runs to latch forced rescue, got {:?}", st);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("aaaaa-aa")?;
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+
+    let now_secs = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    env.set_main_lock_expires_at_ts(Some(now_secs + 30))?;
+    env.main_tick()?;
+
+    let st_before = env.state()?;
+    if st_before.last_summary_present || st_before.active_payout_job_present {
+        bail!("expected active lease to suppress the first main tick, got {:?}", st_before);
+    }
+    if !env.ledger_transfers()?.is_empty() || !env.notifications()?.is_empty() {
+        bail!("expected no payout-side activity while the main lease is still active");
+    }
+
+    env.advance_time_and_tick(31, 5);
+    env.main_tick()?;
+
+    let summary = env
+        .summary()
+        .context("expected stale-lease retry to produce a summary")?;
+    if summary.topped_up_count != 1 || summary.failed_topups != 0 {
+        bail!(
+            "expected stale-lease retry to complete one beneficiary top-up, got topped_up_count={} failed_topups={}",
+            summary.topped_up_count,
+            summary.failed_topups,
+        );
+    }
+    if env.notifications()?.len() != 1 || env.ledger_transfers()?.len() != 1 {
+        bail!("expected exactly one ledger transfer and one notify after stale-lease recovery");
     }
 
     Ok(())

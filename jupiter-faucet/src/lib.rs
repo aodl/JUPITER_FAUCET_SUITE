@@ -81,7 +81,7 @@ fn init(args: InitArgs) {
         expected_first_staking_tx_id: args.expected_first_staking_tx_id,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(24 * 60 * 60),
-        min_tx_e8s: args.min_tx_e8s.unwrap_or(10_000_000),
+        min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
     };
 
     let st = State::new(cfg, now_secs);

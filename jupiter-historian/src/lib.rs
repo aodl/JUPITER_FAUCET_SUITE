@@ -421,7 +421,7 @@ fn config_from_init_args(args: InitArgs) -> Config {
         enable_sns_tracking: args.enable_sns_tracking.unwrap_or(false),
         scan_interval_seconds: args.scan_interval_seconds.unwrap_or(10 * 60),
         cycles_interval_seconds: args.cycles_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
-        min_tx_e8s: args.min_tx_e8s.unwrap_or(10_000_000),
+        min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
         max_cycles_entries_per_canister: clamp_cycles_entries_per_canister(args.max_cycles_entries_per_canister.unwrap_or(100)),
         max_contribution_entries_per_canister: clamp_contribution_entries_per_canister(args.max_contribution_entries_per_canister.unwrap_or(100)),
         max_index_pages_per_tick: clamp_index_pages_per_tick(args.max_index_pages_per_tick.unwrap_or(10)),
@@ -1172,7 +1172,7 @@ mod tests {
                 enable_sns_tracking: false,
                 scan_interval_seconds: 600,
                 cycles_interval_seconds: 604800,
-                min_tx_e8s: 10_000_000,
+                min_tx_e8s: 100_000_000,
                 max_cycles_entries_per_canister: 100,
                 max_contribution_entries_per_canister: 100,
                 max_index_pages_per_tick: 10,
@@ -1251,7 +1251,7 @@ mod tests {
         assert_eq!(cfg.sns_wasm_canister_id, mainnet_sns_wasm_id());
         assert_eq!(cfg.scan_interval_seconds, 600);
         assert_eq!(cfg.cycles_interval_seconds, 604800);
-        assert_eq!(cfg.min_tx_e8s, 10_000_000);
+        assert_eq!(cfg.min_tx_e8s, 100_000_000);
     }
 
     #[test]
@@ -1539,7 +1539,7 @@ mod tests {
             tx_id: 12,
             timestamp_nanos: Some(12),
             amount_e8s: 20_000_000,
-            memo_text: "not-a-principal".to_string(),
+            memo_text: crate::logic::INVALID_MEMO_PLACEHOLDER.to_string(),
         }]);
         state::set_state(st);
 
@@ -1550,7 +1550,7 @@ mod tests {
         assert_eq!(all.items.len(), 3);
         assert_eq!(all.items[0].tx_id, 12);
         assert_eq!(all.items[0].canister_id, None);
-        assert_eq!(all.items[0].memo_text.as_deref(), Some("not-a-principal"));
+        assert_eq!(all.items[0].memo_text.as_deref(), Some(crate::logic::INVALID_MEMO_PLACEHOLDER));
         assert!(!all.items[0].counts_toward_faucet);
         assert_eq!(all.items[1].tx_id, 11);
         assert_eq!(all.items[1].canister_id, Some(qualifying));
@@ -1712,7 +1712,7 @@ mod tests {
                 vec![ContributionSample {
                     tx_id: idx as u64 + 1,
                     timestamp_nanos: Some((idx as u64 + 1) * 1_000_000_000),
-                    amount_e8s: 10_000_000,
+                    amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
                 }],
             );
@@ -1764,7 +1764,7 @@ mod tests {
                 .map(|tx_id| ContributionSample {
                     tx_id,
                     timestamp_nanos: Some(tx_id * 1_000_000_000),
-                    amount_e8s: 10_000_000,
+                    amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
                 })
                 .collect(),
@@ -1884,7 +1884,7 @@ mod tests {
                 enable_sns_tracking: false,
                 scan_interval_seconds: 600,
                 cycles_interval_seconds: 604800,
-                min_tx_e8s: 10_000_000,
+                min_tx_e8s: 100_000_000,
                 max_cycles_entries_per_canister: 100,
                 max_contribution_entries_per_canister: 100,
                 max_index_pages_per_tick: 10,

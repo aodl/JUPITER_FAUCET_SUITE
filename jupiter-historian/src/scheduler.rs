@@ -779,7 +779,7 @@ mod tests {
             assert!(!st.contribution_history.contains_key(&low_amount));
             let invalid = &st.recent_invalid_contributions.as_ref().unwrap()[0];
             assert_eq!(invalid.tx_id, 44);
-            assert_eq!(invalid.memo_text, "not-a-principal");
+            assert_eq!(invalid.memo_text, crate::logic::INVALID_MEMO_PLACEHOLDER);
         });
     }
 

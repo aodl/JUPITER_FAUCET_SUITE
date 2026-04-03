@@ -265,7 +265,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
-        min_tx_e8s: Some(10_000_000),
+        min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
@@ -389,7 +389,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
-        min_tx_e8s: Some(10_000_000),
+        min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
@@ -523,7 +523,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
-        min_tx_e8s: Some(10_000_000),
+        min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
@@ -551,14 +551,14 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         ledger,
         Principal::anonymous(),
         "debug_credit",
-        encode_args((staking_account.clone(), 80_000_000u64))?,
+        encode_args((staking_account.clone(), 100_000_000u64))?,
     )?;
     let _: u64 = update_bytes(
         &pic,
         index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 80_000_000u64, Some(target.to_text().into_bytes())))?,
+        encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
     let disburser_staging = Account { owner: disburser, subaccount: None };
     let _: () = update_bytes(
@@ -566,7 +566,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         ledger,
         Principal::anonymous(),
         "debug_credit",
-        encode_args((disburser_staging, 80_000_000u64))?,
+        encode_args((disburser_staging, 100_000_000u64))?,
     )?;
 
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
@@ -647,7 +647,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
-        min_tx_e8s: Some(10_000_000),
+        min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm.clone(), encode_one(faucet_init)?, None);
@@ -675,14 +675,14 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         ledger,
         Principal::anonymous(),
         "debug_credit",
-        encode_args((staking_account.clone(), 80_000_000u64))?,
+        encode_args((staking_account.clone(), 100_000_000u64))?,
     )?;
     let _: u64 = update_bytes(
         &pic,
         index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 80_000_000u64, Some(target.to_text().into_bytes())))?,
+        encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
     let disburser_staging = Account { owner: disburser, subaccount: None };
     let _: () = update_bytes(
@@ -690,7 +690,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         ledger,
         Principal::anonymous(),
         "debug_credit",
-        encode_args((disburser_staging, 80_000_000u64))?,
+        encode_args((disburser_staging, 100_000_000u64))?,
     )?;
 
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
@@ -954,7 +954,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
-        min_tx_e8s: Some(10_000_000),
+        min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
@@ -970,7 +970,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         enable_sns_tracking: Some(false),
         scan_interval_seconds: Some(60),
         cycles_interval_seconds: Some(1),
-        min_tx_e8s: Some(10_000_000),
+        min_tx_e8s: Some(100_000_000),
         max_cycles_entries_per_canister: Some(100),
         max_contribution_entries_per_canister: Some(100),
         max_index_pages_per_tick: Some(10),
@@ -996,11 +996,11 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
 
     let target = blackhole;
     let staking_id = account_identifier_text(&staking_account);
-    let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((staking_account.clone(), 80_000_000u64))?)?;
-    let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 80_000_000u64, Some(target.to_text().into_bytes())))?)?;
+    let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((staking_account.clone(), 100_000_000u64))?)?;
+    let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?)?;
 
     let disburser_staging = Account { owner: disburser, subaccount: None };
-    let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((disburser_staging, 80_000_000u64))?)?;
+    let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((disburser_staging, 100_000_000u64))?)?;
 
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
@@ -1055,7 +1055,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(registered.items.len(), 1);
     assert_eq!(registered.items[0].canister_id, target);
     assert_eq!(registered.items[0].qualifying_contribution_count, 1);
-    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 80_000_000);
+    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 100_000_000);
     assert!(registered.items[0].last_contribution_ts.is_some());
     assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
     assert!(registered.items[0].last_cycles_probe_ts.is_some());
@@ -1073,7 +1073,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(recent.items.len(), 1);
     assert_eq!(recent.items[0].canister_id, Some(target));
     assert_eq!(recent.items[0].tx_id, 1);
-    assert_eq!(recent.items[0].amount_e8s, 80_000_000);
+    assert_eq!(recent.items[0].amount_e8s, 100_000_000);
     assert!(recent.items[0].counts_toward_faucet);
 
     let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;

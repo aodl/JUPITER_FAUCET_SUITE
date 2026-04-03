@@ -735,7 +735,7 @@ fn cmd_setup_faucet_dfx() -> Result<()> {
             expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
-            min_tx_e8s = opt (10000000:nat64);
+            min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
         staking_subaccount = faucet_staking_account
@@ -797,7 +797,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
-            min_tx_e8s = opt (10000000:nat64);
+            min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
         staking_subaccount = faucet_staking_account
@@ -836,7 +836,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             enable_sns_tracking = opt true;
             scan_interval_seconds = opt (31536000:nat64);
             cycles_interval_seconds = opt (1:nat64);
-            min_tx_e8s = opt (10000000:nat64);
+            min_tx_e8s = opt (100000000:nat64);
             max_cycles_entries_per_canister = opt (100:nat32);
             max_contribution_entries_per_canister = opt (100:nat32);
             max_index_pages_per_tick = opt (10:nat32);
@@ -944,7 +944,7 @@ fn cmd_setup() -> Result<()> {
             expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
-            min_tx_e8s = opt (10000000:nat64);
+            min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
         staking_subaccount = faucet_staking_account
@@ -984,7 +984,7 @@ fn cmd_setup() -> Result<()> {
             enable_sns_tracking = opt true;
             scan_interval_seconds = opt (31536000:nat64);
             cycles_interval_seconds = opt (1:nat64);
-            min_tx_e8s = opt (10000000:nat64);
+            min_tx_e8s = opt (100000000:nat64);
             max_cycles_entries_per_canister = opt (100:nat32);
             max_contribution_entries_per_canister = opt (100:nat32);
             max_index_pages_per_tick = opt (10:nat32);
@@ -1592,17 +1592,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
 
         let _: () = call_raw("mock_cmc", "debug_set_script", "(vec { variant { Processing }; variant { Ok } })")?;
@@ -1695,13 +1695,13 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
         let summary = summary.context("expected faucet summary after empty-history payout")?;
-        if summary.topped_up_count != 0 || summary.remainder_to_self_e8s != 79_990_000 {
+        if summary.topped_up_count != 0 || summary.remainder_to_self_e8s != 99_990_000 {
             bail!(
                 "expected empty history to send whole payout remainder to self, got topped_up_count={} remainder_to_self_e8s={}",
                 summary.topped_up_count,
@@ -1731,12 +1731,12 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
@@ -1801,17 +1801,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 100000000000:nat64)", account_to_candid(&accounts.staking)),
+            &format!("({}, 1000000000000:nat64)", account_to_candid(&accounts.staking)),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 10000000:nat64, {})", staking_id, opt_blob_to_candid(Some(Principal::anonymous().to_text().as_bytes()))),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, opt_blob_to_candid(Some(Principal::anonymous().to_text().as_bytes()))),
         )?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
@@ -1825,8 +1825,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
                 summary.ignored_bad_memo
             );
         }
-        if summary.remainder_to_self_e8s != 79_990_000 {
-            bail!("expected fallback remainder to self of 79_990_000 e8s, got {}", summary.remainder_to_self_e8s);
+        if summary.remainder_to_self_e8s != 99_990_000 {
+            bail!("expected fallback remainder to self of 99_990_000 e8s, got {}", summary.remainder_to_self_e8s);
         }
 
         Ok(())
@@ -1846,17 +1846,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
@@ -1891,17 +1891,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
@@ -1941,17 +1941,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
         )?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_credit",
-            &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
         let _: () = call_raw(
             "mock_cmc",
@@ -2005,17 +2005,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+                &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
             )?;
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+                &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
             )?;
             let _: u64 = call_raw(
                 "mock_icp_index",
                 "debug_append_transfer",
-                &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+                &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
             )?;
             let _: () = call_raw("mock_cmc", "debug_set_script", script)?;
 
@@ -2055,17 +2055,17 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!("({}, 80000000:nat64)", account_to_candid(&accounts.staking)),
+                &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
             )?;
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!("({}, 80000000:nat64)", account_to_candid(&accounts.payout)),
+                &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
             )?;
             let _: u64 = call_raw(
                 "mock_icp_index",
                 "debug_append_transfer",
-                &format!("(\"{}\", 80000000:nat64, {})", staking_id, memo),
+                &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
             )?;
             let _: () = call_raw("mock_icrc_ledger", "debug_set_next_error", err_arg)?;
 
@@ -2079,7 +2079,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             if summary.failed_topups != 1 || summary.topped_up_count != 0 {
                 bail!("expected {label} path to count exactly one failed top-up and zero successful beneficiary top-ups, got failed_topups={} topped_up_count={}", summary.failed_topups, summary.topped_up_count);
             }
-            if summary.remainder_to_self_e8s != 79_990_000 {
+            if summary.remainder_to_self_e8s != 99_990_000 {
                 bail!("expected {label} path to leave the failed beneficiary share in the faucet and send the full remainder to self, got {}", summary.remainder_to_self_e8s);
             }
             let transfers_after: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
@@ -2229,7 +2229,7 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+            &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, memo),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
@@ -2367,7 +2367,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                 .collect::<Vec<_>>()
                 .join("; ")
         );
-        let append_args = format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo);
+        let append_args = format!(r#"("{}", 100000000:nat64, {})"#, staking_id, memo);
         let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &append_args)?;
 
         let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
@@ -2425,7 +2425,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+            &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, memo),
         )?;
         let blackhole_id = canister_id("mock_blackhole")?;
         let _: () = call_raw(
@@ -2523,7 +2523,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+            &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, memo),
         )?;
         let _: u64 = call_raw(
             "mock_icp_index",
@@ -2667,7 +2667,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!(r#"("{}", 80000000:nat64, {})"#, staking_id, memo),
+            &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, memo),
         )?;
 
         let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;

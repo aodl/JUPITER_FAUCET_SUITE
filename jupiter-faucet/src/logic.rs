@@ -213,37 +213,37 @@ mod tests {
     #[test]
     fn contribution_below_threshold_is_ignored() {
         let valid = principal("aaaaa-aa");
-        let c = Contribution { amount_e8s: 9_999_999, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::IgnoreUnderThreshold);
+        let c = Contribution { amount_e8s: 99_999_999, memo_bytes: Some(valid.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::IgnoreUnderThreshold);
     }
 
     #[test]
     fn contribution_exactly_at_threshold_is_included() {
         let valid = principal("aaaaa-aa");
-        let c = Contribution { amount_e8s: 10_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 5_000_000, amount_e8s: 4_990_000 });
+        let c = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
 
     #[test]
     fn contribution_above_threshold_is_included() {
         let valid = principal("aaaaa-aa");
         let c = Contribution { amount_e8s: 400_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 200_000_000, amount_e8s: 199_990_000 });
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 200_000_000, amount_e8s: 199_990_000 });
     }
 
     #[test]
     fn share_calculation_uses_current_pot_and_denominator() {
         let valid = principal("aaaaa-aa");
         let c = Contribution { amount_e8s: 250_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_contribution(120_000_000, 600_000_000, 10_000, 10_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+        assert_eq!(evaluate_contribution(120_000_000, 600_000_000, 10_000, 100_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
 
     #[test]
     fn evaluate_contribution_counts_bad_and_missing_memos() {
         let missing = Contribution { amount_e8s: 200_000_000, memo_bytes: None };
         let bad = Contribution { amount_e8s: 300_000_000, memo_bytes: Some(b"bad-memo".to_vec()) };
-        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &missing), ContributionDecision::IgnoreBadMemo);
-        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &bad), ContributionDecision::IgnoreBadMemo);
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &missing), ContributionDecision::IgnoreBadMemo);
+        assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &bad), ContributionDecision::IgnoreBadMemo);
     }
 
     #[test]
@@ -251,8 +251,8 @@ mod tests {
         let beneficiary = principal("aaaaa-aa");
         let first = Contribution { amount_e8s: 200_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
         let second = Contribution { amount_e8s: 300_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
-        let first_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &first);
-        let second_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &second);
+        let first_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &first);
+        let second_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &second);
         assert_eq!(first_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
         assert_eq!(second_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 150_000_000, amount_e8s: 149_990_000 });
     }
@@ -262,8 +262,8 @@ mod tests {
         let a = principal("aaaaa-aa");
         let b = principal("2vxsx-fae");
         let amount_e8s = 200_000_000;
-        let eval_a = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &Contribution { amount_e8s, memo_bytes: Some(a.to_text().into_bytes()) });
-        let eval_b = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 10_000_000, &Contribution { amount_e8s, memo_bytes: Some(b.to_text().into_bytes()) });
+        let eval_a = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &Contribution { amount_e8s, memo_bytes: Some(a.to_text().into_bytes()) });
+        let eval_b = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &Contribution { amount_e8s, memo_bytes: Some(b.to_text().into_bytes()) });
         assert_eq!(eval_a, ContributionDecision::Eligible { beneficiary: a, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
         assert_eq!(eval_b, ContributionDecision::Eligible { beneficiary: b, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
     }
@@ -279,8 +279,8 @@ mod tests {
     #[test]
     fn no_transfer_when_share_rounds_below_fee() {
         let beneficiary = principal("aaaaa-aa");
-        let c = Contribution { amount_e8s: 10_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
-        assert_eq!(evaluate_contribution(10_000, 1_000_000_000, 10_000, 10_000_000, &c), ContributionDecision::NoTransfer);
+        let c = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
+        assert_eq!(evaluate_contribution(10_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::NoTransfer);
     }
 
     #[test]
@@ -326,8 +326,8 @@ mod tests {
         let memo = Some(beneficiary.to_text().into_bytes());
         let first = Contribution { amount_e8s: 125_000_000, memo_bytes: memo.clone() };
         let second = Contribution { amount_e8s: 125_000_000, memo_bytes: memo };
-        let first_eval = evaluate_contribution(200_000_000, 500_000_000, 10_000, 10_000_000, &first);
-        let second_eval = evaluate_contribution(200_000_000, 500_000_000, 10_000, 10_000_000, &second);
+        let first_eval = evaluate_contribution(200_000_000, 500_000_000, 10_000, 100_000_000, &first);
+        let second_eval = evaluate_contribution(200_000_000, 500_000_000, 10_000, 100_000_000, &second);
         assert_eq!(first_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
         assert_eq!(second_eval, ContributionDecision::Eligible { beneficiary, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
@@ -336,8 +336,8 @@ mod tests {
     fn zero_pot_or_zero_denominator_never_produces_a_transfer() {
         let beneficiary = principal("aaaaa-aa");
         let contribution = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
-        assert_eq!(evaluate_contribution(0, 500_000_000, 10_000, 10_000_000, &contribution), ContributionDecision::NoTransfer);
-        assert_eq!(evaluate_contribution(50_000_000, 0, 10_000, 10_000_000, &contribution), ContributionDecision::NoTransfer);
+        assert_eq!(evaluate_contribution(0, 500_000_000, 10_000, 100_000_000, &contribution), ContributionDecision::NoTransfer);
+        assert_eq!(evaluate_contribution(50_000_000, 0, 10_000, 100_000_000, &contribution), ContributionDecision::NoTransfer);
     }
 
 

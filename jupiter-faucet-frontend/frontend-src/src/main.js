@@ -306,7 +306,6 @@ function renderPaneSubtitles(data) {
       + (heapMemory !== undefined && stableMemory !== undefined
         ? ` (${formatBytes(heapMemory)} heap + ${formatBytes(stableMemory)} stable)`
         : '');
-  setStatusNote('registered-pane-memory-note', memoryNote);
   setStatusNote('commitments-pane-memory-note', memoryNote);
   setStatusNote('burned-pane-memory-note', memoryNote);
 }
@@ -377,8 +376,7 @@ function formatCommitmentTarget(item) {
   if (canister) {
     return escapeHtml(formatPrincipal(canister));
   }
-  const memoText = Array.isArray(item?.memo_text) ? item.memo_text[0] : item?.memo_text;
-  return escapeHtml(memoText || 'invalid principal');
+  return 'invalid principal memo';
 }
 
 function commitmentTransactionHref(item) {

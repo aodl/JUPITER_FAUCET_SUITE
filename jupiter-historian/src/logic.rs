@@ -1,4 +1,6 @@
 use candid::Principal;
+
+pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid principal memo";
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
@@ -76,7 +78,7 @@ pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account
             tx_id,
             amount_e8s,
             timestamp_nanos,
-            memo_text,
+            memo_text: INVALID_MEMO_PLACEHOLDER.to_string(),
         }))
     }
 }
@@ -223,7 +225,7 @@ mod tests {
         let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
         match c {
             IndexedContributionEntry::Invalid(c) => {
-                assert_eq!(c.memo_text, "not-a-principal");
+                assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER);
             }
             IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
         }

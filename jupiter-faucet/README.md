@@ -75,9 +75,9 @@ Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not
 
 The default minimum tracked contribution is:
 
-- `min_tx_e8s = 10_000_000` (`0.1 ICP`)
+- `min_tx_e8s = 100_000_000` (`1 ICP`)
 
-Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`.
+Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. The production minimum is intentionally high because historian keeps a durable beneficiary registry for memo-derived targets so it can later monitor and display cycles top-up activity efficiently; a much lower threshold would make registry spam far cheaper.
 
 ## Important payout semantics
 
@@ -287,7 +287,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
   - type: `opt nat64`
 - `main_interval_seconds` (optional; defaults to 7 days)
 - `rescue_interval_seconds` (optional; defaults to 1 day)
-- `min_tx_e8s` (optional; defaults to `0.1 ICP`)
+- `min_tx_e8s` (optional; defaults to `1 ICP`)
 
 A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
 
@@ -326,7 +326,7 @@ The committed mainnet install args wire the current production constants used by
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
 - `main_interval_seconds = 604800`
 - `rescue_interval_seconds = 86400`
-- `min_tx_e8s = 10000000`
+- `min_tx_e8s = 100000000`
 
 ## Public interface
 

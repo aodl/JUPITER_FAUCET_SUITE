@@ -40,9 +40,9 @@ Memo handling mirrors the faucet’s input rules:
 - if `icrc1_memo` is present but empty, do **not** fall back to the numeric memo
 - trim UTF-8 text before trying to parse principal text
 
-If the memo decodes to principal text, the beneficiary is tracked in the historian registry. When the amount is at least `min_tx_e8s`, the contribution is also attached to that canister/principal as qualifying history. Below-threshold memo contributions are kept in a separate capped recent feed and do not count as qualifying history.
+If the memo decodes to principal text, the beneficiary is tracked in the historian registry. When the amount is at least `min_tx_e8s`, the contribution is also attached to that canister/principal as qualifying history. Below-threshold memo contributions are kept in a separate capped recent feed and do not count as qualifying history. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically so later cycles and burn activity can be tracked efficiently on-chain and on the frontend.
 
-If the memo is valid text but **not** valid principal text, the historian keeps it in its recent-invalid-contribution feed instead of dropping it completely. That is useful operationally because it shows what people tried to send even when the faucet would ignore it.
+If the memo is valid text but **not** valid principal text, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
 ### Burn indexing
 
@@ -132,7 +132,7 @@ Production methods:
   - default sort is `TotalQualifyingContributedDesc`
 - `list_recent_contributions`
   - recent valid and invalid contribution feed used by the frontend
-  - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and the original trimmed `memo_text` preserved
+  - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and a generic placeholder memo label rather than the original attacker-provided text
 - `list_recent_burns`
   - recent ICP burn feed used by the frontend
 
@@ -202,7 +202,7 @@ Optional:
 - `enable_sns_tracking` (defaults to `false`)
 - `scan_interval_seconds` (defaults to `600`)
 - `cycles_interval_seconds` (defaults to `604800`)
-- `min_tx_e8s` (defaults to `10_000_000`)
+- `min_tx_e8s` (defaults to `100_000_000`)
 - `max_cycles_entries_per_canister` (defaults to `100`)
 - `max_contribution_entries_per_canister` (defaults to `100`)
 - `max_index_pages_per_tick` (defaults to `10`)
@@ -234,7 +234,7 @@ The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently c
 - `enable_sns_tracking = false`
 - `scan_interval_seconds = 600`
 - `cycles_interval_seconds = 604800`
-- `min_tx_e8s = 10_000_000`
+- `min_tx_e8s = 100_000_000`
 - `max_cycles_entries_per_canister = 100`
 - `max_contribution_entries_per_canister = 100`
 - `max_index_pages_per_tick = 10`

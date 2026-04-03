@@ -19,6 +19,6 @@
     expected_first_staking_tx_id = opt (31118741 : nat64);
     main_interval_seconds = opt 604800;
     rescue_interval_seconds = opt 86400;
-    min_tx_e8s = opt 10000000;
+    min_tx_e8s = opt 100000000;
   }
 )

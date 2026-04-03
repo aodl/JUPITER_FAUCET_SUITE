@@ -15,7 +15,7 @@
   enable_sns_tracking = opt false;
   scan_interval_seconds = opt (600 : nat64);
   cycles_interval_seconds = opt (604800 : nat64);
-  min_tx_e8s = opt (10000000 : nat64);
+  min_tx_e8s = opt (100000000 : nat64);
   max_cycles_entries_per_canister = opt (100 : nat32);
   max_contribution_entries_per_canister = opt (100 : nat32);
   max_index_pages_per_tick = opt (10 : nat32);

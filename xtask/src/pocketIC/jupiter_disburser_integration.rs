@@ -461,6 +461,17 @@ fn debug_set_pause_after_planning(pic: &PocketIc, canister: Principal, enabled: 
     Ok(())
 }
 
+fn debug_set_main_lock_expires_at_ts(pic: &PocketIc, canister: Principal, ts: Option<u64>) -> Result<()> {
+    let _: () = update_call(
+        pic,
+        canister,
+        Principal::anonymous(),
+        "debug_set_main_lock_expires_at_ts",
+        ts,
+    )?;
+    Ok(())
+}
+
 fn debug_set_trap_after_successful_transfers(
     pic: &PocketIc,
     canister: Principal,
@@ -1307,6 +1318,88 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 
 
 // ------------------------- Additional E2E scenarios -------------------------
+
+#[test]
+#[ignore]
+fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
+    require_ignored_flag()?;
+
+    let icp_features = IcpFeatures {
+        registry: Some(IcpFeaturesConfig::DefaultConfig),
+        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
+        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
+        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
+        ..Default::default()
+    };
+
+    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
+        .with_nns_subnet()
+        .with_application_subnet()
+        .with_icp_features(icp_features)
+        .build();
+
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+    let controller = disburser_canister;
+
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 4242, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+
+    let wasm = build_disburser_wasm()?;
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: None,
+        main_interval_seconds: Some(365 * 24 * 60 * 60),
+        rescue_interval_seconds: Some(365 * 24 * 60 * 60),
+    };
+
+    pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
+    set_blackholed_controllers(&pic, disburser_canister)?;
+
+    let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    debug_set_main_lock_expires_at_ts(&pic, disburser_canister, Some(now_secs + 30))?;
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+
+    let st_before = debug_state(&pic, disburser_canister)?;
+    if st_before.payout_plan_present {
+        bail!("expected active lease to suppress the first main tick, got {:?}", st_before);
+    }
+    let n_before = get_full_neuron(&pic, gov, controller, neuron_id)?;
+    if n_before
+        .maturity_disbursements_in_progress
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
+        bail!("expected no maturity disbursement while the main lease is still active");
+    }
+
+    advance_and_tick(&pic, 31, 5);
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+
+    let (inflight_seen, n_after_start) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
+    if !inflight_seen {
+        bail!(
+            "expected stale-lease retry to start maturity disbursement, but it did not; maturity={} stake={} disbursements={:?}",
+            n_after_start.maturity_e8s_equivalent,
+            n_after_start.cached_neuron_stake_e8s,
+            n_after_start.maturity_disbursements_in_progress,
+        );
+    }
+
+    Ok(())
+}
+
 
 #[test]
 #[ignore]
