@@ -439,3 +439,86 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
   assert.equal(data.registered.total, 0n);
   assert.equal(summaryMetricsUnavailable(data), false);
 });
+
+
+test('loadDashboardData tolerates a historian build that lacks list_recent_burns but still serves the other public queries', async () => {
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+    },
+    ledgerActorFactory: () => ({
+      async account_balance() { return { e8s: 77n }; },
+      async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+    }),
+  });
+
+  assert.deepEqual(data.burns, { items: [] });
+  assert.equal(data.errors.burns, null);
+  assert.equal(data.stakeE8s, 77n);
+  assert.equal(data.hasAnyFailure, false);
+});
+
+test('loadDashboardData preserves partial dashboard data when get_public_status fails', async () => {
+  let ledgerCreated = false;
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() { throw new Error('status temporarily unavailable'); },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_burns() { return { items: [] }; },
+    },
+    ledgerActorFactory: () => {
+      ledgerCreated = true;
+      throw new Error('ledger actor should not be created when status failed');
+    },
+  });
+
+  assert.equal(ledgerCreated, false);
+  assert.deepEqual(data.counts, historianCounts());
+  assert.deepEqual(data.registered, registeredResponse());
+  assert.deepEqual(data.recent, recentResponse());
+  assert.equal(data.status, null);
+  assert.equal(data.stakeE8s, null);
+  assert.equal(data.errors.status, 'status temporarily unavailable');
+  assert.equal(data.errors.stake, 'Stake unavailable');
+});
+
+test('loadDashboardData surfaces both native and icrc stake failures in one normalized message', async () => {
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_burns() { return { items: [] }; },
+    },
+    ledgerActorFactory: () => ({
+      async account_balance() {
+        throw new Error('native path unavailable');
+      },
+      async icrc1_balance_of() {
+        throw new Error('icrc fallback unavailable');
+      },
+    }),
+  });
+
+  assert.equal(
+    data.errors.stake,
+    'Stake unavailable via native ledger account_balance (native path unavailable) and icrc1_balance_of (icrc fallback unavailable)',
+  );
+  assert.equal(data.stakeE8s, null);
+  assert.equal(data.hasAnyFailure, true);
+});

@@ -704,7 +704,13 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
             continue;
         }
 
+        let page_start = job.next_start;
         for tx in &resp.transactions {
+            if let Some(last_seen) = page_start {
+                if tx.id <= last_seen {
+                    continue;
+                }
+            }
             let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
                 set_next_start(Some(tx.id));
                 continue;
@@ -1506,6 +1512,52 @@ mod tests {
         let (active_job_present, summary_present) = state::with_state(|st| (st.active_payout_job.is_some(), st.last_summary.is_some()));
         assert!(!active_job_present, "inline retry flow should not leave an active job behind once complete");
         assert!(summary_present, "completed job should finalize exactly one summary");
+    }
+
+
+    #[test]
+    fn overlapping_index_pages_do_not_double_count_the_last_seen_tx() {
+        let now_secs = 4_300_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(10, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let first = Principal::from_text("aaaaa-aa").unwrap();
+        let second = Principal::from_text("2vxsx-fae").unwrap();
+
+        let mut first_page = Vec::new();
+        for id in 1..500u64 {
+            first_page.push(contribution_tx(id, &staking_id, 1, None));
+        }
+        first_page.push(contribution_tx(500, &staking_id, 50_000_000, Some(first.to_text().into_bytes())));
+
+        let second_page = vec![
+            contribution_tx(500, &staking_id, 50_000_000, Some(first.to_text().into_bytes())),
+            contribution_tx(501, &staking_id, 50_000_000, Some(second.to_text().into_bytes())),
+        ];
+
+        let index = ScriptedIndex::new(vec![
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: first_page,
+            }),
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: second_page,
+            }),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(601), LedgerStep::Ok(602), LedgerStep::Ok(603)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 3, "expected two beneficiary transfers plus one self remainder transfer");
+        assert_eq!(cmc.call_count(), 3);
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 2, "overlapping page replay must not duplicate the tx id 500 contribution");
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ignored_under_threshold, 0);
+        assert_eq!(summary.ignored_bad_memo, 499);
     }
 
     #[test]

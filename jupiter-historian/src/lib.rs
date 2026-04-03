@@ -1133,6 +1133,83 @@ mod tests {
         assert!(response.items.is_empty());
     }
 
+
+    #[test]
+    fn list_registered_canister_summaries_uses_canister_id_as_tie_breaker_for_stable_pagination() {
+        let a = principal("aaaaa-aa");
+        let b = principal("2vxsx-fae");
+        let mut st = base_state();
+        for canister in [a, b] {
+            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+            st.contribution_history.insert(
+                canister,
+                vec![ContributionSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1_000),
+                    amount_e8s: 50_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.per_canister_meta.insert(
+                canister,
+                CanisterMeta {
+                    last_contribution_ts: Some(1_000),
+                    ..CanisterMeta::default()
+                },
+            );
+        }
+        state::set_state(st);
+
+        for sort in [
+            RegisteredCanisterSummarySort::LastContributionDesc,
+            RegisteredCanisterSummarySort::QualifyingContributionCountDesc,
+            RegisteredCanisterSummarySort::TotalQualifyingContributedDesc,
+        ] {
+            let first_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+                page: Some(0),
+                page_size: Some(1),
+                sort: Some(sort.clone()),
+            });
+            let second_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+                page: Some(1),
+                page_size: Some(1),
+                sort: Some(sort),
+            });
+
+            assert_eq!(first_page.total, 2);
+            assert_eq!(second_page.total, 2);
+            assert_eq!(first_page.items.len(), 1);
+            assert_eq!(second_page.items.len(), 1);
+            assert_eq!(first_page.items[0].canister_id, b.min(a));
+            assert_eq!(second_page.items[0].canister_id, b.max(a));
+        }
+    }
+
+    #[test]
+    fn list_registered_canister_summaries_returns_empty_pages_past_the_end() {
+        let canister = principal("aaaaa-aa");
+        let mut st = base_state();
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000),
+                amount_e8s: 50_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        state::set_state(st);
+
+        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+            page: Some(5),
+            page_size: Some(1),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        });
+        assert_eq!(response.total, 1);
+        assert!(response.items.is_empty());
+    }
+
     #[test]
     fn list_recent_contributions_returns_qualifying_and_non_qualifying_commitments() {
         let qualifying = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");

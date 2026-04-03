@@ -136,11 +136,13 @@ Important properties:
 - transfer status is persisted per transfer
 - `Duplicate` is treated as success and the returned block index is recorded
 - `TemporarilyUnavailable` keeps the plan and retries later
-- `BadFee`, `TooOld`, and `CreatedInFuture` clear the plan so the next run rebuilds it from the current fee and current staged balance
+- non-transport typed ledger rejections (`BadFee`, `BadBurn`, `InsufficientFunds`, `TooOld`, `CreatedInFuture`, `GenericError`) clear the plan so the next run rebuilds it from the current fee and current staged balance
 - transport / call failures abort the run and leave the plan for a later retry
 - once all transfers are marked sent, the whole plan is cleared
 
 This gives deterministic, duplicate-safe retry behavior without reconstructing intent from logs.
+
+The clear-and-rebuild policy is intentional: it prefers liveness over preserving the exact original split when a persisted plan becomes invalid mid-execution. If transfer `0` already succeeded and transfer `1` later hits a typed ledger rejection, the next run recomputes shares from the remaining staged balance rather than attempting to force the old three-way allocation forever. That behavior is acceptable here because the recipient set is fixed and trusted, and avoiding an indefinitely wedged staged balance is the higher priority.
 
 On `post_upgrade`, if a persisted payout plan already exists, the canister also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the normal main interval.
 

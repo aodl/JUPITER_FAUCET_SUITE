@@ -7,6 +7,7 @@ import {
 } from './dashboard-data.js';
 import { createActor as createGovernanceActor } from '../declarations/nns_governance/index.js';
 import { createNeuronDetailsController } from './neuron-details-controller.js';
+import { setLink } from './dom-helpers.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -126,19 +127,6 @@ function setHtml(id, value) {
   if (node) node.innerHTML = value;
 }
 
-function setLink(id, { href, text, title = text } = {}) {
-  const node = document.getElementById(id);
-  if (!node) return;
-  if (!href || !text) {
-    node.removeAttribute('href');
-    node.removeAttribute('title');
-    return;
-  }
-  node.href = href;
-  node.title = title;
-  const valueNode = node.querySelector('span') || node;
-  valueNode.textContent = text;
-}
 
 function setPaneValueStatus(id, { value = null, loading = false, error = null, html = false } = {}) {
   const valueNode = document.getElementById(id);

@@ -130,6 +130,26 @@ fn self_canister_principal() -> Principal {
     }
 }
 
+fn should_clear_payout_plan_on_transfer_error(err: &TransferError) -> bool {
+    match err {
+        TransferError::TemporarilyUnavailable => false,
+        // Duplicate is handled as success at the match-site above, so if it ever reaches here
+        // we still choose the conservative "do not clear" behavior.
+        TransferError::Duplicate { .. } => false,
+        // Policy choice: treat non-transport, non-duplicate typed ledger rejections as terminal
+        // for the current persisted plan so the canister does not wedge forever retrying the same
+        // identity. A later tick will rebuild from the current staging balance. If some earlier
+        // transfers in the same plan already succeeded, that rebuild uses the remaining balance
+        // rather than preserving the exact original split.
+        TransferError::BadFee { .. }
+        | TransferError::BadBurn { .. }
+        | TransferError::InsufficientFunds { .. }
+        | TransferError::TooOld
+        | TransferError::CreatedInFuture { .. }
+        | TransferError::GenericError { .. } => true,
+    }
+}
+
 struct MainGuard {
     active: bool,
 }
@@ -465,21 +485,12 @@ async fn process_payout<L: LedgerClient>(
                     st.last_successful_transfer_ts = Some(now_secs);
                 });
             }
-        
-            // transient, keep plan and retry later
-            Err(TransferError::TemporarilyUnavailable) => return false,
-        
-            // These can wedge a persisted plan forever if we never rebuild it.
-            // The simplest bulletproof behavior is: clear plan and rebuild next run.
-            Err(TransferError::BadFee { .. })
-            | Err(TransferError::TooOld)
-            | Err(TransferError::CreatedInFuture { .. }) => {
-                state::with_state_mut(|st| st.payout_plan = None);
+            Err(err) => {
+                if should_clear_payout_plan_on_transfer_error(&err) {
+                    state::with_state_mut(|st| st.payout_plan = None);
+                }
                 return false;
             }
-        
-            // other errors: keep plan (or not) doesn't matter much; simplest is retry later.
-            Err(_) => return false,
         }
     }
 }
@@ -830,6 +841,116 @@ mod tests {
         assert_eq!(gov.disburse_calls(), 0, "in-flight source-of-truth state must suppress a second initiation");
         assert_eq!(gov.claim_or_refresh_calls(), 1);
         assert_eq!(state::with_state(|st| st.prev_age_seconds), 777, "skipped ticks must preserve the previously captured age snapshot");
+    }
+
+
+    #[derive(Clone)]
+    enum TransferScriptStep {
+        TypedErr(TransferError),
+        CallErr,
+    }
+
+    struct ScriptedTransferLedger {
+        balance: u64,
+        fee: u64,
+        steps: Mutex<VecDeque<TransferScriptStep>>,
+        transfer_calls: AtomicUsize,
+    }
+
+    impl ScriptedTransferLedger {
+        fn new(balance: u64, fee: u64, steps: Vec<TransferScriptStep>) -> Self {
+            Self {
+                balance,
+                fee,
+                steps: Mutex::new(steps.into()),
+                transfer_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn transfer_calls(&self) -> usize {
+            self.transfer_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl LedgerClient for ScriptedTransferLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(self.fee) }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { Ok(self.balance) }
+        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.transfer_calls.fetch_add(1, Ordering::SeqCst);
+            match self.steps.lock().unwrap().pop_front().expect("missing transfer step") {
+                TransferScriptStep::TypedErr(err) => Ok(Err(err)),
+                TransferScriptStep::CallErr => Err(crate::clients::ClientError::Call("scripted transfer transport failure".to_string())),
+            }
+        }
+    }
+
+    fn set_test_payout_plan(now_secs: u64) {
+        let mut st = state::State::new(test_config(), now_secs);
+        st.payout_plan = Some(state::PayoutPlan {
+            id: 9,
+            fee_e8s: 10_000,
+            created_at_base_nanos: now_secs * 1_000_000_000,
+            transfers: vec![state::PlannedTransfer {
+                to: Account { owner: Principal::from_text("aaaaa-aa").unwrap(), subaccount: None },
+                gross_share_e8s: 50_000_000,
+                amount_e8s: 49_990_000,
+                created_at_time_nanos: now_secs * 1_000_000_000,
+                memo: b"test-transfer".to_vec(),
+                status: state::TransferStatus::Pending,
+            }],
+        });
+        state::set_state(st);
+    }
+
+    #[test]
+    fn permanent_ledger_errors_clear_persisted_plan_instead_of_wedging() {
+        for err in [
+            TransferError::InsufficientFunds { balance: Nat::from(0u64) },
+            TransferError::GenericError { error_code: Nat::from(5u64), message: "permanent ledger failure".to_string() },
+            TransferError::BadBurn { min_burn_amount: Nat::from(10u64) },
+        ] {
+            let now_secs = 2_100_u64;
+            set_test_payout_plan(now_secs);
+
+            let cfg = state::with_state(|st| st.config.clone());
+            let ledger = ScriptedTransferLedger::new(50_000_000, 10_000, vec![TransferScriptStep::TypedErr(err)]);
+            let gov = ScriptedGovernance::new(
+                vec![Ok(Neuron {
+                    aging_since_timestamp_seconds: 100,
+                    maturity_disbursements_in_progress: None,
+                })],
+                vec![],
+            );
+
+            let mut fut = Box::pin(run_main_tick_with_clients(true, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+            assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+            assert_eq!(ledger.transfer_calls(), 1);
+            assert!(state::with_state(|st| st.payout_plan.is_none()), "permanent ledger error should clear the persisted plan");
+            assert_eq!(gov.claim_or_refresh_calls(), 0, "failed payout should short-circuit before later governance side effects");
+        }
+    }
+
+    #[test]
+    fn transport_errors_keep_persisted_plan_for_safe_retry() {
+        let now_secs = 2_200_u64;
+        set_test_payout_plan(now_secs);
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = ScriptedTransferLedger::new(50_000_000, 10_000, vec![TransferScriptStep::CallErr]);
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                aging_since_timestamp_seconds: 100,
+                maturity_disbursements_in_progress: None,
+            })],
+            vec![],
+        );
+
+        let mut fut = Box::pin(run_main_tick_with_clients(true, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert!(state::with_state(|st| st.payout_plan.is_some()), "transport ambiguity should retain the plan for duplicate-safe retry");
+        assert_eq!(gov.claim_or_refresh_calls(), 0);
     }
 
     #[test]

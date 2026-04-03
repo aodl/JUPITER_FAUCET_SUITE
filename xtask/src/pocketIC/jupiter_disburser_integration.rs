@@ -2979,6 +2979,112 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
     Ok(())
 }
 
+
+#[test]
+#[ignore]
+// Opt-in regression guard: this exercises an adversarial staging-balance drift scenario that
+// relies on debug hooks and is useful for manual / CI-on-demand validation, but it does not need
+// to run in every default test invocation.
+fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let controller = disburser_canister;
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 104, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+
+    let wasm = build_disburser_wasm()?;
+    let normal = Account { owner: pic.create_canister(), subaccount: None };
+    let bonus1 = Account { owner: pic.create_canister(), subaccount: None };
+    let bonus2 = Account { owner: pic.create_canister(), subaccount: None };
+    let init = InitArg {
+        neuron_id,
+        normal_recipient: normal.clone(),
+        age_bonus_recipient_1: bonus1.clone(),
+        age_bonus_recipient_2: bonus2.clone(),
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: disburser_canister,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: None,
+        main_interval_seconds: Some(60),
+        rescue_interval_seconds: Some(365 * DAY_SECS),
+    };
+
+    pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
+    set_blackholed_controllers(&pic, disburser_canister)?;
+
+    debug_set_skip_maturity_initiation(&pic, disburser_canister, true)?;
+    debug_set_prev_age_seconds(&pic, disburser_canister, 4 * 365 * DAY_SECS)?;
+
+    let staging = Account { owner: disburser_canister, subaccount: None };
+    let fee = icrc1_fee(&pic, ledger)?;
+    icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: staging.clone(),
+            fee: Some(candid::Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: candid::Nat::from(10 * 100_000_000u64),
+        },
+    )?;
+
+    debug_set_pause_after_planning(&pic, disburser_canister, true)?;
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let planned = debug_state(&pic, disburser_canister)?;
+    if !planned.payout_plan_present {
+        bail!("expected payout plan to be persisted before simulating staging-balance drift");
+    }
+
+    let staging_before_drain = icrc1_balance(&pic, ledger, &staging)?;
+    let drain_target = Account { owner: pic.create_canister(), subaccount: None };
+    let drain_amount = staging_before_drain.saturating_sub(fee);
+    if drain_amount == 0 {
+        bail!("expected a positive staging balance to drain");
+    }
+    icrc1_transfer(
+        &pic,
+        ledger,
+        disburser_canister,
+        TransferArg {
+            from_subaccount: None,
+            to: drain_target,
+            fee: Some(candid::Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: candid::Nat::from(drain_amount),
+        },
+    )?;
+
+    debug_set_pause_after_planning(&pic, disburser_canister, false)?;
+    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    tick_n(&pic, 10);
+
+    let after_failure = debug_state(&pic, disburser_canister)?;
+    if after_failure.payout_plan_present {
+        bail!("expected insufficient-funds payout attempt to clear the persisted plan for rebuild");
+    }
+    let normal_after_failure = icrc1_balance(&pic, ledger, &normal)?;
+    let bonus1_after_failure = icrc1_balance(&pic, ledger, &bonus1)?;
+    let bonus2_after_failure = icrc1_balance(&pic, ledger, &bonus2)?;
+    if normal_after_failure != 0 || bonus1_after_failure != 0 || bonus2_after_failure != 0 {
+        bail!("expected no recipient transfers after staging-balance drift made the persisted plan invalid");
+    }
+
+    Ok(())
+}
+
 #[test]
 #[ignore]
 fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
