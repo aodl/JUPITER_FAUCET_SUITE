@@ -51,7 +51,7 @@ Each timer interval is clamped to at least 60 seconds by the runtime code.
 
 On each successful main tick, the canister does the following:
 
-1. acquires a short-lived main-tick lease so overlapping timer runs do not race
+1. acquires a 15-minute main-tick lease so overlapping timer runs do not race
 2. reads the configured neuron from NNS Governance
 3. checks whether NNS already reports a maturity disbursement in progress
 4. if **no** disbursement is in flight:

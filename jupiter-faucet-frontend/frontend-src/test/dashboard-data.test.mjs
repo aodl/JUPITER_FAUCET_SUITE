@@ -32,6 +32,9 @@ function historianStatus(overrides = {}) {
     index_interval_seconds: 600n,
     last_completed_cycles_sweep_ts: [456n],
     cycles_interval_seconds: 3600n,
+    heap_memory_bytes: [8_388_608n],
+    stable_memory_bytes: [0n],
+    total_memory_bytes: [8_388_608n],
     ...overrides,
   };
 }

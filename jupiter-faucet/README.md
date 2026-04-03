@@ -170,7 +170,7 @@ The PocketIC integration suite includes an end-to-end upgrade test that interrup
 
 On each successful main tick, the canister:
 
-1. acquires a short-lived main-tick lease
+1. acquires a 15-minute main-tick lease
 2. enforces a minimum gap between automatic runs
 3. if no active payout job exists, snapshots:
    - current ledger fee

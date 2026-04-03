@@ -3555,6 +3555,7 @@ fn run_cargo_test_suite(
 
     let mut stdout_buf = String::new();
     let mut stderr_buf = String::new();
+    let mut last_live_printed: Option<String> = None;
     for (is_err, line) in rx {
         if is_err {
             stderr_buf.push_str(&line);
@@ -3564,7 +3565,11 @@ fn run_cargo_test_suite(
             stdout_buf.push('\n');
         }
         if should_live_print_rust_test_line(&line) {
-            eprintln!("{line}");
+            let dedupe_key = strip_ansi(&line).trim().to_string();
+            if last_live_printed.as_deref() != Some(dedupe_key.as_str()) {
+                eprintln!("{line}");
+                last_live_printed = Some(dedupe_key);
+            }
         }
     }
 

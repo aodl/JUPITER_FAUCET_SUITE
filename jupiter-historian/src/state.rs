@@ -163,6 +163,8 @@ pub struct StableState {
     #[serde(default)]
     pub recent_contributions: Option<Vec<RecentContribution>>,
     #[serde(default)]
+    pub recent_under_threshold_contributions: Option<Vec<RecentContribution>>,
+    #[serde(default)]
     pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
     #[serde(default)]
     pub recent_burns: Option<Vec<RecentBurn>>,
@@ -186,6 +188,7 @@ pub struct State {
     pub qualifying_contribution_count: Option<u64>,
     pub icp_burned_e8s: Option<u64>,
     pub recent_contributions: Option<Vec<RecentContribution>>,
+    pub recent_under_threshold_contributions: Option<Vec<RecentContribution>>,
     pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
     pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
@@ -209,6 +212,7 @@ impl State {
             qualifying_contribution_count: Some(0),
             icp_burned_e8s: Some(0),
             recent_contributions: Some(Vec::new()),
+            recent_under_threshold_contributions: Some(Vec::new()),
             recent_invalid_contributions: Some(Vec::new()),
             recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
@@ -320,6 +324,7 @@ impl From<State> for StableState {
             qualifying_contribution_count: value.qualifying_contribution_count,
             icp_burned_e8s: value.icp_burned_e8s,
             recent_contributions: value.recent_contributions,
+            recent_under_threshold_contributions: value.recent_under_threshold_contributions,
             recent_invalid_contributions: value.recent_invalid_contributions,
             recent_burns: value.recent_burns,
             last_index_run_ts: value.last_index_run_ts,
@@ -349,6 +354,7 @@ impl From<StableState> for State {
             qualifying_contribution_count: value.qualifying_contribution_count,
             icp_burned_e8s: value.icp_burned_e8s,
             recent_contributions: value.recent_contributions,
+            recent_under_threshold_contributions: value.recent_under_threshold_contributions,
             recent_invalid_contributions: value.recent_invalid_contributions,
             recent_burns: value.recent_burns,
             last_index_run_ts: value.last_index_run_ts,

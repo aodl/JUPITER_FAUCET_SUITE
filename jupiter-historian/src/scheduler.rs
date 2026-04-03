@@ -6,13 +6,14 @@ use crate::clients::index::{account_identifier_text, IcpIndexCanister, IndexOper
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::{BlackholeClient, IndexClient, SnsRootClient, SnsWasmClient};
-use crate::{logic, mainnet_cmc_id};
+use crate::{
+    logic, mainnet_cmc_id, MAX_RECENT_BURNS, MAX_RECENT_INVALID_CONTRIBUTIONS,
+    MAX_RECENT_QUALIFYING_CONTRIBUTIONS, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+};
 use crate::state::{self, ActiveCyclesSweep, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, InvalidContribution, RecentBurn, RecentContribution};
 
 const PAGE_SIZE: u64 = 500;
-const MAX_RECENT_CONTRIBUTIONS: usize = 250;
-const MAX_RECENT_INVALID_CONTRIBUTIONS: usize = 250;
-const MAX_RECENT_BURNS: usize = 250;
+const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
 
 fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
@@ -22,14 +23,14 @@ fn burn_sort_key(item: &RecentBurn) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
-fn push_recent_contribution(recent: &mut Vec<RecentContribution>, item: RecentContribution) {
+fn push_recent_contribution(recent: &mut Vec<RecentContribution>, item: RecentContribution, max_entries: usize) {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
         return;
     }
     recent.push(item);
     recent.sort_by(|a, b| contribution_sort_key(b).cmp(&contribution_sort_key(a)));
-    if recent.len() > MAX_RECENT_CONTRIBUTIONS {
-        recent.truncate(MAX_RECENT_CONTRIBUTIONS);
+    if recent.len() > max_entries {
+        recent.truncate(max_entries);
     }
 }
 
@@ -84,16 +85,22 @@ fn log_error(message: &str) {
 
 struct MainGuard {
     active: bool,
+    lease_expires_at_ts: u64,
 }
 
 impl MainGuard {
-    fn acquire() -> Option<Self> {
+    fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            if st.main_lock_expires_at_ts.unwrap_or(0) != 0 {
+            let lock_expires_at_ts = st.main_lock_expires_at_ts.unwrap_or(0);
+            if lock_expires_at_ts > now_secs {
                 return None;
             }
-            st.main_lock_expires_at_ts = Some(1);
-            Some(Self { active: true })
+            let lease_expires_at_ts = now_secs.saturating_add(MAIN_TICK_LEASE_SECONDS);
+            st.main_lock_expires_at_ts = Some(lease_expires_at_ts);
+            Some(Self {
+                active: true,
+                lease_expires_at_ts,
+            })
         })
     }
 
@@ -101,14 +108,22 @@ impl MainGuard {
         if !self.active {
             return;
         }
-        state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(0));
+        let lease_expires_at_ts = self.lease_expires_at_ts;
+        state::with_state_mut(|st| {
+            if st.main_lock_expires_at_ts == Some(lease_expires_at_ts) {
+                st.main_lock_expires_at_ts = Some(0);
+            }
+        });
         self.active = false;
     }
 
     fn finish(mut self, now_secs: u64) {
+        let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs;
-            st.main_lock_expires_at_ts = Some(0);
+            if st.main_lock_expires_at_ts == Some(lease_expires_at_ts) {
+                st.main_lock_expires_at_ts = Some(0);
+            }
         });
         self.active = false;
     }
@@ -127,7 +142,7 @@ pub fn install_timers() {
 pub async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
-    let Some(guard) = MainGuard::acquire() else { return; };
+    let Some(guard) = MainGuard::acquire(now_secs) else { return; };
     if !force {
         let min_gap = state::with_state(|st| st.config.scan_interval_seconds.saturating_sub(5));
         let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
@@ -206,25 +221,37 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                             contribution.beneficiary,
                             logic::merge_sources(st.canister_sources.get(&contribution.beneficiary), CanisterSource::MemoContribution),
                         );
-                        let history = st.contribution_history.entry(contribution.beneficiary).or_default();
-                        let inserted = logic::push_contribution(
-                            history,
-                            crate::state::ContributionSample {
+                        if contribution.counts_toward_faucet {
+                            let recent_item = RecentContribution {
+                                canister_id: contribution.beneficiary,
                                 tx_id: contribution.tx_id,
                                 timestamp_nanos: contribution.timestamp_nanos,
                                 amount_e8s: contribution.amount_e8s,
-                                counts_toward_faucet: contribution.counts_toward_faucet,
-                            },
-                            cfg.max_contribution_entries_per_canister,
-                        );
-                        if inserted {
-                            let meta = st.per_canister_meta.entry(contribution.beneficiary).or_insert_with(CanisterMeta::default);
-                            logic::apply_contribution_seen(meta, contribution.timestamp_nanos, now_secs);
-                            if contribution.counts_toward_faucet {
+                                counts_toward_faucet: true,
+                            };
+                            let history = st.contribution_history.entry(contribution.beneficiary).or_default();
+                            let inserted = logic::push_contribution(
+                                history,
+                                crate::state::ContributionSample {
+                                    tx_id: contribution.tx_id,
+                                    timestamp_nanos: contribution.timestamp_nanos,
+                                    amount_e8s: contribution.amount_e8s,
+                                    counts_toward_faucet: true,
+                                },
+                                cfg.max_contribution_entries_per_canister,
+                            );
+                            if inserted {
+                                let meta = st.per_canister_meta.entry(contribution.beneficiary).or_insert_with(CanisterMeta::default);
+                                logic::apply_contribution_seen(meta, contribution.timestamp_nanos, now_secs);
+                                let recent = st.recent_contributions.get_or_insert_with(Vec::new);
+                                push_recent_contribution(recent, recent_item, MAX_RECENT_QUALIFYING_CONTRIBUTIONS);
+                            }
+                            if inserted {
                                 let count = st.qualifying_contribution_count.get_or_insert(0);
                                 *count = count.saturating_add(1);
                             }
-                            let recent = st.recent_contributions.get_or_insert_with(Vec::new);
+                        } else {
+                            let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
                             push_recent_contribution(
                                 recent,
                                 RecentContribution {
@@ -232,8 +259,9 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                                     tx_id: contribution.tx_id,
                                     timestamp_nanos: contribution.timestamp_nanos,
                                     amount_e8s: contribution.amount_e8s,
-                                    counts_toward_faucet: contribution.counts_toward_faucet,
+                                    counts_toward_faucet: false,
                                 },
+                                MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
                             );
                         }
                     }
@@ -718,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_recent_list() {
+    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_separate_recent_lists_and_registers_memo_beneficiaries() {
         let staking_id = configure_state(10);
         let qualifying = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let low_amount = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
@@ -736,11 +764,100 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(2));
+            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(
+                st.recent_under_threshold_contributions
+                    .as_ref()
+                    .map(|items| items.len()),
+                Some(1),
+            );
             assert_eq!(st.recent_invalid_contributions.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 42);
+            assert_eq!(st.recent_under_threshold_contributions.as_ref().unwrap()[0].tx_id, 43);
+            assert!(st.canister_sources.contains_key(&low_amount));
+            assert!(st.distinct_canisters.contains(&low_amount));
+            assert!(!st.contribution_history.contains_key(&low_amount));
             let invalid = &st.recent_invalid_contributions.as_ref().unwrap()[0];
             assert_eq!(invalid.tx_id, 44);
             assert_eq!(invalid.memo_text, "not-a-principal");
+        });
+    }
+
+    #[test]
+    fn indexing_caps_under_threshold_recent_list_while_registering_distinct_memo_beneficiaries() {
+        let staking_id = configure_state(10);
+        let pages = vec![GetAccountIdentifierTransactionsResponse {
+            balance: 10_000,
+            transactions: (1..=105)
+                .map(|tx_id| {
+                    let canister = candid::Principal::from_slice(&[(tx_id % 29 + 1) as u8]);
+                    transfer_to_staking_tx(
+                        tx_id,
+                        &staking_id,
+                        canister,
+                        5,
+                        tx_id * 1_000_000_000,
+                    )
+                })
+                .collect(),
+            oldest_tx_id: Some(1),
+        }];
+        let mock = MockIndexClient::new(pages);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+
+        state::with_state(|st| {
+            let recent = st
+                .recent_under_threshold_contributions
+                .as_ref()
+                .expect("under-threshold recent list should exist");
+            assert_eq!(recent.len(), MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS);
+            assert_eq!(recent[0].tx_id, 105);
+            assert_eq!(recent.last().map(|item| item.tx_id), Some(6));
+            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(0));
+            assert_eq!(st.canister_sources.len(), 29);
+            assert_eq!(st.distinct_canisters.len(), 29);
+            assert!(st.contribution_history.is_empty());
+            assert_eq!(st.qualifying_contribution_count, Some(0));
+        });
+    }
+
+    #[test]
+    fn indexing_registers_new_qualifying_canisters_without_pruning_existing_beneficiaries() {
+        let staking_id = configure_state(10);
+        let existing = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        state::with_state_mut(|st| {
+            st.distinct_canisters.insert(existing);
+            st.canister_sources
+                .insert(existing, crate::logic::merge_sources(None, CanisterSource::MemoContribution));
+            st.contribution_history.insert(
+                existing,
+                vec![crate::state::ContributionSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1_000_000_000),
+                    amount_e8s: 100,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.qualifying_contribution_count = Some(1);
+        });
+        let new_canister = candid::Principal::from_slice(&[251, 251, 251]);
+        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 150,
+            transactions: vec![transfer_to_staking_tx(9_999, &staking_id, new_canister, 150, 123_000_000_000)],
+            oldest_tx_id: Some(9_999),
+        }]);
+
+        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.qualifying_contribution_count, Some(2));
+            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 9_999);
+            assert!(st.canister_sources.contains_key(&new_canister));
+            assert!(st.contribution_history.contains_key(&new_canister));
+            assert!(st.distinct_canisters.contains(&new_canister));
+            assert!(st.distinct_canisters.contains(&existing));
         });
     }
 

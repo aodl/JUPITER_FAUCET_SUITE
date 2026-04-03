@@ -337,6 +337,8 @@
         <article class="nav-panel-section" data-panel="metric-burned" id="nav-panel-metric-burned">
           <h2 class="nav-panel-title">Burned</h2>
           <p class="nav-panel-subtitle" id="burned-pane-subtitle">Loading next historian run…</p>
+          <p class="nav-panel-content">This is historian's capped recent burn view (newest <strong>500</strong>). Older burn transactions remain durably queryable from the ICP ledger and its archive canisters.</p>
+          <p class="pane-status-note" id="burned-pane-memory-note" hidden></p>
           <div class="pane-table-wrap">
             <table class="pane-table">
               <thead>
@@ -361,6 +363,8 @@
         <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">
           <h2 class="nav-panel-title">Canisters/Principals</h2>
           <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
+          <p class="nav-panel-content">This registry is historian's durable set of tracked canisters/principals. The registry itself is not pruned, but the per-canister histories and recent feeds shown elsewhere are bounded; full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
+          <p class="pane-status-note" id="registered-pane-memory-note" hidden></p>
           <div class="pane-table-wrap">
             <table class="pane-table">
               <thead>
@@ -386,7 +390,8 @@
         <article class="nav-panel-section" data-panel="metric-commitments" id="nav-panel-metric-commitments">
           <h2 class="nav-panel-title">Commitments</h2>
           <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">A commitment qualifies when the memo names a canister/principal and the contribution is at least <strong>0.1 ICP</strong>. The table below shows all indexed staking-account commitments, including non-qualifying and invalid-memo entries.</p>
+          <p class="nav-panel-content">A commitment qualifies when the memo names a canister/principal and the contribution is at least <strong>0.1 ICP</strong>. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+          <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
           <div class="pane-table-wrap">
             <table class="pane-table">
               <thead>

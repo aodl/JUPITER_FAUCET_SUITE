@@ -7,12 +7,198 @@ use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
 use std::cmp::Reverse;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::state::{
-    CanisterMeta, CanisterSource, Config, ContributionSample, CyclesSample, RecentBurn,
-    RecentContribution, StableState, State,
+    CanisterMeta, CanisterSource, Config, ContributionSample, CyclesSample, InvalidContribution,
+    RecentBurn, RecentContribution, StableState, State,
 };
+
+pub(crate) const MAX_PUBLIC_QUERY_LIMIT: u32 = 100;
+pub(crate) const MAX_RECENT_QUALIFYING_CONTRIBUTIONS: usize = 500;
+pub(crate) const MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS: usize = 100;
+pub(crate) const MAX_RECENT_INVALID_CONTRIBUTIONS: usize = 100;
+pub(crate) const MAX_RECENT_BURNS: usize = 500;
+pub(crate) const MAX_CONTRIBUTION_ENTRIES_PER_CANISTER_HARD_CAP: u32 = 250;
+pub(crate) const MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP: u32 = 250;
+pub(crate) const MAX_INDEX_PAGES_PER_TICK_HARD_CAP: u32 = 100;
+pub(crate) const MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP: u32 = 500;
+
+fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
+    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
+}
+
+fn invalid_contribution_sort_key(item: &InvalidContribution) -> (u64, u64) {
+    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
+}
+
+fn burn_sort_key(item: &RecentBurn) -> (u64, u64) {
+    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
+}
+
+fn clamp_public_limit(limit: Option<u32>, default: u32) -> usize {
+    limit.unwrap_or(default).clamp(1, MAX_PUBLIC_QUERY_LIMIT) as usize
+}
+
+fn clamp_cycles_entries_per_canister(value: u32) -> u32 {
+    value.clamp(1, MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP)
+}
+
+fn clamp_contribution_entries_per_canister(value: u32) -> u32 {
+    value.clamp(1, MAX_CONTRIBUTION_ENTRIES_PER_CANISTER_HARD_CAP)
+}
+
+fn clamp_index_pages_per_tick(value: u32) -> u32 {
+    value.clamp(1, MAX_INDEX_PAGES_PER_TICK_HARD_CAP)
+}
+
+fn clamp_canisters_per_cycles_tick(value: u32) -> u32 {
+    value.clamp(1, MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn allocated_heap_memory_bytes() -> u64 {
+    (core::arch::wasm32::memory_size(0) as u64) * 65_536
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn allocated_heap_memory_bytes() -> u64 {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+fn allocated_stable_memory_bytes() -> u64 {
+    ic_cdk::api::stable::stable_size().saturating_mul(65_536)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn allocated_stable_memory_bytes() -> u64 {
+    0
+}
+
+fn normalize_recent_contribution_bucket(items: &mut Vec<RecentContribution>, counts_toward_faucet: bool, max_entries: usize) {
+    items.retain(|item| item.counts_toward_faucet == counts_toward_faucet);
+    items.sort_by(|a, b| contribution_sort_key(b).cmp(&contribution_sort_key(a)));
+    let mut seen = BTreeSet::new();
+    items.retain(|item| seen.insert(item.tx_id));
+    items.truncate(max_entries);
+}
+
+fn normalize_recent_invalid_contributions(items: &mut Vec<InvalidContribution>) {
+    items.sort_by(|a, b| invalid_contribution_sort_key(b).cmp(&invalid_contribution_sort_key(a)));
+    let mut seen = BTreeSet::new();
+    items.retain(|item| seen.insert(item.tx_id));
+    items.truncate(MAX_RECENT_INVALID_CONTRIBUTIONS);
+}
+
+fn normalize_recent_burns(items: &mut Vec<RecentBurn>) {
+    items.sort_by(|a, b| burn_sort_key(b).cmp(&burn_sort_key(a)));
+    let mut seen = BTreeSet::new();
+    items.retain(|item| seen.insert(item.tx_id));
+    items.truncate(MAX_RECENT_BURNS);
+}
+
+fn memo_source_is_registered(_st: &State, _canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
+    sources.contains(&CanisterSource::MemoContribution)
+}
+
+
+
+fn clamp_config(st: &mut State) {
+    st.config.max_cycles_entries_per_canister =
+        clamp_cycles_entries_per_canister(st.config.max_cycles_entries_per_canister);
+    st.config.max_contribution_entries_per_canister =
+        clamp_contribution_entries_per_canister(st.config.max_contribution_entries_per_canister);
+    st.config.max_index_pages_per_tick = clamp_index_pages_per_tick(st.config.max_index_pages_per_tick);
+    st.config.max_canisters_per_cycles_tick =
+        clamp_canisters_per_cycles_tick(st.config.max_canisters_per_cycles_tick);
+}
+
+fn normalize_runtime_state(st: &mut State) {
+    clamp_config(st);
+
+    let mut recent_contributions = st.recent_contributions.take().unwrap_or_default();
+    recent_contributions.extend(fallback_recent_qualifying_contributions_state(st));
+    let mut recent_under_threshold = st.recent_under_threshold_contributions.take().unwrap_or_default();
+    recent_under_threshold.extend(fallback_recent_under_threshold_contributions_state(st));
+
+    for item in recent_contributions.iter().filter(|item| !item.counts_toward_faucet).cloned() {
+        recent_under_threshold.push(item);
+    }
+    recent_contributions.retain(|item| item.counts_toward_faucet);
+
+    let mut empty_histories = Vec::new();
+    for (canister_id, history) in st.contribution_history.iter_mut() {
+        let mut removed = Vec::new();
+        history.retain(|item| {
+            if item.counts_toward_faucet {
+                true
+            } else {
+                removed.push(RecentContribution {
+                    canister_id: *canister_id,
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: false,
+                });
+                false
+            }
+        });
+        recent_under_threshold.extend(removed);
+        if history.len() > st.config.max_contribution_entries_per_canister as usize {
+            let excess = history.len() - st.config.max_contribution_entries_per_canister as usize;
+            history.drain(0..excess);
+        }
+        if history.is_empty() {
+            empty_histories.push(*canister_id);
+        }
+    }
+    for canister_id in empty_histories {
+        st.contribution_history.remove(&canister_id);
+    }
+
+    normalize_recent_contribution_bucket(&mut recent_contributions, true, MAX_RECENT_QUALIFYING_CONTRIBUTIONS);
+    normalize_recent_contribution_bucket(&mut recent_under_threshold, false, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS);
+    st.recent_contributions = Some(recent_contributions);
+    st.recent_under_threshold_contributions = Some(recent_under_threshold);
+
+    let mut recent_invalid = st.recent_invalid_contributions.take().unwrap_or_default();
+    normalize_recent_invalid_contributions(&mut recent_invalid);
+    st.recent_invalid_contributions = Some(recent_invalid);
+
+    let mut recent_burns = st.recent_burns.take().unwrap_or_default();
+    recent_burns.extend(fallback_recent_burns_state(st));
+    normalize_recent_burns(&mut recent_burns);
+    st.recent_burns = Some(recent_burns);
+
+    st.qualifying_contribution_count = Some(fallback_qualifying_contribution_count(st));
+
+    let contribution_last_ts: BTreeMap<_, _> = st
+        .contribution_history
+        .iter()
+        .map(|(canister_id, history)| {
+            (
+                *canister_id,
+                history
+                    .iter()
+                    .filter_map(|item| item.timestamp_nanos.map(|ts| ts / 1_000_000_000))
+                    .max(),
+            )
+        })
+        .collect();
+    for (canister_id, meta) in st.per_canister_meta.iter_mut() {
+        meta.last_contribution_ts = contribution_last_ts.get(canister_id).copied().flatten();
+    }
+
+    let distinct_canisters: BTreeSet<_> = st
+        .canister_sources
+        .keys()
+        .copied()
+        .chain(st.contribution_history.keys().copied())
+        .chain(st.cycles_history.keys().copied())
+        .collect();
+    st.distinct_canisters = distinct_canisters;
+}
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -121,6 +307,9 @@ pub struct PublicStatus {
     pub index_interval_seconds: u64,
     pub last_completed_cycles_sweep_ts: Option<u64>,
     pub cycles_interval_seconds: u64,
+    pub heap_memory_bytes: Option<u64>,
+    pub stable_memory_bytes: Option<u64>,
+    pub total_memory_bytes: Option<u64>,
 }
 
 #[derive(CandidType, Deserialize, Clone)]
@@ -233,10 +422,10 @@ fn config_from_init_args(args: InitArgs) -> Config {
         scan_interval_seconds: args.scan_interval_seconds.unwrap_or(10 * 60),
         cycles_interval_seconds: args.cycles_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(10_000_000),
-        max_cycles_entries_per_canister: args.max_cycles_entries_per_canister.unwrap_or(100),
-        max_contribution_entries_per_canister: args.max_contribution_entries_per_canister.unwrap_or(100),
-        max_index_pages_per_tick: args.max_index_pages_per_tick.unwrap_or(10),
-        max_canisters_per_cycles_tick: args.max_canisters_per_cycles_tick.unwrap_or(25),
+        max_cycles_entries_per_canister: clamp_cycles_entries_per_canister(args.max_cycles_entries_per_canister.unwrap_or(100)),
+        max_contribution_entries_per_canister: clamp_contribution_entries_per_canister(args.max_contribution_entries_per_canister.unwrap_or(100)),
+        max_index_pages_per_tick: clamp_index_pages_per_tick(args.max_index_pages_per_tick.unwrap_or(10)),
+        max_canisters_per_cycles_tick: clamp_canisters_per_cycles_tick(args.max_canisters_per_cycles_tick.unwrap_or(25)),
     }
 }
 
@@ -246,8 +435,8 @@ fn sources_include_memo_contribution(sources: &BTreeSet<CanisterSource>) -> bool
 
 fn count_registered_canisters(st: &State) -> u64 {
     st.canister_sources
-        .values()
-        .filter(|sources| sources_include_memo_contribution(sources))
+        .iter()
+        .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
         .count() as u64
 }
 
@@ -309,26 +498,47 @@ fn fallback_icp_burned_e8s(st: &State) -> u64 {
         .fold(0u64, |acc, meta| acc.saturating_add(meta.burned_e8s))
 }
 
-fn fallback_recent_contributions_state(st: &State) -> Vec<RecentContribution> {
+fn fallback_recent_qualifying_contributions_state(st: &State) -> Vec<RecentContribution> {
     let mut items: Vec<_> = st
         .contribution_history
         .iter()
         .flat_map(|(canister_id, history)| {
-            history.iter().cloned().map(|item| RecentContribution {
-                canister_id: *canister_id,
-                tx_id: item.tx_id,
-                timestamp_nanos: item.timestamp_nanos,
-                amount_e8s: item.amount_e8s,
-                counts_toward_faucet: item.counts_toward_faucet,
-            })
+            history
+                .iter()
+                .filter(|item| item.counts_toward_faucet)
+                .cloned()
+                .map(|item| RecentContribution {
+                    canister_id: *canister_id,
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: true,
+                })
         })
         .collect();
-    items.sort_by(|a, b| {
-        let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
-        let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
-        b_key.cmp(&a_key)
-    });
-    items.truncate(250);
+    normalize_recent_contribution_bucket(&mut items, true, MAX_RECENT_QUALIFYING_CONTRIBUTIONS);
+    items
+}
+
+fn fallback_recent_under_threshold_contributions_state(st: &State) -> Vec<RecentContribution> {
+    let mut items: Vec<_> = st
+        .contribution_history
+        .iter()
+        .flat_map(|(canister_id, history)| {
+            history
+                .iter()
+                .filter(|item| !item.counts_toward_faucet)
+                .cloned()
+                .map(|item| RecentContribution {
+                    canister_id: *canister_id,
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: false,
+                })
+        })
+        .collect();
+    normalize_recent_contribution_bucket(&mut items, false, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS);
     items
 }
 
@@ -349,30 +559,34 @@ fn fallback_recent_burns_state(st: &State) -> Vec<RecentBurn> {
             })
         })
         .collect();
-    items.sort_by(|a, b| {
-        let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
-        let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
-        b_key.cmp(&a_key)
-    });
-    items.truncate(250);
+    normalize_recent_burns(&mut items);
     items
 }
 
 fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> {
-    let mut items: Vec<_> = st
-        .contribution_history
-        .iter()
-        .flat_map(|(canister_id, history)| {
-            history.iter().cloned().map(|item| RecentContributionListItem {
-                canister_id: Some(*canister_id),
-                memo_text: Some(canister_id.to_text()),
+    let mut items: Vec<_> = fallback_recent_qualifying_contributions_state(st)
+        .into_iter()
+        .map(|item| RecentContributionListItem {
+            canister_id: Some(item.canister_id),
+            memo_text: Some(item.canister_id.to_text()),
+            tx_id: item.tx_id,
+            timestamp_nanos: item.timestamp_nanos,
+            amount_e8s: item.amount_e8s,
+            counts_toward_faucet: true,
+        })
+        .collect();
+    items.extend(
+        fallback_recent_under_threshold_contributions_state(st)
+            .into_iter()
+            .map(|item| RecentContributionListItem {
+                canister_id: Some(item.canister_id),
+                memo_text: Some(item.canister_id.to_text()),
                 tx_id: item.tx_id,
                 timestamp_nanos: item.timestamp_nanos,
                 amount_e8s: item.amount_e8s,
-                counts_toward_faucet: item.counts_toward_faucet,
-            })
-        })
-        .collect();
+                counts_toward_faucet: false,
+            }),
+    );
     if let Some(invalid) = &st.recent_invalid_contributions {
         items.extend(invalid.iter().cloned().map(|item| RecentContributionListItem {
             canister_id: None,
@@ -388,7 +602,7 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> 
         let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
         b_key.cmp(&a_key)
     });
-    items.truncate(250);
+    items.truncate(MAX_RECENT_QUALIFYING_CONTRIBUTIONS + MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS + MAX_RECENT_INVALID_CONTRIBUTIONS);
     items
 }
 
@@ -409,7 +623,10 @@ fn initialize_derived_state_if_missing(st: &mut State) {
         st.icp_burned_e8s = Some(fallback_icp_burned_e8s(st));
     }
     if st.recent_contributions.is_none() {
-        st.recent_contributions = Some(fallback_recent_contributions_state(st));
+        st.recent_contributions = Some(fallback_recent_qualifying_contributions_state(st));
+    }
+    if st.recent_under_threshold_contributions.is_none() {
+        st.recent_under_threshold_contributions = Some(fallback_recent_under_threshold_contributions_state(st));
     }
     if st.recent_invalid_contributions.is_none() {
         st.recent_invalid_contributions = Some(Vec::new());
@@ -426,7 +643,7 @@ fn registered_canister_summaries(st: &State) -> Vec<RegisteredCanisterSummary> {
     let items: Vec<_> = st
         .canister_sources
         .iter()
-        .filter(|(_, sources)| sources_include_memo_contribution(sources))
+        .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
         .map(|(canister_id, sources)| {
             let history = st.contribution_history.get(canister_id).cloned().unwrap_or_default();
             let cycles_history = st.cycles_history.get(canister_id).cloned().unwrap_or_default();
@@ -453,6 +670,7 @@ fn init(args: InitArgs) {
     let cfg = config_from_init_args(args);
     let mut st = State::new(cfg, now_secs);
     initialize_config_defaults_if_missing(&mut st);
+    normalize_runtime_state(&mut st);
     state::set_state(st);
     scheduler::install_timers();
 }
@@ -478,16 +696,16 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
             st.config.min_tx_e8s = v;
         }
         if let Some(v) = args.max_cycles_entries_per_canister {
-            st.config.max_cycles_entries_per_canister = v;
+            st.config.max_cycles_entries_per_canister = clamp_cycles_entries_per_canister(v);
         }
         if let Some(v) = args.max_contribution_entries_per_canister {
-            st.config.max_contribution_entries_per_canister = v;
+            st.config.max_contribution_entries_per_canister = clamp_contribution_entries_per_canister(v);
         }
         if let Some(v) = args.max_index_pages_per_tick {
-            st.config.max_index_pages_per_tick = v;
+            st.config.max_index_pages_per_tick = clamp_index_pages_per_tick(v);
         }
         if let Some(v) = args.max_canisters_per_cycles_tick {
-            st.config.max_canisters_per_cycles_tick = v;
+            st.config.max_canisters_per_cycles_tick = clamp_canisters_per_cycles_tick(v);
         }
         if let Some(v) = args.blackhole_canister_id {
             st.config.blackhole_canister_id = v;
@@ -503,6 +721,7 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         }
     }
     initialize_derived_state_if_missing(st);
+    normalize_runtime_state(st);
     st.main_lock_expires_at_ts = Some(0);
 }
 
@@ -510,8 +729,8 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
 fn post_upgrade(args: Option<UpgradeArgs>) {
     let (stable,): (StableState,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
     let mut st: State = stable.into();
-    apply_upgrade_args(&mut st, args);
     initialize_config_defaults_if_missing(&mut st);
+    apply_upgrade_args(&mut st, args);
     st.icp_burned_e8s = Some(fallback_icp_burned_e8s(&st));
     state::set_state(st);
     scheduler::install_timers();
@@ -520,7 +739,7 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
 #[ic_cdk::query]
 fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
     state::with_state(|st| {
-        let limit = args.limit.unwrap_or(50).max(1) as usize;
+        let limit = clamp_public_limit(args.limit, 50);
         let mut items = Vec::new();
         let mut next = None;
         let mut started = args.start_after.is_none();
@@ -536,6 +755,30 @@ fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
                 .get(&canister_id)
                 .cloned()
                 .unwrap_or_default();
+            if sources.is_empty() {
+                continue;
+            }
+            if !memo_source_is_registered(st, &canister_id, &sources) {
+                let mut filtered_sources = sources.clone();
+                filtered_sources.remove(&CanisterSource::MemoContribution);
+                if filtered_sources.is_empty() {
+                    continue;
+                }
+                if let Some(filter) = &args.source_filter {
+                    if !filtered_sources.contains(filter) {
+                        continue;
+                    }
+                }
+                if items.len() >= limit {
+                    next = Some(canister_id);
+                    break;
+                }
+                items.push(CanisterListItem {
+                    canister_id,
+                    sources: filtered_sources.into_iter().collect(),
+                });
+                continue;
+            }
             if let Some(filter) = &args.source_filter {
                 if !sources.contains(filter) {
                     continue;
@@ -560,28 +803,34 @@ fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
 #[ic_cdk::query]
 fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
     state::with_state(|st| {
-        let history = st
-            .cycles_history
-            .get(&args.canister_id)
-            .cloned()
-            .unwrap_or_default();
         let descending = args.descending.unwrap_or(false);
-        let limit = args.limit.unwrap_or(100).max(1) as usize;
-        let mut filtered: Vec<_> = history
-            .into_iter()
-            .filter(|item| match args.start_after_ts {
-                Some(ts) if descending => item.timestamp_nanos < ts,
-                Some(ts) => item.timestamp_nanos > ts,
-                None => true,
-            })
-            .collect();
-        if descending {
-            filtered.reverse();
+        let limit = clamp_public_limit(args.limit, 100);
+        let mut items = Vec::new();
+        let mut next = None;
+        if let Some(history) = st.cycles_history.get(&args.canister_id) {
+            let iter: Box<dyn Iterator<Item = &CyclesSample>> = if descending {
+                Box::new(history.iter().rev())
+            } else {
+                Box::new(history.iter())
+            };
+            for item in iter {
+                let include = match args.start_after_ts {
+                    Some(ts) if descending => item.timestamp_nanos < ts,
+                    Some(ts) => item.timestamp_nanos > ts,
+                    None => true,
+                };
+                if !include {
+                    continue;
+                }
+                if items.len() >= limit {
+                    next = Some(item.timestamp_nanos);
+                    break;
+                }
+                items.push(item.clone());
+            }
         }
-        let next = filtered.get(limit).map(|item| item.timestamp_nanos);
-        filtered.truncate(limit);
         CyclesHistoryPage {
-            items: filtered,
+            items,
             next_start_after_ts: next,
         }
     })
@@ -590,28 +839,34 @@ fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
 #[ic_cdk::query]
 fn get_contribution_history(args: GetContributionHistoryArgs) -> ContributionHistoryPage {
     state::with_state(|st| {
-        let history = st
-            .contribution_history
-            .get(&args.canister_id)
-            .cloned()
-            .unwrap_or_default();
         let descending = args.descending.unwrap_or(false);
-        let limit = args.limit.unwrap_or(100).max(1) as usize;
-        let mut filtered: Vec<_> = history
-            .into_iter()
-            .filter(|item| match args.start_after_tx_id {
-                Some(tx_id) if descending => item.tx_id < tx_id,
-                Some(tx_id) => item.tx_id > tx_id,
-                None => true,
-            })
-            .collect();
-        if descending {
-            filtered.reverse();
+        let limit = clamp_public_limit(args.limit, 100);
+        let mut items = Vec::new();
+        let mut next = None;
+        if let Some(history) = st.contribution_history.get(&args.canister_id) {
+            let iter: Box<dyn Iterator<Item = &ContributionSample>> = if descending {
+                Box::new(history.iter().rev())
+            } else {
+                Box::new(history.iter())
+            };
+            for item in iter {
+                let include = match args.start_after_tx_id {
+                    Some(tx_id) if descending => item.tx_id < tx_id,
+                    Some(tx_id) => item.tx_id > tx_id,
+                    None => true,
+                };
+                if !include {
+                    continue;
+                }
+                if items.len() >= limit {
+                    next = Some(item.tx_id);
+                    break;
+                }
+                items.push(item.clone());
+            }
         }
-        let next = filtered.get(limit).map(|item| item.tx_id);
-        filtered.truncate(limit);
         ContributionHistoryPage {
-            items: filtered,
+            items,
             next_start_after_tx_id: next,
         }
     })
@@ -656,6 +911,8 @@ fn get_public_counts() -> PublicCounts {
 
 #[ic_cdk::query]
 fn get_public_status() -> PublicStatus {
+    let heap_memory_bytes = allocated_heap_memory_bytes();
+    let stable_memory_bytes = allocated_stable_memory_bytes();
     state::with_state(|st| PublicStatus {
         staking_account: st.config.staking_account.clone(),
         ledger_canister_id: st.config.ledger_canister_id,
@@ -667,6 +924,9 @@ fn get_public_status() -> PublicStatus {
             Some(st.last_completed_cycles_sweep_ts)
         },
         cycles_interval_seconds: st.config.cycles_interval_seconds,
+        heap_memory_bytes: Some(heap_memory_bytes),
+        stable_memory_bytes: Some(stable_memory_bytes),
+        total_memory_bytes: Some(heap_memory_bytes.saturating_add(stable_memory_bytes)),
     })
 }
 
@@ -712,7 +972,7 @@ fn list_registered_canister_summaries(
 #[ic_cdk::query]
 fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentContributionsResponse {
     state::with_state(|st| {
-        let limit = args.limit.unwrap_or(20).clamp(1, 100) as usize;
+        let limit = clamp_public_limit(args.limit, 20);
         let qualifying_only = args.qualifying_only.unwrap_or(false);
         let mut items: Vec<RecentContributionListItem> = if let Some(recent) = &st.recent_contributions {
             let mut merged: Vec<RecentContributionListItem> = recent
@@ -724,9 +984,19 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
-                    counts_toward_faucet: item.counts_toward_faucet,
+                    counts_toward_faucet: true,
                 })
                 .collect();
+            if let Some(low_value) = &st.recent_under_threshold_contributions {
+                merged.extend(low_value.iter().cloned().map(|item| RecentContributionListItem {
+                    canister_id: Some(item.canister_id),
+                    memo_text: Some(item.canister_id.to_text()),
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: false,
+                }));
+            }
             if let Some(invalid) = &st.recent_invalid_contributions {
                 merged.extend(invalid.iter().cloned().map(|item| RecentContributionListItem {
                     canister_id: None,
@@ -757,7 +1027,7 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
 #[ic_cdk::query]
 fn list_recent_burns(args: ListRecentBurnsArgs) -> ListRecentBurnsResponse {
     state::with_state(|st| {
-        let limit = args.limit.unwrap_or(20).clamp(1, 100) as usize;
+        let limit = clamp_public_limit(args.limit, 20);
         let mut items = st.recent_burns.clone().unwrap_or_default();
         items.truncate(limit);
         ListRecentBurnsResponse {
@@ -836,6 +1106,12 @@ fn debug_reset_runtime_state() {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
+fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
+    state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(ts.unwrap_or(0)));
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
 fn debug_reset_derived_state() {
     state::with_state_mut(|st| {
         st.distinct_canisters.clear();
@@ -852,6 +1128,7 @@ fn debug_reset_derived_state() {
         st.qualifying_contribution_count = Some(0);
         st.icp_burned_e8s = Some(0);
         st.recent_contributions = Some(Vec::new());
+        st.recent_under_threshold_contributions = Some(Vec::new());
         st.recent_invalid_contributions = Some(Vec::new());
         st.recent_burns = Some(Vec::new());
         st.last_index_run_ts = Some(0);
@@ -915,6 +1192,7 @@ mod tests {
             qualifying_contribution_count: None,
             icp_burned_e8s: None,
             recent_contributions: None,
+            recent_under_threshold_contributions: None,
             recent_invalid_contributions: None,
             recent_burns: None,
             last_index_run_ts: None,
@@ -1042,10 +1320,16 @@ mod tests {
         assert_eq!(status.ledger_canister_id, principal("jufzc-caaaa-aaaar-qb5da-cai"));
         assert_eq!(status.last_index_run_ts, Some(777));
         assert_eq!(status.last_completed_cycles_sweep_ts, Some(888));
+        assert!(status.heap_memory_bytes.is_some());
+        assert!(status.stable_memory_bytes.is_some());
+        assert_eq!(
+            status.total_memory_bytes,
+            Some(status.heap_memory_bytes.unwrap_or(0).saturating_add(status.stable_memory_bytes.unwrap_or(0))),
+        );
     }
 
     #[test]
-    fn registered_canister_count_requires_memo_contribution() {
+    fn registered_canister_count_requires_qualifying_memo_contribution_history() {
         let memo_only = principal("aaaaa-aa");
         let sns_only = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let both = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
@@ -1056,6 +1340,24 @@ mod tests {
         st.canister_sources.insert(
             both,
             BTreeSet::from([CanisterSource::MemoContribution, CanisterSource::SnsDiscovery]),
+        );
+        st.contribution_history.insert(
+            memo_only,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 80_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.contribution_history.insert(
+            both,
+            vec![ContributionSample {
+                tx_id: 2,
+                timestamp_nanos: Some(2_000_000_000),
+                amount_e8s: 50_000_000,
+                counts_toward_faucet: true,
+            }],
         );
 
         assert_eq!(count_registered_canisters(&st), 2);
@@ -1095,7 +1397,7 @@ mod tests {
     }
 
     #[test]
-    fn get_public_counts_treats_non_qualifying_memo_canisters_as_registered_but_not_burned() {
+    fn get_public_counts_includes_non_qualifying_memo_canisters_in_registered_totals() {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut st = base_state();
         st.canister_sources.insert(memo_canister, BTreeSet::from([CanisterSource::MemoContribution]));
@@ -1223,6 +1525,8 @@ mod tests {
                 amount_e8s: 20_000_000,
                 counts_toward_faucet: true,
             },
+        ]);
+        st.recent_under_threshold_contributions = Some(vec![
             RecentContribution {
                 canister_id: low_amount,
                 tx_id: 10,
@@ -1303,6 +1607,204 @@ mod tests {
         assert_eq!(st.qualifying_contribution_count, Some(2));
         assert_eq!(st.icp_burned_e8s, Some(300));
         assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 3);
+    }
+
+
+    #[test]
+    fn normalize_runtime_state_moves_non_qualifying_commitments_out_of_registered_history() {
+        let canister = principal("aaaaa-aa");
+        let mut st = base_state();
+        st.config.max_contribution_entries_per_canister = 1;
+        st.distinct_canisters.insert(canister);
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![
+                ContributionSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1_000_000_000),
+                    amount_e8s: 5_000_000,
+                    counts_toward_faucet: false,
+                },
+                ContributionSample {
+                    tx_id: 2,
+                    timestamp_nanos: Some(2_000_000_000),
+                    amount_e8s: 50_000_000,
+                    counts_toward_faucet: true,
+                },
+            ],
+        );
+        st.recent_contributions = Some(vec![RecentContribution {
+            canister_id: canister,
+            tx_id: 1,
+            timestamp_nanos: Some(1_000_000_000),
+            amount_e8s: 5_000_000,
+            counts_toward_faucet: false,
+        }]);
+        st.per_canister_meta.insert(
+            canister,
+            CanisterMeta {
+                first_seen_ts: Some(1),
+                ..CanisterMeta::default()
+            },
+        );
+
+        normalize_runtime_state(&mut st);
+
+        assert_eq!(st.qualifying_contribution_count, Some(1));
+        assert_eq!(st.contribution_history.get(&canister).map(|items| items.len()), Some(1));
+        assert_eq!(st.contribution_history.get(&canister).unwrap()[0].tx_id, 2);
+        assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(1));
+        assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 2);
+        assert_eq!(
+            st.recent_under_threshold_contributions
+                .as_ref()
+                .map(|items| items.iter().map(|item| item.tx_id).collect::<Vec<_>>()),
+            Some(vec![1]),
+        );
+        assert_eq!(st.per_canister_meta.get(&canister).and_then(|meta| meta.last_contribution_ts), Some(2));
+        assert_eq!(count_registered_canisters(&st), 1);
+    }
+
+    #[test]
+    fn normalize_runtime_state_preserves_memo_only_registration_when_history_is_non_qualifying() {
+        let canister = principal("aaaaa-aa");
+        let mut st = base_state();
+        st.distinct_canisters.insert(canister);
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 5_000_000,
+                counts_toward_faucet: false,
+            }],
+        );
+
+        normalize_runtime_state(&mut st);
+
+        assert_eq!(count_registered_canisters(&st), 1);
+        assert!(st.canister_sources.contains_key(&canister));
+        assert!(st.distinct_canisters.contains(&canister));
+        assert!(!st.contribution_history.contains_key(&canister));
+        assert_eq!(
+            st.recent_under_threshold_contributions
+                .as_ref()
+                .map(|items| items.iter().map(|item| item.tx_id).collect::<Vec<_>>()),
+            Some(vec![1]),
+        );
+    }
+
+
+    #[test]
+    fn normalize_runtime_state_preserves_large_beneficiary_registry() {
+        let mut st = base_state();
+        for idx in 0..=2_100u32 {
+            let canister = Principal::from_slice(&[((idx % 250) + 1) as u8, ((idx / 250) + 1) as u8]);
+            st.distinct_canisters.insert(canister);
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+            st.contribution_history.insert(
+                canister,
+                vec![ContributionSample {
+                    tx_id: idx as u64 + 1,
+                    timestamp_nanos: Some((idx as u64 + 1) * 1_000_000_000),
+                    amount_e8s: 10_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+        }
+
+        normalize_runtime_state(&mut st);
+
+        assert_eq!(st.distinct_canisters.len(), 2_101);
+        assert_eq!(st.canister_sources.len(), 2_101);
+        assert_eq!(st.contribution_history.len(), 2_101);
+    }
+
+    #[test]
+    fn apply_upgrade_args_clamps_runtime_caps() {
+        let mut st = base_state();
+        apply_upgrade_args(
+            &mut st,
+            Some(UpgradeArgs {
+                max_cycles_entries_per_canister: Some(u32::MAX),
+                max_contribution_entries_per_canister: Some(u32::MAX),
+                max_index_pages_per_tick: Some(u32::MAX),
+                max_canisters_per_cycles_tick: Some(u32::MAX),
+                ..UpgradeArgs::default()
+            }),
+        );
+
+        assert_eq!(st.config.max_cycles_entries_per_canister, MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP);
+        assert_eq!(
+            st.config.max_contribution_entries_per_canister,
+            MAX_CONTRIBUTION_ENTRIES_PER_CANISTER_HARD_CAP,
+        );
+        assert_eq!(st.config.max_index_pages_per_tick, MAX_INDEX_PAGES_PER_TICK_HARD_CAP);
+        assert_eq!(
+            st.config.max_canisters_per_cycles_tick,
+            MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP,
+        );
+    }
+
+    #[test]
+    fn public_query_limits_are_clamped() {
+        let canister = principal("aaaaa-aa");
+        let mut st = base_state();
+        st.distinct_canisters.insert(canister);
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            (1..=150)
+                .map(|tx_id| ContributionSample {
+                    tx_id,
+                    timestamp_nanos: Some(tx_id * 1_000_000_000),
+                    amount_e8s: 10_000_000,
+                    counts_toward_faucet: true,
+                })
+                .collect(),
+        );
+        st.cycles_history.insert(
+            canister,
+            (1..=150)
+                .map(|idx| CyclesSample {
+                    timestamp_nanos: idx,
+                    cycles: idx as u128,
+                    source: CyclesSampleSource::BlackholeStatus,
+                })
+                .collect(),
+        );
+        state::set_state(st);
+
+        let canisters = list_canisters(ListCanistersArgs {
+            start_after: None,
+            limit: Some(5_000),
+            source_filter: None,
+        });
+        assert_eq!(canisters.items.len(), 1);
+
+        let contributions = get_contribution_history(GetContributionHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(5_000),
+            descending: Some(false),
+        });
+        assert_eq!(contributions.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
+        assert_eq!(contributions.next_start_after_tx_id, Some(101));
+
+        let cycles = get_cycles_history(GetCyclesHistoryArgs {
+            canister_id: canister,
+            start_after_ts: None,
+            limit: Some(5_000),
+            descending: Some(false),
+        });
+        assert_eq!(cycles.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
+        assert_eq!(cycles.next_start_after_ts, Some(101));
     }
 
     #[test]

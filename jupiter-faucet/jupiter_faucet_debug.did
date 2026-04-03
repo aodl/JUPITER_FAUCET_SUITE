@@ -70,6 +70,7 @@ service : (InitArgs) -> {
   debug_set_blackhole_armed : (opt bool) -> ();
   debug_set_blackhole_armed_since_ts : (opt nat64) -> ();
   debug_set_expected_first_staking_tx_id : (opt nat64) -> ();
+  debug_set_main_lock_expires_at_ts : (opt nat64) -> ();
   debug_clear_forced_rescue : () -> ();
   debug_set_last_successful_transfer_ts : (opt nat64) -> ();
   debug_set_trap_after_successful_transfers : (opt nat32) -> ();

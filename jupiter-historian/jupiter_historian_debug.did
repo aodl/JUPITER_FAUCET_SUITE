@@ -96,6 +96,9 @@ type PublicStatus = record {
   index_interval_seconds : nat64;
   last_completed_cycles_sweep_ts : opt nat64;
   cycles_interval_seconds : nat64;
+  heap_memory_bytes : opt nat64;
+  stable_memory_bytes : opt nat64;
+  total_memory_bytes : opt nat64;
 };
 type RegisteredCanisterSummarySort = variant {
   CanisterIdAsc;
@@ -164,6 +167,7 @@ service : (InitArgs) -> {
   debug_set_last_completed_cycles_sweep_ts : (opt nat64) -> ();
   debug_set_last_sns_discovery_ts : (opt nat64) -> ();
   debug_set_last_indexed_staking_tx_id : (opt nat64) -> ();
+  debug_set_main_lock_expires_at_ts : (opt nat64) -> ();
   debug_reset_runtime_state : () -> ();
   debug_reset_derived_state : () -> ();
 }

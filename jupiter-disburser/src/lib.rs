@@ -189,6 +189,12 @@ fn debug_set_blackhole_armed_since_ts(ts: Option<u64>) {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
+fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
+    crate::state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(ts.unwrap_or(0)));
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
 fn debug_clear_forced_rescue() {
     crate::state::with_state_mut(|st| st.forced_rescue_reason = None);
 }

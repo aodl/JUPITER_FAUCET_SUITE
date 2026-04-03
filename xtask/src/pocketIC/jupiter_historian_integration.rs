@@ -243,6 +243,9 @@ struct PublicStatus {
     index_interval_seconds: u64,
     last_completed_cycles_sweep_ts: Option<u64>,
     cycles_interval_seconds: u64,
+    heap_memory_bytes: Option<u64>,
+    stable_memory_bytes: Option<u64>,
+    total_memory_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -489,6 +492,45 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
 
 #[test]
 #[ignore]
+fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let target = h.blackhole;
+    let staking_id = h.staking_identifier()?;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id, 42u64, Some(target.to_text().into_bytes())))?,
+    )?;
+
+    let now_secs = (h.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let _: () = update_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_set_main_lock_expires_at_ts",
+        Some(now_secs + 30),
+    )?;
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts_before: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts_before.registered_canister_count, 0);
+    assert_eq!(counts_before.qualifying_contribution_count, 0);
+
+    h.pic.advance_time(Duration::from_secs(31));
+    tick_n(&h.pic, 5);
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts_after: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts_after.registered_canister_count, 1);
+    assert_eq!(counts_after.qualifying_contribution_count, 1);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
@@ -534,6 +576,9 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     assert_eq!(status.index_interval_seconds, 60);
     assert_eq!(status.cycles_interval_seconds, 1);
     assert!(status.last_index_run_ts.is_some());
+    assert!(status.heap_memory_bytes.is_some());
+    assert!(status.stable_memory_bytes.is_some());
+    assert!(status.total_memory_bytes.is_some());
 
     let registered: ListRegisteredCanisterSummariesResponse = query_one(
         &h.pic,

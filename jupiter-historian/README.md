@@ -2,7 +2,7 @@
 
 `jupiter-historian` is the indexing and observability canister for the Jupiter Faucet Suite.
 
-It keeps a distinct set of target canisters discovered from faucet staking-account transfer memos, records contribution history for those canisters, records ICP burn observations by scanning CMC deposit accounts, and records periodic cycles observations when those balances are observable on-chain.
+It keeps a durable set of target canisters/principals discovered from faucet staking-account transfer memos, records bounded contribution history for tracked canisters, records ICP burn observations by scanning CMC deposit accounts, and records bounded periodic cycles observations when those balances are observable on-chain.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -40,7 +40,7 @@ Memo handling mirrors the faucet’s input rules:
 - if `icrc1_memo` is present but empty, do **not** fall back to the numeric memo
 - trim UTF-8 text before trying to parse principal text
 
-If the memo decodes to principal text, the contribution is attached to that canister.
+If the memo decodes to principal text, the beneficiary is tracked in the historian registry. When the amount is at least `min_tx_e8s`, the contribution is also attached to that canister/principal as qualifying history. Below-threshold memo contributions are kept in a separate capped recent feed and do not count as qualifying history.
 
 If the memo is valid text but **not** valid principal text, the historian keeps it in its recent-invalid-contribution feed instead of dropping it completely. That is useful operationally because it shows what people tried to send even when the faucet would ignore it.
 
@@ -59,7 +59,7 @@ For each burn target it tracks:
 - cumulative burned ICP in e8s
 - recent burn items for the public dashboard
 
-The burn-target set is intentionally broader than just "currently memo-valid canisters": it includes memo-derived canisters, the configured faucet canister itself when present, and any canister that already has prior burn state recorded in historian storage. That lets burn tracking continue even if an older canister stops receiving fresh contributions.
+The burn-target set is intentionally broader than just "currently memo-valid canisters": it includes tracked memo-derived canisters, the configured faucet canister itself when present, and any canister that already has prior burn state recorded in historian storage. That lets burn tracking continue even if an older canister stops receiving fresh contributions.
 
 This burn indexing keys off actual `Burn` records on the CMC deposit account history, so merely transferring ICP into the deposit account does not count as “burned into cycles” until the ledger records the burn.
 
@@ -93,22 +93,21 @@ SNS-discovered canisters are not probed through blackhole status in the regular 
 
 ## Retention and deduplication
 
-Both timelines are capped per canister and pruned oldest-first.
+The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards.
 
-Configurable limits are:
+Durable bounded state currently uses these caps:
 
-- `max_cycles_entries_per_canister` (default `100`)
-- `max_contribution_entries_per_canister` (default `100`)
-
-Other retained recent lists are capped in code at 250 items each:
-
-- recent valid contributions
-- recent invalid contributions
-- recent burns
+- the tracked canister / principal registry is **not pruned**
+- `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
+- `max_contribution_entries_per_canister` default `100`, hard-clamped to `250`
+- recent qualifying contributions: `500`
+- recent below-threshold memo contributions: `100`
+- recent invalid-memo contributions: `100`
+- recent burns: `500`
 
 Deduplication rules are:
 
-- contributions are deduped by transaction ID
+- contributions are deduped by transaction ID within the retained per-canister history window
 - recent contributions / invalid contributions / burns are deduped by transaction ID
 - cycles samples are not appended twice for the same canister and timestamp
 
@@ -143,9 +142,9 @@ The public read model is intentionally richer than the raw history methods becau
 
 The main public queries use these code-backed defaults:
 
-- `list_canisters`: default `limit = 50`
-- `get_cycles_history`: default `limit = 100`
-- `get_contribution_history`: default `limit = 100`
+- `list_canisters`: default `limit = 50`, clamped to `1..=100`
+- `get_cycles_history`: default `limit = 100`, clamped to `1..=100`
+- `get_contribution_history`: default `limit = 100`, clamped to `1..=100`
 - `list_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
 - `list_recent_contributions`: default `limit = 20`, clamped to `1..=100`
 - `list_recent_burns`: default `limit = 20`, clamped to `1..=100`

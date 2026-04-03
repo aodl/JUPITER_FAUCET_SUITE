@@ -847,6 +847,9 @@ struct HistorianPublicStatus {
     index_interval_seconds: u64,
     last_completed_cycles_sweep_ts: Option<u64>,
     cycles_interval_seconds: u64,
+    heap_memory_bytes: Option<u64>,
+    stable_memory_bytes: Option<u64>,
+    total_memory_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1033,6 +1036,9 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(status.cycles_interval_seconds, 1);
     assert!(status.last_index_run_ts.is_some());
     assert!(status.last_completed_cycles_sweep_ts.is_some());
+    assert!(status.heap_memory_bytes.is_some());
+    assert!(status.stable_memory_bytes.is_some());
+    assert!(status.total_memory_bytes.is_some());
 
     let registered: HistorianListRegisteredCanisterSummariesResponse = query_one(
         &pic,

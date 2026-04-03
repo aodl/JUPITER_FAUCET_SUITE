@@ -4,6 +4,8 @@ use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use std::time::Duration;
 
+const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
+
 use crate::clients::cmc::CyclesMintingCanister;
 use crate::clients::index::{account_identifier_text, GetAccountIdentifierTransactionsResponse, IcpIndexCanister};
 use crate::clients::ledger::IcrcLedgerCanister;
@@ -134,17 +136,19 @@ fn log_summary(summary: &state::Summary) {
 
 struct MainGuard {
     active: bool,
+    lease_expires_at_ts: u64,
 }
 
 impl MainGuard {
-    fn acquire() -> Option<Self> {
+    fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            if st.main_lock_expires_at_ts.unwrap_or(0) != 0 {
+            let lock_expires_at_ts = st.main_lock_expires_at_ts.unwrap_or(0);
+            if lock_expires_at_ts > now_secs {
                 return None;
             }
-            // Stored as 0/1 for stable-state compatibility with existing deployments.
-            st.main_lock_expires_at_ts = Some(1);
-            Some(Self { active: true })
+            let lease_expires_at_ts = now_secs.saturating_add(MAIN_TICK_LEASE_SECONDS);
+            st.main_lock_expires_at_ts = Some(lease_expires_at_ts);
+            Some(Self { active: true, lease_expires_at_ts })
         })
     }
 
@@ -152,14 +156,22 @@ impl MainGuard {
         if !self.active {
             return;
         }
-        state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(0));
+        let lease_expires_at_ts = self.lease_expires_at_ts;
+        state::with_state_mut(|st| {
+            if st.main_lock_expires_at_ts == Some(lease_expires_at_ts) {
+                st.main_lock_expires_at_ts = Some(0);
+            }
+        });
         self.active = false;
     }
 
     fn finish(mut self, now_secs: u64, err: Option<u32>) {
+        let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs;
-            st.main_lock_expires_at_ts = Some(0);
+            if st.main_lock_expires_at_ts == Some(lease_expires_at_ts) {
+                st.main_lock_expires_at_ts = Some(0);
+            }
         });
         self.active = false;
         if let Some(code) = err { log_error(code); }
@@ -207,7 +219,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClien
     index: &I,
     cmc: &C,
 ) {
-    let Some(guard) = MainGuard::acquire() else { return; };
+    let Some(guard) = MainGuard::acquire(now_secs) else { return; };
     debug_reset_successful_transfer_counter();
     if !force {
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
@@ -1060,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn main_lock_prevents_overlap_after_old_lease_window_passes() {
+    fn stale_main_lease_can_be_reclaimed_without_old_guard_clearing_the_new_lease() {
         let now_secs = 1_000_u64;
         let mut st = state::State::new(test_config(), now_secs);
         let mut job = ActivePayoutJob::new(1, 10_000, 1_000_000, 2_000_000, now_secs * 1_000_000_000);
@@ -1077,16 +1089,28 @@ mod tests {
         let mut fut1 = Box::pin(run_main_tick_with_clients(false, first_now_nanos, now_secs, &ledger, &index, &cmc));
         assert!(matches!(poll_once(fut1.as_mut()), Poll::Pending));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(1));
+        assert_eq!(
+            state::with_state(|st| st.main_lock_expires_at_ts),
+            Some(now_secs + MAIN_TICK_LEASE_SECONDS),
+        );
 
-        let second_now_secs = now_secs + (15 * 60) + 1;
+        let second_now_secs = now_secs + MAIN_TICK_LEASE_SECONDS + 1;
         let second_now_nanos = second_now_secs * 1_000_000_000;
         let mut fut2 = Box::pin(run_main_tick_with_clients(false, second_now_nanos, second_now_secs, &ledger, &index, &cmc));
-        assert!(matches!(poll_once(fut2.as_mut()), Poll::Ready(())));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(1));
+        assert!(matches!(poll_once(fut2.as_mut()), Poll::Pending));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            state::with_state(|st| st.main_lock_expires_at_ts),
+            Some(second_now_secs + MAIN_TICK_LEASE_SECONDS),
+        );
 
         drop(fut1);
+        assert_eq!(
+            state::with_state(|st| st.main_lock_expires_at_ts),
+            Some(second_now_secs + MAIN_TICK_LEASE_SECONDS),
+        );
+
+        drop(fut2);
         assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
     }
 

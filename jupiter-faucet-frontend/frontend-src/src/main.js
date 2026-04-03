@@ -71,6 +71,20 @@ function formatInteger(value) {
   return formatGroupedBigInt(asBigInt);
 }
 
+function formatBytes(value) {
+  if (value === null || value === undefined) return DASH;
+  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let scaled = Number(asBigInt);
+  let unitIndex = 0;
+  while (scaled >= 1024 && unitIndex < units.length - 1) {
+    scaled /= 1024;
+    unitIndex += 1;
+  }
+  const digits = scaled >= 100 || unitIndex === 0 ? 0 : scaled >= 10 ? 1 : 2;
+  return `${scaled.toFixed(digits)} ${units[unitIndex]}`;
+}
+
 function formatTimestampSeconds(value) {
   if (!value) return DASH;
   return new Date(Number(value) * 1000).toLocaleString('en-GB', {
@@ -282,6 +296,19 @@ function renderPaneSubtitles(data) {
   setText('registered-pane-subtitle', subtitle);
   setText('commitments-pane-subtitle', subtitle);
   setText('burned-pane-subtitle', subtitle);
+
+  const totalMemory = data?.status?.total_memory_bytes?.[0];
+  const heapMemory = data?.status?.heap_memory_bytes?.[0];
+  const stableMemory = data?.status?.stable_memory_bytes?.[0];
+  const memoryNote = totalMemory === undefined || totalMemory === null
+    ? ''
+    : `Historian allocated memory: ${formatBytes(totalMemory)}`
+      + (heapMemory !== undefined && stableMemory !== undefined
+        ? ` (${formatBytes(heapMemory)} heap + ${formatBytes(stableMemory)} stable)`
+        : '');
+  setStatusNote('registered-pane-memory-note', memoryNote);
+  setStatusNote('commitments-pane-memory-note', memoryNote);
+  setStatusNote('burned-pane-memory-note', memoryNote);
 }
 
 function paneEmptyMessage(data, key, defaultText) {

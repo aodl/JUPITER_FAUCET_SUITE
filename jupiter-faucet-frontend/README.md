@@ -105,6 +105,7 @@ No browser requests are made to custom `/dashboard/*` routes.
 The browser data loader is intentionally defensive:
 
 - it fetches historian counts, status, registered-canister summaries, recent contributions, and recent burns concurrently
+- the displayed historian history tables are intentionally bounded views; the tracked canister/principal registry is not pruned, and full transfer history still lives on the ICP ledger and its archive canisters
 - it only instantiates the ledger actor after historian status reveals the staking account and ledger canister ID
 - it preserves partial success, so one failed dashboard query does not blank the whole page
 - it explicitly detects the "all requested historian methods are missing" shape and flags that as a likely outdated historian deployment

@@ -20,6 +20,9 @@ export const idlFactory = ({ IDL }) => {
     index_interval_seconds: IDL.Nat64,
     last_completed_cycles_sweep_ts: IDL.Opt(IDL.Nat64),
     cycles_interval_seconds: IDL.Nat64,
+    heap_memory_bytes: IDL.Opt(IDL.Nat64),
+    stable_memory_bytes: IDL.Opt(IDL.Nat64),
+    total_memory_bytes: IDL.Opt(IDL.Nat64),
   });
   const RegisteredCanisterSummarySort = IDL.Variant({
     CanisterIdAsc: IDL.Null,

@@ -88,7 +88,7 @@ Important details that matter in practice:
 - only incoming `Transfer` records **to** the staking account are treated as contributions; `TransferFrom` records are ignored
 - whitespace around principal text is tolerated because the parser trims before decoding
 - empty, malformed, or non-principal memos are ignored
-- contributions below `min_tx_e8s` are ignored
+- contributions below `min_tx_e8s` are ignored by the faucet for eligibility; historian still tracks memo-derived beneficiaries in its distinct registry, but only keeps a capped recent feed for the below-threshold attempts and does not count them as qualifying history
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record
 - each new payout job rescans the full staking history against a fresh payout-pot snapshot
 
@@ -102,6 +102,7 @@ See [`jupiter-faucet/README.md`](jupiter-faucet/README.md) for the exact rules a
   - no public production methods beyond installation / upgrade
 - `jupiter-historian`
   - public read-only query API for counts, status, histories, summaries, recent contributions, and recent burns
+  - the historian keeps a durable beneficiary registry plus bounded history/recent-feed views in canister state; the canonical full transfer history remains on the ICP ledger and its archive canisters
 - `jupiter-faucet-frontend`
   - `http_request` for certified asset serving
 - `jupiter-lifeline`
