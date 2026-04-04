@@ -219,7 +219,7 @@ function nextRunLabel(status) {
 function renderLandingSummary(data) {
   setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8s(data.stakeE8s) });
   setMetricStatus('landing-icp-burned', data.counts?.icp_burned_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Burned unavailable' } : { value: formatIcpE8s(data.counts.icp_burned_e8s) });
-  setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Canisters/principals unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
+  setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Target canisters unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
   setMetricStatus('landing-qualifying-contributions', data.counts?.qualifying_contribution_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Commitments unavailable' } : { value: formatInteger(data.counts.qualifying_contribution_count) });
   setHidden('landing-live-unavailable', true);
 }
@@ -376,7 +376,7 @@ function formatCommitmentTarget(item) {
   if (canister) {
     return escapeHtml(formatPrincipal(canister));
   }
-  return 'invalid principal memo';
+  return 'invalid target canister memo';
 }
 
 function commitmentTransactionHref(item) {
@@ -456,7 +456,7 @@ function renderRegisteredPane(data) {
         <td>${escapeHtml(formatIcpE8s(item.total_qualifying_contributed_e8s))}</td>
         <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
       </tr>`,
-    paneEmptyMessage(data, 'registered', 'No canisters/principals indexed yet.'),
+    paneEmptyMessage(data, 'registered', 'No target canisters indexed yet.'),
     4,
   );
 }

@@ -1119,7 +1119,7 @@ mod tests {
         let now_secs = 1_000_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(1, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -1150,7 +1150,7 @@ mod tests {
         let now_secs = 1_250_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(2, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -1179,8 +1179,8 @@ mod tests {
         let now_secs = 1_500_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(5, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary_a = Principal::from_text("aaaaa-aa").unwrap();
-        let beneficiary_b = Principal::from_text("2vxsx-fae").unwrap();
+        let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary_a.to_text().into_bytes())),
             contribution_tx(11, &staking_id, 60_000_000, Some(beneficiary_b.to_text().into_bytes())),
@@ -1209,7 +1209,7 @@ mod tests {
         let now_secs = 1_600_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(6, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -1235,7 +1235,7 @@ mod tests {
         let now_secs = 1_700_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(7, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -1299,7 +1299,7 @@ mod tests {
     #[test]
     fn completed_job_counts_beneficiary_zero_success_once_even_if_interrupted_across_ticks() {
         let now_secs = 4_050_u64;
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let cfg = test_config();
         let mut st = state::State::new(cfg.clone(), now_secs);
         let mut job = ActivePayoutJob::new(40, 10_000, 10_000, 1, now_secs * 1_000_000_000);
@@ -1376,7 +1376,7 @@ mod tests {
     #[test]
     fn stale_pending_transfer_fails_without_reusing_an_expired_created_at_time() {
         let now_secs = 3 * 24 * 60 * 60;
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let stale_created_at_nanos = (now_secs - 2 * 24 * 60 * 60) * 1_000_000_000;
         let cfg = test_config();
         let mut st = state::State::new(cfg.clone(), now_secs);
@@ -1415,8 +1415,8 @@ mod tests {
         let now_secs = 4_100_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(8, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary_a = Principal::from_text("aaaaa-aa").unwrap();
-        let beneficiary_b = Principal::from_text("2vxsx-fae").unwrap();
+        let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary_a.to_text().into_bytes())),
             contribution_tx(11, &staking_id, 60_000_000, Some(beneficiary_b.to_text().into_bytes())),
@@ -1446,7 +1446,7 @@ mod tests {
     #[test]
     fn resumes_pending_transfer_after_upgrade_boundary_before_transfer_outcome_is_known() {
         let now_secs = 3_600_u64;
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         set_active_job(now_secs, {
             let mut job = ActivePayoutJob::new(7, 10_000, 24_990_000, 1, now_secs * 1_000_000_000);
             job.scan_complete = true;
@@ -1482,7 +1482,7 @@ mod tests {
     #[test]
     fn resumes_pending_notification_after_upgrade_boundary_without_retransferring() {
         let now_secs = 3_700_u64;
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         set_active_job(now_secs, {
             let mut job = ActivePayoutJob::new(8, 10_000, 24_990_000, 1, now_secs * 1_000_000_000);
             job.scan_complete = true;
@@ -1521,7 +1521,7 @@ mod tests {
         let now_secs = 4_200_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(9, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let beneficiary = Principal::from_text("aaaaa-aa").unwrap();
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -1544,8 +1544,8 @@ mod tests {
         let now_secs = 4_300_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(10, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let first = Principal::from_text("aaaaa-aa").unwrap();
-        let second = Principal::from_text("2vxsx-fae").unwrap();
+        let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
 
         let mut first_page = Vec::new();
         for id in 1..500u64 {

@@ -55,19 +55,20 @@ A staking-account transaction only contributes to attribution if all of the foll
 
 1. it is an incoming `Transfer` **to** the configured `staking_account` (`TransferFrom` records are ignored)
 2. the transferred amount is at least `min_tx_e8s`
-3. the memo can be decoded as principal text for a beneficiary canister
+3. the memo can be decoded as ASCII principal text in `icrc1_memo` within the ICP memo limit (the supported UX is to enter the beneficiary target canister ID)
 
 ### Memo parsing rules
 
 Memo handling is intentionally simple and code-driven:
 
-- first preference: `icrc1_memo`
-- fallback: legacy numeric memo bytes if `icrc1_memo` is absent and the numeric memo is non-zero
-- an empty `icrc1_memo` is treated as empty / invalid and does **not** fall back to the numeric memo
+- only non-empty `icrc1_memo` bytes are considered
+- legacy numeric memos are ignored entirely
+- an empty `icrc1_memo` is treated as empty / invalid
 - empty memo = invalid
 - malformed memo = invalid
-- memo that is not valid principal text = invalid
-- whitespace around principal text is tolerated because the parser trims before decoding
+- memo that does not decode to principal text within the ICP memo limit = invalid
+- the trimmed memo must be ASCII and at most 32 bytes
+- whitespace around the memo text is tolerated because the parser trims before decoding, as long as the raw `icrc1_memo` still fits within the 32-byte ICP memo limit
 
 Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not block later transfers.
 
@@ -77,7 +78,9 @@ The default minimum tracked contribution is:
 
 - `min_tx_e8s = 100_000_000` (`1 ICP`)
 
-Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. The production minimum is intentionally high because historian keeps a durable beneficiary registry for memo-derived targets so it can later monitor and display cycles top-up activity efficiently; a much lower threshold would make registry spam far cheaper.
+Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. They also do **not** create durable historian tracking for the memo target. The production minimum is intentionally high because historian only keeps a durable beneficiary registry for memo-derived targets that actually qualify; a much lower threshold would make registry spam far cheaper.
+
+Memo encoding uses `icrc1_memo` text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended target canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
 
 ## Important payout semantics
 
@@ -399,7 +402,7 @@ The most important thing to remember is that the faucet is **job-snapshot based*
 
 Treat the memo requirement as canonical:
 
-- beneficiary is identified by principal text in the memo
+- beneficiary is identified by ASCII principal text in `icrc1_memo`; the supported usage is to put the target canister ID there
 - malformed or missing memos are ignored
 - ownership of the beneficiary canister is not checked by the faucet
 

@@ -10,7 +10,12 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-fn require_ignored_flag() -> Result<()> { Ok(()) }
+fn require_ignored_flag() -> Result<()> {
+    // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
+    // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
+    // invoke them explicitly with `--ignored`.
+    Ok(())
+}
 fn repo_root() -> &'static str { env!("CARGO_MANIFEST_DIR") }
 
 fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<&str>) -> Result<Vec<u8>> {
@@ -387,6 +392,115 @@ fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
 
 #[test]
 #[ignore]
+fn historian_keeps_under_threshold_contributions_out_of_durable_tracking() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let target = h.blackhole;
+    let staking_id = h.staking_identifier()?;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id, 5u64, Some(target.to_text().into_bytes())))?,
+    )?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let st: DebugState = query_one(&h.pic, h.historian, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(st.distinct_canister_count, 0);
+    assert_eq!(st.last_indexed_staking_tx_id, Some(1));
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.qualifying_contribution_count, 0);
+
+    let canisters: ListCanistersResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs { start_after: None, limit: Some(10), source_filter: None },
+    )?;
+    assert!(canisters.items.is_empty());
+
+    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        },
+    )?;
+    assert_eq!(registered.total, 0);
+    assert!(registered.items.is_empty());
+
+    let recent: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 1);
+    assert_eq!(recent.items[0].canister_id, Some(target));
+    assert!(!recent.items[0].counts_toward_faucet);
+
+    let cycles: CyclesHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_cycles_history",
+        GetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) },
+    )?;
+    assert!(cycles.items.is_empty());
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_ignores_missing_icrc1_memo_even_when_legacy_numeric_memo_exists() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer_with_numeric_memo",
+        encode_args((staking_id, 100_000_000u64, 0x61616161612d6161u64))?,
+    )?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.qualifying_contribution_count, 0);
+
+    let recent: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert!(recent.items.is_empty());
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
@@ -428,7 +542,7 @@ fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> 
     h.pic.install_canister(sns_root, sns_root_wasm()?, vec![], None);
 
     let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
-    let dapp = Principal::from_text("2vxsx-fae")?;
+    let dapp = Principal::from_text("qjdve-lqaaa-aaaaa-aaaeq-cai")?;
     let archive = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
 
     let summary = GetSnsCanistersSummaryResponse {
@@ -645,7 +759,7 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
     h.pic.install_canister(sns_root, sns_root_wasm()?, vec![], None);
 
     let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
-    let dapp = Principal::from_text("2vxsx-fae")?;
+    let dapp = Principal::from_text("qjdve-lqaaa-aaaaa-aaaeq-cai")?;
 
     let summary = GetSnsCanistersSummaryResponse {
         root: Some(SnsCanisterSummary { canister_id: Some(sns_root), status: Some(SnsCanisterStatus { cycles: Some(Nat::from(1000u64)) }) }),

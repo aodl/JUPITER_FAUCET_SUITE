@@ -33,13 +33,15 @@ fn post_upgrade() {
 
 #[query]
 fn http_request(req: HttpRequest) -> HttpResponse {
-    let path = req.get_path().expect("failed to parse request path");
+    let path = match req.get_path() {
+        Ok(path) => path,
+        Err(_) => return plain_error_response(StatusCode::BAD_REQUEST, "bad request path"),
+    };
 
-    if path == "/metrics" {
-        return serve_metrics();
+    match request_target_for_path(&path) {
+        RequestTarget::Metrics => serve_metrics(),
+        RequestTarget::Asset => serve_asset(&req),
     }
-
-    serve_asset(&req)
 }
 
 thread_local! {
@@ -52,6 +54,31 @@ thread_local! {
 static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 const IMMUTABLE_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 const NO_CACHE_ASSET_CACHE_CONTROL: &str = "public, no-cache, no-store";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestTarget {
+    Metrics,
+    Asset,
+}
+
+fn request_target_for_path(path: &str) -> RequestTarget {
+    if path == "/metrics" {
+        RequestTarget::Metrics
+    } else {
+        RequestTarget::Asset
+    }
+}
+
+fn plain_error_response(status: StatusCode, message: &str) -> HttpResponse<'static> {
+    HttpResponse::builder()
+        .with_status_code(status)
+        .with_body(message.as_bytes().to_vec())
+        .with_headers(get_asset_headers(vec![
+            ("content-type".to_string(), "text/plain; charset=utf-8".to_string()),
+            ("cache-control".to_string(), NO_CACHE_ASSET_CACHE_CONTROL.to_string()),
+        ]))
+        .build()
+}
 
 fn collect_assets<'content, 'path>(
     dir: &'content Dir<'path>,
@@ -200,16 +227,29 @@ fn serve_metrics() -> HttpResponse<'static> {
             .with_headers(headers)
             .build();
 
+        let Some(certificate) = data_certificate() else {
+            return plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "certificate unavailable");
+        };
+
         HTTP_TREE.with(|tree| {
             let tree = tree.borrow();
             let metrics_tree_path = HttpCertificationPath::exact("/metrics");
             let metrics_certification = HttpCertification::skip();
             let metrics_tree_entry =
                 HttpCertificationTreeEntry::new(&metrics_tree_path, metrics_certification);
+            let witness = match tree.witness(&metrics_tree_entry, "/metrics") {
+                Ok(witness) => witness,
+                Err(_) => {
+                    return plain_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "metrics witness unavailable",
+                    )
+                }
+            };
             add_v2_certificate_header(
-                &data_certificate().expect("no data certificate available"),
+                &certificate,
                 &mut response,
-                &tree.witness(&metrics_tree_entry, "/metrics").unwrap(),
+                &witness,
                 &metrics_tree_path.to_expr_path(),
             );
 
@@ -219,14 +259,13 @@ fn serve_metrics() -> HttpResponse<'static> {
 }
 
 fn serve_asset(req: &HttpRequest) -> HttpResponse<'static> {
+    let Some(certificate) = data_certificate() else {
+        return plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "certificate unavailable");
+    };
     ASSET_ROUTER.with_borrow(|asset_router| {
-        if let Ok(response) = asset_router.serve_asset(
-            &data_certificate().expect("no data certificate available"),
-            req,
-        ) {
-            response
-        } else {
-            ic_cdk::trap("failed to serve frontend asset");
+        match asset_router.serve_asset(&certificate, req) {
+            Ok(response) => response,
+            Err(_) => plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "failed to serve frontend asset"),
         }
     })
 }
@@ -264,4 +303,54 @@ fn get_asset_headers(additional_headers: Vec<HeaderField>) -> Vec<HeaderField> {
     ];
     headers.extend(additional_headers);
     headers
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header_value<'a>(response: &'a HttpResponse<'static>, name: &str) -> Option<&'a str> {
+        response
+            .headers()
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    #[test]
+    fn request_target_routes_metrics_separately() {
+        assert_eq!(request_target_for_path("/metrics"), RequestTarget::Metrics);
+        assert_eq!(request_target_for_path("/"), RequestTarget::Asset);
+        assert_eq!(request_target_for_path("/assets/app.js"), RequestTarget::Asset);
+        assert_eq!(request_target_for_path("/does-not-exist"), RequestTarget::Asset);
+    }
+
+    #[test]
+    fn http_request_returns_bad_request_for_malformed_urls() {
+        let request = HttpRequest::get("http://[").build();
+        let response = http_request(request);
+        assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.body(), b"bad request path");
+        assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
+    }
+
+    #[test]
+    fn plain_error_response_includes_security_and_cache_headers() {
+        let response = plain_error_response(StatusCode::BAD_REQUEST, "bad request path");
+        assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.body(), b"bad request path");
+        assert_eq!(header_value(&response, "content-type"), Some("text/plain; charset=utf-8"));
+        assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
+        assert_eq!(header_value(&response, "x-content-type-options"), Some("nosniff"));
+        assert!(header_value(&response, "content-security-policy").is_some());
+    }
+
+    #[test]
+    fn asset_headers_include_expected_defaults_and_overrides() {
+        let headers = get_asset_headers(vec![("cache-control".to_string(), IMMUTABLE_ASSET_CACHE_CONTROL.to_string())]);
+        assert!(headers.iter().any(|(name, value)| name == "strict-transport-security" && value == "max-age=31536000; includeSubDomains"));
+        assert!(headers.iter().any(|(name, value)| name == "cache-control" && value == IMMUTABLE_ASSET_CACHE_CONTROL));
+        assert!(headers.iter().any(|(name, value)| name == "cross-origin-opener-policy" && value == "same-origin"));
+    }
 }

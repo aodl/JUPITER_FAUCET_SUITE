@@ -216,12 +216,12 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
             if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
                 state::with_state_mut(|st| match contribution {
                     logic::IndexedContributionEntry::Valid(contribution) => {
-                        st.distinct_canisters.insert(contribution.beneficiary);
-                        st.canister_sources.insert(
-                            contribution.beneficiary,
-                            logic::merge_sources(st.canister_sources.get(&contribution.beneficiary), CanisterSource::MemoContribution),
-                        );
                         if contribution.counts_toward_faucet {
+                            st.distinct_canisters.insert(contribution.beneficiary);
+                            st.canister_sources.insert(
+                                contribution.beneficiary,
+                                logic::merge_sources(st.canister_sources.get(&contribution.beneficiary), CanisterSource::MemoContribution),
+                            );
                             let recent_item = RecentContribution {
                                 canister_id: contribution.beneficiary,
                                 tx_id: contribution.tx_id,
@@ -423,6 +423,15 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
             let mut canisters = vec![self_id];
             for canister_id in st.distinct_canisters.iter().copied() {
                 let sources = st.canister_sources.get(&canister_id).cloned().unwrap_or_default();
+                let memo_registered = sources.contains(&CanisterSource::MemoContribution)
+                    && st
+                        .contribution_history
+                        .get(&canister_id)
+                        .map(|history| history.iter().any(|item| item.counts_toward_faucet))
+                        .unwrap_or(false);
+                if !memo_registered && !sources.contains(&CanisterSource::SnsDiscovery) {
+                    continue;
+                }
                 if logic::should_skip_blackhole_for_sources(&sources) {
                     continue;
                 }
@@ -619,6 +628,26 @@ mod tests {
         }
     }
 
+    fn seed_qualifying_memo_registration(beneficiary: candid::Principal) {
+        state::with_state_mut(|st| {
+            st.canister_sources.insert(
+                beneficiary,
+                crate::logic::merge_sources(st.canister_sources.get(&beneficiary), CanisterSource::MemoContribution),
+            );
+            st.distinct_canisters.insert(beneficiary);
+            st.contribution_history.insert(
+                beneficiary,
+                vec![crate::state::ContributionSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(100_000_000_000),
+                    amount_e8s: st.config.min_tx_e8s,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.qualifying_contribution_count = Some(1);
+        });
+    }
+
     struct MockIndexClient {
         pages: Mutex<VecDeque<GetAccountIdentifierTransactionsResponse>>,
         calls: Mutex<Vec<(String, Option<u64>, u64)>>,
@@ -658,6 +687,8 @@ mod tests {
                 }))
         }
     }
+
+
 
     #[test]
     fn indexing_single_qualifying_contribution_updates_counts() {
@@ -746,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_separate_recent_lists_and_registers_memo_beneficiaries() {
+    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_separate_recent_lists_without_registering_under_threshold_canisters() {
         let staking_id = configure_state(10);
         let qualifying = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let low_amount = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
@@ -774,8 +805,8 @@ mod tests {
             assert_eq!(st.recent_invalid_contributions.as_ref().map(|items| items.len()), Some(1));
             assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.recent_under_threshold_contributions.as_ref().unwrap()[0].tx_id, 43);
-            assert!(st.canister_sources.contains_key(&low_amount));
-            assert!(st.distinct_canisters.contains(&low_amount));
+            assert!(!st.canister_sources.contains_key(&low_amount));
+            assert!(!st.distinct_canisters.contains(&low_amount));
             assert!(!st.contribution_history.contains_key(&low_amount));
             let invalid = &st.recent_invalid_contributions.as_ref().unwrap()[0];
             assert_eq!(invalid.tx_id, 44);
@@ -784,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn indexing_caps_under_threshold_recent_list_while_registering_distinct_memo_beneficiaries() {
+    fn indexing_caps_under_threshold_recent_list_without_registering_distinct_memo_beneficiaries() {
         let staking_id = configure_state(10);
         let pages = vec![GetAccountIdentifierTransactionsResponse {
             balance: 10_000,
@@ -815,8 +846,8 @@ mod tests {
             assert_eq!(recent[0].tx_id, 105);
             assert_eq!(recent.last().map(|item| item.tx_id), Some(6));
             assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(0));
-            assert_eq!(st.canister_sources.len(), 29);
-            assert_eq!(st.distinct_canisters.len(), 29);
+            assert_eq!(st.canister_sources.len(), 0);
+            assert_eq!(st.distinct_canisters.len(), 0);
             assert!(st.contribution_history.is_empty());
             assert_eq!(st.qualifying_contribution_count, Some(0));
         });
@@ -865,13 +896,7 @@ mod tests {
     fn burn_indexing_counts_only_actual_burn_entries() {
         let _staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| {
-            st.canister_sources.insert(
-                beneficiary,
-                crate::logic::merge_sources(None, CanisterSource::MemoContribution),
-            );
-            st.distinct_canisters.insert(beneficiary);
-        });
+        seed_qualifying_memo_registration(beneficiary);
         let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
@@ -900,13 +925,7 @@ mod tests {
     fn burn_indexing_counts_burn_once_even_when_transfer_precedes_it() {
         let _staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| {
-            st.canister_sources.insert(
-                beneficiary,
-                crate::logic::merge_sources(None, CanisterSource::MemoContribution),
-            );
-            st.distinct_canisters.insert(beneficiary);
-        });
+        seed_qualifying_memo_registration(beneficiary);
         let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
@@ -940,13 +959,7 @@ mod tests {
     fn burn_indexing_uses_scan_cursor_without_promoting_non_burns_to_last_burn() {
         let _staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| {
-            st.canister_sources.insert(
-                beneficiary,
-                crate::logic::merge_sources(None, CanisterSource::MemoContribution),
-            );
-            st.distinct_canisters.insert(beneficiary);
-        });
+        seed_qualifying_memo_registration(beneficiary);
         let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
         let mock = MockIndexClient::new(vec![
             // first run: faucet target

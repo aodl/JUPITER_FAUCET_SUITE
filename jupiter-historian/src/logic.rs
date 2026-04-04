@@ -1,6 +1,7 @@
 use candid::Principal;
 
-pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid principal memo";
+pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid target canister memo";
+pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
@@ -38,21 +39,25 @@ pub fn memo_text_from_bytes(bytes: &[u8]) -> Option<String> {
     Some(memo_text)
 }
 
-#[cfg(test)]
-pub fn parse_beneficiary_from_memo(bytes: &[u8]) -> Option<Principal> {
+pub fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
+    if bytes.is_empty() || bytes.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !bytes.is_ascii() {
+        return None;
+    }
     let memo_text = memo_text_from_bytes(bytes)?;
+    if memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
+        return None;
+    }
     Principal::from_text(&memo_text).ok()
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
     match &tx.transaction.operation {
         IndexOperation::Transfer { to, amount, .. } if to == staking_account_id => {
-            let memo = match tx.transaction.icrc1_memo.as_ref() {
-                Some(bytes) if bytes.is_empty() => None,
-                Some(bytes) => Some(bytes.clone()),
-                None if tx.transaction.memo != 0 => Some(tx.transaction.memo.to_be_bytes().to_vec()),
-                None => None,
-            };
+            let memo = tx
+                .transaction
+                .icrc1_memo
+                .as_ref()
+                .and_then(|bytes| (!bytes.is_empty()).then(|| bytes.clone()));
             let ts = tx.transaction.timestamp.as_ref().map(|ts| ts.timestamp_nanos)
                 .or_else(|| tx.transaction.created_at_time.as_ref().map(|ts| ts.timestamp_nanos));
             Some((tx.id, memo, amount.e8s(), ts))
@@ -64,8 +69,8 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id:
 pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedContributionEntry> {
     let (tx_id, memo_opt, amount_e8s, timestamp_nanos) = memo_bytes_from_index_tx(tx, staking_account_id)?;
     let memo = memo_opt?;
-    let memo_text = memo_text_from_bytes(&memo)?;
-    if let Ok(beneficiary) = Principal::from_text(&memo_text) {
+    memo_text_from_bytes(&memo)?;
+    if let Some(beneficiary) = parse_target_canister_from_memo(&memo) {
         Some(IndexedContributionEntry::Valid(IndexedContribution {
             tx_id,
             beneficiary,
@@ -162,19 +167,27 @@ mod tests {
     use crate::clients::index::{IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens};
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
+    fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
 
     #[test]
-    fn parses_principal_memo() {
-        let p = principal("aaaaa-aa");
-        assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
-        assert_eq!(parse_beneficiary_from_memo(b"  aaaaa-aa\n"), Some(p));
-        assert_eq!(parse_beneficiary_from_memo(b"bad"), None);
+    fn parses_target_canister_memo() {
+        let p = target_canister();
+        assert_eq!(parse_target_canister_from_memo(p.to_text().as_bytes()), Some(p));
+        assert_eq!(parse_target_canister_from_memo(format!("  {}\n", p.to_text()).as_bytes()), Some(p));
+        assert_eq!(parse_target_canister_from_memo(b"bad"), None);
+    }
+
+    #[test]
+    fn rejects_oversize_principal_text_memos() {
+        let self_auth = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
+        assert!(self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(parse_target_canister_from_memo(self_auth.to_text().as_bytes()), None);
     }
 
     #[test]
     fn indexed_contribution_uses_icrc1_memo_and_threshold_flag() {
         let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let tx = IndexTransactionWithId {
             id: 1,
             transaction: IndexTransaction {
@@ -202,6 +215,29 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn missing_icrc1_memo_is_ignored_even_when_legacy_numeric_memo_is_set() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 21,
+            transaction: IndexTransaction {
+                memo: u64::from_be_bytes(*b"aaaaa-aa"),
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
+                    amount: Tokens::new(50),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp { timestamp_nanos: 99 }),
+            },
+        };
+        let c = indexed_contribution_from_tx(&tx, &staking, 100);
+        assert!(c.is_none());
+    }
 
     #[test]
     fn invalid_memo_transfers_still_surface_without_transaction_hashes() {
@@ -265,7 +301,7 @@ mod tests {
             id: 42,
             transaction: IndexTransaction {
                 memo: 0,
-                icrc1_memo: Some(b"aaaaa-aa".to_vec()),
+                icrc1_memo: Some(target_canister().to_text().into_bytes()),
                 operation: IndexOperation::TransferFrom {
                     to: "staking-account".to_string(),
                     fee: Tokens::new(10_000),

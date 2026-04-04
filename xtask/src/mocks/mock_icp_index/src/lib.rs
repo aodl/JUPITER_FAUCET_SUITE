@@ -210,6 +210,34 @@ fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> 
 }
 
 #[ic_cdk::update]
+fn debug_append_transfer_with_numeric_memo(to: String, amount_e8s: u64, memo: u64) -> u64 {
+    ST.with(|s| {
+        let mut st = s.borrow_mut();
+        st.next_id = st.next_id.saturating_add(1);
+        let id = st.next_id;
+        st.txs.push(IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo,
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    to,
+                    fee: Tokens { e8s: 10_000 },
+                    from: "mock-sender".to_string(),
+                    amount: Tokens { e8s: amount_e8s },
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp {
+                    timestamp_nanos: ic_cdk::api::time() as u64,
+                }),
+            },
+        });
+        id
+    })
+}
+
+#[ic_cdk::update]
 fn debug_append_burn(from: String, amount_e8s: u64) -> u64 {
     ST.with(|s| {
         let mut st = s.borrow_mut();

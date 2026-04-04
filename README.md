@@ -76,19 +76,22 @@ For the exact split math, memo formats, retry semantics, and rescue logic, the c
 At a high level, a participant:
 
 1. transfers ICP into the faucet neuron’s configured `staking_account`
-2. puts the **target canister principal** in the transfer memo
+2. puts the **target canister ID** in the transfer memo as ASCII text
 
-The contributor does **not** need to own the target canister. The faucet only cares that the memo decodes to principal text for the beneficiary canister.
+The contributor does **not** need to own the target canister. The supported UX is to put the intended beneficiary canister ID in the memo as ASCII text; the faucet itself parses non-empty ASCII principal text from `icrc1_memo` within the ICP memo-size limit.
+
+The supported memo path is ASCII principal text carried in `icrc1_memo`, intended to be the target canister ID. The old 64-bit numeric memo field is intentionally ignored, which keeps the policy aligned with “enter the canister ID as text” rather than trying to reinterpret numeric values as UTF-8.
 
 Important details that matter in practice:
 
-- the faucet prefers `icrc1_memo`
-- if `icrc1_memo` is absent, it falls back to the legacy numeric memo bytes when that numeric memo is non-zero
-- if `icrc1_memo` is present but empty, the faucet does **not** fall back to the legacy numeric memo
+- the faucet only considers non-empty `icrc1_memo` bytes as a beneficiary memo
+- legacy numeric memos are ignored entirely
+- an empty `icrc1_memo` is treated as missing / invalid
 - only incoming `Transfer` records **to** the staking account are treated as contributions; `TransferFrom` records are ignored
-- whitespace around principal text is tolerated because the parser trims before decoding
-- empty, malformed, or non-principal memos are ignored
-- contributions below `min_tx_e8s` are ignored by the faucet for eligibility; historian still tracks memo-derived beneficiaries in its distinct registry, but only keeps a capped recent feed for the below-threshold attempts and does not count them as qualifying history
+- whitespace around the canister ID text is tolerated because the parser trims before decoding, as long as the raw `icrc1_memo` still fits within the 32-byte ICP memo limit
+- the trimmed memo must be ASCII and at most 32 bytes
+- empty, malformed, or oversize memos are ignored
+- contributions below `min_tx_e8s` are ignored for durable beneficiary registration and faucet eligibility; historian only keeps a capped recent feed for the below-threshold attempts and does not retain those canisters in its tracked registry
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record
 - each new payout job rescans the full staking history against a fresh payout-pot snapshot
 

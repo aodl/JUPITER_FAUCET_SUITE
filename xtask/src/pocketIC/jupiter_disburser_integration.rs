@@ -16,7 +16,8 @@ const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
 const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
 const NNS_ROOT_ID: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 
-// We keep these E2E tests opt-in.
+// These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
+// Repository entry points such as `cargo run -p xtask -- test_all` invoke them explicitly.
 fn require_ignored_flag() -> Result<()> {
     // Running with: cargo test -p jupiter-disburser --test jupiter_disburser_integration -- --ignored --nocapture
     Ok(())

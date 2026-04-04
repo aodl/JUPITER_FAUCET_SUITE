@@ -68,7 +68,7 @@ fn allocated_heap_memory_bytes() -> u64 {
 
 #[cfg(target_arch = "wasm32")]
 fn allocated_stable_memory_bytes() -> u64 {
-    ic_cdk::api::stable::stable_size().saturating_mul(65_536)
+    ic_cdk::stable::stable_size().saturating_mul(65_536)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -98,8 +98,24 @@ fn normalize_recent_burns(items: &mut Vec<RecentBurn>) {
     items.truncate(MAX_RECENT_BURNS);
 }
 
-fn memo_source_is_registered(_st: &State, _canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
+fn memo_source_is_registered(st: &State, canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
     sources.contains(&CanisterSource::MemoContribution)
+        && st
+            .contribution_history
+            .get(canister_id)
+            .map(|history| history.iter().any(|item| item.counts_toward_faucet))
+            .unwrap_or(false)
+}
+
+fn visible_sources_for_canister(st: &State, canister_id: &Principal) -> Option<BTreeSet<CanisterSource>> {
+    let mut sources = st.canister_sources.get(canister_id)?.clone();
+    if !memo_source_is_registered(st, canister_id, &sources) {
+        sources.remove(&CanisterSource::MemoContribution);
+    }
+    if sources.is_empty() {
+        return None;
+    }
+    Some(sources)
 }
 
 
@@ -157,6 +173,33 @@ fn normalize_runtime_state(st: &mut State) {
         st.contribution_history.remove(&canister_id);
     }
 
+    let stale_memo_only_canisters: Vec<_> = st
+        .canister_sources
+        .iter()
+        .filter_map(|(canister_id, sources)| {
+            if sources.contains(&CanisterSource::MemoContribution)
+                && !memo_source_is_registered(st, canister_id, sources)
+            {
+                Some(*canister_id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    for canister_id in stale_memo_only_canisters {
+        let remove_entry = if let Some(sources) = st.canister_sources.get_mut(&canister_id) {
+            sources.remove(&CanisterSource::MemoContribution);
+            sources.is_empty()
+        } else {
+            false
+        };
+        if remove_entry {
+            st.canister_sources.remove(&canister_id);
+            st.cycles_history.remove(&canister_id);
+            st.per_canister_meta.remove(&canister_id);
+        }
+    }
+
     normalize_recent_contribution_bucket(&mut recent_contributions, true, MAX_RECENT_QUALIFYING_CONTRIBUTIONS);
     normalize_recent_contribution_bucket(&mut recent_under_threshold, false, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS);
     st.recent_contributions = Some(recent_contributions);
@@ -172,6 +215,7 @@ fn normalize_runtime_state(st: &mut State) {
     st.recent_burns = Some(recent_burns);
 
     st.qualifying_contribution_count = Some(fallback_qualifying_contribution_count(st));
+    st.icp_burned_e8s = Some(fallback_icp_burned_e8s(st));
 
     let contribution_last_ts: BTreeMap<_, _> = st
         .contribution_history
@@ -429,10 +473,6 @@ fn config_from_init_args(args: InitArgs) -> Config {
     }
 }
 
-fn sources_include_memo_contribution(sources: &BTreeSet<CanisterSource>) -> bool {
-    sources.contains(&CanisterSource::MemoContribution)
-}
-
 fn count_registered_canisters(st: &State) -> u64 {
     st.canister_sources
         .iter()
@@ -456,7 +496,7 @@ pub(crate) fn burn_target_canisters(st: &State) -> BTreeSet<Principal> {
     let mut out: BTreeSet<Principal> = st
         .canister_sources
         .iter()
-        .filter(|(_, sources)| sources_include_memo_contribution(sources))
+        .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
         .map(|(canister_id, _)| *canister_id)
         .collect();
     for (canister_id, meta) in st.per_canister_meta.iter() {
@@ -731,7 +771,6 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     let mut st: State = stable.into();
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    st.icp_burned_e8s = Some(fallback_icp_burned_e8s(&st));
     state::set_state(st);
     scheduler::install_timers();
 }
@@ -750,35 +789,9 @@ fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
                 }
                 continue;
             }
-            let sources: BTreeSet<CanisterSource> = st
-                .canister_sources
-                .get(&canister_id)
-                .cloned()
-                .unwrap_or_default();
-            if sources.is_empty() {
+            let Some(sources) = visible_sources_for_canister(st, &canister_id) else {
                 continue;
-            }
-            if !memo_source_is_registered(st, &canister_id, &sources) {
-                let mut filtered_sources = sources.clone();
-                filtered_sources.remove(&CanisterSource::MemoContribution);
-                if filtered_sources.is_empty() {
-                    continue;
-                }
-                if let Some(filter) = &args.source_filter {
-                    if !filtered_sources.contains(filter) {
-                        continue;
-                    }
-                }
-                if items.len() >= limit {
-                    next = Some(canister_id);
-                    break;
-                }
-                items.push(CanisterListItem {
-                    canister_id,
-                    sources: filtered_sources.into_iter().collect(),
-                });
-                continue;
-            }
+            };
             if let Some(filter) = &args.source_filter {
                 if !sources.contains(filter) {
                     continue;
@@ -875,7 +888,9 @@ fn get_contribution_history(args: GetContributionHistoryArgs) -> ContributionHis
 #[ic_cdk::query]
 fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
     state::with_state(|st| {
-        let sources = st.canister_sources.get(&canister_id)?.clone().into_iter().collect();
+        let sources = visible_sources_for_canister(st, &canister_id)?
+            .into_iter()
+            .collect();
         let meta = st.per_canister_meta.get(&canister_id).cloned().unwrap_or_default();
         let cycles_points = st
             .cycles_history
@@ -1147,7 +1162,7 @@ mod tests {
 
     fn sample_account() -> Account {
         Account {
-            owner: principal("aaaaa-aa"),
+            owner: principal("22255-zqaaa-aaaas-qf6uq-cai"),
             subaccount: None,
         }
     }
@@ -1201,7 +1216,7 @@ mod tests {
 
     #[test]
     fn initialize_derived_state_reconstructs_recent_burns_from_legacy_meta() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.per_canister_meta.insert(
             canister,
@@ -1256,7 +1271,7 @@ mod tests {
 
     #[test]
     fn apply_upgrade_args_updates_tuning_fields_and_preserves_histories() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.contribution_history.insert(
             canister,
@@ -1330,7 +1345,7 @@ mod tests {
 
     #[test]
     fn registered_canister_count_requires_qualifying_memo_contribution_history() {
-        let memo_only = principal("aaaaa-aa");
+        let memo_only = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let sns_only = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let both = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
@@ -1397,7 +1412,7 @@ mod tests {
     }
 
     #[test]
-    fn get_public_counts_includes_non_qualifying_memo_canisters_in_registered_totals() {
+    fn get_public_counts_excludes_non_qualifying_memo_canisters_from_registered_totals() {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut st = base_state();
         st.canister_sources.insert(memo_canister, BTreeSet::from([CanisterSource::MemoContribution]));
@@ -1413,7 +1428,7 @@ mod tests {
         state::set_state(st);
 
         let counts = get_public_counts();
-        assert_eq!(counts.registered_canister_count, 1);
+        assert_eq!(counts.registered_canister_count, 0);
         assert_eq!(counts.qualifying_contribution_count, 0);
         assert_eq!(counts.icp_burned_e8s, 0);
         assert_eq!(counts.sns_discovered_canister_count, 0);
@@ -1437,9 +1452,73 @@ mod tests {
 
 
     #[test]
+    fn list_registered_canister_summaries_excludes_non_qualifying_memo_only_canisters() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 5_000_000,
+                counts_toward_faucet: false,
+            }],
+        );
+        state::set_state(st);
+
+        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        });
+        assert_eq!(response.total, 0);
+        assert!(response.items.is_empty());
+    }
+
+    #[test]
+    fn get_canister_overview_hides_non_qualifying_memo_only_canisters() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 5_000_000,
+                counts_toward_faucet: false,
+            }],
+        );
+        state::set_state(st);
+
+        assert!(get_canister_overview(canister).is_none());
+    }
+
+    #[test]
+    fn burn_targets_exclude_non_qualifying_memo_only_canisters() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 5_000_000,
+                counts_toward_faucet: false,
+            }],
+        );
+
+        let targets = burn_target_canisters(&st);
+        assert!(!targets.contains(&canister));
+        assert!(targets.contains(&effective_faucet_canister_id(&st)));
+    }
+
+    #[test]
     fn list_registered_canister_summaries_uses_canister_id_as_tie_breaker_for_stable_pagination() {
-        let a = principal("aaaaa-aa");
-        let b = principal("2vxsx-fae");
+        let a = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let b = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
         let mut st = base_state();
         for canister in [a, b] {
             st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
@@ -1489,7 +1568,7 @@ mod tests {
 
     #[test]
     fn list_registered_canister_summaries_returns_empty_pages_past_the_end() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
         st.contribution_history.insert(
@@ -1570,7 +1649,7 @@ mod tests {
 
     #[test]
     fn derived_aggregates_fallback_from_histories() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.contribution_history.insert(
             canister,
@@ -1612,7 +1691,7 @@ mod tests {
 
     #[test]
     fn normalize_runtime_state_moves_non_qualifying_commitments_out_of_registered_history() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.config.max_contribution_entries_per_canister = 1;
         st.distinct_canisters.insert(canister);
@@ -1668,8 +1747,8 @@ mod tests {
     }
 
     #[test]
-    fn normalize_runtime_state_preserves_memo_only_registration_when_history_is_non_qualifying() {
-        let canister = principal("aaaaa-aa");
+    fn normalize_runtime_state_prunes_memo_only_registration_when_history_is_non_qualifying() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
         st.canister_sources
@@ -1686,10 +1765,12 @@ mod tests {
 
         normalize_runtime_state(&mut st);
 
-        assert_eq!(count_registered_canisters(&st), 1);
-        assert!(st.canister_sources.contains_key(&canister));
-        assert!(st.distinct_canisters.contains(&canister));
+        assert_eq!(count_registered_canisters(&st), 0);
+        assert!(!st.canister_sources.contains_key(&canister));
+        assert!(!st.distinct_canisters.contains(&canister));
         assert!(!st.contribution_history.contains_key(&canister));
+        assert!(!st.cycles_history.contains_key(&canister));
+        assert!(!st.per_canister_meta.contains_key(&canister));
         assert_eq!(
             st.recent_under_threshold_contributions
                 .as_ref()
@@ -1698,6 +1779,38 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn normalize_runtime_state_recomputes_burned_total_after_pruning_stale_memo_only_canister() {
+        let memo_only = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let sns_tracked = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
+        let mut st = base_state();
+        st.icp_burned_e8s = Some(999);
+        st.canister_sources.insert(memo_only, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.canister_sources.insert(sns_tracked, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.per_canister_meta.insert(
+            memo_only,
+            CanisterMeta {
+                burned_e8s: 250,
+                last_burn_tx_id: Some(10),
+                ..Default::default()
+            },
+        );
+        st.per_canister_meta.insert(
+            sns_tracked,
+            CanisterMeta {
+                burned_e8s: 75,
+                last_burn_tx_id: Some(11),
+                ..Default::default()
+            },
+        );
+
+        normalize_runtime_state(&mut st);
+
+        assert_eq!(st.icp_burned_e8s, Some(75));
+        assert!(!st.per_canister_meta.contains_key(&memo_only));
+        assert!(st.per_canister_meta.contains_key(&sns_tracked));
+    }
 
     #[test]
     fn normalize_runtime_state_preserves_large_beneficiary_registry() {
@@ -1753,7 +1866,7 @@ mod tests {
 
     #[test]
     fn public_query_limits_are_clamped() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
         st.canister_sources
@@ -1917,7 +2030,7 @@ mod tests {
 
     #[test]
     fn registered_canister_summaries_roll_up_qualifying_only() {
-        let canister = principal("aaaaa-aa");
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
         st.contribution_history.insert(

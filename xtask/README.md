@@ -11,6 +11,8 @@ It wraps four different layers of validation:
 
 Using `xtask` keeps the command surface stable and avoids having to remember which mocks, features, identities, and ignored tests need to be wired together manually.
 
+The long-running PocketIC suites are intentionally marked `#[ignore]` so a plain `cargo test` stays fast during inner-loop development. Repository entry points such as `cargo run -p xtask -- test_all` explicitly invoke those ignored suites, so the annotation is deliberate rather than an oversight.
+
 ## Frontend coverage in `xtask`
 
 `xtask` now includes the checked-in frontend Node tests as a first-class component:

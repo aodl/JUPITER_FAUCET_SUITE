@@ -9,7 +9,12 @@ mod real_blackhole;
 use std::process::Command;
 use std::time::Duration;
 
-fn require_ignored_flag() -> Result<()> { Ok(()) }
+fn require_ignored_flag() -> Result<()> {
+    // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
+    // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
+    // invoke them explicitly with `--ignored`.
+    Ok(())
+}
 fn repo_root() -> &'static str { env!("CARGO_MANIFEST_DIR") }
 
 fn build_wasm(package: &str, features: Option<&str>) -> Result<Vec<u8>> {

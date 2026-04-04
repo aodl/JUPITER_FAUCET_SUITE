@@ -2,7 +2,7 @@
 
 `jupiter-historian` is the indexing and observability canister for the Jupiter Faucet Suite.
 
-It keeps a durable set of target canisters/principals discovered from faucet staking-account transfer memos, records bounded contribution history for tracked canisters, records ICP burn observations by scanning CMC deposit accounts, and records bounded periodic cycles observations when those balances are observable on-chain.
+It keeps a durable set of target canisters discovered from faucet staking-account transfer memos, records bounded contribution history for tracked canisters, records ICP burn observations by scanning CMC deposit accounts, and records bounded periodic cycles observations when those balances are observable on-chain.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -35,20 +35,24 @@ For each eligible incoming `Transfer` **to** the staking account (`TransferFrom`
 
 Memo handling mirrors the faucet’s input rules:
 
-- prefer `icrc1_memo`
-- otherwise fall back to the legacy numeric memo bytes when the numeric memo is non-zero
-- if `icrc1_memo` is present but empty, do **not** fall back to the numeric memo
-- trim UTF-8 text before trying to parse principal text
+- only consider non-empty `icrc1_memo` bytes
+- ignore legacy numeric memos entirely
+- treat an empty `icrc1_memo` as missing / invalid
+- trim ASCII text before trying to parse principal text from the memo (the supported UX is to enter a target canister ID)
 
-If the memo decodes to principal text, the beneficiary is tracked in the historian registry. When the amount is at least `min_tx_e8s`, the contribution is also attached to that canister/principal as qualifying history. Below-threshold memo contributions are kept in a separate capped recent feed and do not count as qualifying history. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically so later cycles and burn activity can be tracked efficiently on-chain and on the frontend.
+If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, the beneficiary is tracked in the historian registry and attached to that principal as qualifying history. In normal use that principal should be the intended target canister ID. Below-threshold memo contributions are kept only in a separate capped recent feed and do **not** create durable canister tracking, burn targets, or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and burn activity can be tracked efficiently on-chain and on the frontend.
 
-If the memo is valid text but **not** valid principal text, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
+Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text and fits within 32 bytes** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold contributions never create durable tracking.
+
+Memo encoding uses `icrc1_memo` text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic.
+
+If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
 ### Burn indexing
 
 The historian also indexes ICP burns by scanning the CMC deposit accounts for:
 
-- every memo-derived canister
+- every qualifying memo-derived canister
 - the faucet canister itself
 - any canister that already has prior burn history in historian state
 
@@ -59,7 +63,7 @@ For each burn target it tracks:
 - cumulative burned ICP in e8s
 - recent burn items for the public dashboard
 
-The burn-target set is intentionally broader than just "currently memo-valid canisters": it includes tracked memo-derived canisters, the configured faucet canister itself when present, and any canister that already has prior burn state recorded in historian storage. That lets burn tracking continue even if an older canister stops receiving fresh contributions.
+The burn-target set is intentionally broader than just "currently qualifying memo-derived canisters": it includes qualifying tracked memo-derived canisters, the configured faucet canister itself when present, and any canister that already has prior burn state recorded in historian storage. That lets burn tracking continue even if an older qualifying canister stops receiving fresh contributions.
 
 This burn indexing keys off actual `Burn` records on the CMC deposit account history, so merely transferring ICP into the deposit account does not count as “burned into cycles” until the ledger records the burn.
 
@@ -97,7 +101,7 @@ The historian intentionally keeps a bounded read model for **history**. It is no
 
 Durable bounded state currently uses these caps:
 
-- the tracked canister / principal registry is **not pruned**
+- memo-only target-canister entries that never reach a qualifying contribution are pruned during normalization; the retained qualifying/SNS-backed registry is otherwise durable
 - `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
 - `max_contribution_entries_per_canister` default `100`, hard-clamped to `250`
 - recent qualifying contributions: `500`

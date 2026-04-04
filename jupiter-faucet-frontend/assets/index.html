@@ -154,7 +154,7 @@
         <strong class="metric-rail-link-value"><span id="landing-icp-burned">—</span><span class="metric-status" id="landing-icp-burned-status" hidden aria-hidden="true"></span></strong>
       </a>
       <a href="#metric-registered" class="metric-rail-link nav-item" data-panel="metric-registered">
-        <span class="metric-rail-link-label">Canisters/Principals</span>
+        <span class="metric-rail-link-label">Target Canisters</span>
         <strong class="metric-rail-link-value"><span id="landing-registered-canisters">—</span><span class="metric-status" id="landing-registered-canisters-status" hidden aria-hidden="true"></span></strong>
       </a>
       <a href="#metric-commitments" class="metric-rail-link nav-item" data-panel="metric-commitments">
@@ -247,7 +247,7 @@
                   >Jupiter Faucet's canister-controlled neuron</a
                 >
                 and set your <strong>target canister ID</strong> as the transaction
-                <strong>memo</strong> (see <i>Ctrl + K 'memo'</i> tip below). You do not need to be the owner of the canister. The 1 ICP minimum is intentional: historian keeps a durable beneficiary registry so later top-up activity can be monitored efficiently, and a much lower minimum would make registry spam far too cheap.
+                <strong>memo</strong> in plain ASCII text (see <i>Ctrl + K 'memo'</i> tip below). You do not need to be the owner of the canister. The 1 ICP minimum is intentional: historian keeps a durable beneficiary registry so later top-up activity can be monitored efficiently, and a much lower minimum would make registry spam far too cheap.
               </p>
 
               <div class="pane-inline-block">
@@ -257,7 +257,7 @@
                 </div>
                 <a class="pane-external-link pane-inline-code-link mono" id="how-staking-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="how-staking-account-address">22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d</code></a>
                 <p class="pane-inline-help">
-                  Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field <br/>(<b>Ctrl + k</b>, and search '<b>memo</b>' if the field is not yet visible).
+                  Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field as plain ASCII text. Target canister IDs fit within the ICP `icrc1_memo` limit; ordinary self-authenticating user principals do not, so the supported UX remains entering the target canister ID. <br/>(<b>Ctrl + k</b>, and search '<b>memo</b>' if the field is not yet visible).
                 </p>
               </div>
 
@@ -361,14 +361,14 @@
         </article>
 
         <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">
-          <h2 class="nav-panel-title">Canisters/Principals</h2>
+          <h2 class="nav-panel-title">Target Canisters</h2>
           <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">This registry is historian's durable set of tracked canisters/principals. The registry itself is not pruned, but the per-canister histories and recent feeds shown elsewhere are bounded; full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
+          <p class="nav-panel-content">This registry is historian's durable set of retained target canisters. Stale memo-only entries that never reached a qualifying contribution are pruned during historian normalization, while the retained qualifying and SNS-discovered registry remains durable; the per-canister histories and recent feeds shown elsewhere are bounded, and full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
           <div class="pane-table-wrap">
             <table class="pane-table">
               <thead>
                 <tr>
-                  <th>Canister/Principal</th>
+                  <th>Target canister</th>
                   <th>Commitments</th>
                   <th>Total ICP</th>
                   <th>Latest cycles</th>
@@ -389,7 +389,7 @@
         <article class="nav-panel-section" data-panel="metric-commitments" id="nav-panel-metric-commitments">
           <h2 class="nav-panel-title">Commitments</h2>
           <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">A commitment qualifies when the memo names a canister/principal and the contribution is at least <strong>1 ICP</strong>. The minimum is intentionally high to make beneficiary-registry spam expensive: historian keeps a durable beneficiary registry so it can efficiently monitor and display later cycle top-up activity. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+          <p class="nav-panel-content">A commitment qualifies when the memo names a target canister ID as ASCII principal text in `icrc1_memo` (max <strong>32 bytes</strong>) and the contribution is at least <strong>1 ICP</strong>. The minimum is intentionally high to make beneficiary-registry spam expensive: historian keeps a durable beneficiary registry so it can efficiently monitor and display later cycle top-up activity. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
           <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
           <div class="pane-table-wrap">
             <table class="pane-table">
@@ -397,7 +397,7 @@
                 <tr>
                   <th>Timestamp</th>
                   <th>Amount</th>
-                  <th>Canister/Principal</th>
+                  <th>Target canister</th>
                   <th>Qualifies</th>
                 </tr>
               </thead>

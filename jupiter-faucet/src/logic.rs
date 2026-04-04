@@ -5,6 +5,7 @@ use crate::clients::index::{IndexOperation, IndexTransactionWithId};
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
 
 pub const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
+pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct Contribution {
@@ -21,19 +22,24 @@ pub enum ContributionDecision {
 }
 
 pub fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
-    std::str::from_utf8(memo).ok().and_then(|s| Principal::from_text(s.trim()).ok())
+    if memo.is_empty() || memo.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !memo.is_ascii() {
+        return None;
+    }
+    let memo_text = std::str::from_utf8(memo).ok()?.trim();
+    if memo_text.is_empty() || memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
+        return None;
+    }
+    Principal::from_text(memo_text).ok()
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_identifier: &str) -> Option<Contribution> {
     match &tx.transaction.operation {
         IndexOperation::Transfer { to, amount, .. } if to == staking_account_identifier => {
-            let memo_bytes = if let Some(icrc1_memo) = &tx.transaction.icrc1_memo {
-                if icrc1_memo.is_empty() { None } else { Some(icrc1_memo.clone()) }
-            } else if tx.transaction.memo == 0 {
-                None
-            } else {
-                Some(tx.transaction.memo.to_be_bytes().to_vec())
-            };
+            let memo_bytes = tx
+                .transaction
+                .icrc1_memo
+                .as_ref()
+                .and_then(|icrc1_memo| (!icrc1_memo.is_empty()).then(|| icrc1_memo.clone()));
             Some(Contribution { amount_e8s: amount.e8s(), memo_bytes })
         }
         _ => None,
@@ -107,16 +113,24 @@ mod tests {
     use crate::state::{ActivePayoutJob, PendingNotification, TransferKind};
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
+    fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
 
     #[test]
-    fn parser_accepts_valid_principal_text_memo() {
-        let p = principal("aaaaa-aa");
+    fn parser_accepts_target_canister_text_memo() {
+        let p = target_canister();
         assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
     }
 
     #[test]
+    fn parser_rejects_oversize_self_authenticating_principal_text() {
+        let p = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
+        assert!(p.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), None);
+    }
+
+    #[test]
     fn parser_rejects_malformed_or_adversarial_memos() {
-        let p = principal("aaaaa-aa");
+        let p = target_canister();
         assert_eq!(parse_beneficiary_from_memo(b"not-a-principal"), None);
         assert_eq!(parse_beneficiary_from_memo(b""), None);
         assert_eq!(parse_beneficiary_from_memo(&p.as_slice()[..p.as_slice().len().saturating_sub(1)]), None);
@@ -125,14 +139,14 @@ mod tests {
 
 
     #[test]
-    fn parser_accepts_whitespace_padded_principal_text_memo() {
-        let p = principal("aaaaa-aa");
+    fn parser_accepts_whitespace_padded_target_canister_text_memo() {
+        let p = target_canister();
         let memo = format!("  {}\n", p.to_text());
         assert_eq!(parse_beneficiary_from_memo(memo.as_bytes()), Some(p));
     }
 
     #[test]
-    fn empty_icrc1_memo_does_not_fall_back_to_numeric_memo() {
+    fn empty_icrc1_memo_is_ignored() {
         let staking = "staking-account".to_string();
         let tx = IndexTransactionWithId {
             id: 7,
@@ -155,33 +169,10 @@ mod tests {
     }
 
     #[test]
-    fn transfer_from_transactions_are_not_treated_as_contributions() {
+    fn missing_icrc1_memo_does_not_consider_legacy_numeric_memo() {
         let staking = "staking-account".to_string();
         let tx = IndexTransactionWithId {
-            id: 9,
-            transaction: IndexTransaction {
-                memo: 0,
-                icrc1_memo: Some(b"aaaaa-aa".to_vec()),
-                operation: IndexOperation::TransferFrom {
-                    to: staking.clone(),
-                    fee: Tokens::new(10_000),
-                    from: "sender".to_string(),
-                    amount: Tokens::new(123),
-                    spender: "spender".to_string(),
-                },
-                created_at_time: None,
-                timestamp: None,
-            },
-        };
-        assert!(memo_bytes_from_index_tx(&tx, &staking).is_none());
-    }
-
-    #[test]
-    fn numeric_memo_falls_back_to_eight_byte_principal_text() {
-        let staking = "staking-account".to_string();
-        let expected = principal("aaaaa-aa");
-        let tx = IndexTransactionWithId {
-            id: 8,
+            id: 70,
             transaction: IndexTransaction {
                 memo: u64::from_be_bytes(*b"aaaaa-aa"),
                 icrc1_memo: None,
@@ -197,8 +188,29 @@ mod tests {
             },
         };
         let contribution = memo_bytes_from_index_tx(&tx, &staking).expect("matching transfer should be surfaced");
-        assert_eq!(contribution.memo_bytes, Some(expected.to_text().into_bytes()));
-        assert_eq!(parse_beneficiary_from_memo(contribution.memo_bytes.as_deref().unwrap()), Some(expected));
+        assert_eq!(contribution.memo_bytes, None);
+    }
+
+    #[test]
+    fn transfer_from_transactions_are_not_treated_as_contributions() {
+        let staking = "staking-account".to_string();
+        let tx = IndexTransactionWithId {
+            id: 9,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(target_canister().to_text().into_bytes()),
+                operation: IndexOperation::TransferFrom {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".to_string(),
+                    amount: Tokens::new(123),
+                    spender: "spender".to_string(),
+                },
+                created_at_time: None,
+                timestamp: None,
+            },
+        };
+        assert!(memo_bytes_from_index_tx(&tx, &staking).is_none());
     }
 
     #[test]
@@ -212,28 +224,28 @@ mod tests {
 
     #[test]
     fn contribution_below_threshold_is_ignored() {
-        let valid = principal("aaaaa-aa");
+        let valid = target_canister();
         let c = Contribution { amount_e8s: 99_999_999, memo_bytes: Some(valid.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::IgnoreUnderThreshold);
     }
 
     #[test]
     fn contribution_exactly_at_threshold_is_included() {
-        let valid = principal("aaaaa-aa");
+        let valid = target_canister();
         let c = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
 
     #[test]
     fn contribution_above_threshold_is_included() {
-        let valid = principal("aaaaa-aa");
+        let valid = target_canister();
         let c = Contribution { amount_e8s: 400_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 200_000_000, amount_e8s: 199_990_000 });
     }
 
     #[test]
     fn share_calculation_uses_current_pot_and_denominator() {
-        let valid = principal("aaaaa-aa");
+        let valid = target_canister();
         let c = Contribution { amount_e8s: 250_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(120_000_000, 600_000_000, 10_000, 100_000_000, &c), ContributionDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
@@ -248,7 +260,7 @@ mod tests {
 
     #[test]
     fn separate_contributions_for_same_beneficiary_remain_separate() {
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let first = Contribution { amount_e8s: 200_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
         let second = Contribution { amount_e8s: 300_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
         let first_eval = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &first);
@@ -259,8 +271,8 @@ mod tests {
 
     #[test]
     fn distinct_beneficiaries_with_same_contribution_size_are_processed_independently() {
-        let a = principal("aaaaa-aa");
-        let b = principal("2vxsx-fae");
+        let a = target_canister();
+        let b = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
         let amount_e8s = 200_000_000;
         let eval_a = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &Contribution { amount_e8s, memo_bytes: Some(a.to_text().into_bytes()) });
         let eval_b = evaluate_contribution(500_000_000, 1_000_000_000, 10_000, 100_000_000, &Contribution { amount_e8s, memo_bytes: Some(b.to_text().into_bytes()) });
@@ -278,14 +290,14 @@ mod tests {
 
     #[test]
     fn no_transfer_when_share_rounds_below_fee() {
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let c = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(10_000, 1_000_000_000, 10_000, 100_000_000, &c), ContributionDecision::NoTransfer);
     }
 
     #[test]
     fn summary_tracks_separate_same_beneficiary_contributions_and_remainder_without_aggregation() {
-        let a = principal("aaaaa-aa");
+        let a = target_canister();
         let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut job = ActivePayoutJob::new(1, 10_000, 40_0000_0000, 10_0000_0000, 123);
         let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10) };
@@ -305,7 +317,7 @@ mod tests {
 
     #[test]
     fn summary_accounting_reconciles_pot_fees_and_remainder() {
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let mut job = ActivePayoutJob::new(9, 10_000, 100_000_000, 500_000_000, 77);
         let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s: 40_000_000, amount_e8s: 39_990_000, block_index: 1, next_start: Some(1) };
         let p2 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary, gross_share_e8s: 60_000_000, amount_e8s: 59_990_000, block_index: 2, next_start: None };
@@ -322,7 +334,7 @@ mod tests {
 
     #[test]
     fn same_beneficiary_with_identical_memo_bytes_is_evaluated_as_distinct_contributions() {
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let memo = Some(beneficiary.to_text().into_bytes());
         let first = Contribution { amount_e8s: 125_000_000, memo_bytes: memo.clone() };
         let second = Contribution { amount_e8s: 125_000_000, memo_bytes: memo };
@@ -334,7 +346,7 @@ mod tests {
 
     #[test]
     fn zero_pot_or_zero_denominator_never_produces_a_transfer() {
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let contribution = Contribution { amount_e8s: 100_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
         assert_eq!(evaluate_contribution(0, 500_000_000, 10_000, 100_000_000, &contribution), ContributionDecision::NoTransfer);
         assert_eq!(evaluate_contribution(50_000_000, 0, 10_000, 100_000_000, &contribution), ContributionDecision::NoTransfer);
@@ -343,7 +355,7 @@ mod tests {
 
     #[test]
     fn accepted_but_unnotified_transfer_still_reduces_remaining_pot() {
-        let beneficiary = principal("aaaaa-aa");
+        let beneficiary = target_canister();
         let mut job = ActivePayoutJob::new(12, 10_000, 90_000_000, 200_000_000, 1);
         let pending = PendingNotification {
             kind: TransferKind::Beneficiary,
@@ -377,12 +389,12 @@ mod tests {
             let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
 
             let beneficiaries = [
-                principal("aaaaa-aa"),
-                principal("2vxsx-fae"),
+                target_canister(),
                 principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
                 principal("r7inp-6aaaa-aaaaa-aaabq-cai"),
                 principal("qjdve-lqaaa-aaaaa-aaaeq-cai"),
                 principal("qoctq-giaaa-aaaaa-aaaea-cai"),
+                principal("rdmx6-jaaaa-aaaaa-aaadq-cai"),
             ];
             let contribution_count = 1 + (lcg(&mut seed) % 6) as usize;
             for i in 0..contribution_count {

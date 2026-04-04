@@ -8,6 +8,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 fn require_ignored_flag() -> Result<()> {
+    // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
+    // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
+    // invoke them explicitly with `--ignored`.
     Ok(())
 }
 
@@ -485,7 +488,7 @@ impl FaucetEnv {
 fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -513,7 +516,7 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
 fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -540,7 +543,7 @@ fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks
 fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(90_000_000)?;
     env.credit_staking(90_000_000)?;
@@ -584,7 +587,7 @@ fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> 
 fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separate() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(target.to_text().into_bytes());
 
     env.credit_staking(300_000_000)?;
@@ -629,7 +632,7 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoning_run() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let good_target = Principal::from_text("aaaaa-aa")?;
+    let good_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(good_target.to_text().into_bytes());
 
     env.credit_staking(1_500_000_000)?;
@@ -668,8 +671,8 @@ fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoni
 fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_work() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let first = Principal::from_text("aaaaa-aa")?;
-    let second = Principal::from_text("2vxsx-fae")?;
+    let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
 
     env.credit_staking(800_000_000)?;
     env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
@@ -721,8 +724,8 @@ fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_fo
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
     })?;
-    let first = Principal::from_text("aaaaa-aa")?;
-    let second = Principal::from_text("2vxsx-fae")?;
+    let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
 
     env.credit_staking(800_000_000)?;
     env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
@@ -773,7 +776,7 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
         init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
     })?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -834,7 +837,7 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
         init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
     })?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -895,7 +898,7 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
 fn faucet_large_history_repeated_runs_keep_state_footprint_bounded() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(target.to_text().into_bytes());
 
     let baseline = env.footprint()?;
@@ -933,7 +936,7 @@ fn faucet_large_history_repeated_runs_keep_state_footprint_bounded() -> Result<(
 fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -962,7 +965,7 @@ fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() ->
 fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -993,7 +996,7 @@ fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()
 fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     let baseline = env.footprint()?;
     env.credit_payout(100_000_000)?;
@@ -1023,7 +1026,7 @@ fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
 fn faucet_ledger_temporary_failure_before_transfer_recovers_inline() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -1050,7 +1053,7 @@ fn faucet_ledger_temporary_failure_before_transfer_recovers_inline() -> Result<(
 fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfer() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -1080,7 +1083,7 @@ fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfe
 fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extra_transfer() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -1124,7 +1127,7 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
 fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     for script in [
         vec![
@@ -1168,7 +1171,7 @@ fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() ->
 fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accounting() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let faucet_id = env.faucet;
 
     env.credit_payout(100_000_000)?;
@@ -1216,8 +1219,8 @@ fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accoun
 fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_same_job() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let failed_target = Principal::from_text("aaaaa-aa")?;
-    let success_target = Principal::from_text("2vxsx-fae")?;
+    let failed_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let success_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
     let faucet_id = env.faucet;
 
     env.credit_payout(100_000_000)?;
@@ -1269,8 +1272,8 @@ fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_s
 fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let first_target = Principal::from_text("aaaaa-aa")?;
-    let second_target = Principal::from_text("2vxsx-fae")?;
+    let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let second_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
 
     env.credit_payout(120_000_000)?;
     env.credit_staking(800_000_000)?;
@@ -1371,7 +1374,7 @@ fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<(
 fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(target.to_text().into_bytes());
 
     let baseline = env.footprint()?;
@@ -1513,7 +1516,7 @@ fn faucet_init_args_preserve_expected_first_staking_tx_id() -> Result<()> {
 #[ignore]
 fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
     require_ignored_flag()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let expected_first_tx_id = 1u64;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.blackhole_armed = Some(true);
@@ -1551,7 +1554,7 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
 #[ignore]
 fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Result<()> {
     require_ignored_flag()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.blackhole_armed = Some(true);
         init.expected_first_staking_tx_id = Some(2);
@@ -1591,7 +1594,7 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
 #[ignore]
 fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Result<()> {
     require_ignored_flag()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.blackhole_armed = Some(true);
         init.expected_first_staking_tx_id = Some(1);
@@ -1660,7 +1663,7 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
 fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.set_blackholed_controllers()?;
     env.set_blackhole_armed(Some(true))?;
@@ -1697,7 +1700,7 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     for _ in 0..2 {
         env.credit_payout(100_000_000)?;
         env.credit_staking(100_000_000)?;
-        env.append_transfer(100_000_000, Some(Principal::from_text("aaaaa-aa")?.to_text().into_bytes()))?;
+        env.append_transfer(100_000_000, Some(Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?.to_text().into_bytes()))?;
         env.main_tick()?;
         env.advance_time_and_tick(61, 20);
         env.main_tick()?;
@@ -1716,7 +1719,7 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
 fn faucet_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
-    let target = Principal::from_text("aaaaa-aa")?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
