@@ -55,7 +55,7 @@ A staking-account transaction only contributes to attribution if all of the foll
 
 1. it is an incoming `Transfer` **to** the configured `staking_account` (`TransferFrom` records are ignored)
 2. the transferred amount is at least `min_tx_e8s`
-3. the memo can be decoded as ASCII principal text in `icrc1_memo` within the ICP memo limit (the supported UX is to enter the beneficiary target canister ID)
+3. the memo can be decoded as short ASCII principal text for the beneficiary (the supported UX is to enter the target canister ID)
 
 ### Memo parsing rules
 
@@ -68,7 +68,7 @@ Memo handling is intentionally simple and code-driven:
 - malformed memo = invalid
 - memo that does not decode to principal text within the ICP memo limit = invalid
 - the trimmed memo must be ASCII and at most 32 bytes
-- whitespace around the memo text is tolerated because the parser trims before decoding, as long as the raw `icrc1_memo` still fits within the 32-byte ICP memo limit
+- whitespace around canister text is tolerated because the parser trims before decoding
 
 Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not block later transfers.
 
@@ -80,7 +80,7 @@ The default minimum tracked contribution is:
 
 Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. They also do **not** create durable historian tracking for the memo target. The production minimum is intentionally high because historian only keeps a durable beneficiary registry for memo-derived targets that actually qualify; a much lower threshold would make registry spam far cheaper.
 
-Memo encoding uses `icrc1_memo` text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended target canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
+Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended target canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
 
 ## Important payout semantics
 
@@ -220,14 +220,14 @@ If the ledger replies with `Duplicate`, the faucet reuses the returned block ind
 The faucet does **not** retry forever and does **not** buffer a retry queue in memory. Behavior is:
 
 - first ambiguous failure → retry that step once immediately, inline
-- retry still fails → count that contribution as failed and continue with the next record
+- retry still fails → count that contribution as **ambiguous** and continue with the next record
 
-This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible contributions may fail in a given run and be reflected only in the summary counters.
+This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible contributions may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters.
 
 
 ### Logging policy
 
-To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups`, not one log line per failed beneficiary top-up attempt. The `failed_topups` counter is beneficiary-only; a failed remainder-to-self cleanup transfer does not increment it.
+To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups` and `ambiguous_topups`, not one log line per beneficiary top-up attempt. `failed_topups` is used for deterministic beneficiary failures; `ambiguous_topups` is used when the faucet exhausts its one inline retry at a boundary where a prior ledger / CMC action may already have taken effect. These counters are beneficiary-only; a failed remainder-to-self cleanup transfer does not increment either one.
 
 ## Rescue and blackhole policy
 
@@ -290,7 +290,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
   - type: `opt nat64`
 - `main_interval_seconds` (optional; defaults to 7 days)
 - `rescue_interval_seconds` (optional; defaults to 1 day)
-- `min_tx_e8s` (optional; defaults to `1 ICP`)
+- `min_tx_e8s` (optional; defaults to `1 ICP`; must be at least `0.1 ICP`)
 
 A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
 
@@ -329,7 +329,7 @@ The committed mainnet install args wire the current production constants used by
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
 - `main_interval_seconds = 604800`
 - `rescue_interval_seconds = 86400`
-- `min_tx_e8s = 100000000`
+- `min_tx_e8s = 100000000` (`1 ICP`, with an enforced hard floor of `10000000` / `0.1 ICP`)
 
 ## Public interface
 
@@ -402,7 +402,7 @@ The most important thing to remember is that the faucet is **job-snapshot based*
 
 Treat the memo requirement as canonical:
 
-- beneficiary is identified by ASCII principal text in `icrc1_memo`; the supported usage is to put the target canister ID there
+- beneficiary is identified by short ASCII principal text in `icrc1_memo` (the supported usage is to put the target canister ID there)
 - malformed or missing memos are ignored
 - ownership of the beneficiary canister is not checked by the faucet
 

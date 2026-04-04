@@ -100,6 +100,7 @@ pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
         topped_up_min_e8s: job.topped_up_min_e8s,
         topped_up_max_e8s: job.topped_up_max_e8s,
         failed_topups: job.failed_topups,
+        ambiguous_topups: job.ambiguous_topups,
         ignored_under_threshold: job.ignored_under_threshold,
         ignored_bad_memo: job.ignored_bad_memo,
         remainder_to_self_e8s: job.remainder_to_self_e8s,
@@ -143,6 +144,13 @@ mod tests {
         let p = target_canister();
         let memo = format!("  {}\n", p.to_text());
         assert_eq!(parse_beneficiary_from_memo(memo.as_bytes()), Some(p));
+    }
+
+    #[test]
+    fn parser_does_not_hardcode_a_cai_suffix() {
+        let p = principal("uuc56-gyb");
+        assert!(p.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
     }
 
     #[test]
@@ -215,7 +223,7 @@ mod tests {
 
     #[test]
     fn principal_subaccount_matches_documented_layout() {
-        let p = principal("aaaaa-aa");
+        let p = principal("uuc56-gyb");
         let sub = principal_to_subaccount(p);
         assert_eq!(sub[0], p.as_slice().len() as u8);
         assert_eq!(&sub[1..1 + p.as_slice().len()], p.as_slice());
@@ -369,6 +377,7 @@ mod tests {
         let summary = summary_from_job(&job);
         assert_eq!(summary.topped_up_count, 0);
         assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
         assert_eq!(summary.pot_remaining_e8s, 60_000_000);
     }
 

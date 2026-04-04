@@ -33,3 +33,6 @@ release-artifacts/
 
 # frontend build artifacts
 jupiter-faucet-frontend/assets/generated/
+# python cache
+__pycache__/
+*.pyc

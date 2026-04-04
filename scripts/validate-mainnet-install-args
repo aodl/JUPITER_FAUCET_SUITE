@@ -40,6 +40,25 @@ def require_contains(text: str, needle: str, context: str) -> None:
         fail(f"{context} is missing `{needle}`")
 
 
+def extract_nat64(text: str, field: str, path: Path) -> int:
+    match = re.search(rf"{re.escape(field)}\s*=\s*(?:opt\s*)?(?:\()?\s*(\d+)(?:\s*:\s*nat64)?\s*\)?\s*;", text)
+    if not match:
+        fail(f"{path} is missing `{field}`")
+    return int(match.group(1))
+
+
+def validate_no_debug_methods_in_prod_did(path: Path) -> None:
+    text = path.read_text()
+    if re.search(r"\bdebug_\w+\b", text):
+        fail(f"{path} unexpectedly exposes debug_* methods in the production DID")
+
+
+def validate_debug_methods_present_in_debug_did(path: Path) -> None:
+    text = path.read_text()
+    if not re.search(r"\bdebug_\w+\b", text):
+        fail(f"{path} is expected to expose debug_* methods")
+
+
 def validate_disburser() -> None:
     path = REPO_ROOT / "jupiter-disburser" / "mainnet-install-args.did"
     text = path.read_text()
@@ -54,7 +73,7 @@ def validate_disburser() -> None:
     require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
 
 
-def validate_faucet() -> None:
+def validate_faucet() -> int:
     path = REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did"
     text = path.read_text()
     require_contains(text, f'ledger_canister_id = opt principal "{MAINNET["ledger"]}";', str(path))
@@ -67,16 +86,19 @@ def validate_faucet() -> None:
     if not match:
         fail(f"{path} is missing `expected_first_staking_tx_id`")
     value = match.group(1).strip()
+    faucet_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
+    if faucet_min_tx_e8s < 10_000_000:
+        fail(f"{path} configures min_tx_e8s below the supported floor of 10_000_000 e8s (0.1 ICP)")
     if value == "null":
-        return
+        return faucet_min_tx_e8s
     if re.fullmatch(r"opt\s+\(?\s*\d+(?:\s*:\s*nat64)?\s*\)?", value):
-        return
+        return faucet_min_tx_e8s
     fail(
         f"{path} has invalid `expected_first_staking_tx_id` value `{value}`; expected `null` or `opt <nat64>`"
     )
 
 
-def validate_historian() -> None:
+def validate_historian() -> int:
     path = REPO_ROOT / "jupiter-historian" / "mainnet-install-args.did"
     text = path.read_text()
     require_contains(text, f'ledger_canister_id = opt principal "{MAINNET["ledger"]}";', str(path))
@@ -85,13 +107,29 @@ def validate_historian() -> None:
     require_contains(text, f'faucet_canister_id = opt principal "{PROD["jupiter_faucet"]}";', str(path))
     require_contains(text, f'blackhole_canister_id = opt principal "{MAINNET["blackhole"]}";', str(path))
     require_contains(text, f'sns_wasm_canister_id = opt principal "{MAINNET["sns_wasm"]}";', str(path))
+    historian_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
+    if historian_min_tx_e8s < 10_000_000:
+        fail(f"{path} configures min_tx_e8s below the supported floor of 10_000_000 e8s (0.1 ICP)")
+    return historian_min_tx_e8s
 
 
 def main() -> None:
     validate_disburser()
-    validate_faucet()
-    validate_historian()
-    print("mainnet install-args look consistent with the committed mainnet wiring")
+    faucet_min_tx_e8s = validate_faucet()
+    historian_min_tx_e8s = validate_historian()
+    if faucet_min_tx_e8s != historian_min_tx_e8s:
+        fail(
+            "faucet and historian min_tx_e8s must match so public qualification reporting matches payout eligibility"
+        )
+
+    validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-faucet" / "jupiter_faucet.did")
+    validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-disburser" / "jupiter_disburser.did")
+    validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-historian" / "jupiter_historian.did")
+    validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-faucet" / "jupiter_faucet_debug.did")
+    validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-disburser" / "jupiter_disburser_debug.did")
+    validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-historian" / "jupiter_historian_debug.did")
+
+    print("mainnet install-args and DID files look consistent with the committed production wiring")
 
 
 if __name__ == "__main__":

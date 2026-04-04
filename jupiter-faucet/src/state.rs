@@ -66,6 +66,8 @@ pub struct Summary {
     pub topped_up_min_e8s: Option<u64>,
     pub topped_up_max_e8s: Option<u64>,
     pub failed_topups: u64,
+    #[serde(default)]
+    pub ambiguous_topups: u64,
     pub ignored_under_threshold: u64,
     pub ignored_bad_memo: u64,
     pub remainder_to_self_e8s: u64,
@@ -87,6 +89,8 @@ pub struct ActivePayoutJob {
     pub topped_up_min_e8s: Option<u64>,
     pub topped_up_max_e8s: Option<u64>,
     pub failed_topups: u64,
+    #[serde(default)]
+    pub ambiguous_topups: u64,
     pub remainder_to_self_e8s: u64,
     #[serde(default)]
     pub pending_transfer: Option<PendingTransfer>,
@@ -114,6 +118,7 @@ impl ActivePayoutJob {
             topped_up_min_e8s: None,
             topped_up_max_e8s: None,
             failed_topups: 0,
+            ambiguous_topups: 0,
             remainder_to_self_e8s: 0,
             pending_transfer: None,
             next_created_at_time_nanos: created_at_time_nanos,

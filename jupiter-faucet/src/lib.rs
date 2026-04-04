@@ -51,6 +51,30 @@ fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
 }
 
+
+pub(crate) const MIN_MIN_TX_E8S: u64 = 10_000_000;
+
+fn assert_non_anonymous_principal(name: &str, principal: Principal) {
+    assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
+}
+
+fn validate_config(cfg: &crate::state::Config) {
+    assert_non_anonymous_principal("staking_account.owner", cfg.staking_account.owner);
+    assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
+    assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
+    assert_non_anonymous_principal("cmc_canister_id", cfg.cmc_canister_id);
+    assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
+    if let Some(blackhole_controller) = cfg.blackhole_controller {
+        assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
+    }
+    assert!(cfg.main_interval_seconds > 0, "main_interval_seconds must be greater than 0");
+    assert!(cfg.rescue_interval_seconds > 0, "rescue_interval_seconds must be greater than 0");
+    assert!(
+        cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
+        "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
+    );
+}
+
 fn decode_subaccount_opt(v: Option<Vec<u8>>) -> Result<Option<[u8; 32]>, String> {
     match v {
         None => Ok(None),
@@ -84,6 +108,7 @@ fn init(args: InitArgs) {
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
     };
 
+    validate_config(&cfg);
     let st = State::new(cfg, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
@@ -120,6 +145,7 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             st.consecutive_cmc_zero_success_runs = Some(0);
         }
     }
+    validate_config(&st.config);
     st.main_lock_expires_at_ts = Some(0);
 }
 
@@ -243,6 +269,7 @@ fn debug_reset_runtime_state() {
         st.consecutive_cmc_zero_success_runs = Some(0);
         st.last_observed_staking_balance_e8s = None;
         st.last_observed_latest_tx_id = None;
+        validate_config(&st.config);
         st.main_lock_expires_at_ts = Some(0);
         st.active_payout_job = None;
         st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
@@ -320,6 +347,83 @@ async fn debug_main_tick() {
 #[ic_cdk::update]
 async fn debug_rescue_tick() {
     crate::scheduler::debug_rescue_tick_impl().await;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn principal(text: &str) -> Principal {
+        Principal::from_text(text).unwrap()
+    }
+
+    fn sample_account() -> Account {
+        Account {
+            owner: principal("22255-zqaaa-aaaas-qf6uq-cai"),
+            subaccount: None,
+        }
+    }
+
+    fn sample_config() -> crate::state::Config {
+        crate::state::Config {
+            staking_account: sample_account(),
+            payout_subaccount: None,
+            ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
+            index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
+            cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
+            blackhole_controller: Some(principal("e3mmv-5qaaa-aaaah-aadma-cai")),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: 60,
+            rescue_interval_seconds: 60,
+            min_tx_e8s: 100_000_000,
+        }
+    }
+
+    #[test]
+    fn validate_config_accepts_minimum_supported_threshold() {
+        let mut cfg = sample_config();
+        cfg.min_tx_e8s = MIN_MIN_TX_E8S;
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "min_tx_e8s must be at least")]
+    fn validate_config_rejects_threshold_below_minimum() {
+        let mut cfg = sample_config();
+        cfg.min_tx_e8s = MIN_MIN_TX_E8S - 1;
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "main_interval_seconds must be greater than 0")]
+    fn validate_config_rejects_zero_main_interval() {
+        let mut cfg = sample_config();
+        cfg.main_interval_seconds = 0;
+        validate_config(&cfg);
+    }
+
+    #[test]
+    fn apply_upgrade_args_keeps_runtime_state_and_revalidates() {
+        let now_secs = 123;
+        let mut st = State::new(sample_config(), now_secs);
+        st.main_lock_expires_at_ts = Some(99);
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
+                blackhole_armed: Some(true),
+                clear_forced_rescue: Some(true),
+            }),
+            now_secs,
+        );
+        assert_eq!(st.config.blackhole_controller, Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")));
+        assert_eq!(st.config.blackhole_armed, Some(true));
+        assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
+        assert_eq!(st.main_lock_expires_at_ts, Some(0));
+    }
 }
 
 ic_cdk::export_candid!();

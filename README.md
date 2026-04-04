@@ -64,7 +64,7 @@ The live value-moving path is:
 7. For each eligible contribution whose computed share is larger than the ledger fee, the faucet sends ICP to the beneficiary’s CMC deposit subaccount and then calls `notify_top_up`.
 8. The CMC converts those deposits into cycles top-ups.
 
-The faucet top-up path is intentionally **best effort**. Each eligible contribution is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. A failed contribution is counted in the run summary and the job continues rather than buffering deferred retry work.
+The faucet top-up path is intentionally **best effort**. Each eligible contribution is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work.
 
 For the exact split math, memo formats, retry semantics, and rescue logic, the component READMEs are the canonical source:
 
@@ -78,7 +78,7 @@ At a high level, a participant:
 1. transfers ICP into the faucet neuron’s configured `staking_account`
 2. puts the **target canister ID** in the transfer memo as ASCII text
 
-The contributor does **not** need to own the target canister. The supported UX is to put the intended beneficiary canister ID in the memo as ASCII text; the faucet itself parses non-empty ASCII principal text from `icrc1_memo` within the ICP memo-size limit.
+The contributor does **not** need to own the target canister. The faucet accepts short ASCII principal text in the memo; the supported UX is to enter the beneficiary target canister ID there.
 
 The supported memo path is ASCII principal text carried in `icrc1_memo`, intended to be the target canister ID. The old 64-bit numeric memo field is intentionally ignored, which keeps the policy aligned with “enter the canister ID as text” rather than trying to reinterpret numeric values as UTF-8.
 
@@ -88,14 +88,14 @@ Important details that matter in practice:
 - legacy numeric memos are ignored entirely
 - an empty `icrc1_memo` is treated as missing / invalid
 - only incoming `Transfer` records **to** the staking account are treated as contributions; `TransferFrom` records are ignored
-- whitespace around the canister ID text is tolerated because the parser trims before decoding, as long as the raw `icrc1_memo` still fits within the 32-byte ICP memo limit
+- whitespace around the canister ID text is tolerated because the parser trims before decoding
 - the trimmed memo must be ASCII and at most 32 bytes
 - empty, malformed, or oversize memos are ignored
 - contributions below `min_tx_e8s` are ignored for durable beneficiary registration and faucet eligibility; historian only keeps a capped recent feed for the below-threshold attempts and does not retain those canisters in its tracked registry
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record
 - each new payout job rescans the full staking history against a fresh payout-pot snapshot
 
-The production minimum is intentionally **1 ICP** so beneficiary-registry spam stays expensive. Historian keeps a durable registry of memo-derived beneficiaries so it can efficiently monitor and display later cycle top-up activity; a much lower threshold would let an attacker register huge numbers of canisters very cheaply.
+The production minimum is intentionally **1 ICP** so beneficiary-registry spam stays expensive. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions. Historian keeps a durable registry of memo-derived beneficiaries so it can efficiently monitor and display later cycle top-up activity; a much lower threshold would let an attacker register huge numbers of canisters very cheaply.
 
 See [`jupiter-faucet/README.md`](jupiter-faucet/README.md) for the exact rules and examples.
 

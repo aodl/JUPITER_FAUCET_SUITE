@@ -81,8 +81,6 @@ fn debug_reset_successful_transfer_counter() {}
 #[cfg(not(feature = "debug_api"))]
 enum DebugSuccessfulTransferInjection {
     None,
-    Abort,
-    Trap,
 }
 
 #[cfg(not(feature = "debug_api"))]
@@ -124,9 +122,10 @@ fn log_cycles() {
 
 fn log_summary(summary: &state::Summary) {
     emit_log_line(format!(
-        "SUMMARY:topped_up_count={} failed_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={}",
+        "SUMMARY:topped_up_count={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={}",
         summary.topped_up_count,
         summary.failed_topups,
+        summary.ambiguous_topups,
         summary.ignored_under_threshold,
         summary.ignored_bad_memo,
         summary.remainder_to_self_e8s,
@@ -315,14 +314,27 @@ fn mark_pending_transfer_accepted(block_index: u64) -> Option<PendingNotificatio
     })
 }
 
-fn clear_pending_transfer_failed() {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingTransferTerminalStatus {
+    Failed,
+    Ambiguous,
+}
+
+fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
             if matches!(job.pending_transfer.as_ref().map(|pending| &pending.notification.kind), Some(TransferKind::Beneficiary)) {
-                job.failed_topups = job.failed_topups.saturating_add(1);
+                match status {
+                    PendingTransferTerminalStatus::Failed => {
+                        job.failed_topups = job.failed_topups.saturating_add(1);
+                    }
+                    PendingTransferTerminalStatus::Ambiguous => {
+                        job.ambiguous_topups = job.ambiguous_topups.saturating_add(1);
+                    }
+                }
             }
             // Remainder-to-self top-ups are intentional best-effort cleanup only. They are not
-            // counted as beneficiary failures and should not bias rescue / summary policy.
+            // counted as beneficiary failures or ambiguities and should not bias rescue / summary policy.
             job.pending_transfer = None;
         }
     });
@@ -420,7 +432,9 @@ async fn drive_pending_transfer(
     let accepted = match staged.phase {
         PendingTransferPhase::AwaitingTransfer => {
             if !created_at_time_is_valid_for_ledger(staged.created_at_time_nanos, now_nanos) {
-                clear_pending_transfer_failed();
+                // Once the created_at_time expires we can no longer safely distinguish “never accepted”
+                // from “accepted but the reply was lost”, so we surface this as ambiguous rather than failed.
+                clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
                 return true;
             }
 
@@ -443,19 +457,21 @@ async fn drive_pending_transfer(
                 TransferAttemptOutcome::ImmediateRetryable => match transfer_once(ledger, second_arg).await {
                     TransferAttemptOutcome::Accepted(v) => v,
                     TransferAttemptOutcome::ImmediateRetryable | TransferAttemptOutcome::Failed => {
-                        clear_pending_transfer_failed();
+                        clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
                         return true;
                     }
                 },
                 TransferAttemptOutcome::Failed => {
-                    clear_pending_transfer_failed();
+                    clear_pending_transfer(PendingTransferTerminalStatus::Failed);
                     return true;
                 }
             };
 
             match debug_successful_transfer_injection() {
                 DebugSuccessfulTransferInjection::None => {}
+                #[cfg(feature = "debug_api")]
                 DebugSuccessfulTransferInjection::Abort => return false,
+                #[cfg(feature = "debug_api")]
                 DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful faucet transfer"),
             };
 
@@ -469,7 +485,7 @@ async fn drive_pending_transfer(
 
     if !notify_once(cmc, &accepted).await {
         if !notify_once(cmc, &accepted).await {
-            clear_pending_transfer_failed();
+            clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
             return true;
         }
     }
@@ -720,6 +736,10 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
         for tx in &resp.transactions {
             if let Some(last_seen) = page_start {
                 if tx.id <= last_seen {
+                    // Faucet history scans intentionally trust the ICP index cursor contract to be
+                    // monotonic and exclusive across pages. Duplicate page-boundary delivery would
+                    // be treated as an upstream indexing issue rather than something this single-pass
+                    // scan tries to compensate for internally.
                     continue;
                 }
             }
@@ -740,6 +760,9 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
                     // Best-effort policy: attempt each eligible top-up independently, allow at most
                     // one immediate inline retry at ambiguous ledger / notify boundaries, and persist
                     // only the single in-flight transfer/notify phase so upgrades can resume safely.
+                    // Exhausted ambiguous paths are counted separately from deterministic failures so
+                    // operators can tell the difference between a known rejection and an unknown outcome
+                    // that may need external reconciliation.
                     let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s, block_index: 0, next_start: Some(tx.id) };
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
@@ -1017,18 +1040,18 @@ mod tests {
 
     fn test_config_with_intervals(main_interval_seconds: u64, rescue_interval_seconds: u64) -> state::Config {
         state::Config {
-            staking_account: Account { owner: Principal::anonymous(), subaccount: None },
+            staking_account: Account { owner: Principal::management_canister(), subaccount: None },
             payout_subaccount: None,
-            ledger_canister_id: Principal::anonymous(),
-            index_canister_id: Principal::anonymous(),
-            cmc_canister_id: Principal::anonymous(),
-            rescue_controller: Principal::anonymous(),
+            ledger_canister_id: Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap(),
+            index_canister_id: Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").unwrap(),
+            cmc_canister_id: Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap(),
+            rescue_controller: Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
             blackhole_controller: Some(Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds,
             rescue_interval_seconds,
-            min_tx_e8s: 1,
+            min_tx_e8s: crate::MIN_MIN_TX_E8S,
         }
     }
 
@@ -1200,7 +1223,8 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(summary.topped_up_count, 1);
         assert_eq!(summary.topped_up_sum_e8s, 29_990_000);
-        assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 1);
         assert_eq!(summary.remainder_to_self_e8s, 69_990_000);
     }
 
@@ -1225,9 +1249,34 @@ mod tests {
         assert_eq!(cmc.call_count(), 1);
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(summary.topped_up_count, 0);
-        assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 1);
         assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
         assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn retryable_then_deterministic_transfer_failure_is_still_counted_as_ambiguous() {
+        let now_secs = 1_650_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(61, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = ExclusiveIndex::new(vec![
+            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![
+            LedgerStep::CallErr,
+            LedgerStep::PermanentErr,
+            LedgerStep::Ok(292),
+        ]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, now_secs * 1_000_000_000, now_secs)));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 0);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 1);
+        assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
     }
 
     #[test]
@@ -1251,6 +1300,7 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(summary.topped_up_count, 0);
         assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.ambiguous_topups, 0);
         assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
         assert_eq!(summary.pot_remaining_e8s, 0);
     }
@@ -1273,6 +1323,7 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized after inline retry");
         assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
         assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
     }
 
     #[test]
@@ -1293,6 +1344,7 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized after retry exhaustion");
         assert_eq!(summary.remainder_to_self_e8s, 0);
         assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
         assert_eq!(summary.pot_remaining_e8s, 0);
     }
 
@@ -1331,6 +1383,8 @@ mod tests {
             assert!(job.pending_transfer.is_none());
             assert_eq!(job.cmc_attempt_count, Some(2));
             assert_eq!(job.cmc_success_count, Some(0));
+            assert_eq!(job.failed_topups, 0);
+            assert_eq!(job.ambiguous_topups, 1);
         });
 
         state::with_state_mut(|st| st.active_payout_job.as_mut().expect("job should still exist").scan_complete = true);
@@ -1374,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_pending_transfer_fails_without_reusing_an_expired_created_at_time() {
+    fn stale_pending_transfer_is_marked_ambiguous_without_reusing_an_expired_created_at_time() {
         let now_secs = 3 * 24 * 60 * 60;
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let stale_created_at_nanos = (now_secs - 2 * 24 * 60 * 60) * 1_000_000_000;
@@ -1406,7 +1460,8 @@ mod tests {
         state::with_state(|st| {
             let job = st.active_payout_job.as_ref().expect("job should remain active for inspection");
             assert!(job.pending_transfer.is_none());
-            assert_eq!(job.failed_topups, 1);
+            assert_eq!(job.failed_topups, 0);
+            assert_eq!(job.ambiguous_topups, 1);
         });
     }
 
@@ -1436,7 +1491,8 @@ mod tests {
         let summary = &logs[0];
         assert!(summary.starts_with("SUMMARY:"), "expected summary log prefix, got {summary}");
         assert!(summary.contains("topped_up_count=1"));
-        assert!(summary.contains("failed_topups=1"));
+        assert!(summary.contains("failed_topups=0"));
+        assert!(summary.contains("ambiguous_topups=1"));
         assert!(summary.contains("remainder_to_self_e8s=69990000"));
         assert!(!summary.contains("ERR:"));
         assert!(!summary.contains("TOPUP"));
@@ -1580,8 +1636,8 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(summary.topped_up_count, 2, "overlapping page replay must not duplicate the tx id 500 contribution");
         assert_eq!(summary.failed_topups, 0);
-        assert_eq!(summary.ignored_under_threshold, 0);
-        assert_eq!(summary.ignored_bad_memo, 499);
+        assert_eq!(summary.ignored_under_threshold, 499);
+        assert_eq!(summary.ignored_bad_memo, 0);
     }
 
     #[test]
@@ -1742,6 +1798,7 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
         assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
         assert_eq!(summary.pot_remaining_e8s, 0);
     }
 

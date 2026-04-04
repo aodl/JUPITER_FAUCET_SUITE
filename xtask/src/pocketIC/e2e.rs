@@ -39,6 +39,10 @@ fn tick_n(pic: &PocketIc, n: usize) {
     }
 }
 
+fn fixture_principal() -> Principal {
+    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
+}
+
 fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
     let sender = pic
         .get_controllers(canister)
@@ -179,6 +183,8 @@ struct FaucetSummary {
     topped_up_min_e8s: Option<u64>,
     topped_up_max_e8s: Option<u64>,
     failed_topups: u64,
+    #[serde(default)]
+    ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
     remainder_to_self_e8s: u64,
@@ -256,7 +262,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     pic.install_canister(cmc, cmc_wasm, vec![], None);
 
     let staking_account = Account {
-        owner: Principal::anonymous(),
+        owner: fixture_principal(),
         subaccount: Some([7u8; 32]),
     };
     let faucet_init = FaucetInitArg {
@@ -280,7 +286,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
@@ -380,7 +386,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
     pic.install_canister(cmc, cmc_wasm, vec![], None);
 
     let staking_account = Account {
-        owner: Principal::anonymous(),
+        owner: fixture_principal(),
         subaccount: Some([8u8; 32]),
     };
     let faucet_init = FaucetInitArg {
@@ -408,7 +414,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
             subaccount: None,
         },
         age_bonus_recipient_2: Account {
-            owner: disburser,
+            owner: pic.create_canister(),
             subaccount: None,
         },
         ledger_canister_id: Some(ledger),
@@ -514,7 +520,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     pic.install_canister(cmc, cmc_wasm, vec![], None);
 
     let staking_account = Account {
-        owner: Principal::anonymous(),
+        owner: fixture_principal(),
         subaccount: Some([6u8; 32]),
     };
     let faucet_init = FaucetInitArg {
@@ -538,7 +544,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
@@ -638,7 +644,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
     pic.install_canister(cmc, cmc_wasm, vec![], None);
 
     let staking_account = Account {
-        owner: Principal::anonymous(),
+        owner: fixture_principal(),
         subaccount: Some([5u8; 32]),
     };
     let faucet_init = FaucetInitArg {
@@ -662,7 +668,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser,
@@ -947,7 +953,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     pic.install_canister(blackhole, blackhole_wasm, vec![], None);
     set_controllers_exact(&pic, blackhole, vec![blackhole])?;
 
-    let staking_account = Account { owner: Principal::anonymous(), subaccount: Some([11u8; 32]) };
+    let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([11u8; 32]) };
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
@@ -988,7 +994,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser,

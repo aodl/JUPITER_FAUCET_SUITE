@@ -81,6 +81,10 @@ fn nns_root() -> Principal {
     Principal::from_text(NNS_ROOT_ID).expect("valid NNS root principal")
 }
 
+fn fixture_principal() -> Principal {
+    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
+}
+
 fn stop_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> Result<()> {
     pic.stop_canister(canister, Some(sender))
         .map_err(|r| anyhow!("stop_canister({canister}) reject: {r:?}"))
@@ -1953,7 +1957,7 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     // Neuron controller is *not* the disburser.
-    let controller = Principal::anonymous();
+    let controller = fixture_principal();
     let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 4242, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
@@ -2169,7 +2173,7 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
 
-    let controller = Principal::anonymous();
+    let controller = fixture_principal();
     let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 7, 1_000 * 100_000_000)?; // 1,000 ICP
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
@@ -2181,7 +2185,7 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2248,7 +2252,7 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
 
-    let controller = Principal::anonymous();
+    let controller = fixture_principal();
     let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 72, 1_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
@@ -2260,7 +2264,7 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2323,7 +2327,7 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
 
-    let controller = Principal::anonymous();
+    let controller = fixture_principal();
     let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 71, 1_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
@@ -2335,7 +2339,7 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2395,7 +2399,7 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     let disburser_canister = pic.create_canister();
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
-    let controller = Principal::anonymous();
+    let controller = fixture_principal();
     let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 100, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
@@ -3379,7 +3383,7 @@ fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
@@ -3457,7 +3461,7 @@ fn upgrade_persists_inflight() -> Result<()> {
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
@@ -4626,7 +4630,7 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,
@@ -4703,7 +4707,7 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
         neuron_id,
         normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
         age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: disburser_canister, subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: disburser_canister,

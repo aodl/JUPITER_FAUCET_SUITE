@@ -178,10 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_oversize_principal_text_memos() {
+    fn rejects_oversize_principal_text_memos_but_not_short_valid_principals() {
         let self_auth = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
         assert!(self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
         assert_eq!(parse_target_canister_from_memo(self_auth.to_text().as_bytes()), None);
+        let short = Principal::from_text("aaaaa-aa").unwrap();
+        assert!(short.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(parse_target_canister_from_memo(short.to_text().as_bytes()), Some(short));
     }
 
     #[test]
@@ -264,6 +267,35 @@ mod tests {
                 assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER);
             }
             IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
+        }
+    }
+
+    #[test]
+    fn short_valid_principal_text_is_indexed_without_a_suffix_rule() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 3,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"aaaaa-aa".to_vec()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
+                    amount: Tokens::new(100_000_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 124 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedContributionEntry::Valid(c) => {
+                assert_eq!(c.beneficiary, Principal::from_text("aaaaa-aa").unwrap());
+                assert!(c.counts_toward_faucet);
+            }
+            IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),
         }
     }
 

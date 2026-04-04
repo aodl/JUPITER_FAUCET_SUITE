@@ -257,7 +257,7 @@
                 </div>
                 <a class="pane-external-link pane-inline-code-link mono" id="how-staking-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="how-staking-account-address">22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d</code></a>
                 <p class="pane-inline-help">
-                  Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field as plain ASCII text. Target canister IDs fit within the ICP `icrc1_memo` limit; ordinary self-authenticating user principals do not, so the supported UX remains entering the target canister ID. <br/>(<b>Ctrl + k</b>, and search '<b>memo</b>' if the field is not yet visible).
+                  Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field as plain ASCII text. The faucet accepts short ASCII principal text in `icrc1_memo`; entering the target canister ID is the supported UX, and ordinary self-authenticating user principals do not fit. <br/>(<b>Ctrl + k</b>, and search '<b>memo</b>' if the field is not yet visible).
                 </p>
               </div>
 
@@ -363,7 +363,7 @@
         <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">
           <h2 class="nav-panel-title">Target Canisters</h2>
           <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">This registry is historian's durable set of retained target canisters. Stale memo-only entries that never reached a qualifying contribution are pruned during historian normalization, while the retained qualifying and SNS-discovered registry remains durable; the per-canister histories and recent feeds shown elsewhere are bounded, and full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
+          <p class="nav-panel-content">This registry is historian's durable set of tracked target canisters. The registry itself is not pruned, but the per-canister histories and recent feeds shown elsewhere are bounded; full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
           <div class="pane-table-wrap">
             <table class="pane-table">
               <thead>

@@ -10,7 +10,7 @@ use crate::{
     logic, mainnet_cmc_id, MAX_RECENT_BURNS, MAX_RECENT_INVALID_CONTRIBUTIONS,
     MAX_RECENT_QUALIFYING_CONTRIBUTIONS, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
 };
-use crate::state::{self, ActiveCyclesSweep, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, InvalidContribution, RecentBurn, RecentContribution};
+use crate::state::{self, ActiveCyclesSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, InvalidContribution, RecentBurn, RecentContribution};
 
 const PAGE_SIZE: u64 = 500;
 const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
@@ -179,20 +179,21 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     process_contribution_indexing(index, now_secs).await?;
     process_burn_indexing(index).await?;
 
-    let (enable_sns_tracking, last_sns_discovery_ts, last_completed_cycles_sweep_ts, active_present, interval_secs) = state::with_state(|st| (
+    let (enable_sns_tracking, last_sns_discovery_ts, last_completed_cycles_sweep_ts, active_cycles_present, active_sns_present, interval_secs) = state::with_state(|st| (
         st.config.enable_sns_tracking,
         st.last_sns_discovery_ts,
         st.last_completed_cycles_sweep_ts,
         st.active_cycles_sweep.is_some(),
+        st.active_sns_discovery.is_some(),
         st.config.cycles_interval_seconds,
     ));
 
-    let sns_due = enable_sns_tracking && now_secs.saturating_sub(last_sns_discovery_ts) >= interval_secs;
+    let sns_due = enable_sns_tracking && (active_sns_present || now_secs.saturating_sub(last_sns_discovery_ts) >= interval_secs);
     if sns_due {
         process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root).await?;
     }
 
-    let cycles_due = active_present || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
+    let cycles_due = active_cycles_present || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
     if cycles_due {
         process_cycles_sweep(now_nanos, now_secs, blackhole).await?;
     }
@@ -323,6 +324,9 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
             let mut recent_burns = Vec::new();
             for tx in page.transactions.iter() {
                 if cursor.map(|prev| tx.id <= prev).unwrap_or(false) {
+                    // Burn indexing uses the same monotonic/exclusive cursor assumption as the main
+                    // staking-account scan. Temporary page-boundary duplication is treated as an
+                    // upstream index inconsistency rather than something we buffer additional state for.
                     continue;
                 }
                 last_seen = Some(tx.id);
@@ -371,48 +375,95 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
     Ok(())
 }
 
+fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
+    let Some(canister_id) = summary.canister_id else { return; };
+    let cycles = summary.status.and_then(|status| status.cycles).and_then(|cycles| nat_to_u128(&cycles));
+    state::with_state_mut(|st| {
+        st.distinct_canisters.insert(canister_id);
+        st.canister_sources.insert(canister_id, logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::SnsDiscovery));
+        let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+        if meta.first_seen_ts.is_none() {
+            meta.first_seen_ts = Some(now_secs);
+        }
+        if let Some(cycles) = cycles {
+            let history = st.cycles_history.entry(canister_id).or_default();
+            let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(timestamp_nanos, cycles, CyclesSampleSource::SnsRootSummary), max_cycles_entries);
+            if inserted {
+                logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary));
+            }
+        } else {
+            logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::NotAvailable);
+        }
+    });
+}
+
 async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     sns_wasm: &W,
     sns_root: &R,
 ) -> Result<(), String> {
-    let max_cycles_entries = state::with_state(|st| st.config.max_cycles_entries_per_canister);
-    let deployed = sns_wasm.list_deployed_snses().await.map_err(|e| format!("list_deployed_snses failed: {e}"))?;
-    for sns in deployed.instances {
-        let Some(root_id) = sns.root_canister_id else { continue; };
-        let summary = sns_root.get_sns_canisters_summary(root_id).await.map_err(|e| format!("get_sns_canisters_summary failed: {e}"))?;
-        let process_summary = |summary: SnsCanisterSummary| {
-            let Some(canister_id) = summary.canister_id else { return; };
-            let cycles = summary.status.and_then(|status| status.cycles).and_then(|cycles| nat_to_u128(&cycles));
-            state::with_state_mut(|st| {
-                st.distinct_canisters.insert(canister_id);
-                st.canister_sources.insert(canister_id, logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::SnsDiscovery));
-                let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-                if meta.first_seen_ts.is_none() {
-                    meta.first_seen_ts = Some(now_secs);
-                }
-                if let Some(cycles) = cycles {
-                    let history = st.cycles_history.entry(canister_id).or_default();
-                    let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(timestamp_nanos, cycles, CyclesSampleSource::SnsRootSummary), max_cycles_entries);
-                    if inserted {
-                        logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary));
-                    }
-                } else {
-                    logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::NotAvailable);
-                }
+    let (snapshot, max_per_tick, max_cycles_entries) = state::with_state_mut(|st| {
+        if st.active_sns_discovery.is_none() {
+            st.active_sns_discovery = Some(ActiveSnsDiscovery {
+                started_at_ts_nanos: timestamp_nanos,
+                root_canister_ids: Vec::new(),
+                next_index: 0,
             });
-        };
+        }
+        (
+            st.active_sns_discovery.clone().expect("active sns discovery"),
+            st.config.max_canisters_per_cycles_tick.max(1),
+            st.config.max_cycles_entries_per_canister,
+        )
+    });
 
-        if let Some(summary) = summary.root { process_summary(summary); }
-        if let Some(summary) = summary.governance { process_summary(summary); }
-        if let Some(summary) = summary.ledger { process_summary(summary); }
-        if let Some(summary) = summary.swap { process_summary(summary); }
-        if let Some(summary) = summary.index { process_summary(summary); }
-        for summary in summary.dapps { process_summary(summary); }
-        for summary in summary.archives { process_summary(summary); }
+    let snapshot = if snapshot.root_canister_ids.is_empty() && snapshot.next_index == 0 {
+        let deployed = sns_wasm.list_deployed_snses().await.map_err(|e| format!("list_deployed_snses failed: {e}"))?;
+        let mut root_canister_ids: Vec<_> = deployed
+            .instances
+            .into_iter()
+            .filter_map(|sns| sns.root_canister_id)
+            .collect();
+        root_canister_ids.sort();
+        root_canister_ids.dedup();
+        state::with_state_mut(|st| {
+            if let Some(active) = st.active_sns_discovery.as_mut() {
+                active.root_canister_ids = root_canister_ids.clone();
+            }
+        });
+        ActiveSnsDiscovery {
+            started_at_ts_nanos: snapshot.started_at_ts_nanos,
+            root_canister_ids,
+            next_index: 0,
+        }
+    } else {
+        snapshot
+    };
+
+    let discovery_timestamp_nanos = snapshot.started_at_ts_nanos;
+    let start = snapshot.next_index as usize;
+    let end = (snapshot.next_index + max_per_tick as u64).min(snapshot.root_canister_ids.len() as u64) as usize;
+    for root_id in snapshot.root_canister_ids[start..end].iter().copied() {
+        let summary = sns_root.get_sns_canisters_summary(root_id).await.map_err(|e| format!("get_sns_canisters_summary failed: {e}"))?;
+        if let Some(summary) = summary.root { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
+        if let Some(summary) = summary.governance { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
+        if let Some(summary) = summary.ledger { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
+        if let Some(summary) = summary.swap { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
+        if let Some(summary) = summary.index { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
+        for summary in summary.dapps { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
+        for summary in summary.archives { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
     }
-    state::with_state_mut(|st| st.last_sns_discovery_ts = now_secs);
+
+    state::with_state_mut(|st| {
+        if let Some(active) = st.active_sns_discovery.as_mut() {
+            active.next_index = end as u64;
+            if active.next_index >= active.root_canister_ids.len() as u64 {
+                st.active_sns_discovery = None;
+                st.last_sns_discovery_ts = now_secs;
+            }
+        }
+    });
     Ok(())
 }
 
@@ -513,9 +564,10 @@ mod tests {
     use crate::clients::index::{GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens};
     use crate::state::{Config, State};
     use async_trait::async_trait;
+    use candid::Principal;
     use futures::executor::block_on;
     use icrc_ledger_types::icrc1::account::Account;
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
     use std::sync::Mutex;
 
     fn principal(text: &str) -> candid::Principal {
@@ -689,6 +741,174 @@ mod tests {
     }
 
 
+    struct MockSnsWasmClient {
+        responses: Mutex<VecDeque<Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError>>>,
+        calls: Mutex<u32>,
+    }
+
+    impl MockSnsWasmClient {
+        fn new(responses: Vec<Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError>>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into()),
+                calls: Mutex::new(0),
+            }
+        }
+
+        fn calls(&self) -> u32 {
+            *self.calls.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl SnsWasmClient for MockSnsWasmClient {
+        async fn list_deployed_snses(&self) -> Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError> {
+            *self.calls.lock().unwrap() += 1;
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(crate::clients::sns_wasm::ListDeployedSnsesResponse { instances: Vec::new() }))
+        }
+    }
+
+    struct MockSnsRootClient {
+        responses: Mutex<BTreeMap<Principal, crate::clients::sns_root::GetSnsCanistersSummaryResponse>>,
+        calls: Mutex<Vec<Principal>>,
+    }
+
+    impl MockSnsRootClient {
+        fn new(responses: BTreeMap<Principal, crate::clients::sns_root::GetSnsCanistersSummaryResponse>) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<Principal> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl SnsRootClient for MockSnsRootClient {
+        async fn get_sns_canisters_summary(&self, root_id: Principal) -> Result<crate::clients::sns_root::GetSnsCanistersSummaryResponse, crate::clients::ClientError> {
+            self.calls.lock().unwrap().push(root_id);
+            self.responses
+                .lock()
+                .unwrap()
+                .get(&root_id)
+                .cloned()
+                .ok_or_else(|| crate::clients::ClientError::Call(format!("missing summary for {}", root_id)))
+        }
+    }
+
+    fn sns_summary(canister_id: Principal, cycles: u64) -> SnsCanisterSummary {
+        SnsCanisterSummary {
+            canister_id: Some(canister_id),
+            status: Some(crate::clients::sns_root::SnsCanisterStatus { cycles: Some(Nat::from(cycles)) }),
+        }
+    }
+
+
+    struct MockBlackholeClient;
+
+    #[async_trait]
+    impl BlackholeClient for MockBlackholeClient {
+        async fn canister_status(&self, canister_id: Principal) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError> {
+            Ok(crate::clients::blackhole::BlackholeCanisterStatus {
+                cycles: Nat::from(0u64),
+                settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
+            })
+        }
+    }
+
+
+
+    #[test]
+    fn sns_discovery_chunks_across_ticks_and_resumes_from_persisted_state() {
+        let _staking_id = configure_state(10);
+        let root_a = candid::Principal::from_slice(&[1]);
+        let root_b = candid::Principal::from_slice(&[2]);
+        let root_c = candid::Principal::from_slice(&[3]);
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.config.cycles_interval_seconds = 10;
+            st.config.max_canisters_per_cycles_tick = 2;
+            st.last_sns_discovery_ts = 0;
+            st.active_sns_discovery = None;
+        });
+        let sns_wasm = MockSnsWasmClient::new(vec![Ok(crate::clients::sns_wasm::ListDeployedSnsesResponse {
+            instances: vec![
+                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_b.clone()) },
+                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_a.clone()) },
+                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_b.clone()) },
+                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_c.clone()) },
+            ],
+        })]);
+        let mut summaries = BTreeMap::new();
+        summaries.insert(root_a.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_a.clone(), 10)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
+        summaries.insert(root_b.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_b.clone(), 20)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
+        summaries.insert(root_c.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_c.clone(), 30)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
+        let sns_root = MockSnsRootClient::new(summaries);
+
+        block_on(process_sns_discovery(123, 100, &sns_wasm, &sns_root)).unwrap();
+        state::with_state(|st| {
+            let active = st.active_sns_discovery.as_ref().expect("discovery should remain in progress after first batch");
+            assert_eq!(active.root_canister_ids, vec![root_a.clone(), root_b.clone(), root_c.clone()]);
+            assert_eq!(active.next_index, 2);
+            assert_eq!(st.last_sns_discovery_ts, 0);
+            assert!(st.distinct_canisters.contains(&root_a));
+            assert!(st.distinct_canisters.contains(&root_b));
+            assert!(!st.distinct_canisters.contains(&root_c));
+        });
+        assert_eq!(sns_wasm.calls(), 1);
+        assert_eq!(sns_root.calls(), vec![root_a.clone(), root_b.clone()]);
+
+        block_on(process_sns_discovery(456, 101, &sns_wasm, &sns_root)).unwrap();
+        state::with_state(|st| {
+            assert!(st.active_sns_discovery.is_none());
+            assert_eq!(st.last_sns_discovery_ts, 101);
+            assert!(st.distinct_canisters.contains(&root_c));
+            let history = st.cycles_history.get(&root_c).expect("cycles history for final root");
+            assert_eq!(history.last().map(|sample| sample.cycles), Some(30));
+        });
+        assert_eq!(sns_wasm.calls(), 1, "deployed SNS roots should be fetched only once per discovery sweep");
+        assert_eq!(sns_root.calls(), vec![root_a.clone(), root_b.clone(), root_c.clone()]);
+    }
+
+    #[test]
+    fn active_sns_discovery_resumes_even_when_interval_is_not_due() {
+        let _staking_id = configure_state(10);
+        let root_a = candid::Principal::from_slice(&[1]);
+        let root_b = candid::Principal::from_slice(&[2]);
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.config.cycles_interval_seconds = 10_000;
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.last_sns_discovery_ts = 9_999;
+            st.active_sns_discovery = Some(ActiveSnsDiscovery {
+                started_at_ts_nanos: 55,
+                root_canister_ids: vec![root_a.clone(), root_b.clone()],
+                next_index: 1,
+            });
+            st.last_completed_cycles_sweep_ts = 10_000;
+        });
+        let index = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse { balance: 0, transactions: Vec::new(), oldest_tx_id: None }]);
+        let blackhole = MockBlackholeClient;
+        let sns_wasm = MockSnsWasmClient::new(vec![]);
+        let mut summaries = BTreeMap::new();
+        summaries.insert(root_b.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_b.clone(), 44)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
+        let sns_root = MockSnsRootClient::new(summaries);
+
+        block_on(run_main_tick_with_clients(999, 10_000, &index, &blackhole, &sns_wasm, &sns_root)).unwrap();
+        state::with_state(|st| {
+            assert!(st.active_sns_discovery.is_none());
+            assert_eq!(st.last_sns_discovery_ts, 10_000);
+            assert!(st.distinct_canisters.contains(&root_b));
+        });
+        assert_eq!(sns_wasm.calls(), 0, "resumed discovery should not refetch deployed SNS roots");
+        assert_eq!(sns_root.calls(), vec![root_b.clone()]);
+    }
 
     #[test]
     fn indexing_single_qualifying_contribution_updates_counts() {

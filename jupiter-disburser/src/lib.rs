@@ -50,6 +50,45 @@ fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
 }
 
+
+fn self_canister_principal_for_validation() -> Principal {
+    #[cfg(test)]
+    {
+        // Unit tests do not run inside a real canister context, so use a stable non-anonymous
+        // stand-in principal to model the disburser's staging account for validation-only checks.
+        Principal::management_canister()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::canister_self()
+    }
+}
+
+fn assert_non_anonymous_principal(name: &str, principal: Principal) {
+    assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
+}
+
+fn validate_config(cfg: &crate::state::Config) {
+    assert!(cfg.neuron_id != 0, "neuron_id must be non-zero");
+    assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
+    assert_non_anonymous_principal("governance_canister_id", cfg.governance_canister_id);
+    assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
+    if let Some(blackhole_controller) = cfg.blackhole_controller {
+        assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
+    }
+    assert!(cfg.main_interval_seconds > 0, "main_interval_seconds must be greater than 0");
+    assert!(cfg.rescue_interval_seconds > 0, "rescue_interval_seconds must be greater than 0");
+
+    let staging_account = Account {
+        owner: self_canister_principal_for_validation(),
+        subaccount: None,
+    };
+    assert!(cfg.normal_recipient != staging_account, "normal_recipient must not equal the disburser staging account");
+    assert!(cfg.age_bonus_recipient_1 != staging_account, "age_bonus_recipient_1 must not equal the disburser staging account");
+    assert!(cfg.age_bonus_recipient_2 != staging_account, "age_bonus_recipient_2 must not equal the disburser staging account");
+
+}
+
 #[ic_cdk::init]
 fn init(args: InitArgs) {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
@@ -68,6 +107,7 @@ fn init(args: InitArgs) {
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(86_400),
     };
 
+    validate_config(&cfg);
     let st = State::new(cfg, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
@@ -100,6 +140,7 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             st.forced_rescue_reason = None;
         }
     }
+    validate_config(&st.config);
     st.main_lock_expires_at_ts = Some(0);
 }
 
@@ -233,6 +274,68 @@ fn debug_set_skip_maturity_initiation(enabled: bool) {
 #[ic_cdk::update]
 async fn debug_build_payout_plan() -> bool {
     crate::scheduler::debug_build_payout_plan_impl().await
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn principal(text: &str) -> Principal {
+        Principal::from_text(text).unwrap()
+    }
+
+    fn account(owner: Principal, subaccount: Option<[u8; 32]>) -> Account {
+        Account { owner, subaccount }
+    }
+
+    fn sample_config() -> crate::state::Config {
+        crate::state::Config {
+            neuron_id: 1,
+            normal_recipient: account(principal("ryjl3-tyaaa-aaaaa-aaaba-cai"), None),
+            age_bonus_recipient_1: account(principal("qhbym-qaaaa-aaaaa-aaafq-cai"), None),
+            age_bonus_recipient_2: account(principal("rrkah-fqaaa-aaaaa-aaaaq-cai"), Some([7u8; 32])),
+            ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
+            governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+            rescue_controller: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
+            blackhole_controller: Some(principal("e3mmv-5qaaa-aaaah-aadma-cai")),
+            blackhole_armed: Some(false),
+            main_interval_seconds: 60,
+            rescue_interval_seconds: 60,
+        }
+    }
+
+    #[test]
+    fn validate_config_accepts_distinct_recipients() {
+        validate_config(&sample_config());
+    }
+
+
+    #[test]
+    #[should_panic(expected = "must not equal the disburser staging account")]
+    fn validate_config_rejects_staging_account_recipient() {
+        let mut cfg = sample_config();
+        cfg.normal_recipient = Account { owner: Principal::management_canister(), subaccount: None };
+        validate_config(&cfg);
+    }
+
+    #[test]
+    fn apply_upgrade_args_revalidates_config() {
+        let now_secs = 99;
+        let mut st = State::new(sample_config(), now_secs);
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai")),
+                blackhole_armed: Some(true),
+                clear_forced_rescue: Some(true),
+            }),
+            now_secs,
+        );
+        assert_eq!(st.config.blackhole_controller, Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai")));
+        assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
+        assert_eq!(st.main_lock_expires_at_ts, Some(0));
+    }
 }
 
 ic_cdk::export_candid!();

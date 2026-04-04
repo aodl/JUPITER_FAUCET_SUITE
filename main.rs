@@ -214,6 +214,10 @@ fn principal_of_identity() -> Result<Principal> {
     Ok(Principal::from_text(p.trim())?)
 }
 
+fn short_test_principal() -> Principal {
+    Principal::from_slice(&[1])
+}
+
 #[derive(Debug, CandidType, Deserialize)]
 struct TransferRecord {
     from: Account,
@@ -259,6 +263,8 @@ struct FaucetSummary {
     topped_up_min_e8s: Option<u64>,
     topped_up_max_e8s: Option<u64>,
     failed_topups: u64,
+    #[serde(default)]
+    ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
     remainder_to_self_e8s: u64,
@@ -290,7 +296,7 @@ fn deploy_disburser_dbg() -> Result<()> {
     let rescue = principal_of_identity()?;
 
     let r1 = Principal::management_canister();
-    let r2 = Principal::anonymous();
+    let r2 = short_test_principal();
     let r3 = rescue;
 
     let args = format!(
@@ -346,7 +352,7 @@ fn deploy_faucet_dbg(mode: Option<&str>) -> Result<()> {
             rescue_interval_seconds = opt (60:nat64);
             min_tx_e8s = opt (100000000:nat64);
         }},)"#,
-        staking_owner = Principal::anonymous().to_text(),
+        staking_owner = short_test_principal().to_text(),
         staking_sub = (0u8..32).map(|_| "7:nat8").collect::<Vec<_>>().join("; "),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),

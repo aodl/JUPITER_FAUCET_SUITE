@@ -38,13 +38,13 @@ Memo handling mirrors the faucet’s input rules:
 - only consider non-empty `icrc1_memo` bytes
 - ignore legacy numeric memos entirely
 - treat an empty `icrc1_memo` as missing / invalid
-- trim ASCII text before trying to parse principal text from the memo (the supported UX is to enter a target canister ID)
+- trim ASCII text before trying to parse a target canister ID
 
-If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, the beneficiary is tracked in the historian registry and attached to that principal as qualifying history. In normal use that principal should be the intended target canister ID. Below-threshold memo contributions are kept only in a separate capped recent feed and do **not** create durable canister tracking, burn targets, or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and burn activity can be tracked efficiently on-chain and on the frontend.
+If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, the beneficiary is tracked in the historian registry and attached to that target canister as qualifying history. Below-threshold memo contributions are kept only in a separate capped recent feed and do **not** create durable canister tracking, burn targets, or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and burn activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
 
 Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text and fits within 32 bytes** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold contributions never create durable tracking.
 
-Memo encoding uses `icrc1_memo` text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic.
+Memo encoding uses `icrc1_memo` target-canister text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic.
 
 If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
@@ -58,7 +58,7 @@ The historian also indexes ICP burns by scanning the CMC deposit accounts for:
 
 For each burn target it tracks:
 
-- the last scanned deposit-account transaction ID (used as the pagination cursor)
+- the last scanned deposit-account transaction ID (used as the pagination cursor; the implementation intentionally assumes the index cursor contract is monotonic and exclusive across pages rather than adding extra complexity for hypothetical duplicate page-boundary delivery)
 - the last actual burn transaction ID
 - cumulative burned ICP in e8s
 - recent burn items for the public dashboard
@@ -93,6 +93,8 @@ When `enable_sns_tracking = true`, the historian periodically:
 3. adds all discovered SNS canister IDs to its tracked set with source `SnsDiscovery`
 4. records any cycles values available in the SNS root summary as `SnsRootSummary` samples
 
+The discovery pass is intentionally chunked and resumable across ticks. The historian snapshots the deployed SNS root list once, then walks it in bounded batches using the same per-tick cap used by the cycles sweep. That keeps each run bounded even if the deployed SNS set grows materially over time.
+
 SNS-discovered canisters are not probed through blackhole status in the regular cycles sweep when the source set indicates they should be handled via SNS summaries instead.
 
 ## Retention and deduplication
@@ -101,7 +103,7 @@ The historian intentionally keeps a bounded read model for **history**. It is no
 
 Durable bounded state currently uses these caps:
 
-- memo-only target-canister entries that never reach a qualifying contribution are pruned during normalization; the retained qualifying/SNS-backed registry is otherwise durable
+- the tracked target-canister registry is **not pruned**
 - `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
 - `max_contribution_entries_per_canister` default `100`, hard-clamped to `250`
 - recent qualifying contributions: `500`
@@ -206,7 +208,7 @@ Optional:
 - `enable_sns_tracking` (defaults to `false`)
 - `scan_interval_seconds` (defaults to `600`)
 - `cycles_interval_seconds` (defaults to `604800`)
-- `min_tx_e8s` (defaults to `100_000_000`)
+- `min_tx_e8s` (defaults to `100_000_000`; must be at least `10_000_000`)
 - `max_cycles_entries_per_canister` (defaults to `100`)
 - `max_contribution_entries_per_canister` (defaults to `100`)
 - `max_index_pages_per_tick` (defaults to `10`)
@@ -238,7 +240,7 @@ The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently c
 - `enable_sns_tracking = false`
 - `scan_interval_seconds = 600`
 - `cycles_interval_seconds = 604800`
-- `min_tx_e8s = 100_000_000`
+- `min_tx_e8s = 100_000_000` (must match the faucet config, and both are validated by `scripts/validate-mainnet-install-args`)
 - `max_cycles_entries_per_canister = 100`
 - `max_contribution_entries_per_canister = 100`
 - `max_index_pages_per_tick = 10`

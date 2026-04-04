@@ -82,6 +82,10 @@ fn label(layer: &str, component: &str, name: &str) -> String {
     }
 }
 
+fn short_test_principal() -> Principal {
+    Principal::from_slice(&[1])
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TestComponent {
     Test,
@@ -250,14 +254,6 @@ fn canister_id(name: &str) -> Result<String> {
     Ok(out.trim().to_string())
 }
 
-fn fixture_target_canister_principal() -> Result<Principal> {
-    Principal::from_text(canister_id("mock_cmc")?.trim()).map_err(Into::into)
-}
-
-fn fixture_secondary_target_canister_principal() -> Result<Principal> {
-    Principal::from_text(canister_id("mock_icp_index")?.trim()).map_err(Into::into)
-}
-
 fn local_replica_host() -> String {
     if let Ok(host) = env::var("DFX_LOCAL_HOST") {
         let trimmed = host.trim();
@@ -347,6 +343,8 @@ struct FaucetSummary {
     topped_up_min_e8s: Option<u64>,
     topped_up_max_e8s: Option<u64>,
     failed_topups: u64,
+    #[serde(default)]
+    ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
     remainder_to_self_e8s: u64,
@@ -660,7 +658,7 @@ fn cmd_setup_common() -> Result<()> {
 
 fn faucet_staking_account() -> Account {
     Account {
-        owner: Principal::anonymous(),
+        owner: short_test_principal(),
         subaccount: Some([9u8; 32]),
     }
 }
@@ -678,7 +676,7 @@ fn cmd_setup_disburser_dfx() -> Result<()> {
     let rescue = principal_of_identity()?;
 
     let r1 = Principal::management_canister();
-    let r2 = Principal::anonymous();
+    let r2 = short_test_principal();
     let r3 = rescue;
 
     let args = format!(
@@ -899,7 +897,7 @@ fn cmd_setup() -> Result<()> {
     let rescue = principal_of_identity()?;
 
     let r1 = Principal::management_canister();
-    let r2 = Principal::anonymous();
+    let r2 = short_test_principal();
     let r3 = rescue;
 
     let args = format!(
@@ -1428,7 +1426,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1472,7 +1470,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1523,7 +1521,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let good_memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1594,7 +1592,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1644,7 +1642,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
         let beneficiary_a = Principal::from_text(canister_id("mock_cmc")?.trim())?;
-        let beneficiary_b = fixture_secondary_target_canister_principal()?;
+        let beneficiary_b = short_test_principal();
         let memo_a = opt_blob_to_candid(Some(beneficiary_a.to_text().as_bytes()));
         let memo_b = opt_blob_to_candid(Some(beneficiary_b.to_text().as_bytes()));
 
@@ -1733,7 +1731,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1769,7 +1767,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1819,7 +1817,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_transfer",
-            &format!("(\"{}\", 100000000:nat64, {})", staking_id, opt_blob_to_candid(Some(fixture_target_canister_principal()?.to_text().as_bytes()))),
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, opt_blob_to_candid(Some(short_test_principal().to_text().as_bytes()))),
         )?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
@@ -1848,7 +1846,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1893,7 +1891,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -1943,7 +1941,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
-        let target = fixture_target_canister_principal()?;
+        let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
         let _: () = call_raw(
@@ -2007,7 +2005,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
             let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
             let staking_id = account_identifier_text(&accounts.staking);
-            let target = fixture_target_canister_principal()?;
+            let target = short_test_principal();
             let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
             let _: () = call_raw(
@@ -2058,7 +2056,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
             let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
             let staking_id = account_identifier_text(&accounts.staking);
-            let memo = opt_blob_to_candid(Some(fixture_target_canister_principal()?.to_text().as_bytes()));
+            let memo = opt_blob_to_candid(Some(short_test_principal().to_text().as_bytes()));
 
             let _: () = call_raw(
                 "mock_icrc_ledger",
@@ -2361,7 +2359,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         }
 
         let staking = Account {
-            owner: Principal::anonymous(),
+            owner: short_test_principal(),
             subaccount: Some([9u8; 32]),
         };
         let staking_id = account_identifier_text(&staking);

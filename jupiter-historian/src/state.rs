@@ -100,6 +100,13 @@ pub struct CanisterMeta {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ActiveSnsDiscovery {
+    pub started_at_ts_nanos: u64,
+    pub root_canister_ids: Vec<Principal>,
+    pub next_index: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ActiveCyclesSweep {
     pub started_at_ts_nanos: u64,
     pub canisters: Vec<Principal>,
@@ -154,6 +161,8 @@ pub struct StableState {
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
+    #[serde(default)]
+    pub active_sns_discovery: Option<ActiveSnsDiscovery>,
     pub main_lock_expires_at_ts: Option<u64>,
     pub last_main_run_ts: u64,
     #[serde(default)]
@@ -183,6 +192,8 @@ pub struct State {
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
+    #[serde(default)]
+    pub active_sns_discovery: Option<ActiveSnsDiscovery>,
     pub main_lock_expires_at_ts: Option<u64>,
     pub last_main_run_ts: u64,
     pub qualifying_contribution_count: Option<u64>,
@@ -207,6 +218,7 @@ impl State {
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
             active_cycles_sweep: None,
+            active_sns_discovery: None,
             main_lock_expires_at_ts: Some(0),
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
             qualifying_contribution_count: Some(0),
@@ -319,6 +331,7 @@ impl From<State> for StableState {
             last_sns_discovery_ts: value.last_sns_discovery_ts,
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
             active_cycles_sweep: value.active_cycles_sweep,
+            active_sns_discovery: value.active_sns_discovery,
             main_lock_expires_at_ts: value.main_lock_expires_at_ts,
             last_main_run_ts: value.last_main_run_ts,
             qualifying_contribution_count: value.qualifying_contribution_count,
@@ -349,6 +362,7 @@ impl From<StableState> for State {
             last_sns_discovery_ts: value.last_sns_discovery_ts,
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
             active_cycles_sweep: value.active_cycles_sweep,
+            active_sns_discovery: value.active_sns_discovery,
             main_lock_expires_at_ts: value.main_lock_expires_at_ts,
             last_main_run_ts: value.last_main_run_ts,
             qualifying_contribution_count: value.qualifying_contribution_count,

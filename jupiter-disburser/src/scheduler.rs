@@ -747,12 +747,12 @@ mod tests {
     fn test_config() -> state::Config {
         state::Config {
             neuron_id: 1,
-            normal_recipient: Account { owner: Principal::anonymous(), subaccount: None },
-            age_bonus_recipient_1: Account { owner: Principal::anonymous(), subaccount: None },
-            age_bonus_recipient_2: Account { owner: Principal::anonymous(), subaccount: None },
-            ledger_canister_id: Principal::anonymous(),
-            governance_canister_id: Principal::anonymous(),
-            rescue_controller: Principal::anonymous(),
+            normal_recipient: Account { owner: Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap(), subaccount: None },
+            age_bonus_recipient_1: Account { owner: Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").unwrap(), subaccount: None },
+            age_bonus_recipient_2: Account { owner: Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(), subaccount: None },
+            ledger_canister_id: Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap(),
+            governance_canister_id: Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
+            rescue_controller: Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap(),
             blackhole_controller: Some(Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()),
             blackhole_armed: Some(false),
             main_interval_seconds: 60,

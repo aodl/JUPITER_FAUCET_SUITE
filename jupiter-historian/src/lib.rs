@@ -24,6 +24,30 @@ pub(crate) const MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP: u32 = 250;
 pub(crate) const MAX_INDEX_PAGES_PER_TICK_HARD_CAP: u32 = 100;
 pub(crate) const MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP: u32 = 500;
 
+
+pub(crate) const MIN_MIN_TX_E8S: u64 = 10_000_000;
+
+fn assert_non_anonymous_principal(name: &str, principal: Principal) {
+    assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
+}
+
+fn validate_config(cfg: &Config) {
+    assert_non_anonymous_principal("staking_account.owner", cfg.staking_account.owner);
+    assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
+    assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
+    assert_non_anonymous_principal("blackhole_canister_id", cfg.blackhole_canister_id);
+    assert_non_anonymous_principal("sns_wasm_canister_id", cfg.sns_wasm_canister_id);
+    if let Some(cmc_canister_id) = cfg.cmc_canister_id {
+        assert_non_anonymous_principal("cmc_canister_id", cmc_canister_id);
+    }
+    if let Some(faucet_canister_id) = cfg.faucet_canister_id {
+        assert_non_anonymous_principal("faucet_canister_id", faucet_canister_id);
+    }
+    assert!(cfg.scan_interval_seconds > 0, "scan_interval_seconds must be greater than 0");
+    assert!(cfg.cycles_interval_seconds > 0, "cycles_interval_seconds must be greater than 0");
+    assert!(cfg.min_tx_e8s >= MIN_MIN_TX_E8S, "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)");
+}
+
 fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
@@ -215,7 +239,6 @@ fn normalize_runtime_state(st: &mut State) {
     st.recent_burns = Some(recent_burns);
 
     st.qualifying_contribution_count = Some(fallback_qualifying_contribution_count(st));
-    st.icp_burned_e8s = Some(fallback_icp_burned_e8s(st));
 
     let contribution_last_ts: BTreeMap<_, _> = st
         .contribution_history
@@ -454,7 +477,7 @@ fn mainnet_sns_wasm_id() -> Principal {
 }
 
 fn config_from_init_args(args: InitArgs) -> Config {
-    Config {
+    let cfg = Config {
         staking_account: args.staking_account,
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
@@ -470,7 +493,9 @@ fn config_from_init_args(args: InitArgs) -> Config {
         max_contribution_entries_per_canister: clamp_contribution_entries_per_canister(args.max_contribution_entries_per_canister.unwrap_or(100)),
         max_index_pages_per_tick: clamp_index_pages_per_tick(args.max_index_pages_per_tick.unwrap_or(10)),
         max_canisters_per_cycles_tick: clamp_canisters_per_cycles_tick(args.max_canisters_per_cycles_tick.unwrap_or(25)),
-    }
+    };
+    validate_config(&cfg);
+    cfg
 }
 
 fn count_registered_canisters(st: &State) -> u64 {
@@ -762,6 +787,7 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     }
     initialize_derived_state_if_missing(st);
     normalize_runtime_state(st);
+    validate_config(&st.config);
     st.main_lock_expires_at_ts = Some(0);
 }
 
@@ -1202,6 +1228,7 @@ mod tests {
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
             active_cycles_sweep: None,
+            active_sns_discovery: None,
             main_lock_expires_at_ts: Some(0),
             last_main_run_ts: 1,
             qualifying_contribution_count: None,
@@ -1270,6 +1297,51 @@ mod tests {
     }
 
     #[test]
+    fn config_validation_accepts_minimum_supported_threshold() {
+        let mut cfg = config_from_init_args(InitArgs {
+            staking_account: sample_account(),
+            ledger_canister_id: None,
+            index_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+            blackhole_canister_id: None,
+            sns_wasm_canister_id: None,
+            enable_sns_tracking: None,
+            scan_interval_seconds: Some(600),
+            cycles_interval_seconds: Some(604800),
+            min_tx_e8s: Some(MIN_MIN_TX_E8S),
+            max_cycles_entries_per_canister: None,
+            max_contribution_entries_per_canister: None,
+            max_index_pages_per_tick: None,
+            max_canisters_per_cycles_tick: None,
+        });
+        cfg.min_tx_e8s = MIN_MIN_TX_E8S;
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "min_tx_e8s must be at least")]
+    fn config_from_init_args_rejects_threshold_below_minimum() {
+        let _ = config_from_init_args(InitArgs {
+            staking_account: sample_account(),
+            ledger_canister_id: None,
+            index_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+            blackhole_canister_id: None,
+            sns_wasm_canister_id: None,
+            enable_sns_tracking: None,
+            scan_interval_seconds: Some(600),
+            cycles_interval_seconds: Some(604800),
+            min_tx_e8s: Some(MIN_MIN_TX_E8S - 1),
+            max_cycles_entries_per_canister: None,
+            max_contribution_entries_per_canister: None,
+            max_index_pages_per_tick: None,
+            max_canisters_per_cycles_tick: None,
+        });
+    }
+
+    #[test]
     fn apply_upgrade_args_updates_tuning_fields_and_preserves_histories() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
@@ -1294,7 +1366,7 @@ mod tests {
                 enable_sns_tracking: Some(true),
                 scan_interval_seconds: Some(123),
                 cycles_interval_seconds: Some(456),
-                min_tx_e8s: Some(789),
+                min_tx_e8s: Some(MIN_MIN_TX_E8S),
                 max_cycles_entries_per_canister: Some(11),
                 max_contribution_entries_per_canister: Some(12),
                 max_index_pages_per_tick: Some(13),
@@ -1312,7 +1384,7 @@ mod tests {
         assert!(st.config.enable_sns_tracking);
         assert_eq!(st.config.scan_interval_seconds, 123);
         assert_eq!(st.config.cycles_interval_seconds, 456);
-        assert_eq!(st.config.min_tx_e8s, 789);
+        assert_eq!(st.config.min_tx_e8s, MIN_MIN_TX_E8S);
         assert_eq!(st.config.max_cycles_entries_per_canister, 11);
         assert_eq!(st.config.max_contribution_entries_per_canister, 12);
         assert_eq!(st.config.max_index_pages_per_tick, 13);
@@ -1779,38 +1851,6 @@ mod tests {
         );
     }
 
-
-    #[test]
-    fn normalize_runtime_state_recomputes_burned_total_after_pruning_stale_memo_only_canister() {
-        let memo_only = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let sns_tracked = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
-        let mut st = base_state();
-        st.icp_burned_e8s = Some(999);
-        st.canister_sources.insert(memo_only, BTreeSet::from([CanisterSource::MemoContribution]));
-        st.canister_sources.insert(sns_tracked, BTreeSet::from([CanisterSource::SnsDiscovery]));
-        st.per_canister_meta.insert(
-            memo_only,
-            CanisterMeta {
-                burned_e8s: 250,
-                last_burn_tx_id: Some(10),
-                ..Default::default()
-            },
-        );
-        st.per_canister_meta.insert(
-            sns_tracked,
-            CanisterMeta {
-                burned_e8s: 75,
-                last_burn_tx_id: Some(11),
-                ..Default::default()
-            },
-        );
-
-        normalize_runtime_state(&mut st);
-
-        assert_eq!(st.icp_burned_e8s, Some(75));
-        assert!(!st.per_canister_meta.contains_key(&memo_only));
-        assert!(st.per_canister_meta.contains_key(&sns_tracked));
-    }
 
     #[test]
     fn normalize_runtime_state_preserves_large_beneficiary_registry() {

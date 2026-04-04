@@ -199,6 +199,8 @@ struct FaucetSummary {
     topped_up_min_e8s: Option<u64>,
     topped_up_max_e8s: Option<u64>,
     failed_topups: u64,
+    #[serde(default)]
+    ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
     remainder_to_self_e8s: u64,
@@ -311,7 +313,7 @@ impl FaucetEnv {
         pic.install_canister(lifeline, lifeline_wasm()?, vec![], None);
 
         let staking_account = Account {
-            owner: Principal::anonymous(),
+            owner: Principal::management_canister(),
             subaccount: Some([9u8; 32]),
         };
         let blackhole_controller = test_blackhole_controller();
@@ -661,6 +663,36 @@ fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoni
     }
     if calls.first().and_then(|c| c.start).is_some() {
         bail!("expected the first page scan to start from the beginning");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    let target = Principal::from_slice(&[1]);
+
+    env.credit_staking(200_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+
+    env.credit_payout(120_000_000)?;
+    env.main_tick()?;
+
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 {
+        bail!("expected short valid principal text to produce one top-up, got {}", summary.topped_up_count);
+    }
+    if summary.ignored_bad_memo != 0 {
+        bail!("expected short valid principal text not to count as ignored_bad_memo, got {}", summary.ignored_bad_memo);
+    }
+    let notifies = env.notifications()?;
+    let matching: Vec<_> = notifies.iter().filter(|n| n.canister_id == target).collect();
+    if matching.len() != 1 {
+        bail!("expected exactly one CMC notification for short valid principal text target {target}, got {notifies:?}");
     }
 
     Ok(())
@@ -1188,10 +1220,11 @@ fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accoun
         bail!("expected exhausted inline retry path to complete the job within one tick");
     }
     let summary = env.summary()?;
-    if summary.failed_topups != 1 || summary.topped_up_count != 0 {
+    if summary.failed_topups != 0 || summary.ambiguous_topups != 1 || summary.topped_up_count != 0 {
         bail!(
-            "expected exhausted inline retry path to record one failed top-up and no beneficiary success, got failed_topups={} topped_up_count={}",
+            "expected exhausted inline retry path to record one ambiguous top-up and no beneficiary success, got failed_topups={} ambiguous_topups={} topped_up_count={}",
             summary.failed_topups,
+            summary.ambiguous_topups,
             summary.topped_up_count
         );
     }
@@ -1238,11 +1271,12 @@ fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_s
         bail!("expected inline retry exhaustion on the first contribution not to leave work behind");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.failed_topups != 1 {
+    if summary.topped_up_count != 1 || summary.failed_topups != 0 || summary.ambiguous_topups != 1 {
         bail!(
-            "expected one later success and one exhausted inline retry failure, got topped_up_count={} failed_topups={}",
+            "expected one later success and one exhausted inline retry ambiguity, got topped_up_count={} failed_topups={} ambiguous_topups={}",
             summary.topped_up_count,
-            summary.failed_topups
+            summary.failed_topups,
+            summary.ambiguous_topups
         );
     }
     if summary.remainder_to_self_e8s != 49_990_000 {

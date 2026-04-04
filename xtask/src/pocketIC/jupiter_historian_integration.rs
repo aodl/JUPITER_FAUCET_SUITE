@@ -348,7 +348,7 @@ impl Harness {
         set_controllers_exact(&pic, blackhole, vec![blackhole])?;
         pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
 
-        let staking_account = Account { owner: Principal::anonymous(), subaccount: Some([9u8; 32]) };
+        let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
         let init = HistorianInitArg {
             staking_account,
             ledger_canister_id: Some(index),
@@ -360,7 +360,7 @@ impl Harness {
             enable_sns_tracking: Some(enable_sns_tracking),
             scan_interval_seconds: Some(60),
             cycles_interval_seconds: Some(1),
-            min_tx_e8s: Some(10),
+            min_tx_e8s: Some(10_000_000),
             max_cycles_entries_per_canister: Some(100),
             max_contribution_entries_per_canister: Some(100),
             max_index_pages_per_tick: Some(10),
@@ -371,7 +371,7 @@ impl Harness {
     }
 
     fn staking_identifier(&self) -> Result<String> {
-        let account = Account { owner: Principal::anonymous(), subaccount: Some([9u8; 32]) };
+        let account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
         Ok(account_identifier_text(&account))
     }
 
@@ -402,7 +402,7 @@ fn historian_keeps_under_threshold_contributions_out_of_durable_tracking() -> Re
         h.index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 5u64, Some(target.to_text().into_bytes())))?,
+        encode_args((staking_id, 5_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
 
     h.tick();
@@ -501,12 +501,46 @@ fn historian_ignores_missing_icrc1_memo_even_when_legacy_numeric_memo_exists() -
 
 #[test]
 #[ignore]
+fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    let target = Principal::from_slice(&[1]);
+    let target_text = target.to_text();
+    let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 100_000_000u64, Some(target_text.clone().into_bytes())))?)?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.qualifying_contribution_count, 1);
+
+    let recent: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 1);
+    assert_eq!(recent.items[0].canister_id, Some(target));
+    assert_eq!(recent.items[0].memo_text.as_deref(), Some(target_text.as_str()));
+    assert!(recent.items[0].counts_toward_faucet);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.blackhole;
     let staking_id = h.staking_identifier()?;
-    let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 42u64, Some(target.to_text().into_bytes())))?)?;
+    let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 42_000_000u64, Some(target.to_text().into_bytes())))?)?;
 
     h.tick();
     let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
@@ -581,7 +615,7 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
     let h = Harness::new(false)?;
     let target = h.blackhole;
     let staking_id = h.staking_identifier()?;
-    let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 42u64, Some(target.to_text().into_bytes())))?)?;
+    let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 42_000_000u64, Some(target.to_text().into_bytes())))?)?;
     h.tick();
     let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
 
@@ -616,7 +650,7 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
         h.index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 42u64, Some(target.to_text().into_bytes())))?,
+        encode_args((staking_id, 42_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
 
     let now_secs = (h.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
@@ -656,14 +690,14 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
         h.index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id.clone(), 42u64, Some(target.to_text().into_bytes())))?,
+        encode_args((staking_id.clone(), 42_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
     let _: u64 = update_bytes(
         &h.pic,
         h.index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 5u64, Some(target.to_text().into_bytes())))?,
+        encode_args((staking_id, 5_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
     let burn_account = account_identifier_text(&Account { owner: h.cmc, subaccount: Some(principal_to_subaccount(target)) });
     let _: u64 = update_bytes(
@@ -671,7 +705,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
         h.index,
         Principal::anonymous(),
         "debug_append_burn",
-        encode_args((burn_account, 42u64))?,
+        encode_args((burn_account, 42_000_000u64))?,
     )?;
 
     h.tick();
@@ -680,11 +714,11 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 1);
     assert_eq!(counts.qualifying_contribution_count, 1);
-    assert_eq!(counts.icp_burned_e8s, 42);
+    assert_eq!(counts.icp_burned_e8s, 42_000_000);
     assert_eq!(counts.sns_discovered_canister_count, 0);
 
     let status: PublicStatus = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_status", ())?;
-    assert_eq!(status.staking_account.owner, Principal::anonymous());
+    assert_eq!(status.staking_account.owner, Principal::management_canister());
     assert_eq!(status.staking_account.subaccount, Some([9u8; 32]));
     assert_eq!(status.ledger_canister_id, h.index);
     assert_eq!(status.index_interval_seconds, 60);
@@ -710,7 +744,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     assert_eq!(registered.items[0].canister_id, target);
     assert_eq!(registered.items[0].sources, vec![CanisterSource::MemoContribution]);
     assert_eq!(registered.items[0].qualifying_contribution_count, 1);
-    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 42);
+    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 42_000_000);
     assert!(registered.items[0].last_contribution_ts.is_some());
     assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
     assert!(registered.items[0].last_cycles_probe_ts.is_some());
@@ -727,10 +761,10 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     )?;
     assert_eq!(recent_all.items.len(), 2);
     assert_eq!(recent_all.items[0].tx_id, 2);
-    assert_eq!(recent_all.items[0].amount_e8s, 5);
+    assert_eq!(recent_all.items[0].amount_e8s, 5_000_000);
     assert!(!recent_all.items[0].counts_toward_faucet);
     assert_eq!(recent_all.items[1].tx_id, 1);
-    assert_eq!(recent_all.items[1].amount_e8s, 42);
+    assert_eq!(recent_all.items[1].amount_e8s, 42_000_000);
     assert!(recent_all.items[1].counts_toward_faucet);
 
     let recent_qualifying: ListRecentContributionsResponse = query_one(

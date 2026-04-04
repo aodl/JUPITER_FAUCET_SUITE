@@ -58,6 +58,7 @@ type Summary = record {
   topped_up_min_e8s : opt nat64;
   topped_up_max_e8s : opt nat64;
   failed_topups : nat64;
+  ambiguous_topups : nat64;
   ignored_under_threshold : nat64;
   ignored_bad_memo : nat64;
   remainder_to_self_e8s : nat64;
