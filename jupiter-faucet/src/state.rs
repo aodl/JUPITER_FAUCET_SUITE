@@ -99,6 +99,8 @@ pub struct ActivePayoutJob {
     pub observed_latest_tx_id: Option<u64>,
     pub cmc_attempt_count: Option<u64>,
     pub cmc_success_count: Option<u64>,
+    #[serde(default)]
+    pub cmc_attempted_beneficiaries: Option<Vec<Principal>>,
 }
 
 impl ActivePayoutJob {
@@ -126,6 +128,7 @@ impl ActivePayoutJob {
             observed_latest_tx_id: None,
             cmc_attempt_count: Some(0),
             cmc_success_count: Some(0),
+            cmc_attempted_beneficiaries: Some(Vec::new()),
         }
     }
 }

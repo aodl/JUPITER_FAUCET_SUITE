@@ -1,7 +1,7 @@
 import { HttpAgent } from '@icp-sdk/core/agent';
 import { sha224 } from '@noble/hashes/sha2.js';
 import { createActor as createHistorianActor } from '../declarations/jupiter_historian/index.js';
-import { createActor as createLedgerActor } from '../declarations/mock_icrc_ledger/index.js';
+import { createActor as createLedgerActor } from '../declarations/icp_ledger/index.js';
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;

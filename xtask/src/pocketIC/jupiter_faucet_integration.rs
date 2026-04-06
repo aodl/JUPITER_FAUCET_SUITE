@@ -56,6 +56,7 @@ fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
@@ -67,6 +68,9 @@ fn index_wasm() -> Result<Vec<u8>> {
 }
 fn cmc_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&CMC_WASM, "mock-cmc", None)
+}
+fn blackhole_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(&BLACKHOLE_WASM, "mock-blackhole", None)
 }
 fn faucet_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&FAUCET_WASM, "jupiter-faucet", Some("debug_api"))
@@ -161,6 +165,7 @@ enum ForcedRescueReason {
     BootstrapNoSuccess,
     IndexAnchorMissing,
     IndexLatestInvariantBroken,
+    IndexLatestUnreadable,
     CmcZeroSuccessRuns,
 }
 
@@ -176,6 +181,7 @@ struct DebugState {
     forced_rescue_reason: Option<ForcedRescueReason>,
     consecutive_index_anchor_failures: u8,
     consecutive_index_latest_invariant_failures: u8,
+    consecutive_index_latest_unreadable_failures: u8,
     consecutive_cmc_zero_success_runs: u8,
     last_observed_staking_balance_e8s: Option<u64>,
     last_observed_latest_tx_id: Option<u64>,
@@ -213,6 +219,13 @@ struct NotifyRecord {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugBlackholeStatus {
+    canister_id: Principal,
+    cycles: Nat,
+    controllers: Vec<Principal>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugGetCall {
     account_identifier: String,
     start: Option<u64>,
@@ -229,10 +242,6 @@ struct TransferRecord {
     memo: Option<Vec<u8>>,
     created_at_time: Option<u64>,
     result: String,
-}
-
-fn test_blackhole_controller() -> Principal {
-    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()
 }
 
 fn account_identifier_text(account: &Account) -> String {
@@ -279,6 +288,7 @@ struct FaucetEnv {
     ledger: Principal,
     index: Principal,
     cmc: Principal,
+    blackhole: Principal,
     lifeline: Principal,
     faucet: Principal,
     blackhole_controller: Principal,
@@ -300,23 +310,25 @@ impl FaucetEnv {
         let ledger = pic.create_canister();
         let index = pic.create_canister();
         let cmc = pic.create_canister();
+        let blackhole = pic.create_canister();
         let lifeline = pic.create_canister();
         let faucet = pic.create_canister();
 
-        for c in [ledger, index, cmc, lifeline, faucet] {
+        for c in [ledger, index, cmc, blackhole, lifeline, faucet] {
             pic.add_cycles(c, 5_000_000_000_000);
         }
 
         pic.install_canister(ledger, ledger_wasm()?, vec![], None);
         pic.install_canister(index, index_wasm()?, vec![], None);
         pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
         pic.install_canister(lifeline, lifeline_wasm()?, vec![], None);
 
         let staking_account = Account {
             owner: Principal::management_canister(),
             subaccount: Some([9u8; 32]),
         };
-        let blackhole_controller = test_blackhole_controller();
+        let blackhole_controller = blackhole;
 
         let mut init = FaucetInitArg {
             staking_account: staking_account.clone(),
@@ -343,6 +355,7 @@ impl FaucetEnv {
             ledger,
             index,
             cmc,
+            blackhole,
             lifeline,
             faucet,
             blackhole_controller,
@@ -375,6 +388,7 @@ impl FaucetEnv {
     fn set_cmc_script(&self, script: Vec<DebugNotifyBehavior>) -> Result<()> {
         update_one(&self.pic, self.cmc, Principal::anonymous(), "debug_set_script", script)
     }
+
 
     fn set_ledger_next_error(&self, err: Option<DebugNextTransferError>) -> Result<()> {
         update_one(&self.pic, self.ledger, Principal::anonymous(), "debug_set_next_error", err)
@@ -1802,11 +1816,12 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     env.set_blackholed_controllers()?;
     env.set_blackhole_armed(Some(true))?;
     env.set_cmc_fail(true)?;
+    let target = env.blackhole;
 
     for _ in 0..2 {
         env.credit_payout(100_000_000)?;
         env.credit_staking(100_000_000)?;
-        env.append_transfer(100_000_000, Some(Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?.to_text().into_bytes()))?;
+        env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
         env.main_tick()?;
         env.advance_time_and_tick(61, 20);
         env.main_tick()?;
@@ -1815,6 +1830,33 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     let st = env.state()?;
     if st.forced_rescue_reason != Some(ForcedRescueReason::CmcZeroSuccessRuns) || st.consecutive_cmc_zero_success_runs < 2 {
         bail!("expected two zero-success CMC runs to latch forced rescue, got {:?}", st);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_zero_success_runs_for_non_canister_targets_do_not_latch_forced_rescue() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    env.set_blackholed_controllers()?;
+    env.set_blackhole_armed(Some(true))?;
+    env.set_cmc_fail(true)?;
+
+    for _ in 0..3 {
+        env.credit_payout(100_000_000)?;
+        env.credit_staking(100_000_000)?;
+        env.append_transfer(100_000_000, Some(Principal::from_text("uuc56-gyb")?.to_text().into_bytes()))?;
+        env.main_tick()?;
+        env.advance_time_and_tick(61, 20);
+        env.main_tick()?;
+    }
+
+    let st = env.state()?;
+    if st.forced_rescue_reason.is_some() || st.consecutive_cmc_zero_success_runs != 0 {
+        bail!("expected non-canister memo targets not to advance the zero-success rescue threshold, got {:?}", st);
     }
 
     Ok(())

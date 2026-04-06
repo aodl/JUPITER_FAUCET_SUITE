@@ -1,3 +1,4 @@
+pub mod canister_info;
 pub mod cmc;
 pub mod index;
 pub mod ledger;
@@ -44,4 +45,9 @@ pub trait IndexClient: Send + Sync {
 #[async_trait]
 pub trait CmcClient: Send + Sync {
     async fn notify_top_up(&self, canister_id: Principal, block_index: u64) -> Result<(), ClientError>;
+}
+
+#[async_trait]
+pub trait CanisterStatusClient: Send + Sync {
+    async fn canister_exists(&self, canister_id: Principal) -> Result<bool, ClientError>;
 }

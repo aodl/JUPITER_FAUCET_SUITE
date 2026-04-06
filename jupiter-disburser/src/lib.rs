@@ -50,6 +50,20 @@ fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
 }
 
+fn production_canister_id() -> Principal {
+    Principal::from_text(env!("JUPITER_DISBURSER_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
+}
+
+fn is_production_canister(principal: Principal) -> bool {
+    principal == production_canister_id()
+}
+
+#[cfg(feature = "debug_api")]
+fn guard_debug_api_not_production() {
+    if is_production_canister(ic_cdk::api::canister_self()) {
+        ic_cdk::trap("debug_api is disabled for the production canister");
+    }
+}
 
 fn self_canister_principal_for_validation() -> Principal {
     #[cfg(test)]
@@ -173,6 +187,7 @@ pub struct DebugState {
 #[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state() -> DebugState {
+    guard_debug_api_not_production();
     crate::state::with_state(|st| DebugState {
         prev_age_seconds: st.prev_age_seconds,
         last_successful_transfer_ts: st.last_successful_transfer_ts,
@@ -188,6 +203,7 @@ fn debug_state() -> DebugState {
 #[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state_size_bytes() -> u64 {
+    guard_debug_api_not_production();
     let st = crate::state::get_state();
     match candid::encode_one(st) {
         Ok(bytes) => bytes.len() as u64,
@@ -198,84 +214,98 @@ fn debug_state_size_bytes() -> u64 {
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 async fn debug_main_tick() {
+    guard_debug_api_not_production();
     crate::scheduler::debug_main_tick_impl().await;
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 async fn debug_rescue_tick() {
+    guard_debug_api_not_production();
     crate::scheduler::debug_rescue_tick_impl().await;
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_prev_age_seconds(age_seconds: u64) {
+    guard_debug_api_not_production();
     crate::state::with_state_mut(|st| st.prev_age_seconds = age_seconds);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_last_successful_transfer_ts(ts: Option<u64>) {
+    guard_debug_api_not_production();
     crate::state::with_state_mut(|st| st.last_successful_transfer_ts = ts);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_last_rescue_check_ts(ts: u64) {
+    guard_debug_api_not_production();
     crate::state::with_state_mut(|st| st.last_rescue_check_ts = ts);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_blackhole_armed_since_ts(ts: Option<u64>) {
+    guard_debug_api_not_production();
     crate::state::with_state_mut(|st| st.blackhole_armed_since_ts = ts);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
+    guard_debug_api_not_production();
     crate::state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(ts.unwrap_or(0)));
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_clear_forced_rescue() {
+    guard_debug_api_not_production();
     crate::state::with_state_mut(|st| st.forced_rescue_reason = None);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_pause_after_planning(enabled: bool) {
+    guard_debug_api_not_production();
     crate::scheduler::debug_set_pause_after_planning(enabled);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
+    guard_debug_api_not_production();
     crate::scheduler::debug_set_trap_after_successful_transfers(n);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
+    guard_debug_api_not_production();
     crate::scheduler::debug_set_real_trap_after_successful_transfers(n);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_simulate_low_cycles(enabled: bool) {
+    guard_debug_api_not_production();
     crate::scheduler::debug_set_simulate_low_cycles(enabled);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_skip_maturity_initiation(enabled: bool) {
+    guard_debug_api_not_production();
     crate::scheduler::debug_set_skip_maturity_initiation(enabled);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 async fn debug_build_payout_plan() -> bool {
+    guard_debug_api_not_production();
     crate::scheduler::debug_build_payout_plan_impl().await
 }
 
@@ -345,6 +375,13 @@ mod tests {
         assert_eq!(st.config.blackhole_controller, Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai")));
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
         assert_eq!(st.main_lock_expires_at_ts, Some(0));
+    }
+
+
+    #[test]
+    fn production_canister_detection_matches_expected_id() {
+        assert!(is_production_canister(production_canister_id()));
+        assert!(!is_production_canister(principal("aaaaa-aa")));
     }
 }
 

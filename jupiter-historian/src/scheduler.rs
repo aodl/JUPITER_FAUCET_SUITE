@@ -250,6 +250,7 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                             if inserted {
                                 let count = st.qualifying_contribution_count.get_or_insert(0);
                                 *count = count.saturating_add(1);
+                                crate::refresh_registered_canister_summary(st, contribution.beneficiary);
                             }
                         } else {
                             let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
@@ -394,6 +395,7 @@ fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_en
         } else {
             logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::NotAvailable);
         }
+        crate::refresh_registered_canister_summary(st, canister_id);
     });
 }
 
@@ -515,6 +517,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
                 if inserted {
                     logic::apply_cycles_probe_result(meta, started_at_ts_nanos, CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister));
                 }
+                crate::refresh_registered_canister_summary(st, canister_id);
             });
             continue;
         }
@@ -532,6 +535,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
                     if inserted {
                         logic::apply_cycles_probe_result(meta, started_at_ts_nanos, CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus));
                     }
+                    crate::refresh_registered_canister_summary(st, canister_id);
                 });
             }
             Err(err) => {
@@ -541,6 +545,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
                         meta.first_seen_ts = Some(now_secs);
                     }
                     logic::apply_cycles_probe_result(meta, started_at_ts_nanos, CyclesProbeResult::Error(err.to_string()));
+                    crate::refresh_registered_canister_summary(st, canister_id);
                 });
             }
         }

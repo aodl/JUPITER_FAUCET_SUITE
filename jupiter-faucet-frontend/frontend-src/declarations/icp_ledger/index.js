@@ -1,7 +1,7 @@
 import { Actor } from '@icp-sdk/core/agent';
-import { idlFactory } from './mock_icrc_ledger.did.js';
+import { idlFactory } from './icp_ledger.did.js';
 
-export { idlFactory } from './mock_icrc_ledger.did.js';
+export { idlFactory } from './icp_ledger.did.js';
 export const canisterId = '';
 
 export const createActor = (resolvedCanisterId, options = {}) => {

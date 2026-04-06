@@ -147,16 +147,15 @@ ASSET_VERSION=2026-03-19 ./scripts/build-canister jupiter-faucet-frontend
 
 ## Regenerating declarations
 
-The checked-in declarations under `frontend-src/declarations/` are intended to match the outputs from:
+The checked-in historian declarations under `frontend-src/declarations/jupiter_historian/` can be regenerated with:
 
 ```bash
 dfx generate jupiter_historian
-dfx generate mock_icrc_ledger
 ```
 
 The relevant `declarations` output paths are configured in `dfx.json`.
 
-`mock_icrc_ledger` is used only to generate the ledger actor surface the frontend needs; at runtime the actor is pointed at the ledger canister ID returned by historian status.
+`frontend-src/declarations/icp_ledger/` is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the actor is pointed at the ledger canister ID returned by historian status.
 
 ## Frontend-only tests
 

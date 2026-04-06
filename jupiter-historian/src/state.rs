@@ -157,6 +157,8 @@ pub struct StableState {
     pub contribution_history: BTreeMap<Principal, Vec<ContributionSample>>,
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, StableCanisterMeta>,
+    #[serde(default)]
+    pub registered_canister_summaries_cache: Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
     pub last_indexed_staking_tx_id: Option<u64>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
@@ -188,6 +190,8 @@ pub struct State {
     pub contribution_history: BTreeMap<Principal, Vec<ContributionSample>>,
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
+    #[serde(default)]
+    pub registered_canister_summaries_cache: Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
     pub last_indexed_staking_tx_id: Option<u64>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
@@ -214,6 +218,7 @@ impl State {
             contribution_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
+            registered_canister_summaries_cache: Some(BTreeMap::new()),
             last_indexed_staking_tx_id: None,
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
@@ -327,6 +332,7 @@ impl From<State> for StableState {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
+            registered_canister_summaries_cache: value.registered_canister_summaries_cache,
             last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
             last_sns_discovery_ts: value.last_sns_discovery_ts,
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
@@ -358,6 +364,7 @@ impl From<StableState> for State {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
+            registered_canister_summaries_cache: value.registered_canister_summaries_cache,
             last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
             last_sns_discovery_ts: value.last_sns_discovery_ts,
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,

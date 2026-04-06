@@ -175,12 +175,39 @@ restore_frontend_assets() {
 
 trap restore_frontend_assets EXIT
 
+load_prod_canister_id() {
+  local canister_json_key="$1"
+
+  python3 - "$canister_json_key" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+key = sys.argv[1]
+data = json.loads(Path('canister_ids.json').read_text())
+print(data[key]['ic'])
+PY
+}
+
 build_one() {
   local target_name="$1"
   local cargo_package="$2"
   local raw_name="$3"
   local candid_path="$4"
   local artifact_stem="$5"
+  local prod_canister_env_name="${6:-}"
+  local prod_canister_json_key="${7:-}"
+
+  if [[ -n "$prod_canister_env_name" || -n "$prod_canister_json_key" ]]; then
+    if [[ -z "$prod_canister_env_name" || -z "$prod_canister_json_key" ]]; then
+      echo "both prod canister env name and json key are required" >&2
+      exit 1
+    fi
+    local prod_canister_id
+    prod_canister_id="$(load_prod_canister_id "$prod_canister_json_key")"
+    export "$prod_canister_env_name=$prod_canister_id"
+    echo "Embedding production canister id for ${target_name}: ${prod_canister_id}"
+  fi
 
   cargo build --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
 
@@ -202,16 +229,16 @@ build_one() {
 build_selected() {
   case "$1" in
     jupiter-disburser)
-      build_one "jupiter-disburser" "jupiter-disburser" "jupiter_disburser" "jupiter-disburser/jupiter_disburser.did" "jupiter_disburser"
+      build_one "jupiter-disburser" "jupiter-disburser" "jupiter_disburser" "jupiter-disburser/jupiter_disburser.did" "jupiter_disburser" "JUPITER_DISBURSER_PROD_CANISTER_ID" "jupiter_disburser"
       ;;
     jupiter-lifeline)
       build_one "jupiter-lifeline" "jupiter-lifeline" "jupiter_lifeline" "jupiter-lifeline/jupiter_lifeline.did" "jupiter_lifeline"
       ;;
     jupiter-faucet)
-      build_one "jupiter-faucet" "jupiter-faucet" "jupiter_faucet" "jupiter-faucet/jupiter_faucet.did" "jupiter_faucet"
+      build_one "jupiter-faucet" "jupiter-faucet" "jupiter_faucet" "jupiter-faucet/jupiter_faucet.did" "jupiter_faucet" "JUPITER_FAUCET_PROD_CANISTER_ID" "jupiter_faucet"
       ;;
     jupiter-historian)
-      build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "jupiter-historian/jupiter_historian.did" "jupiter_historian"
+      build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "jupiter-historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
       ;;
     jupiter-sns-rewards)
       build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "jupiter-sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards"
