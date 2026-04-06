@@ -287,6 +287,30 @@ struct ListRegisteredCanisterSummariesResponse {
     total: u64,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum CyclesProbeResult {
+    Ok(CyclesSampleSource),
+    NotAvailable,
+    Error(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CanisterMeta {
+    first_seen_ts: Option<u64>,
+    last_contribution_ts: Option<u64>,
+    last_cycles_probe_ts: Option<u64>,
+    last_cycles_probe_result: Option<CyclesProbeResult>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CanisterOverview {
+    canister_id: Principal,
+    sources: Vec<CanisterSource>,
+    meta: CanisterMeta,
+    cycles_points: u32,
+    contribution_points: u32,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
 struct ListRecentContributionsArgs {
     limit: Option<u32>,
@@ -568,6 +592,59 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
         ListCanistersArgs { start_after: None, limit: Some(10), source_filter: None },
     )?;
     assert!(canisters.items.is_empty());
+
+    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        },
+    )?;
+    assert_eq!(registered.total, 0);
+    assert!(registered.items.is_empty());
+
+    for reserved in [Principal::anonymous(), Principal::management_canister()] {
+        let overview: Option<CanisterOverview> = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_canister_overview",
+            reserved,
+        )?;
+        assert!(overview.is_none(), "reserved principal {reserved} must not surface a public overview");
+
+        let contribs: ContributionHistoryPage = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_contribution_history",
+            GetContributionHistoryArgs {
+                canister_id: reserved,
+                start_after_tx_id: None,
+                limit: Some(10),
+                descending: Some(false),
+            },
+        )?;
+        assert!(contribs.items.is_empty(), "reserved principal {reserved} must not gain contribution history");
+
+        let cycles: CyclesHistoryPage = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_cycles_history",
+            GetCyclesHistoryArgs {
+                canister_id: reserved,
+                start_after_ts: None,
+                limit: Some(10),
+                descending: Some(false),
+            },
+        )?;
+        assert!(cycles.items.is_empty(), "reserved principal {reserved} must not gain cycles history");
+    }
 
     let recent: ListRecentContributionsResponse = query_one(
         &h.pic,
