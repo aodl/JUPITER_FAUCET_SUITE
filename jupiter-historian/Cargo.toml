@@ -25,6 +25,7 @@ ic-cdk = "0.19"
 ic-cdk-timers = "1.0.0"
 icrc-ledger-types = "0.1.12"
 crc32fast = "1"
+jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 
 [features]
 debug_api = []

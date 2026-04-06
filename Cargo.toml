@@ -5,6 +5,7 @@ members = [
   "jupiter-lifeline",
   "jupiter-faucet",
   "jupiter-historian",
+  "jupiter-memo-policy",
   "jupiter-sns-rewards",
   "jupiter-faucet-frontend",
   "xtask",

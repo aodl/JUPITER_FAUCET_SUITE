@@ -5,7 +5,7 @@ use crate::clients::index::{IndexOperation, IndexTransactionWithId};
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
 
 pub const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
-pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
+pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 
 #[derive(Clone, Debug)]
 pub struct Contribution {
@@ -22,18 +22,7 @@ pub enum ContributionDecision {
 }
 
 pub fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
-    if memo.is_empty() || memo.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !memo.is_ascii() {
-        return None;
-    }
-    let memo_text = std::str::from_utf8(memo).ok()?.trim();
-    if memo_text.is_empty() || memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
-        return None;
-    }
-    let principal = Principal::from_text(memo_text).ok()?;
-    if principal == Principal::anonymous() || principal == Principal::management_canister() {
-        return None;
-    }
-    Some(principal)
+    jupiter_memo_policy::parse_target_canister_principal_from_memo(memo)
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_identifier: &str) -> Option<Contribution> {

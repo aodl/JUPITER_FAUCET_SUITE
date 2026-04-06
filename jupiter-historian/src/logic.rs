@@ -1,7 +1,7 @@
 use candid::Principal;
 
 pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid target canister memo";
-pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
+pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
@@ -40,18 +40,7 @@ pub fn memo_text_from_bytes(bytes: &[u8]) -> Option<String> {
 }
 
 pub fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
-    if bytes.is_empty() || bytes.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !bytes.is_ascii() {
-        return None;
-    }
-    let memo_text = memo_text_from_bytes(bytes)?;
-    if memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
-        return None;
-    }
-    let principal = Principal::from_text(&memo_text).ok()?;
-    if principal == Principal::anonymous() || principal == Principal::management_canister() {
-        return None;
-    }
-    Some(principal)
+    jupiter_memo_policy::parse_target_canister_principal_from_memo(bytes)
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
@@ -173,32 +162,7 @@ mod tests {
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
     fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
 
-    #[test]
-    fn parses_target_canister_memo() {
-        let p = target_canister();
-        assert_eq!(parse_target_canister_from_memo(p.to_text().as_bytes()), Some(p));
-        assert_eq!(parse_target_canister_from_memo(format!("  {}\n", p.to_text()).as_bytes()), Some(p));
-        assert_eq!(parse_target_canister_from_memo(b"bad"), None);
-    }
-
-    #[test]
-    fn rejects_oversize_principal_text_memos_but_not_short_valid_principals() {
-        let self_auth = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
-        assert!(self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
-        assert_eq!(parse_target_canister_from_memo(self_auth.to_text().as_bytes()), None);
-        let short = target_canister();
-        assert!(short.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
-        assert_eq!(parse_target_canister_from_memo(short.to_text().as_bytes()), Some(short));
-    }
-
-    #[test]
-    fn rejects_anonymous_and_management_canister_principals() {
-        assert_eq!(parse_target_canister_from_memo(Principal::anonymous().to_text().as_bytes()), None);
-        assert_eq!(parse_target_canister_from_memo(Principal::management_canister().to_text().as_bytes()), None);
-    }
-
-    #[test]
-    fn memo_parser_matches_faucet_policy_corpus() {
+    fn memo_policy_corpus() -> Vec<(&'static str, Vec<u8>, Option<Principal>)> {
         let target = target_canister();
         let short_without_cai = Principal::from_slice(&[1]);
         let oversize_self_auth = Principal::from_text(
@@ -215,7 +179,7 @@ mod tests {
             .as_bytes()
             .to_vec();
 
-        let cases: Vec<(&str, Vec<u8>, Option<Principal>)> = vec![
+        vec![
             ("valid target principal text", target.to_text().into_bytes(), Some(target)),
             (
                 "whitespace padded principal text",
@@ -247,12 +211,40 @@ mod tests {
                 Principal::management_canister().to_text().into_bytes(),
                 None,
             ),
-        ];
+        ]
+    }
 
-        for (label, memo, expected) in cases {
+    #[test]
+    fn parses_target_canister_memo() {
+        let p = target_canister();
+        assert_eq!(parse_target_canister_from_memo(p.to_text().as_bytes()), Some(p));
+        assert_eq!(parse_target_canister_from_memo(format!("  {}\n", p.to_text()).as_bytes()), Some(p));
+        assert_eq!(parse_target_canister_from_memo(b"bad"), None);
+    }
+
+    #[test]
+    fn rejects_oversize_principal_text_memos_but_not_short_valid_principals() {
+        let self_auth = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
+        assert!(self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(parse_target_canister_from_memo(self_auth.to_text().as_bytes()), None);
+        let short = target_canister();
+        assert!(short.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(parse_target_canister_from_memo(short.to_text().as_bytes()), Some(short));
+    }
+
+    #[test]
+    fn rejects_anonymous_and_management_canister_principals() {
+        assert_eq!(parse_target_canister_from_memo(Principal::anonymous().to_text().as_bytes()), None);
+        assert_eq!(parse_target_canister_from_memo(Principal::management_canister().to_text().as_bytes()), None);
+    }
+
+    #[test]
+    fn memo_parser_matches_faucet_policy_corpus() {
+        for (label, memo, expected) in memo_policy_corpus() {
             assert_eq!(parse_target_canister_from_memo(&memo), expected, "{label}");
         }
     }
+
 
     #[test]
     fn indexed_contribution_uses_icrc1_memo_and_threshold_flag() {

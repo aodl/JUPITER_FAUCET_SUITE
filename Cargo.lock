@@ -1180,6 +1180,7 @@ dependencies = [
  "ic-cdk",
  "ic-cdk-timers",
  "icrc-ledger-types",
+ "jupiter-memo-policy",
  "num-traits",
  "pocket-ic",
  "serde",
@@ -1216,6 +1217,7 @@ dependencies = [
  "ic-cdk",
  "ic-cdk-timers",
  "icrc-ledger-types",
+ "jupiter-memo-policy",
  "num-traits",
  "pocket-ic",
  "serde",
@@ -1233,6 +1235,13 @@ dependencies = [
  "candid",
  "ic-cdk",
  "ic-cdk-timers",
+]
+
+[[package]]
+name = "jupiter-memo-policy"
+version = "0.1.0"
+dependencies = [
+ "candid",
 ]
 
 [[package]]
