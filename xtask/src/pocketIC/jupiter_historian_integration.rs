@@ -535,6 +535,63 @@ fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Re
 
 #[test]
 #[ignore]
+fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    for reserved in [Principal::anonymous(), Principal::management_canister()] {
+        let _: u64 = update_bytes(
+            &h.pic,
+            h.index,
+            Principal::anonymous(),
+            "debug_append_transfer",
+            encode_args((staking_id.clone(), 100_000_000u64, Some(reserved.to_text().into_bytes())))?,
+        )?;
+    }
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let st: DebugState = query_one(&h.pic, h.historian, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(st.distinct_canister_count, 0);
+    assert_eq!(st.last_indexed_staking_tx_id, Some(2));
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.qualifying_contribution_count, 0);
+
+    let canisters: ListCanistersResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs { start_after: None, limit: Some(10), source_filter: None },
+    )?;
+    assert!(canisters.items.is_empty());
+
+    let recent: ListRecentContributionsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_contributions",
+        ListRecentContributionsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 2);
+    assert!(recent.items.iter().all(|item| item.canister_id.is_none()));
+    assert!(recent.items.iter().all(|item| !item.counts_toward_faucet));
+    assert!(recent
+        .items
+        .iter()
+        .all(|item| item.memo_text.as_deref() == Some("invalid target canister memo")));
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;

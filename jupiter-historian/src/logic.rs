@@ -47,7 +47,11 @@ pub fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
     if memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
         return None;
     }
-    Principal::from_text(&memo_text).ok()
+    let principal = Principal::from_text(&memo_text).ok()?;
+    if principal == Principal::anonymous() || principal == Principal::management_canister() {
+        return None;
+    }
+    Some(principal)
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
@@ -182,9 +186,15 @@ mod tests {
         let self_auth = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
         assert!(self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
         assert_eq!(parse_target_canister_from_memo(self_auth.to_text().as_bytes()), None);
-        let short = Principal::from_text("aaaaa-aa").unwrap();
+        let short = target_canister();
         assert!(short.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
         assert_eq!(parse_target_canister_from_memo(short.to_text().as_bytes()), Some(short));
+    }
+
+    #[test]
+    fn rejects_anonymous_and_management_canister_principals() {
+        assert_eq!(parse_target_canister_from_memo(Principal::anonymous().to_text().as_bytes()), None);
+        assert_eq!(parse_target_canister_from_memo(Principal::management_canister().to_text().as_bytes()), None);
     }
 
     #[test]
