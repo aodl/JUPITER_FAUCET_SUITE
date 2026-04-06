@@ -31,6 +31,27 @@ enum NotifyError {
     },
 }
 
+fn classify_notify_top_up_result(result: NotifyTopUpResult) -> Result<(), ClientError> {
+    match result {
+        NotifyTopUpResult::Ok(_) => Ok(()),
+        NotifyTopUpResult::Err(NotifyError::Processing) => Err(ClientError::RetryableNotify(
+            "notify_top_up returned retriable error: Processing".to_string(),
+        )),
+        NotifyTopUpResult::Err(NotifyError::Refunded { reason, block_index }) => Err(ClientError::TerminalNotify(
+            format!("notify_top_up refunded deposit: reason={reason:?} block_index={block_index:?}"),
+        )),
+        NotifyTopUpResult::Err(NotifyError::TransactionTooOld(block_index)) => Err(ClientError::TerminalNotify(
+            format!("notify_top_up rejected stale block_index={block_index}"),
+        )),
+        NotifyTopUpResult::Err(NotifyError::InvalidTransaction(message)) => Err(ClientError::TerminalNotify(
+            format!("notify_top_up rejected invalid transaction: {message}"),
+        )),
+        NotifyTopUpResult::Err(NotifyError::Other { error_code, error_message }) => Err(ClientError::RetryableNotify(
+            format!("notify_top_up returned other error: code={error_code} message={error_message}"),
+        )),
+    }
+}
+
 pub struct CyclesMintingCanister {
     cmc_id: Principal,
 }
@@ -57,14 +78,39 @@ impl CmcClient for CyclesMintingCanister {
             .candid()
             .map_err(|e| ClientError::Call(format!("notify_top_up decode failed: {e:?}")))?;
 
-        match result {
-            NotifyTopUpResult::Ok(_) => Ok(()),
-            NotifyTopUpResult::Err(NotifyError::Processing) => Err(ClientError::Call(
-                "notify_top_up returned retriable error: Processing".to_string(),
-            )),
-            NotifyTopUpResult::Err(err) => Err(ClientError::Call(format!(
-                "notify_top_up returned error: {err:?}"
-            ))),
-        }
+        classify_notify_top_up_result(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_processing_as_retryable() {
+        let err = classify_notify_top_up_result(NotifyTopUpResult::Err(NotifyError::Processing)).unwrap_err();
+        assert!(matches!(err, ClientError::RetryableNotify(_)));
+    }
+
+    #[test]
+    fn classify_refunded_as_terminal() {
+        let err = classify_notify_top_up_result(NotifyTopUpResult::Err(NotifyError::Refunded {
+            reason: "refunded".to_string(),
+            block_index: Some(7),
+        }))
+        .unwrap_err();
+        assert!(matches!(err, ClientError::TerminalNotify(_)));
+    }
+
+    #[test]
+    fn classify_transaction_too_old_as_terminal() {
+        let err = classify_notify_top_up_result(NotifyTopUpResult::Err(NotifyError::TransactionTooOld(99))).unwrap_err();
+        assert!(matches!(err, ClientError::TerminalNotify(_)));
+    }
+
+    #[test]
+    fn classify_invalid_transaction_as_terminal() {
+        let err = classify_notify_top_up_result(NotifyTopUpResult::Err(NotifyError::InvalidTransaction("bad block".to_string()))).unwrap_err();
+        assert!(matches!(err, ClientError::TerminalNotify(_)));
     }
 }

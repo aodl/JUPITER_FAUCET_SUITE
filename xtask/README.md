@@ -203,8 +203,15 @@ The current E2E coverage includes:
 
 - disburser paying faucet and faucet topping up a target canister
 - repeated disburser payouts feeding faucet full-history replay
+- a real-ICP PocketIC diagnostic probe for the CMC top-up flow that logs the exact deposit account, memo bytes, ledger transfer block, and raw `notify_top_up` result for comparison against `dfx ledger top-up`
 - retry safety across the disburser → faucet → CMC boundary
 - faucet upgrade during retry-state recovery
+
+To run just the diagnostic probe and print the transfer / notify details:
+
+```bash
+cargo test -p xtask --test e2e probe_real_cmc_topup_flow_diagnostics -- --ignored --exact --nocapture
+```
 
 ## Reproducible blackhole requirement in historian / E2E suites
 

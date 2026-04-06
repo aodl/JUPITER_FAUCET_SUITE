@@ -277,7 +277,7 @@ mod tests {
             id: 3,
             transaction: IndexTransaction {
                 memo: 0,
-                icrc1_memo: Some(b"aaaaa-aa".to_vec()),
+                icrc1_memo: Some(b"qaa6y-5yaaa-aaaaa-aaafa-cai".to_vec()),
                 operation: IndexOperation::Transfer {
                     to: staking.clone(),
                     fee: Tokens::new(10_000),
@@ -292,7 +292,7 @@ mod tests {
         let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
         match c {
             IndexedContributionEntry::Valid(c) => {
-                assert_eq!(c.beneficiary, Principal::from_text("aaaaa-aa").unwrap());
+                assert_eq!(c.beneficiary, Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap());
                 assert!(c.counts_toward_faucet);
             }
             IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),

@@ -2028,7 +2028,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
             let st1: FaucetDebugState = call_raw_noargs("jupiter_faucet_dbg", "debug_state")?;
             if st1.active_payout_job_present || !st1.last_summary_present {
-                bail!("expected {label} response to be retried inline and finish within one tick");
+                bail!("expected {label} response to be retried safely inline and finish within one tick");
             }
             let transfers_after: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
             if transfers_after.len() != 1 {
@@ -2036,7 +2036,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             }
             let notes_after: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
             if notes_after.len() != 1 || notes_after[0].canister_id != target {
-                bail!("expected {label} retry path to end with one completed beneficiary notification, got {notes_after:?}");
+                bail!("expected {label} retry path to end with one completed beneficiary notification after the safe inline retry, got {notes_after:?}");
             }
         }
 

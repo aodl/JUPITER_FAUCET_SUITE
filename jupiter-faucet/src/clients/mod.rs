@@ -15,6 +15,10 @@ pub enum ClientError {
     Call(String),
     #[error("conversion error: {0}")]
     Convert(String),
+    #[error("retryable CMC notify error: {0}")]
+    RetryableNotify(String),
+    #[error("terminal CMC notify error: {0}")]
+    TerminalNotify(String),
 }
 
 #[async_trait]

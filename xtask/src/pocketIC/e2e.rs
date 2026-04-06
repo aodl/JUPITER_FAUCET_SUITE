@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
 use sha2::{Digest, Sha224};
 
@@ -8,6 +10,10 @@ use sha2::{Digest, Sha224};
 mod real_blackhole;
 use std::process::Command;
 use std::time::Duration;
+
+const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+
+const CYCLES_MINTING_CANISTER_ID: &str = "rkp4c-7iaaa-aaaaa-aaaca-cai";
 
 fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
@@ -37,6 +43,21 @@ fn tick_n(pic: &PocketIc, n: usize) {
     for _ in 0..n {
         pic.tick();
     }
+}
+
+fn build_pic_with_real_icp() -> PocketIc {
+    let icp_features = IcpFeatures {
+        registry: Some(IcpFeaturesConfig::DefaultConfig),
+        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
+        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
+        ..Default::default()
+    };
+
+    PocketIcBuilder::new()
+        .with_nns_subnet()
+        .with_application_subnet()
+        .with_icp_features(icp_features)
+        .build()
 }
 
 fn fixture_principal() -> Principal {
@@ -215,6 +236,19 @@ fn icrc1_balance(pic: &PocketIc, ledger: Principal, acct: &Account) -> Result<u6
     nat_to_u64(&n)
 }
 
+fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
+    let fee: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_fee", ())?;
+    nat_to_u64(&fee)
+}
+
+fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: TransferArg) -> Result<u64> {
+    let result: Result<Nat, TransferError> = update_one(pic, ledger, from, "icrc1_transfer", arg)?;
+    match result {
+        Ok(block_index) => nat_to_u64(&block_index),
+        Err(err) => bail!("icrc1_transfer failed: {err:?}"),
+    }
+}
+
 fn test_blackhole_controller() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()
 }
@@ -232,6 +266,24 @@ fn account_identifier_text(account: &Account) -> String {
     bytes[4..].copy_from_slice(&hash);
     hex::encode(bytes)
 }
+
+
+fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
+    let bytes = principal.as_slice();
+    let mut out = [0u8; 32];
+    out[0] = bytes.len() as u8;
+    let len = bytes.len().min(31);
+    out[1..1 + len].copy_from_slice(&bytes[..len]);
+    out
+}
+
+fn cmc_deposit_account(cmc: Principal, target: Principal) -> Account {
+    Account {
+        owner: cmc,
+        subaccount: Some(principal_to_subaccount(target)),
+    }
+}
+
 
 #[test]
 #[ignore]
@@ -917,6 +969,118 @@ struct HistorianRecentContributionListItem {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianListRecentContributionsResponse {
     items: Vec<HistorianRecentContributionListItem>,
+}
+
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RealNotifyTopUpArg {
+    canister_id: Principal,
+    block_index: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RealNotifyTopUpResult {
+    Ok(Nat),
+    Err(RealNotifyError),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RealNotifyError {
+    Refunded { reason: String, block_index: Option<u64> },
+    Processing,
+    TransactionTooOld(u64),
+    InvalidTransaction(String),
+    Other { error_code: u64, error_message: String },
+}
+
+fn describe_account(account: &Account) -> String {
+    let sub_hex = account
+        .subaccount
+        .map(hex::encode)
+        .unwrap_or_else(|| "<none>".to_string());
+    format!(
+        "owner={} subaccount_hex={} account_id={}",
+        account.owner,
+        sub_hex,
+        account_identifier_text(account)
+    )
+}
+
+#[test]
+#[ignore]
+fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let cmc = Principal::from_text(CYCLES_MINTING_CANISTER_ID)?;
+    let blackhole_wasm = real_blackhole::real_blackhole_wasm()?;
+
+    let target = pic.create_canister();
+    pic.add_cycles(target, 5_000_000_000_000);
+    pic.install_canister(target, blackhole_wasm, vec![], None);
+    set_controllers_exact(&pic, target, vec![target])?;
+
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+    let memo_u64 = 1_347_768_404u64;
+    let memo_bytes = memo_u64.to_le_bytes().to_vec();
+    let deposit_account = cmc_deposit_account(cmc, target);
+    let amount_e8s = 500_000_000u64;
+
+    let anon_default = Account { owner: Principal::anonymous(), subaccount: None };
+    let deposit_before = icrc1_balance(&pic, ledger, &deposit_account)?;
+    let anon_before = icrc1_balance(&pic, ledger, &anon_default)?;
+
+    println!("=== real CMC top-up probe ===");
+    println!("target_canister={}", target);
+    println!("ledger_canister={}", ledger);
+    println!("cmc_canister={}", cmc);
+    println!("anonymous_default_account={}", describe_account(&anon_default));
+    println!("deposit_account={}", describe_account(&deposit_account));
+    println!("principal_to_subaccount_hex={}", hex::encode(principal_to_subaccount(target)));
+    println!("top_up_memo_u64={}", memo_u64);
+    println!("top_up_memo_hex={}", hex::encode(&memo_bytes));
+    println!("top_up_memo_ascii={:?}", memo_bytes);
+    println!("transfer_fee_e8s={}", fee_e8s);
+    println!("transfer_amount_e8s={}", amount_e8s);
+    println!("deposit_balance_before_e8s={}", deposit_before);
+    println!("anonymous_balance_before_e8s={}", anon_before);
+
+    let block_index = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: deposit_account.clone(),
+            fee: Some(Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: Some(Memo::from(memo_bytes.clone())),
+            amount: Nat::from(amount_e8s),
+        },
+    )?;
+
+    let deposit_after_transfer = icrc1_balance(&pic, ledger, &deposit_account)?;
+    let anon_after_transfer = icrc1_balance(&pic, ledger, &anon_default)?;
+    println!("transfer_block_index={}", block_index);
+    println!("deposit_balance_after_transfer_e8s={}", deposit_after_transfer);
+    println!("anonymous_balance_after_transfer_e8s={}", anon_after_transfer);
+
+    let notify_result: RealNotifyTopUpResult = update_one(
+        &pic,
+        cmc,
+        Principal::anonymous(),
+        "notify_top_up",
+        RealNotifyTopUpArg { canister_id: target, block_index },
+    )?;
+    println!("notify_top_up_result={notify_result:?}");
+
+    let deposit_after_notify = icrc1_balance(&pic, ledger, &deposit_account)?;
+    let anon_after_notify = icrc1_balance(&pic, ledger, &anon_default)?;
+    println!("deposit_balance_after_notify_e8s={}", deposit_after_notify);
+    println!("anonymous_balance_after_notify_e8s={}", anon_after_notify);
+    println!("=== end real CMC top-up probe ===");
+
+    Ok(())
 }
 
 #[test]

@@ -87,6 +87,9 @@ fn validate_config(cfg: &crate::state::Config) {
     assert!(cfg.age_bonus_recipient_1 != staging_account, "age_bonus_recipient_1 must not equal the disburser staging account");
     assert!(cfg.age_bonus_recipient_2 != staging_account, "age_bonus_recipient_2 must not equal the disburser staging account");
 
+    assert!(cfg.normal_recipient != cfg.age_bonus_recipient_1, "normal_recipient and age_bonus_recipient_1 must be distinct");
+    assert!(cfg.normal_recipient != cfg.age_bonus_recipient_2, "normal_recipient and age_bonus_recipient_2 must be distinct");
+    assert!(cfg.age_bonus_recipient_1 != cfg.age_bonus_recipient_2, "age_bonus_recipient_1 and age_bonus_recipient_2 must be distinct");
 }
 
 #[ic_cdk::init]
@@ -310,6 +313,13 @@ mod tests {
         validate_config(&sample_config());
     }
 
+    #[test]
+    #[should_panic(expected = "must be distinct")]
+    fn validate_config_rejects_duplicate_recipients() {
+        let mut cfg = sample_config();
+        cfg.age_bonus_recipient_1 = cfg.normal_recipient;
+        validate_config(&cfg);
+    }
 
     #[test]
     #[should_panic(expected = "must not equal the disburser staging account")]

@@ -38,13 +38,13 @@ Memo handling mirrors the faucet’s input rules:
 - only consider non-empty `icrc1_memo` bytes
 - ignore legacy numeric memos entirely
 - treat an empty `icrc1_memo` as missing / invalid
-- trim ASCII text before trying to parse a target canister ID
+- trim ASCII text before trying to parse principal text (the supported UX is to enter the target canister ID)
 
-If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, the beneficiary is tracked in the historian registry and attached to that target canister as qualifying history. Below-threshold memo contributions are kept only in a separate capped recent feed and do **not** create durable canister tracking, burn targets, or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and burn activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
+If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, the beneficiary principal is tracked in the historian registry and attached to that parsed principal as qualifying history. The supported UX is still to enter the target canister ID in the memo. Below-threshold memo contributions are kept only in a separate capped recent feed and do **not** create durable canister tracking, burn targets, or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and burn activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
 
 Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text and fits within 32 bytes** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold contributions never create durable tracking.
 
-Memo encoding uses `icrc1_memo` target-canister text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic.
+Memo encoding uses `icrc1_memo` principal text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic.
 
 If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
@@ -99,7 +99,7 @@ SNS-discovered canisters are not probed through blackhole status in the regular 
 
 ## Retention and deduplication
 
-The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards.
+The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry.
 
 Durable bounded state currently uses these caps:
 

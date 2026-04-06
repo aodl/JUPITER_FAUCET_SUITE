@@ -29,7 +29,11 @@ pub fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
     if memo_text.is_empty() || memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
         return None;
     }
-    Principal::from_text(memo_text).ok()
+    let principal = Principal::from_text(memo_text).ok()?;
+    if principal == Principal::anonymous() || principal == Principal::management_canister() {
+        return None;
+    }
+    Some(principal)
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_identifier: &str) -> Option<Contribution> {
@@ -138,6 +142,11 @@ mod tests {
         assert_eq!(parse_beneficiary_from_memo(&vec![0xff; 64]), None);
     }
 
+    #[test]
+    fn parser_rejects_anonymous_and_management_canister_principals() {
+        assert_eq!(parse_beneficiary_from_memo(Principal::anonymous().to_text().as_bytes()), None);
+        assert_eq!(parse_beneficiary_from_memo(Principal::management_canister().to_text().as_bytes()), None);
+    }
 
     #[test]
     fn parser_accepts_whitespace_padded_target_canister_text_memo() {

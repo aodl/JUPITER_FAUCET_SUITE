@@ -375,9 +375,22 @@ async fn transfer_once(ledger: &impl LedgerClient, arg: TransferArg) -> Transfer
     }
 }
 
-async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotifyAttemptOutcome {
+    Succeeded,
+    Retryable,
+    Terminal,
+}
+
+async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> NotifyAttemptOutcome {
     increment_cmc_attempts(pending);
-    cmc.notify_top_up(pending.beneficiary, pending.block_index).await.is_ok()
+    match cmc.notify_top_up(pending.beneficiary, pending.block_index).await {
+        Ok(()) => NotifyAttemptOutcome::Succeeded,
+        Err(crate::clients::ClientError::TerminalNotify(_)) => NotifyAttemptOutcome::Terminal,
+        Err(crate::clients::ClientError::RetryableNotify(_))
+        | Err(crate::clients::ClientError::Call(_))
+        | Err(crate::clients::ClientError::Convert(_)) => NotifyAttemptOutcome::Retryable,
+    }
 }
 fn record_successful_notification(now_secs: u64, pending: &PendingNotification) {
     state::with_state_mut(|st| {
@@ -404,7 +417,7 @@ fn finalize_completed_job() {
 fn set_next_start(next_start: Option<u64>) { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_start = next_start; }); }
 
 fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64) -> TransferArg {
-    let memo_bytes = logic::MEMO_TOP_UP_CANISTER_U64.to_be_bytes().to_vec();
+    let memo_bytes = logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec();
     TransferArg {
         from_subaccount: state::with_state(|st| st.config.payout_subaccount),
         to,
@@ -483,14 +496,33 @@ async fn drive_pending_transfer(
         PendingTransferPhase::TransferAccepted => staged.notification,
     };
 
-    if !notify_once(cmc, &accepted).await {
-        if !notify_once(cmc, &accepted).await {
-            clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
-            return true;
+    let first_notify = notify_once(cmc, &accepted).await;
+    match first_notify {
+        NotifyAttemptOutcome::Succeeded => {
+            record_successful_notification(now_secs, &accepted);
+            true
+        }
+        NotifyAttemptOutcome::Retryable | NotifyAttemptOutcome::Terminal => {
+            // Once the ledger transfer is accepted, a duplicate-safe notify retry can improve the
+            // final classification without risking an extra outflow. Two terminal replies mean the
+            // beneficiary top-up deterministically failed; any transport/retryable uncertainty left
+            // after the single inline retry is surfaced as ambiguous.
+            match notify_once(cmc, &accepted).await {
+                NotifyAttemptOutcome::Succeeded => {
+                    record_successful_notification(now_secs, &accepted);
+                    true
+                }
+                NotifyAttemptOutcome::Terminal if matches!(first_notify, NotifyAttemptOutcome::Terminal) => {
+                    clear_pending_transfer(PendingTransferTerminalStatus::Failed);
+                    true
+                }
+                NotifyAttemptOutcome::Retryable | NotifyAttemptOutcome::Terminal => {
+                    clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
+                    true
+                }
+            }
         }
     }
-    record_successful_notification(now_secs, &accepted);
-    true
 }
 
 async fn send_and_notify(
@@ -758,11 +790,11 @@ async fn process_payout(ledger: &impl LedgerClient, index: &impl IndexClient, cm
                 logic::ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } => {
                     set_next_start(Some(tx.id));
                     // Best-effort policy: attempt each eligible top-up independently, allow at most
-                    // one immediate inline retry at ambiguous ledger / notify boundaries, and persist
+                    // one immediate inline retry at the accepted-ledger / notify boundary, and persist
                     // only the single in-flight transfer/notify phase so upgrades can resume safely.
-                    // Exhausted ambiguous paths are counted separately from deterministic failures so
-                    // operators can tell the difference between a known rejection and an unknown outcome
-                    // that may need external reconciliation.
+                    // Exhausted terminal notify paths count as deterministic failures; any remaining
+                    // transport/retryable uncertainty after the one safe retry is surfaced separately
+                    // as ambiguous so operators can reconcile only the truly unknown cases.
                     let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s, block_index: 0, next_start: Some(tx.id) };
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
@@ -907,7 +939,8 @@ mod tests {
     #[derive(Clone)]
     enum CmcStep {
         Ok,
-        Err,
+        RetryableErr,
+        TerminalErr,
     }
 
     struct ScriptedCmc {
@@ -934,7 +967,8 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             match self.steps.lock().unwrap().pop_front().expect("missing cmc step") {
                 CmcStep::Ok => Ok(()),
-                CmcStep::Err => Err(crate::clients::ClientError::Call("scripted cmc failure".to_string())),
+                CmcStep::RetryableErr => Err(crate::clients::ClientError::Call("scripted cmc failure".to_string())),
+                CmcStep::TerminalErr => Err(crate::clients::ClientError::TerminalNotify("scripted terminal cmc failure".to_string())),
             }
         }
     }
@@ -1138,6 +1172,19 @@ mod tests {
     }
 
     #[test]
+    fn transfer_arg_uses_little_endian_top_up_memo() {
+        state::set_state(state::State::new(test_config(), 0));
+        let arg = transfer_arg(
+            Account { owner: Principal::management_canister(), subaccount: Some([7u8; 32]) },
+            123_456_789,
+            10_000,
+            42,
+        );
+        let memo = arg.memo.expect("memo should be present");
+        assert_eq!(memo.0, logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec());
+    }
+
+    #[test]
     fn immediate_transfer_retry_reuses_created_at_time_and_succeeds_inline() {
         let now_secs = 1_000_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(1, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
@@ -1314,7 +1361,7 @@ mod tests {
             job
         });
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(55)]);
-        let cmc = ScriptedCmc::new(vec![CmcStep::Err, CmcStep::Ok]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::RetryableErr, CmcStep::Ok]);
 
         assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &cmc, now_secs * 1_000_000_000, now_secs)));
         assert_eq!(ledger.transfer_calls(), 1, "notify retry must not resend the ledger transfer");
@@ -1329,23 +1376,46 @@ mod tests {
     #[test]
     fn immediate_notify_retry_failure_counts_once_and_finalizes() {
         let now_secs = 4_000_u64;
-        set_active_job(now_secs, {
-            let mut job = ActivePayoutJob::new(4, 10_000, 80_000_000, 1, now_secs * 1_000_000_000);
-            job.scan_complete = true;
-            job
-        });
-        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(88)]);
-        let cmc = ScriptedCmc::new(vec![CmcStep::Err, CmcStep::Err]);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(4, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let index = ExclusiveIndex::new(vec![
+            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(88), LedgerStep::Ok(188)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::RetryableErr, CmcStep::RetryableErr, CmcStep::Ok]);
 
-        assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &cmc, now_secs * 1_000_000_000, now_secs)));
-        assert_eq!(ledger.transfer_calls(), 1);
-        assert_eq!(cmc.call_count(), 2);
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 2);
+        assert_eq!(cmc.call_count(), 3);
         assert!(state::with_state(|st| st.active_payout_job.is_none()));
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized after retry exhaustion");
-        assert_eq!(summary.remainder_to_self_e8s, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 39_990_000);
         assert_eq!(summary.failed_topups, 0);
-        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 1);
         assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn exhausted_terminal_notify_failure_counts_as_failed_after_one_safe_retry() {
+        let now_secs = 4_025_u64;
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(4025, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let index = ExclusiveIndex::new(vec![
+            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(89), LedgerStep::Ok(189)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::TerminalErr, CmcStep::TerminalErr, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 2, "exhausted terminal notify failures should skip the beneficiary and still send the remainder");
+        assert_eq!(cmc.call_count(), 3, "terminal notify failures should get one safe inline retry before the remainder notify");
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized after exhausted terminal notify failure");
+        assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 39_990_000);
+        assert_eq!(summary.topped_up_count, 0);
     }
 
     #[test]
@@ -1371,7 +1441,7 @@ mod tests {
         state::set_state(st);
 
         let ledger = ScriptedLedger::new(vec![]);
-        let first_tick_cmc = ScriptedCmc::new(vec![CmcStep::Err, CmcStep::Err]);
+        let first_tick_cmc = ScriptedCmc::new(vec![CmcStep::RetryableErr, CmcStep::RetryableErr]);
         let index = ScriptedIndex::new(vec![IndexResponseStep::Err]);
 
         assert!(!run_ready(process_payout(&ledger, &index, &first_tick_cmc, now_secs * 1_000_000_000, now_secs)));

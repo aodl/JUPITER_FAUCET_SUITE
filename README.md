@@ -64,7 +64,7 @@ The live value-moving path is:
 7. For each eligible contribution whose computed share is larger than the ledger fee, the faucet sends ICP to the beneficiary’s CMC deposit subaccount and then calls `notify_top_up`.
 8. The CMC converts those deposits into cycles top-ups.
 
-The faucet top-up path is intentionally **best effort**. Each eligible contribution is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work.
+The faucet top-up path is intentionally **best effort**. Each eligible contribution is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. Deterministic failures, including typed terminal CMC `notify_top_up` rejections, are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
 For the exact split math, memo formats, retry semantics, and rescue logic, the component READMEs are the canonical source:
 
@@ -107,7 +107,7 @@ See [`jupiter-faucet/README.md`](jupiter-faucet/README.md) for the exact rules a
   - no public production methods beyond installation / upgrade
 - `jupiter-historian`
   - public read-only query API for counts, status, histories, summaries, recent contributions, and recent burns
-  - the historian keeps a durable beneficiary registry plus bounded history/recent-feed views in canister state; the canonical full transfer history remains on the ICP ledger and its archive canisters
+  - the historian keeps a durable beneficiary registry plus bounded history/recent-feed views in canister state; the canonical full transfer history remains on the ICP ledger and its archive canisters, and if tracked-canister cardinality ever becomes an operational issue the intended next step is an archive canister rather than a hard cap in the live historian
 - `jupiter-faucet-frontend`
   - `http_request` for certified asset serving
 - `jupiter-lifeline`

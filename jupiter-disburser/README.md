@@ -114,8 +114,6 @@ The code also uses deterministic `created_at_time` values derived from the payou
 
 Together, those two fields are part of the duplicate-proof retry model.
 
-The planner intentionally streams the three configured recipient shares in a single pass and does **not** try to coalesce identical recipient accounts. That is a deliberate memory/simplicity tradeoff rather than an oversight: the payout plan stays compact and deterministic, at the cost that intentionally duplicated recipients would pay duplicate ledger fees.
-
 ## Transfer planning and retry semantics
 
 ### Persisted payout plan
@@ -193,6 +191,9 @@ Without a recorded successful transfer, the time-based rescue logic has no proof
   - recipient of the 80% age-bonus share
 - `age_bonus_recipient_2`
   - recipient of the 20% age-bonus share
+
+The three configured recipients must be pairwise distinct. The runtime also rejects any recipient that equals the disburser staging account.
+
 - `ledger_canister_id` (optional; defaults to ICP Ledger)
 - `governance_canister_id` (optional; defaults to NNS Governance)
 - `rescue_controller`

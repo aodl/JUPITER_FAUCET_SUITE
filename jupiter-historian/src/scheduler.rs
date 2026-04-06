@@ -1041,7 +1041,7 @@ mod tests {
             balance: 10_000,
             transactions: (1..=105)
                 .map(|tx_id| {
-                    let canister = candid::Principal::from_slice(&[(tx_id % 29 + 1) as u8]);
+                    let canister = candid::Principal::from_slice(&[1, (tx_id % 251 + 1) as u8]);
                     transfer_to_staking_tx(
                         tx_id,
                         &staking_id,

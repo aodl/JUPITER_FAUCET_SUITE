@@ -1156,7 +1156,7 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
 
 #[test]
 #[ignore]
-fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() -> Result<()> {
+fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -1188,10 +1188,82 @@ fn faucet_terminal_cmc_errors_still_retry_safely_without_duplicate_transfer() ->
         env.main_tick()?;
         let st = env.state()?;
         if st.active_payout_job_present || !st.last_summary_present {
-            bail!("expected terminal typed CMC error to be retried inline and complete within one tick");
+            bail!("expected terminal typed CMC error to complete within one tick after a safe inline notify retry");
         }
-        if env.ledger_transfers()?.len() != 1 || env.notifications()?.len() != 1 {
-            bail!("expected terminal typed CMC inline retry path to avoid duplicate transfer and finish with one notification");
+        let transfers = env.ledger_transfers()?;
+        let notes = env.notifications()?;
+        if transfers.len() != 1 || notes.len() != 1 {
+            bail!("expected terminal typed CMC path to avoid duplicate transfer and recover with exactly one completed notify, got transfers={} notifications={}", transfers.len(), notes.len());
+        }
+        let summary = env.summary()?;
+        if summary.failed_topups != 0 || summary.ambiguous_topups != 0 || summary.topped_up_count != 1 {
+            bail!(
+                "expected terminal typed CMC path to recover as a success after one safe retry, got failed_topups={} ambiguous_topups={} topped_up_count={}",
+                summary.failed_topups,
+                summary.ambiguous_topups,
+                summary.topped_up_count,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transfer_retry() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+
+    for script in [
+        vec![
+            DebugNotifyBehavior::Refunded {
+                reason: "refunded".to_string(),
+                block_index: Some(7),
+            },
+            DebugNotifyBehavior::Refunded {
+                reason: "still refunded".to_string(),
+                block_index: Some(7),
+            },
+        ],
+        vec![
+            DebugNotifyBehavior::TransactionTooOld(99),
+            DebugNotifyBehavior::TransactionTooOld(99),
+        ],
+        vec![
+            DebugNotifyBehavior::InvalidTransaction("bad block".to_string()),
+            DebugNotifyBehavior::InvalidTransaction("bad block".to_string()),
+        ],
+    ] {
+        update_noargs::<()>(&env.pic, env.ledger, Principal::anonymous(), "debug_reset")?;
+        update_noargs::<()>(&env.pic, env.index, Principal::anonymous(), "debug_reset")?;
+        update_noargs::<()>(&env.pic, env.cmc, Principal::anonymous(), "debug_reset")?;
+        update_noargs::<()>(&env.pic, env.faucet, Principal::anonymous(), "debug_reset_runtime_state")?;
+
+        env.credit_payout(100_000_000)?;
+        env.credit_staking(100_000_000)?;
+        env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+        env.set_cmc_script(script)?;
+
+        env.main_tick()?;
+        let st = env.state()?;
+        if st.active_payout_job_present || !st.last_summary_present {
+            bail!("expected exhausted terminal typed CMC errors to complete within one tick");
+        }
+        let transfers = env.ledger_transfers()?;
+        let notes = env.notifications()?;
+        if transfers.len() != 1 || !notes.is_empty() {
+            bail!("expected exhausted terminal typed CMC path to avoid duplicate transfer and leave no completed notify, got transfers={} notifications={}", transfers.len(), notes.len());
+        }
+        let summary = env.summary()?;
+        if summary.failed_topups != 1 || summary.ambiguous_topups != 0 || summary.topped_up_count != 0 {
+            bail!(
+                "expected exhausted terminal typed CMC path to count as deterministic failure, got failed_topups={} ambiguous_topups={} topped_up_count={}",
+                summary.failed_topups,
+                summary.ambiguous_topups,
+                summary.topped_up_count,
+            );
         }
     }
 

@@ -151,6 +151,7 @@ The subaccount layout is:
 - remaining bytes = zero padding
 
 That matches the standard top-up pattern used before calling `notify_top_up`.
+For ICRC-1 transfers, the faucet encodes the CMC top-up memo as an 8-byte **little-endian** blob so it matches how the CMC interprets ICRC memo bytes.
 
 ### Outgoing ledger transfer memo
 
@@ -184,7 +185,7 @@ On each successful main tick, the canister:
 6. scans the staking account through the ICP index canister, page by page
 7. evaluates each eligible incoming transfer independently
 8. for each eligible beneficiary contribution, performs ledger transfer then `notify_top_up`
-9. if an ambiguous transfer or notify failure occurs, retries that one step immediately once in-line
+9. if a transfer fails before acceptance or a post-acceptance notify fails, retries that step immediately once in-line
 10. when scanning is complete, optionally sends the remainder-to-self top-up
 11. finalizes the job into a persisted summary and applies health observations
 
@@ -209,7 +210,9 @@ The runtime still does **not** buffer an unbounded deferred retry queue; it only
 The faucet retries at most once, immediately and inline, at these two ambiguous boundaries:
 
 - ledger transfer failed before a block index was obtained
-- CMC `notify_top_up` failed after a ledger transfer had already been accepted
+- CMC `notify_top_up` failed after a ledger transfer had already been accepted (typed terminal replies are still retried once safely, then classified separately if they remain terminal)
+
+Typed terminal `notify_top_up` rejections such as `Refunded`, `TransactionTooOld`, and `InvalidTransaction` are still retried once safely after an accepted ledger transfer; if both notify attempts remain terminal, the beneficiary is counted as a deterministic failure rather than an ambiguity.
 
 ### Duplicate-proof behavior
 
@@ -219,10 +222,11 @@ If the ledger replies with `Duplicate`, the faucet reuses the returned block ind
 
 The faucet does **not** retry forever and does **not** buffer a retry queue in memory. Behavior is:
 
-- first ambiguous failure → retry that step once immediately, inline
-- retry still fails → count that contribution as **ambiguous** and continue with the next record
+- first accepted-ledger notify failure → retry that notify once immediately, inline
+- if both notify replies are typed terminal rejections → count that contribution as **failed** and continue
+- otherwise, if the retry still leaves transport / retryable uncertainty → count that contribution as **ambiguous** and continue
 
-This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible contributions may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters.
+This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible contributions may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
 
 ### Logging policy
