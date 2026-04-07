@@ -35,6 +35,8 @@ type InitArgs = record {
   staking_account : Account;
   ledger_canister_id : opt principal;
   index_canister_id : opt principal;
+  cmc_canister_id : opt principal;
+  faucet_canister_id : opt principal;
   blackhole_canister_id : opt principal;
   sns_wasm_canister_id : opt principal;
   enable_sns_tracking : opt bool;
@@ -152,6 +154,23 @@ type DebugState = record {
   active_cycles_sweep_next_index : opt nat64;
   last_index_run_ts : opt nat64;
 };
+type DebugConfig = record {
+  staking_account : Account;
+  ledger_canister_id : principal;
+  index_canister_id : principal;
+  cmc_canister_id : opt principal;
+  faucet_canister_id : opt principal;
+  blackhole_canister_id : principal;
+  sns_wasm_canister_id : principal;
+  enable_sns_tracking : bool;
+  scan_interval_seconds : nat64;
+  cycles_interval_seconds : nat64;
+  min_tx_e8s : nat64;
+  max_cycles_entries_per_canister : nat32;
+  max_contribution_entries_per_canister : nat32;
+  max_index_pages_per_tick : nat32;
+  max_canisters_per_cycles_tick : nat32;
+};
 service : (InitArgs) -> {
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
@@ -163,6 +182,7 @@ service : (InitArgs) -> {
   list_recent_contributions : (ListRecentContributionsArgs) -> (ListRecentContributionsResponse) query;
   list_recent_burns : (ListRecentBurnsArgs) -> (ListRecentBurnsResponse) query;
   debug_state : () -> (DebugState) query;
+  debug_config : () -> (DebugConfig) query;
   debug_driver_tick : () -> ();
   debug_set_last_completed_cycles_sweep_ts : (opt nat64) -> ();
   debug_set_last_sns_discovery_ts : (opt nat64) -> ();

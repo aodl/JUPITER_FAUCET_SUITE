@@ -15,7 +15,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "jupiter-disburser/jupiter_disburser_debug.did"
         }
       ]
     },
@@ -27,7 +28,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_icrc_ledger/mock_icrc_ledger.did"
         }
       ],
       "declarations": {
@@ -47,7 +49,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_nns_governance/mock_nns_governance.did"
         }
       ]
     },
@@ -87,7 +90,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "jupiter-faucet/jupiter_faucet_debug.did"
         }
       ]
     },
@@ -99,7 +103,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_icp_index/mock_icp_index.did"
         }
       ]
     },
@@ -111,7 +116,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_cmc/mock_cmc.did"
         }
       ]
     },
@@ -138,7 +144,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "jupiter-historian/jupiter_historian_debug.did"
         }
       ]
     },
@@ -150,7 +157,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_blackhole/mock_blackhole.did"
         }
       ]
     },
@@ -162,7 +170,8 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_sns_wasm/mock_sns_wasm.did"
         }
       ]
     },
@@ -174,7 +183,47 @@
       "skip_cargo_audit": true,
       "metadata": [
         {
-          "name": "candid:service"
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_sns_root/mock_sns_root.did"
+        }
+      ]
+    },
+    "jupiter_disburser_args_dbg": {
+      "type": "custom",
+      "candid": "jupiter-disburser/jupiter_disburser_debug.did",
+      "wasm": "target/wasm32-unknown-unknown/release/jupiter_disburser.wasm",
+      "build": "cargo build --target wasm32-unknown-unknown --release -p jupiter-disburser --features debug_api --locked",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service",
+          "path": "jupiter-disburser/jupiter_disburser_debug.did"
+        }
+      ]
+    },
+    "jupiter_faucet_args_dbg": {
+      "type": "custom",
+      "candid": "jupiter-faucet/jupiter_faucet_debug.did",
+      "wasm": "target/wasm32-unknown-unknown/release/jupiter_faucet.wasm",
+      "build": "cargo build --target wasm32-unknown-unknown --release -p jupiter-faucet --features debug_api --locked",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service",
+          "path": "jupiter-faucet/jupiter_faucet_debug.did"
+        }
+      ]
+    },
+    "jupiter_historian_args_dbg": {
+      "type": "custom",
+      "candid": "jupiter-historian/jupiter_historian_debug.did",
+      "wasm": "target/wasm32-unknown-unknown/release/jupiter_historian.wasm",
+      "build": "cargo build --target wasm32-unknown-unknown --release -p jupiter-historian --features debug_api --locked",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service",
+          "path": "jupiter-historian/jupiter_historian_debug.did"
         }
       ]
     }

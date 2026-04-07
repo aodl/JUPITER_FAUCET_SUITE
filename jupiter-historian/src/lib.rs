@@ -477,10 +477,12 @@ fn mainnet_sns_wasm_id() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("invalid hardcoded sns-wasm principal")
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
     Principal::from_text(env!("JUPITER_HISTORIAN_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 fn is_production_canister(principal: Principal) -> bool {
     principal == production_canister_id()
 }
@@ -1138,6 +1140,26 @@ pub struct DebugState {
 }
 
 #[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugConfig {
+    pub staking_account: Account,
+    pub ledger_canister_id: Principal,
+    pub index_canister_id: Principal,
+    pub cmc_canister_id: Option<Principal>,
+    pub faucet_canister_id: Option<Principal>,
+    pub blackhole_canister_id: Principal,
+    pub sns_wasm_canister_id: Principal,
+    pub enable_sns_tracking: bool,
+    pub scan_interval_seconds: u64,
+    pub cycles_interval_seconds: u64,
+    pub min_tx_e8s: u64,
+    pub max_cycles_entries_per_canister: u32,
+    pub max_contribution_entries_per_canister: u32,
+    pub max_index_pages_per_tick: u32,
+    pub max_canisters_per_cycles_tick: u32,
+}
+
+#[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state() -> DebugState {
     guard_debug_api_not_production();
@@ -1149,6 +1171,29 @@ fn debug_state() -> DebugState {
         active_cycles_sweep_present: st.active_cycles_sweep.is_some(),
         active_cycles_sweep_next_index: st.active_cycles_sweep.as_ref().map(|s| s.next_index),
         last_index_run_ts: st.last_index_run_ts,
+    })
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+fn debug_config() -> DebugConfig {
+    guard_debug_api_not_production();
+    state::with_state(|st| DebugConfig {
+        staking_account: st.config.staking_account.clone(),
+        ledger_canister_id: st.config.ledger_canister_id,
+        index_canister_id: st.config.index_canister_id,
+        cmc_canister_id: st.config.cmc_canister_id,
+        faucet_canister_id: st.config.faucet_canister_id,
+        blackhole_canister_id: st.config.blackhole_canister_id,
+        sns_wasm_canister_id: st.config.sns_wasm_canister_id,
+        enable_sns_tracking: st.config.enable_sns_tracking,
+        scan_interval_seconds: st.config.scan_interval_seconds,
+        cycles_interval_seconds: st.config.cycles_interval_seconds,
+        min_tx_e8s: st.config.min_tx_e8s,
+        max_cycles_entries_per_canister: st.config.max_cycles_entries_per_canister,
+        max_contribution_entries_per_canister: st.config.max_contribution_entries_per_canister,
+        max_index_pages_per_tick: st.config.max_index_pages_per_tick,
+        max_canisters_per_cycles_tick: st.config.max_canisters_per_cycles_tick,
     })
 }
 

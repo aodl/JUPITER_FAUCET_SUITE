@@ -5,7 +5,8 @@ use crate::clients::index::{IndexOperation, IndexTransactionWithId};
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
 
 pub const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
-pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
+#[cfg(test)]
+const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 
 #[derive(Clone, Debug)]
 pub struct Contribution {

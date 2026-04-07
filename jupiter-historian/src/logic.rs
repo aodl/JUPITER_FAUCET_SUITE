@@ -1,7 +1,8 @@
 use candid::Principal;
 
 pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid target canister memo";
-pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
+#[cfg(test)]
+const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};

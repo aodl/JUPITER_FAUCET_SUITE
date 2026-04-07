@@ -50,10 +50,12 @@ fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
     Principal::from_text(env!("JUPITER_DISBURSER_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 fn is_production_canister(principal: Principal) -> bool {
     principal == production_canister_id()
 }
@@ -185,6 +187,22 @@ pub struct DebugState {
 }
 
 #[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugConfig {
+    pub neuron_id: u64,
+    pub normal_recipient: Account,
+    pub age_bonus_recipient_1: Account,
+    pub age_bonus_recipient_2: Account,
+    pub ledger_canister_id: Principal,
+    pub governance_canister_id: Principal,
+    pub rescue_controller: Principal,
+    pub blackhole_controller: Option<Principal>,
+    pub blackhole_armed: Option<bool>,
+    pub main_interval_seconds: u64,
+    pub rescue_interval_seconds: u64,
+}
+
+#[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state() -> DebugState {
     guard_debug_api_not_production();
@@ -197,6 +215,25 @@ fn debug_state() -> DebugState {
         blackhole_controller: st.config.blackhole_controller,
         blackhole_armed_since_ts: st.blackhole_armed_since_ts,
         forced_rescue_reason: st.forced_rescue_reason.clone(),
+    })
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+fn debug_config() -> DebugConfig {
+    guard_debug_api_not_production();
+    crate::state::with_state(|st| DebugConfig {
+        neuron_id: st.config.neuron_id,
+        normal_recipient: st.config.normal_recipient.clone(),
+        age_bonus_recipient_1: st.config.age_bonus_recipient_1.clone(),
+        age_bonus_recipient_2: st.config.age_bonus_recipient_2.clone(),
+        ledger_canister_id: st.config.ledger_canister_id,
+        governance_canister_id: st.config.governance_canister_id,
+        rescue_controller: st.config.rescue_controller,
+        blackhole_controller: st.config.blackhole_controller,
+        blackhole_armed: st.config.blackhole_armed,
+        main_interval_seconds: st.config.main_interval_seconds,
+        rescue_interval_seconds: st.config.rescue_interval_seconds,
     })
 }
 

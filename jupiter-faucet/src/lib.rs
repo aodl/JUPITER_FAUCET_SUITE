@@ -51,10 +51,12 @@ fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
     Principal::from_text(env!("JUPITER_FAUCET_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 fn is_production_canister(principal: Principal) -> bool {
     principal == production_canister_id()
 }
@@ -202,6 +204,23 @@ pub struct DebugAccounts {
 
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
+pub struct DebugConfig {
+    pub staking_account: Account,
+    pub payout_subaccount: Option<Vec<u8>>,
+    pub ledger_canister_id: Principal,
+    pub index_canister_id: Principal,
+    pub cmc_canister_id: Principal,
+    pub rescue_controller: Principal,
+    pub blackhole_controller: Option<Principal>,
+    pub blackhole_armed: Option<bool>,
+    pub expected_first_staking_tx_id: Option<u64>,
+    pub main_interval_seconds: u64,
+    pub rescue_interval_seconds: u64,
+    pub min_tx_e8s: u64,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
 pub struct DebugFootprint {
     pub state_candid_bytes: u64,
     pub active_payout_job_candid_bytes: u64,
@@ -248,6 +267,26 @@ fn debug_accounts() -> DebugAccounts {
             subaccount: st.config.payout_subaccount,
         },
         staking: st.config.staking_account.clone(),
+    })
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+fn debug_config() -> DebugConfig {
+    guard_debug_api_not_production();
+    crate::state::with_state(|st| DebugConfig {
+        staking_account: st.config.staking_account.clone(),
+        payout_subaccount: st.config.payout_subaccount.map(|bytes| bytes.to_vec()),
+        ledger_canister_id: st.config.ledger_canister_id,
+        index_canister_id: st.config.index_canister_id,
+        cmc_canister_id: st.config.cmc_canister_id,
+        rescue_controller: st.config.rescue_controller,
+        blackhole_controller: st.config.blackhole_controller,
+        blackhole_armed: st.config.blackhole_armed,
+        expected_first_staking_tx_id: st.config.expected_first_staking_tx_id,
+        main_interval_seconds: st.config.main_interval_seconds,
+        rescue_interval_seconds: st.config.rescue_interval_seconds,
+        min_tx_e8s: st.config.min_tx_e8s,
     })
 }
 

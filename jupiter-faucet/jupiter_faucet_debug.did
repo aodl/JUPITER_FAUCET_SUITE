@@ -27,6 +27,20 @@ type ForcedRescueReason = variant {
 };
 
 type DebugAccounts = record { payout : Account; staking : Account };
+type DebugConfig = record {
+  staking_account : Account;
+  payout_subaccount : opt vec nat8;
+  ledger_canister_id : principal;
+  index_canister_id : principal;
+  cmc_canister_id : principal;
+  rescue_controller : principal;
+  blackhole_controller : opt principal;
+  blackhole_armed : opt bool;
+  expected_first_staking_tx_id : opt nat64;
+  main_interval_seconds : nat64;
+  rescue_interval_seconds : nat64;
+  min_tx_e8s : nat64;
+};
 type DebugFootprint = record {
   state_candid_bytes : nat64;
   active_payout_job_candid_bytes : nat64;
@@ -65,6 +79,7 @@ type Summary = record {
 };
 service : (InitArgs) -> {
   debug_accounts : () -> (DebugAccounts) query;
+  debug_config : () -> (DebugConfig) query;
   debug_footprint : () -> (DebugFootprint) query;
   debug_last_summary : () -> (opt Summary) query;
   debug_reset_runtime_state : () -> ();

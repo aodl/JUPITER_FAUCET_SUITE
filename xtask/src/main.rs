@@ -180,6 +180,9 @@ fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
     trimmed.is_empty()
         || trimmed.contains("] Cycles: ")
         || (trimmed.contains(" UTC: [Canister ") && trimmed.contains("] "))
+        || trimmed.contains(" canister created with canister id:")
+        || trimmed.starts_with("Installed code for canister ")
+        || trimmed.starts_with("Reinstalled code for canister ")
 }
 
 fn run_dfx(args: &[&str]) -> Result<String> {
@@ -232,11 +235,47 @@ fn run_dfx(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn candid_path_for_canister(canister: &str) -> Option<String> {
+    let repo = repo_root();
+    let relative = match canister {
+        "jupiter_disburser" => "jupiter-disburser/jupiter_disburser.did",
+        "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => "jupiter-disburser/jupiter_disburser_debug.did",
+        "jupiter_faucet" => "jupiter-faucet/jupiter_faucet.did",
+        "jupiter_faucet_dbg" | "jupiter_faucet_args_dbg" => "jupiter-faucet/jupiter_faucet_debug.did",
+        "jupiter_historian" => "jupiter-historian/jupiter_historian.did",
+        "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => "jupiter-historian/jupiter_historian_debug.did",
+        "mock_icrc_ledger" => "mock-icrc-ledger/mock_icrc_ledger.did",
+        "mock_nns_governance" => "mock-nns-governance/mock_nns_governance.did",
+        "mock_icp_index" => "mock-icp-index/mock_icp_index.did",
+        "mock_cmc" => "mock-cmc/mock_cmc.did",
+        "mock_blackhole" => "mock-blackhole/mock_blackhole.did",
+        "mock_sns_wasm" => "mock-sns-wasm/mock_sns_wasm.did",
+        "mock_sns_root" => "mock-sns-root/mock_sns_root.did",
+        _ => return None,
+    };
+    let path = std::path::Path::new(&repo).join(relative).canonicalize().ok()?;
+    Some(path.to_string_lossy().into_owned())
+}
+
 fn call_raw<T>(canister: &str, method: &str, args: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de> + CandidType,
 {
-    let out = run_dfx(&["canister", "call", canister, method, args, "--output", "raw"])?;
+    let mut cmd: Vec<String> = vec![
+        "canister".into(),
+        "call".into(),
+        canister.into(),
+        method.into(),
+        args.into(),
+        "--output".into(),
+        "raw".into(),
+    ];
+    if let Some(candid) = candid_path_for_canister(canister) {
+        cmd.push("--candid".into());
+        cmd.push(candid);
+    }
+    let refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
+    let out = run_dfx(&refs)?;
     let hex_str = out.trim().trim_start_matches("0x");
     let bytes = hex::decode(hex_str)?;
     Ok(decode_one(&bytes)?)
@@ -311,9 +350,40 @@ struct DebugState {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
+struct DisburserDebugConfig {
+    neuron_id: u64,
+    normal_recipient: Account,
+    age_bonus_recipient_1: Account,
+    age_bonus_recipient_2: Account,
+    ledger_canister_id: Principal,
+    governance_canister_id: Principal,
+    rescue_controller: Principal,
+    blackhole_controller: Option<Principal>,
+    blackhole_armed: Option<bool>,
+    main_interval_seconds: u64,
+    rescue_interval_seconds: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
 struct FaucetDebugAccounts {
     payout: Account,
     staking: Account,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct FaucetDebugConfig {
+    staking_account: Account,
+    payout_subaccount: Option<Vec<u8>>,
+    ledger_canister_id: Principal,
+    index_canister_id: Principal,
+    cmc_canister_id: Principal,
+    rescue_controller: Principal,
+    blackhole_controller: Option<Principal>,
+    blackhole_armed: Option<bool>,
+    expected_first_staking_tx_id: Option<u64>,
+    main_interval_seconds: u64,
+    rescue_interval_seconds: u64,
+    min_tx_e8s: u64,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -420,6 +490,24 @@ struct HistorianPublicStatus {
     cycles_interval_seconds: u64,
 }
 
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianDebugConfig {
+    staking_account: Account,
+    ledger_canister_id: Principal,
+    index_canister_id: Principal,
+    cmc_canister_id: Option<Principal>,
+    faucet_canister_id: Option<Principal>,
+    blackhole_canister_id: Principal,
+    sns_wasm_canister_id: Principal,
+    enable_sns_tracking: bool,
+    scan_interval_seconds: u64,
+    cycles_interval_seconds: u64,
+    min_tx_e8s: u64,
+    max_cycles_entries_per_canister: u32,
+    max_contribution_entries_per_canister: u32,
+    max_index_pages_per_tick: u32,
+    max_canisters_per_cycles_tick: u32,
+}
 
 #[derive(Debug, CandidType, Deserialize)]
 struct HistorianRegisteredCanisterSummary {
@@ -540,6 +628,9 @@ fn nat_plain_string(value: &Nat) -> String {
     value.to_string().replace('_', "")
 }
 
+fn bytes_to_candid_blob(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!(r"\{:02x}", b)).collect()
+}
 
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
@@ -663,6 +754,63 @@ fn faucet_staking_account() -> Account {
     }
 }
 
+fn mainnet_governance_principal() -> Principal {
+    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("valid governance principal")
+}
+
+fn mainnet_ledger_principal() -> Principal {
+    Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("valid ledger principal")
+}
+
+fn mainnet_index_principal() -> Principal {
+    Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").expect("valid index principal")
+}
+
+fn mainnet_cmc_principal() -> Principal {
+    Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").expect("valid cmc principal")
+}
+
+fn mainnet_blackhole_principal() -> Principal {
+    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("valid blackhole principal")
+}
+
+fn mainnet_sns_wasm_principal() -> Principal {
+    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid sns wasm principal")
+}
+
+fn prod_lifeline_principal() -> Principal {
+    Principal::from_text("afisn-gqaaa-aaaar-qb4qa-cai").expect("valid lifeline principal")
+}
+
+fn prod_faucet_principal() -> Principal {
+    Principal::from_text("acjuz-liaaa-aaaar-qb4qq-cai").expect("valid faucet principal")
+}
+
+fn prod_sns_rewards_principal() -> Principal {
+    Principal::from_text("alk7f-5aaaa-aaaar-qb4ra-cai").expect("valid sns rewards principal")
+}
+
+fn expected_mainnet_staking_subaccount() -> [u8; 32] {
+    [
+        255, 12, 11, 54, 175, 239, 255, 208, 199, 164, 216, 92, 11, 206, 163, 102,
+        172, 214, 215, 79, 69, 247, 112, 61, 7, 131, 204, 100, 72, 137, 156, 104,
+    ]
+}
+
+fn expected_dquorum_subaccount() -> [u8; 32] {
+    [
+        119, 230, 61, 231, 43, 94, 51, 57, 234, 32, 244, 186, 243, 236, 43, 217,
+        33, 56, 221, 222, 13, 174, 182, 157, 181, 10, 204, 235, 56, 75, 223, 15,
+    ]
+}
+
+fn expected_mainnet_staking_account() -> Account {
+    Account {
+        owner: mainnet_governance_principal(),
+        subaccount: Some(expected_mainnet_staking_subaccount()),
+    }
+}
+
 fn cmd_setup_disburser_dfx() -> Result<()> {
     cmd_setup_common()?;
 
@@ -730,7 +878,7 @@ fn cmd_setup_faucet_dfx() -> Result<()> {
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
     let faucet_args = format!(
         r#"(record {{
-            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
             payout_subaccount = null;
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
@@ -744,13 +892,9 @@ fn cmd_setup_faucet_dfx() -> Result<()> {
             min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
-        staking_subaccount = faucet_staking_account
+        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
             .subaccount
-            .unwrap()
-            .iter()
-            .map(|b| b.to_string())
-            .collect::<Vec<_>>()
-            .join("; "),
+            .unwrap()),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
@@ -792,7 +936,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
     let faucet_args = format!(
         r#"(record {{
-            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
             payout_subaccount = null;
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
@@ -806,13 +950,9 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
-        staking_subaccount = faucet_staking_account
+        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
             .subaccount
-            .unwrap()
-            .iter()
-            .map(|b| b.to_string())
-            .collect::<Vec<_>>()
-            .join("; "),
+            .unwrap()),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
@@ -832,7 +972,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
 
     let historian_args = format!(
         r#"(record {{
-            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
@@ -855,13 +995,9 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
         staking_owner = faucet_staking_account.owner.to_text(),
-        staking_subaccount = faucet_staking_account
+        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
             .subaccount
-            .unwrap()
-            .iter()
-            .map(|b| b.to_string())
-            .collect::<Vec<_>>()
-            .join("; "),
+            .unwrap()),
     );
     run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
 
@@ -939,7 +1075,7 @@ fn cmd_setup() -> Result<()> {
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
     let faucet_args = format!(
         r#"(record {{
-            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
             payout_subaccount = null;
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
@@ -953,13 +1089,9 @@ fn cmd_setup() -> Result<()> {
             min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
-        staking_subaccount = faucet_staking_account
+        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
             .subaccount
-            .unwrap()
-            .iter()
-            .map(|b| b.to_string())
-            .collect::<Vec<_>>()
-            .join("; "),
+            .unwrap()),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
@@ -980,7 +1112,7 @@ fn cmd_setup() -> Result<()> {
 
     let historian_args = format!(
         r#"(record {{
-            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_subaccount} }} }};
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
@@ -997,13 +1129,9 @@ fn cmd_setup() -> Result<()> {
             max_canisters_per_cycles_tick = opt (10:nat32);
         }},)"#,
         staking_owner = faucet_staking_account.owner.to_text(),
-        staking_subaccount = faucet_staking_account
+        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
             .subaccount
-            .unwrap()
-            .iter()
-            .map(|b| b.to_string())
-            .collect::<Vec<_>>()
-            .join("; "),
+            .unwrap()),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
@@ -1029,6 +1157,54 @@ fn cmd_teardown() -> Result<()> {
     let _ = run_dfx(&["stop"])?;
     Ok(())
 }
+
+fn create_canister(canister: &str) -> Result<()> {
+    run_dfx(&["canister", "create", canister])?;
+    Ok(())
+}
+
+fn wasm_path_for_canister(canister: &str) -> Result<String> {
+    let repo = repo_root();
+    let relative = match canister {
+        "jupiter_disburser_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_disburser.wasm",
+        "jupiter_faucet_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_faucet.wasm",
+        "jupiter_historian_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_historian.wasm",
+        _ => bail!("no explicit wasm path configured for {canister}"),
+    };
+    let wasm = std::path::Path::new(&repo).join(relative);
+    let wasm = wasm
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", wasm.display()))?;
+    let wasm = wasm
+        .to_str()
+        .context("wasm path is not valid UTF-8")?;
+    Ok(wasm.to_string())
+}
+
+fn install_with_argument_file(canister: &str, relative_path: &str) -> Result<()> {
+    let repo = repo_root();
+    let arg_file = std::path::Path::new(&repo).join(relative_path);
+    let arg_file = arg_file
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", arg_file.display()))?;
+    let arg_file = arg_file
+        .to_str()
+        .context("argument file path is not valid UTF-8")?;
+    let wasm = wasm_path_for_canister(canister)?;
+    run_dfx(&[
+        "canister",
+        "install",
+        canister,
+        "--wasm",
+        &wasm,
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        arg_file,
+    ])?;
+    Ok(())
+}
+
 
 fn get_canister_controllers(canister: &str) -> Result<BTreeSet<String>> {
     // Example output typically contains a line like:
@@ -1232,6 +1408,31 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
+    run_scenario(outcomes, label("dfx", "disburser", "checked-in mainnet install args round-trip into config"), || {
+        create_canister("jupiter_disburser_args_dbg")?;
+        install_with_argument_file("jupiter_disburser_args_dbg", "jupiter-disburser/mainnet-install-args.did")?;
+        let cfg: DisburserDebugConfig = call_raw_noargs("jupiter_disburser_args_dbg", "debug_config")?;
+        let expected_normal = Account { owner: prod_faucet_principal(), subaccount: None };
+        let expected_bonus_1 = Account { owner: prod_sns_rewards_principal(), subaccount: None };
+        let expected_bonus_2 = Account { owner: mainnet_governance_principal(), subaccount: Some(expected_dquorum_subaccount()) };
+        let ok = cfg.neuron_id == 11_614_578_985_374_291_210
+            && cfg.normal_recipient == expected_normal
+            && cfg.age_bonus_recipient_1 == expected_bonus_1
+            && cfg.age_bonus_recipient_2 == expected_bonus_2
+            && cfg.ledger_canister_id == mainnet_ledger_principal()
+            && cfg.governance_canister_id == mainnet_governance_principal()
+            && cfg.rescue_controller == prod_lifeline_principal()
+            && cfg.blackhole_controller == Some(mainnet_blackhole_principal())
+            && cfg.blackhole_armed == Some(false)
+            && cfg.main_interval_seconds == 86_400
+            && cfg.rescue_interval_seconds == 86_400;
+        if !ok {
+            let failure = format!("unexpected disburser debug_config: {:?}", cfg);
+            bail!("{failure}");
+        }
+        Ok(())
+    });
+
     run_scenario(
         outcomes,
         label("dfx", "disburser", "Rescue controllers invariants (broken→blackhole+rescue+self, healthy→blackhole+self)"),
@@ -1411,6 +1612,8 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
     
         Ok(())
     });
+
+
 
     Ok(())
 }
@@ -2101,6 +2304,29 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
+    run_scenario(outcomes, label("dfx", "faucet", "checked-in mainnet install args round-trip into config"), || {
+        create_canister("jupiter_faucet_args_dbg")?;
+        install_with_argument_file("jupiter_faucet_args_dbg", "jupiter-faucet/mainnet-install-args.did")?;
+        let cfg: FaucetDebugConfig = call_raw_noargs("jupiter_faucet_args_dbg", "debug_config")?;
+        let ok = cfg.staking_account == expected_mainnet_staking_account()
+            && cfg.payout_subaccount.is_none()
+            && cfg.ledger_canister_id == mainnet_ledger_principal()
+            && cfg.index_canister_id == mainnet_index_principal()
+            && cfg.cmc_canister_id == mainnet_cmc_principal()
+            && cfg.rescue_controller == prod_lifeline_principal()
+            && cfg.blackhole_controller == Some(mainnet_blackhole_principal())
+            && cfg.blackhole_armed.is_none()
+            && cfg.expected_first_staking_tx_id == Some(31_118_741)
+            && cfg.main_interval_seconds == 604_800
+            && cfg.rescue_interval_seconds == 86_400
+            && cfg.min_tx_e8s == 100_000_000;
+        if !ok {
+            let failure = format!("unexpected faucet debug_config: {:?}", cfg);
+            bail!("{failure}");
+        }
+        Ok(())
+    });
+
     run_scenario(outcomes, label("dfx", "faucet", "rescue: before first successful top-up it stays on current controllers"), || {
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
         let _: () = call_raw("jupiter_faucet_dbg", "debug_set_blackhole_armed", "(opt true)")?;
@@ -2150,6 +2376,8 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
         Ok(())
     });
+
+
 
     Ok(())
 }
@@ -3002,14 +3230,46 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
+
+
     Ok(())
 }
+fn run_dfx_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_scenario(outcomes, label("dfx", "historian", "checked-in mainnet install args round-trip into config"), || {
+        create_canister("jupiter_historian_args_dbg")?;
+        install_with_argument_file("jupiter_historian_args_dbg", "jupiter-historian/mainnet-install-args.did")?;
+        let cfg: HistorianDebugConfig = call_raw_noargs("jupiter_historian_args_dbg", "debug_config")?;
+        if cfg.staking_account != expected_mainnet_staking_account()
+            || cfg.ledger_canister_id != mainnet_ledger_principal()
+            || cfg.index_canister_id != mainnet_index_principal()
+            || cfg.cmc_canister_id != Some(mainnet_cmc_principal())
+            || cfg.faucet_canister_id != Some(prod_faucet_principal())
+            || cfg.blackhole_canister_id != mainnet_blackhole_principal()
+            || cfg.sns_wasm_canister_id != mainnet_sns_wasm_principal()
+            || cfg.enable_sns_tracking
+            || cfg.scan_interval_seconds != 600
+            || cfg.cycles_interval_seconds != 604_800
+            || cfg.min_tx_e8s != 100_000_000
+            || cfg.max_cycles_entries_per_canister != 100
+            || cfg.max_contribution_entries_per_canister != 100
+            || cfg.max_index_pages_per_tick != 10
+            || cfg.max_canisters_per_cycles_tick != 25
+        {
+            bail!("unexpected historian debug_config: {:?}", cfg);
+        }
+        Ok(())
+    });
+
+    Ok(())
+}
+
 
 fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_dfx_disburser_scenarios(outcomes)?;
     run_dfx_faucet_scenarios(outcomes)?;
     run_dfx_historian_scenarios(outcomes)?;
     run_dfx_frontend_scenarios(outcomes)?;
+    run_dfx_historian_config_roundtrip_scenario(outcomes)?;
     Ok(())
 }
 
@@ -3225,8 +3485,8 @@ fn run_repo_validation_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         outcomes,
         "repo",
         "",
-        "./scripts/validate-mainnet-install-args",
-        &[],
+        "python3",
+        &["./scripts/validate-mainnet-install-args"],
         &root,
         &[],
     )
@@ -3255,7 +3515,10 @@ fn run_dfx_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompone
         TestComponent::Test => run_dfx_scenarios(outcomes)?,
         TestComponent::Disburser => run_dfx_disburser_scenarios(outcomes)?,
         TestComponent::Faucet => run_dfx_faucet_scenarios(outcomes)?,
-        TestComponent::Historian => run_dfx_historian_scenarios(outcomes)?,
+        TestComponent::Historian => {
+            run_dfx_historian_scenarios(outcomes)?;
+            run_dfx_historian_config_roundtrip_scenario(outcomes)?;
+        }
         TestComponent::Frontend => run_frontend_dfx_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_dfx_integration is not supported; use e2e_all"),
     }

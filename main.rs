@@ -290,6 +290,10 @@ fn account_identifier_text(account: &Account) -> String {
     hex::encode(bytes)
 }
 
+fn bytes_to_candid_blob(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!(r"\{:02x}", b)).collect()
+}
+
 fn deploy_disburser_dbg() -> Result<()> {
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -341,7 +345,7 @@ fn deploy_faucet_dbg(mode: Option<&str>) -> Result<()> {
 
     let args = format!(
         r#"(record {{
-            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt vec {{ {staking_sub} }} }};
+            staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_sub}" }};
             payout_subaccount = null;
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
@@ -353,7 +357,7 @@ fn deploy_faucet_dbg(mode: Option<&str>) -> Result<()> {
             min_tx_e8s = opt (100000000:nat64);
         }},)"#,
         staking_owner = short_test_principal().to_text(),
-        staking_sub = (0u8..32).map(|_| "7:nat8").collect::<Vec<_>>().join("; "),
+        staking_sub = bytes_to_candid_blob(&[7u8; 32]),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),

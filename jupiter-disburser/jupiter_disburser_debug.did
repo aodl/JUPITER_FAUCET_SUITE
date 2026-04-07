@@ -35,9 +35,23 @@ type DebugState = record {
   blackhole_armed_since_ts : opt nat64;
   forced_rescue_reason : opt ForcedRescueReason;
 };
+type DebugConfig = record {
+  neuron_id : nat64;
+  normal_recipient : Account;
+  age_bonus_recipient_1 : Account;
+  age_bonus_recipient_2 : Account;
+  ledger_canister_id : principal;
+  governance_canister_id : principal;
+  rescue_controller : principal;
+  blackhole_controller : opt principal;
+  blackhole_armed : opt bool;
+  main_interval_seconds : nat64;
+  rescue_interval_seconds : nat64;
+};
 
 service : (InitArgs) -> {
   debug_state : () -> (DebugState) query;
+  debug_config : () -> (DebugConfig) query;
   debug_state_size_bytes : () -> (nat64) query;
 
   debug_main_tick : () -> ();
