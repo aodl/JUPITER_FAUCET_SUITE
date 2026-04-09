@@ -559,7 +559,9 @@ async fn send_and_notify(
 
 fn ensure_active_job(now_nanos: u64, fee_e8s: u64, pot_start_e8s: u64, denom_e8s: u64) {
     state::with_state_mut(|st| {
-        if st.active_payout_job.is_some() { return; }
+        if st.active_payout_job.is_some() {
+            return;
+        }
         let id = st.payout_nonce;
         st.payout_nonce = st.payout_nonce.saturating_add(1);
         st.active_payout_job = Some(ActivePayoutJob::new(id, fee_e8s, pot_start_e8s, denom_e8s, now_nanos));

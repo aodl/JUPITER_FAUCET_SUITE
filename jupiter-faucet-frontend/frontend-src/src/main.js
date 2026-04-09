@@ -398,7 +398,7 @@ function formatCommitmentOutcome(item) {
     case 'UnderThresholdContribution':
       return 'Under threshold';
     case 'InvalidTargetMemo':
-      return 'Invalid input';
+      return 'Invalid target';
     default:
       return item?.counts_toward_faucet ? 'Qualifying' : 'Non-qualifying';
   }

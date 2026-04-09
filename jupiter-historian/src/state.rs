@@ -268,6 +268,10 @@ thread_local! {
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
+    #[cfg(test)]
+    static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    #[cfg(test)]
+    static PERSISTENCE_DIRTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
@@ -305,6 +309,7 @@ pub fn restore_state_from_stable() -> Option<State> {
 
 pub fn set_state(st: State) {
     persist_snapshot(&st);
+    clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
@@ -316,14 +321,93 @@ pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
+#[cfg(test)]
+fn persistence_batch_active() -> bool {
+    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.get() > 0)
+}
+
+#[cfg(not(test))]
+fn persistence_batch_active() -> bool {
+    false
+}
+
+#[cfg(test)]
+fn mark_persistence_dirty() {
+    PERSISTENCE_DIRTY.with(|dirty| dirty.set(true));
+}
+
+#[cfg(not(test))]
+fn mark_persistence_dirty() {}
+
+#[cfg(test)]
+fn clear_persistence_dirty() {
+    PERSISTENCE_DIRTY.with(|dirty| dirty.set(false));
+}
+
+#[cfg(not(test))]
+fn clear_persistence_dirty() {}
+
+#[cfg(test)]
+pub fn persist_dirty_state() {
+    let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
+    if !dirty {
+        return;
+    }
+    let snapshot = get_state();
+    persist_snapshot(&snapshot);
+    clear_persistence_dirty();
+}
+
+#[cfg(test)]
+/// A synchronous persistence-batch guard.
+///
+/// Do not hold this guard across an `await` point. While it is live, mutations are
+/// only marked dirty and are not durably flushed until the batch ends or an
+/// explicit `persist_dirty_state()` call occurs.
+pub struct PersistenceBatch {
+    active: bool,
+}
+
+#[cfg(test)]
+impl Drop for PersistenceBatch {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let should_flush = PERSISTENCE_BATCH_DEPTH.with(|depth| {
+            let current = depth.get();
+            assert!(current > 0, "persistence batch depth underflow");
+            depth.set(current - 1);
+            current == 1
+        });
+        if should_flush {
+            persist_dirty_state();
+        }
+        self.active = false;
+    }
+}
+
+#[cfg(test)]
+#[must_use]
+pub fn begin_persistence_batch() -> PersistenceBatch {
+    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    PersistenceBatch { active: true }
+}
+
 pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|s| {
         let mut borrow = s.borrow_mut();
         let st = borrow.as_mut().expect("state not initialized");
+        let immediate_persist = !persistence_batch_active();
         let out = f(st);
-        let snapshot = st.clone();
+        if immediate_persist {
+            let snapshot = st.clone();
+            drop(borrow);
+            persist_snapshot(&snapshot);
+            return out;
+        }
+        mark_persistence_dirty();
         drop(borrow);
-        persist_snapshot(&snapshot);
         out
     })
 }
@@ -476,6 +560,8 @@ mod tests {
             cell.set(VersionedStableState::Uninitialized)
                 .expect("failed to reset historian stable state for test");
         });
+        PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
+        PERSISTENCE_DIRTY.with(|dirty| dirty.set(false));
         STATE.with(|s| *s.borrow_mut() = None);
     }
 
@@ -588,5 +674,27 @@ mod tests {
         assert_eq!(restored.main_lock_state_ts, Some(66));
         assert_eq!(restored.recent_invalid_contributions.as_ref().expect("missing invalid contributions")[0].tx_id, 12);
         assert_eq!(restored.recent_burns.as_ref().expect("missing recent burns")[0].canister_id, canister_id);
+    }
+
+    #[test]
+    fn persistence_batch_defers_writes_until_flush_boundary() {
+        reset_test_storage();
+        set_state(State::new(sample_config(), 7_000));
+
+        {
+            let _batch = begin_persistence_batch();
+            with_state_mut(|st| {
+                st.last_indexed_staking_tx_id = Some(88);
+                st.main_lock_state_ts = Some(77);
+            });
+            let restored_mid = restore_state_from_stable().expect("expected persisted state before batch mutation");
+            assert_ne!(restored_mid.last_indexed_staking_tx_id, Some(88));
+            assert_ne!(restored_mid.main_lock_state_ts, Some(77));
+            persist_dirty_state();
+        }
+
+        let restored = restore_state_from_stable().expect("expected persisted state after batch flush");
+        assert_eq!(restored.last_indexed_staking_tx_id, Some(88));
+        assert_eq!(restored.main_lock_state_ts, Some(77));
     }
 }
