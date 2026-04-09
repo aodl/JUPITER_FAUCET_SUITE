@@ -6,6 +6,11 @@ type ContributionSample = record {
   amount_e8s : nat64;
   counts_toward_faucet : bool;
 };
+type RecentContributionOutcomeCategory = variant {
+  QualifyingContribution;
+  UnderThresholdContribution;
+  InvalidTargetMemo;
+};
 type RecentContributionListItem = record {
   canister_id : opt principal;
   memo_text : opt text;
@@ -13,6 +18,7 @@ type RecentContributionListItem = record {
   timestamp_nanos : opt nat64;
   amount_e8s : nat64;
   counts_toward_faucet : bool;
+  outcome_category : RecentContributionOutcomeCategory;
 };
 type CyclesSampleSource = variant { BlackholeStatus; SelfCanister; SnsRootSummary };
 type CyclesSample = record {

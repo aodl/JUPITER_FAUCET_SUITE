@@ -77,6 +77,7 @@ function recentResponse() {
         timestamp_nanos: [1_710_000_000_000_000_000n],
         amount_e8s: 200_000_000n,
         counts_toward_faucet: true,
+        outcome_category: { QualifyingContribution: null },
       },
     ],
   };
@@ -381,6 +382,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
             timestamp_nanos: [1_710_000_000_000_000_001n],
             amount_e8s: 5_000_000n,
             counts_toward_faucet: false,
+            outcome_category: { UnderThresholdContribution: null },
           }],
         };
       },

@@ -200,6 +200,12 @@ struct DebugFootprint {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugCanisterInfoProbeResult {
+    exists: bool,
+    observed_reject: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct FaucetSummary {
     pot_start_e8s: u64,
     pot_remaining_e8s: u64,
@@ -481,6 +487,10 @@ impl FaucetEnv {
     fn ledger_fee_e8s(&self) -> Result<u64> {
         let fee: Nat = query_one(&self.pic, self.ledger, Principal::anonymous(), "icrc1_fee", ())?;
         Ok(nat_to_u64(&fee))
+    }
+
+    fn debug_canister_info_probe(&self, canister_id: Principal) -> Result<DebugCanisterInfoProbeResult> {
+        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_canister_info_probe", canister_id)
     }
 
     fn index_get_calls(&self) -> Result<Vec<DebugGetCall>> {
@@ -1995,6 +2005,78 @@ fn faucet_opaque_principal_target_is_accepted_by_current_cmc_path() -> Result<()
         bail!(
             "expected exactly one successful CMC notification for opaque principal target, got {:?}",
             notifications
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_canister_info_characterization_matrix_records_observed_wording() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+
+    let installed_canister = env.blackhole;
+    let nonexistent_canister = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
+    let reserved_principal = Principal::from_slice(&[0x7f]);
+    let opaque_principal = Principal::from_slice(&[0x01]);
+
+    let cases = [
+        ("installed_canister_id", installed_canister, true),
+        ("nonexistent_canister_id", nonexistent_canister, false),
+        ("reserved_principal", reserved_principal, false),
+        ("opaque_principal", opaque_principal, false),
+    ];
+
+    for (label, target, expected_exists) in cases {
+        let observed_probe = env.debug_canister_info_probe(target)?;
+        let exists = observed_probe.exists;
+        let observed = observed_probe.observed_reject;
+        println!(
+            "canister_info_characterization_via_faucet label={label} target={} exists={} observed_reject={:?}",
+            target,
+            exists,
+            observed
+        );
+        if exists != expected_exists {
+            bail!(
+                "unexpected canister_info characterization for {label}: expected exists={expected_exists}, got exists={exists}, observed={observed:?}"
+            );
+        }
+        if !exists && observed.is_none() {
+            bail!("expected observed reject wording for {label}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_rescue() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
+
+    env.set_blackholed_controllers()?;
+    env.set_blackhole_armed(Some(true))?;
+    env.set_cmc_fail(true)?;
+
+    for _ in 0..3 {
+        env.credit_payout(100_000_000)?;
+        env.credit_staking(100_000_000)?;
+        env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+        env.main_tick()?;
+        env.advance_time_and_tick(61, 20);
+        env.main_tick()?;
+    }
+
+    let st = env.state()?;
+    if st.forced_rescue_reason.is_some() || st.consecutive_cmc_zero_success_runs != 0 {
+        bail!(
+            "expected nonexistent canister-id targets not to advance the zero-success rescue threshold, got {:?}",
+            st
         );
     }
 

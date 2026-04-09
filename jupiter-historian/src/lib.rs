@@ -420,6 +420,13 @@ pub struct ListRecentContributionsArgs {
     pub qualifying_only: Option<bool>,
 }
 
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub enum RecentContributionOutcomeCategory {
+    QualifyingContribution,
+    UnderThresholdContribution,
+    InvalidTargetMemo,
+}
+
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct RecentContributionListItem {
     pub canister_id: Option<Principal>,
@@ -428,6 +435,7 @@ pub struct RecentContributionListItem {
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
+    pub outcome_category: RecentContributionOutcomeCategory,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -656,6 +664,7 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> 
             timestamp_nanos: item.timestamp_nanos,
             amount_e8s: item.amount_e8s,
             counts_toward_faucet: true,
+            outcome_category: RecentContributionOutcomeCategory::QualifyingContribution,
         })
         .collect();
     items.extend(
@@ -668,6 +677,7 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> 
                 timestamp_nanos: item.timestamp_nanos,
                 amount_e8s: item.amount_e8s,
                 counts_toward_faucet: false,
+                outcome_category: RecentContributionOutcomeCategory::UnderThresholdContribution,
             }),
     );
     if let Some(invalid) = &st.recent_invalid_contributions {
@@ -678,6 +688,7 @@ fn fallback_recent_contributions(st: &State) -> Vec<RecentContributionListItem> 
             timestamp_nanos: item.timestamp_nanos,
             amount_e8s: item.amount_e8s,
             counts_toward_faucet: false,
+            outcome_category: RecentContributionOutcomeCategory::InvalidTargetMemo,
         }));
     }
     items.sort_by(|a, b| {
@@ -1068,6 +1079,7 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
                     counts_toward_faucet: true,
+                    outcome_category: RecentContributionOutcomeCategory::QualifyingContribution,
                 })
                 .collect();
             if let Some(low_value) = &st.recent_under_threshold_contributions {
@@ -1078,6 +1090,7 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
                     counts_toward_faucet: false,
+                    outcome_category: RecentContributionOutcomeCategory::UnderThresholdContribution,
                 }));
             }
             if let Some(invalid) = &st.recent_invalid_contributions {
@@ -1088,6 +1101,7 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
                     counts_toward_faucet: false,
+                    outcome_category: RecentContributionOutcomeCategory::InvalidTargetMemo,
                 }));
             }
             merged.sort_by(|a, b| {
@@ -1852,12 +1866,15 @@ mod tests {
         assert_eq!(all.items[0].canister_id, None);
         assert_eq!(all.items[0].memo_text.as_deref(), Some(crate::logic::INVALID_MEMO_PLACEHOLDER));
         assert!(!all.items[0].counts_toward_faucet);
+        assert_eq!(all.items[0].outcome_category, RecentContributionOutcomeCategory::InvalidTargetMemo);
         assert_eq!(all.items[1].tx_id, 11);
         assert_eq!(all.items[1].canister_id, Some(qualifying));
         assert!(all.items[1].counts_toward_faucet);
+        assert_eq!(all.items[1].outcome_category, RecentContributionOutcomeCategory::QualifyingContribution);
         assert_eq!(all.items[2].tx_id, 10);
         assert_eq!(all.items[2].canister_id, Some(low_amount));
         assert!(!all.items[2].counts_toward_faucet);
+        assert_eq!(all.items[2].outcome_category, RecentContributionOutcomeCategory::UnderThresholdContribution);
 
         let qualifying_only = list_recent_contributions(ListRecentContributionsArgs {
             limit: Some(10),
@@ -1866,6 +1883,7 @@ mod tests {
         assert_eq!(qualifying_only.items.len(), 1);
         assert_eq!(qualifying_only.items[0].tx_id, 11);
         assert!(qualifying_only.items[0].counts_toward_faucet);
+        assert_eq!(qualifying_only.items[0].outcome_category, RecentContributionOutcomeCategory::QualifyingContribution);
     }
 
     #[test]

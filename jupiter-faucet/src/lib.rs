@@ -391,6 +391,33 @@ fn debug_clear_forced_rescue() {
 }
 
 #[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct DebugCanisterInfoProbeResult {
+    pub exists: bool,
+    pub observed_reject: Option<String>,
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+async fn debug_canister_info_probe(canister_id: Principal) -> DebugCanisterInfoProbeResult {
+    guard_debug_api_not_production();
+    let request = ic_cdk::management_canister::CanisterInfoArgs {
+        canister_id,
+        num_requested_changes: Some(0),
+    };
+    match ic_cdk::management_canister::canister_info(&request).await {
+        Ok(_) => DebugCanisterInfoProbeResult {
+            exists: true,
+            observed_reject: None,
+        },
+        Err(err) => DebugCanisterInfoProbeResult {
+            exists: false,
+            observed_reject: Some(format!("{err:?}")),
+        },
+    }
+}
+
+#[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
     guard_debug_api_not_production();

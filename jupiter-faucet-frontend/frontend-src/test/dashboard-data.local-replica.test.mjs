@@ -26,6 +26,12 @@ function optionalBigIntString(opt) {
   return asString(opt[0]);
 }
 
+function variantLabel(value) {
+  if (!value || Array.isArray(value)) return null;
+  const keys = Object.keys(value);
+  return keys.length === 1 ? keys[0] : null;
+}
+
 const maybeTest = host && historianCanisterId && expected ? test : test.skip;
 
 maybeTest('loadDashboardData matches the expected local replica fixture', async () => {
@@ -81,6 +87,9 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
       assert.equal(asString(actual.tx_id), exp.txId);
       assert.equal(asString(actual.amount_e8s), exp.amountE8s);
       assert.equal(actual.counts_toward_faucet, exp.countsTowardFaucet);
+      if (exp.outcomeCategory !== undefined) {
+        assert.equal(variantLabel(actual.outcome_category), exp.outcomeCategory);
+      }
     }
   }
 

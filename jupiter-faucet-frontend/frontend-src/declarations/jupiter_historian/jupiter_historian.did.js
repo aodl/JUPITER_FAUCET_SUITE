@@ -54,6 +54,11 @@ export const idlFactory = ({ IDL }) => {
     limit: IDL.Opt(IDL.Nat32),
     qualifying_only: IDL.Opt(IDL.Bool),
   });
+  const RecentContributionOutcomeCategory = IDL.Variant({
+    QualifyingContribution: IDL.Null,
+    UnderThresholdContribution: IDL.Null,
+    InvalidTargetMemo: IDL.Null,
+  });
   const RecentContributionListItem = IDL.Record({
     canister_id: IDL.Opt(IDL.Principal),
     memo_text: IDL.Opt(IDL.Text),
@@ -61,6 +66,7 @@ export const idlFactory = ({ IDL }) => {
     timestamp_nanos: IDL.Opt(IDL.Nat64),
     amount_e8s: IDL.Nat64,
     counts_toward_faucet: IDL.Bool,
+    outcome_category: RecentContributionOutcomeCategory,
   });
   const ListRecentContributionsResponse = IDL.Record({
     items: IDL.Vec(RecentContributionListItem),

@@ -379,6 +379,31 @@ function formatCommitmentTarget(item) {
   return 'invalid target canister memo';
 }
 
+function commitmentOutcomeCategory(item) {
+  const category = item?.outcome_category;
+  if (category && !Array.isArray(category)) {
+    if ('QualifyingContribution' in category) return 'QualifyingContribution';
+    if ('UnderThresholdContribution' in category) return 'UnderThresholdContribution';
+    if ('InvalidTargetMemo' in category) return 'InvalidTargetMemo';
+  }
+  if (item?.counts_toward_faucet) return 'QualifyingContribution';
+  const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
+  return canister ? 'UnderThresholdContribution' : 'InvalidTargetMemo';
+}
+
+function formatCommitmentOutcome(item) {
+  switch (commitmentOutcomeCategory(item)) {
+    case 'QualifyingContribution':
+      return 'Qualifying';
+    case 'UnderThresholdContribution':
+      return 'Under threshold';
+    case 'InvalidTargetMemo':
+      return 'Invalid input';
+    default:
+      return item?.counts_toward_faucet ? 'Qualifying' : 'Non-qualifying';
+  }
+}
+
 function commitmentTransactionHref(item) {
   const txIndex = item?.tx_id;
   if (txIndex !== undefined && txIndex !== null) {
@@ -471,7 +496,7 @@ function renderCommitmentsPane(data) {
         <td>${renderCommitmentTimestampCell(item)}</td>
         <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
         <td class="mono">${formatCommitmentTarget(item)}</td>
-        <td>${item.counts_toward_faucet ? 'Yes' : 'No'}</td>
+        <td>${escapeHtml(formatCommitmentOutcome(item))}</td>
       </tr>`,
     paneEmptyMessage(data, 'recent', 'No commitments indexed yet.'),
     4,

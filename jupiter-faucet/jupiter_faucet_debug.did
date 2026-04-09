@@ -27,6 +27,10 @@ type ForcedRescueReason = variant {
 };
 
 type DebugAccounts = record { payout : Account; staking : Account };
+type DebugCanisterInfoProbeResult = record {
+  exists : bool;
+  observed_reject : opt text;
+};
 type DebugConfig = record {
   staking_account : Account;
   payout_subaccount : opt vec nat8;
@@ -79,6 +83,7 @@ type Summary = record {
 };
 service : (InitArgs) -> {
   debug_accounts : () -> (DebugAccounts) query;
+  debug_canister_info_probe : (principal) -> (DebugCanisterInfoProbeResult);
   debug_config : () -> (DebugConfig) query;
   debug_footprint : () -> (DebugFootprint) query;
   debug_last_summary : () -> (opt Summary) query;
