@@ -160,12 +160,12 @@ struct MainGuard {
 impl MainGuard {
     fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            let lock_expires_at_ts = st.main_lock_expires_at_ts.unwrap_or(0);
+            let lock_expires_at_ts = st.main_lock_state_ts.unwrap_or(0);
             if lock_expires_at_ts > now_secs {
                 return None;
             }
             let lease_expires_at_ts = now_secs.saturating_add(MAIN_TICK_LEASE_SECONDS);
-            st.main_lock_expires_at_ts = Some(lease_expires_at_ts);
+            st.main_lock_state_ts = Some(lease_expires_at_ts);
             Some(Self { active: true, lease_expires_at_ts })
         })
     }
@@ -176,8 +176,8 @@ impl MainGuard {
         }
         let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
-            if st.main_lock_expires_at_ts == Some(lease_expires_at_ts) {
-                st.main_lock_expires_at_ts = Some(0);
+            if st.main_lock_state_ts == Some(lease_expires_at_ts) {
+                st.main_lock_state_ts = Some(0);
             }
         });
         self.active = false;
@@ -187,8 +187,8 @@ impl MainGuard {
         let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs;
-            if st.main_lock_expires_at_ts == Some(lease_expires_at_ts) {
-                st.main_lock_expires_at_ts = Some(0);
+            if st.main_lock_state_ts == Some(lease_expires_at_ts) {
+                st.main_lock_state_ts = Some(0);
             }
         });
         self.active = false;
@@ -790,7 +790,7 @@ mod tests {
         assert!(matches!(poll_once(fut1.as_mut()), Poll::Pending));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(
-            state::with_state(|st| st.main_lock_expires_at_ts),
+            state::with_state(|st| st.main_lock_state_ts),
             Some(now_secs + MAIN_TICK_LEASE_SECONDS),
         );
 
@@ -800,29 +800,29 @@ mod tests {
         assert!(matches!(poll_once(fut2.as_mut()), Poll::Pending));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert_eq!(
-            state::with_state(|st| st.main_lock_expires_at_ts),
+            state::with_state(|st| st.main_lock_state_ts),
             Some(second_now_secs + MAIN_TICK_LEASE_SECONDS),
         );
 
         drop(fut1);
         assert_eq!(
-            state::with_state(|st| st.main_lock_expires_at_ts),
+            state::with_state(|st| st.main_lock_state_ts),
             Some(second_now_secs + MAIN_TICK_LEASE_SECONDS),
         );
 
         drop(fut2);
-        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+        assert_eq!(state::with_state(|st| st.main_lock_state_ts), Some(0));
     }
 
     #[test]
     fn post_upgrade_clears_inflight_lock_and_allows_next_tick() {
         let now_secs = 1_200_u64;
         let mut st = state::State::new(test_config(), now_secs);
-        st.main_lock_expires_at_ts = Some(1);
+        st.main_lock_state_ts = Some(1);
         crate::apply_upgrade_args_to_state(&mut st, None, now_secs + 1);
         state::set_state(st);
 
-        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+        assert_eq!(state::with_state(|st| st.main_lock_state_ts), Some(0));
 
         let cfg = state::with_state(|st| st.config.clone());
         let ledger = UnexpectedLedger;
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(gov.get_full_neuron_calls(), 1);
         assert_eq!(gov.disburse_calls(), 0);
         assert_eq!(gov.claim_or_refresh_calls(), 1);
-        assert_eq!(state::with_state(|st| st.main_lock_expires_at_ts), Some(0));
+        assert_eq!(state::with_state(|st| st.main_lock_state_ts), Some(0));
     }
 
     #[test]

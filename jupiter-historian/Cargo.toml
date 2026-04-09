@@ -24,6 +24,7 @@ hex = "0.4"
 ic-cdk = "0.19"
 ic-cdk-timers = "1.0.0"
 icrc-ledger-types = "0.1.12"
+ic-stable-structures = "0.6"
 crc32fast = "1"
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 
@@ -39,6 +40,7 @@ slog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 icrc-ledger-types = "0.1.12"
+ic-stable-structures = "0.6"
 crc32fast = "1"
 futures = "0.3"
 

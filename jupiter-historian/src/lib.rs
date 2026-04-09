@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::state::{
     CanisterMeta, CanisterSource, Config, ContributionSample, CyclesSample, InvalidContribution,
-    RecentBurn, RecentContribution, StableState, State,
+    RecentBurn, RecentContribution, State,
 };
 
 pub(crate) const MAX_PUBLIC_QUERY_LIMIT: u32 = 100;
@@ -775,6 +775,7 @@ fn registered_canister_summaries(st: &State) -> Vec<RegisteredCanisterSummary> {
 fn init(args: InitArgs) {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     let cfg = config_from_init_args(args);
+    state::init_stable_storage();
     let mut st = State::new(cfg, now_secs);
     initialize_config_defaults_if_missing(&mut st);
     normalize_runtime_state(&mut st);
@@ -784,8 +785,7 @@ fn init(args: InitArgs) {
 
 #[ic_cdk::pre_upgrade]
 fn pre_upgrade() {
-    let st: StableState = state::get_state().into();
-    ic_cdk::storage::stable_save((st,)).expect("stable_save failed");
+    let _ = state::get_state();
 }
 
 fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
@@ -830,13 +830,13 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     initialize_derived_state_if_missing(st);
     normalize_runtime_state(st);
     validate_config(&st.config);
-    st.main_lock_expires_at_ts = Some(0);
+    st.main_lock_state_ts = Some(0);
 }
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: Option<UpgradeArgs>) {
-    let (stable,): (StableState,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
-    let mut st: State = stable.into();
+    state::init_stable_storage();
+    let mut st: State = state::restore_state_from_stable().expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
     state::set_state(st);
@@ -866,7 +866,7 @@ fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
                 }
             }
             if items.len() >= limit {
-                next = Some(canister_id);
+                next = items.last().map(|item: &CanisterListItem| item.canister_id);
                 break;
             }
             items.push(CanisterListItem {
@@ -904,7 +904,7 @@ fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
                     continue;
                 }
                 if items.len() >= limit {
-                    next = Some(item.timestamp_nanos);
+                    next = items.last().map(|sample: &CyclesSample| sample.timestamp_nanos);
                     break;
                 }
                 items.push(item.clone());
@@ -940,7 +940,7 @@ fn get_contribution_history(args: GetContributionHistoryArgs) -> ContributionHis
                     continue;
                 }
                 if items.len() >= limit {
-                    next = Some(item.tx_id);
+                    next = items.last().map(|sample: &ContributionSample| sample.tx_id);
                     break;
                 }
                 items.push(item.clone());
@@ -1231,7 +1231,7 @@ fn debug_reset_runtime_state() {
     guard_debug_api_not_production();
     state::with_state_mut(|st| {
         st.active_cycles_sweep = None;
-        st.main_lock_expires_at_ts = Some(0);
+        st.main_lock_state_ts = Some(0);
         st.last_main_run_ts = 0;
     });
 }
@@ -1240,7 +1240,7 @@ fn debug_reset_runtime_state() {
 #[ic_cdk::update]
 fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
-    state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(ts.unwrap_or(0)));
+    state::with_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
 }
 
 #[cfg(feature = "debug_api")]
@@ -1257,7 +1257,7 @@ fn debug_reset_derived_state() {
         st.last_sns_discovery_ts = 0;
         st.last_completed_cycles_sweep_ts = 0;
         st.active_cycles_sweep = None;
-        st.main_lock_expires_at_ts = Some(0);
+        st.main_lock_state_ts = Some(0);
         st.last_main_run_ts = 0;
         st.qualifying_contribution_count = Some(0);
         st.icp_burned_e8s = Some(0);
@@ -1323,7 +1323,7 @@ mod tests {
             last_completed_cycles_sweep_ts: 0,
             active_cycles_sweep: None,
             active_sns_discovery: None,
-            main_lock_expires_at_ts: Some(0),
+            main_lock_state_ts: Some(0),
             last_main_run_ts: 1,
             qualifying_contribution_count: None,
             icp_burned_e8s: None,
@@ -1503,7 +1503,7 @@ mod tests {
                 counts_toward_faucet: true,
             }],
         );
-        st.main_lock_expires_at_ts = Some(99);
+        st.main_lock_state_ts = Some(99);
 
         let original_account = st.config.staking_account.clone();
         let original_ledger = st.config.ledger_canister_id;
@@ -1539,7 +1539,7 @@ mod tests {
         assert_eq!(st.config.max_index_pages_per_tick, 13);
         assert_eq!(st.config.max_canisters_per_cycles_tick, 14);
         assert_eq!(st.contribution_history.get(&canister).map(|v| v.len()), Some(1));
-        assert_eq!(st.main_lock_expires_at_ts, Some(0));
+        assert_eq!(st.main_lock_state_ts, Some(0));
     }
 
     #[test]
@@ -2097,7 +2097,7 @@ mod tests {
             descending: Some(false),
         });
         assert_eq!(contributions.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
-        assert_eq!(contributions.next_start_after_tx_id, Some(101));
+        assert_eq!(contributions.next_start_after_tx_id, Some(100));
 
         let cycles = get_cycles_history(GetCyclesHistoryArgs {
             canister_id: canister,
@@ -2106,7 +2106,101 @@ mod tests {
             descending: Some(false),
         });
         assert_eq!(cycles.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
-        assert_eq!(cycles.next_start_after_ts, Some(101));
+        assert_eq!(cycles.next_start_after_ts, Some(100));
+    }
+
+    #[test]
+    fn list_canisters_pagination_round_trips_without_skips() {
+        let canisters = [
+            principal("22255-zqaaa-aaaas-qf6uq-cai"),
+            principal("r7inp-6aaaa-aaaaa-aaabq-cai"),
+            principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+        ];
+        let mut st = base_state();
+        for canister in canisters {
+            st.distinct_canisters.insert(canister);
+            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+            st.contribution_history.insert(
+                canister,
+                vec![ContributionSample {
+                    tx_id: canister.as_slice()[0] as u64,
+                    timestamp_nanos: Some(canister.as_slice()[0] as u64),
+                    amount_e8s: 100_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+        }
+        state::set_state(st);
+
+        let first = list_canisters(ListCanistersArgs { start_after: None, limit: Some(2), source_filter: None });
+        let second = list_canisters(ListCanistersArgs { start_after: first.next_start_after, limit: Some(2), source_filter: None });
+        let returned: Vec<_> = first.items.into_iter().chain(second.items.into_iter()).map(|item| item.canister_id).collect();
+        let mut expected = canisters.to_vec();
+        expected.sort();
+        assert_eq!(returned, expected);
+    }
+
+    #[test]
+    fn cycles_history_pagination_round_trips_without_skips_in_both_directions() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.distinct_canisters.insert(canister);
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![ContributionSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1),
+                amount_e8s: 100_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister,
+            vec![
+                CyclesSample { timestamp_nanos: 10, cycles: 1, source: CyclesSampleSource::BlackholeStatus },
+                CyclesSample { timestamp_nanos: 20, cycles: 2, source: CyclesSampleSource::BlackholeStatus },
+                CyclesSample { timestamp_nanos: 30, cycles: 3, source: CyclesSampleSource::BlackholeStatus },
+            ],
+        );
+        state::set_state(st);
+
+        let first = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: None, limit: Some(2), descending: Some(false) });
+        let second = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: first.next_start_after_ts, limit: Some(2), descending: Some(false) });
+        let asc: Vec<_> = first.items.iter().chain(second.items.iter()).map(|item| item.timestamp_nanos).collect();
+        assert_eq!(asc, vec![10, 20, 30]);
+
+        let first_desc = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: None, limit: Some(2), descending: Some(true) });
+        let second_desc = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: first_desc.next_start_after_ts, limit: Some(2), descending: Some(true) });
+        let desc: Vec<_> = first_desc.items.iter().chain(second_desc.items.iter()).map(|item| item.timestamp_nanos).collect();
+        assert_eq!(desc, vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn contribution_history_pagination_round_trips_without_skips_in_both_directions() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.distinct_canisters.insert(canister);
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+        st.contribution_history.insert(
+            canister,
+            vec![
+                ContributionSample { tx_id: 10, timestamp_nanos: Some(10), amount_e8s: 1, counts_toward_faucet: true },
+                ContributionSample { tx_id: 20, timestamp_nanos: Some(20), amount_e8s: 1, counts_toward_faucet: true },
+                ContributionSample { tx_id: 30, timestamp_nanos: Some(30), amount_e8s: 1, counts_toward_faucet: true },
+            ],
+        );
+        state::set_state(st);
+
+        let first = get_contribution_history(GetContributionHistoryArgs { canister_id: canister, start_after_tx_id: None, limit: Some(2), descending: Some(false) });
+        let second = get_contribution_history(GetContributionHistoryArgs { canister_id: canister, start_after_tx_id: first.next_start_after_tx_id, limit: Some(2), descending: Some(false) });
+        let asc: Vec<_> = first.items.iter().chain(second.items.iter()).map(|item| item.tx_id).collect();
+        assert_eq!(asc, vec![10, 20, 30]);
+
+        let first_desc = get_contribution_history(GetContributionHistoryArgs { canister_id: canister, start_after_tx_id: None, limit: Some(2), descending: Some(true) });
+        let second_desc = get_contribution_history(GetContributionHistoryArgs { canister_id: canister, start_after_tx_id: first_desc.next_start_after_tx_id, limit: Some(2), descending: Some(true) });
+        let desc: Vec<_> = first_desc.items.iter().chain(second_desc.items.iter()).map(|item| item.tx_id).collect();
+        assert_eq!(desc, vec![30, 20, 10]);
     }
 
     #[test]
@@ -2148,7 +2242,7 @@ mod tests {
             last_sns_discovery_ts: u64,
             last_completed_cycles_sweep_ts: u64,
             active_cycles_sweep: Option<crate::state::ActiveCyclesSweep>,
-            main_lock_expires_at_ts: Option<u64>,
+            main_lock_state_ts: Option<u64>,
             last_main_run_ts: u64,
         }
 
@@ -2201,7 +2295,7 @@ mod tests {
             last_sns_discovery_ts: 9,
             last_completed_cycles_sweep_ts: 10,
             active_cycles_sweep: None,
-            main_lock_expires_at_ts: Some(0),
+            main_lock_state_ts: Some(0),
             last_main_run_ts: 11,
         };
 

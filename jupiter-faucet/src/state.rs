@@ -1,6 +1,12 @@
 use candid::{CandidType, Deserialize, Principal};
+use ic_stable_structures::{
+    memory_manager::{MemoryId, MemoryManager, VirtualMemory},
+    storable::Bound,
+    DefaultMemoryImpl, StableCell, Storable,
+};
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
+use std::borrow::Cow;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -149,8 +155,7 @@ pub struct State {
     pub consecutive_cmc_zero_success_runs: Option<u8>,
     pub last_observed_staking_balance_e8s: Option<u64>,
     pub last_observed_latest_tx_id: Option<u64>,
-    // Legacy field name retained for stable-memory compatibility; used as 0/1 lock state.
-    pub main_lock_expires_at_ts: Option<u64>,
+    pub main_lock_state_ts: Option<u64>,
     pub payout_nonce: u64,
     pub active_payout_job: Option<ActivePayoutJob>,
     pub last_main_run_ts: u64,
@@ -173,7 +178,7 @@ impl State {
             consecutive_cmc_zero_success_runs: Some(0),
             last_observed_staking_balance_e8s: None,
             last_observed_latest_tx_id: None,
-            main_lock_expires_at_ts: Some(0),
+            main_lock_state_ts: Some(0),
             payout_nonce: 1,
             active_payout_job: None,
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
@@ -181,11 +186,88 @@ impl State {
     }
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone)]
+pub enum VersionedStableState {
+    Uninitialized,
+    V1(State),
+}
+
+impl Storable for VersionedStableState {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(candid::encode_one(self).expect("failed to encode faucet stable state"))
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(bytes.as_ref()).expect("failed to decode faucet stable state")
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+type Memory = VirtualMemory<DefaultMemoryImpl>;
+
 thread_local! {
+    static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
+        std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
+    static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
+        std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
 }
 
-pub fn set_state(st: State) { STATE.with(|s| *s.borrow_mut() = Some(st)); }
-pub fn get_state() -> State { STATE.with(|s| s.borrow().clone()).expect("state not initialized") }
-pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R { STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized"))) }
-pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R { STATE.with(|s| f(s.borrow_mut().as_mut().expect("state not initialized"))) }
+fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
+    STABLE_STATE.with(|cell| {
+        if cell.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(0));
+                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized)
+                    .expect("failed to initialize faucet stable cell");
+                *cell.borrow_mut() = Some(stable_cell);
+            });
+        }
+        let mut borrow = cell.borrow_mut();
+        f(borrow.as_mut().expect("faucet stable cell not initialized"))
+    })
+}
+
+fn persist_snapshot(st: &State) {
+    with_stable_cell(|cell| {
+        cell.set(VersionedStableState::V1(st.clone()))
+            .expect("failed to persist faucet stable state");
+    });
+}
+
+pub fn init_stable_storage() {
+    let _ = restore_state_from_stable();
+}
+
+pub fn restore_state_from_stable() -> Option<State> {
+    with_stable_cell(|cell| match cell.get().clone() {
+        VersionedStableState::Uninitialized => None,
+        VersionedStableState::V1(st) => Some(st),
+    })
+}
+
+pub fn set_state(st: State) {
+    persist_snapshot(&st);
+    STATE.with(|s| *s.borrow_mut() = Some(st));
+}
+
+pub fn get_state() -> State {
+    STATE.with(|s| s.borrow().clone()).expect("state not initialized")
+}
+
+pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
+    STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
+}
+
+pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    STATE.with(|s| {
+        let mut borrow = s.borrow_mut();
+        let st = borrow.as_mut().expect("state not initialized");
+        let out = f(st);
+        let snapshot = st.clone();
+        drop(borrow);
+        persist_snapshot(&snapshot);
+        out
+    })
+}

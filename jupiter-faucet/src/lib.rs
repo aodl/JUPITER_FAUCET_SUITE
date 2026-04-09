@@ -125,6 +125,7 @@ fn init(args: InitArgs) {
     };
 
     validate_config(&cfg);
+    crate::state::init_stable_storage();
     let st = State::new(cfg, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
@@ -132,8 +133,7 @@ fn init(args: InitArgs) {
 
 #[ic_cdk::pre_upgrade]
 fn pre_upgrade() {
-    let st = crate::state::get_state();
-    ic_cdk::storage::stable_save((st,)).expect("stable_save failed");
+    let _ = crate::state::get_state();
 }
 
 pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) {
@@ -162,13 +162,14 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
         }
     }
     validate_config(&st.config);
-    st.main_lock_expires_at_ts = Some(0);
+    st.main_lock_state_ts = Some(0);
 }
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: Option<UpgradeArgs>) {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
-    let (mut st,): (State,) = ic_cdk::storage::stable_restore().expect("stable_restore failed");
+    crate::state::init_stable_storage();
+    let mut st = crate::state::restore_state_from_stable().expect("stable state missing during faucet post_upgrade");
     apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
@@ -328,7 +329,7 @@ fn debug_reset_runtime_state() {
         st.last_observed_staking_balance_e8s = None;
         st.last_observed_latest_tx_id = None;
         validate_config(&st.config);
-        st.main_lock_expires_at_ts = Some(0);
+        st.main_lock_state_ts = Some(0);
         st.active_payout_job = None;
         st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
     });
@@ -373,7 +374,7 @@ fn debug_set_expected_first_staking_tx_id(v: Option<u64>) {
 #[ic_cdk::update]
 fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
-    crate::state::with_state_mut(|st| st.main_lock_expires_at_ts = Some(ts.unwrap_or(0)));
+    crate::state::with_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
 }
 
 #[cfg(feature = "debug_api")]
@@ -483,7 +484,7 @@ mod tests {
     fn apply_upgrade_args_keeps_runtime_state_and_revalidates() {
         let now_secs = 123;
         let mut st = State::new(sample_config(), now_secs);
-        st.main_lock_expires_at_ts = Some(99);
+        st.main_lock_state_ts = Some(99);
         apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
@@ -496,7 +497,7 @@ mod tests {
         assert_eq!(st.config.blackhole_controller, Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")));
         assert_eq!(st.config.blackhole_armed, Some(true));
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
-        assert_eq!(st.main_lock_expires_at_ts, Some(0));
+        assert_eq!(st.main_lock_state_ts, Some(0));
     }
 }
 

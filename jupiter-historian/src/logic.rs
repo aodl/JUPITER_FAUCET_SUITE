@@ -32,13 +32,6 @@ pub enum IndexedContributionEntry {
 }
 
 
-pub fn memo_text_from_bytes(bytes: &[u8]) -> Option<String> {
-    let memo_text = std::str::from_utf8(bytes).ok()?.trim().to_string();
-    if memo_text.is_empty() {
-        return None;
-    }
-    Some(memo_text)
-}
 
 pub fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
     jupiter_memo_policy::parse_target_canister_principal_from_memo(bytes)
@@ -63,7 +56,6 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id:
 pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedContributionEntry> {
     let (tx_id, memo_opt, amount_e8s, timestamp_nanos) = memo_bytes_from_index_tx(tx, staking_account_id)?;
     let memo = memo_opt?;
-    memo_text_from_bytes(&memo)?;
     if let Some(beneficiary) = parse_target_canister_from_memo(&memo) {
         Some(IndexedContributionEntry::Valid(IndexedContribution {
             tx_id,
@@ -356,6 +348,58 @@ mod tests {
                 assert!(c.counts_toward_faucet);
             }
             IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),
+        }
+    }
+
+    #[test]
+    fn whitespace_only_non_empty_memo_surfaces_as_invalid() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 30,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"  \n\t".to_vec()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(50),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 123 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedContributionEntry::Invalid(c) => assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER),
+            IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
+        }
+    }
+
+    #[test]
+    fn non_utf8_non_empty_memo_surfaces_as_invalid() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 31,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(vec![0xff, 0xfe, 0xfd]),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(50),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 124 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedContributionEntry::Invalid(c) => assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER),
+            IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
         }
     }
 

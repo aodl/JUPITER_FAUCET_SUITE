@@ -82,6 +82,8 @@ Transfers below that threshold are ignored for attribution and counted as `ignor
 
 Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended target canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
 
+The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up.
+
 ## Important payout semantics
 
 ### 1) Every new payout job rescans the full history

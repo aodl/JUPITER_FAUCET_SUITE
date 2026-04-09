@@ -1,6 +1,12 @@
 use candid::{CandidType, Principal};
+use ic_stable_structures::{
+    memory_manager::{MemoryId, MemoryManager, VirtualMemory},
+    storable::Bound,
+    DefaultMemoryImpl, StableCell, Storable,
+};
 use icrc_ledger_types::icrc1::account::Account;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
@@ -51,7 +57,6 @@ pub struct ContributionSample {
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
 }
-
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct InvalidContribution {
@@ -113,7 +118,6 @@ pub struct ActiveCyclesSweep {
     pub next_index: u64,
 }
 
-
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct StableConfig {
     pub staking_account: Account,
@@ -165,7 +169,7 @@ pub struct StableState {
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
     #[serde(default)]
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
-    pub main_lock_expires_at_ts: Option<u64>,
+    pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
     #[serde(default)]
     pub qualifying_contribution_count: Option<u64>,
@@ -182,6 +186,7 @@ pub struct StableState {
     #[serde(default)]
     pub last_index_run_ts: Option<u64>,
 }
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct State {
     pub config: Config,
@@ -198,7 +203,7 @@ pub struct State {
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
     #[serde(default)]
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
-    pub main_lock_expires_at_ts: Option<u64>,
+    pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
     pub qualifying_contribution_count: Option<u64>,
     pub icp_burned_e8s: Option<u64>,
@@ -224,7 +229,7 @@ impl State {
             last_completed_cycles_sweep_ts: 0,
             active_cycles_sweep: None,
             active_sns_discovery: None,
-            main_lock_expires_at_ts: Some(0),
+            main_lock_state_ts: Some(0),
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
             qualifying_contribution_count: Some(0),
             icp_burned_e8s: Some(0),
@@ -237,15 +242,91 @@ impl State {
     }
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone)]
+pub enum VersionedStableState {
+    Uninitialized,
+    V1(StableState),
+}
+
+impl Storable for VersionedStableState {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(candid::encode_one(self).expect("failed to encode historian stable state"))
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(bytes.as_ref()).expect("failed to decode historian stable state")
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+type Memory = VirtualMemory<DefaultMemoryImpl>;
+
 thread_local! {
+    static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
+        std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
+    static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
+        std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
 }
 
-pub fn set_state(st: State) { STATE.with(|s| *s.borrow_mut() = Some(st)); }
-pub fn get_state() -> State { STATE.with(|s| s.borrow().clone()).expect("state not initialized") }
-pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R { STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized"))) }
-pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R { STATE.with(|s| f(s.borrow_mut().as_mut().expect("state not initialized"))) }
+fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
+    STABLE_STATE.with(|cell| {
+        if cell.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(0));
+                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized)
+                    .expect("failed to initialize historian stable cell");
+                *cell.borrow_mut() = Some(stable_cell);
+            });
+        }
+        let mut borrow = cell.borrow_mut();
+        f(borrow.as_mut().expect("historian stable cell not initialized"))
+    })
+}
 
+fn persist_snapshot(st: &State) {
+    with_stable_cell(|cell| {
+        cell.set(VersionedStableState::V1(st.clone().into()))
+            .expect("failed to persist historian stable state");
+    });
+}
+
+pub fn init_stable_storage() {
+    let _ = restore_state_from_stable();
+}
+
+pub fn restore_state_from_stable() -> Option<State> {
+    with_stable_cell(|cell| match cell.get().clone() {
+        VersionedStableState::Uninitialized => None,
+        VersionedStableState::V1(st) => Some(st.into()),
+    })
+}
+
+pub fn set_state(st: State) {
+    persist_snapshot(&st);
+    STATE.with(|s| *s.borrow_mut() = Some(st));
+}
+
+pub fn get_state() -> State {
+    STATE.with(|s| s.borrow().clone()).expect("state not initialized")
+}
+
+pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
+    STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
+}
+
+pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    STATE.with(|s| {
+        let mut borrow = s.borrow_mut();
+        let st = borrow.as_mut().expect("state not initialized");
+        let out = f(st);
+        let snapshot = st.clone();
+        drop(borrow);
+        persist_snapshot(&snapshot);
+        out
+    })
+}
 
 impl From<Config> for StableConfig {
     fn from(value: Config) -> Self {
@@ -338,7 +419,7 @@ impl From<State> for StableState {
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
             active_cycles_sweep: value.active_cycles_sweep,
             active_sns_discovery: value.active_sns_discovery,
-            main_lock_expires_at_ts: value.main_lock_expires_at_ts,
+            main_lock_state_ts: value.main_lock_state_ts,
             last_main_run_ts: value.last_main_run_ts,
             qualifying_contribution_count: value.qualifying_contribution_count,
             icp_burned_e8s: value.icp_burned_e8s,
@@ -370,7 +451,7 @@ impl From<StableState> for State {
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
             active_cycles_sweep: value.active_cycles_sweep,
             active_sns_discovery: value.active_sns_discovery,
-            main_lock_expires_at_ts: value.main_lock_expires_at_ts,
+            main_lock_state_ts: value.main_lock_state_ts,
             last_main_run_ts: value.last_main_run_ts,
             qualifying_contribution_count: value.qualifying_contribution_count,
             icp_burned_e8s: value.icp_burned_e8s,

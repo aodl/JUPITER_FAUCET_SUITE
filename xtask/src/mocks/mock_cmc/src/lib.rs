@@ -64,13 +64,21 @@ thread_local! {
 #[ic_cdk::init]
 fn init() {}
 
+
 #[ic_cdk::update]
-fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
-    ST.with(|s| {
+async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
+    let scripted = ST.with(|s| {
         let mut st = s.borrow_mut();
-        if let Some(behavior) = st.scripted_behaviors.first().cloned() {
+        st.scripted_behaviors.first().cloned().map(|behavior| {
             st.scripted_behaviors.remove(0);
-            return match behavior {
+            behavior
+        })
+    });
+
+    if let Some(behavior) = scripted {
+        return ST.with(|s| {
+            let mut st = s.borrow_mut();
+            match behavior {
                 DebugNotifyBehavior::Ok => {
                     st.notifications.push(NotifyRecord {
                         canister_id: arg.canister_id,
@@ -94,11 +102,17 @@ fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
                         error_message,
                     })
                 }
-            };
-        }
-        if st.fail {
-            return NotifyTopUpResult::Err(NotifyError::Processing);
-        }
+            }
+        });
+    }
+
+    if ST.with(|s| s.borrow().fail) {
+        return NotifyTopUpResult::Err(NotifyError::Processing);
+    }
+
+
+    ST.with(|s| {
+        let mut st = s.borrow_mut();
         st.notifications.push(NotifyRecord {
             canister_id: arg.canister_id,
             block_index: arg.block_index,
