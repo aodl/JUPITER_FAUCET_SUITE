@@ -131,6 +131,10 @@ fn query_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
     decode_one(&reply).map_err(Into::into)
 }
 
+fn nat_to_u64(n: &Nat) -> u64 {
+    n.0.to_u64_digits().get(0).copied().unwrap_or(0)
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct FaucetInitArg {
     staking_account: Account,
@@ -472,6 +476,11 @@ impl FaucetEnv {
 
     fn ledger_transfers(&self) -> Result<Vec<TransferRecord>> {
         query_one(&self.pic, self.ledger, Principal::anonymous(), "debug_transfers", ())
+    }
+
+    fn ledger_fee_e8s(&self) -> Result<u64> {
+        let fee: Nat = query_one(&self.pic, self.ledger, Principal::anonymous(), "icrc1_fee", ())?;
+        Ok(nat_to_u64(&fee))
     }
 
     fn index_get_calls(&self) -> Result<Vec<DebugGetCall>> {
@@ -854,8 +863,9 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
         bail!("expected exactly one beneficiary notification after post-upgrade recovery, got {notes:?}");
     }
 
+    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 {
         bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
@@ -864,6 +874,70 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
         bail!("expected post-upgrade recovery to finalize the interrupted payout job");
     }
 
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_upgrade_clears_stale_lock_and_auto_resumes_interrupted_payout_job() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
+        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
+    })?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+
+    env.set_trap_after_successful_transfers(Some(1))?;
+    env.main_tick()?;
+
+    let st_mid = env.state()?;
+    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
+        bail!("expected injected interruption to leave an active payout job without final summary before upgrade");
+    }
+    let transfers_mid = env.ledger_transfers()?;
+    if transfers_mid.len() != 1 {
+        bail!("expected exactly one beneficiary ledger transfer to land before upgrade, got {}", transfers_mid.len());
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected interruption before notify_top_up to leave no CMC notifications before upgrade");
+    }
+
+    let now_secs = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    env.set_main_lock_expires_at_ts(Some(now_secs + 7 * 24 * 60 * 60))?;
+
+    env.upgrade()?;
+
+    let st_after_upgrade = env.state()?;
+    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
+        bail!("expected interrupted payout job to remain persisted immediately after upgrade before auto-resume fires");
+    }
+
+    env.advance_time_and_tick(1, 20);
+
+    let transfers_after = env.ledger_transfers()?;
+    if transfers_after.len() != 1 {
+        bail!("expected post-upgrade recovery to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
+    }
+    let notes = env.notifications()?;
+    if notes.len() != 1 || notes[0].canister_id != target {
+        bail!("expected exactly one beneficiary notification after post-upgrade recovery, got {notes:?}");
+    }
+
+    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 {
+        bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
+    }
+
+    let st_done = env.state()?;
+    if st_done.active_payout_job_present || !st_done.last_summary_present {
+        bail!("expected post-upgrade recovery to finalize the interrupted payout job");
+    }
 
     Ok(())
 }
@@ -919,8 +993,9 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
         bail!("expected exactly one beneficiary notification after post-upgrade recovery from real trap, got {notes:?}");
     }
 
+    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 {
         bail!("unexpected summary after post-upgrade real-trap recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
