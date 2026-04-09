@@ -774,6 +774,138 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
 
 #[test]
 #[ignore]
+fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    let targets = vec![h.blackhole, h.index, h.historian];
+
+    for (i, target) in targets.iter().enumerate() {
+        let _: u64 = update_bytes(
+            &h.pic,
+            h.index,
+            Principal::anonymous(),
+            "debug_append_transfer",
+            encode_args((staking_id.clone(), 20_000_000u64 + i as u64, Some(target.to_text().into_bytes())))?,
+        )?;
+    }
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let mut before_ids = Vec::new();
+    let mut cursor = None;
+    for _ in 0..8 {
+        let page: ListCanistersResponse = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "list_canisters",
+            ListCanistersArgs {
+                start_after: cursor,
+                limit: Some(2),
+                source_filter: None,
+            },
+        )?;
+        before_ids.extend(page.items.iter().map(|item| item.canister_id));
+        cursor = page.next_start_after;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let mut expected_ids = targets.clone();
+    expected_ids.sort();
+    if before_ids != expected_ids {
+        bail!("expected paginated pre-upgrade list to return all tracked canisters without skips, got {:?}", before_ids);
+    }
+
+    let registered_before: ListRegisteredCanisterSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        },
+    )?;
+    if registered_before.total != targets.len() as u64 {
+        bail!("expected {} registered summaries before upgrade, got {}", targets.len(), registered_before.total);
+    }
+
+    let upgrade_sender = h.pic.get_controllers(h.historian).first().copied().unwrap_or(h.historian);
+    h.pic
+        .upgrade_canister(
+            h.historian,
+            historian_wasm()?,
+            encode_one(Option::<HistorianUpgradeArg>::None)?,
+            Some(upgrade_sender),
+        )
+        .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
+
+    let mut after_ids = Vec::new();
+    let mut cursor = None;
+    for _ in 0..8 {
+        let page: ListCanistersResponse = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "list_canisters",
+            ListCanistersArgs {
+                start_after: cursor,
+                limit: Some(2),
+                source_filter: None,
+            },
+        )?;
+        after_ids.extend(page.items.iter().map(|item| item.canister_id));
+        cursor = page.next_start_after;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    if after_ids != expected_ids {
+        bail!("expected paginated post-upgrade list to preserve all tracked canisters without skips, got {:?}", after_ids);
+    }
+
+    let registered_after: ListRegisteredCanisterSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_registered_canister_summaries",
+        ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
+        },
+    )?;
+    if registered_after.total != targets.len() as u64 {
+        bail!("expected {} registered summaries after upgrade, got {}", targets.len(), registered_after.total);
+    }
+
+    for target in targets {
+        let contribs: ContributionHistoryPage = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_contribution_history",
+            GetContributionHistoryArgs {
+                canister_id: target,
+                start_after_tx_id: None,
+                limit: Some(10),
+                descending: Some(false),
+            },
+        )?;
+        if contribs.items.len() != 1 {
+            bail!("expected one preserved contribution for {target}, got {:?}", contribs.items);
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;

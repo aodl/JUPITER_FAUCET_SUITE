@@ -219,13 +219,6 @@ struct NotifyRecord {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct DebugBlackholeStatus {
-    canister_id: Principal,
-    cycles: Nat,
-    controllers: Vec<Principal>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugGetCall {
     account_identifier: String,
     start: Option<u64>,
@@ -1890,6 +1883,44 @@ fn faucet_reserved_principal_target_is_accepted_by_current_cmc_path() -> Result<
     let notifications = env.notifications()?;
     if notifications.len() != 1 || notifications[0].canister_id != target {
         bail!("expected exactly one successful CMC notification for reserved principal target, got {:?}", notifications);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_opaque_principal_target_is_accepted_by_current_cmc_path() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    // Use a short opaque principal (last byte 0x01) that passes memo parsing.
+    // This is a characterization test for the current local/PocketIC CMC path rather
+    // than a protocol guarantee about all environments.
+    let target = Principal::from_slice(&[0x01]);
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.main_tick()?;
+
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1
+        || summary.failed_topups != 0
+        || summary.ambiguous_topups != 0
+        || summary.ignored_bad_memo != 0
+    {
+        bail!(
+            "expected opaque principal target to be accepted by the current CMC path after passing memo policy, got {:?}",
+            summary
+        );
+    }
+
+    let notifications = env.notifications()?;
+    if notifications.len() != 1 || notifications[0].canister_id != target {
+        bail!(
+            "expected exactly one successful CMC notification for opaque principal target, got {:?}",
+            notifications
+        );
     }
 
     Ok(())
