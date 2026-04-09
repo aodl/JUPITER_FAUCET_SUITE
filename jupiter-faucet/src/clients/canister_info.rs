@@ -45,3 +45,21 @@ impl CanisterStatusClient for NoopCanisterStatusClient {
         Ok(false)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::definitely_not_a_canister;
+
+    #[test]
+    fn recognizes_documented_not_a_canister_wording() {
+        assert!(definitely_not_a_canister("Reject text: principal does not characterize a canister"));
+        assert!(definitely_not_a_canister("reject: canister not found"));
+    }
+
+    #[test]
+    fn does_not_treat_generic_not_found_as_definitive() {
+        assert!(!definitely_not_a_canister("transient routing error: subnet not found"));
+        assert!(!definitely_not_a_canister("some unrelated not found response"));
+    }
+}

@@ -175,3 +175,72 @@ pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
         out
     })
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reset_test_storage() {
+        with_stable_cell(|cell| {
+            cell.set(VersionedStableState::Uninitialized)
+                .expect("failed to reset disburser stable state for test");
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    fn principal(bytes: &[u8]) -> Principal {
+        Principal::from_slice(bytes)
+    }
+
+    fn sample_config() -> Config {
+        Config {
+            neuron_id: 42,
+            normal_recipient: Account { owner: principal(&[1]), subaccount: None },
+            age_bonus_recipient_1: Account { owner: principal(&[2]), subaccount: None },
+            age_bonus_recipient_2: Account { owner: principal(&[3]), subaccount: None },
+            ledger_canister_id: principal(&[4]),
+            governance_canister_id: principal(&[5]),
+            rescue_controller: principal(&[6]),
+            blackhole_controller: Some(principal(&[7])),
+            blackhole_armed: Some(false),
+            main_interval_seconds: 60,
+            rescue_interval_seconds: 120,
+        }
+    }
+
+    #[test]
+    fn stable_restore_is_none_before_first_persist() {
+        reset_test_storage();
+        assert!(restore_state_from_stable().is_none());
+    }
+
+    #[test]
+    fn set_state_round_trips_through_stable_storage() {
+        reset_test_storage();
+        let mut st = State::new(sample_config(), 3_000);
+        st.prev_age_seconds = 123;
+        st.main_lock_state_ts = Some(44);
+        set_state(st.clone());
+
+        let restored = restore_state_from_stable().expect("expected persisted disburser state");
+        assert_eq!(restored.prev_age_seconds, 123);
+        assert_eq!(restored.main_lock_state_ts, Some(44));
+        assert_eq!(restored.payout_nonce, st.payout_nonce);
+    }
+
+    #[test]
+    fn with_state_mut_persists_updates_to_stable_storage() {
+        reset_test_storage();
+        set_state(State::new(sample_config(), 4_000));
+
+        with_state_mut(|st| {
+            st.last_successful_transfer_ts = Some(888);
+            st.main_lock_state_ts = Some(55);
+        });
+
+        let restored = restore_state_from_stable().expect("expected persisted disburser state after mutation");
+        assert_eq!(restored.last_successful_transfer_ts, Some(888));
+        assert_eq!(restored.main_lock_state_ts, Some(55));
+    }
+}

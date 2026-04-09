@@ -463,3 +463,130 @@ impl From<StableState> for State {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RegisteredCanisterSummary;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn reset_test_storage() {
+        with_stable_cell(|cell| {
+            cell.set(VersionedStableState::Uninitialized)
+                .expect("failed to reset historian stable state for test");
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    fn principal(bytes: &[u8]) -> Principal {
+        Principal::from_slice(bytes)
+    }
+
+    fn sample_config() -> Config {
+        Config {
+            staking_account: Account { owner: principal(&[1]), subaccount: None },
+            ledger_canister_id: principal(&[2]),
+            index_canister_id: principal(&[3]),
+            cmc_canister_id: Some(principal(&[4])),
+            faucet_canister_id: Some(principal(&[5])),
+            blackhole_canister_id: principal(&[6]),
+            sns_wasm_canister_id: principal(&[7]),
+            enable_sns_tracking: true,
+            scan_interval_seconds: 60,
+            cycles_interval_seconds: 120,
+            min_tx_e8s: 100_000_000,
+            max_cycles_entries_per_canister: 100,
+            max_contribution_entries_per_canister: 100,
+            max_index_pages_per_tick: 10,
+            max_canisters_per_cycles_tick: 10,
+        }
+    }
+
+    #[test]
+    fn stable_restore_is_none_before_first_persist() {
+        reset_test_storage();
+        assert!(restore_state_from_stable().is_none());
+    }
+
+    #[test]
+    fn set_state_round_trips_histories_and_cache_through_stable_storage() {
+        reset_test_storage();
+        let canister_id = principal(&[9]);
+        let mut st = State::new(sample_config(), 5_000);
+        st.distinct_canisters.insert(canister_id);
+        let mut sources = BTreeSet::new();
+        sources.insert(CanisterSource::MemoContribution);
+        st.canister_sources.insert(canister_id, sources);
+        st.contribution_history.insert(canister_id, vec![ContributionSample {
+            tx_id: 7,
+            timestamp_nanos: Some(77),
+            amount_e8s: 100_000_000,
+            counts_toward_faucet: true,
+        }]);
+        st.cycles_history.insert(canister_id, vec![CyclesSample {
+            timestamp_nanos: 88,
+            cycles: 123_456,
+            source: CyclesSampleSource::BlackholeStatus,
+        }]);
+        st.per_canister_meta.insert(canister_id, CanisterMeta {
+            first_seen_ts: Some(1),
+            last_contribution_ts: Some(77),
+            last_cycles_probe_ts: Some(88),
+            last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus)),
+            last_burn_tx_id: Some(11),
+            last_burn_scan_tx_id: Some(12),
+            burned_e8s: 42,
+        });
+        let mut cache = BTreeMap::new();
+        cache.insert(
+            canister_id,
+            RegisteredCanisterSummary {
+                canister_id,
+                sources: vec![CanisterSource::MemoContribution],
+                qualifying_contribution_count: 1,
+                total_qualifying_contributed_e8s: 100_000_000,
+                last_contribution_ts: Some(77),
+                latest_cycles: Some(123_456),
+                last_cycles_probe_ts: Some(88),
+            },
+        );
+        st.registered_canister_summaries_cache = Some(cache);
+        set_state(st);
+
+        let restored = restore_state_from_stable().expect("expected persisted historian state");
+        assert_eq!(restored.distinct_canisters.len(), 1);
+        assert_eq!(restored.contribution_history.get(&canister_id).expect("missing contribution history")[0].tx_id, 7);
+        assert_eq!(restored.cycles_history.get(&canister_id).expect("missing cycles history")[0].cycles, 123_456);
+        assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);
+        assert_eq!(restored.registered_canister_summaries_cache.as_ref().and_then(|m| m.get(&canister_id)).expect("missing registered canister summary").latest_cycles, Some(123_456));
+    }
+
+    #[test]
+    fn with_state_mut_persists_recent_feeds_to_stable_storage() {
+        reset_test_storage();
+        let canister_id = principal(&[10]);
+        set_state(State::new(sample_config(), 6_000));
+
+        with_state_mut(|st| {
+            st.recent_invalid_contributions = Some(vec![InvalidContribution {
+                tx_id: 12,
+                timestamp_nanos: Some(120),
+                amount_e8s: 99,
+                memo_text: "<invalid memo>".to_string(),
+            }]);
+            st.recent_burns = Some(vec![RecentBurn {
+                canister_id,
+                tx_id: 13,
+                timestamp_nanos: Some(130),
+                amount_e8s: 55,
+            }]);
+            st.main_lock_state_ts = Some(66);
+        });
+
+        let restored = restore_state_from_stable().expect("expected persisted historian state after mutation");
+        assert_eq!(restored.main_lock_state_ts, Some(66));
+        assert_eq!(restored.recent_invalid_contributions.as_ref().expect("missing invalid contributions")[0].tx_id, 12);
+        assert_eq!(restored.recent_burns.as_ref().expect("missing recent burns")[0].canister_id, canister_id);
+    }
+}

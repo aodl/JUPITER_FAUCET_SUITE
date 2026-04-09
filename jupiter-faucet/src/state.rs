@@ -271,3 +271,74 @@ pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
         out
     })
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reset_test_storage() {
+        with_stable_cell(|cell| {
+            cell.set(VersionedStableState::Uninitialized)
+                .expect("failed to reset faucet stable state for test");
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    fn principal(bytes: &[u8]) -> Principal {
+        Principal::from_slice(bytes)
+    }
+
+    fn sample_config() -> Config {
+        Config {
+            staking_account: Account { owner: principal(&[1]), subaccount: None },
+            payout_subaccount: Some([7; 32]),
+            ledger_canister_id: principal(&[2]),
+            index_canister_id: principal(&[3]),
+            cmc_canister_id: principal(&[4]),
+            rescue_controller: principal(&[5]),
+            blackhole_controller: Some(principal(&[6])),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: Some(11),
+            main_interval_seconds: 60,
+            rescue_interval_seconds: 120,
+            min_tx_e8s: 100_000_000,
+        }
+    }
+
+    #[test]
+    fn stable_restore_is_none_before_first_persist() {
+        reset_test_storage();
+        assert!(restore_state_from_stable().is_none());
+    }
+
+    #[test]
+    fn set_state_round_trips_through_stable_storage() {
+        reset_test_storage();
+        let mut st = State::new(sample_config(), 1_000);
+        st.last_successful_transfer_ts = Some(77);
+        st.main_lock_state_ts = Some(33);
+        set_state(st.clone());
+
+        let restored = restore_state_from_stable().expect("expected persisted faucet state");
+        assert_eq!(restored.last_successful_transfer_ts, Some(77));
+        assert_eq!(restored.main_lock_state_ts, Some(33));
+        assert_eq!(restored.payout_nonce, st.payout_nonce);
+        assert_eq!(restored.config.min_tx_e8s, st.config.min_tx_e8s);
+    }
+
+    #[test]
+    fn with_state_mut_persists_updates_to_stable_storage() {
+        reset_test_storage();
+        set_state(State::new(sample_config(), 2_000));
+
+        with_state_mut(|st| {
+            st.last_observed_staking_balance_e8s = Some(555);
+            st.main_lock_state_ts = Some(99);
+        });
+
+        let restored = restore_state_from_stable().expect("expected persisted faucet state after mutation");
+        assert_eq!(restored.last_observed_staking_balance_e8s, Some(555));
+        assert_eq!(restored.main_lock_state_ts, Some(99));
+    }
+}
