@@ -794,11 +794,6 @@ fn init(args: InitArgs) {
     scheduler::install_timers();
 }
 
-#[ic_cdk::pre_upgrade]
-fn pre_upgrade() {
-    let _ = state::get_state();
-}
-
 fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
         if let Some(v) = args.enable_sns_tracking {

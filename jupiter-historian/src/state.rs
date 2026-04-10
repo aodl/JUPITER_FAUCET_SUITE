@@ -268,9 +268,7 @@ thread_local! {
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
-    #[cfg(test)]
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    #[cfg(test)]
     static PERSISTENCE_DIRTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -321,33 +319,18 @@ pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
-#[cfg(test)]
 fn persistence_batch_active() -> bool {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.get() > 0)
 }
 
-#[cfg(not(test))]
-fn persistence_batch_active() -> bool {
-    false
-}
-
-#[cfg(test)]
 fn mark_persistence_dirty() {
     PERSISTENCE_DIRTY.with(|dirty| dirty.set(true));
 }
 
-#[cfg(not(test))]
-fn mark_persistence_dirty() {}
-
-#[cfg(test)]
 fn clear_persistence_dirty() {
     PERSISTENCE_DIRTY.with(|dirty| dirty.set(false));
 }
 
-#[cfg(not(test))]
-fn clear_persistence_dirty() {}
-
-#[cfg(test)]
 pub fn persist_dirty_state() {
     let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
     if !dirty {
@@ -358,7 +341,6 @@ pub fn persist_dirty_state() {
     clear_persistence_dirty();
 }
 
-#[cfg(test)]
 /// A synchronous persistence-batch guard.
 ///
 /// Do not hold this guard across an `await` point. While it is live, mutations are
@@ -368,7 +350,6 @@ pub struct PersistenceBatch {
     active: bool,
 }
 
-#[cfg(test)]
 impl Drop for PersistenceBatch {
     fn drop(&mut self) {
         if !self.active {
@@ -387,7 +368,6 @@ impl Drop for PersistenceBatch {
     }
 }
 
-#[cfg(test)]
 #[must_use]
 pub fn begin_persistence_batch() -> PersistenceBatch {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
@@ -497,7 +477,7 @@ impl From<State> for StableState {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-            registered_canister_summaries_cache: value.registered_canister_summaries_cache,
+            registered_canister_summaries_cache: None,
             last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
             last_sns_discovery_ts: value.last_sns_discovery_ts,
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
@@ -529,7 +509,7 @@ impl From<StableState> for State {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-            registered_canister_summaries_cache: value.registered_canister_summaries_cache,
+            registered_canister_summaries_cache: None,
             last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
             last_sns_discovery_ts: value.last_sns_discovery_ts,
             last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
@@ -596,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn set_state_round_trips_histories_and_cache_through_stable_storage() {
+    fn set_state_round_trips_histories_without_persisting_derived_cache() {
         reset_test_storage();
         let canister_id = principal(&[9]);
         let mut st = State::new(sample_config(), 5_000);
@@ -645,7 +625,7 @@ mod tests {
         assert_eq!(restored.contribution_history.get(&canister_id).expect("missing contribution history")[0].tx_id, 7);
         assert_eq!(restored.cycles_history.get(&canister_id).expect("missing cycles history")[0].cycles, 123_456);
         assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);
-        assert_eq!(restored.registered_canister_summaries_cache.as_ref().and_then(|m| m.get(&canister_id)).expect("missing registered canister summary").latest_cycles, Some(123_456));
+        assert!(restored.registered_canister_summaries_cache.is_none());
     }
 
     #[test]

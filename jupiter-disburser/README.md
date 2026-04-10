@@ -197,7 +197,7 @@ The three configured recipients must be pairwise distinct. The runtime also reje
 - `ledger_canister_id` (optional; defaults to ICP Ledger)
 - `governance_canister_id` (optional; defaults to NNS Governance)
 - `rescue_controller`
-- `blackhole_controller` (optional; defaults to canonical blackhole)
+- `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the disburser canister principal or `rescue_controller`)
 - `blackhole_armed` (optional)
 - `main_interval_seconds` (optional; defaults to 86400)
 - `rescue_interval_seconds` (optional; defaults to 86400)

@@ -212,9 +212,7 @@ thread_local! {
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
-    #[cfg(test)]
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    #[cfg(test)]
     static PERSISTENCE_DIRTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -265,33 +263,18 @@ pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
-#[cfg(test)]
 fn persistence_batch_active() -> bool {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.get() > 0)
 }
 
-#[cfg(not(test))]
-fn persistence_batch_active() -> bool {
-    false
-}
-
-#[cfg(test)]
 fn mark_persistence_dirty() {
     PERSISTENCE_DIRTY.with(|dirty| dirty.set(true));
 }
 
-#[cfg(not(test))]
-fn mark_persistence_dirty() {}
-
-#[cfg(test)]
 fn clear_persistence_dirty() {
     PERSISTENCE_DIRTY.with(|dirty| dirty.set(false));
 }
 
-#[cfg(not(test))]
-fn clear_persistence_dirty() {}
-
-#[cfg(test)]
 pub fn persist_dirty_state() {
     let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
     if !dirty {
@@ -302,7 +285,6 @@ pub fn persist_dirty_state() {
     clear_persistence_dirty();
 }
 
-#[cfg(test)]
 /// A synchronous persistence-batch guard.
 ///
 /// Do not hold this guard across an `await` point. While it is live, mutations are
@@ -312,7 +294,6 @@ pub struct PersistenceBatch {
     active: bool,
 }
 
-#[cfg(test)]
 impl Drop for PersistenceBatch {
     fn drop(&mut self) {
         if !self.active {
@@ -331,7 +312,6 @@ impl Drop for PersistenceBatch {
     }
 }
 
-#[cfg(test)]
 #[must_use]
 pub fn begin_persistence_batch() -> PersistenceBatch {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));

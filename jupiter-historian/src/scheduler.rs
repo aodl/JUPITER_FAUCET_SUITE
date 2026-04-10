@@ -253,46 +253,49 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
         if page.transactions.is_empty() {
             break;
         }
-        for tx in page.transactions.iter() {
-            if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
-                state::with_state_mut(|st| match contribution {
-                    logic::IndexedContributionEntry::Valid(contribution) => {
-                        if contribution.counts_toward_faucet {
-                            apply_verified_qualifying_contribution(st, contribution, now_secs);
-                        } else {
-                            let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
-                            push_recent_contribution(
+        {
+            let _batch = state::begin_persistence_batch();
+            for tx in page.transactions.iter() {
+                if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
+                    state::with_state_mut(|st| match contribution {
+                        logic::IndexedContributionEntry::Valid(contribution) => {
+                            if contribution.counts_toward_faucet {
+                                apply_verified_qualifying_contribution(st, contribution, now_secs);
+                            } else {
+                                let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
+                                push_recent_contribution(
+                                    recent,
+                                    RecentContribution {
+                                        canister_id: contribution.beneficiary,
+                                        tx_id: contribution.tx_id,
+                                        timestamp_nanos: contribution.timestamp_nanos,
+                                        amount_e8s: contribution.amount_e8s,
+                                        counts_toward_faucet: false,
+                                    },
+                                    MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+                                );
+                            }
+                        }
+                        logic::IndexedContributionEntry::Invalid(contribution) => {
+                            let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
+                            push_recent_invalid_contribution(
                                 recent,
-                                RecentContribution {
-                                    canister_id: contribution.beneficiary,
+                                InvalidContribution {
                                     tx_id: contribution.tx_id,
                                     timestamp_nanos: contribution.timestamp_nanos,
                                     amount_e8s: contribution.amount_e8s,
-                                    counts_toward_faucet: false,
+                                    memo_text: contribution.memo_text,
                                 },
-                                MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
                             );
                         }
-                    }
-                    logic::IndexedContributionEntry::Invalid(contribution) => {
-                        let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
-                        push_recent_invalid_contribution(
-                            recent,
-                            InvalidContribution {
-                                tx_id: contribution.tx_id,
-                                timestamp_nanos: contribution.timestamp_nanos,
-                                amount_e8s: contribution.amount_e8s,
-                                memo_text: contribution.memo_text,
-                            },
-                        );
-                    }
-                });
+                    });
+                }
+                cursor = Some(tx.id);
+                // Historian dedupe relies on this cursor remaining monotonic in normal operation. The
+                // retained per-canister history only protects against duplicate delivery within the
+                // retained window; older tx_ids are considered already indexed once the cursor passes them.
+                state::with_state_mut(|st| st.last_indexed_staking_tx_id = cursor);
             }
-            cursor = Some(tx.id);
-            // Historian dedupe relies on this cursor remaining monotonic in normal operation. The
-            // retained per-canister history only protects against duplicate delivery within the
-            // retained window; older tx_ids are considered already indexed once the cursor passes them.
-            state::with_state_mut(|st| st.last_indexed_staking_tx_id = cursor);
         }
         if page.transactions.len() < PAGE_SIZE as usize {
             break;
@@ -354,24 +357,27 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
                 }
             }
 
-            state::with_state_mut(|st| {
-                let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-                if let Some(last_seen) = last_seen {
-                    meta.last_burn_scan_tx_id = Some(last_seen);
-                }
-                if let Some(last_actual_burn_tx_id) = last_actual_burn_tx_id {
-                    meta.last_burn_tx_id = Some(last_actual_burn_tx_id);
-                }
-                if added > 0 {
-                    meta.burned_e8s = meta.burned_e8s.saturating_add(added);
-                    let total = st.icp_burned_e8s.get_or_insert(0);
-                    *total = total.saturating_add(added);
-                    let recent = st.recent_burns.get_or_insert_with(Vec::new);
-                    for burn in recent_burns {
-                        push_recent_burn(recent, burn);
+            {
+                let _batch = state::begin_persistence_batch();
+                state::with_state_mut(|st| {
+                    let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+                    if let Some(last_seen) = last_seen {
+                        meta.last_burn_scan_tx_id = Some(last_seen);
                     }
-                }
-            });
+                    if let Some(last_actual_burn_tx_id) = last_actual_burn_tx_id {
+                        meta.last_burn_tx_id = Some(last_actual_burn_tx_id);
+                    }
+                    if added > 0 {
+                        meta.burned_e8s = meta.burned_e8s.saturating_add(added);
+                        let total = st.icp_burned_e8s.get_or_insert(0);
+                        *total = total.saturating_add(added);
+                        let recent = st.recent_burns.get_or_insert_with(Vec::new);
+                        for burn in recent_burns {
+                            push_recent_burn(recent, burn);
+                        }
+                    }
+                });
+            }
 
             cursor = last_seen;
             if page.transactions.len() < PAGE_SIZE as usize {

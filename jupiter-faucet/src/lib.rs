@@ -74,14 +74,28 @@ fn assert_non_anonymous_principal(name: &str, principal: Principal) {
     assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
 }
 
+fn self_canister_principal_for_validation() -> Principal {
+    #[cfg(test)]
+    {
+        Principal::management_canister()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::canister_self()
+    }
+}
+
 fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("staking_account.owner", cfg.staking_account.owner);
     assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
     assert_non_anonymous_principal("cmc_canister_id", cfg.cmc_canister_id);
+    let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
     if let Some(blackhole_controller) = cfg.blackhole_controller {
         assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
+        assert!(blackhole_controller != self_id, "blackhole_controller must not equal the faucet canister principal");
+        assert!(blackhole_controller != cfg.rescue_controller, "blackhole_controller and rescue_controller must be distinct");
     }
     assert!(cfg.main_interval_seconds > 0, "main_interval_seconds must be greater than 0");
     assert!(cfg.rescue_interval_seconds > 0, "rescue_interval_seconds must be greater than 0");
@@ -129,11 +143,6 @@ fn init(args: InitArgs) {
     let st = State::new(cfg, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
-}
-
-#[ic_cdk::pre_upgrade]
-fn pre_upgrade() {
-    let _ = crate::state::get_state();
 }
 
 pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) {
@@ -504,6 +513,23 @@ mod tests {
     fn validate_config_rejects_zero_main_interval() {
         let mut cfg = sample_config();
         cfg.main_interval_seconds = 0;
+        validate_config(&cfg);
+    }
+
+
+    #[test]
+    #[should_panic(expected = "blackhole_controller must not equal the faucet canister principal")]
+    fn validate_config_rejects_blackhole_controller_equal_to_self() {
+        let mut cfg = sample_config();
+        cfg.blackhole_controller = Some(Principal::management_canister());
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "blackhole_controller and rescue_controller must be distinct")]
+    fn validate_config_rejects_blackhole_controller_equal_to_rescue_controller() {
+        let mut cfg = sample_config();
+        cfg.blackhole_controller = Some(cfg.rescue_controller);
         validate_config(&cfg);
     }
 

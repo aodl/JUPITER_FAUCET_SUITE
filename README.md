@@ -82,7 +82,7 @@ The contributor does **not** need to own the target canister. The faucet accepts
 
 The supported memo path is ASCII principal text carried in `icrc1_memo`, intended to be the target canister ID. The old 64-bit numeric memo field is intentionally ignored, which keeps the policy aligned with “enter the canister ID as text” rather than trying to reinterpret numeric values as UTF-8.
 
-The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Principal text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister.
+The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Principal text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up.
 
 This distinction matters because the ICP/Cycles ecosystem now has two different concepts: principals can hold cycles directly through the cycles ledger, but the faucet's `notify_top_up` path is still a **canister top-up** path rather than a general “mint cycles to arbitrary principal” path. Operationally, the supported UX remains: put the **target canister ID** in `icrc1_memo`.
 
@@ -96,8 +96,8 @@ Important details that matter in practice:
 - the trimmed memo must be ASCII and at most 32 bytes
 - empty, malformed, or oversize memos are ignored
 - contributions below `min_tx_e8s` are ignored for durable beneficiary registration and faucet eligibility; historian only keeps a capped recent feed for the below-threshold attempts and does not retain those canisters in its tracked registry
-- each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record
-- each new payout job rescans the full staking history against a fresh payout-pot snapshot
+- each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record, so separate qualifying contributions for the same beneficiary may incur separate outbound fees
+- each new payout job rescans the full staking history against a fresh payout-pot snapshot in a streaming, page-by-page pass; the design intentionally prefers constant resident attribution state over bounded historical replay cost, so growth pressure is on execution time and cycles rather than on a durable in-memory attribution set
 
 The production minimum is intentionally **1 ICP** so beneficiary-registry spam stays expensive. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions. Historian keeps a durable registry of memo-derived beneficiaries so it can efficiently monitor and display later cycle top-up activity; a much lower threshold would let an attacker register huge numbers of canisters very cheaply.
 

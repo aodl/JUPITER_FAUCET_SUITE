@@ -44,7 +44,7 @@ If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and
 
 Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold contributions never create durable tracking.
 
-Memo encoding uses `icrc1_memo` principal text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic.
+Memo encoding uses `icrc1_memo` principal text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic. This mirrors the faucet’s policy-only memo validation: accepted short principal text is not itself a proof that the target is an installed canister.
 
 If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
@@ -58,7 +58,7 @@ The historian also indexes ICP burns by scanning the CMC deposit accounts for:
 
 For each burn target it tracks:
 
-- the last scanned deposit-account transaction ID (used as the pagination cursor; the implementation intentionally assumes the index cursor contract is monotonic and exclusive across pages rather than adding extra complexity for hypothetical duplicate page-boundary delivery)
+- the last scanned deposit-account transaction ID (used as the pagination cursor; the implementation intentionally trusts the ICP index cursor contract to remain monotonic and exclusive across pages rather than adding compensating complexity for hypothetical duplicate page-boundary delivery)
 - the last actual burn transaction ID
 - cumulative burned ICP in e8s
 - recent burn items for the public dashboard
@@ -99,7 +99,7 @@ SNS-discovered canisters are not probed through blackhole status in the regular 
 
 ## Retention and deduplication
 
-The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry.
+The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry. Derived caches are rebuilt at runtime instead of being treated as durable source-of-truth state.
 
 Durable bounded state currently uses these caps:
 

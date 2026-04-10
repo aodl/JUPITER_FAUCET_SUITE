@@ -22,7 +22,8 @@ The implementation is intentionally empty:
 - no public methods
 - no timers
 - no stable state
-- `init` and `post_upgrade` are both no-ops
+- `init` is a no-op
+- there is no upgrade hook because no runtime reinitialization is required
 
 That means the canister is currently a principal / account placeholder, not a live reward-distribution engine.
 

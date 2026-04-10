@@ -36,7 +36,7 @@ Each payout job works from two snapshots taken at the beginning of the job:
 - `pot_start_e8s` = current ICP balance of the faucet payout account
 - `denom_staking_balance_e8s` = current ICP balance of the configured staking account
 
-The faucet then scans the staking account’s indexed transfer history from the beginning and evaluates each eligible incoming transfer independently.
+The faucet then scans the staking account’s indexed transfer history from the beginning in a streaming, page-by-page pass and evaluates each eligible incoming transfer independently.
 
 For each eligible contribution it computes:
 
@@ -82,7 +82,7 @@ Transfers below that threshold are ignored for attribution and counted as `ignor
 
 Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended target canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
 
-The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up.
+The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
 ## Important payout semantics
 
@@ -92,16 +92,20 @@ The faucet does **not** permanently checkpoint “already attributed” staking 
 
 Instead, each new payout job rescans the staking account history from the beginning and re-evaluates contributions against the new payout-pot snapshot.
 
+That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the blackholed canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
+
 Only the **currently active** job persists the scan cursor and aggregate counters. 
 ### 2) Contributions are not aggregated
 
 Each eligible contribution is processed independently, even when multiple contributions map to the same beneficiary.
 
-So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct contribution records for payout purposes.
+So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct contribution records for payout purposes. That is an intentional trade-off of the single-pass streaming model, and it means repeated qualifying contributions for the same beneficiary may incur repeated outbound ledger fees.
 
 ### 3) The denominator is the staking-account balance snapshot
 
 The proportional split is based on the staking account’s balance at job start, not on a sum the faucet reconstructs from history in memory.
+
+This design assumes the staking-account balance is protocol-controlled and is not intentionally shrunk during normal operation. Under that invariant the current balance snapshot is the correct denominator for the payout job.
 
 That is why the code also contains index-health invariants around the observed oldest / latest transaction IDs.
 
@@ -169,7 +173,7 @@ Default timers are:
 - `rescue_interval_seconds = 1 day`
 - index page size = `500`
 
-Each interval timer is clamped to at least 60 seconds by the runtime code. On `post_upgrade`, if an `ActivePayoutJob` already exists, the faucet also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the regular 7-day cadence. There is no separate retry timer: retries are attempted inline during the same payout pass.
+Each interval timer is clamped to at least 60 seconds by the runtime code. On `post_upgrade`, if an `ActivePayoutJob` already exists, the faucet also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the regular 7-day cadence. There is no separate retry timer: retries are attempted inline during the same payout pass. The historical replay itself is chunked by index pages and by async transfer/notify boundaries, so no payout job relies on one monolithic message execution.
 The PocketIC integration suite includes an end-to-end upgrade test that interrupts a live payout after the ledger transfer lands but before the faucet persists acceptance/notify progress, then upgrades and verifies duplicate-proof recovery to a single final notification.
 
 ### Main tick sequence
@@ -289,7 +293,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `index_canister_id` (optional; defaults to ICP Index)
 - `cmc_canister_id` (optional; defaults to the Cycles Minting Canister)
 - `rescue_controller`
-- `blackhole_controller` (optional; defaults to canonical blackhole)
+- `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the faucet canister principal or `rescue_controller`)
 - `blackhole_armed` (optional)
 - `expected_first_staking_tx_id` (optional)
   - a safety anchor for the oldest expected staking-account transaction **ID** visible through the index canister

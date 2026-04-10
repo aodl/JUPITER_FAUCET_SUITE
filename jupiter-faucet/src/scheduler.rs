@@ -432,7 +432,26 @@ async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
     });
     log_summary(&summary);
 }
-fn set_next_start(next_start: Option<u64>) { state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.next_start = next_start; }); }
+fn flush_scan_progress(ignored_under_threshold_delta: &mut u64, ignored_bad_memo_delta: &mut u64, next_start: Option<u64>) {
+    if *ignored_under_threshold_delta == 0 && *ignored_bad_memo_delta == 0 && next_start.is_none() {
+        return;
+    }
+    state::with_state_mut(|st| {
+        if let Some(job) = st.active_payout_job.as_mut() {
+            job.ignored_under_threshold = job
+                .ignored_under_threshold
+                .saturating_add(*ignored_under_threshold_delta);
+            job.ignored_bad_memo = job
+                .ignored_bad_memo
+                .saturating_add(*ignored_bad_memo_delta);
+            if next_start.is_some() {
+                job.next_start = next_start;
+            }
+        }
+    });
+    *ignored_under_threshold_delta = 0;
+    *ignored_bad_memo_delta = 0;
+}
 
 fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64) -> TransferArg {
     let memo_bytes = logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec();
@@ -818,6 +837,10 @@ async fn process_payout(
         }
 
         let page_start = job.next_start;
+        let mut ignored_under_threshold_delta = 0u64;
+        let mut ignored_bad_memo_delta = 0u64;
+        let mut page_next_start = page_start;
+        let mut scan_batch = Some(state::begin_persistence_batch());
         for tx in &resp.transactions {
             if let Some(last_seen) = page_start {
                 if tx.id <= last_seen {
@@ -829,7 +852,7 @@ async fn process_payout(
                 }
             }
             let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
-                set_next_start(Some(tx.id));
+                page_next_start = Some(tx.id);
                 continue;
             };
             let snapshot = state::with_state(|st| {
@@ -837,11 +860,25 @@ async fn process_payout(
                 (job.pot_start_e8s, job.denom_staking_balance_e8s, job.fee_e8s, st.config.min_tx_e8s)
             });
             match logic::evaluate_contribution(snapshot.0, snapshot.1, snapshot.2, snapshot.3, &contribution) {
-                logic::ContributionDecision::IgnoreUnderThreshold => state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(1); job.next_start = Some(tx.id); }),
-                logic::ContributionDecision::IgnoreBadMemo => state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(1); job.next_start = Some(tx.id); }),
-                logic::ContributionDecision::NoTransfer => set_next_start(Some(tx.id)),
+                logic::ContributionDecision::IgnoreUnderThreshold => {
+                    ignored_under_threshold_delta = ignored_under_threshold_delta.saturating_add(1);
+                    page_next_start = Some(tx.id);
+                }
+                logic::ContributionDecision::IgnoreBadMemo => {
+                    ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
+                    page_next_start = Some(tx.id);
+                }
+                logic::ContributionDecision::NoTransfer => {
+                    page_next_start = Some(tx.id);
+                }
                 logic::ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } => {
-                    set_next_start(Some(tx.id));
+                    page_next_start = Some(tx.id);
+                    flush_scan_progress(
+                        &mut ignored_under_threshold_delta,
+                        &mut ignored_bad_memo_delta,
+                        page_next_start,
+                    );
+                    drop(scan_batch.take());
                     // Best-effort policy: attempt each eligible top-up independently, allow at most
                     // one immediate inline retry at the accepted-ledger / notify boundary, and persist
                     // only the single in-flight transfer/notify phase so upgrades can resume safely.
@@ -852,13 +889,20 @@ async fn process_payout(
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
                     }
+                    scan_batch = Some(state::begin_persistence_batch());
                 }
             }
         }
         let last_id = resp.transactions.last().map(|t| t.id);
         state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
+            job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(ignored_under_threshold_delta);
+            job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(ignored_bad_memo_delta);
+            if let Some(next_start) = page_next_start {
+                job.next_start = Some(next_start);
+            }
             if resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none() { job.scan_complete = true; } else { job.next_start = last_id; }
         });
+        drop(scan_batch);
     }
 }
 
