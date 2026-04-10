@@ -1217,28 +1217,28 @@ async fn debug_driver_tick() {
 #[ic_cdk::update]
 fn debug_set_last_completed_cycles_sweep_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
-    state::with_state_mut(|st| st.last_completed_cycles_sweep_ts = ts.unwrap_or(0));
+    state::with_root_state_mut(|st| st.last_completed_cycles_sweep_ts = ts.unwrap_or(0));
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_last_sns_discovery_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
-    state::with_state_mut(|st| st.last_sns_discovery_ts = ts.unwrap_or(0));
+    state::with_root_state_mut(|st| st.last_sns_discovery_ts = ts.unwrap_or(0));
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
     guard_debug_api_not_production();
-    state::with_state_mut(|st| st.last_indexed_staking_tx_id = tx_id);
+    state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = tx_id);
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 fn debug_reset_runtime_state() {
     guard_debug_api_not_production();
-    state::with_state_mut(|st| {
+    state::with_root_state_mut(|st| {
         st.active_cycles_sweep = None;
         st.main_lock_state_ts = Some(0);
         st.last_main_run_ts = 0;
@@ -1249,7 +1249,7 @@ fn debug_reset_runtime_state() {
 #[ic_cdk::update]
 fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
-    state::with_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
+    state::with_root_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
 }
 
 #[cfg(feature = "debug_api")]

@@ -90,7 +90,7 @@ struct MainGuard {
 
 impl MainGuard {
     fn acquire(now_secs: u64) -> Option<Self> {
-        state::with_state_mut(|st| {
+        state::with_root_state_mut(|st| {
             let lock_expires_at_ts = st.main_lock_state_ts.unwrap_or(0);
             if lock_expires_at_ts > now_secs {
                 return None;
@@ -109,7 +109,7 @@ impl MainGuard {
             return;
         }
         let lease_expires_at_ts = self.lease_expires_at_ts;
-        state::with_state_mut(|st| {
+        state::with_root_state_mut(|st| {
             if st.main_lock_state_ts == Some(lease_expires_at_ts) {
                 st.main_lock_state_ts = Some(0);
             }
@@ -119,7 +119,7 @@ impl MainGuard {
 
     fn finish(mut self, now_secs: u64) {
         let lease_expires_at_ts = self.lease_expires_at_ts;
-        state::with_state_mut(|st| {
+        state::with_root_state_mut(|st| {
             st.last_main_run_ts = now_secs;
             if st.main_lock_state_ts == Some(lease_expires_at_ts) {
                 st.main_lock_state_ts = Some(0);
@@ -257,51 +257,57 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
             let _batch = state::begin_persistence_batch();
             for tx in page.transactions.iter() {
                 if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
-                    state::with_state_mut(|st| match contribution {
+                    match contribution {
                         logic::IndexedContributionEntry::Valid(contribution) => {
                             if contribution.counts_toward_faucet {
-                                apply_verified_qualifying_contribution(st, contribution, now_secs);
+                                state::with_root_registry_and_contributions_state_mut(|st| {
+                                    apply_verified_qualifying_contribution(st, contribution, now_secs);
+                                });
                             } else {
-                                let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
-                                push_recent_contribution(
-                                    recent,
-                                    RecentContribution {
-                                        canister_id: contribution.beneficiary,
-                                        tx_id: contribution.tx_id,
-                                        timestamp_nanos: contribution.timestamp_nanos,
-                                        amount_e8s: contribution.amount_e8s,
-                                        counts_toward_faucet: false,
-                                    },
-                                    MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
-                                );
+                                state::with_root_state_mut(|st| {
+                                    let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
+                                    push_recent_contribution(
+                                        recent,
+                                        RecentContribution {
+                                            canister_id: contribution.beneficiary,
+                                            tx_id: contribution.tx_id,
+                                            timestamp_nanos: contribution.timestamp_nanos,
+                                            amount_e8s: contribution.amount_e8s,
+                                            counts_toward_faucet: false,
+                                        },
+                                        MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+                                    );
+                                });
                             }
                         }
                         logic::IndexedContributionEntry::Invalid(contribution) => {
-                            let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
-                            push_recent_invalid_contribution(
-                                recent,
-                                InvalidContribution {
-                                    tx_id: contribution.tx_id,
-                                    timestamp_nanos: contribution.timestamp_nanos,
-                                    amount_e8s: contribution.amount_e8s,
-                                    memo_text: contribution.memo_text,
-                                },
-                            );
+                            state::with_root_state_mut(|st| {
+                                let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
+                                push_recent_invalid_contribution(
+                                    recent,
+                                    InvalidContribution {
+                                        tx_id: contribution.tx_id,
+                                        timestamp_nanos: contribution.timestamp_nanos,
+                                        amount_e8s: contribution.amount_e8s,
+                                        memo_text: contribution.memo_text,
+                                    },
+                                );
+                            });
                         }
-                    });
+                    }
                 }
                 cursor = Some(tx.id);
                 // Historian dedupe relies on this cursor remaining monotonic in normal operation. The
                 // retained per-canister history only protects against duplicate delivery within the
                 // retained window; older tx_ids are considered already indexed once the cursor passes them.
-                state::with_state_mut(|st| st.last_indexed_staking_tx_id = cursor);
+                state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = cursor);
             }
         }
         if page.transactions.len() < PAGE_SIZE as usize {
             break;
         }
     }
-    state::with_state_mut(|st| st.last_index_run_ts = Some(now_secs));
+    state::with_root_state_mut(|st| st.last_index_run_ts = Some(now_secs));
     Ok(())
 }
 
@@ -359,7 +365,7 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
 
             {
                 let _batch = state::begin_persistence_batch();
-                state::with_state_mut(|st| {
+                state::with_root_and_registry_state_mut(|st| {
                     let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                     if let Some(last_seen) = last_seen {
                         meta.last_burn_scan_tx_id = Some(last_seen);
@@ -392,7 +398,7 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
 fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
     let Some(canister_id) = summary.canister_id else { return; };
     let cycles = summary.status.and_then(|status| status.cycles).and_then(|cycles| nat_to_u128(&cycles));
-    state::with_state_mut(|st| {
+    state::with_root_registry_and_cycles_state_mut(|st| {
         st.distinct_canisters.insert(canister_id);
         st.canister_sources.insert(canister_id, logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::SnsDiscovery));
         let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
@@ -418,7 +424,7 @@ async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     sns_wasm: &W,
     sns_root: &R,
 ) -> Result<(), String> {
-    let (snapshot, max_per_tick, max_cycles_entries) = state::with_state_mut(|st| {
+    let (snapshot, max_per_tick, max_cycles_entries) = state::with_root_state_mut(|st| {
         if st.active_sns_discovery.is_none() {
             st.active_sns_discovery = Some(ActiveSnsDiscovery {
                 started_at_ts_nanos: timestamp_nanos,
@@ -442,7 +448,7 @@ async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
             .collect();
         root_canister_ids.sort();
         root_canister_ids.dedup();
-        state::with_state_mut(|st| {
+        state::with_root_state_mut(|st| {
             if let Some(active) = st.active_sns_discovery.as_mut() {
                 active.root_canister_ids = root_canister_ids.clone();
             }
@@ -470,7 +476,7 @@ async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
         for summary in summary.archives { apply_sns_canister_summary(discovery_timestamp_nanos, now_secs, max_cycles_entries, summary); }
     }
 
-    state::with_state_mut(|st| {
+    state::with_root_state_mut(|st| {
         if let Some(active) = st.active_sns_discovery.as_mut() {
             active.next_index = end as u64;
             if active.next_index >= active.root_canister_ids.len() as u64 {
@@ -483,7 +489,7 @@ async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
 }
 
 async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs: u64, blackhole: &B) -> Result<(), String> {
-    let (snapshot, max_per_tick, max_entries) = state::with_state_mut(|st| {
+    let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
         if st.active_cycles_sweep.is_none() {
             let self_id = ic_cdk::api::canister_self();
             let mut canisters = vec![self_id];
@@ -520,7 +526,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
         if canister_id == self_id {
             let cycles = ic_cdk::api::canister_cycle_balance();
             log_cycles_once_per_week(cycles);
-            state::with_state_mut(|st| {
+            state::with_root_registry_and_cycles_state_mut(|st| {
                 let history = st.cycles_history.entry(canister_id).or_default();
                 let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(started_at_ts_nanos, cycles, CyclesSampleSource::SelfCanister), max_entries);
                 let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
@@ -538,7 +544,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
         match blackhole.canister_status(canister_id).await {
             Ok(status) => {
                 let cycles = nat_to_u128(&status.cycles).ok_or_else(|| "cycles overflow converting nat to u128".to_string())?;
-                state::with_state_mut(|st| {
+                state::with_root_registry_and_cycles_state_mut(|st| {
                     let history = st.cycles_history.entry(canister_id).or_default();
                     let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(started_at_ts_nanos, cycles, CyclesSampleSource::BlackholeStatus), max_entries);
                     let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
@@ -552,7 +558,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
                 });
             }
             Err(err) => {
-                state::with_state_mut(|st| {
+                state::with_root_and_registry_state_mut(|st| {
                     let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                     if meta.first_seen_ts.is_none() {
                         meta.first_seen_ts = Some(now_secs);
@@ -564,7 +570,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
         }
     }
 
-    state::with_state_mut(|st| {
+    state::with_root_state_mut(|st| {
         if let Some(active) = st.active_cycles_sweep.as_mut() {
             active.next_index = end as u64;
             if active.next_index >= active.canisters.len() as u64 {
