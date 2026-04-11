@@ -217,6 +217,7 @@ fn apply_verified_qualifying_contribution(
         amount_e8s: contribution.amount_e8s,
         counts_toward_faucet: true,
     };
+    crate::state::ensure_contribution_history_loaded(st, contribution.beneficiary);
     let history = st.contribution_history.entry(contribution.beneficiary).or_default();
     let inserted = logic::push_contribution(
         history,
@@ -260,9 +261,12 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                     match contribution {
                         logic::IndexedContributionEntry::Valid(contribution) => {
                             if contribution.counts_toward_faucet {
-                                state::with_root_registry_and_contributions_state_mut(|st| {
-                                    apply_verified_qualifying_contribution(st, contribution, now_secs);
-                                });
+                                {
+                                    let dirty_beneficiary = contribution.beneficiary.clone();
+                                    state::with_root_registry_and_contributions_canister_state_mut(dirty_beneficiary, |st| {
+                                        apply_verified_qualifying_contribution(st, contribution, now_secs);
+                                    });
+                                }
                             } else {
                                 state::with_root_state_mut(|st| {
                                     let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
@@ -365,7 +369,8 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
 
             {
                 let _batch = state::begin_persistence_batch();
-                state::with_root_and_registry_state_mut(|st| {
+                let dirty_canister_id = canister_id.clone();
+                state::with_root_and_registry_canister_state_mut(dirty_canister_id, |st| {
                     let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                     if let Some(last_seen) = last_seen {
                         meta.last_burn_scan_tx_id = Some(last_seen);
@@ -398,20 +403,37 @@ async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> 
 fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
     let Some(canister_id) = summary.canister_id else { return; };
     let cycles = summary.status.and_then(|status| status.cycles).and_then(|cycles| nat_to_u128(&cycles));
-    state::with_root_registry_and_cycles_state_mut(|st| {
+    let dirty_canister_id = canister_id.clone();
+    state::with_root_registry_and_cycles_canister_state_mut(dirty_canister_id, |st| {
         st.distinct_canisters.insert(canister_id);
-        st.canister_sources.insert(canister_id, logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::SnsDiscovery));
-        let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-        if meta.first_seen_ts.is_none() {
-            meta.first_seen_ts = Some(now_secs);
-        }
+        st.canister_sources.insert(
+            canister_id,
+            logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::SnsDiscovery),
+        );
         if let Some(cycles) = cycles {
+            crate::state::ensure_cycles_history_loaded(st, canister_id);
             let history = st.cycles_history.entry(canister_id).or_default();
-            let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(timestamp_nanos, cycles, CyclesSampleSource::SnsRootSummary), max_cycles_entries);
+            let inserted = logic::push_cycles_sample(
+                history,
+                logic::make_cycles_sample(timestamp_nanos, cycles, CyclesSampleSource::SnsRootSummary),
+                max_cycles_entries,
+            );
+            let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+            if meta.first_seen_ts.is_none() {
+                meta.first_seen_ts = Some(now_secs);
+            }
             if inserted {
-                logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary));
+                logic::apply_cycles_probe_result(
+                    meta,
+                    timestamp_nanos,
+                    CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary),
+                );
             }
         } else {
+            let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+            if meta.first_seen_ts.is_none() {
+                meta.first_seen_ts = Some(now_secs);
+            }
             logic::apply_cycles_probe_result(meta, timestamp_nanos, CyclesProbeResult::NotAvailable);
         }
         crate::refresh_registered_canister_summary(st, canister_id);
@@ -509,7 +531,11 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
                 }
                 canisters.push(canister_id);
             }
-            st.active_cycles_sweep = Some(ActiveCyclesSweep { started_at_ts_nanos: timestamp_nanos, canisters, next_index: 0 });
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: timestamp_nanos,
+                canisters,
+                next_index: 0,
+            });
         }
         (
             st.active_cycles_sweep.clone().expect("active sweep"),
@@ -526,15 +552,24 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
         if canister_id == self_id {
             let cycles = ic_cdk::api::canister_cycle_balance();
             log_cycles_once_per_week(cycles);
-            state::with_root_registry_and_cycles_state_mut(|st| {
+            state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+                crate::state::ensure_cycles_history_loaded(st, canister_id);
                 let history = st.cycles_history.entry(canister_id).or_default();
-                let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(started_at_ts_nanos, cycles, CyclesSampleSource::SelfCanister), max_entries);
+                let inserted = logic::push_cycles_sample(
+                    history,
+                    logic::make_cycles_sample(started_at_ts_nanos, cycles, CyclesSampleSource::SelfCanister),
+                    max_entries,
+                );
                 let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                 if meta.first_seen_ts.is_none() {
                     meta.first_seen_ts = Some(now_secs);
                 }
                 if inserted {
-                    logic::apply_cycles_probe_result(meta, started_at_ts_nanos, CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister));
+                    logic::apply_cycles_probe_result(
+                        meta,
+                        started_at_ts_nanos,
+                        CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister),
+                    );
                 }
                 crate::refresh_registered_canister_summary(st, canister_id);
             });
@@ -543,27 +578,45 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
 
         match blackhole.canister_status(canister_id).await {
             Ok(status) => {
-                let cycles = nat_to_u128(&status.cycles).ok_or_else(|| "cycles overflow converting nat to u128".to_string())?;
-                state::with_root_registry_and_cycles_state_mut(|st| {
+                let cycles = nat_to_u128(&status.cycles)
+                    .ok_or_else(|| "cycles overflow converting nat to u128".to_string())?;
+                state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+                    crate::state::ensure_cycles_history_loaded(st, canister_id);
                     let history = st.cycles_history.entry(canister_id).or_default();
-                    let inserted = logic::push_cycles_sample(history, logic::make_cycles_sample(started_at_ts_nanos, cycles, CyclesSampleSource::BlackholeStatus), max_entries);
+                    let inserted = logic::push_cycles_sample(
+                        history,
+                        logic::make_cycles_sample(
+                            started_at_ts_nanos,
+                            cycles,
+                            CyclesSampleSource::BlackholeStatus,
+                        ),
+                        max_entries,
+                    );
                     let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                     if meta.first_seen_ts.is_none() {
                         meta.first_seen_ts = Some(now_secs);
                     }
                     if inserted {
-                        logic::apply_cycles_probe_result(meta, started_at_ts_nanos, CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus));
+                        logic::apply_cycles_probe_result(
+                            meta,
+                            started_at_ts_nanos,
+                            CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus),
+                        );
                     }
                     crate::refresh_registered_canister_summary(st, canister_id);
                 });
             }
             Err(err) => {
-                state::with_root_and_registry_state_mut(|st| {
+                state::with_root_and_registry_canister_state_mut(canister_id, |st| {
                     let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
                     if meta.first_seen_ts.is_none() {
                         meta.first_seen_ts = Some(now_secs);
                     }
-                    logic::apply_cycles_probe_result(meta, started_at_ts_nanos, CyclesProbeResult::Error(err.to_string()));
+                    logic::apply_cycles_probe_result(
+                        meta,
+                        started_at_ts_nanos,
+                        CyclesProbeResult::Error(err.to_string()),
+                    );
                     crate::refresh_registered_canister_summary(st, canister_id);
                 });
             }

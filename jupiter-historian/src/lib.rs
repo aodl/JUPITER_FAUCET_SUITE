@@ -124,11 +124,9 @@ fn normalize_recent_burns(items: &mut Vec<RecentBurn>) {
 
 fn memo_source_is_registered(st: &State, canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
     sources.contains(&CanisterSource::MemoContribution)
-        && st
-            .contribution_history
-            .get(canister_id)
-            .map(|history| history.iter().any(|item| item.counts_toward_faucet))
-            .unwrap_or(false)
+        && contribution_history_snapshot(st, *canister_id)
+            .into_iter()
+            .any(|item| item.counts_toward_faucet)
 }
 
 fn visible_sources_for_canister(st: &State, canister_id: &Principal) -> Option<BTreeSet<CanisterSource>> {
@@ -240,12 +238,12 @@ fn normalize_runtime_state(st: &mut State) {
 
     st.qualifying_contribution_count = Some(fallback_qualifying_contribution_count(st));
 
-    let contribution_last_ts: BTreeMap<_, _> = st
-        .contribution_history
-        .iter()
-        .map(|(canister_id, history)| {
+    let contribution_last_ts: BTreeMap<_, _> = contribution_history_canister_ids(st)
+        .into_iter()
+        .map(|canister_id| {
+            let history = contribution_history_snapshot(st, canister_id);
             (
-                *canister_id,
+                canister_id,
                 history
                     .iter()
                     .filter_map(|item| item.timestamp_nanos.map(|ts| ts / 1_000_000_000))
@@ -261,8 +259,8 @@ fn normalize_runtime_state(st: &mut State) {
         .canister_sources
         .keys()
         .copied()
-        .chain(st.contribution_history.keys().copied())
-        .chain(st.cycles_history.keys().copied())
+        .chain(contribution_history_canister_ids(st))
+        .chain(cycles_history_canister_ids(st))
         .collect();
     st.distinct_canisters = distinct_canisters;
     rebuild_registered_canister_summaries_cache(st);
@@ -575,10 +573,40 @@ fn latest_cycles(history: &[CyclesSample]) -> Option<u128> {
     history.iter().max_by_key(|item| item.timestamp_nanos).map(|item| item.cycles)
 }
 
-fn fallback_qualifying_contribution_count(st: &State) -> u64 {
+fn contribution_history_canister_ids(st: &State) -> BTreeSet<Principal> {
     st.contribution_history
-        .values()
-        .flat_map(|history| history.iter())
+        .keys()
+        .copied()
+        .chain(state::stable_contribution_history_keys())
+        .collect()
+}
+
+fn cycles_history_canister_ids(st: &State) -> BTreeSet<Principal> {
+    st.cycles_history
+        .keys()
+        .copied()
+        .chain(state::stable_cycles_history_keys())
+        .collect()
+}
+
+fn contribution_history_snapshot(st: &State, canister_id: Principal) -> Vec<ContributionSample> {
+    st.contribution_history
+        .get(&canister_id)
+        .cloned()
+        .unwrap_or_else(|| state::stable_contribution_history_for(canister_id))
+}
+
+fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec<CyclesSample> {
+    st.cycles_history
+        .get(&canister_id)
+        .cloned()
+        .unwrap_or_else(|| state::stable_cycles_history_for(canister_id))
+}
+
+fn fallback_qualifying_contribution_count(st: &State) -> u64 {
+    contribution_history_canister_ids(st)
+        .into_iter()
+        .flat_map(|canister_id| contribution_history_snapshot(st, canister_id).into_iter())
         .filter(|item| item.counts_toward_faucet)
         .count() as u64
 }
@@ -590,16 +618,14 @@ fn fallback_icp_burned_e8s(st: &State) -> u64 {
 }
 
 fn fallback_recent_qualifying_contributions_state(st: &State) -> Vec<RecentContribution> {
-    let mut items: Vec<_> = st
-        .contribution_history
-        .iter()
-        .flat_map(|(canister_id, history)| {
-            history
-                .iter()
+    let mut items: Vec<_> = contribution_history_canister_ids(st)
+        .into_iter()
+        .flat_map(|canister_id| {
+            contribution_history_snapshot(st, canister_id)
+                .into_iter()
                 .filter(|item| item.counts_toward_faucet)
-                .cloned()
-                .map(|item| RecentContribution {
-                    canister_id: *canister_id,
+                .map(move |item| RecentContribution {
+                    canister_id,
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
@@ -612,16 +638,14 @@ fn fallback_recent_qualifying_contributions_state(st: &State) -> Vec<RecentContr
 }
 
 fn fallback_recent_under_threshold_contributions_state(st: &State) -> Vec<RecentContribution> {
-    let mut items: Vec<_> = st
-        .contribution_history
-        .iter()
-        .flat_map(|(canister_id, history)| {
-            history
-                .iter()
+    let mut items: Vec<_> = contribution_history_canister_ids(st)
+        .into_iter()
+        .flat_map(|canister_id| {
+            contribution_history_snapshot(st, canister_id)
+                .into_iter()
                 .filter(|item| !item.counts_toward_faucet)
-                .cloned()
-                .map(|item| RecentContribution {
-                    canister_id: *canister_id,
+                .map(move |item| RecentContribution {
+                    canister_id,
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
@@ -738,16 +762,20 @@ fn initialize_derived_state_if_missing(st: &mut State) {
 
 fn registered_canister_summary_for(st: &State, canister_id: Principal) -> Option<RegisteredCanisterSummary> {
     let sources = visible_sources_for_canister(st, &canister_id)?;
-    let history = st.contribution_history.get(&canister_id)?;
-    let (qualifying_contribution_count, total_qualifying_contributed_e8s, rollup_last_ts) = qualifying_rollup(history);
+    let history = contribution_history_snapshot(st, canister_id);
+    if history.is_empty() {
+        return None;
+    }
+    let (qualifying_contribution_count, total_qualifying_contributed_e8s, rollup_last_ts) = qualifying_rollup(&history);
     let meta = st.per_canister_meta.get(&canister_id).cloned().unwrap_or_default();
+    let cycles_history = cycles_history_snapshot(st, canister_id);
     Some(RegisteredCanisterSummary {
         canister_id,
         sources: sources.into_iter().collect(),
         qualifying_contribution_count,
         total_qualifying_contributed_e8s,
         last_contribution_ts: meta.last_contribution_ts.or(rollup_last_ts),
-        latest_cycles: st.cycles_history.get(&canister_id).and_then(|history| latest_cycles(history)),
+        latest_cycles: latest_cycles(&cycles_history),
         last_cycles_probe_ts: meta.last_cycles_probe_ts,
     })
 }
@@ -845,7 +873,10 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     let mut st: State = state::restore_state_from_stable().expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    state::set_state(st);
+    // Persist only the historian root on upgrade. Contribution/cycles histories are
+    // restored lazily from stable entry/index maps, so rewriting all durable sections
+    // here would clobber those bulk histories with an intentionally sparse heap view.
+    state::set_state_root_only(st);
     scheduler::install_timers();
 }
 
@@ -894,27 +925,26 @@ fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
         let limit = clamp_public_limit(args.limit, 100);
         let mut items = Vec::new();
         let mut next = None;
-        if let Some(history) = st.cycles_history.get(&args.canister_id) {
-            let iter: Box<dyn Iterator<Item = &CyclesSample>> = if descending {
-                Box::new(history.iter().rev())
-            } else {
-                Box::new(history.iter())
+        let history = cycles_history_snapshot(st, args.canister_id);
+        let iter: Box<dyn Iterator<Item = &CyclesSample>> = if descending {
+            Box::new(history.iter().rev())
+        } else {
+            Box::new(history.iter())
+        };
+        for item in iter {
+            let include = match args.start_after_ts {
+                Some(ts) if descending => item.timestamp_nanos < ts,
+                Some(ts) => item.timestamp_nanos > ts,
+                None => true,
             };
-            for item in iter {
-                let include = match args.start_after_ts {
-                    Some(ts) if descending => item.timestamp_nanos < ts,
-                    Some(ts) => item.timestamp_nanos > ts,
-                    None => true,
-                };
-                if !include {
-                    continue;
-                }
-                if items.len() >= limit {
-                    next = items.last().map(|sample: &CyclesSample| sample.timestamp_nanos);
-                    break;
-                }
-                items.push(item.clone());
+            if !include {
+                continue;
             }
+            if items.len() >= limit {
+                next = items.last().map(|sample: &CyclesSample| sample.timestamp_nanos);
+                break;
+            }
+            items.push(item.clone());
         }
         CyclesHistoryPage {
             items,
@@ -930,27 +960,26 @@ fn get_contribution_history(args: GetContributionHistoryArgs) -> ContributionHis
         let limit = clamp_public_limit(args.limit, 100);
         let mut items = Vec::new();
         let mut next = None;
-        if let Some(history) = st.contribution_history.get(&args.canister_id) {
-            let iter: Box<dyn Iterator<Item = &ContributionSample>> = if descending {
-                Box::new(history.iter().rev())
-            } else {
-                Box::new(history.iter())
+        let history = contribution_history_snapshot(st, args.canister_id);
+        let iter: Box<dyn Iterator<Item = &ContributionSample>> = if descending {
+            Box::new(history.iter().rev())
+        } else {
+            Box::new(history.iter())
+        };
+        for item in iter {
+            let include = match args.start_after_tx_id {
+                Some(tx_id) if descending => item.tx_id < tx_id,
+                Some(tx_id) => item.tx_id > tx_id,
+                None => true,
             };
-            for item in iter {
-                let include = match args.start_after_tx_id {
-                    Some(tx_id) if descending => item.tx_id < tx_id,
-                    Some(tx_id) => item.tx_id > tx_id,
-                    None => true,
-                };
-                if !include {
-                    continue;
-                }
-                if items.len() >= limit {
-                    next = items.last().map(|sample: &ContributionSample| sample.tx_id);
-                    break;
-                }
-                items.push(item.clone());
+            if !include {
+                continue;
             }
+            if items.len() >= limit {
+                next = items.last().map(|sample: &ContributionSample| sample.tx_id);
+                break;
+            }
+            items.push(item.clone());
         }
         ContributionHistoryPage {
             items,
