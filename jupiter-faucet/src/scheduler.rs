@@ -13,12 +13,13 @@ use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CanisterStatusClient, CmcClient, IndexClient, LedgerClient};
 use crate::state::{
     ActivePayoutJob, ForcedRescueReason, PendingNotification, PendingTransfer, PendingTransferPhase,
-    TransferKind,
+    SkipRange, TransferKind,
 };
 use crate::{logic, policy, state};
 
 
 const PAGE_SIZE: u64 = 500;
+const MIN_SKIP_RANGE_TX_COUNT: u64 = 10_000;
 const LEDGER_CREATED_AT_MAX_AGE_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 const LEDGER_CREATED_AT_MAX_FUTURE_SKEW_NANOS: u64 = 60 * 1_000_000_000;
 
@@ -432,8 +433,106 @@ async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
     });
     log_summary(&summary);
 }
-fn flush_scan_progress(ignored_under_threshold_delta: &mut u64, ignored_bad_memo_delta: &mut u64, next_start: Option<u64>) {
-    if *ignored_under_threshold_delta == 0 && *ignored_bad_memo_delta == 0 && next_start.is_none() {
+
+#[derive(Clone, Debug, Default)]
+struct LocalSkipCandidate {
+    start_tx_id: Option<u64>,
+    end_tx_id: Option<u64>,
+    tx_count: u64,
+}
+
+impl LocalSkipCandidate {
+    fn from_job(job: &ActivePayoutJob) -> Self {
+        Self {
+            start_tx_id: job.skip_candidate_start_tx_id,
+            end_tx_id: job.skip_candidate_end_tx_id,
+            tx_count: job.skip_candidate_tx_count,
+        }
+    }
+
+    fn note_skippable(&mut self, tx_id: u64) {
+        if self.tx_count == 0 {
+            self.start_tx_id = Some(tx_id);
+            self.end_tx_id = Some(tx_id);
+            self.tx_count = 1;
+            return;
+        }
+        self.end_tx_id = Some(tx_id);
+        self.tx_count = self.tx_count.saturating_add(1);
+    }
+
+    fn finish_span(&mut self) -> Option<SkipRange> {
+        let range = if self.tx_count >= MIN_SKIP_RANGE_TX_COUNT {
+            Some(SkipRange {
+                start_tx_id: self.start_tx_id.expect("skip span start missing"),
+                end_tx_id: self.end_tx_id.expect("skip span end missing"),
+            })
+        } else {
+            None
+        };
+        *self = Self::default();
+        range
+    }
+}
+
+fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option<u64>) -> usize {
+    let Some(last_seen) = cursor else { return 0; };
+    for (idx, range) in skip_ranges.iter().enumerate() {
+        if range.end_tx_id > last_seen {
+            return idx;
+        }
+    }
+    skip_ranges.len()
+}
+
+fn next_skip_jump_target(cursor: Option<u64>, skip_ranges: &[SkipRange], skip_range_idx: &mut usize) -> Option<u64> {
+    let Some(last_seen) = cursor else { return None; };
+    while let Some(range) = skip_ranges.get(*skip_range_idx) {
+        if last_seen >= range.end_tx_id {
+            *skip_range_idx += 1;
+            continue;
+        }
+        let next_unread = last_seen.saturating_add(1);
+        if next_unread >= range.start_tx_id && next_unread <= range.end_tx_id {
+            return Some(range.end_tx_id);
+        }
+        return None;
+    }
+    None
+}
+
+fn record_completed_skip_range(
+    skip_candidate: &mut LocalSkipCandidate,
+    pending_skip_ranges: &mut Vec<SkipRange>,
+) {
+    if let Some(range) = skip_candidate.finish_span() {
+        pending_skip_ranges.push(range);
+    }
+}
+
+fn persist_new_skip_ranges(skip_ranges: &mut Vec<SkipRange>, pending_skip_ranges: &mut Vec<SkipRange>) {
+    for range in pending_skip_ranges.drain(..) {
+        if let Some(previous) = skip_ranges.last() {
+            assert!(
+                previous.end_tx_id.saturating_add(1) < range.start_tx_id,
+                "new skip range must be strictly disjoint from prior persisted ranges"
+            );
+        }
+        state::insert_skip_range(range.clone());
+        skip_ranges.push(range);
+    }
+}
+fn flush_scan_progress(
+    ignored_under_threshold_delta: &mut u64,
+    ignored_bad_memo_delta: &mut u64,
+    next_start: Option<u64>,
+    skip_candidate: &LocalSkipCandidate,
+) {
+    if *ignored_under_threshold_delta == 0
+        && *ignored_bad_memo_delta == 0
+        && next_start.is_none()
+        && skip_candidate.tx_count == 0
+    {
         return;
     }
     state::with_state_mut(|st| {
@@ -447,6 +546,9 @@ fn flush_scan_progress(ignored_under_threshold_delta: &mut u64, ignored_bad_memo
             if next_start.is_some() {
                 job.next_start = next_start;
             }
+            job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+            job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+            job.skip_candidate_tx_count = skip_candidate.tx_count;
         }
     });
     *ignored_under_threshold_delta = 0;
@@ -803,6 +905,12 @@ async fn process_payout(
         ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s);
     }
 
+    let mut skip_ranges = state::list_skip_ranges();
+    let mut skip_range_idx = initial_skip_range_index(
+        &skip_ranges,
+        state::with_state(|st| st.active_payout_job.as_ref().and_then(|job| job.next_start)),
+    );
+
     loop {
         let job = state::with_state(|st| st.active_payout_job.clone());
         let Some(job) = job else { maybe_latch_bootstrap_rescue(now_secs); return true; };
@@ -826,13 +934,33 @@ async fn process_payout(
             return true;
         }
 
+        if let Some(skip_to) = next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx) {
+            state::with_state_mut(|st| {
+                if let Some(active_job) = st.active_payout_job.as_mut() {
+                    active_job.next_start = Some(skip_to);
+                }
+            });
+            continue;
+        }
+
         let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
             Ok(v) => v,
             Err(_) => return false,
         };
         note_index_page(&resp);
         if resp.transactions.is_empty() {
-            state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() { job.scan_complete = true; });
+            let mut skip_candidate = LocalSkipCandidate::from_job(&job);
+            let mut pending_skip_ranges = Vec::new();
+            record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
+            state::with_state_mut(|st| {
+                if let Some(active_job) = st.active_payout_job.as_mut() {
+                    active_job.scan_complete = true;
+                    active_job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+                    active_job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+                    active_job.skip_candidate_tx_count = skip_candidate.tx_count;
+                }
+            });
+            persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
             continue;
         }
 
@@ -840,18 +968,17 @@ async fn process_payout(
         let mut ignored_under_threshold_delta = 0u64;
         let mut ignored_bad_memo_delta = 0u64;
         let mut page_next_start = page_start;
+        let mut skip_candidate = LocalSkipCandidate::from_job(&job);
+        let mut pending_skip_ranges = Vec::new();
         let mut scan_batch = Some(state::begin_persistence_batch());
         for tx in &resp.transactions {
             if let Some(last_seen) = page_start {
                 if tx.id <= last_seen {
-                    // Faucet history scans intentionally trust the ICP index cursor contract to be
-                    // monotonic and exclusive across pages. Duplicate page-boundary delivery would
-                    // be treated as an upstream indexing issue rather than something this single-pass
-                    // scan tries to compensate for internally.
                     continue;
                 }
             }
             let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
+                skip_candidate.note_skippable(tx.id);
                 page_next_start = Some(tx.id);
                 continue;
             };
@@ -861,30 +988,30 @@ async fn process_payout(
             });
             match logic::evaluate_contribution(snapshot.0, snapshot.1, snapshot.2, snapshot.3, &contribution) {
                 logic::ContributionDecision::IgnoreUnderThreshold => {
+                    skip_candidate.note_skippable(tx.id);
                     ignored_under_threshold_delta = ignored_under_threshold_delta.saturating_add(1);
                     page_next_start = Some(tx.id);
                 }
                 logic::ContributionDecision::IgnoreBadMemo => {
+                    skip_candidate.note_skippable(tx.id);
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
                     page_next_start = Some(tx.id);
                 }
                 logic::ContributionDecision::NoTransfer => {
+                    record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                     page_next_start = Some(tx.id);
                 }
                 logic::ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } => {
+                    record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                     page_next_start = Some(tx.id);
                     flush_scan_progress(
                         &mut ignored_under_threshold_delta,
                         &mut ignored_bad_memo_delta,
                         page_next_start,
+                        &skip_candidate,
                     );
                     drop(scan_batch.take());
-                    // Best-effort policy: attempt each eligible top-up independently, allow at most
-                    // one immediate inline retry at the accepted-ledger / notify boundary, and persist
-                    // only the single in-flight transfer/notify phase so upgrades can resume safely.
-                    // Exhausted terminal notify paths count as deterministic failures; any remaining
-                    // transport/retryable uncertainty after the one safe retry is surfaced separately
-                    // as ambiguous so operators can reconcile only the truly unknown cases.
+                    persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
                     let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s, block_index: 0, next_start: Some(tx.id) };
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
@@ -894,18 +1021,25 @@ async fn process_payout(
             }
         }
         let last_id = resp.transactions.last().map(|t| t.id);
+        let scan_complete = resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none();
+        if scan_complete {
+            record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
+        }
         state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
             job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(ignored_under_threshold_delta);
             job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(ignored_bad_memo_delta);
             if let Some(next_start) = page_next_start {
                 job.next_start = Some(next_start);
             }
-            if resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none() { job.scan_complete = true; } else { job.next_start = last_id; }
+            job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+            job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+            job.skip_candidate_tx_count = skip_candidate.tx_count;
+            if scan_complete { job.scan_complete = true; } else { job.next_start = last_id; }
         });
         drop(scan_batch);
+        persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
     }
 }
-
 async fn attempt_rescue(now_secs: u64) {
     maybe_latch_bootstrap_rescue(now_secs);
     let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_reason) = state::with_state(|st| {
@@ -1134,6 +1268,46 @@ mod tests {
     }
 
 
+    struct RecordingIndex {
+        txs: Vec<IndexTransactionWithId>,
+        starts: Arc<Mutex<Vec<Option<u64>>>>,
+    }
+
+    impl RecordingIndex {
+        fn new(txs: Vec<IndexTransactionWithId>) -> Self {
+            Self { txs, starts: Arc::new(Mutex::new(Vec::new())) }
+        }
+
+        fn starts(&self) -> Vec<Option<u64>> {
+            self.starts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl IndexClient for RecordingIndex {
+        async fn get_account_identifier_transactions(
+            &self,
+            _account_identifier: String,
+            start: Option<u64>,
+            max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            self.starts.lock().unwrap().push(start);
+            let transactions = self
+                .txs
+                .iter()
+                .filter(|tx| start.map(|last_seen| tx.id > last_seen).unwrap_or(true))
+                .take(max_results as usize)
+                .cloned()
+                .collect();
+            Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: self.txs.first().map(|tx| tx.id),
+                transactions,
+            })
+        }
+    }
+
+
     #[derive(Clone)]
     enum IndexResponseStep {
         Ok(GetAccountIdentifierTransactionsResponse),
@@ -1211,6 +1385,7 @@ mod tests {
         let cfg = test_config();
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.active_payout_job = Some(job);
+        state::clear_skip_ranges();
         state::set_state(st);
         cfg
     }
@@ -1249,6 +1424,7 @@ mod tests {
         let mut job = ActivePayoutJob::new(1, 10_000, 1_000_000, 2_000_000, now_secs * 1_000_000_000);
         job.scan_complete = true;
         st.active_payout_job = Some(job);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(7)]);
@@ -1287,6 +1463,7 @@ mod tests {
 
     #[test]
     fn transfer_arg_uses_little_endian_top_up_memo() {
+        state::clear_skip_ranges();
         state::set_state(state::State::new(test_config(), 0));
         let arg = transfer_arg(
             Account { owner: Principal::management_canister(), subaccount: Some([7u8; 32]) },
@@ -1553,6 +1730,7 @@ mod tests {
             phase: PendingTransferPhase::TransferAccepted,
         });
         st.active_payout_job = Some(job);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         let ledger = ScriptedLedger::new(vec![]);
@@ -1597,6 +1775,7 @@ mod tests {
         job.cmc_success_count = Some(0);
         job.cmc_attempted_beneficiaries = Some(vec![beneficiary]);
         st.active_payout_job = Some(job);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(123)]);
@@ -1628,6 +1807,7 @@ mod tests {
         job.cmc_success_count = Some(0);
         job.cmc_attempted_beneficiaries = Some(vec![beneficiary]);
         st.active_payout_job = Some(job);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(123)]);
@@ -1662,6 +1842,7 @@ mod tests {
             phase: PendingTransferPhase::AwaitingTransfer,
         });
         st.active_payout_job = Some(job);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         let ledger = ScriptedLedger::new(vec![]);
@@ -1876,6 +2057,7 @@ mod tests {
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.last_observed_staking_balance_e8s = Some(100);
         st.last_observed_latest_tx_id = Some(10);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         state::with_state_mut(|st| apply_latest_observation(st, 200, LatestScan::Read(Some(10))));
@@ -1899,6 +2081,7 @@ mod tests {
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.last_observed_staking_balance_e8s = Some(100);
         st.last_observed_latest_tx_id = Some(10);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         state::with_state_mut(|st| apply_latest_observation(st, 200, LatestScan::Unreadable));
@@ -1932,6 +2115,7 @@ mod tests {
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.last_observed_staking_balance_e8s = Some(100);
         st.last_observed_latest_tx_id = Some(10);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         run_ready(probe_index_health(&index, &staking_id, 200));
@@ -1974,6 +2158,7 @@ mod tests {
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.last_observed_staking_balance_e8s = Some(100);
         st.last_observed_latest_tx_id = Some(10);
+        state::clear_skip_ranges();
         state::set_state(st);
 
         run_ready(probe_index_health(&index, &staking_id, 200));
@@ -2014,6 +2199,215 @@ mod tests {
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.ambiguous_topups, 0);
         assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+
+    #[test]
+    fn large_skippable_history_persists_a_single_skip_range() {
+        let now_secs = 10_000;
+        let job = ActivePayoutJob::new(100, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
+        let _cfg = set_active_job(now_secs, job);
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
+            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .collect();
+        let index = RecordingIndex::new(txs);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        assert_eq!(
+            state::list_skip_ranges(),
+            vec![SkipRange {
+                start_tx_id: 1,
+                end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+            }]
+        );
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
+        assert_eq!(summary.ignored_under_threshold, MIN_SKIP_RANGE_TX_COUNT);
+        assert_eq!(summary.ignored_bad_memo, 0);
+        assert_eq!(index.starts().first().copied(), Some(None));
+    }
+
+    #[test]
+    fn history_below_skip_threshold_does_not_persist_range() {
+        let now_secs = 10_100;
+        let job = ActivePayoutJob::new(101, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
+        let _cfg = set_active_job(now_secs, job);
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
+            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .collect();
+        let index = RecordingIndex::new(txs);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        assert!(state::list_skip_ranges().is_empty());
+    }
+
+    #[test]
+    fn persisted_skip_range_causes_next_run_to_jump_before_fetching_inside_it() {
+        let now_secs = 10_200;
+        let mut job = ActivePayoutJob::new(7, 10_000, 500_000_000, 500_000_000, now_secs * 1_000_000_000);
+        job.next_start = Some(0);
+        let _cfg = set_active_job(now_secs, job);
+        state::insert_skip_range(SkipRange {
+            start_tx_id: 1,
+            end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+        });
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let txs = vec![contribution_tx(
+            MIN_SKIP_RANGE_TX_COUNT + 1,
+            &staking_id,
+            500_000_000,
+            Some(beneficiary.to_text().into_bytes()),
+        )];
+        let index = RecordingIndex::new(txs);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(42)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &ExistingCanisterStatus::new(vec![beneficiary]),
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        assert_eq!(index.starts().first().copied(), Some(Some(MIN_SKIP_RANGE_TX_COUNT)));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
+        assert_eq!(summary.topped_up_count, 1);
+    }
+
+    #[test]
+    fn interrupted_multi_page_skip_candidate_resumes_and_persists_single_range() {
+        let now_secs = 10_250;
+        let mut job = ActivePayoutJob::new(9, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
+        job.next_start = None;
+        let _cfg = set_active_job(now_secs, job);
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
+            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .collect();
+        let first_page = GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            oldest_tx_id: Some(1),
+            transactions: txs.iter().take(PAGE_SIZE as usize).cloned().collect(),
+        };
+        let interrupted_index = ScriptedIndex::new(vec![IndexResponseStep::Ok(first_page), IndexResponseStep::Err]);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(!run_ready(process_payout(
+            &ledger,
+            &interrupted_index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        let interrupted_job = state::with_state(|st| st.active_payout_job.clone()).expect("job should remain active after retryable index failure");
+        assert_eq!(interrupted_job.next_start, Some(PAGE_SIZE));
+        assert_eq!(interrupted_job.skip_candidate_start_tx_id, Some(1));
+        assert_eq!(interrupted_job.skip_candidate_end_tx_id, Some(PAGE_SIZE));
+        assert_eq!(interrupted_job.skip_candidate_tx_count, PAGE_SIZE);
+        assert!(state::list_skip_ranges().is_empty());
+
+        let resuming_index = RecordingIndex::new(txs);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &resuming_index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        assert_eq!(
+            state::list_skip_ranges(),
+            vec![SkipRange {
+                start_tx_id: 1,
+                end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+            }]
+        );
+        assert_eq!(resuming_index.starts().first().copied(), Some(Some(PAGE_SIZE)));
+    }
+
+    #[test]
+    fn no_transfer_breaks_skip_span_so_only_long_barren_sides_are_persisted() {
+        let now_secs = 10_300;
+        let mut job = ActivePayoutJob::new(11, 10_000, 10_000, 1_000_000_000_000, now_secs * 1_000_000_000);
+        job.next_start = None;
+        let _cfg = set_active_job(now_secs, job);
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let mut txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
+            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .collect();
+        txs.push(contribution_tx(
+            MIN_SKIP_RANGE_TX_COUNT + 1,
+            &staking_id,
+            crate::MIN_MIN_TX_E8S,
+            Some(beneficiary.to_text().into_bytes()),
+        ));
+        txs.extend(
+            ((MIN_SKIP_RANGE_TX_COUNT + 2)..=(2 * MIN_SKIP_RANGE_TX_COUNT + 1))
+                .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None)),
+        );
+        let index = RecordingIndex::new(txs);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        assert_eq!(
+            state::list_skip_ranges(),
+            vec![
+                SkipRange {
+                    start_tx_id: 1,
+                    end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+                },
+                SkipRange {
+                    start_tx_id: MIN_SKIP_RANGE_TX_COUNT + 2,
+                    end_tx_id: 2 * MIN_SKIP_RANGE_TX_COUNT + 1,
+                },
+            ]
+        );
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
+        assert_eq!(summary.ignored_under_threshold, 2 * MIN_SKIP_RANGE_TX_COUNT);
+        assert_eq!(summary.topped_up_count, 0);
     }
 
 }

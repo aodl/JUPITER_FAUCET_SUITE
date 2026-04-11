@@ -2,7 +2,7 @@ use candid::{CandidType, Deserialize, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
-    DefaultMemoryImpl, StableCell, Storable,
+    DefaultMemoryImpl, StableBTreeMap, StableCell, Storable,
 };
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
@@ -53,6 +53,80 @@ pub struct PendingTransfer {
     pub phase: PendingTransferPhase,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkipRange {
+    pub start_tx_id: u64,
+    pub end_tx_id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct U64Key(u64);
+
+impl U64Key {
+    fn get(&self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for U64Key {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl Storable for U64Key {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let slice = bytes.as_ref();
+        assert_eq!(slice.len(), 8, "invalid faucet u64 key length");
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(slice);
+        Self(u64::from_be_bytes(raw))
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 8,
+        is_fixed_size: true,
+    };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct U64Value(u64);
+
+impl U64Value {
+    fn get(&self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for U64Value {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl Storable for U64Value {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let slice = bytes.as_ref();
+        assert_eq!(slice.len(), 8, "invalid faucet u64 value length");
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(slice);
+        Self(u64::from_be_bytes(raw))
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 8,
+        is_fixed_size: true,
+    };
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum ForcedRescueReason {
     BootstrapNoSuccess,
@@ -100,6 +174,12 @@ pub struct ActivePayoutJob {
     pub remainder_to_self_e8s: u64,
     #[serde(default)]
     pub pending_transfer: Option<PendingTransfer>,
+    #[serde(default)]
+    pub skip_candidate_start_tx_id: Option<u64>,
+    #[serde(default)]
+    pub skip_candidate_end_tx_id: Option<u64>,
+    #[serde(default)]
+    pub skip_candidate_tx_count: u64,
     pub next_created_at_time_nanos: u64,
     pub observed_oldest_tx_id: Option<u64>,
     pub observed_latest_tx_id: Option<u64>,
@@ -129,6 +209,9 @@ impl ActivePayoutJob {
             ambiguous_topups: 0,
             remainder_to_self_e8s: 0,
             pending_transfer: None,
+            skip_candidate_start_tx_id: None,
+            skip_candidate_end_tx_id: None,
+            skip_candidate_tx_count: 0,
             next_created_at_time_nanos: created_at_time_nanos,
             observed_oldest_tx_id: None,
             observed_latest_tx_id: None,
@@ -211,6 +294,8 @@ thread_local! {
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         std::cell::RefCell::new(None);
+    static STABLE_SKIP_RANGE_MAP: std::cell::RefCell<Option<StableBTreeMap<U64Key, U64Value, Memory>>> =
+        std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static PERSISTENCE_DIRTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -235,6 +320,65 @@ fn persist_snapshot(st: &State) {
     with_stable_cell(|cell| {
         cell.set(VersionedStableState::V1(st.clone()))
             .expect("failed to persist faucet stable state");
+    });
+}
+
+fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, Memory>) -> R) -> R {
+    STABLE_SKIP_RANGE_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(1));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow.as_mut().expect("faucet skip-range stable map not initialized"))
+    })
+}
+
+pub fn list_skip_ranges() -> Vec<SkipRange> {
+    with_skip_range_map(|map| {
+        map.iter()
+            .map(|(start, end)| SkipRange {
+                start_tx_id: start.get(),
+                end_tx_id: end.get(),
+            })
+            .collect()
+    })
+}
+
+pub fn insert_skip_range(range: SkipRange) {
+    assert!(range.start_tx_id <= range.end_tx_id, "invalid skip range: start exceeds end");
+    let existing = list_skip_ranges();
+    assert!(
+        existing.iter().all(|candidate| candidate.start_tx_id != range.start_tx_id),
+        "skip range insertion would replace an existing range with the same start"
+    );
+    if let Some(previous) = existing.iter().rev().find(|candidate| candidate.start_tx_id < range.start_tx_id) {
+        assert!(
+            previous.end_tx_id.saturating_add(1) < range.start_tx_id,
+            "skip range insertion would overlap or abut an existing predecessor"
+        );
+    }
+    if let Some(next) = existing.iter().find(|candidate| candidate.start_tx_id > range.start_tx_id) {
+        assert!(
+            range.end_tx_id.saturating_add(1) < next.start_tx_id,
+            "skip range insertion would overlap or abut an existing successor"
+        );
+    }
+    with_skip_range_map(|map| {
+        map.insert(U64Key::from(range.start_tx_id), U64Value::from(range.end_tx_id));
+    });
+}
+
+#[cfg(test)]
+pub fn clear_skip_ranges() {
+    with_skip_range_map(|map| {
+        let keys: Vec<_> = map.iter().map(|(start, _)| start).collect();
+        for key in keys {
+            map.remove(&key);
+        }
     });
 }
 
@@ -346,6 +490,7 @@ mod tests {
             cell.set(VersionedStableState::Uninitialized)
                 .expect("failed to reset faucet stable state for test");
         });
+        clear_skip_ranges();
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
         PERSISTENCE_DIRTY.with(|dirty| dirty.set(false));
         STATE.with(|s| *s.borrow_mut() = None);
@@ -429,4 +574,47 @@ mod tests {
         assert_eq!(restored.last_observed_staking_balance_e8s, Some(777));
         assert_eq!(restored.main_lock_state_ts, Some(123));
     }
+
+    #[test]
+    fn skip_ranges_round_trip_through_dedicated_stable_map() {
+        reset_test_storage();
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 25 });
+        insert_skip_range(SkipRange { start_tx_id: 40, end_tx_id: 60 });
+
+        assert_eq!(
+            list_skip_ranges(),
+            vec![
+                SkipRange { start_tx_id: 10, end_tx_id: 25 },
+                SkipRange { start_tx_id: 40, end_tx_id: 60 },
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_skip_ranges_removes_all_entries() {
+        reset_test_storage();
+        insert_skip_range(SkipRange { start_tx_id: 100, end_tx_id: 200 });
+        insert_skip_range(SkipRange { start_tx_id: 400, end_tx_id: 800 });
+
+        clear_skip_ranges();
+
+        assert!(list_skip_ranges().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "overlap or abut")]
+    fn skip_range_insertion_rejects_adjacent_ranges() {
+        reset_test_storage();
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 });
+        insert_skip_range(SkipRange { start_tx_id: 21, end_tx_id: 30 });
+    }
+
+    #[test]
+    #[should_panic(expected = "same start")]
+    fn skip_range_insertion_rejects_same_start_as_existing_range() {
+        reset_test_storage();
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 });
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 30 });
+    }
+
 }
