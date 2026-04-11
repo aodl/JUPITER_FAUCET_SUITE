@@ -1375,7 +1375,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_derived_state_reconstructs_recent_burns_from_legacy_meta() {
+    fn initialize_derived_state_reconstructs_recent_burns_from_meta_fallback() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.per_canister_meta.insert(
@@ -2245,113 +2245,6 @@ mod tests {
         assert_eq!(desc, vec![30, 20, 10]);
     }
 
-    #[test]
-    fn stable_state_decodes_original_historian_layout() {
-        #[derive(CandidType, candid::Deserialize, Clone)]
-        struct LegacyConfig {
-            staking_account: Account,
-            ledger_canister_id: Principal,
-            index_canister_id: Principal,
-            blackhole_canister_id: Principal,
-            sns_wasm_canister_id: Principal,
-            enable_sns_tracking: bool,
-            scan_interval_seconds: u64,
-            cycles_interval_seconds: u64,
-            min_tx_e8s: u64,
-            max_cycles_entries_per_canister: u32,
-            max_contribution_entries_per_canister: u32,
-            max_index_pages_per_tick: u32,
-            max_canisters_per_cycles_tick: u32,
-        }
-
-        #[derive(CandidType, candid::Deserialize, Clone, Default)]
-        struct LegacyCanisterMeta {
-            first_seen_ts: Option<u64>,
-            last_contribution_ts: Option<u64>,
-            last_cycles_probe_ts: Option<u64>,
-            last_cycles_probe_result: Option<crate::state::CyclesProbeResult>,
-        }
-
-        #[derive(CandidType, candid::Deserialize, Clone)]
-        struct LegacyState {
-            config: LegacyConfig,
-            distinct_canisters: BTreeSet<Principal>,
-            canister_sources: BTreeMap<Principal, BTreeSet<crate::state::CanisterSource>>,
-            contribution_history: BTreeMap<Principal, Vec<crate::state::ContributionSample>>,
-            cycles_history: BTreeMap<Principal, Vec<crate::state::CyclesSample>>,
-            per_canister_meta: BTreeMap<Principal, LegacyCanisterMeta>,
-            last_indexed_staking_tx_id: Option<u64>,
-            last_sns_discovery_ts: u64,
-            last_completed_cycles_sweep_ts: u64,
-            active_cycles_sweep: Option<crate::state::ActiveCyclesSweep>,
-            main_lock_state_ts: Option<u64>,
-            last_main_run_ts: u64,
-        }
-
-        let canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
-        let mut canister_sources = BTreeMap::new();
-        canister_sources.insert(canister, BTreeSet::from([crate::state::CanisterSource::MemoContribution]));
-        let mut contribution_history = BTreeMap::new();
-        contribution_history.insert(
-            canister,
-            vec![crate::state::ContributionSample {
-                tx_id: 42,
-                timestamp_nanos: Some(7),
-                amount_e8s: 123,
-                counts_toward_faucet: true,
-            }],
-        );
-        let mut per_canister_meta = BTreeMap::new();
-        per_canister_meta.insert(
-            canister,
-            LegacyCanisterMeta {
-                first_seen_ts: Some(1),
-                last_contribution_ts: Some(2),
-                last_cycles_probe_ts: Some(3),
-                last_cycles_probe_result: None,
-            },
-        );
-
-        let legacy = LegacyState {
-            config: LegacyConfig {
-                staking_account: sample_account(),
-                ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
-                index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
-                blackhole_canister_id: principal("e3mmv-5qaaa-aaaah-aadma-cai"),
-                sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
-                enable_sns_tracking: false,
-                scan_interval_seconds: 600,
-                cycles_interval_seconds: 604800,
-                min_tx_e8s: 100_000_000,
-                max_cycles_entries_per_canister: 100,
-                max_contribution_entries_per_canister: 100,
-                max_index_pages_per_tick: 10,
-                max_canisters_per_cycles_tick: 25,
-            },
-            distinct_canisters: BTreeSet::from([canister]),
-            canister_sources,
-            contribution_history,
-            cycles_history: BTreeMap::new(),
-            per_canister_meta,
-            last_indexed_staking_tx_id: Some(42),
-            last_sns_discovery_ts: 9,
-            last_completed_cycles_sweep_ts: 10,
-            active_cycles_sweep: None,
-            main_lock_state_ts: Some(0),
-            last_main_run_ts: 11,
-        };
-
-        let bytes = candid::encode_one((legacy,)).unwrap();
-        let (stable,): (crate::state::StableState,) = candid::decode_one(&bytes).unwrap();
-        let restored: State = stable.into();
-
-        assert_eq!(restored.config.cmc_canister_id, None);
-        assert_eq!(restored.config.faucet_canister_id, None);
-        assert_eq!(restored.icp_burned_e8s, None);
-        assert_eq!(restored.qualifying_contribution_count, None);
-        assert_eq!(restored.per_canister_meta.get(&canister).map(|m| m.burned_e8s), Some(0));
-        assert_eq!(restored.per_canister_meta.get(&canister).and_then(|m| m.last_burn_tx_id), None);
-    }
 
     #[test]
     fn registered_canister_summaries_roll_up_qualifying_only() {

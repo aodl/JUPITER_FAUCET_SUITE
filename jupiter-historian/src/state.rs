@@ -154,40 +154,6 @@ pub struct StableCanisterMeta {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct StableState {
-    pub config: StableConfig,
-    pub distinct_canisters: BTreeSet<Principal>,
-    pub canister_sources: BTreeMap<Principal, BTreeSet<CanisterSource>>,
-    pub contribution_history: BTreeMap<Principal, Vec<ContributionSample>>,
-    pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
-    pub per_canister_meta: BTreeMap<Principal, StableCanisterMeta>,
-    #[serde(default)]
-    pub registered_canister_summaries_cache: Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
-    pub last_indexed_staking_tx_id: Option<u64>,
-    pub last_sns_discovery_ts: u64,
-    pub last_completed_cycles_sweep_ts: u64,
-    pub active_cycles_sweep: Option<ActiveCyclesSweep>,
-    #[serde(default)]
-    pub active_sns_discovery: Option<ActiveSnsDiscovery>,
-    pub main_lock_state_ts: Option<u64>,
-    pub last_main_run_ts: u64,
-    #[serde(default)]
-    pub qualifying_contribution_count: Option<u64>,
-    #[serde(default)]
-    pub icp_burned_e8s: Option<u64>,
-    #[serde(default)]
-    pub recent_contributions: Option<Vec<RecentContribution>>,
-    #[serde(default)]
-    pub recent_under_threshold_contributions: Option<Vec<RecentContribution>>,
-    #[serde(default)]
-    pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
-    #[serde(default)]
-    pub recent_burns: Option<Vec<RecentBurn>>,
-    #[serde(default)]
-    pub last_index_run_ts: Option<u64>,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct StableRootState {
     pub config: StableConfig,
     pub last_indexed_staking_tx_id: Option<u64>,
@@ -213,23 +179,6 @@ pub struct StableRootState {
     #[serde(default)]
     pub last_index_run_ts: Option<u64>,
 }
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Default)]
-pub struct StableRegistryState {
-    pub canister_sources: BTreeMap<Principal, BTreeSet<CanisterSource>>,
-    pub per_canister_meta: BTreeMap<Principal, StableCanisterMeta>,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Default)]
-pub struct StableContributionHistoryState {
-    pub contribution_history: BTreeMap<Principal, Vec<ContributionSample>>,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Default)]
-pub struct StableCyclesHistoryState {
-    pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
-}
-
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct PrincipalKey(Vec<u8>);
@@ -282,38 +231,6 @@ impl Storable for StableSourceSet {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-struct StableContributionSamples(pub Vec<ContributionSample>);
-
-impl Storable for StableContributionSamples {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(
-            candid::encode_one(self).expect("failed to encode historian stable contribution samples"),
-        )
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref())
-            .expect("failed to decode historian stable contribution samples")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-struct StableCyclesSamples(pub Vec<CyclesSample>);
-
-impl Storable for StableCyclesSamples {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian stable cycles samples"))
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian stable cycles samples")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 struct StableU64List(pub Vec<u64>);
@@ -510,10 +427,7 @@ impl State {
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub enum VersionedStableState {
     Uninitialized,
-    V1(StableState),
-    V2(StableRootState),
-    V3(StableRootState),
-    V4(StableRootState),
+    Current(StableRootState),
 }
 
 impl Storable for VersionedStableState {
@@ -528,60 +442,6 @@ impl Storable for VersionedStableState {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-pub enum VersionedStableRegistryState {
-    Uninitialized,
-    V1(StableRegistryState),
-}
-
-impl Storable for VersionedStableRegistryState {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian registry stable state"))
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian registry stable state")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-pub enum VersionedStableContributionHistoryState {
-    Uninitialized,
-    V1(StableContributionHistoryState),
-}
-
-impl Storable for VersionedStableContributionHistoryState {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian contribution-history stable state"))
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian contribution-history stable state")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-pub enum VersionedStableCyclesHistoryState {
-    Uninitialized,
-    V1(StableCyclesHistoryState),
-}
-
-impl Storable for VersionedStableCyclesHistoryState {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian cycles-history stable state"))
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian cycles-history stable state")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
 thread_local! {
@@ -589,19 +449,9 @@ thread_local! {
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static STABLE_ROOT_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         std::cell::RefCell::new(None);
-    static LEGACY_STABLE_REGISTRY_STATE: std::cell::RefCell<Option<StableCell<VersionedStableRegistryState, Memory>>> =
-        std::cell::RefCell::new(None);
-    static LEGACY_STABLE_CONTRIBUTION_HISTORY_STATE: std::cell::RefCell<Option<StableCell<VersionedStableContributionHistoryState, Memory>>> =
-        std::cell::RefCell::new(None);
-    static LEGACY_STABLE_CYCLES_HISTORY_STATE: std::cell::RefCell<Option<StableCell<VersionedStableCyclesHistoryState, Memory>>> =
-        std::cell::RefCell::new(None);
     static STABLE_CANISTER_SOURCES_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableSourceSet, Memory>>> =
         std::cell::RefCell::new(None);
     static STABLE_CANISTER_META_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableCanisterMeta, Memory>>> =
-        std::cell::RefCell::new(None);
-    static LEGACY_V3_STABLE_CONTRIBUTION_HISTORY_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableContributionSamples, Memory>>> =
-        std::cell::RefCell::new(None);
-    static LEGACY_V3_STABLE_CYCLES_HISTORY_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableCyclesSamples, Memory>>> =
         std::cell::RefCell::new(None);
     static STABLE_CONTRIBUTION_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
@@ -640,54 +490,8 @@ fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState,
     })
 }
 
-fn with_legacy_registry_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableRegistryState, Memory>) -> R) -> R {
-    LEGACY_STABLE_REGISTRY_STATE.with(|cell| {
-        if cell.borrow().is_none() {
-            MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(1));
-                let stable_cell = StableCell::init(memory, VersionedStableRegistryState::Uninitialized)
-                    .expect("failed to initialize historian registry stable cell");
-                *cell.borrow_mut() = Some(stable_cell);
-            });
-        }
-        let mut borrow = cell.borrow_mut();
-        f(borrow.as_mut().expect("historian registry stable cell not initialized"))
-    })
-}
 
-fn with_legacy_contribution_history_stable_cell<R>(
-    f: impl FnOnce(&mut StableCell<VersionedStableContributionHistoryState, Memory>) -> R,
-) -> R {
-    LEGACY_STABLE_CONTRIBUTION_HISTORY_STATE.with(|cell| {
-        if cell.borrow().is_none() {
-            MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(2));
-                let stable_cell = StableCell::init(memory, VersionedStableContributionHistoryState::Uninitialized)
-                    .expect("failed to initialize historian contribution-history stable cell");
-                *cell.borrow_mut() = Some(stable_cell);
-            });
-        }
-        let mut borrow = cell.borrow_mut();
-        f(borrow.as_mut().expect("historian contribution-history stable cell not initialized"))
-    })
-}
 
-fn with_legacy_cycles_history_stable_cell<R>(
-    f: impl FnOnce(&mut StableCell<VersionedStableCyclesHistoryState, Memory>) -> R,
-) -> R {
-    LEGACY_STABLE_CYCLES_HISTORY_STATE.with(|cell| {
-        if cell.borrow().is_none() {
-            MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(3));
-                let stable_cell = StableCell::init(memory, VersionedStableCyclesHistoryState::Uninitialized)
-                    .expect("failed to initialize historian cycles-history stable cell");
-                *cell.borrow_mut() = Some(stable_cell);
-            });
-        }
-        let mut borrow = cell.borrow_mut();
-        f(borrow.as_mut().expect("historian cycles-history stable cell not initialized"))
-    })
-}
 
 
 fn with_canister_sources_map<R>(
@@ -722,37 +526,7 @@ fn with_canister_meta_map<R>(
     })
 }
 
-fn with_legacy_v3_contribution_history_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableContributionSamples, Memory>) -> R,
-) -> R {
-    LEGACY_V3_STABLE_CONTRIBUTION_HISTORY_MAP.with(|map| {
-        if map.borrow().is_none() {
-            MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(12));
-                let stable_map = StableBTreeMap::init(memory);
-                *map.borrow_mut() = Some(stable_map);
-            });
-        }
-        let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian legacy V3 contribution-history stable map not initialized"))
-    })
-}
 
-fn with_legacy_v3_cycles_history_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableCyclesSamples, Memory>) -> R,
-) -> R {
-    LEGACY_V3_STABLE_CYCLES_HISTORY_MAP.with(|map| {
-        if map.borrow().is_none() {
-            MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(13));
-                let stable_map = StableBTreeMap::init(memory);
-                *map.borrow_mut() = Some(stable_map);
-            });
-        }
-        let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian legacy V3 cycles-history stable map not initialized"))
-    })
-}
 
 fn with_contribution_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
@@ -1112,22 +886,6 @@ fn sync_cycles_history_principals(
     }
 }
 
-fn clear_legacy_history_storage_after_v4_commit() {
-    with_legacy_registry_stable_cell(|cell| {
-        cell.set(VersionedStableRegistryState::Uninitialized)
-            .expect("failed to clear historian legacy registry stable state");
-    });
-    with_legacy_contribution_history_stable_cell(|cell| {
-        cell.set(VersionedStableContributionHistoryState::Uninitialized)
-            .expect("failed to clear historian legacy contribution-history stable state");
-    });
-    with_legacy_cycles_history_stable_cell(|cell| {
-        cell.set(VersionedStableCyclesHistoryState::Uninitialized)
-            .expect("failed to clear historian legacy cycles-history stable state");
-    });
-    with_legacy_v3_contribution_history_map(|map| map.clear_new());
-    with_legacy_v3_cycles_history_map(|map| map.clear_new());
-}
 
 fn build_root_snapshot(st: &State) -> StableRootState {
     StableRootState {
@@ -1175,14 +933,13 @@ fn persist_snapshot_sections_scoped(
         }
     }
     if dirty_sections & DIRTY_ROOT != 0 {
-        // Commit the root section last so a persisted V4 root always points at fully written
-        // bulk sections. This preserves the old layouts as the last known-good durable root if a
-        // trap occurs before the map-backed write completes.
+        // Commit the root section last so the durable root always points at fully written
+        // bulk sections. This keeps the root as the final commit marker if a trap occurs before
+        // the map-backed writes complete.
         with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::V4(build_root_snapshot(st)))
+            cell.set(VersionedStableState::Current(build_root_snapshot(st)))
                 .expect("failed to persist historian root stable state");
         });
-        clear_legacy_history_storage_after_v4_commit();
     }
 }
 
@@ -1198,108 +955,7 @@ pub fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
-fn restore_state_v2(root: StableRootState) -> State {
-    let registry = with_legacy_registry_stable_cell(|cell| match cell.get().clone() {
-        VersionedStableRegistryState::Uninitialized => StableRegistryState::default(),
-        VersionedStableRegistryState::V1(st) => st,
-    });
-    let contributions = with_legacy_contribution_history_stable_cell(|cell| match cell.get().clone() {
-        VersionedStableContributionHistoryState::Uninitialized => StableContributionHistoryState::default(),
-        VersionedStableContributionHistoryState::V1(st) => st,
-    });
-    let cycles = with_legacy_cycles_history_stable_cell(|cell| match cell.get().clone() {
-        VersionedStableCyclesHistoryState::Uninitialized => StableCyclesHistoryState::default(),
-        VersionedStableCyclesHistoryState::V1(st) => st,
-    });
-    let mut st = State {
-        config: root.config.into(),
-        distinct_canisters: BTreeSet::new(),
-        canister_sources: registry.canister_sources,
-        contribution_history: contributions.contribution_history,
-        cycles_history: cycles.cycles_history,
-        per_canister_meta: registry
-            .per_canister_meta
-            .into_iter()
-            .map(|(k, v)| (k, v.into()))
-            .collect(),
-        registered_canister_summaries_cache: None,
-        last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
-        last_sns_discovery_ts: root.last_sns_discovery_ts,
-        last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
-        active_cycles_sweep: root.active_cycles_sweep,
-        active_sns_discovery: root.active_sns_discovery,
-        main_lock_state_ts: root.main_lock_state_ts,
-        last_main_run_ts: root.last_main_run_ts,
-        qualifying_contribution_count: root.qualifying_contribution_count,
-        icp_burned_e8s: root.icp_burned_e8s,
-        recent_contributions: root.recent_contributions,
-        recent_under_threshold_contributions: root.recent_under_threshold_contributions,
-        recent_invalid_contributions: root.recent_invalid_contributions,
-        recent_burns: root.recent_burns,
-        last_index_run_ts: root.last_index_run_ts,
-    };
-    rebuild_distinct_canisters(&mut st);
-    st
-}
-
-fn restore_state_v3(root: StableRootState) -> State {
-    let canister_sources = with_canister_sources_map(|map| {
-        let mut out = BTreeMap::new();
-        for (key, value) in map.iter() {
-            out.insert(key.to_principal(), value.0.clone());
-        }
-        out
-    });
-    let contribution_history = with_legacy_v3_contribution_history_map(|map| {
-        let mut out = BTreeMap::new();
-        for (key, value) in map.iter() {
-            out.insert(key.to_principal(), value.0.clone());
-        }
-        out
-    });
-    let cycles_history = with_legacy_v3_cycles_history_map(|map| {
-        let mut out = BTreeMap::new();
-        for (key, value) in map.iter() {
-            out.insert(key.to_principal(), value.0.clone());
-        }
-        out
-    });
-    let per_canister_meta = with_canister_meta_map(|map| {
-        let mut out = BTreeMap::new();
-        for (key, value) in map.iter() {
-            out.insert(key.to_principal(), value.clone().into());
-        }
-        out
-    });
-
-    let mut st = State {
-        config: root.config.into(),
-        distinct_canisters: BTreeSet::new(),
-        canister_sources,
-        contribution_history,
-        cycles_history,
-        per_canister_meta,
-        registered_canister_summaries_cache: None,
-        last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
-        last_sns_discovery_ts: root.last_sns_discovery_ts,
-        last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
-        active_cycles_sweep: root.active_cycles_sweep,
-        active_sns_discovery: root.active_sns_discovery,
-        main_lock_state_ts: root.main_lock_state_ts,
-        last_main_run_ts: root.last_main_run_ts,
-        qualifying_contribution_count: root.qualifying_contribution_count,
-        icp_burned_e8s: root.icp_burned_e8s,
-        recent_contributions: root.recent_contributions,
-        recent_under_threshold_contributions: root.recent_under_threshold_contributions,
-        recent_invalid_contributions: root.recent_invalid_contributions,
-        recent_burns: root.recent_burns,
-        last_index_run_ts: root.last_index_run_ts,
-    };
-    rebuild_distinct_canisters(&mut st);
-    st
-}
-
-fn restore_state_v4(root: StableRootState) -> State {
+fn restore_state_current(root: StableRootState) -> State {
     let canister_sources = with_canister_sources_map(|map| {
         let mut out = BTreeMap::new();
         for (key, value) in map.iter() {
@@ -1348,23 +1004,7 @@ pub fn restore_state_from_stable() -> Option<State> {
     let snapshot = with_root_stable_cell(|cell| cell.get().clone());
     match snapshot {
         VersionedStableState::Uninitialized => None,
-        VersionedStableState::V1(st) => {
-            let mut restored: State = st.into();
-            rebuild_distinct_canisters(&mut restored);
-            persist_snapshot(&restored);
-            Some(restored)
-        }
-        VersionedStableState::V2(root) => {
-            let restored = restore_state_v2(root);
-            persist_snapshot(&restored);
-            Some(restored)
-        }
-        VersionedStableState::V3(root) => {
-            let restored = restore_state_v3(root);
-            persist_snapshot(&restored);
-            Some(restored)
-        }
-        VersionedStableState::V4(root) => Some(restore_state_v4(root)),
+        VersionedStableState::Current(root) => Some(restore_state_current(root)),
     }
 }
 
@@ -1647,69 +1287,6 @@ impl From<StableCanisterMeta> for CanisterMeta {
     }
 }
 
-impl From<State> for StableState {
-    fn from(value: State) -> Self {
-        Self {
-            config: value.config.into(),
-            distinct_canisters: value.distinct_canisters,
-            canister_sources: value.canister_sources,
-            contribution_history: value.contribution_history,
-            cycles_history: value.cycles_history,
-            per_canister_meta: value
-                .per_canister_meta
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-            registered_canister_summaries_cache: None,
-            last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
-            last_sns_discovery_ts: value.last_sns_discovery_ts,
-            last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
-            active_cycles_sweep: value.active_cycles_sweep,
-            active_sns_discovery: value.active_sns_discovery,
-            main_lock_state_ts: value.main_lock_state_ts,
-            last_main_run_ts: value.last_main_run_ts,
-            qualifying_contribution_count: value.qualifying_contribution_count,
-            icp_burned_e8s: value.icp_burned_e8s,
-            recent_contributions: value.recent_contributions,
-            recent_under_threshold_contributions: value.recent_under_threshold_contributions,
-            recent_invalid_contributions: value.recent_invalid_contributions,
-            recent_burns: value.recent_burns,
-            last_index_run_ts: value.last_index_run_ts,
-        }
-    }
-}
-
-impl From<StableState> for State {
-    fn from(value: StableState) -> Self {
-        Self {
-            config: value.config.into(),
-            distinct_canisters: value.distinct_canisters,
-            canister_sources: value.canister_sources,
-            contribution_history: value.contribution_history,
-            cycles_history: value.cycles_history,
-            per_canister_meta: value
-                .per_canister_meta
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-            registered_canister_summaries_cache: None,
-            last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
-            last_sns_discovery_ts: value.last_sns_discovery_ts,
-            last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
-            active_cycles_sweep: value.active_cycles_sweep,
-            active_sns_discovery: value.active_sns_discovery,
-            main_lock_state_ts: value.main_lock_state_ts,
-            last_main_run_ts: value.last_main_run_ts,
-            qualifying_contribution_count: value.qualifying_contribution_count,
-            icp_burned_e8s: value.icp_burned_e8s,
-            recent_contributions: value.recent_contributions,
-            recent_under_threshold_contributions: value.recent_under_threshold_contributions,
-            recent_invalid_contributions: value.recent_invalid_contributions,
-            recent_burns: value.recent_burns,
-            last_index_run_ts: value.last_index_run_ts,
-        }
-    }
-}
 
 
 #[cfg(test)]
@@ -1723,24 +1300,10 @@ mod tests {
             cell.set(VersionedStableState::Uninitialized)
                 .expect("failed to reset historian root stable state for test");
         });
-        with_legacy_registry_stable_cell(|cell| {
-            cell.set(VersionedStableRegistryState::Uninitialized)
-                .expect("failed to reset historian legacy registry stable state for test");
-        });
-        with_legacy_contribution_history_stable_cell(|cell| {
-            cell.set(VersionedStableContributionHistoryState::Uninitialized)
-                .expect("failed to reset historian legacy contribution-history stable state for test");
-        });
-        with_legacy_cycles_history_stable_cell(|cell| {
-            cell.set(VersionedStableCyclesHistoryState::Uninitialized)
-                .expect("failed to reset historian legacy cycles-history stable state for test");
-        });
         with_canister_sources_map(|map| map.clear_new());
         with_canister_meta_map(|map| map.clear_new());
-        with_legacy_v3_contribution_history_map(|map| map.clear_new());
         with_contribution_history_index_map(|map| map.clear_new());
         with_contribution_entry_map(|map| map.clear_new());
-        with_legacy_v3_cycles_history_map(|map| map.clear_new());
         with_cycles_history_index_map(|map| map.clear_new());
         with_cycles_entry_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
@@ -1896,216 +1459,8 @@ mod tests {
     }
 
 
-    #[test]
-    fn v1_restore_migrates_to_map_backed_v3_state() {
-        reset_test_storage();
-        let canister_id = principal(&[11]);
-        let mut st = State::new(sample_config(), 8_000);
-        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoContribution]));
-        st.distinct_canisters.insert(canister_id);
-        st.contribution_history.insert(canister_id, vec![ContributionSample {
-            tx_id: 21,
-            timestamp_nanos: Some(210),
-            amount_e8s: 111,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 220,
-            cycles: 333,
-            source: CyclesSampleSource::SelfCanister,
-        }]);
-        st.per_canister_meta.insert(canister_id, CanisterMeta {
-            first_seen_ts: Some(1),
-            last_contribution_ts: Some(2),
-            last_cycles_probe_ts: Some(3),
-            last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister)),
-            last_burn_tx_id: Some(4),
-            last_burn_scan_tx_id: Some(5),
-            burned_e8s: 6,
-        });
-        with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::V1(st.clone().into()))
-                .expect("failed to seed historian V1 state for test");
-        });
 
-        let restored = restore_state_from_stable().expect("expected restored historian state");
-        assert_eq!(restored.contribution_history.get(&canister_id).unwrap()[0].tx_id, 21);
-        assert_eq!(restored.cycles_history.get(&canister_id).unwrap()[0].cycles, 333);
-        assert_eq!(restored.per_canister_meta.get(&canister_id).unwrap().burned_e8s, 6);
 
-        with_root_stable_cell(|cell| {
-            assert!(matches!(cell.get(), VersionedStableState::V4(_)));
-        });
-        let sources = snapshot_sources_map();
-        assert!(sources.contains_key(&canister_id));
-        let meta = snapshot_meta_map();
-        assert_eq!(meta.get(&canister_id).and_then(|m| m.burned_e8s), Some(6));
-        let contributions = snapshot_contribution_history_map();
-        assert_eq!(contributions.get(&canister_id).unwrap()[0].tx_id, 21);
-        let cycles = snapshot_cycles_history_map();
-        assert_eq!(cycles.get(&canister_id).unwrap()[0].cycles, 333);
-    }
-
-    #[test]
-    fn v2_restore_migrates_legacy_cells_to_map_backed_v3_state() {
-        reset_test_storage();
-        let canister_id = principal(&[13]);
-        with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::V2(StableRootState {
-                config: sample_config().into(),
-                last_indexed_staking_tx_id: Some(41),
-                last_sns_discovery_ts: 42,
-                last_completed_cycles_sweep_ts: 43,
-                active_cycles_sweep: None,
-                active_sns_discovery: None,
-                main_lock_state_ts: Some(44),
-                last_main_run_ts: 45,
-                qualifying_contribution_count: Some(1),
-                icp_burned_e8s: Some(9),
-                recent_contributions: Some(Vec::new()),
-                recent_under_threshold_contributions: Some(Vec::new()),
-                recent_invalid_contributions: Some(Vec::new()),
-                recent_burns: Some(Vec::new()),
-                last_index_run_ts: Some(46),
-            }))
-            .expect("failed to seed historian V2 root state for test");
-        });
-        with_legacy_registry_stable_cell(|cell| {
-            cell.set(VersionedStableRegistryState::V1(StableRegistryState {
-                canister_sources: BTreeMap::from([(canister_id, BTreeSet::from([CanisterSource::MemoContribution]))]),
-                per_canister_meta: BTreeMap::from([(
-                    canister_id,
-                    StableCanisterMeta {
-                        first_seen_ts: Some(1),
-                        last_contribution_ts: Some(2),
-                        last_cycles_probe_ts: Some(3),
-                        last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister)),
-                        last_burn_tx_id: Some(4),
-                        last_burn_scan_tx_id: Some(5),
-                        burned_e8s: Some(6),
-                    },
-                )]),
-            }))
-            .expect("failed to seed historian V2 registry state for test");
-        });
-        with_legacy_contribution_history_stable_cell(|cell| {
-            cell.set(VersionedStableContributionHistoryState::V1(StableContributionHistoryState {
-                contribution_history: BTreeMap::from([(
-                    canister_id,
-                    vec![ContributionSample {
-                        tx_id: 51,
-                        timestamp_nanos: Some(510),
-                        amount_e8s: 111,
-                        counts_toward_faucet: true,
-                    }],
-                )]),
-            }))
-            .expect("failed to seed historian V2 contribution-history state for test");
-        });
-        with_legacy_cycles_history_stable_cell(|cell| {
-            cell.set(VersionedStableCyclesHistoryState::V1(StableCyclesHistoryState {
-                cycles_history: BTreeMap::from([(
-                    canister_id,
-                    vec![CyclesSample {
-                        timestamp_nanos: 520,
-                        cycles: 777,
-                        source: CyclesSampleSource::SelfCanister,
-                    }],
-                )]),
-            }))
-            .expect("failed to seed historian V2 cycles-history state for test");
-        });
-
-        let restored = restore_state_from_stable().expect("expected restored historian state");
-        assert_eq!(restored.last_indexed_staking_tx_id, Some(41));
-        assert_eq!(restored.contribution_history.get(&canister_id).unwrap()[0].tx_id, 51);
-        assert_eq!(restored.cycles_history.get(&canister_id).unwrap()[0].cycles, 777);
-
-        with_root_stable_cell(|cell| {
-            assert!(matches!(cell.get(), VersionedStableState::V4(_)));
-        });
-        assert!(snapshot_sources_map().contains_key(&canister_id));
-        assert_eq!(snapshot_contribution_history_map().get(&canister_id).unwrap()[0].tx_id, 51);
-        assert_eq!(snapshot_cycles_history_map().get(&canister_id).unwrap()[0].cycles, 777);
-    }
-
-    #[test]
-    fn v3_restore_migrates_vec_per_canister_maps_to_entry_backed_v4_state() {
-        reset_test_storage();
-        let canister_id = principal(&[14]);
-        with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::V3(StableRootState {
-                config: sample_config().into(),
-                last_indexed_staking_tx_id: Some(61),
-                last_sns_discovery_ts: 62,
-                last_completed_cycles_sweep_ts: 63,
-                active_cycles_sweep: None,
-                active_sns_discovery: None,
-                main_lock_state_ts: Some(64),
-                last_main_run_ts: 65,
-                qualifying_contribution_count: Some(2),
-                icp_burned_e8s: Some(10),
-                recent_contributions: Some(Vec::new()),
-                recent_under_threshold_contributions: Some(Vec::new()),
-                recent_invalid_contributions: Some(Vec::new()),
-                recent_burns: Some(Vec::new()),
-                last_index_run_ts: Some(66),
-            }))
-            .expect("failed to seed historian V3 root state for test");
-        });
-        with_canister_sources_map(|map| {
-            map.insert(PrincipalKey::from(canister_id), StableSourceSet(BTreeSet::from([CanisterSource::MemoContribution])));
-        });
-        with_canister_meta_map(|map| {
-            map.insert(
-                PrincipalKey::from(canister_id),
-                StableCanisterMeta {
-                    first_seen_ts: Some(1),
-                    last_contribution_ts: Some(2),
-                    last_cycles_probe_ts: Some(3),
-                    last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister)),
-                    last_burn_tx_id: Some(4),
-                    last_burn_scan_tx_id: Some(5),
-                    burned_e8s: Some(6),
-                },
-            );
-        });
-        with_legacy_v3_contribution_history_map(|map| {
-            map.insert(
-                PrincipalKey::from(canister_id),
-                StableContributionSamples(vec![ContributionSample {
-                    tx_id: 71,
-                    timestamp_nanos: Some(710),
-                    amount_e8s: 123,
-                    counts_toward_faucet: true,
-                }]),
-            );
-        });
-        with_legacy_v3_cycles_history_map(|map| {
-            map.insert(
-                PrincipalKey::from(canister_id),
-                StableCyclesSamples(vec![CyclesSample {
-                    timestamp_nanos: 720,
-                    cycles: 888,
-                    source: CyclesSampleSource::SelfCanister,
-                }]),
-            );
-        });
-
-        let restored = restore_state_from_stable().expect("expected restored historian state");
-        assert_eq!(restored.last_indexed_staking_tx_id, Some(61));
-        assert_eq!(restored.contribution_history.get(&canister_id).unwrap()[0].tx_id, 71);
-        assert_eq!(restored.cycles_history.get(&canister_id).unwrap()[0].cycles, 888);
-
-        with_root_stable_cell(|cell| {
-            assert!(matches!(cell.get(), VersionedStableState::V4(_)));
-        });
-        with_legacy_v3_contribution_history_map(|map| assert!(map.iter().next().is_none()));
-        with_legacy_v3_cycles_history_map(|map| assert!(map.iter().next().is_none()));
-        assert!(snapshot_sources_map().contains_key(&canister_id));
-        assert_eq!(snapshot_contribution_history_map().get(&canister_id).unwrap()[0].tx_id, 71);
-        assert_eq!(snapshot_cycles_history_map().get(&canister_id).unwrap()[0].cycles, 888);
-    }
 
     #[test]
     fn with_state_mut_persists_recent_feeds_to_stable_storage() {
@@ -2203,8 +1558,7 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    fn v4_restore_keeps_bulk_histories_in_stable_storage_until_requested() {
+    fn restore_keeps_bulk_histories_in_stable_storage_until_requested() {
         reset_test_storage();
         let canister_id = principal(&[31]);
         let mut st = State::new(sample_config(), 10_000);
@@ -2229,6 +1583,7 @@ mod tests {
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 222);
     }
 
+    #[test]
     fn canister_scoped_contribution_flush_only_rewrites_target_canister_history() {
         reset_test_storage();
         let canister_a = principal(&[21]);
