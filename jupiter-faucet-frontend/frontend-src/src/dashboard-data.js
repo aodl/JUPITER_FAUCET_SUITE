@@ -91,6 +91,33 @@ export function accountIdentifierHex(account) {
   return bytesToHex(accountIdentifierBytes(account));
 }
 
+async function listAllRegisteredCanisterSummaries(historian) {
+  const items = [];
+  let page = 0;
+  let total = 0n;
+
+  while (true) {
+    const response = await historian.list_registered_canister_summaries({
+      page: [page],
+      page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
+      sort: [{ TotalQualifyingContributedDesc: null }],
+    });
+    const pageItems = Array.isArray(response?.items) ? response.items : [];
+    items.push(...pageItems);
+    total = response?.total ?? BigInt(items.length);
+    if (pageItems.length < REGISTERED_SUMMARY_PAGE_SIZE || BigInt(items.length) >= total) {
+      return {
+        ...response,
+        items,
+        page: 0n,
+        page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
+        total,
+      };
+    }
+    page += 1;
+  }
+}
+
 export function resetAgentCacheForTests() {
   agentPromises.clear();
 }
@@ -167,11 +194,7 @@ export async function loadDashboardData({
   const [countsResult, statusResult, registeredResult, recentResult, burnsResult] = await Promise.allSettled([
     historian.get_public_counts(),
     historian.get_public_status(),
-    historian.list_registered_canister_summaries({
-      page: [0],
-      page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
-      sort: [{ TotalQualifyingContributedDesc: null }],
-    }),
+    listAllRegisteredCanisterSummaries(historian),
     historian.list_recent_contributions({
       limit: [RECENT_CONTRIBUTION_LIMIT],
       qualifying_only: [false],

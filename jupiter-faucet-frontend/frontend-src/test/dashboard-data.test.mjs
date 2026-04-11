@@ -160,6 +160,66 @@ test('loadDashboardData uses the shared frontend actor query shapes and native l
   assert.equal(summaryMetricsUnavailable(data), false);
 });
 
+
+test('loadDashboardData fetches all registered canister summary pages instead of silently truncating after page zero', async () => {
+  const registeredCalls = [];
+  const makeItem = (n) => ({
+    canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
+    sources: [{ MemoContribution: null }],
+    qualifying_contribution_count: BigInt(n),
+    total_qualifying_contributed_e8s: BigInt(n),
+    last_contribution_ts: [1000n + BigInt(n)],
+    latest_cycles: [],
+    last_cycles_probe_ts: [],
+  });
+  const firstPageItems = Array.from({ length: REGISTERED_SUMMARY_PAGE_SIZE }, (_, idx) => makeItem(idx + 1));
+  const secondPageItem = makeItem(REGISTERED_SUMMARY_PAGE_SIZE + 1);
+
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts({ registered_canister_count: BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1) }); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries(args) {
+        registeredCalls.push(args);
+        const page = args.page?.[0] ?? 0;
+        if (page === 0) {
+          return {
+            items: firstPageItems,
+            page: 0n,
+            page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
+            total: BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1),
+          };
+        }
+        if (page === 1) {
+          return {
+            items: [secondPageItem],
+            page: 1n,
+            page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
+            total: BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1),
+          };
+        }
+        throw new Error(`unexpected registered summary page: ${page}`);
+      },
+      async list_recent_contributions() { return { items: [] }; },
+      async list_recent_burns() { return { items: [] }; },
+    },
+    ledgerActorFactory: () => ({
+      async account_balance() { return { e8s: 1n }; },
+      async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+    }),
+  });
+
+  assert.deepEqual(
+    registeredCalls.map((call) => call.page?.[0]),
+    [0, 1],
+  );
+  assert.equal(data.registered.items.length, REGISTERED_SUMMARY_PAGE_SIZE + 1);
+  assert.equal(data.registered.total, BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1));
+});
+
 test('loadDashboardData falls back to icrc1_balance_of when native ledger account_balance fails', async () => {
   let fallbackArg = null;
   const data = await loadDashboardData({

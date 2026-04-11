@@ -1,14 +1,19 @@
 use async_trait::async_trait;
 use candid::Principal;
+use ic_cdk::call::{CallRejected, Error as CallError, RejectCode};
 use ic_cdk::management_canister::{canister_info, CanisterInfoArgs};
 
 use crate::clients::{CanisterStatusClient, ClientError};
 
-fn definitely_not_a_canister(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("does not characterize a canister")
-        || lower.contains("not characterize a canister")
-        || lower.contains("canister not found")
+fn definitely_not_a_canister(err: &CallError) -> bool {
+    matches!(err, CallError::CallRejected(rejected) if is_destination_invalid(rejected))
+}
+
+fn is_destination_invalid(rejected: &CallRejected) -> bool {
+    rejected
+        .reject_code()
+        .map(|code| code == RejectCode::DestinationInvalid)
+        .unwrap_or_else(|_| rejected.raw_reject_code() == RejectCode::DestinationInvalid as u32)
 }
 
 pub struct ManagementCanisterInfoClient;
@@ -24,11 +29,10 @@ impl CanisterStatusClient for ManagementCanisterInfoClient {
         match canister_info(&request).await {
             Ok(_) => Ok(true),
             Err(err) => {
-                let message = format!("canister_info failed: {err:?}");
-                if definitely_not_a_canister(&message) {
+                if definitely_not_a_canister(&err) {
                     Ok(false)
                 } else {
-                    Err(ClientError::Call(message))
+                    Err(ClientError::Call(format!("canister_info failed: {err:?}")))
                 }
             }
         }
@@ -49,17 +53,31 @@ impl CanisterStatusClient for NoopCanisterStatusClient {
 
 #[cfg(test)]
 mod tests {
-    use super::definitely_not_a_canister;
+    use super::{definitely_not_a_canister, is_destination_invalid};
+    use ic_cdk::call::{CallRejected, Error as CallError, RejectCode};
 
     #[test]
-    fn recognizes_documented_not_a_canister_wording() {
-        assert!(definitely_not_a_canister("Reject text: principal does not characterize a canister"));
-        assert!(definitely_not_a_canister("reject: canister not found"));
+    fn recognizes_destination_invalid_rejects_as_definitely_not_a_canister() {
+        let err = CallError::CallRejected(CallRejected::with_rejection(
+            RejectCode::DestinationInvalid as u32,
+            "principal does not characterize a canister".into(),
+        ));
+        assert!(definitely_not_a_canister(&err));
     }
 
     #[test]
-    fn does_not_treat_generic_not_found_as_definitive() {
-        assert!(!definitely_not_a_canister("transient routing error: subnet not found"));
-        assert!(!definitely_not_a_canister("some unrelated not found response"));
+    fn does_not_treat_other_reject_codes_as_definitive() {
+        let err = CallError::CallRejected(CallRejected::with_rejection(
+            RejectCode::SysTransient as u32,
+            "transient routing error".into(),
+        ));
+        assert!(!definitely_not_a_canister(&err));
+    }
+
+    #[test]
+    fn falls_back_to_raw_reject_code_for_unrecognized_reject_values() {
+        let rejected = CallRejected::with_rejection(999, "future reject code".into());
+        assert!(!is_destination_invalid(&rejected));
     }
 }
+
