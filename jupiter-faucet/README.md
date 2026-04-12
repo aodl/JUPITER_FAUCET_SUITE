@@ -94,7 +94,9 @@ Instead, each new payout job rescans the staking account history from the beginn
 
 That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the blackholed canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
 
-Only the **currently active** job persists the scan cursor and aggregate counters. 
+To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans that were previously found to contain no transactions worth revisiting under the current attribution rules. This is a replay-work cache, not a new source of truth: if future maintenance ever changes contribution-validity inputs such as `min_tx_e8s` or memo parsing / memo-policy semantics, the persisted skip ranges must be cleared so those historical transactions are re-evaluated under the new rules before the cache is trusted again.
+
+Only the **currently active** job persists the scan cursor, partial skip-span state, and aggregate counters. 
 ### 2) Contributions are not aggregated
 
 Each eligible contribution is processed independently, even when multiple contributions map to the same beneficiary.
@@ -301,6 +303,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `main_interval_seconds` (optional; defaults to 7 days)
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `1 ICP`; must be at least `0.1 ICP`)
+  - if this is ever changed in a future upgrade after skip ranges have already been learned, those persisted skip ranges must be cleared so prior history is re-evaluated under the new threshold
 
 A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
 
@@ -311,6 +314,8 @@ Upgrade args currently support:
 - `blackhole_controller`
 - `blackhole_armed`
 - `clear_forced_rescue`
+
+At the moment there is no dedicated production upgrade arg for clearing persisted skip ranges. That is acceptable only because the production intent is to keep `min_tx_e8s` and memo-policy semantics stable before blackholing. If future maintenance ever needs to change those contribution-validity rules, add or use an explicit skip-range reset path as part of the same rollout so old history is re-scanned under the new rules.
 
 `clear_forced_rescue = true` clears:
 

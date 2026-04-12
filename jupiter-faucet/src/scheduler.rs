@@ -19,6 +19,10 @@ use crate::{logic, policy, state};
 
 
 const PAGE_SIZE: u64 = 500;
+// Only persist large barren spans so the durable skip-range cache stays small and a
+// one-time adversarial history scan remains much more expensive for the attacker than for
+// the faucet. These ranges are only valid while contribution-classification policy is
+// unchanged; if min_tx_e8s or memo-policy semantics ever change, the cache must be reset.
 const MIN_SKIP_RANGE_TX_COUNT: u64 = 10_000;
 const LEDGER_CREATED_AT_MAX_AGE_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 const LEDGER_CREATED_AT_MAX_FUTURE_SKEW_NANOS: u64 = 60 * 1_000_000_000;
@@ -905,6 +909,9 @@ async fn process_payout(
         ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s);
     }
 
+    // Skip ranges are a durable cache of barren tx-id spans discovered by earlier jobs.
+    // They deliberately optimize replay work only; if future maintenance changes the rules
+    // for what counts as a contribution, the cache must be cleared before relying on it.
     let mut skip_ranges = state::list_skip_ranges();
     let mut skip_range_idx = initial_skip_range_index(
         &skip_ranges,

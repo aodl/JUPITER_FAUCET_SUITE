@@ -97,7 +97,7 @@ Important details that matter in practice:
 - empty, malformed, or oversize memos are ignored
 - contributions below `min_tx_e8s` are ignored for durable beneficiary registration and faucet eligibility; historian only keeps a capped recent feed for the below-threshold attempts and does not retain those canisters in its tracked registry
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record, so separate qualifying contributions for the same beneficiary may incur separate outbound fees
-- each new payout job rescans the full staking history against a fresh payout-pot snapshot in a streaming, page-by-page pass; the design intentionally prefers constant resident attribution state over bounded historical replay cost, so growth pressure is on execution time and cycles rather than on a durable in-memory attribution set
+- each new payout job rescans the full staking history against a fresh payout-pot snapshot in a streaming, page-by-page pass; large barren spans are cached as durable skip ranges to reduce repeated replay work, but those cached ranges remain valid only while contribution-validity inputs such as `min_tx_e8s` and memo parsing / memo-policy semantics remain unchanged
 
 The production minimum is intentionally **1 ICP** so beneficiary-registry spam stays expensive. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions. Historian keeps a durable registry of memo-derived beneficiaries so it can efficiently monitor and display later cycle top-up activity; a much lower threshold would let an attacker register huge numbers of canisters very cheaply.
 

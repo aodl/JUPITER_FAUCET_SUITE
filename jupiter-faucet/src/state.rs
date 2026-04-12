@@ -337,6 +337,11 @@ fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, M
     })
 }
 
+// Skip ranges are a durable replay-work cache for history spans that are known to be
+// irrelevant under the current faucet attribution policy. If future maintenance changes
+// policy inputs that affect contribution validity (for example min_tx_e8s or memo parsing /
+// memo-policy semantics), these cached ranges must be cleared so history is re-evaluated
+// under the new rules before relying on them again.
 pub fn list_skip_ranges() -> Vec<SkipRange> {
     with_skip_range_map(|map| {
         map.iter()
@@ -349,6 +354,10 @@ pub fn list_skip_ranges() -> Vec<SkipRange> {
 }
 
 pub fn insert_skip_range(range: SkipRange) {
+    // This durable cache assumes the contribution-validity rules are unchanged since the
+    // range was learned. Callers should clear all persisted skip ranges before reusing the
+    // cache after any config or policy change that could make previously skipped transfers
+    // relevant again.
     assert!(range.start_tx_id <= range.end_tx_id, "invalid skip range: start exceeds end");
     let existing = list_skip_ranges();
     assert!(
