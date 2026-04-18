@@ -1,12 +1,12 @@
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{decode_one, encode_one, CandidType, Deserialize, Principal};
+use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use slog::Level;
 use pocket_ic::{PocketIc, PocketIcBuilder};
 use serde_bytes::ByteBuf;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha224, Sha256};
 use std::process::Command;
 use std::time::Duration;
 use std::sync::OnceLock;
@@ -46,6 +46,11 @@ fn pic_log_level() -> Level {
 }
 
 const DAY_SECS: u64 = 24 * 60 * 60;
+const ICP_LEDGER_FEE_E8S: u64 = 10_000;
+const E8S_PER_ICP: u64 = 100_000_000;
+const WHALE_BACKGROUND_RESERVE_ICP: u64 = 50_000;
+const WHALE_BACKGROUND_DESIRED_ICP: u64 = 1_000_000_000;
+const WHALE_BACKGROUND_MIN_ICP: u64 = 1_000_000;
 
 fn advance_time_steps(pic: &PocketIc, total_secs: u64, step_secs: u64, ticks_per_step: usize) {
     let mut remaining = total_secs;
@@ -85,6 +90,20 @@ fn fixture_principal() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
 }
 
+fn account_identifier_text(account: &Account) -> String {
+    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
+    let mut hasher = Sha224::new();
+    hasher.update(b"\x0Aaccount-id");
+    hasher.update(account.owner.as_slice());
+    hasher.update(subaccount);
+    let hash = hasher.finalize();
+    let checksum = crc32fast::hash(&hash).to_be_bytes();
+    let mut bytes = [0u8; 32];
+    bytes[..4].copy_from_slice(&checksum);
+    bytes[4..].copy_from_slice(&hash);
+    hex::encode(bytes)
+}
+
 fn stop_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> Result<()> {
     pic.stop_canister(canister, Some(sender))
         .map_err(|r| anyhow!("stop_canister({canister}) reject: {r:?}"))
@@ -93,6 +112,28 @@ fn stop_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> R
 fn start_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> Result<()> {
     pic.start_canister(canister, Some(sender))
         .map_err(|r| anyhow!("start_canister({canister}) reject: {r:?}"))
+}
+
+fn run_faucet_round(pic: &PocketIc, faucet: Principal, phase: &str) -> Result<FaucetSummary> {
+    let _: () = update_noargs(pic, faucet, Principal::anonymous(), "debug_main_tick")
+        .with_context(|| format!("{phase}: faucet debug_main_tick failed"))?;
+    tick_n(pic, 20);
+    let summary: Option<FaucetSummary> =
+        query_call(pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
+    summary.ok_or_else(|| anyhow!("{phase}: expected faucet summary after payout round"))
+}
+
+fn effective_gross_beneficiary_e8s(summary: &FaucetSummary) -> Result<u128> {
+    if summary.topped_up_count != 1 {
+        bail!("expected exactly one beneficiary top-up when computing effective gross payout share: {summary:?}");
+    }
+    Ok(summary.topped_up_sum_e8s as u128 + ICP_LEDGER_FEE_E8S as u128)
+}
+
+fn effective_denom_e8s(summary: &FaucetSummary) -> u64 {
+    summary
+        .effective_denom_staking_balance_e8s
+        .unwrap_or(summary.denom_staking_balance_e8s)
 }
 
 // ------------------------- Minimal candid types -------------------------
@@ -334,6 +375,48 @@ struct DebugState {
     forced_rescue_reason: Option<ForcedRescueReason>,
 }
 
+
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct FaucetInitArg {
+    staking_account: Account,
+    payout_subaccount: Option<Vec<u8>>,
+    ledger_canister_id: Option<Principal>,
+    index_canister_id: Option<Principal>,
+    cmc_canister_id: Option<Principal>,
+    rescue_controller: Principal,
+    blackhole_controller: Option<Principal>,
+    blackhole_armed: Option<bool>,
+    expected_first_staking_tx_id: Option<u64>,
+    main_interval_seconds: Option<u64>,
+    rescue_interval_seconds: Option<u64>,
+    min_tx_e8s: Option<u64>,
+    stake_recognition_delay_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct FaucetDebugAccounts {
+    payout: Account,
+    staking: Account,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct FaucetSummary {
+    pot_start_e8s: u64,
+    pot_remaining_e8s: u64,
+    denom_staking_balance_e8s: u64,
+    effective_denom_staking_balance_e8s: Option<u64>,
+    topped_up_count: u64,
+    topped_up_sum_e8s: u64,
+    topped_up_min_e8s: Option<u64>,
+    topped_up_max_e8s: Option<u64>,
+    failed_topups: u64,
+    ambiguous_topups: u64,
+    ignored_under_threshold: u64,
+    ignored_bad_memo: u64,
+    remainder_to_self_e8s: u64,
+}
+
 // Logic constants (duplicated from crate::logic for E2E assertions)
 const SECS_PER_DAY: u64 = 86_400;
 const SECS_PER_YEAR: u64 = 365 * SECS_PER_DAY;
@@ -342,44 +425,90 @@ const MAX_AGE_FOR_BONUS_SECS: u64 = 4 * SECS_PER_YEAR;
 // ------------------------- Helpers -------------------------
 
 static DISBURSER_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
+static FAUCET_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
+static INDEX_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
+static CMC_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
-fn build_disburser_wasm() -> Result<Vec<u8>> {
-    if let Some(bytes) = DISBURSER_WASM_CACHE.get() {
+fn workspace_root() -> Result<&'static std::path::Path> {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .context("CARGO_MANIFEST_DIR has no parent")
+}
+
+fn build_wasm_cached(
+    cache: &OnceLock<Vec<u8>>,
+    package: &str,
+    features: Option<&str>,
+    env_var: Option<&str>,
+) -> Result<Vec<u8>> {
+    if let Some(bytes) = cache.get() {
         return Ok(bytes.clone());
     }
 
-    if let Ok(path) = std::env::var("JUPITER_DISBURSER_WASM_PATH") {
-        return std::fs::read(path).context("reading JUPITER_DISBURSER_WASM_PATH");
+    if let Some(env_var) = env_var {
+        if let Ok(path) = std::env::var(env_var) {
+            let bytes = std::fs::read(path).with_context(|| format!("reading {env_var}"))?;
+            let _ = cache.set(bytes.clone());
+            return Ok(bytes);
+        }
     }
 
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--quiet",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-            "-p",
-            "jupiter-disburser",
-            "--features",
-            "debug_api",
-        ])
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "build",
+        "--quiet",
+        "--target",
+        "wasm32-unknown-unknown",
+        "--release",
+        "-p",
+        package,
+        "--locked",
+    ]);
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+    let status = cmd
+        .current_dir(workspace_root()?)
         .status()
-        .context("failed to run cargo build for wasm")?;
-
+        .with_context(|| format!("failed to run cargo build for {package}"))?;
     if !status.success() {
-        bail!("cargo build (wasm) failed");
+        bail!("cargo build (wasm) failed for {package}");
     }
 
-    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .context("CARGO_MANIFEST_DIR has no parent")?;
-
-    let p = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_disburser.wasm");
-
-    let bytes = std::fs::read(&p).with_context(|| format!("reading wasm at {}", p.display()))?;
-    let _ = DISBURSER_WASM_CACHE.set(bytes.clone());
+    let raw_name = package.replace('-', "_");
+    let path = workspace_root()?.join(format!(
+        "target/wasm32-unknown-unknown/release/{raw_name}.wasm"
+    ));
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("reading wasm at {}", path.display()))?;
+    let _ = cache.set(bytes.clone());
     Ok(bytes)
+}
+
+fn build_disburser_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(
+        &DISBURSER_WASM_CACHE,
+        "jupiter-disburser",
+        Some("debug_api"),
+        Some("JUPITER_DISBURSER_WASM_PATH"),
+    )
+}
+
+fn build_faucet_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(
+        &FAUCET_WASM_CACHE,
+        "jupiter-faucet",
+        Some("debug_api"),
+        Some("JUPITER_FAUCET_WASM_PATH"),
+    )
+}
+
+fn build_index_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(&INDEX_WASM_CACHE, "mock-icp-index", None, None)
+}
+
+fn build_cmc_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(&CMC_WASM_CACHE, "mock-cmc", None, None)
 }
 
 fn tick_n(pic: &PocketIc, n: usize) {
@@ -419,6 +548,19 @@ fn update_noargs<R: for<'de> Deserialize<'de> + CandidType>(
 ) -> Result<R> {
     let out = pic
         .update_call(canister, sender, method, encode_one(())?)
+        .map_err(|r| anyhow!("reject: {:?}", r))?;
+    Ok(decode_one(&out)?)
+}
+
+fn update_bytes<R: for<'de> Deserialize<'de> + CandidType>(
+    pic: &PocketIc,
+    canister: Principal,
+    sender: Principal,
+    method: &str,
+    bytes: Vec<u8>,
+) -> Result<R> {
+    let out = pic
+        .update_call(canister, sender, method, bytes)
         .map_err(|r| anyhow!("reject: {:?}", r))?;
     Ok(decode_one(&out)?)
 }
@@ -877,6 +1019,77 @@ fn top_up_neuron_stake_and_refresh(
     refresh_neuron_stake(pic, gov, controller, neuron_id)
 }
 
+fn apply_top_up(
+    pic: &PocketIc,
+    ledger: Principal,
+    gov: Principal,
+    controller: Principal,
+    neuron_id: u64,
+    index: Principal,
+    staking_id: &str,
+    amount_e8s: u64,
+    memo_bytes: &[u8],
+) -> Result<()> {
+    transfer_to_neuron_staking_subaccount_with_memo(
+        pic,
+        ledger,
+        gov,
+        controller,
+        neuron_id,
+        amount_e8s,
+        Some(memo_bytes.to_vec()),
+    )?;
+    refresh_neuron_stake(pic, gov, controller, neuron_id)?;
+    let _: u64 = update_bytes(
+        pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id.to_string(), amount_e8s, Some(memo_bytes.to_vec())))?,
+    )?;
+    Ok(())
+}
+
+fn transfer_to_neuron_staking_subaccount_with_memo(
+    pic: &PocketIc,
+    ledger: Principal,
+    gov: Principal,
+    controller: Principal,
+    neuron_id: u64,
+    amount_e8s: u64,
+    memo: Option<Vec<u8>>,
+) -> Result<()> {
+    let fee_e8s = icrc1_fee(pic, ledger)?;
+    let n = get_full_neuron(pic, gov, controller, neuron_id)?;
+    let sub = n.account.to_vec();
+    if sub.len() != 32 {
+        bail!("unexpected neuron.account len={}, expected 32", sub.len());
+    }
+    let mut sa = [0u8; 32];
+    sa.copy_from_slice(&sub);
+
+    let to = Account {
+        owner: gov,
+        subaccount: Some(sa),
+    };
+
+    icrc1_transfer(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to,
+            fee: Some(candid::Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: memo.map(Into::into),
+            amount: candid::Nat::from(amount_e8s),
+        },
+    )?;
+
+    Ok(())
+}
+
 fn make_and_settle_motion_proposal(
     pic: &PocketIc,
     gov: Principal,
@@ -1000,6 +1213,104 @@ fn register_vote_yes(
     Ok(())
 }
 
+
+#[derive(Clone, Copy, Debug)]
+struct WhaleBackground {
+    neuron_id: u64,
+    target_stake_e8s: u64,
+    final_stake_e8s: u64,
+}
+
+fn install_whale_background(pic: &PocketIc, ledger: Principal, gov: Principal) -> Result<WhaleBackground> {
+    // Create a huge whale neuron to dominate the background voting power.
+    // This reduces sensitivity to the preconfigured PocketIC NNS neurons and
+    // makes the reward environment much more stable for round-to-round comparisons.
+    //
+    // Compute the intended whale size up front, then seed the neuron directly
+    // with that amount so later test output cannot confuse an initial seed with
+    // the effective stabilization stake.
+    let anon_acct = Account { owner: Principal::anonymous(), subaccount: None };
+    let anon_bal = icrc1_balance(pic, ledger, &anon_acct)?;
+    let desired_whale_e8s: u64 = WHALE_BACKGROUND_DESIRED_ICP * E8S_PER_ICP;
+    let fee_e8s = icrc1_fee(pic, ledger)?;
+    let reserve_e8s: u64 = WHALE_BACKGROUND_RESERVE_ICP * E8S_PER_ICP + 100 * fee_e8s;
+    let safe_cap = anon_bal.saturating_sub(reserve_e8s);
+    let target_stake_e8s: u64 = desired_whale_e8s.min(safe_cap / 2).saturating_sub(10 * fee_e8s);
+    if target_stake_e8s < WHALE_BACKGROUND_MIN_ICP * E8S_PER_ICP {
+        bail!("insufficient anonymous balance for whale background: anon_bal={} e8s", anon_bal);
+    }
+
+    let whale_id = stake_and_claim_neuron(
+        pic,
+        ledger,
+        gov,
+        Principal::anonymous(),
+        990_001,
+        target_stake_e8s,
+    )?;
+    increase_dissolve_delay(pic, gov, Principal::anonymous(), whale_id, 31_557_600)?;
+
+    let final_stake_e8s = get_full_neuron(pic, gov, Principal::anonymous(), whale_id)?
+        .cached_neuron_stake_e8s;
+    if final_stake_e8s < target_stake_e8s {
+        bail!(
+            "whale direct seed did not fully materialize in cached stake: target_stake_e8s={} final_stake_e8s={}",
+            target_stake_e8s,
+            final_stake_e8s,
+        );
+    }
+
+    eprintln!(
+        "installed_whale_background neuron_id={} target_stake_e8s={} final_stake_e8s={}",
+        whale_id,
+        target_stake_e8s,
+        final_stake_e8s,
+    );
+
+    Ok(WhaleBackground {
+        neuron_id: whale_id,
+        target_stake_e8s,
+        final_stake_e8s,
+    })
+}
+
+fn earn_one_reward_cycle_with_whale(
+    pic: &PocketIc,
+    gov: Principal,
+    controller: Principal,
+    neuron_id: u64,
+    whale_id: u64,
+    phase: &str,
+    proposal_seq: u64,
+) -> Result<u64> {
+    let before = get_full_neuron(pic, gov, controller, neuron_id)?;
+    let pid = make_motion_proposal(
+        pic,
+        gov,
+        Principal::anonymous(),
+        whale_id,
+        &format!("timing-skew-whale-{phase}"),
+        proposal_seq,
+    )?;
+    register_vote_yes(pic, gov, Principal::anonymous(), whale_id, &pid)?;
+    register_vote_yes(pic, gov, controller, neuron_id, &pid)?;
+    advance_days(pic, 8);
+    tick_n(pic, 20);
+    let after = get_full_neuron(pic, gov, controller, neuron_id)?;
+    if after.maturity_e8s_equivalent <= before.maturity_e8s_equivalent {
+        bail!(
+            "{phase}: expected one whale-stabilized reward cycle to increase maturity; before={} after={} before_stake={} after_stake={} before_refreshed={:?} after_refreshed={:?}",
+            before.maturity_e8s_equivalent,
+            after.maturity_e8s_equivalent,
+            before.cached_neuron_stake_e8s,
+            after.cached_neuron_stake_e8s,
+            before.voting_power_refreshed_timestamp_seconds,
+            after.voting_power_refreshed_timestamp_seconds,
+        );
+    }
+    Ok(after.maturity_e8s_equivalent - before.maturity_e8s_equivalent)
+}
+
 fn disburse_maturity_to_account(
     pic: &PocketIc,
     gov: Principal,
@@ -1029,27 +1340,63 @@ fn disburse_maturity_to_account(
     }
 }
 
-fn ensure_maturity_ge_1_icp(
+#[derive(Debug)]
+struct MaturityTraceEntry {
+    attempt: u64,
+    now_secs: u64,
+    maturity_e8s_equivalent: u64,
+    cached_neuron_stake_e8s: u64,
+    dissolve_state: Option<DissolveState>,
+    aging_since_timestamp_seconds: u64,
+    voting_power_refreshed_timestamp_seconds: Option<u64>,
+    inflight_disbursement_count: usize,
+}
+
+fn format_maturity_trace(entries: &[MaturityTraceEntry]) -> String {
+    entries
+        .iter()
+        .map(|e| {
+            format!(
+                "attempt={} now={} maturity={} stake={} dissolve_state={:?} aging_since={} refreshed_ts={:?} inflight={}",
+                e.attempt,
+                e.now_secs,
+                e.maturity_e8s_equivalent,
+                e.cached_neuron_stake_e8s,
+                e.dissolve_state,
+                e.aging_since_timestamp_seconds,
+                e.voting_power_refreshed_timestamp_seconds,
+                e.inflight_disbursement_count,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn ensure_current_maturity_ge(
     pic: &PocketIc,
-    ledger: Principal,
     gov: Principal,
     controller: Principal,
     neuron_id: u64,
+    target: u64,
 ) -> Result<()> {
-    let target = 200_000_000u64; // 2 ICP in e8s (>= 1 ICP after worst-case -5% maturity modulation)
-
-    // Make the neuron big so rewards become non-trivial.
-    top_up_neuron_stake_and_refresh(pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?; // 5,000,000 ICP
-
+    let mut trace = Vec::new();
     for i in 0..12u64 {
         let n = get_full_neuron(pic, gov, controller, neuron_id)?;
-        e2e_log!(
-            "maturity loop {i}: maturity={} stake={} dissolve_state={:?} age_since={}",
-            n.maturity_e8s_equivalent,
-            n.cached_neuron_stake_e8s,
-            n.dissolve_state,
-            n.aging_since_timestamp_seconds
-        );
+        let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+        trace.push(MaturityTraceEntry {
+            attempt: i,
+            now_secs,
+            maturity_e8s_equivalent: n.maturity_e8s_equivalent,
+            cached_neuron_stake_e8s: n.cached_neuron_stake_e8s,
+            dissolve_state: n.dissolve_state.clone(),
+            aging_since_timestamp_seconds: n.aging_since_timestamp_seconds,
+            voting_power_refreshed_timestamp_seconds: n.voting_power_refreshed_timestamp_seconds,
+            inflight_disbursement_count: n
+                .maturity_disbursements_in_progress
+                .as_ref()
+                .map(|v| v.len())
+                .unwrap_or(0),
+        });
 
         if n.maturity_e8s_equivalent >= target {
             return Ok(());
@@ -1068,11 +1415,29 @@ fn ensure_maturity_ge_1_icp(
     }
 
     let n = get_full_neuron(pic, gov, controller, neuron_id)?;
+    let trace_dump = format_maturity_trace(&trace);
     bail!(
-        "failed to reach 1 ICP maturity after retries (maturity_e8s_equivalent={}, dissolve_state={:?})",
+        "failed to reach target maturity after retries (target={}, maturity_e8s_equivalent={}, dissolve_state={:?})\nmaturity trace:\n{}",
+        target,
         n.maturity_e8s_equivalent,
-        n.dissolve_state
+        n.dissolve_state,
+        trace_dump,
     );
+}
+
+fn ensure_maturity_ge_1_icp(
+    pic: &PocketIc,
+    ledger: Principal,
+    gov: Principal,
+    controller: Principal,
+    neuron_id: u64,
+) -> Result<()> {
+    let target = 200_000_000u64; // 2 ICP in e8s (>= 1 ICP after worst-case -5% maturity modulation)
+
+    // Make the neuron big so rewards become non-trivial.
+    top_up_neuron_stake_and_refresh(pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?; // 5,000,000 ICP
+
+    ensure_current_maturity_ge(pic, gov, controller, neuron_id, target)
 }
 
 fn wait_for_inflight_disbursement(
@@ -1100,6 +1465,70 @@ fn wait_for_inflight_disbursement(
     }
     Ok((false, last))
 }
+
+fn stage_existing_maturity_to_faucet(
+    pic: &PocketIc,
+    ledger: Principal,
+    gov: Principal,
+    disburser: Principal,
+    controller: Principal,
+    neuron_id: u64,
+    phase: &str,
+    payout: &Account,
+) -> Result<(u64, u64, u64)> {
+    let neuron_before = get_full_neuron(pic, gov, controller, neuron_id)?;
+    if neuron_before.maturity_e8s_equivalent == 0 {
+        bail!("{phase}: expected non-zero maturity before staging to faucet; neuron={:?}", neuron_before);
+    }
+
+    let payout_before = icrc1_balance(pic, ledger, payout)?;
+    let staging = Account { owner: disburser, subaccount: None };
+    let staging_before = icrc1_balance(pic, ledger, &staging)?;
+
+    let _: () = update_noargs(pic, disburser, Principal::anonymous(), "debug_main_tick")
+        .with_context(|| format!("{phase}: debug_main_tick failed while initiating maturity disbursement"))?;
+    let (inflight_seen, neuron_after_tick) = wait_for_inflight_disbursement(pic, gov, controller, neuron_id)?;
+    if !inflight_seen {
+        bail!(
+            "{phase}: expected in-flight maturity disbursement after initiation; neuron_after_tick={:?}",
+            neuron_after_tick,
+        );
+    }
+
+    advance_days(pic, 8);
+    let staging_after_credit = wait_for_staging_credit(pic, ledger, &staging, staging_before)
+        .with_context(|| format!("{phase}: staging account never increased after maturity disbursement"))?;
+
+    debug_set_prev_age_seconds(pic, disburser, 0)?;
+    debug_set_skip_maturity_initiation(pic, disburser, true)?;
+    let payout_delta = (|| -> Result<u64> {
+        for _ in 0..50 {
+            let _: () = update_noargs(pic, disburser, Principal::anonymous(), "debug_main_tick")?;
+            tick_n(pic, 25);
+            let payout_after = icrc1_balance(pic, ledger, payout)?;
+            if payout_after > payout_before {
+                return Ok(payout_after - payout_before);
+            }
+        }
+        bail!(
+            "{phase}: expected staged ICP to reach faucet payout account after payout-only debug ticks; payout_before={} staging_before={} staging_after_credit={}",
+            payout_before,
+            staging_before,
+            staging_after_credit,
+        );
+    })();
+    let clear_skip_result = debug_set_skip_maturity_initiation(pic, disburser, false);
+    let payout_delta = payout_delta?;
+    clear_skip_result?;
+
+    let neuron_after_payout = get_full_neuron(pic, gov, controller, neuron_id)?;
+    Ok((
+        payout_delta,
+        neuron_before.maturity_e8s_equivalent,
+        neuron_after_payout.maturity_e8s_equivalent,
+    ))
+}
+
 
 fn wait_for_staging_credit(
     pic: &PocketIc,
@@ -4402,29 +4831,27 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
 
     // Create a huge whale neuron to dominate the background voting power.
     // This reduces sensitivity to any preconfigured genesis neurons and makes the reward environment stable.
+    // Compute the target whale size up front and seed it directly to avoid seed-vs-top-up ambiguity.
+    let anon_acct = Account { owner: Principal::anonymous(), subaccount: None };
+    let anon_bal = icrc1_balance(&pic, ledger, &anon_acct)?;
+    let desired_whale: u64 = WHALE_BACKGROUND_DESIRED_ICP * E8S_PER_ICP;
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+    // Keep a generous reserve for other test transfers and fees.
+    let reserve: u64 = WHALE_BACKGROUND_RESERVE_ICP * E8S_PER_ICP + 100 * fee_e8s;
+    let safe_cap = anon_bal.saturating_sub(reserve);
+    let target_whale_stake_e8s: u64 = desired_whale.min(safe_cap / 2).saturating_sub(10 * fee_e8s);
+    if target_whale_stake_e8s < WHALE_BACKGROUND_MIN_ICP * E8S_PER_ICP {
+        bail!("insufficient anonymous balance for whale background: anon_bal={} e8s", anon_bal);
+    }
     let whale_id = stake_and_claim_neuron(
         &pic,
         ledger,
         gov,
         Principal::anonymous(),
         990_001,
-        10_000 * 100_000_000,
+        target_whale_stake_e8s,
     )?;
     increase_dissolve_delay(&pic, gov, Principal::anonymous(), whale_id, 31_557_600)?;
-    // Make the whale extremely large (aim for 1B ICP), but cap to half of the anonymous account balance
-    // so we never exhaust funds needed for the rest of the test.
-    let anon_acct = Account { owner: Principal::anonymous(), subaccount: None };
-    let anon_bal = icrc1_balance(&pic, ledger, &anon_acct)?;
-    let desired_whale: u64 = 1_000_000_000u64 * 100_000_000u64;
-    let fee_e8s = icrc1_fee(&pic, ledger)?;
-    // Keep a generous reserve for other test transfers and fees.
-    let reserve: u64 = 50_000 * 100_000_000 + 100 * fee_e8s;
-    let safe_cap = anon_bal.saturating_sub(reserve);
-    let whale_topup: u64 = desired_whale.min(safe_cap / 2).saturating_sub(10 * fee_e8s);
-    if whale_topup < 1_000_000u64 * 100_000_000u64 {
-        bail!("insufficient anonymous balance for whale top-up: anon_bal={} e8s", anon_bal);
-    }
-    top_up_neuron_stake_and_refresh(&pic, ledger, gov, Principal::anonymous(), whale_id, whale_topup)?;
 
     // Create the 4y neuron at t=0.
     let n4 = stake_and_claim_neuron(&pic, ledger, gov, controller, 990_004, 10_000 * 100_000_000)?;
@@ -4925,3 +5352,1127 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
 }
 
 
+
+#[test]
+#[ignore]
+fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting() -> Result<()> {
+    // This is the canonical post-mitigation economics test.
+    //
+    // Setup:
+    // * one existing beneficiary contributes before the measured round starts
+    // * a second valid contribution is added only after that round's reward has already accrued
+    //
+    // Expectation under the faucet mitigation:
+    // * the late contribution increases the live neuron stake before payout
+    // * but it should not reduce the existing beneficiary's payout in that affected round,
+    //   because the faucet now uses a tx-id-bounded round-effective denominator and a
+    //   conservative stake-recognition delay when weighting in-round contributions
+    // * by the following clean round, the new contributor should start participating normally
+    //
+    // Assertion shape:
+    // * use a matched control path and a treatment path
+    // * require the affected round to remain aligned within a very tight tolerance
+    // * do NOT require later rounds to stay identical, because once the contribution becomes
+    //   eligible it legitimately changes beneficiary participation and any later tiny residuals
+    //   can also reflect real age-bonus timing differences rather than unfair first-round skew
+
+    require_ignored_flag()?;
+
+    #[derive(Clone, Debug)]
+    struct RoundRec {
+        gross: u128,
+        pot: u64,
+        live_denom: u64,
+        effective_denom: u64,
+        topped_up_count: u64,
+        ignored_bad_memo: u64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct ScenarioRec {
+        baseline: RoundRec,
+        round2: RoundRec,
+        round3: RoundRec,
+    }
+
+    fn aggregate_gross_e8s(summary: &FaucetSummary) -> u128 {
+        summary.topped_up_sum_e8s as u128
+            + (summary.topped_up_count as u128).saturating_mul(ICP_LEDGER_FEE_E8S as u128)
+    }
+
+    fn summary_round(summary: &FaucetSummary) -> RoundRec {
+        RoundRec {
+            gross: aggregate_gross_e8s(summary),
+            pot: summary.pot_start_e8s,
+            live_denom: summary.denom_staking_balance_e8s,
+            effective_denom: effective_denom_e8s(summary),
+            topped_up_count: summary.topped_up_count,
+            ignored_bad_memo: summary.ignored_bad_memo,
+        }
+    }
+
+    fn finish_round_after_reward(
+        pic: &PocketIc,
+        ledger: Principal,
+        gov: Principal,
+        disburser: Principal,
+        controller: Principal,
+        neuron_id: u64,
+        faucet: Principal,
+        payout: &Account,
+        phase: &str,
+        maturity_delta: u64,
+    ) -> Result<RoundRec> {
+        let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
+            pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            phase,
+            payout,
+        )?;
+        let backlog = maturity_before_stage.saturating_sub(maturity_delta);
+        if backlog > ICP_LEDGER_FEE_E8S * 10 {
+            bail!(
+                "{phase}: round is contaminated by carry-over maturity; maturity_delta={} maturity_before_stage={} maturity_after_stage={} backlog={}",
+                maturity_delta,
+                maturity_before_stage,
+                maturity_after_stage,
+                backlog,
+            );
+        }
+        let summary = run_faucet_round(pic, faucet, phase)?;
+        if summary.pot_start_e8s != pot {
+            bail!(
+                "{phase}: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
+                summary.pot_start_e8s,
+                pot,
+            );
+        }
+        Ok(summary_round(&summary))
+    }
+
+    fn record_clean_round(
+        pic: &PocketIc,
+        ledger: Principal,
+        gov: Principal,
+        disburser: Principal,
+        controller: Principal,
+        neuron_id: u64,
+        whale_id: u64,
+        faucet: Principal,
+        payout: &Account,
+        phase: &str,
+        proposal_seq: u64,
+    ) -> Result<RoundRec> {
+        let maturity_delta =
+            earn_one_reward_cycle_with_whale(pic, gov, controller, neuron_id, whale_id, phase, proposal_seq)?;
+        finish_round_after_reward(
+            pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            faucet,
+            payout,
+            phase,
+            maturity_delta,
+        )
+    }
+
+    fn run_scenario(with_late_extra_top_up: bool, memo: u64, proposal_seq_base: u64) -> Result<ScenarioRec> {
+        let pic = build_pic();
+        let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+        let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+        let disburser = pic.create_canister();
+        pic.add_cycles(disburser, 5_000_000_000_000);
+        let controller = disburser;
+        let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * E8S_PER_ICP)?;
+        increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+        ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+        let whale = install_whale_background(&pic, ledger, gov)?;
+        let whale_id = whale.neuron_id;
+        eprintln!(
+            "mitigated_timing_whale_final_stake_e8s={} target_stake_e8s={}",
+            whale.final_stake_e8s,
+            whale.target_stake_e8s,
+        );
+
+        let index = pic.create_canister();
+        let cmc = pic.create_canister();
+        let faucet = pic.create_canister();
+        let existing_target = pic.create_canister();
+        let late_target = pic.create_canister();
+        for c in [index, cmc, faucet, existing_target, late_target] {
+            pic.add_cycles(c, 5_000_000_000_000);
+        }
+        pic.install_canister(index, build_index_wasm()?, vec![], None);
+        pic.install_canister(cmc, build_cmc_wasm()?, vec![], None);
+
+        let staking_account = Account {
+            owner: gov,
+            subaccount: Some(neuron_staking_subaccount(controller, memo)),
+        };
+        let very_long_interval = 365 * DAY_SECS;
+        let faucet_init = FaucetInitArg {
+            staking_account: staking_account.clone(),
+            payout_subaccount: None,
+            ledger_canister_id: Some(ledger),
+            index_canister_id: Some(index),
+            cmc_canister_id: Some(cmc),
+            rescue_controller: faucet,
+            blackhole_controller: Some(test_blackhole_controller()),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: Some(very_long_interval),
+            rescue_interval_seconds: Some(very_long_interval),
+            min_tx_e8s: Some(100_000_000),
+            stake_recognition_delay_seconds: Some(DAY_SECS),
+        };
+        pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
+        set_blackholed_controllers(&pic, faucet)?;
+        let faucet_accounts: FaucetDebugAccounts =
+            query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+        let payout = faucet_accounts.payout.clone();
+
+        let disburser_init = InitArg {
+            neuron_id,
+            normal_recipient: payout.clone(),
+            age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+            age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+            ledger_canister_id: Some(ledger),
+            governance_canister_id: Some(gov),
+            rescue_controller: disburser,
+            blackhole_controller: Some(test_blackhole_controller()),
+            blackhole_armed: Some(false),
+            main_interval_seconds: Some(very_long_interval),
+            rescue_interval_seconds: Some(very_long_interval),
+        };
+        pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+        set_blackholed_controllers(&pic, disburser)?;
+
+        let initial_valid_amount_e8s = 4_000 * E8S_PER_ICP;
+        let extra_top_up_e8s = 5_000 * E8S_PER_ICP;
+        let existing_memo = existing_target.to_text().into_bytes();
+        let late_memo = late_target.to_text().into_bytes();
+        let staking_id = account_identifier_text(&staking_account);
+
+        apply_top_up(
+            &pic,
+            ledger,
+            gov,
+            controller,
+            neuron_id,
+            index,
+            &staking_id,
+            initial_valid_amount_e8s,
+            &existing_memo,
+        )?;
+
+        let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
+        if preexisting > 0 {
+            let _ = stage_existing_maturity_to_faucet(
+                &pic,
+                ledger,
+                gov,
+                disburser,
+                controller,
+                neuron_id,
+                "mitigated-timing-warmup-drain",
+                &payout,
+            )?;
+            let _ = run_faucet_round(&pic, faucet, "mitigated-timing-warmup-drain")?;
+        }
+        let post_warmup = get_full_neuron(&pic, gov, controller, neuron_id)?;
+        if post_warmup.maturity_e8s_equivalent != 0 {
+            bail!(
+                "scenario setup: warmup drain did not fully clear pre-existing maturity; preexisting={} remaining={} stake={}",
+                preexisting,
+                post_warmup.maturity_e8s_equivalent,
+                post_warmup.cached_neuron_stake_e8s,
+            );
+        }
+
+        let baseline = record_clean_round(
+            &pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            whale_id,
+            faucet,
+            &payout,
+            "mitigated-timing-baseline",
+            proposal_seq_base,
+        )?;
+
+        let round2 = if with_late_extra_top_up {
+            let maturity_delta = earn_one_reward_cycle_with_whale(
+                &pic,
+                gov,
+                controller,
+                neuron_id,
+                whale_id,
+                "mitigated-timing-round2-reward",
+                proposal_seq_base + 1,
+            )?;
+            let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
+                &pic,
+                ledger,
+                gov,
+                disburser,
+                controller,
+                neuron_id,
+                "mitigated-timing-round2-late-top-up-stage",
+                &payout,
+            )?;
+            let backlog = maturity_before_stage.saturating_sub(maturity_delta);
+            if backlog > ICP_LEDGER_FEE_E8S * 10 {
+                bail!(
+                    "mitigated-timing-round2-late-top-up: round is contaminated by carry-over maturity; maturity_delta={} maturity_before_stage={} maturity_after_stage={} backlog={}",
+                    maturity_delta,
+                    maturity_before_stage,
+                    maturity_after_stage,
+                    backlog,
+                );
+            }
+            // Make the second valid contribution land only after the round's payout pot has
+            // already been staged to the faucet but immediately before the faucet snapshots the
+            // denominator. With the faucet's conservative one-day stake-recognition delay, this
+            // should leave the affected-round effective denominator unchanged even though live
+            // stake has already increased by payout time.
+            apply_top_up(
+                &pic,
+                ledger,
+                gov,
+                controller,
+                neuron_id,
+                index,
+                &staking_id,
+                extra_top_up_e8s,
+                &late_memo,
+            )?;
+            let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-late-top-up")?;
+            if summary.pot_start_e8s != pot {
+                bail!(
+                    "mitigated-timing-round2-late-top-up: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
+                    summary.pot_start_e8s,
+                    pot,
+                );
+            }
+            summary_round(&summary)
+        } else {
+            record_clean_round(
+                &pic,
+                ledger,
+                gov,
+                disburser,
+                controller,
+                neuron_id,
+                whale_id,
+                faucet,
+                &payout,
+                "mitigated-timing-round2-control",
+                proposal_seq_base + 1,
+            )?
+        };
+
+        let round3 = record_clean_round(
+            &pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            whale_id,
+            faucet,
+            &payout,
+            if with_late_extra_top_up {
+                "mitigated-timing-round3-treatment"
+            } else {
+                "mitigated-timing-round3-control"
+            },
+            proposal_seq_base + 2,
+        )?;
+
+        Ok(ScenarioRec { baseline, round2, round3 })
+    }
+
+    let control = run_scenario(false, 4747, 70_001)?;
+    let treatment = run_scenario(true, 4748, 80_001)?;
+    let round2_gap = if control.round2.gross >= treatment.round2.gross {
+        control.round2.gross - treatment.round2.gross
+    } else {
+        treatment.round2.gross - control.round2.gross
+    };
+
+    eprintln!(
+        "[mitigated-top-up-timing] control_baseline_gross={} treatment_baseline_gross={} control_round2_gross={} treatment_round2_gross={} control_round2_pot={} treatment_round2_pot={} control_round2_live_denom={} treatment_round2_live_denom={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_count={} treatment_round2_count={} control_round3_count={} treatment_round3_count={} round2_gap={}",
+        control.baseline.gross,
+        treatment.baseline.gross,
+        control.round2.gross,
+        treatment.round2.gross,
+        control.round2.pot,
+        treatment.round2.pot,
+        control.round2.live_denom,
+        treatment.round2.live_denom,
+        control.round2.effective_denom,
+        treatment.round2.effective_denom,
+        control.round2.topped_up_count,
+        treatment.round2.topped_up_count,
+        control.round3.topped_up_count,
+        treatment.round3.topped_up_count,
+        round2_gap,
+    );
+
+    if control.baseline.topped_up_count != 1 || treatment.baseline.topped_up_count != 1 {
+        bail!(
+            "expected both baseline rounds to pay exactly the pre-existing beneficiary; control_baseline={:?} treatment_baseline={:?}",
+            control.baseline,
+            treatment.baseline,
+        );
+    }
+    if control.round2.topped_up_count != 1 || treatment.round2.topped_up_count != 1 {
+        bail!(
+            "expected the affected round to pay only the pre-existing beneficiary in both scenarios; control_round2={:?} treatment_round2={:?}",
+            control.round2,
+            treatment.round2,
+        );
+    }
+    if treatment.round2.live_denom <= control.round2.live_denom {
+        bail!(
+            "expected the late valid top-up to increase the live staking denominator before payout; control_round2_live_denom={} treatment_round2_live_denom={}",
+            control.round2.live_denom,
+            treatment.round2.live_denom,
+        );
+    }
+    if control.round2.effective_denom != treatment.round2.effective_denom {
+        bail!(
+            "expected weighted round accounting to keep the affected-round effective denominator unchanged by a very late top-up; control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}",
+            control.round2.effective_denom,
+            treatment.round2.effective_denom,
+            control.round2.live_denom,
+            treatment.round2.live_denom,
+        );
+    }
+    if control.round2.pot != treatment.round2.pot {
+        bail!(
+            "expected a very late top-up to leave the affected-round payout pot unchanged because the reward had already accrued; control_round2_pot={} treatment_round2_pot={}",
+            control.round2.pot,
+            treatment.round2.pot,
+        );
+    }
+    if round2_gap > ICP_LEDGER_FEE_E8S as u128 {
+        bail!(
+            "expected weighted round accounting to prevent a late valid top-up from pinching the existing beneficiary in the affected round; control_round2_gross={} treatment_round2_gross={} gap={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}",
+            control.round2.gross,
+            treatment.round2.gross,
+            round2_gap,
+            control.round2.effective_denom,
+            treatment.round2.effective_denom,
+            control.round2.live_denom,
+            treatment.round2.live_denom,
+        );
+    }
+    if treatment.round3.topped_up_count != 2 {
+        bail!(
+            "expected the late contributor to begin participating by the following clean round; treatment_round3={:?}",
+            treatment.round3,
+        );
+    }
+    if treatment.round3.effective_denom <= control.round3.effective_denom {
+        bail!(
+            "expected the following clean round to include the late contributor in the effective denominator; control_round3_effective_denom={} treatment_round3_effective_denom={}",
+            control.round3.effective_denom,
+            treatment.round3.effective_denom,
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting() -> Result<()> {
+    // This is the invalid-contribution analogue of the canonical post-mitigation economics test.
+    //
+    // Control vs treatment:
+    // * control: one existing beneficiary contributes before the measured round starts
+    // * treatment: the same setup, plus a second contribution with an invalid memo that lands
+    //   very close to the payout boundary after that round's reward has already accrued
+    //
+    // Assertions:
+    // * the treatment path's live stake should increase before payout, proving the extra ICP really
+    //   reached the neuron stake
+    // * the faucet should record the bad memo and continue paying only the pre-existing beneficiary
+    // * the treatment path's affected-round effective denominator should remain aligned with control,
+    //   so the existing beneficiary is not pinched in that round
+    //
+    // We use a matched control/treatment comparison because the synthetic reward environment can drift
+    // slightly between rounds. The claim is therefore not "every round is identical", but rather:
+    // same setup + same pot timing + same effective denominator => no unfair affected-round payout loss.
+
+    require_ignored_flag()?;
+
+    #[derive(Clone, Debug)]
+    struct RoundRec {
+        gross: u128,
+        pot: u64,
+        live_denom: u64,
+        effective_denom: u64,
+        topped_up_count: u64,
+        ignored_bad_memo: u64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct ScenarioRec {
+        baseline: RoundRec,
+        round2: RoundRec,
+        round3: RoundRec,
+    }
+
+    fn aggregate_gross_e8s(summary: &FaucetSummary) -> u128 {
+        summary.topped_up_sum_e8s as u128
+            + (summary.topped_up_count as u128).saturating_mul(ICP_LEDGER_FEE_E8S as u128)
+    }
+
+    fn summary_round(summary: &FaucetSummary) -> RoundRec {
+        RoundRec {
+            gross: aggregate_gross_e8s(summary),
+            pot: summary.pot_start_e8s,
+            live_denom: summary.denom_staking_balance_e8s,
+            effective_denom: effective_denom_e8s(summary),
+            topped_up_count: summary.topped_up_count,
+            ignored_bad_memo: summary.ignored_bad_memo,
+        }
+    }
+
+    fn finish_round_after_reward(
+        pic: &PocketIc,
+        ledger: Principal,
+        gov: Principal,
+        disburser: Principal,
+        controller: Principal,
+        neuron_id: u64,
+        faucet: Principal,
+        payout: &Account,
+        phase: &str,
+        maturity_delta: u64,
+    ) -> Result<RoundRec> {
+        let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
+            pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            phase,
+            payout,
+        )?;
+        let backlog = maturity_before_stage.saturating_sub(maturity_delta);
+        if backlog > ICP_LEDGER_FEE_E8S * 10 {
+            bail!(
+                "{phase}: round is contaminated by carry-over maturity; maturity_delta={} maturity_before_stage={} maturity_after_stage={} backlog={}",
+                maturity_delta,
+                maturity_before_stage,
+                maturity_after_stage,
+                backlog,
+            );
+        }
+        let summary = run_faucet_round(pic, faucet, phase)?;
+        if summary.pot_start_e8s != pot {
+            bail!(
+                "{phase}: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
+                summary.pot_start_e8s,
+                pot,
+            );
+        }
+        Ok(summary_round(&summary))
+    }
+
+    fn record_clean_round(
+        pic: &PocketIc,
+        ledger: Principal,
+        gov: Principal,
+        disburser: Principal,
+        controller: Principal,
+        neuron_id: u64,
+        whale_id: u64,
+        faucet: Principal,
+        payout: &Account,
+        phase: &str,
+        proposal_seq: u64,
+    ) -> Result<RoundRec> {
+        let maturity_delta =
+            earn_one_reward_cycle_with_whale(pic, gov, controller, neuron_id, whale_id, phase, proposal_seq)?;
+        finish_round_after_reward(
+            pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            faucet,
+            payout,
+            phase,
+            maturity_delta,
+        )
+    }
+
+    fn run_scenario(with_late_invalid_top_up: bool, memo: u64, proposal_seq_base: u64) -> Result<ScenarioRec> {
+        let pic = build_pic();
+        let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+        let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+        let disburser = pic.create_canister();
+        pic.add_cycles(disburser, 5_000_000_000_000);
+        let controller = disburser;
+        let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * E8S_PER_ICP)?;
+        increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+        ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+        let whale = install_whale_background(&pic, ledger, gov)?;
+        let whale_id = whale.neuron_id;
+        eprintln!(
+            "mitigated_invalid_timing_whale_final_stake_e8s={} target_stake_e8s={}",
+            whale.final_stake_e8s,
+            whale.target_stake_e8s,
+        );
+
+        let index = pic.create_canister();
+        let cmc = pic.create_canister();
+        let faucet = pic.create_canister();
+        let existing_target = pic.create_canister();
+        for c in [index, cmc, faucet, existing_target] {
+            pic.add_cycles(c, 5_000_000_000_000);
+        }
+        pic.install_canister(index, build_index_wasm()?, vec![], None);
+        pic.install_canister(cmc, build_cmc_wasm()?, vec![], None);
+
+        let staking_account = Account {
+            owner: gov,
+            subaccount: Some(neuron_staking_subaccount(controller, memo)),
+        };
+        let very_long_interval = 365 * DAY_SECS;
+        let faucet_init = FaucetInitArg {
+            staking_account: staking_account.clone(),
+            payout_subaccount: None,
+            ledger_canister_id: Some(ledger),
+            index_canister_id: Some(index),
+            cmc_canister_id: Some(cmc),
+            rescue_controller: faucet,
+            blackhole_controller: Some(test_blackhole_controller()),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: Some(very_long_interval),
+            rescue_interval_seconds: Some(very_long_interval),
+            min_tx_e8s: Some(100_000_000),
+            stake_recognition_delay_seconds: Some(DAY_SECS),
+        };
+        pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
+        set_blackholed_controllers(&pic, faucet)?;
+        let faucet_accounts: FaucetDebugAccounts =
+            query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+        let payout = faucet_accounts.payout.clone();
+
+        let disburser_init = InitArg {
+            neuron_id,
+            normal_recipient: payout.clone(),
+            age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+            age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+            ledger_canister_id: Some(ledger),
+            governance_canister_id: Some(gov),
+            rescue_controller: disburser,
+            blackhole_controller: Some(test_blackhole_controller()),
+            blackhole_armed: Some(false),
+            main_interval_seconds: Some(very_long_interval),
+            rescue_interval_seconds: Some(very_long_interval),
+        };
+        pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+        set_blackholed_controllers(&pic, disburser)?;
+
+        let initial_valid_amount_e8s = 4_000 * E8S_PER_ICP;
+        let extra_top_up_e8s = 5_000 * E8S_PER_ICP;
+        let existing_memo = existing_target.to_text().into_bytes();
+        let invalid_memo = b"not-a-valid-principal".to_vec();
+        let staking_id = account_identifier_text(&staking_account);
+
+        apply_top_up(
+            &pic,
+            ledger,
+            gov,
+            controller,
+            neuron_id,
+            index,
+            &staking_id,
+            initial_valid_amount_e8s,
+            &existing_memo,
+        )?;
+
+        let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
+        if preexisting > 0 {
+            let _ = stage_existing_maturity_to_faucet(
+                &pic,
+                ledger,
+                gov,
+                disburser,
+                controller,
+                neuron_id,
+                "mitigated-invalid-timing-warmup-drain",
+                &payout,
+            )?;
+            let _ = run_faucet_round(&pic, faucet, "mitigated-invalid-timing-warmup-drain")?;
+        }
+        let post_warmup = get_full_neuron(&pic, gov, controller, neuron_id)?;
+        if post_warmup.maturity_e8s_equivalent != 0 {
+            bail!(
+                "scenario setup: warmup drain did not fully clear pre-existing maturity; preexisting={} remaining={} stake={}",
+                preexisting,
+                post_warmup.maturity_e8s_equivalent,
+                post_warmup.cached_neuron_stake_e8s,
+            );
+        }
+
+        let baseline = record_clean_round(
+            &pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            whale_id,
+            faucet,
+            &payout,
+            "mitigated-invalid-timing-baseline",
+            proposal_seq_base,
+        )?;
+
+        let round2 = if with_late_invalid_top_up {
+            let maturity_delta = earn_one_reward_cycle_with_whale(
+                &pic,
+                gov,
+                controller,
+                neuron_id,
+                whale_id,
+                "mitigated-invalid-timing-round2-reward",
+                proposal_seq_base + 1,
+            )?;
+            let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
+                &pic,
+                ledger,
+                gov,
+                disburser,
+                controller,
+                neuron_id,
+                "mitigated-invalid-timing-round2-late-top-up-stage",
+                &payout,
+            )?;
+            let backlog = maturity_before_stage.saturating_sub(maturity_delta);
+            if backlog > ICP_LEDGER_FEE_E8S * 10 {
+                bail!(
+                    "mitigated-invalid-timing-round2-late-top-up: round is contaminated by carry-over maturity; maturity_delta={} maturity_before_stage={} maturity_after_stage={} backlog={}",
+                    maturity_delta,
+                    maturity_before_stage,
+                    maturity_after_stage,
+                    backlog,
+                );
+            }
+            // Invalid late stake should also land only after the round's payout pot has already
+            // been staged, so the affected round can observe higher live stake without letting the
+            // malformed memo enter the weighted effective denominator.
+            apply_top_up(
+                &pic,
+                ledger,
+                gov,
+                controller,
+                neuron_id,
+                index,
+                &staking_id,
+                extra_top_up_e8s,
+                &invalid_memo,
+            )?;
+            let summary = run_faucet_round(&pic, faucet, "mitigated-invalid-timing-round2-late-top-up")?;
+            if summary.pot_start_e8s != pot {
+                bail!(
+                    "mitigated-invalid-timing-round2-late-top-up: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
+                    summary.pot_start_e8s,
+                    pot,
+                );
+            }
+            summary_round(&summary)
+        } else {
+            record_clean_round(
+                &pic,
+                ledger,
+                gov,
+                disburser,
+                controller,
+                neuron_id,
+                whale_id,
+                faucet,
+                &payout,
+                "mitigated-invalid-timing-round2-control",
+                proposal_seq_base + 1,
+            )?
+        };
+
+        let round3 = record_clean_round(
+            &pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            whale_id,
+            faucet,
+            &payout,
+            if with_late_invalid_top_up {
+                "mitigated-invalid-timing-round3-treatment"
+            } else {
+                "mitigated-invalid-timing-round3-control"
+            },
+            proposal_seq_base + 2,
+        )?;
+
+        Ok(ScenarioRec { baseline, round2, round3 })
+    }
+
+    let control = run_scenario(false, 5757, 90_001)?;
+    let treatment = run_scenario(true, 5758, 100_001)?;
+    let round2_gap = if control.round2.gross >= treatment.round2.gross {
+        control.round2.gross - treatment.round2.gross
+    } else {
+        treatment.round2.gross - control.round2.gross
+    };
+
+    eprintln!(
+        "[mitigated-invalid-top-up-timing] control_baseline_gross={} treatment_baseline_gross={} control_round2_gross={} treatment_round2_gross={} control_round2_pot={} treatment_round2_pot={} control_round2_live_denom={} treatment_round2_live_denom={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_count={} treatment_round2_count={} control_round2_ignored_bad_memo={} treatment_round2_ignored_bad_memo={} control_round3_count={} treatment_round3_count={} control_round3_ignored_bad_memo={} treatment_round3_ignored_bad_memo={} round2_gap={}",
+        control.baseline.gross,
+        treatment.baseline.gross,
+        control.round2.gross,
+        treatment.round2.gross,
+        control.round2.pot,
+        treatment.round2.pot,
+        control.round2.live_denom,
+        treatment.round2.live_denom,
+        control.round2.effective_denom,
+        treatment.round2.effective_denom,
+        control.round2.topped_up_count,
+        treatment.round2.topped_up_count,
+        control.round2.ignored_bad_memo,
+        treatment.round2.ignored_bad_memo,
+        control.round3.topped_up_count,
+        treatment.round3.topped_up_count,
+        control.round3.ignored_bad_memo,
+        treatment.round3.ignored_bad_memo,
+        round2_gap,
+    );
+
+    if control.baseline.topped_up_count != 1 || treatment.baseline.topped_up_count != 1 {
+        bail!(
+            "expected both baseline rounds to pay exactly the pre-existing beneficiary; control_baseline={:?} treatment_baseline={:?}",
+            control.baseline,
+            treatment.baseline,
+        );
+    }
+    if control.round2.topped_up_count != 1 || treatment.round2.topped_up_count != 1 {
+        bail!(
+            "expected the affected round to pay only the pre-existing beneficiary in both scenarios; control_round2={:?} treatment_round2={:?}",
+            control.round2,
+            treatment.round2,
+        );
+    }
+    if treatment.round2.ignored_bad_memo != 1 {
+        bail!(
+            "expected the late invalid contribution to be recorded as one ignored bad memo in the affected round; treatment_round2={:?}",
+            treatment.round2,
+        );
+    }
+    if treatment.round2.live_denom <= control.round2.live_denom {
+        bail!(
+            "expected the late invalid top-up to increase the live staking denominator before payout; control_round2_live_denom={} treatment_round2_live_denom={}",
+            control.round2.live_denom,
+            treatment.round2.live_denom,
+        );
+    }
+    if control.round2.effective_denom != treatment.round2.effective_denom {
+        bail!(
+            "expected invalid in-round stake to be excluded from the affected-round effective denominator; control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}",
+            control.round2.effective_denom,
+            treatment.round2.effective_denom,
+            control.round2.live_denom,
+            treatment.round2.live_denom,
+        );
+    }
+    if control.round2.pot != treatment.round2.pot {
+        bail!(
+            "expected a very late invalid top-up to leave the affected-round payout pot unchanged because the reward had already accrued; control_round2_pot={} treatment_round2_pot={}",
+            control.round2.pot,
+            treatment.round2.pot,
+        );
+    }
+    if round2_gap > ICP_LEDGER_FEE_E8S as u128 {
+        bail!(
+            "expected weighted round accounting plus invalid-memo exclusion to prevent a late invalid top-up from pinching the existing beneficiary in the affected round; control_round2_gross={} treatment_round2_gross={} gap={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={} treatment_round2_ignored_bad_memo={}",
+            control.round2.gross,
+            treatment.round2.gross,
+            round2_gap,
+            control.round2.effective_denom,
+            treatment.round2.effective_denom,
+            control.round2.live_denom,
+            treatment.round2.live_denom,
+            treatment.round2.ignored_bad_memo,
+        );
+    }
+    if treatment.round3.topped_up_count != 1 {
+        bail!(
+            "expected the invalid contributor never to become a beneficiary in the following clean round; treatment_round3={:?}",
+            treatment.round3,
+        );
+    }
+    if treatment.round3.ignored_bad_memo != 1 {
+        bail!(
+            "expected the single late bad memo to be re-observed exactly once when the next round replays history from the start; treatment_round2={:?} treatment_round3={:?}",
+            treatment.round2,
+            treatment.round3,
+        );
+    }
+
+    Ok(())
+}
+
+
+#[test]
+#[ignore]
+fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let disburser = pic.create_canister();
+    pic.add_cycles(disburser, 5_000_000_000_000);
+    let controller = disburser;
+    let memo = 5555u64;
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+
+    let index = pic.create_canister();
+    let cmc = pic.create_canister();
+    let faucet = pic.create_canister();
+    let target = pic.create_canister();
+    for c in [index, cmc, faucet, target] {
+        pic.add_cycles(c, 5_000_000_000_000);
+    }
+    pic.install_canister(index, build_index_wasm()?, vec![], None);
+    pic.install_canister(cmc, build_cmc_wasm()?, vec![], None);
+
+    let staking_account = Account {
+        owner: gov,
+        subaccount: Some(neuron_staking_subaccount(controller, memo)),
+    };
+    let very_long_interval = 365 * DAY_SECS;
+    let faucet_init = FaucetInitArg {
+        staking_account: staking_account.clone(),
+        payout_subaccount: Some(vec![9; 32]),
+        ledger_canister_id: Some(ledger),
+        index_canister_id: Some(index),
+        cmc_canister_id: Some(cmc),
+        rescue_controller: faucet,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
+        main_interval_seconds: Some(very_long_interval),
+        rescue_interval_seconds: Some(very_long_interval),
+        min_tx_e8s: Some(1_000 * 100_000_000),
+        stake_recognition_delay_seconds: Some(DAY_SECS),
+    };
+    pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
+    set_blackholed_controllers(&pic, faucet)?;
+    let faucet_accounts: FaucetDebugAccounts = query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let payout = faucet_accounts.payout;
+
+    let disburser_init = InitArg {
+        neuron_id,
+        normal_recipient: payout.clone(),
+        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: disburser,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: Some(false),
+        main_interval_seconds: Some(very_long_interval),
+        rescue_interval_seconds: Some(very_long_interval),
+    };
+    pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+    set_blackholed_controllers(&pic, disburser)?;
+
+    let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
+    let (warmup_pot, warmup_before_stage, warmup_after_stage) = stage_existing_maturity_to_faucet(
+        &pic, ledger, gov, disburser, controller, neuron_id, "warmup-drain", &payout,
+    )?;
+    let warmup = query_call::<_, Option<FaucetSummary>>(&pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
+    let _ = run_faucet_round(&pic, faucet, "warmup-drain")?;
+    let after = get_full_neuron(&pic, gov, controller, neuron_id)?;
+
+    eprintln!(
+        "[warmup-drain] maturity_before={} warmup_before_stage={} warmup_after_stage={} warmup_pot={} maturity_after={} cached_stake_after={} prior_summary_present={}",
+        before.maturity_e8s_equivalent,
+        warmup_before_stage,
+        warmup_after_stage,
+        warmup_pot,
+        after.maturity_e8s_equivalent,
+        after.cached_neuron_stake_e8s,
+        warmup.is_some(),
+    );
+
+    if after.maturity_e8s_equivalent != 0 {
+        bail!(
+            "warmup drain left residual maturity; maturity_before={} warmup_before_stage={} warmup_after_stage={} warmup_pot={} maturity_after={}",
+            before.maturity_e8s_equivalent,
+            warmup_before_stage,
+            warmup_after_stage,
+            warmup_pot,
+            after.maturity_e8s_equivalent,
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let disburser = pic.create_canister();
+    pic.add_cycles(disburser, 5_000_000_000_000);
+    let controller = disburser;
+    let memo = 6666u64;
+    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * 100_000_000)?;
+    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
+    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+    let whale = install_whale_background(&pic, ledger, gov)?;
+    let whale_id = whale.neuron_id;
+    eprintln!("baseline_stability_whale_final_stake_e8s={} target_stake_e8s={}", whale.final_stake_e8s, whale.target_stake_e8s);
+
+    let index = pic.create_canister();
+    let cmc = pic.create_canister();
+    let faucet = pic.create_canister();
+    let target = pic.create_canister();
+    for c in [index, cmc, faucet, target] {
+        pic.add_cycles(c, 5_000_000_000_000);
+    }
+    pic.install_canister(index, build_index_wasm()?, vec![], None);
+    pic.install_canister(cmc, build_cmc_wasm()?, vec![], None);
+
+    let staking_account = Account {
+        owner: gov,
+        subaccount: Some(neuron_staking_subaccount(controller, memo)),
+    };
+    let very_long_interval = 365 * DAY_SECS;
+    let faucet_init = FaucetInitArg {
+        staking_account: staking_account.clone(),
+        payout_subaccount: Some(vec![7; 32]),
+        ledger_canister_id: Some(ledger),
+        index_canister_id: Some(index),
+        cmc_canister_id: Some(cmc),
+        rescue_controller: faucet,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: Some(false),
+        expected_first_staking_tx_id: None,
+        main_interval_seconds: Some(very_long_interval),
+        rescue_interval_seconds: Some(very_long_interval),
+        min_tx_e8s: Some(1_000 * 100_000_000),
+        stake_recognition_delay_seconds: Some(DAY_SECS),
+    };
+    pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
+    set_blackholed_controllers(&pic, faucet)?;
+    let faucet_accounts: FaucetDebugAccounts = query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let payout = faucet_accounts.payout;
+
+    let disburser_init = InitArg {
+        neuron_id,
+        normal_recipient: payout.clone(),
+        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: disburser,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: Some(false),
+        main_interval_seconds: Some(very_long_interval),
+        rescue_interval_seconds: Some(very_long_interval),
+    };
+    pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+    set_blackholed_controllers(&pic, disburser)?;
+
+    let staking_id = account_identifier_text(&staking_account);
+    let valid_amount_e8s = 4_000 * 100_000_000u64;
+    let valid_memo = target.to_text().into_bytes();
+    transfer_to_neuron_staking_subaccount_with_memo(&pic, ledger, gov, controller, neuron_id, valid_amount_e8s, Some(valid_memo.clone()))?;
+    refresh_neuron_stake(&pic, gov, controller, neuron_id)?;
+    let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id.clone(), valid_amount_e8s, Some(valid_memo.clone())))?)?;
+
+    let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
+    if preexisting > 0 {
+        let _ = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, "baseline-stability-warmup", &payout)?;
+        let _ = run_faucet_round(&pic, faucet, "baseline-stability-warmup")?;
+    }
+
+    let mut logs = Vec::new();
+    let mut prior_gross: Option<u128> = None;
+    let mut prior_pot: Option<u64> = None;
+    for (idx, proposal_seq) in [12_001_u64, 12_002, 12_003].into_iter().enumerate() {
+        let phase = format!("baseline-stability-round-{}", idx + 1);
+        let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
+        let delta = earn_one_reward_cycle_with_whale(&pic, gov, controller, neuron_id, whale_id, &phase, proposal_seq)?;
+        let after_reward = get_full_neuron(&pic, gov, controller, neuron_id)?;
+        let (pot, before_stage, after_stage) = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, &phase, &payout)?;
+        let summary = run_faucet_round(&pic, faucet, &phase)?;
+        let gross = effective_gross_beneficiary_e8s(&summary)? as u128;
+        let backlog = before_stage.saturating_sub(delta);
+        logs.push(format!(
+            "round={} before_maturity={} delta={} after_reward_maturity={} before_stage={} after_stage={} backlog={} pot={} denom={} gross={}",
+            idx + 1,
+            before.maturity_e8s_equivalent,
+            delta,
+            after_reward.maturity_e8s_equivalent,
+            before_stage,
+            after_stage,
+            backlog,
+            summary.pot_start_e8s,
+            summary.denom_staking_balance_e8s,
+            gross,
+        ));
+        if summary.pot_start_e8s != pot {
+            bail!("{}: faucet pot did not match staged pot; summary_pot={} staged_pot={} logs={:?}", phase, summary.pot_start_e8s, pot, logs);
+        }
+        if let Some(prev_pot) = prior_pot {
+            if summary.pot_start_e8s < prev_pot / 2 || summary.pot_start_e8s > prev_pot * 2 {
+                bail!("{}: round pot varied too much without invalid top-up; prev_pot={} current_pot={} logs={:?}", phase, prev_pot, summary.pot_start_e8s, logs);
+            }
+        }
+        if let Some(prev_gross) = prior_gross {
+            if gross < prev_gross / 2 || gross > prev_gross * 2 {
+                bail!("{}: beneficiary payout varied too much without invalid top-up; prev_gross={} current_gross={} logs={:?}", phase, prev_gross, gross, logs);
+            }
+        }
+        prior_pot = Some(summary.pot_start_e8s);
+        prior_gross = Some(gross);
+    }
+
+    eprintln!("[baseline-stability] {}", logs.join(" | "));
+    Ok(())
+}

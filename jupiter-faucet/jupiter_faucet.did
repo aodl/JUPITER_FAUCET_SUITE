@@ -16,6 +16,7 @@ type InitArgs = record {
   main_interval_seconds : opt nat64;
   rescue_interval_seconds : opt nat64;
   min_tx_e8s : opt nat64;
+  stake_recognition_delay_seconds : opt nat64;
 };
 
 service : (InitArgs) -> {};

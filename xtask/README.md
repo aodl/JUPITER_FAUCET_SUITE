@@ -195,6 +195,21 @@ Examples covered by the current PocketIC suites include:
   - `list_recent_contributions`
   - `list_recent_burns`
 
+### PocketIC maturity and reward caveats
+
+Several PocketIC tests in this repo compare round-to-round maturity and payout behavior. A few nuances matter enough that they are easy to forget:
+
+- **Constant stake does not imply constant payout.** A beneficiary payout depends on the round pot as well as the denominator. Even if stake is unchanged, the round pot can drift because the reward environment is not a perfectly flat APY stream in these synthetic tests.
+- **Round-to-round maturity can vary for real reasons.** The reward pool, total voting power, proposal settlement timing, reward rollover when no proposals settle, and proposal mix / weights can all change the maturity earned in a given synthetic round.
+- **PocketIC background state matters.** Preconfigured NNS / genesis neurons can make the total voting-power environment noisy. The existing whale-background tests create a very large anonymous whale neuron specifically to dominate that background and make comparisons more stable.
+- **Seed the whale directly with the computed target amount.** The helper now computes the intended stabilization stake up front from the anonymous balance and reserve logic, then claims the whale directly at that amount. The tests still log and assert the whale's final cached stake so the runtime amount is explicit in `--nocapture` output.
+- **Warm up and drain first.** Helpers such as `ensure_maturity_ge_1_icp(...)` intentionally leave the neuron with accumulated maturity. Any round-to-round economics comparison should drain that backlog before establishing a baseline.
+- **Prefer timing-isolated comparisons.** For the current faucet mitigation, the sharpest protocol-level check is that a very late valid top-up raises the live stake but does not reduce the existing beneficiary's payout in that affected round because the faucet now weights in-round stake conservatively instead of trusting the raw live denominator.
+- **Whales reduce noise, not signal.** A large whale neuron helps stabilize network-wide voting-power effects, but it should not remove the actual economic effect under test, such as a denominator step from a late top-up.
+- **The faucet mitigation is now timing-aware.** The live faucet code no longer relies only on the raw live staking balance at payout time. It carries a round-start snapshot forward, clamps the current round by tx id, and applies a conservative recognition delay before weighting valid in-round contributions into the effective denominator. PocketIC timing tests should therefore be read as evidence for the economic model and for the mitigation, not merely for the older unweighted denominator behavior.
+
+The PocketIC tests named around `faucet_late_valid_top_up_*`, `faucet_baseline_round_accounting_*`, `faucet_warmup_drain_*`, and `age_bonus_baseline_matches_age0_with_whale_background` are the main reference points for these caveats.
+
 ### `e2e_pocketic_integration`
 
 Runs the suite-level PocketIC end-to-end tests across the disburser and faucet together.

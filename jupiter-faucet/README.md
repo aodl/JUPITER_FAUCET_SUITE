@@ -94,7 +94,7 @@ Instead, each new payout job rescans the staking account history from the beginn
 
 That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the blackholed canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
 
-To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans that were previously found to contain no transactions worth revisiting under the current attribution rules. This is a replay-work cache, not a new source of truth: if future maintenance ever changes contribution-validity inputs such as `min_tx_e8s` or memo parsing / memo-policy semantics, the persisted skip ranges must be cleared so those historical transactions are re-evaluated under the new rules before the cache is trusted again.
+To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans that were previously found to contain no transactions worth revisiting under the current attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That matches the operational model here: upgrades are rescue-only events, and conservative re-evaluation of historical staking activity is preferable to trusting old cache entries.
 
 Only the **currently active** job persists the scan cursor, partial skip-span state, and aggregate counters. 
 ### 2) Contributions are not aggregated
@@ -103,17 +103,47 @@ Each eligible contribution is processed independently, even when multiple contri
 
 So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct contribution records for payout purposes. That is an intentional trade-off of the single-pass streaming model, and it means repeated qualifying contributions for the same beneficiary may incur repeated outbound ledger fees.
 
-### 3) The denominator is the staking-account balance snapshot
+### 3) The denominator is a round-effective staking snapshot
 
-The proportional split is based on the staking account’s balance at job start, not on a sum the faucet reconstructs from history in memory.
+A payout job still snapshots the payout pot exactly once at job start, but it no longer uses the raw live staking balance as the beneficiary denominator for the completed reward round.
 
-This design assumes the staking-account balance is protocol-controlled and is not intentionally shrunk during normal operation. Under that invariant the current balance snapshot is the correct denominator for the payout job.
+Instead, the faucet now carries forward a **round-start staking snapshot** and builds a **round-effective denominator** for the round that just finished:
 
-That is why the code also contains index-health invariants around the observed oldest / latest transaction IDs.
+- stake already present at the start of the round counts at full weight
+- valid in-round contributions are added with a conservative time weight
+- contributions whose tx id is beyond the round-end snapshot are excluded from the current round entirely
+
+The time weight is intentionally conservative. The faucet uses the contribution timestamp plus a configured stake-recognition delay (default `86400` seconds) before treating that contribution as effective for the current round. This approximates the fact that the staking neuron only begins earning the larger maturity stream after a later `ClaimOrRefresh`, and it biases slightly against over-crediting very recent stake.
+
+The tx-id boundaries are more authoritative than timestamps for inclusion. The faucet captures the latest staking-account tx id at the end of each completed round and uses that as the inclusive upper bound for the next payout job, so equal timestamps do not create ambiguity.
 
 ### 4) The payout pot is snapshotted once per job
 
-A job uses the payout-account balance captured at the beginning of the job. It does not dynamically rescale shares mid-run based on whatever later transfers may have arrived.
+A job uses the payout-account balance captured at the beginning of the job. It does not dynamically rescale shares mid-run based on whatever later transfers may have arrived. The same job-start moment also becomes the stored start boundary for the following reward round.
+
+### 4a) Timing-aware payout fairness
+
+The faucet now explicitly addresses the case where the same additional stake amount arrives at different times within the reward accumulation window. The intended property is:
+
+- if extra stake is present for the full window, pot growth and denominator growth should track closely, so beneficiary payout should stay roughly unchanged
+- if the same stake arrives late in the window, it should receive only the weight justified by the time it could plausibly have been earning, rather than pinching earlier contributors
+- once a later round begins cleanly, any remaining payout differences are expected to reflect real factors such as age-bonus differences rather than unfair denominator timing
+
+Operationally, the mitigation strategy is therefore:
+
+1. persist the round-start staking balance, latest tx id, and timestamp at the end of each completed payout round
+2. snapshot the next round's payout pot and latest tx id exactly once at job start
+3. build the current round's effective denominator as `round_start_balance + weighted valid in-round contributions`
+4. use the same weighted amount for each in-round contribution's numerator and for the round-effective denominator
+5. ignore invalid memo contributions in the weighting adjustment path so adversaries cannot force large numbers of pointless weighting calculations with malformed deposits
+
+The repo now covers this in three layers:
+
+- `src/logic.rs` unit tests verify the weighting, boundary, and payout arithmetic used by the faucet
+- `src/scheduler.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, and falls back safely for exactly one transition payout if no prior round snapshot exists yet
+- the disburser/faucet PocketIC suite keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation
+
+The detailed reward-environment caveats and the rationale for the PocketIC whale background live in `xtask/README.md` and in the comments around the PocketIC reward helpers.
 
 ### 5) Any unallocated remainder stays useful
 
@@ -303,7 +333,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `main_interval_seconds` (optional; defaults to 7 days)
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `1 ICP`; must be at least `0.1 ICP`)
-  - if this is ever changed in a future upgrade after skip ranges have already been learned, those persisted skip ranges must be cleared so prior history is re-evaluated under the new threshold
+  - upgrades already clear persisted skip ranges before resuming, so any rescue-time threshold change will cause historical staking activity to be re-scanned from first principles
 
 A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
 
@@ -315,7 +345,7 @@ Upgrade args currently support:
 - `blackhole_armed`
 - `clear_forced_rescue`
 
-At the moment there is no dedicated production upgrade arg for clearing persisted skip ranges. That is acceptable only because the production intent is to keep `min_tx_e8s` and memo-policy semantics stable before blackholing. If future maintenance ever needs to change those contribution-validity rules, add or use an explicit skip-range reset path as part of the same rollout so old history is re-scanned under the new rules.
+Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative.
 
 `clear_forced_rescue = true` clears:
 

@@ -24,13 +24,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build --file Dockerfile.repro --target artifact --tag "$image_a" . >/dev/null
+docker build --no-cache --file Dockerfile.repro --target artifact --tag "$image_a" . >/dev/null
 cid_a="$(docker create "$image_a")"
 docker cp "$cid_a:/release-artifacts/." "$workdir/run-a"
 docker rm "$cid_a" >/dev/null
 cid_a=""
 
-docker build --file Dockerfile.repro --target artifact --tag "$image_b" . >/dev/null
+docker build --no-cache --file Dockerfile.repro --target artifact --tag "$image_b" . >/dev/null
 cid_b="$(docker create "$image_b")"
 docker cp "$cid_b:/release-artifacts/." "$workdir/run-b"
 docker rm "$cid_b" >/dev/null

@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 candid = "0.10"
 ic-cdk = "0.19"
+ic-cdk-timers = "1.0.0"
 ic-asset-certification = { path = "../third_party/response-verification/ic-asset-certification" }
 ic-http-certification = { path = "../third_party/response-verification/ic-http-certification" }
 include_dir = { version = "0.7", features = ["glob"] }

@@ -97,7 +97,8 @@ Important details that matter in practice:
 - empty, malformed, or oversize memos are ignored
 - contributions below `min_tx_e8s` are ignored for durable beneficiary registration and faucet eligibility; historian only keeps a capped recent feed for the below-threshold attempts and does not retain those canisters in its tracked registry
 - each eligible contribution is processed independently; same-beneficiary contributions are **not** aggregated into one synthetic record, so separate qualifying contributions for the same beneficiary may incur separate outbound fees
-- each new payout job rescans the full staking history against a fresh payout-pot snapshot in a streaming, page-by-page pass; large barren spans are cached as durable skip ranges to reduce repeated replay work, but those cached ranges remain valid only while contribution-validity inputs such as `min_tx_e8s` and memo parsing / memo-policy semantics remain unchanged
+- each new payout job rescans the full staking history against a fresh payout-pot snapshot in a streaming, page-by-page pass; large barren spans are cached as durable skip ranges to reduce repeated replay work, and any rescue upgrade intentionally clears that cache before the faucet resumes so historical staking activity is re-evaluated conservatively
+- stake additions near a payout boundary are handled with round-aware weighting rather than the raw live staking balance alone: the faucet carries forward a round-start snapshot, clamps the round by tx id, and applies a conservative stake-recognition delay before weighting valid in-round contributions into the effective denominator. The weighting and boundary logic are unit-tested in the faucet and exercised in PocketIC across the live stake -> maturity -> payout flow.
 
 The production minimum is intentionally **1 ICP** so beneficiary-registry spam stays expensive. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions. Historian keeps a durable registry of memo-derived beneficiaries so it can efficiently monitor and display later cycle top-up activity; a much lower threshold would let an attacker register huge numbers of canisters very cheaply.
 
@@ -123,7 +124,7 @@ That split is intentional: the value-moving canisters stay narrow; the public re
 
 ## Build reproducibility
 
-The release build expects a committed `package-lock.json` and uses `npm ci` for the frontend bundle path. A helper script, `scripts/verify-reproducible-artifacts`, rebuilds the release artifact twice and diffs the resulting file hashes so reproducibility can be checked in CI or before cutting a release.
+The release build expects committed lockfiles (`Cargo.lock` and `package-lock.json`) and uses `npm ci` for the frontend bundle path. `Dockerfile.repro` now pins the Debian package universe through `snapshot.debian.org`, uses a versioned `rustup-init` artifact, and emits a deterministic `release-artifacts/build-info.json` manifest capturing the exact toolchain versions and key input hashes used for the build. The helper script `scripts/verify-reproducible-artifacts` rebuilds the release artifact twice from scratch (`--no-cache`) and diffs the resulting file hashes so reproducibility can be checked in CI or before cutting a release.
 
 ## Production canisters recorded in this repo
 

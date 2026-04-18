@@ -26,6 +26,7 @@ pub struct InitArgs {
     pub main_interval_seconds: Option<u64>,
     pub rescue_interval_seconds: Option<u64>,
     pub min_tx_e8s: Option<u64>,
+    pub stake_recognition_delay_seconds: Option<u64>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
@@ -99,6 +100,7 @@ fn validate_config(cfg: &crate::state::Config) {
     }
     assert!(cfg.main_interval_seconds > 0, "main_interval_seconds must be greater than 0");
     assert!(cfg.rescue_interval_seconds > 0, "rescue_interval_seconds must be greater than 0");
+    assert!(cfg.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60) > 0, "stake_recognition_delay_seconds must be greater than 0");
     assert!(
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
@@ -136,6 +138,7 @@ fn init(args: InitArgs) {
         main_interval_seconds: args.main_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
+        stake_recognition_delay_seconds: Some(args.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60)),
     };
 
     validate_config(&cfg);
@@ -171,6 +174,9 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
         }
     }
     validate_config(&st.config);
+    // Skip ranges are a replay-work cache only. Any rescue upgrade intentionally
+    // drops them so staking history is re-evaluated from first principles.
+    state::clear_skip_ranges();
     st.main_lock_state_ts = Some(0);
 }
 
@@ -227,6 +233,7 @@ pub struct DebugConfig {
     pub main_interval_seconds: u64,
     pub rescue_interval_seconds: u64,
     pub min_tx_e8s: u64,
+    pub stake_recognition_delay_seconds: u64,
 }
 
 #[cfg(feature = "debug_api")]
@@ -297,6 +304,7 @@ fn debug_config() -> DebugConfig {
         main_interval_seconds: st.config.main_interval_seconds,
         rescue_interval_seconds: st.config.rescue_interval_seconds,
         min_tx_e8s: st.config.min_tx_e8s,
+        stake_recognition_delay_seconds: st.config.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60),
     })
 }
 
@@ -340,6 +348,9 @@ fn debug_reset_runtime_state() {
         validate_config(&st.config);
         st.main_lock_state_ts = Some(0);
         st.active_payout_job = None;
+        st.current_round_start_time_nanos = None;
+        st.current_round_start_staking_balance_e8s = None;
+        st.current_round_start_latest_tx_id = None;
         st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
     });
 }
@@ -484,6 +495,7 @@ mod tests {
             main_interval_seconds: 60,
             rescue_interval_seconds: 60,
             min_tx_e8s: 100_000_000,
+            stake_recognition_delay_seconds: Some(24 * 60 * 60),
         }
     }
 
@@ -534,8 +546,11 @@ mod tests {
     }
 
     #[test]
-    fn apply_upgrade_args_keeps_runtime_state_and_revalidates() {
+    fn apply_upgrade_args_keeps_runtime_state_and_revalidates_and_clears_skip_ranges() {
         let now_secs = 123;
+        crate::state::init_stable_storage();
+        crate::state::clear_skip_ranges();
+        crate::state::insert_skip_range(crate::state::SkipRange { start_tx_id: 10, end_tx_id: 20 });
         let mut st = State::new(sample_config(), now_secs);
         st.main_lock_state_ts = Some(99);
         apply_upgrade_args_to_state(
@@ -551,7 +566,9 @@ mod tests {
         assert_eq!(st.config.blackhole_armed, Some(true));
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
         assert_eq!(st.main_lock_state_ts, Some(0));
+        assert!(crate::state::list_skip_ranges().is_empty());
     }
 }
+
 
 ic_cdk::export_candid!();

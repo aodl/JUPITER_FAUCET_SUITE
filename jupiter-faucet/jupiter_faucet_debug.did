@@ -16,6 +16,7 @@ type InitArgs = record {
   main_interval_seconds : opt nat64;
   rescue_interval_seconds : opt nat64;
   min_tx_e8s : opt nat64;
+  stake_recognition_delay_seconds : opt nat64;
 };
 
 type ForcedRescueReason = variant {
@@ -44,6 +45,7 @@ type DebugConfig = record {
   main_interval_seconds : nat64;
   rescue_interval_seconds : nat64;
   min_tx_e8s : nat64;
+  stake_recognition_delay_seconds : nat64;
 };
 type DebugFootprint = record {
   state_candid_bytes : nat64;
@@ -71,6 +73,7 @@ type Summary = record {
   pot_start_e8s : nat64;
   pot_remaining_e8s : nat64;
   denom_staking_balance_e8s : nat64;
+  effective_denom_staking_balance_e8s : opt nat64;
   topped_up_count : nat64;
   topped_up_sum_e8s : nat64;
   topped_up_min_e8s : opt nat64;

@@ -5,6 +5,7 @@ import { createActor as createLedgerActor } from '../declarations/icp_ledger/ind
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
+export const MAX_REGISTERED_SUMMARY_PAGES = 100;
 export const RECENT_CONTRIBUTION_LIMIT = 100;
 export const RECENT_BURN_LIMIT = 100;
 
@@ -115,6 +116,9 @@ async function listAllRegisteredCanisterSummaries(historian) {
       };
     }
     page += 1;
+    if (page >= MAX_REGISTERED_SUMMARY_PAGES) {
+      throw new Error(`Registered canister summary pagination exceeded ${MAX_REGISTERED_SUMMARY_PAGES} pages without completion`);
+    }
   }
 }
 

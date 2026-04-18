@@ -34,6 +34,7 @@ icrc-ledger-types = "0.1"
 pocket-ic = "12"
 slog = "2"
 sha2 = "0.10"
+crc32fast = "1"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 

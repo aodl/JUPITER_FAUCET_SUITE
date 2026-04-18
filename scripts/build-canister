@@ -20,6 +20,44 @@ export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${REPO_ROOT}=/build"
 
 mkdir -p release-artifacts
 
+emit_build_info() {
+  python3 - <<'PY' > release-artifacts/build-info.json
+from pathlib import Path
+import hashlib
+import json
+import os
+import subprocess
+
+
+def sha256(path: str) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def version(cmd):
+    return subprocess.check_output(cmd, text=True).strip()
+
+info = {
+    "source_date_epoch": os.environ.get("SOURCE_DATE_EPOCH"),
+    "toolchain": {
+        "rustc": version(["rustc", "-V"]),
+        "cargo": version(["cargo", "-V"]),
+        "node": version(["node", "-v"]),
+        "npm": version(["npm", "-v"]),
+        "ic-wasm": version(["ic-wasm", "--version"]),
+    },
+    "inputs": {
+        "Cargo.lock": sha256("Cargo.lock"),
+        "package-lock.json": sha256("package-lock.json"),
+        "rust-toolchain.toml": sha256("rust-toolchain.toml"),
+        "canister_ids.json": sha256("canister_ids.json"),
+        "scripts/build-canister": sha256("scripts/build-canister"),
+        "package.json": sha256("package.json"),
+    },
+}
+print(json.dumps(info, sort_keys=True, indent=2))
+PY
+}
+
 FRONTEND_ASSET_TOKEN="__ASSET_VERSION__"
 FRONTEND_BUNDLE_TOKEN="__APP_BUNDLE_PATH__"
 FRONTEND_BUNDLE_MANIFEST="jupiter-faucet-frontend/assets/generated/frontend-bundle.json"
@@ -209,7 +247,7 @@ build_one() {
     echo "Embedding production canister id for ${target_name}: ${prod_canister_id}"
   fi
 
-  cargo build --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
+  cargo build --frozen --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
 
   local raw_in="target/wasm32-unknown-unknown/release/${raw_name}.wasm"
   local raw_out="release-artifacts/${artifact_stem}.wasm"
@@ -264,6 +302,8 @@ build_selected() {
       ;;
   esac
 }
+
+emit_build_info
 
 TARGET="${1:-all}"
 build_selected "$TARGET"

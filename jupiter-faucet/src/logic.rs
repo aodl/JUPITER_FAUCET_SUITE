@@ -1,7 +1,7 @@
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 
-use crate::clients::index::{IndexOperation, IndexTransactionWithId};
+use crate::clients::index::{IndexOperation, IndexTimeStamp, IndexTransactionWithId};
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
 
 pub const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
@@ -14,6 +14,14 @@ pub struct Contribution {
     pub memo_bytes: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContributionValidity {
+    IgnoreUnderThreshold,
+    IgnoreBadMemo,
+    Valid { beneficiary: Principal },
+}
+
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContributionDecision {
     IgnoreUnderThreshold,
@@ -59,10 +67,88 @@ pub fn compute_raw_share_e8s(amount_e8s: u64, pot_start_e8s: u64, denom_e8s: u64
     raw.min(u64::MAX as u128) as u64
 }
 
+pub fn classify_contribution(min_tx_e8s: u64, contribution: &Contribution) -> ContributionValidity {
+    if contribution.amount_e8s < min_tx_e8s { return ContributionValidity::IgnoreUnderThreshold; }
+    let memo = match contribution.memo_bytes.as_deref() { Some(m) if !m.is_empty() => m, _ => return ContributionValidity::IgnoreBadMemo };
+    let beneficiary = match parse_beneficiary_from_memo(memo) { Some(p) => p, None => return ContributionValidity::IgnoreBadMemo };
+    ContributionValidity::Valid { beneficiary }
+}
+
+pub fn index_tx_timestamp_nanos(tx: &IndexTransactionWithId) -> Option<u64> {
+    tx.transaction
+        .timestamp
+        .as_ref()
+        .or(tx.transaction.created_at_time.as_ref())
+        .map(|ts: &IndexTimeStamp| ts.timestamp_nanos)
+}
+
+pub fn conservative_effective_timestamp_nanos(tx_timestamp_nanos: u64, recognition_delay_seconds: u64) -> u64 {
+    tx_timestamp_nanos.saturating_add(recognition_delay_seconds.saturating_mul(1_000_000_000))
+}
+
+pub fn compute_weighted_amount_e8s(
+    raw_amount_e8s: u64,
+    round_start_time_nanos: u64,
+    round_end_time_nanos: u64,
+    effective_timestamp_nanos: u64,
+) -> u64 {
+    if raw_amount_e8s == 0 || round_end_time_nanos <= round_start_time_nanos {
+        return 0;
+    }
+    if effective_timestamp_nanos <= round_start_time_nanos {
+        return raw_amount_e8s;
+    }
+    if effective_timestamp_nanos >= round_end_time_nanos {
+        return 0;
+    }
+    let duration = (round_end_time_nanos - round_start_time_nanos) as u128;
+    let participating = (round_end_time_nanos - effective_timestamp_nanos) as u128;
+    let weighted = (raw_amount_e8s as u128).saturating_mul(participating).checked_div(duration).unwrap_or(0);
+    weighted.min(u64::MAX as u128) as u64
+}
+
+pub fn contribution_amount_for_round_e8s(
+    contribution: &Contribution,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    round_start_latest_tx_id: Option<u64>,
+    round_end_latest_tx_id: Option<u64>,
+    round_start_time_nanos: u64,
+    round_end_time_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
+        return None;
+    }
+    // Legacy payout jobs and the one-off transition job do not yet have a meaningful
+    // accumulation window. In those cases we must preserve the historical behavior and
+    // treat in-range contributions as fully eligible for the round instead of letting a
+    // zero-width window collapse their weighted amount to zero.
+    if round_end_time_nanos <= round_start_time_nanos {
+        return Some(contribution.amount_e8s);
+    }
+    if round_start_latest_tx_id.map(|start| tx_id <= start).unwrap_or(false) {
+        return Some(contribution.amount_e8s);
+    }
+    let effective_timestamp_nanos = conservative_effective_timestamp_nanos(
+        tx_timestamp_nanos.unwrap_or(round_end_time_nanos),
+        recognition_delay_seconds,
+    );
+    Some(compute_weighted_amount_e8s(
+        contribution.amount_e8s,
+        round_start_time_nanos,
+        round_end_time_nanos,
+        effective_timestamp_nanos,
+    ))
+}
+
+#[allow(dead_code)]
 pub fn evaluate_contribution(pot_start_e8s: u64, denom_e8s: u64, fee_e8s: u64, min_tx_e8s: u64, contribution: &Contribution) -> ContributionDecision {
-    if contribution.amount_e8s < min_tx_e8s { return ContributionDecision::IgnoreUnderThreshold; }
-    let memo = match contribution.memo_bytes.as_deref() { Some(m) if !m.is_empty() => m, _ => return ContributionDecision::IgnoreBadMemo };
-    let beneficiary = match parse_beneficiary_from_memo(memo) { Some(p) => p, None => return ContributionDecision::IgnoreBadMemo };
+    let beneficiary = match classify_contribution(min_tx_e8s, contribution) {
+        ContributionValidity::IgnoreUnderThreshold => return ContributionDecision::IgnoreUnderThreshold,
+        ContributionValidity::IgnoreBadMemo => return ContributionDecision::IgnoreBadMemo,
+        ContributionValidity::Valid { beneficiary } => beneficiary,
+    };
     let gross_share_e8s = compute_raw_share_e8s(contribution.amount_e8s, pot_start_e8s, denom_e8s);
     if gross_share_e8s <= fee_e8s { return ContributionDecision::NoTransfer; }
     ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(fee_e8s) }
@@ -89,6 +175,7 @@ pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
         pot_start_e8s: job.pot_start_e8s,
         pot_remaining_e8s: job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s),
         denom_staking_balance_e8s: job.denom_staking_balance_e8s,
+        effective_denom_staking_balance_e8s: job.effective_denom_staking_balance_e8s,
         topped_up_count: job.topped_up_count,
         topped_up_sum_e8s: job.topped_up_sum_e8s,
         topped_up_min_e8s: job.topped_up_min_e8s,
@@ -109,6 +196,53 @@ mod tests {
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
     fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
+
+    #[test]
+    fn classify_contribution_distinguishes_valid_threshold_and_bad_memo() {
+        let beneficiary = target_canister();
+        assert_eq!(
+            classify_contribution(100, &Contribution { amount_e8s: 99, memo_bytes: Some(beneficiary.to_text().into_bytes()) }),
+            ContributionValidity::IgnoreUnderThreshold
+        );
+        assert_eq!(
+            classify_contribution(100, &Contribution { amount_e8s: 100, memo_bytes: Some(b"bad".to_vec()) }),
+            ContributionValidity::IgnoreBadMemo
+        );
+        assert_eq!(
+            classify_contribution(100, &Contribution { amount_e8s: 100, memo_bytes: Some(beneficiary.to_text().into_bytes()) }),
+            ContributionValidity::Valid { beneficiary }
+        );
+    }
+
+    #[test]
+    fn weighted_amount_is_full_partial_or_zero_based_on_effective_time() {
+        assert_eq!(compute_weighted_amount_e8s(1_000, 0, 100, 0), 1_000);
+        assert_eq!(compute_weighted_amount_e8s(1_000, 0, 100, 25), 750);
+        assert_eq!(compute_weighted_amount_e8s(1_000, 0, 100, 100), 0);
+        assert_eq!(compute_weighted_amount_e8s(1_000, 0, 100, 150), 0);
+    }
+
+    #[test]
+    fn contribution_amount_for_round_uses_tx_id_boundaries_and_conservative_delay() {
+        let contribution = Contribution { amount_e8s: 1_000, memo_bytes: Some(target_canister().to_text().into_bytes()) };
+        let round_end_nanos = 100_000_000_000;
+        assert_eq!(
+            contribution_amount_for_round_e8s(&contribution, 10, Some(5_000_000_000), Some(20), Some(50), 0, round_end_nanos, 10),
+            Some(1_000),
+        );
+        assert_eq!(
+            contribution_amount_for_round_e8s(&contribution, 25, Some(20_000_000_000), Some(20), Some(50), 0, round_end_nanos, 10),
+            Some(700),
+        );
+        assert_eq!(
+            contribution_amount_for_round_e8s(&contribution, 55, Some(20_000_000_000), Some(20), Some(50), 0, round_end_nanos, 10),
+            None,
+        );
+        assert_eq!(
+            contribution_amount_for_round_e8s(&contribution, 30, None, Some(20), Some(50), 0, round_end_nanos, 10),
+            Some(0),
+        );
+    }
 
     #[test]
     fn parser_accepts_target_canister_text_memo() {
@@ -293,6 +427,30 @@ mod tests {
         assert_eq!(compute_raw_share_e8s(2, 5, 3), 3);
         assert_eq!(compute_raw_share_e8s(2, 5, 3), compute_raw_share_e8s(2, 5, 3));
         assert_eq!(compute_raw_share_e8s(333_333_333, 100_000_000, 1_000_000_000), 33_333_333);
+    }
+
+    #[test]
+    fn proportional_pot_and_denominator_scaling_preserves_absolute_shares() {
+        let contribution = 400_000_000_u64;
+        let initial = compute_raw_share_e8s(contribution, 100_000_000, 1_000_000_000);
+        let scaled = compute_raw_share_e8s(contribution, 150_000_000, 1_500_000_000);
+        assert_eq!(initial, 40_000_000);
+        assert_eq!(scaled, initial,
+            "when added stake produces proportionally larger base maturity, later payout pots preserve the same absolute beneficiary share");
+    }
+
+    #[test]
+    fn raw_share_math_shows_why_an_unweighted_live_denominator_would_skew_one_round() {
+        let contribution = 400_000_000_u64;
+        let steady_state = compute_raw_share_e8s(contribution, 100_000_000, 1_000_000_000);
+        let skewed_round = compute_raw_share_e8s(contribution, 100_000_000, 1_500_000_000);
+        let reequilibrated_round = compute_raw_share_e8s(contribution, 150_000_000, 1_500_000_000);
+
+        assert_eq!(steady_state, 40_000_000);
+        assert_eq!(skewed_round, 26_666_666,
+            "if the staking-balance denominator grows before the payout pot catches up, that single round can temporarily underpay relative to steady state");
+        assert_eq!(reequilibrated_round, steady_state,
+            "once the payout pot scales with the larger stake base, the beneficiary re-equilibrates to the original absolute share");
     }
 
     #[test]

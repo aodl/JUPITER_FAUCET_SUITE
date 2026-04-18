@@ -15,5 +15,6 @@
     main_interval_seconds = opt 604800;
     rescue_interval_seconds = opt 86400;
     min_tx_e8s = opt 100000000;
+    stake_recognition_delay_seconds = opt 86400;
   }
 )

@@ -9,6 +9,7 @@ import {
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
   REGISTERED_SUMMARY_PAGE_SIZE,
+  MAX_REGISTERED_SUMMARY_PAGES,
   RECENT_CONTRIBUTION_LIMIT,
   RECENT_BURN_LIMIT,
 } from '../src/dashboard-data.js';
@@ -218,6 +219,49 @@ test('loadDashboardData fetches all registered canister summary pages instead of
   );
   assert.equal(data.registered.items.length, REGISTERED_SUMMARY_PAGE_SIZE + 1);
   assert.equal(data.registered.total, BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1));
+});
+
+test('loadDashboardData aborts pathological registered summary pagination instead of looping forever', async () => {
+  let registeredCalls = 0;
+  const fullPageItems = Array.from({ length: REGISTERED_SUMMARY_PAGE_SIZE }, (_, idx) => ({
+    canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
+    sources: [{ MemoContribution: null }],
+    qualifying_contribution_count: BigInt(idx + 1),
+    total_qualifying_contributed_e8s: BigInt(idx + 1),
+    last_contribution_ts: [1000n + BigInt(idx + 1)],
+    latest_cycles: [],
+    last_cycles_probe_ts: [],
+  }));
+
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts({ registered_canister_count: BigInt(REGISTERED_SUMMARY_PAGE_SIZE * (MAX_REGISTERED_SUMMARY_PAGES + 5)) }); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries() {
+        registeredCalls += 1;
+        return {
+          items: fullPageItems,
+          page: 0n,
+          page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
+          total: BigInt(REGISTERED_SUMMARY_PAGE_SIZE * (MAX_REGISTERED_SUMMARY_PAGES + 5)),
+        };
+      },
+      async list_recent_contributions() { return { items: [] }; },
+      async list_recent_burns() { return { items: [] }; },
+    },
+    ledgerActorFactory: () => ({
+      async account_balance() { return { e8s: 1n }; },
+      async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+    }),
+  });
+
+  assert.equal(data.registered, null);
+  assert.match(data.errors.registered, /pagination exceeded/i);
+  assert.equal(data.hasAnyFailure, true);
+  assert.equal(registeredCalls, MAX_REGISTERED_SUMMARY_PAGES);
 });
 
 test('loadDashboardData falls back to icrc1_balance_of when native ledger account_balance fails', async () => {

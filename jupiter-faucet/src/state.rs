@@ -22,6 +22,8 @@ pub struct Config {
     pub main_interval_seconds: u64,
     pub rescue_interval_seconds: u64,
     pub min_tx_e8s: u64,
+    #[serde(default)]
+    pub stake_recognition_delay_seconds: Option<u64>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -141,6 +143,8 @@ pub struct Summary {
     pub pot_start_e8s: u64,
     pub pot_remaining_e8s: u64,
     pub denom_staking_balance_e8s: u64,
+    #[serde(default)]
+    pub effective_denom_staking_balance_e8s: Option<u64>,
     pub topped_up_count: u64,
     pub topped_up_sum_e8s: u64,
     pub topped_up_min_e8s: Option<u64>,
@@ -187,6 +191,20 @@ pub struct ActivePayoutJob {
     pub cmc_success_count: Option<u64>,
     #[serde(default)]
     pub cmc_attempted_beneficiaries: Option<Vec<Principal>>,
+    #[serde(default)]
+    pub round_start_time_nanos: Option<u64>,
+    #[serde(default)]
+    pub round_start_staking_balance_e8s: Option<u64>,
+    #[serde(default)]
+    pub round_start_latest_tx_id: Option<u64>,
+    #[serde(default)]
+    pub round_end_time_nanos: Option<u64>,
+    #[serde(default)]
+    pub round_end_latest_tx_id: Option<u64>,
+    #[serde(default)]
+    pub effective_denom_staking_balance_e8s: Option<u64>,
+    #[serde(default)]
+    pub effective_denom_scan_complete: Option<bool>,
 }
 
 impl ActivePayoutJob {
@@ -218,7 +236,33 @@ impl ActivePayoutJob {
             cmc_attempt_count: Some(0),
             cmc_success_count: Some(0),
             cmc_attempted_beneficiaries: Some(Vec::new()),
+            round_start_time_nanos: None,
+            round_start_staking_balance_e8s: None,
+            round_start_latest_tx_id: None,
+            round_end_time_nanos: None,
+            round_end_latest_tx_id: None,
+            effective_denom_staking_balance_e8s: None,
+            effective_denom_scan_complete: None,
         }
+    }
+
+    pub fn configure_round_accounting(
+        &mut self,
+        round_start_time_nanos: Option<u64>,
+        round_start_staking_balance_e8s: Option<u64>,
+        round_start_latest_tx_id: Option<u64>,
+        round_end_time_nanos: u64,
+        round_end_latest_tx_id: Option<u64>,
+        effective_denom_staking_balance_e8s: u64,
+        effective_denom_scan_complete: bool,
+    ) {
+        self.round_start_time_nanos = round_start_time_nanos;
+        self.round_start_staking_balance_e8s = round_start_staking_balance_e8s;
+        self.round_start_latest_tx_id = round_start_latest_tx_id;
+        self.round_end_time_nanos = Some(round_end_time_nanos);
+        self.round_end_latest_tx_id = round_end_latest_tx_id;
+        self.effective_denom_staking_balance_e8s = Some(effective_denom_staking_balance_e8s);
+        self.effective_denom_scan_complete = Some(effective_denom_scan_complete);
     }
 }
 
@@ -242,6 +286,12 @@ pub struct State {
     pub payout_nonce: u64,
     pub active_payout_job: Option<ActivePayoutJob>,
     pub last_main_run_ts: u64,
+    #[serde(default)]
+    pub current_round_start_time_nanos: Option<u64>,
+    #[serde(default)]
+    pub current_round_start_staking_balance_e8s: Option<u64>,
+    #[serde(default)]
+    pub current_round_start_latest_tx_id: Option<u64>,
 }
 
 impl State {
@@ -265,6 +315,9 @@ impl State {
             payout_nonce: 1,
             active_payout_job: None,
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
+            current_round_start_time_nanos: None,
+            current_round_start_staking_balance_e8s: None,
+            current_round_start_latest_tx_id: None,
         }
     }
 }
@@ -338,10 +391,9 @@ fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, M
 }
 
 // Skip ranges are a durable replay-work cache for history spans that are known to be
-// irrelevant under the current faucet attribution policy. If future maintenance changes
-// policy inputs that affect contribution validity (for example min_tx_e8s or memo parsing /
-// memo-policy semantics), these cached ranges must be cleared so history is re-evaluated
-// under the new rules before relying on them again.
+// irrelevant under the current faucet attribution policy. Rescue upgrades conservatively
+// clear the cache before the faucet resumes, and any future maintenance that bypasses that
+// default must still clear the cache whenever contribution-validity rules change.
 pub fn list_skip_ranges() -> Vec<SkipRange> {
     with_skip_range_map(|map| {
         map.iter()
@@ -355,9 +407,9 @@ pub fn list_skip_ranges() -> Vec<SkipRange> {
 
 pub fn insert_skip_range(range: SkipRange) {
     // This durable cache assumes the contribution-validity rules are unchanged since the
-    // range was learned. Callers should clear all persisted skip ranges before reusing the
-    // cache after any config or policy change that could make previously skipped transfers
-    // relevant again.
+    // range was learned. Rescue upgrades clear the whole cache before resuming, and any
+    // future maintenance path that changes contribution-validity rules must do the same
+    // before relying on persisted skip ranges again.
     assert!(range.start_tx_id <= range.end_tx_id, "invalid skip range: start exceeds end");
     let existing = list_skip_ranges();
     assert!(
@@ -381,7 +433,6 @@ pub fn insert_skip_range(range: SkipRange) {
     });
 }
 
-#[cfg(test)]
 pub fn clear_skip_ranges() {
     with_skip_range_map(|map| {
         let keys: Vec<_> = map.iter().map(|(start, _)| start).collect();
@@ -523,6 +574,7 @@ mod tests {
             main_interval_seconds: 60,
             rescue_interval_seconds: 120,
             min_tx_e8s: 100_000_000,
+            stake_recognition_delay_seconds: Some(24 * 60 * 60),
         }
     }
 

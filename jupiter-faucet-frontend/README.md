@@ -25,7 +25,7 @@ The canister serves two important HTTP surfaces:
 
 Asset responses are certified and content-typed through the Rust asset router.
 
-The `/metrics` endpoint is intentionally served with certification skipped by policy because it is a simple canister-local diagnostics surface rather than part of the browser dashboard data model.
+The `/metrics` endpoint is also certified now, but as a periodically refreshed snapshot rather than an uncached live recomputation. The frontend canister refreshes and re-certifies the metrics document on a timer, so `/metrics` stays trustworthy without relying on uncertified boundary-node data for the JSON body.
 
 The canister also applies a deliberate cache policy:
 
@@ -190,13 +190,6 @@ The checked-in Node tests cover the highest-value browser-side invariants, inclu
 
 The local-replica variant is fixture-driven: it compares the live loader result against an expected JSON snapshot provided through environment variables.
 
-There is also a small historian smoke helper:
-
-```bash
-npm run smoke:historian
-```
-
-That helper queries the historian plus the referenced ledger canister, prints a compact JSON summary, and warns when obviously suspicious states are observed (for example, a non-zero staking balance alongside all-zero public counts).
 
 ## Upgrade command
 

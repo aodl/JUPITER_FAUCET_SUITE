@@ -19,6 +19,8 @@ use crate::{logic, policy, state};
 
 
 const PAGE_SIZE: u64 = 500;
+const MAX_INDEX_PAGES_PER_PAYOUT_TICK: u64 = 64;
+const MAX_INDEX_PAGES_PER_LATEST_SCAN: u64 = 128;
 // Only persist large barren spans so the durable skip-range cache stays small and a
 // one-time adversarial history scan remains much more expensive for the attacker than for
 // the faucet. These ranges are only valid while contribution-classification policy is
@@ -26,6 +28,7 @@ const PAGE_SIZE: u64 = 500;
 const MIN_SKIP_RANGE_TX_COUNT: u64 = 10_000;
 const LEDGER_CREATED_AT_MAX_AGE_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 const LEDGER_CREATED_AT_MAX_FUTURE_SKEW_NANOS: u64 = 60 * 1_000_000_000;
+const DEFAULT_STAKE_RECOGNITION_DELAY_SECONDS: u64 = 24 * 60 * 60;
 
 #[cfg(feature = "debug_api")]
 use std::cell::RefCell;
@@ -129,14 +132,15 @@ fn log_cycles() {
 
 fn log_summary(summary: &state::Summary) {
     emit_log_line(format!(
-        "SUMMARY:topped_up_count={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={}",
+        "SUMMARY:topped_up_count={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={} effective_denom_e8s={}",
         summary.topped_up_count,
         summary.failed_topups,
         summary.ambiguous_topups,
         summary.ignored_under_threshold,
         summary.ignored_bad_memo,
         summary.remainder_to_self_e8s,
-        summary.pot_remaining_e8s
+        summary.pot_remaining_e8s,
+        summary.effective_denom_staking_balance_e8s.unwrap_or(summary.denom_staking_balance_e8s)
     ));
 }
 
@@ -431,6 +435,11 @@ async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
     let zero_success_run_counts = zero_success_run_counts_toward_rescue(status_client, &job).await;
     let summary = state::with_state_mut(|st| {
         apply_job_health_observations(st, &job, zero_success_run_counts);
+        if let Some(round_end_time_nanos) = job.round_end_time_nanos {
+            st.current_round_start_time_nanos = Some(round_end_time_nanos);
+            st.current_round_start_staking_balance_e8s = Some(job.denom_staking_balance_e8s);
+            st.current_round_start_latest_tx_id = job.round_end_latest_tx_id.or(job.observed_latest_tx_id);
+        }
         let summary = logic::summary_from_job(&job);
         st.last_summary = Some(summary.clone());
         summary
@@ -682,14 +691,73 @@ async fn send_and_notify(
     drive_pending_transfer(ledger, cmc, cmc_id, fee_e8s, now_nanos, now_secs).await
 }
 
-fn ensure_active_job(now_nanos: u64, fee_e8s: u64, pot_start_e8s: u64, denom_e8s: u64) {
+fn recognition_delay_seconds() -> u64 {
+    state::with_state(|st| st.config.stake_recognition_delay_seconds.unwrap_or(DEFAULT_STAKE_RECOGNITION_DELAY_SECONDS))
+}
+
+fn effective_denom_scan_complete(job: &ActivePayoutJob) -> bool {
+    job.effective_denom_scan_complete.unwrap_or(true)
+}
+
+fn effective_denom_e8s(job: &ActivePayoutJob) -> u64 {
+    job.effective_denom_staking_balance_e8s.unwrap_or(job.denom_staking_balance_e8s)
+}
+
+fn ensure_active_job(
+    now_nanos: u64,
+    fee_e8s: u64,
+    pot_start_e8s: u64,
+    denom_e8s: u64,
+    round_end_latest_tx_id: Option<u64>,
+) {
     state::with_state_mut(|st| {
         if st.active_payout_job.is_some() {
             return;
         }
         let id = st.payout_nonce;
         st.payout_nonce = st.payout_nonce.saturating_add(1);
-        st.active_payout_job = Some(ActivePayoutJob::new(id, fee_e8s, pot_start_e8s, denom_e8s, now_nanos));
+        let mut job = ActivePayoutJob::new(id, fee_e8s, pot_start_e8s, denom_e8s, now_nanos);
+        match (
+            st.current_round_start_time_nanos,
+            st.current_round_start_staking_balance_e8s,
+            st.current_round_start_latest_tx_id,
+        ) {
+            (Some(round_start_time_nanos), Some(round_start_staking_balance_e8s), round_start_latest_tx_id) => {
+                let stake_unchanged_since_round_start = round_start_staking_balance_e8s == denom_e8s;
+                let effective_round_end_latest_tx_id = if stake_unchanged_since_round_start {
+                    round_start_latest_tx_id
+                } else {
+                    round_end_latest_tx_id
+                };
+                job.configure_round_accounting(
+                    Some(round_start_time_nanos),
+                    Some(round_start_staking_balance_e8s),
+                    round_start_latest_tx_id,
+                    now_nanos,
+                    effective_round_end_latest_tx_id,
+                    round_start_staking_balance_e8s,
+                    stake_unchanged_since_round_start,
+                );
+                if !stake_unchanged_since_round_start {
+                    job.next_start = round_start_latest_tx_id;
+                }
+            }
+            _ => {
+                // Fresh installs / upgrades do not yet know the prior round boundary. Fall back to
+                // the legacy live-denominator model for exactly one transition payout, then store
+                // the current boundary as the next round's start snapshot when this job finalizes.
+                job.configure_round_accounting(
+                    Some(now_nanos),
+                    Some(denom_e8s),
+                    round_end_latest_tx_id,
+                    now_nanos,
+                    round_end_latest_tx_id,
+                    denom_e8s,
+                    true,
+                );
+            }
+        }
+        st.active_payout_job = Some(job);
     });
 }
 
@@ -724,7 +792,7 @@ async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_ba
             st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
             st.last_observed_latest_tx_id = match latest_tx_id {
                 LatestScan::Read(latest_tx_id) => latest_tx_id,
-                LatestScan::Unreadable => None,
+                LatestScan::Unreadable | LatestScan::InvariantBroken => None,
             };
             st.consecutive_index_latest_invariant_failures = Some(0);
             st.consecutive_index_latest_unreadable_failures = Some(0);
@@ -744,12 +812,42 @@ async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_ba
 enum LatestScan {
     Read(Option<u64>),
     Unreadable,
+    InvariantBroken,
+}
+
+fn record_latest_unreadable_failure(st: &mut state::State) {
+    st.consecutive_index_latest_invariant_failures = Some(0);
+    st.consecutive_index_latest_unreadable_failures = Some(
+        st.consecutive_index_latest_unreadable_failures
+            .unwrap_or(0)
+            .saturating_add(1),
+    );
+    if st.consecutive_index_latest_unreadable_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+        st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestUnreadable);
+    }
+}
+
+fn record_latest_invariant_failure(st: &mut state::State) {
+    st.consecutive_index_latest_unreadable_failures = Some(0);
+    st.consecutive_index_latest_invariant_failures = Some(
+        st.consecutive_index_latest_invariant_failures
+            .unwrap_or(0)
+            .saturating_add(1),
+    );
+    if st.consecutive_index_latest_invariant_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+        st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestInvariantBroken);
+    }
 }
 
 async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: Option<u64>) -> LatestScan {
     let mut cursor = start;
     let mut latest = start;
+    let mut pages_scanned = 0u64;
     loop {
+        if pages_scanned >= MAX_INDEX_PAGES_PER_LATEST_SCAN {
+            return LatestScan::Read(latest);
+        }
+        pages_scanned = pages_scanned.saturating_add(1);
         let resp = match index
             .get_account_identifier_transactions(staking_id.clone(), cursor, PAGE_SIZE)
             .await
@@ -760,6 +858,9 @@ async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: 
         let page_latest = resp.transactions.last().map(|tx| tx.id);
         if page_latest.is_none() {
             return LatestScan::Read(latest);
+        }
+        if cursor.zip(page_latest).map(|(prev, next)| next <= prev).unwrap_or(false) {
+            return LatestScan::InvariantBroken;
         }
         latest = page_latest;
         cursor = page_latest;
@@ -787,24 +888,15 @@ fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, lates
             st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
             st.last_observed_latest_tx_id = match latest_scan {
                 LatestScan::Read(latest_tx_id) => latest_tx_id,
-                LatestScan::Unreadable => None,
+                LatestScan::Unreadable | LatestScan::InvariantBroken => None,
             };
             st.consecutive_index_latest_invariant_failures = Some(0);
             st.consecutive_index_latest_unreadable_failures = Some(0);
         }
         (Some(prev_balance), _prev_latest_tx_id) if prev_balance == denom_balance_e8s => {}
         (Some(_), prev_latest_tx_id) => match latest_scan {
-            LatestScan::Unreadable => {
-                st.consecutive_index_latest_invariant_failures = Some(0);
-                st.consecutive_index_latest_unreadable_failures = Some(
-                    st.consecutive_index_latest_unreadable_failures
-                        .unwrap_or(0)
-                        .saturating_add(1),
-                );
-                if st.consecutive_index_latest_unreadable_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
-                    st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestUnreadable);
-                }
-            }
+            LatestScan::Unreadable => record_latest_unreadable_failure(st),
+            LatestScan::InvariantBroken => record_latest_invariant_failure(st),
             LatestScan::Read(latest_tx_id) => {
                 let latest_changed = match (prev_latest_tx_id, latest_tx_id) {
                     (Some(prev), Some(latest)) => latest != prev,
@@ -817,15 +909,7 @@ fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, lates
                     st.consecutive_index_latest_invariant_failures = Some(0);
                     st.consecutive_index_latest_unreadable_failures = Some(0);
                 } else {
-                    st.consecutive_index_latest_unreadable_failures = Some(0);
-                    st.consecutive_index_latest_invariant_failures = Some(
-                        st.consecutive_index_latest_invariant_failures
-                            .unwrap_or(0)
-                            .saturating_add(1),
-                    );
-                    if st.consecutive_index_latest_invariant_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
-                        st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestInvariantBroken);
-                    }
+                    record_latest_invariant_failure(st);
                 }
             }
         }
@@ -906,7 +990,24 @@ async fn process_payout(
             maybe_latch_bootstrap_rescue(now_secs);
             return true;
         }
-        ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s);
+        let (have_round_snapshot, stake_unchanged_since_round_start, round_start_latest_tx_id) = state::with_state(|st| {
+            let have_snapshot = st.current_round_start_time_nanos.is_some() && st.current_round_start_staking_balance_e8s.is_some();
+            let stake_unchanged = st.current_round_start_staking_balance_e8s == Some(denom_e8s);
+            (have_snapshot, stake_unchanged, st.current_round_start_latest_tx_id)
+        });
+        let round_end_latest_tx_id = if have_round_snapshot {
+            if stake_unchanged_since_round_start {
+                round_start_latest_tx_id
+            } else {
+                match scan_latest_tx_id(index, staking_id.clone(), state::with_state(|st| st.last_observed_latest_tx_id)).await {
+                    LatestScan::Read(latest_tx_id) => latest_tx_id,
+                    LatestScan::Unreadable | LatestScan::InvariantBroken => return false,
+                }
+            }
+        } else {
+            None
+        };
+        ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s, round_end_latest_tx_id);
     }
 
     // Skip ranges are a durable cache of barren tx-id spans discovered by earlier jobs.
@@ -917,6 +1018,7 @@ async fn process_payout(
         &skip_ranges,
         state::with_state(|st| st.active_payout_job.as_ref().and_then(|job| job.next_start)),
     );
+    let mut pages_scanned = 0u64;
 
     loop {
         let job = state::with_state(|st| st.active_payout_job.clone());
@@ -927,6 +1029,81 @@ async fn process_payout(
             }
             continue;
         }
+
+        if !effective_denom_scan_complete(&job) {
+            let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            pages_scanned = pages_scanned.saturating_add(1);
+            let mut page_next_start = job.next_start;
+            let mut denom_delta_e8s = 0u64;
+            let mut reached_round_end = false;
+            let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
+            let round_start_time_nanos = job.round_start_time_nanos.unwrap_or(job.round_end_time_nanos.unwrap_or(now_nanos));
+            let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
+            let recognition_delay_seconds = recognition_delay_seconds();
+
+            for tx in &resp.transactions {
+                if let Some(last_seen) = job.next_start {
+                    if tx.id <= last_seen {
+                        continue;
+                    }
+                }
+                if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
+                    reached_round_end = true;
+                    break;
+                }
+                page_next_start = Some(tx.id);
+                let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
+                    continue;
+                };
+                if !matches!(logic::classify_contribution(min_tx_e8s, &contribution), logic::ContributionValidity::Valid { .. }) {
+                    continue;
+                }
+                let weighted_amount_e8s = logic::contribution_amount_for_round_e8s(
+                    &contribution,
+                    tx.id,
+                    logic::index_tx_timestamp_nanos(tx),
+                    job.round_start_latest_tx_id,
+                    job.round_end_latest_tx_id,
+                    round_start_time_nanos,
+                    round_end_time_nanos,
+                    recognition_delay_seconds,
+                ).unwrap_or(0);
+                denom_delta_e8s = denom_delta_e8s.saturating_add(weighted_amount_e8s);
+            }
+
+            let scan_complete = reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty();
+            state::with_state_mut(|st| {
+                if let Some(active_job) = st.active_payout_job.as_mut() {
+                    active_job.effective_denom_staking_balance_e8s = Some(
+                        active_job
+                            .effective_denom_staking_balance_e8s
+                            .unwrap_or(active_job.round_start_staking_balance_e8s.unwrap_or(active_job.denom_staking_balance_e8s))
+                            .saturating_add(denom_delta_e8s)
+                    );
+                    if scan_complete {
+                        active_job.effective_denom_scan_complete = Some(true);
+                        // The effective-denominator pre-scan only needs to visit current-round
+                        // transactions. The payout scan that follows still needs to revisit the
+                        // full beneficiary history up to the round-end boundary so pre-existing
+                        // contributors continue to receive payouts each round.
+                        active_job.next_start = None;
+                        active_job.skip_candidate_start_tx_id = None;
+                        active_job.skip_candidate_end_tx_id = None;
+                        active_job.skip_candidate_tx_count = 0;
+                    } else if let Some(next_start) = page_next_start {
+                        active_job.next_start = Some(next_start);
+                    }
+                }
+            });
+            if !scan_complete && pages_scanned >= MAX_INDEX_PAGES_PER_PAYOUT_TICK {
+                return true;
+            }
+            continue;
+        }
+
         if job.scan_complete {
             let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
             if remainder_gross_e8s > job.fee_e8s && job.remainder_to_self_e8s == 0 {
@@ -941,12 +1118,26 @@ async fn process_payout(
             return true;
         }
 
-        if let Some(skip_to) = next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx) {
-            state::with_state_mut(|st| {
-                if let Some(active_job) = st.active_payout_job.as_mut() {
-                    active_job.next_start = Some(skip_to);
-                }
+        if job.round_end_latest_tx_id.zip(job.next_start).map(|(end, cursor)| cursor >= end).unwrap_or(false) {
+            state::with_state_mut(|st| if let Some(active_job) = st.active_payout_job.as_mut() {
+                active_job.scan_complete = true;
             });
+            continue;
+        }
+
+        if let Some(skip_to) = next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx) {
+            if job.round_end_latest_tx_id.map(|end| skip_to >= end).unwrap_or(false) {
+                state::with_state_mut(|st| if let Some(active_job) = st.active_payout_job.as_mut() {
+                    active_job.scan_complete = true;
+                    active_job.next_start = active_job.round_end_latest_tx_id;
+                });
+            } else {
+                state::with_state_mut(|st| {
+                    if let Some(active_job) = st.active_payout_job.as_mut() {
+                        active_job.next_start = Some(skip_to);
+                    }
+                });
+            }
             continue;
         }
 
@@ -954,6 +1145,19 @@ async fn process_payout(
             Ok(v) => v,
             Err(_) => return false,
         };
+        pages_scanned = pages_scanned.saturating_add(1);
+        let last_id = resp.transactions.last().map(|t| t.id);
+        if job.next_start.zip(last_id).map(|(prev, latest)| latest <= prev).unwrap_or(false) {
+            state::with_state_mut(|st| {
+                if let Some(active_job) = st.active_payout_job.as_mut() {
+                    if active_job.observed_oldest_tx_id.is_none() {
+                        active_job.observed_oldest_tx_id = resp.oldest_tx_id;
+                    }
+                }
+                record_latest_invariant_failure(st);
+            });
+            return false;
+        }
         note_index_page(&resp);
         if resp.transactions.is_empty() {
             let mut skip_candidate = LocalSkipCandidate::from_job(&job);
@@ -977,6 +1181,7 @@ async fn process_payout(
         let mut page_next_start = page_start;
         let mut skip_candidate = LocalSkipCandidate::from_job(&job);
         let mut pending_skip_ranges = Vec::new();
+        let mut reached_round_end = false;
         let mut scan_batch = Some(state::begin_persistence_batch());
         for tx in &resp.transactions {
             if let Some(last_seen) = page_start {
@@ -984,33 +1189,54 @@ async fn process_payout(
                     continue;
                 }
             }
+            if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
+                reached_round_end = true;
+                break;
+            }
+            page_next_start = Some(tx.id);
             let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
                 skip_candidate.note_skippable(tx.id);
-                page_next_start = Some(tx.id);
                 continue;
             };
             let snapshot = state::with_state(|st| {
                 let job = st.active_payout_job.as_ref().expect("active payout job missing");
-                (job.pot_start_e8s, job.denom_staking_balance_e8s, job.fee_e8s, st.config.min_tx_e8s)
+                (
+                    job.pot_start_e8s,
+                    effective_denom_e8s(job),
+                    job.fee_e8s,
+                    st.config.min_tx_e8s,
+                    job.round_start_latest_tx_id,
+                    job.round_end_latest_tx_id,
+                    job.round_start_time_nanos.unwrap_or(job.round_end_time_nanos.unwrap_or(now_nanos)),
+                    job.round_end_time_nanos.unwrap_or(now_nanos),
+                )
             });
-            match logic::evaluate_contribution(snapshot.0, snapshot.1, snapshot.2, snapshot.3, &contribution) {
-                logic::ContributionDecision::IgnoreUnderThreshold => {
+            match logic::classify_contribution(snapshot.3, &contribution) {
+                logic::ContributionValidity::IgnoreUnderThreshold => {
                     skip_candidate.note_skippable(tx.id);
                     ignored_under_threshold_delta = ignored_under_threshold_delta.saturating_add(1);
-                    page_next_start = Some(tx.id);
                 }
-                logic::ContributionDecision::IgnoreBadMemo => {
+                logic::ContributionValidity::IgnoreBadMemo => {
                     skip_candidate.note_skippable(tx.id);
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
-                    page_next_start = Some(tx.id);
                 }
-                logic::ContributionDecision::NoTransfer => {
+                logic::ContributionValidity::Valid { beneficiary } => {
+                    let amount_for_round_e8s = logic::contribution_amount_for_round_e8s(
+                        &contribution,
+                        tx.id,
+                        logic::index_tx_timestamp_nanos(tx),
+                        snapshot.4,
+                        snapshot.5,
+                        snapshot.6,
+                        snapshot.7,
+                        recognition_delay_seconds(),
+                    ).unwrap_or(0);
+                    let gross_share_e8s = logic::compute_raw_share_e8s(amount_for_round_e8s, snapshot.0, snapshot.1);
+                    if gross_share_e8s <= snapshot.2 {
+                        record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
+                        continue;
+                    }
                     record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
-                    page_next_start = Some(tx.id);
-                }
-                logic::ContributionDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } => {
-                    record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
-                    page_next_start = Some(tx.id);
                     flush_scan_progress(
                         &mut ignored_under_threshold_delta,
                         &mut ignored_bad_memo_delta,
@@ -1019,7 +1245,7 @@ async fn process_payout(
                     );
                     drop(scan_batch.take());
                     persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
-                    let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s, block_index: 0, next_start: Some(tx.id) };
+                    let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(snapshot.2), block_index: 0, next_start: Some(tx.id) };
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
                     }
@@ -1027,8 +1253,7 @@ async fn process_payout(
                 }
             }
         }
-        let last_id = resp.transactions.last().map(|t| t.id);
-        let scan_complete = resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none();
+        let scan_complete = reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none();
         if scan_complete {
             record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
         }
@@ -1041,10 +1266,13 @@ async fn process_payout(
             job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
             job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
             job.skip_candidate_tx_count = skip_candidate.tx_count;
-            if scan_complete { job.scan_complete = true; } else { job.next_start = last_id; }
+            if scan_complete { job.scan_complete = true; } else if !reached_round_end { job.next_start = last_id; }
         });
         drop(scan_batch);
         persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
+        if !scan_complete && pages_scanned >= MAX_INDEX_PAGES_PER_PAYOUT_TICK {
+            return true;
+        }
     }
 }
 async fn attempt_rescue(now_secs: u64) {
@@ -1191,6 +1419,51 @@ mod tests {
         }
     }
 
+
+    #[derive(Clone)]
+    struct BalanceRecordingLedger {
+        fee_e8s: u64,
+        payout_balance_e8s: u64,
+        staking_balance_e8s: u64,
+        transfer_blocks: Arc<Mutex<VecDeque<u64>>>,
+        transfer_amounts: Arc<Mutex<Vec<u64>>>,
+    }
+
+    impl BalanceRecordingLedger {
+        fn new(fee_e8s: u64, payout_balance_e8s: u64, staking_balance_e8s: u64, transfer_blocks: Vec<u64>) -> Self {
+            Self {
+                fee_e8s,
+                payout_balance_e8s,
+                staking_balance_e8s,
+                transfer_blocks: Arc::new(Mutex::new(transfer_blocks.into())),
+                transfer_amounts: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn transfer_amounts(&self) -> Vec<u64> {
+            self.transfer_amounts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl LedgerClient for BalanceRecordingLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(self.fee_e8s) }
+        async fn balance_of_e8s(&self, account: Account) -> Result<u64, crate::clients::ClientError> {
+            let staking = state::with_state(|st| st.config.staking_account.clone());
+            if account == staking {
+                Ok(self.staking_balance_e8s)
+            } else {
+                Ok(self.payout_balance_e8s)
+            }
+        }
+        async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            let amount_u64 = arg.amount.0.to_string().parse::<u64>().unwrap_or(0);
+            self.transfer_amounts.lock().unwrap().push(amount_u64);
+            let block = self.transfer_blocks.lock().unwrap().pop_front().unwrap_or(1);
+            Ok(Ok(BlockIndex::from(block)))
+        }
+    }
+
     #[derive(Clone)]
     enum CmcStep {
         Ok,
@@ -1315,6 +1588,56 @@ mod tests {
     }
 
 
+    struct BarrenPagedIndex {
+        page_count: u64,
+        starts: Arc<Mutex<Vec<Option<u64>>>>,
+        staking_id: String,
+    }
+
+    impl BarrenPagedIndex {
+        fn new(page_count: u64, staking_id: String) -> Self {
+            Self {
+                page_count,
+                starts: Arc::new(Mutex::new(Vec::new())),
+                staking_id,
+            }
+        }
+
+        fn starts(&self) -> Vec<Option<u64>> {
+            self.starts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl IndexClient for BarrenPagedIndex {
+        async fn get_account_identifier_transactions(
+            &self,
+            _account_identifier: String,
+            start: Option<u64>,
+            max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            self.starts.lock().unwrap().push(start);
+            let page_idx = start.map(|last_seen| last_seen / PAGE_SIZE).unwrap_or(0);
+            if page_idx >= self.page_count {
+                return Ok(GetAccountIdentifierTransactionsResponse {
+                    balance: 0,
+                    oldest_tx_id: Some(1),
+                    transactions: Vec::new(),
+                });
+            }
+            let first_id = page_idx * PAGE_SIZE + 1;
+            let transactions = (0..max_results)
+                .map(|offset| contribution_tx(first_id + offset, &self.staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+                .collect();
+            Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions,
+            })
+        }
+    }
+
+
     #[derive(Clone)]
     enum IndexResponseStep {
         Ok(GetAccountIdentifierTransactionsResponse),
@@ -1348,7 +1671,7 @@ mod tests {
         }
     }
 
-    fn contribution_tx(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>) -> IndexTransactionWithId {
+    fn contribution_tx_at(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>, timestamp_nanos: u64) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -1362,9 +1685,13 @@ mod tests {
                     spender: None,
                 },
                 created_at_time: None,
-                timestamp: Some(IndexTimeStamp { timestamp_nanos: 0 }),
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
             },
         }
+    }
+
+    fn contribution_tx(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>) -> IndexTransactionWithId {
+        contribution_tx_at(id, staking_id, amount_e8s, memo, 0)
     }
 
     fn test_config_with_intervals(main_interval_seconds: u64, rescue_interval_seconds: u64) -> state::Config {
@@ -1381,6 +1708,7 @@ mod tests {
             main_interval_seconds,
             rescue_interval_seconds,
             min_tx_e8s: crate::MIN_MIN_TX_E8S,
+            stake_recognition_delay_seconds: Some(24 * 60 * 60),
         }
     }
 
@@ -2043,6 +2371,86 @@ mod tests {
     }
 
     #[test]
+    fn scan_latest_tx_id_detects_non_advancing_full_page() {
+        let index = ScriptedIndex::new(vec![
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, "staking", 1, None)).collect(),
+            }),
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, "staking", 1, None)).collect(),
+            }),
+        ]);
+
+        let latest = run_ready(scan_latest_tx_id(&index, "staking".to_string(), Some(10)));
+        assert_eq!(latest, LatestScan::InvariantBroken);
+    }
+
+    #[test]
+    fn process_payout_stops_and_records_invariant_failure_when_index_page_does_not_advance() {
+        let now_secs = 4_600_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(12, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000));
+        state::with_state_mut(|st| {
+            let job = st.active_payout_job.as_mut().expect("active job");
+            job.next_start = Some(10);
+        });
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let repeated_page: Vec<_> = (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, &staking_id, 1, None)).collect();
+        let index = ScriptedIndex::new(vec![
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: repeated_page.clone(),
+            }),
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: repeated_page,
+            }),
+        ]);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(!run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(1));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+
+        let second_index = ScriptedIndex::new(vec![
+            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, &staking_id, 1, None)).collect(),
+            }),
+        ]);
+        assert!(!run_ready(process_payout(&ledger, &second_index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
+            assert_eq!(st.forced_rescue_reason, Some(ForcedRescueReason::IndexLatestInvariantBroken));
+        });
+    }
+
+    #[test]
+    fn process_payout_yields_after_bounded_number_of_barren_pages() {
+        let now_secs = 4_700_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(13, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let index = BarrenPagedIndex::new(MAX_INDEX_PAGES_PER_PAYOUT_TICK + 1, staking_id);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        let job = state::with_state(|st| st.active_payout_job.clone()).expect("job should remain active after bounded yield");
+        assert_eq!(job.scan_complete, false);
+        assert_eq!(job.next_start, Some(MAX_INDEX_PAGES_PER_PAYOUT_TICK * PAGE_SIZE));
+        assert_eq!(index.starts().len(), MAX_INDEX_PAGES_PER_PAYOUT_TICK as usize);
+    }
+
+    #[test]
     fn scan_latest_tx_id_uses_exclusive_start_cursor_contract() {
         let cfg = test_config();
         let staking_id = account_identifier_text(&cfg.staking_account);
@@ -2415,6 +2823,136 @@ mod tests {
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
         assert_eq!(summary.ignored_under_threshold, 2 * MIN_SKIP_RANGE_TX_COUNT);
         assert_eq!(summary.topped_up_count, 0);
+    }
+
+    #[test]
+    fn process_payout_uses_weighted_effective_denom_and_ignores_post_boundary_tx_ids() {
+        let now_secs = 2_000;
+        let mut job = ActivePayoutJob::new(77, 10_000, 100_000_000, 1_900_000_000, now_secs * 1_000_000_000);
+        job.next_start = Some(1);
+        job.configure_round_accounting(
+            Some(0),
+            Some(1_000_000_000),
+            Some(1),
+            100_000_000_000,
+            Some(2),
+            1_000_000_000,
+            false,
+        );
+        let _cfg = set_active_job(now_secs, job);
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let beneficiary_c = Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            contribution_tx_at(1, &staking_id, 1_000_000_000, Some(beneficiary_a.to_text().into_bytes()), 0),
+            contribution_tx_at(2, &staking_id, 900_000_000, Some(beneficiary_b.to_text().into_bytes()), 80_000_000_000),
+            // Same timestamp as tx 2 on purpose: tx-id, not timestamp, defines the round range.
+            contribution_tx_at(3, &staking_id, 900_000_000, Some(beneficiary_c.to_text().into_bytes()), 80_000_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 1_900_000_000, vec![11, 12]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(1_090_000_000));
+        assert_eq!(summary.topped_up_count, 2);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.pot_remaining_e8s, 1);
+        assert_eq!(ledger.transfer_amounts(), vec![91_733_119, 8_246_880]);
+        assert_eq!(cmc.call_count(), 2);
+    }
+
+    #[test]
+    fn process_payout_still_pays_pre_round_contributions_after_effective_denom_prescan() {
+        let now_secs = 2_500;
+        let mut job = ActivePayoutJob::new(78, 10_000, 100_000_000, 1_400_000_000, now_secs * 1_000_000_000);
+        job.next_start = Some(1);
+        job.configure_round_accounting(
+            Some(0),
+            Some(1_400_000_000),
+            Some(1),
+            100_000_000_000,
+            Some(1),
+            1_400_000_000,
+            false,
+        );
+        let _cfg = set_active_job(now_secs, job);
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            contribution_tx_at(1, &staking_id, 400_000_000, Some(beneficiary.to_text().into_bytes()), 0),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 1_400_000_000, vec![31, 32]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(1_400_000_000));
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.remainder_to_self_e8s, 71_418_572);
+        assert_eq!(ledger.transfer_amounts(), vec![28_561_428, 71_418_572]);
+    }
+
+
+    #[test]
+    fn first_transition_payout_falls_back_to_live_denom_and_records_next_round_snapshot() {
+        let now_secs = 3_000;
+        let cfg = test_config();
+        let st = state::State::new(cfg.clone(), now_secs);
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            contribution_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), now_secs * 1_000_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![21, 22]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(200_000_000));
+        assert_eq!(summary.remainder_to_self_e8s, 49_990_000);
+        assert_eq!(ledger.transfer_amounts(), vec![49_990_000, 49_990_000]);
+        let (round_start_time_nanos, round_start_staking_balance_e8s, round_start_latest_tx_id) = state::with_state(|st| (
+            st.current_round_start_time_nanos,
+            st.current_round_start_staking_balance_e8s,
+            st.current_round_start_latest_tx_id,
+        ));
+        assert_eq!(round_start_time_nanos, Some(now_secs * 1_000_000_000));
+        assert_eq!(round_start_staking_balance_e8s, Some(200_000_000));
+        assert_eq!(round_start_latest_tx_id, Some(1));
     }
 
 }

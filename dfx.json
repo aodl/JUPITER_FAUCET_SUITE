@@ -4,7 +4,7 @@
       "type": "custom",
       "candid": "jupiter-disburser/jupiter_disburser.did",
       "wasm": "release-artifacts/jupiter_disburser.wasm",
-      "build": "./scripts/build-canister jupiter-disburser",
+      "build": "bash ./scripts/build-canister jupiter-disburser",
       "skip_cargo_audit": true
     },
     "jupiter_disburser_dbg": {
@@ -58,28 +58,28 @@
       "type": "custom",
       "candid": "jupiter-lifeline/jupiter_lifeline.did",
       "wasm": "release-artifacts/jupiter_lifeline.wasm",
-      "build": "./scripts/build-canister jupiter-lifeline",
+      "build": "bash ./scripts/build-canister jupiter-lifeline",
       "skip_cargo_audit": true
     },
     "jupiter_faucet": {
       "type": "custom",
       "candid": "jupiter-faucet/jupiter_faucet.did",
       "wasm": "release-artifacts/jupiter_faucet.wasm",
-      "build": "./scripts/build-canister jupiter-faucet",
+      "build": "bash ./scripts/build-canister jupiter-faucet",
       "skip_cargo_audit": true
     },
     "jupiter_sns_rewards": {
       "type": "custom",
       "candid": "jupiter-sns-rewards/jupiter_sns_rewards.did",
       "wasm": "release-artifacts/jupiter_sns_rewards.wasm",
-      "build": "./scripts/build-canister jupiter-sns-rewards",
+      "build": "bash ./scripts/build-canister jupiter-sns-rewards",
       "skip_cargo_audit": true
     },
     "jupiter_faucet_frontend": {
       "type": "custom",
       "candid": "jupiter-faucet-frontend/jupiter_faucet_frontend.did",
       "wasm": "release-artifacts/jupiter_faucet_frontend.wasm",
-      "build": "./scripts/build-canister jupiter-faucet-frontend",
+      "build": "bash ./scripts/build-canister jupiter-faucet-frontend",
       "skip_cargo_audit": true
     },
     "jupiter_faucet_dbg": {
@@ -125,7 +125,7 @@
       "type": "custom",
       "candid": "jupiter-historian/jupiter_historian.did",
       "wasm": "release-artifacts/jupiter_historian.wasm",
-      "build": "./scripts/build-canister jupiter-historian",
+      "build": "bash ./scripts/build-canister jupiter-historian",
       "skip_cargo_audit": true,
       "declarations": {
         "bindings": [
