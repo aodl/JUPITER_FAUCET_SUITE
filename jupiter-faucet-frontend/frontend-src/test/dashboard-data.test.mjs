@@ -145,7 +145,6 @@ test('loadDashboardData uses the shared frontend actor query shapes and native l
   assert.deepEqual(calls[2], ['registered', {
     page: [0],
     page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
-    sort: [{ TotalQualifyingContributedDesc: null }],
   }]);
   assert.deepEqual(calls[3], ['recent', {
     limit: [RECENT_CONTRIBUTION_LIMIT],
@@ -189,7 +188,6 @@ test('loadDashboardData requests only the configured registered canister summary
         assert.deepEqual(args, {
           page: [2],
           page_size: [6],
-          sort: [{ TotalQualifyingContributedDesc: null }],
         });
         return {
           items: requestedPageItems,
@@ -238,7 +236,6 @@ test('loadRegisteredCanisterSummaryPage uses the shared frontend query shape for
   assert.deepEqual(calls, [{
     page: [3],
     page_size: [6],
-    sort: [{ TotalQualifyingContributedDesc: null }],
   }]);
   assert.equal(response.page, 3n);
   assert.equal(response.page_size, 6n);

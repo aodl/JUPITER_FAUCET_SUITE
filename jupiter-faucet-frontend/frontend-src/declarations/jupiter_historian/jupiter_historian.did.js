@@ -24,16 +24,9 @@ export const idlFactory = ({ IDL }) => {
     stable_memory_bytes: IDL.Opt(IDL.Nat64),
     total_memory_bytes: IDL.Opt(IDL.Nat64),
   });
-  const RegisteredCanisterSummarySort = IDL.Variant({
-    CanisterIdAsc: IDL.Null,
-    LastContributionDesc: IDL.Null,
-    QualifyingContributionCountDesc: IDL.Null,
-    TotalQualifyingContributedDesc: IDL.Null,
-  });
   const ListRegisteredCanisterSummariesArgs = IDL.Record({
     page: IDL.Opt(IDL.Nat32),
     page_size: IDL.Opt(IDL.Nat32),
-    sort: IDL.Opt(RegisteredCanisterSummarySort),
   });
   const RegisteredCanisterSummary = IDL.Record({
     canister_id: IDL.Principal,

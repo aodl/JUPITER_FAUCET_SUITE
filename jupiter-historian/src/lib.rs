@@ -378,19 +378,10 @@ pub struct PublicStatus {
     pub total_memory_bytes: Option<u64>,
 }
 
-#[derive(CandidType, Deserialize, Clone)]
-pub enum RegisteredCanisterSummarySort {
-    CanisterIdAsc,
-    LastContributionDesc,
-    QualifyingContributionCountDesc,
-    TotalQualifyingContributedDesc,
-}
-
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct ListRegisteredCanisterSummariesArgs {
     pub page: Option<u32>,
     pub page_size: Option<u32>,
-    pub sort: Option<RegisteredCanisterSummarySort>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -1124,34 +1115,11 @@ fn list_registered_canister_summaries(
     state::with_state(|st| {
         let page = args.page.unwrap_or(0);
         let page_size = args.page_size.unwrap_or(25).clamp(1, 100);
-        let sort = args
-            .sort
-            .unwrap_or(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc);
-        match sort {
-            RegisteredCanisterSummarySort::TotalQualifyingContributedDesc => {
-                if let Some(response) = registered_canister_summaries_total_desc_page(st, page, page_size) {
-                    return response;
-                }
-            }
-            RegisteredCanisterSummarySort::CanisterIdAsc => {}
-            RegisteredCanisterSummarySort::LastContributionDesc => {}
-            RegisteredCanisterSummarySort::QualifyingContributionCountDesc => {}
+        if let Some(response) = registered_canister_summaries_total_desc_page(st, page, page_size) {
+            return response;
         }
         let mut items = registered_canister_summaries(st);
-        match sort {
-            RegisteredCanisterSummarySort::CanisterIdAsc => {
-                items.sort_by_key(|item| item.canister_id);
-            }
-            RegisteredCanisterSummarySort::LastContributionDesc => {
-                items.sort_by_key(|item| (Reverse(item.last_contribution_ts.unwrap_or(0)), item.canister_id));
-            }
-            RegisteredCanisterSummarySort::QualifyingContributionCountDesc => {
-                items.sort_by_key(|item| (Reverse(item.qualifying_contribution_count), item.canister_id));
-            }
-            RegisteredCanisterSummarySort::TotalQualifyingContributedDesc => {
-                items.sort_by_key(registered_canister_summary_total_desc_key);
-            }
-        }
+        items.sort_by_key(registered_canister_summary_total_desc_key);
         let total = items.len() as u64;
         let start = page.saturating_mul(page_size) as usize;
         let end = start.saturating_add(page_size as usize).min(items.len());
@@ -1676,7 +1644,6 @@ mod tests {
         let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc),
         });
 
         assert_eq!(response.total, 2);
@@ -1880,7 +1847,6 @@ mod tests {
         let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         });
         assert_eq!(response.total, 0);
         assert!(response.items.is_empty());
@@ -1906,7 +1872,6 @@ mod tests {
         let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         });
         assert_eq!(response.total, 0);
         assert!(response.items.is_empty());
@@ -1977,29 +1942,21 @@ mod tests {
         }
         state::set_state(st);
 
-        for sort in [
-            RegisteredCanisterSummarySort::LastContributionDesc,
-            RegisteredCanisterSummarySort::QualifyingContributionCountDesc,
-            RegisteredCanisterSummarySort::TotalQualifyingContributedDesc,
-        ] {
-            let first_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-                page: Some(0),
-                page_size: Some(1),
-                sort: Some(sort.clone()),
-            });
-            let second_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-                page: Some(1),
-                page_size: Some(1),
-                sort: Some(sort),
-            });
+        let first_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(1),
+        });
+        let second_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+            page: Some(1),
+            page_size: Some(1),
+        });
 
-            assert_eq!(first_page.total, 2);
-            assert_eq!(second_page.total, 2);
-            assert_eq!(first_page.items.len(), 1);
-            assert_eq!(second_page.items.len(), 1);
-            assert_eq!(first_page.items[0].canister_id, b.min(a));
-            assert_eq!(second_page.items[0].canister_id, b.max(a));
-        }
+        assert_eq!(first_page.total, 2);
+        assert_eq!(second_page.total, 2);
+        assert_eq!(first_page.items.len(), 1);
+        assert_eq!(second_page.items.len(), 1);
+        assert_eq!(first_page.items[0].canister_id, b.min(a));
+        assert_eq!(second_page.items[0].canister_id, b.max(a));
     }
 
     #[test]
@@ -2021,7 +1978,6 @@ mod tests {
         let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
             page: Some(5),
             page_size: Some(1),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         });
         assert_eq!(response.total, 1);
         assert!(response.items.is_empty());

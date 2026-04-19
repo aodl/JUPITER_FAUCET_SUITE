@@ -134,8 +134,8 @@ Production methods:
 - `get_public_status`
   - dashboard status, including staking account and configured ledger canister ID
 - `list_registered_canister_summaries`
-  - paged / sorted summary list used by the frontend registry table
-  - default sort is `TotalQualifyingContributedDesc`
+  - paged summary list used by the frontend registry table
+  - always ordered by total qualifying contributed ICP descending, with canister id as the stable tie-breaker
 - `list_recent_contributions`
   - recent valid and invalid contribution feed used by the frontend
   - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and a generic placeholder memo label rather than the original attacker-provided text

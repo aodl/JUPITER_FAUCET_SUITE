@@ -125,16 +125,9 @@ type PublicStatus = record {
   stable_memory_bytes : opt nat64;
   total_memory_bytes : opt nat64;
 };
-type RegisteredCanisterSummarySort = variant {
-  CanisterIdAsc;
-  LastContributionDesc;
-  QualifyingContributionCountDesc;
-  TotalQualifyingContributedDesc;
-};
 type ListRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
   page_size : opt nat32;
-  sort : opt RegisteredCanisterSummarySort;
 };
 type RegisteredCanisterSummary = record {
   canister_id : principal;

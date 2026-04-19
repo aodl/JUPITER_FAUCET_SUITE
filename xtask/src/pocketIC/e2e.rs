@@ -323,7 +323,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        rescue_controller: faucet,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -341,7 +341,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
-        rescue_controller: disburser,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -447,7 +447,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        rescue_controller: faucet,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -471,7 +471,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
-        rescue_controller: disburser,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -581,7 +581,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        rescue_controller: faucet,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -599,7 +599,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
-        rescue_controller: disburser,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -705,7 +705,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        rescue_controller: faucet,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -723,7 +723,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
-        rescue_controller: disburser,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -915,19 +915,11 @@ struct HistorianPublicStatus {
     total_memory_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum HistorianRegisteredCanisterSummarySort {
-    CanisterIdAsc,
-    LastContributionDesc,
-    QualifyingContributionCountDesc,
-    TotalQualifyingContributedDesc,
-}
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
 struct HistorianListRegisteredCanisterSummariesArgs {
     page: Option<u32>,
     page_size: Option<u32>,
-    sort: Option<HistorianRegisteredCanisterSummarySort>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1124,7 +1116,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        rescue_controller: faucet,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -1161,7 +1153,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
-        rescue_controller: disburser,
+        rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
         main_interval_seconds: Some(86_400),
@@ -1223,7 +1215,6 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         HistorianListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(HistorianRegisteredCanisterSummarySort::TotalQualifyingContributedDesc),
         },
     )?;
     assert_eq!(registered.total, 1);

@@ -253,19 +253,11 @@ struct PublicStatus {
     total_memory_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum RegisteredCanisterSummarySort {
-    CanisterIdAsc,
-    LastContributionDesc,
-    QualifyingContributionCountDesc,
-    TotalQualifyingContributedDesc,
-}
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
 struct ListRegisteredCanisterSummariesArgs {
     page: Option<u32>,
     page_size: Option<u32>,
-    sort: Option<RegisteredCanisterSummarySort>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -457,7 +449,6 @@ fn historian_keeps_under_threshold_contributions_out_of_durable_tracking() -> Re
         ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         },
     )?;
     assert_eq!(registered.total, 0);
@@ -601,7 +592,6 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
         ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         },
     )?;
     assert_eq!(registered.total, 0);
@@ -827,7 +817,6 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
         ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         },
     )?;
     if registered_before.total != targets.len() as u64 {
@@ -876,7 +865,6 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
         ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         },
     )?;
     if registered_after.total != targets.len() as u64 {
@@ -1002,7 +990,6 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
         ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc),
         },
     )?;
     assert_eq!(registered.total, 1);
@@ -1090,7 +1077,6 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
         ListRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
-            sort: Some(RegisteredCanisterSummarySort::CanisterIdAsc),
         },
     )?;
     assert_eq!(registered.total, 0);

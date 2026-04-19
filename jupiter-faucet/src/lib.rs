@@ -98,6 +98,12 @@ fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("cmc_canister_id", cfg.cmc_canister_id);
     let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
+    assert!(cfg.rescue_controller != self_id, "rescue_controller must not equal the faucet canister principal");
+    let payout_account = Account {
+        owner: self_id,
+        subaccount: cfg.payout_subaccount,
+    };
+    assert!(cfg.staking_account != payout_account, "staking_account must not equal the faucet payout account");
     if let Some(blackhole_controller) = cfg.blackhole_controller {
         assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
         assert!(blackhole_controller != self_id, "blackhole_controller must not equal the faucet canister principal");
@@ -558,6 +564,26 @@ mod tests {
     fn validate_config_rejects_blackhole_controller_equal_to_rescue_controller() {
         let mut cfg = sample_config();
         cfg.blackhole_controller = Some(cfg.rescue_controller);
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "rescue_controller must not equal the faucet canister principal")]
+    fn validate_config_rejects_rescue_controller_equal_to_self() {
+        let mut cfg = sample_config();
+        cfg.rescue_controller = Principal::management_canister();
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "staking_account must not equal the faucet payout account")]
+    fn validate_config_rejects_staking_account_equal_to_payout_account() {
+        let mut cfg = sample_config();
+        cfg.payout_subaccount = Some([9u8; 32]);
+        cfg.staking_account = Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([9u8; 32]),
+        };
         validate_config(&cfg);
     }
 

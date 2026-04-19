@@ -95,7 +95,6 @@ function buildRegisteredCanisterSummariesRequest({ page = 0, pageSize = REGISTER
   return {
     page: [page],
     page_size: [pageSize],
-    sort: [{ TotalQualifyingContributedDesc: null }],
   };
 }
 

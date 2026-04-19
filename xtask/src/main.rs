@@ -2499,7 +2499,7 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let registered: ListRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
             "list_registered_canister_summaries",
-            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentContributionsResponse = call_raw(
             "jupiter_historian_dbg",
@@ -2793,7 +2793,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let registered: ListRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
             "list_registered_canister_summaries",
-            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentContributionsResponse = call_raw(
             "jupiter_historian_dbg",
@@ -2923,7 +2923,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let registered: ListRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
             "list_registered_canister_summaries",
-            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentContributionsResponse = call_raw(
             "jupiter_historian_dbg",
@@ -3055,7 +3055,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let registered: ListRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
             "list_registered_canister_summaries",
-            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentContributionsResponse = call_raw(
             "jupiter_historian_dbg",
@@ -3168,7 +3168,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let registered: ListRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
             "list_registered_canister_summaries",
-            "(record { page = opt (0:nat32); page_size = opt (10:nat32); sort = opt variant { TotalQualifyingContributedDesc } })",
+            "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentContributionsResponse = call_raw(
             "jupiter_historian_dbg",

@@ -95,6 +95,7 @@ fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("governance_canister_id", cfg.governance_canister_id);
     let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
+    assert!(cfg.rescue_controller != self_id, "rescue_controller must not equal the disburser canister principal");
     if let Some(blackhole_controller) = cfg.blackhole_controller {
         assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
         assert!(blackhole_controller != self_id, "blackhole_controller must not equal the disburser canister principal");
@@ -107,6 +108,9 @@ fn validate_config(cfg: &crate::state::Config) {
         owner: self_id,
         subaccount: None,
     };
+    assert_non_anonymous_principal("normal_recipient.owner", cfg.normal_recipient.owner);
+    assert_non_anonymous_principal("age_bonus_recipient_1.owner", cfg.age_bonus_recipient_1.owner);
+    assert_non_anonymous_principal("age_bonus_recipient_2.owner", cfg.age_bonus_recipient_2.owner);
     assert!(cfg.normal_recipient != staging_account, "normal_recipient must not equal the disburser staging account");
     assert!(cfg.age_bonus_recipient_1 != staging_account, "age_bonus_recipient_1 must not equal the disburser staging account");
     assert!(cfg.age_bonus_recipient_2 != staging_account, "age_bonus_recipient_2 must not equal the disburser staging account");
@@ -422,6 +426,38 @@ mod tests {
     fn validate_config_rejects_blackhole_controller_equal_to_rescue_controller() {
         let mut cfg = sample_config();
         cfg.blackhole_controller = Some(cfg.rescue_controller);
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "rescue_controller must not equal the disburser canister principal")]
+    fn validate_config_rejects_rescue_controller_equal_to_self() {
+        let mut cfg = sample_config();
+        cfg.rescue_controller = Principal::management_canister();
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "normal_recipient.owner must not be the anonymous principal")]
+    fn validate_config_rejects_anonymous_normal_recipient_owner() {
+        let mut cfg = sample_config();
+        cfg.normal_recipient.owner = Principal::anonymous();
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "age_bonus_recipient_1.owner must not be the anonymous principal")]
+    fn validate_config_rejects_anonymous_bonus_recipient_owner() {
+        let mut cfg = sample_config();
+        cfg.age_bonus_recipient_1.owner = Principal::anonymous();
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "age_bonus_recipient_2.owner must not be the anonymous principal")]
+    fn validate_config_rejects_anonymous_second_bonus_recipient_owner() {
+        let mut cfg = sample_config();
+        cfg.age_bonus_recipient_2.owner = Principal::anonymous();
         validate_config(&cfg);
     }
 
