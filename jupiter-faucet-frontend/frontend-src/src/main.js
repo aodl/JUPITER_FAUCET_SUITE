@@ -4,10 +4,12 @@ import {
   normalizeError,
   accountIdentifierHex,
   loadDashboardData,
+  loadRegisteredCanisterSummaryPage,
 } from './dashboard-data.js';
 import { createActor as createGovernanceActor } from '../declarations/nns_governance/index.js';
 import { createNeuronDetailsController } from './neuron-details-controller.js';
 import { setLink } from './dom-helpers.js';
+import { mergeRegisteredLandingData } from './registered-page-state.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -18,7 +20,16 @@ const TABLE_PAGE_SIZE = 6;
 const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 
 const tableState = {
-  registered: { page: 0, items: [] },
+  registered: {
+    page: 0,
+    items: [],
+    total: 0,
+    pageSize: TABLE_PAGE_SIZE,
+    loading: false,
+    pendingPage: null,
+    error: null,
+    pages: new Map(),
+  },
   commitments: { page: 0, items: [] },
   burn: { page: 0, items: [] },
 };
@@ -123,6 +134,11 @@ function formatAgeFromSeconds(value) {
   if (diff >= day) return `${Math.floor(diff / day)}d`;
   if (diff >= 60 * 60) return `${Math.floor(diff / 3600)}h`;
   return `${Math.floor(diff / 60)}m`;
+}
+
+function numericValue(value, fallback = 0) {
+  if (value === null || value === undefined) return fallback;
+  return Number(value);
 }
 
 function setHidden(id, hidden) {
@@ -356,6 +372,78 @@ function paginate(kind, items, renderRow, emptyMessage, colspan) {
   if (next) next.disabled = state.page >= totalPages - 1;
 }
 
+function registeredPageCacheKey(page, pageSize) {
+  return `${page}:${pageSize}`;
+}
+
+function cacheRegisteredPage(response) {
+  if (!response) return;
+  const state = tableState.registered;
+  const page = numericValue(response.page, 0);
+  const pageSize = Math.max(1, numericValue(response.page_size, TABLE_PAGE_SIZE));
+  const items = Array.isArray(response.items) ? response.items : [];
+  state.pages.set(registeredPageCacheKey(page, pageSize), response);
+  state.page = page;
+  state.pageSize = pageSize;
+  state.total = numericValue(response.total, items.length);
+  state.items = items;
+  state.error = null;
+}
+
+function registeredTotalPages() {
+  const state = tableState.registered;
+  return Math.max(1, Math.ceil(state.total / Math.max(1, state.pageSize || TABLE_PAGE_SIZE)));
+}
+
+async function fetchRegisteredPage(page) {
+  const state = tableState.registered;
+  if (state.loading) return;
+  const pageSize = Math.max(1, state.pageSize || TABLE_PAGE_SIZE);
+  const cacheKey = registeredPageCacheKey(page, pageSize);
+  const cached = state.pages.get(cacheKey);
+  if (cached) {
+    cacheRegisteredPage(cached);
+    const current = window.__JUPITER_LANDING_DATA__ || {};
+    window.__JUPITER_LANDING_DATA__ = mergeRegisteredLandingData(current, {
+      registered: cached,
+      registeredError: null,
+    });
+    renderRegisteredPane(window.__JUPITER_LANDING_DATA__ || null);
+    return;
+  }
+
+  state.loading = true;
+  state.pendingPage = page;
+  state.error = null;
+  renderRegisteredPane(window.__JUPITER_LANDING_DATA__ || null);
+  try {
+    const response = await loadRegisteredCanisterSummaryPage({
+      historianCanisterId: FRONTEND_CONFIG?.historianCanisterId,
+      host: window.location.origin,
+      local: isLocalHost(),
+      page,
+      pageSize,
+    });
+    cacheRegisteredPage(response);
+    const current = window.__JUPITER_LANDING_DATA__ || {};
+    window.__JUPITER_LANDING_DATA__ = mergeRegisteredLandingData(current, {
+      registered: response,
+      registeredError: null,
+    });
+  } catch (error) {
+    state.error = normalizeError(error);
+    console.warn('Registered canister page failed', error);
+    const current = window.__JUPITER_LANDING_DATA__ || {};
+    window.__JUPITER_LANDING_DATA__ = mergeRegisteredLandingData(current, {
+      registeredError: state.error,
+    });
+  } finally {
+    state.loading = false;
+    state.pendingPage = null;
+    renderRegisteredPane(window.__JUPITER_LANDING_DATA__ || null);
+  }
+}
+
 
 function renderCyclesUnavailableCell() {
   const tooltip = 'Blackhole controller required for cycles observability.';
@@ -470,20 +558,45 @@ function bindInlineTooltipFallbacks() {
 }
 
 function renderRegisteredPane(data) {
-  const items = data?.registered?.items || [];
-  paginate(
-    'registered',
-    items,
-    (item) => `
-      <tr>
-        <td class="mono">${formatCommitmentTarget(item)}</td>
-        <td>${escapeHtml(formatInteger(item.qualifying_contribution_count))}</td>
-        <td>${escapeHtml(formatIcpE8s(item.total_qualifying_contributed_e8s))}</td>
-        <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
-      </tr>`,
-    paneEmptyMessage(data, 'registered', 'No target canisters indexed yet.'),
-    4,
-  );
+  const state = tableState.registered;
+  if (data?.registered) {
+    cacheRegisteredPage(data.registered);
+    state.error = data?.errors?.registered || null;
+  } else if (state.pages.size === 0) {
+    state.items = [];
+    state.total = 0;
+    state.page = 0;
+    state.pageSize = TABLE_PAGE_SIZE;
+    state.error = data?.errors?.registered || null;
+  }
+
+  const page = state.loading && Number.isInteger(state.pendingPage) ? state.pendingPage : state.page;
+  const totalPages = registeredTotalPages();
+  const body = document.getElementById('registered-pane-body');
+  const items = state.items || [];
+  const emptyMessage = state.error
+    ? `Target canisters unavailable (${state.error})`
+    : paneEmptyMessage(data, 'registered', 'No target canisters indexed yet.');
+  if (body) {
+    body.innerHTML = items.length
+      ? items.map((item) => `
+        <tr>
+          <td class="mono">${formatCommitmentTarget(item)}</td>
+          <td>${escapeHtml(formatInteger(item.qualifying_contribution_count))}</td>
+          <td>${escapeHtml(formatIcpE8s(item.total_qualifying_contributed_e8s))}</td>
+          <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`;
+  }
+
+  const pageLabel = state.loading
+    ? `Page ${page + 1} of ${totalPages} (loading…)`
+    : `Page ${page + 1} of ${totalPages}`;
+  setText('registered-page-info', state.error ? `${pageLabel} · ${state.error}` : pageLabel);
+  const prev = document.getElementById('registered-prev-page');
+  const next = document.getElementById('registered-next-page');
+  if (prev) prev.disabled = state.loading || page === 0;
+  if (next) next.disabled = state.loading || page >= totalPages - 1;
 }
 
 function renderCommitmentsPane(data) {
@@ -520,8 +633,24 @@ function renderBurnsPane(data) {
 }
 
 function bindPaginationButtons() {
+  const registeredPrev = document.getElementById('registered-prev-page');
+  const registeredNext = document.getElementById('registered-next-page');
+  if (registeredPrev && registeredPrev.dataset.bound !== 'true') {
+    registeredPrev.dataset.bound = 'true';
+    registeredPrev.addEventListener('click', () => {
+      const targetPage = Math.max(0, tableState.registered.page - 1);
+      fetchRegisteredPage(targetPage);
+    });
+  }
+  if (registeredNext && registeredNext.dataset.bound !== 'true') {
+    registeredNext.dataset.bound = 'true';
+    registeredNext.addEventListener('click', () => {
+      const targetPage = Math.min(registeredTotalPages() - 1, tableState.registered.page + 1);
+      fetchRegisteredPage(targetPage);
+    });
+  }
+
   [
-    ['registered', renderRegisteredPane],
     ['commitments', renderCommitmentsPane],
     ['burn', renderBurnsPane],
   ].forEach(([kind, rerender]) => {
@@ -622,6 +751,7 @@ async function initLandingPage() {
       historianCanisterId: FRONTEND_CONFIG?.historianCanisterId,
       host: window.location.origin,
       local: isLocalHost(),
+      registeredPageSize: TABLE_PAGE_SIZE,
     });
     if (data.historianLikelyOutdated) {
       console.warn(`${FRONTEND_HINT} Redeploy jupiter_historian, then hard-refresh the frontend.`);

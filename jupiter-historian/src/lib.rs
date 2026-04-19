@@ -755,7 +755,9 @@ fn initialize_derived_state_if_missing(st: &mut State) {
     if st.last_index_run_ts.is_none() {
         st.last_index_run_ts = Some(st.last_main_run_ts);
     }
-    if st.registered_canister_summaries_cache.is_none() {
+    if st.registered_canister_summaries_cache.is_none()
+        || st.registered_canister_summaries_total_desc_index.is_none()
+    {
         rebuild_registered_canister_summaries_cache(st);
     }
 }
@@ -780,11 +782,77 @@ fn registered_canister_summary_for(st: &State, canister_id: Principal) -> Option
     })
 }
 
+fn registered_canister_summary_total_desc_key(item: &RegisteredCanisterSummary) -> (Reverse<u64>, Principal) {
+    (Reverse(item.total_qualifying_contributed_e8s), item.canister_id)
+}
+
+fn remove_registered_canister_from_total_desc_index(index: &mut Vec<Principal>, canister_id: Principal) {
+    index.retain(|existing| *existing != canister_id);
+}
+
+fn insert_registered_canister_into_total_desc_index(
+    cache: &BTreeMap<Principal, RegisteredCanisterSummary>,
+    index: &mut Vec<Principal>,
+    canister_id: Principal,
+) {
+    let Some(summary) = cache.get(&canister_id) else {
+        return;
+    };
+    index.retain(|existing| *existing != canister_id && cache.contains_key(existing));
+    let summary_key = registered_canister_summary_total_desc_key(summary);
+    let insert_at = index
+        .binary_search_by(|existing_canister_id| {
+            let existing_summary = cache
+                .get(existing_canister_id)
+                .expect("ranked canister missing from summary cache");
+            registered_canister_summary_total_desc_key(existing_summary).cmp(&summary_key)
+        })
+        .unwrap_or_else(|position| position);
+    index.insert(insert_at, canister_id);
+}
+
+fn registered_canister_summaries_total_desc_page(
+    st: &State,
+    page: u32,
+    page_size: u32,
+) -> Option<ListRegisteredCanisterSummariesResponse> {
+    let cache = st.registered_canister_summaries_cache.as_ref()?;
+    let index = st.registered_canister_summaries_total_desc_index.as_ref()?;
+    if index.len() != cache.len() || index.iter().any(|canister_id| !cache.contains_key(canister_id)) {
+        return None;
+    }
+    let total = index.len() as u64;
+    let start = page.saturating_mul(page_size) as usize;
+    let end = start.saturating_add(page_size as usize).min(index.len());
+    let items = if start >= index.len() {
+        Vec::new()
+    } else {
+        index[start..end]
+            .iter()
+            .filter_map(|canister_id| cache.get(canister_id).cloned())
+            .collect()
+    };
+    Some(ListRegisteredCanisterSummariesResponse {
+        items,
+        page,
+        page_size,
+        total,
+    })
+}
+
 pub(crate) fn refresh_registered_canister_summary(st: &mut State, canister_id: Principal) {
     let summary = registered_canister_summary_for(st, canister_id);
-    let cache = st.registered_canister_summaries_cache.get_or_insert_with(BTreeMap::new);
+    let State {
+        registered_canister_summaries_cache,
+        registered_canister_summaries_total_desc_index,
+        ..
+    } = st;
+    let cache = registered_canister_summaries_cache.get_or_insert_with(BTreeMap::new);
+    let total_desc_index = registered_canister_summaries_total_desc_index.get_or_insert_with(Vec::new);
+    remove_registered_canister_from_total_desc_index(total_desc_index, canister_id);
     if let Some(summary) = summary {
         cache.insert(canister_id, summary);
+        insert_registered_canister_into_total_desc_index(cache, total_desc_index, canister_id);
     } else {
         cache.remove(&canister_id);
     }
@@ -793,6 +861,7 @@ pub(crate) fn refresh_registered_canister_summary(st: &mut State, canister_id: P
 pub(crate) fn rebuild_registered_canister_summaries_cache(st: &mut State) {
     let canister_ids: Vec<_> = st.canister_sources.keys().copied().collect();
     st.registered_canister_summaries_cache = Some(BTreeMap::new());
+    st.registered_canister_summaries_total_desc_index = Some(Vec::new());
     for canister_id in canister_ids {
         refresh_registered_canister_summary(st, canister_id);
     }
@@ -1055,8 +1124,21 @@ fn list_registered_canister_summaries(
     state::with_state(|st| {
         let page = args.page.unwrap_or(0);
         let page_size = args.page_size.unwrap_or(25).clamp(1, 100);
+        let sort = args
+            .sort
+            .unwrap_or(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc);
+        match sort {
+            RegisteredCanisterSummarySort::TotalQualifyingContributedDesc => {
+                if let Some(response) = registered_canister_summaries_total_desc_page(st, page, page_size) {
+                    return response;
+                }
+            }
+            RegisteredCanisterSummarySort::CanisterIdAsc => {}
+            RegisteredCanisterSummarySort::LastContributionDesc => {}
+            RegisteredCanisterSummarySort::QualifyingContributionCountDesc => {}
+        }
         let mut items = registered_canister_summaries(st);
-        match args.sort.unwrap_or(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc) {
+        match sort {
             RegisteredCanisterSummarySort::CanisterIdAsc => {
                 items.sort_by_key(|item| item.canister_id);
             }
@@ -1067,7 +1149,7 @@ fn list_registered_canister_summaries(
                 items.sort_by_key(|item| (Reverse(item.qualifying_contribution_count), item.canister_id));
             }
             RegisteredCanisterSummarySort::TotalQualifyingContributedDesc => {
-                items.sort_by_key(|item| (Reverse(item.total_qualifying_contributed_e8s), item.canister_id));
+                items.sort_by_key(registered_canister_summary_total_desc_key);
             }
         }
         let total = items.len() as u64;
@@ -1305,6 +1387,7 @@ fn debug_reset_derived_state() {
         st.recent_burns = Some(Vec::new());
         st.last_index_run_ts = Some(0);
         st.registered_canister_summaries_cache = Some(BTreeMap::new());
+        st.registered_canister_summaries_total_desc_index = Some(Vec::new());
     });
 }
 
@@ -1371,6 +1454,7 @@ mod tests {
             recent_burns: None,
             last_index_run_ts: None,
             registered_canister_summaries_cache: None,
+            registered_canister_summaries_total_desc_index: None,
         }
     }
 
@@ -1504,6 +1588,99 @@ mod tests {
         assert_eq!(cached.last_contribution_ts, Some(9));
         assert_eq!(cached.latest_cycles, Some(777));
         assert_eq!(cached.last_cycles_probe_ts, Some(10));
+        assert_eq!(
+            st.registered_canister_summaries_total_desc_index,
+            Some(vec![canister]),
+        );
+    }
+
+    #[test]
+    fn refresh_registered_canister_summary_keeps_total_desc_index_in_dashboard_order() {
+        let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let second = principal("uxrrr-q7777-77774-qaaaq-cai");
+        let mut st = base_state();
+
+        for (canister, amount_e8s) in [(first, 123_000_000), (second, 456_000_000)] {
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
+            st.contribution_history.insert(
+                canister,
+                vec![ContributionSample {
+                    tx_id: amount_e8s / 1_000_000,
+                    timestamp_nanos: Some(9_000_000_000),
+                    amount_e8s,
+                    counts_toward_faucet: true,
+                }],
+            );
+            refresh_registered_canister_summary(&mut st, canister);
+        }
+
+        assert_eq!(
+            st.registered_canister_summaries_total_desc_index,
+            Some(vec![second, first]),
+        );
+
+        st.contribution_history.insert(
+            first,
+            vec![ContributionSample {
+                tx_id: 999,
+                timestamp_nanos: Some(10_000_000_000),
+                amount_e8s: 789_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        refresh_registered_canister_summary(&mut st, first);
+
+        assert_eq!(
+            st.registered_canister_summaries_total_desc_index,
+            Some(vec![first, second]),
+        );
+    }
+
+
+    #[test]
+    fn list_registered_canister_summaries_falls_back_to_slow_path_when_total_desc_index_drifts() {
+        let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let second = principal("uxrrr-q7777-77774-qaaaq-cai");
+        let mut cache = BTreeMap::new();
+        cache.insert(
+            first,
+            RegisteredCanisterSummary {
+                canister_id: first,
+                sources: vec![CanisterSource::MemoContribution],
+                qualifying_contribution_count: 1,
+                total_qualifying_contributed_e8s: 123_000_000,
+                last_contribution_ts: Some(1),
+                latest_cycles: None,
+                last_cycles_probe_ts: None,
+            },
+        );
+        cache.insert(
+            second,
+            RegisteredCanisterSummary {
+                canister_id: second,
+                sources: vec![CanisterSource::MemoContribution],
+                qualifying_contribution_count: 2,
+                total_qualifying_contributed_e8s: 456_000_000,
+                last_contribution_ts: Some(2),
+                latest_cycles: None,
+                last_cycles_probe_ts: None,
+            },
+        );
+
+        let mut st = base_state();
+        st.registered_canister_summaries_cache = Some(cache);
+        st.registered_canister_summaries_total_desc_index = Some(vec![first]);
+        state::set_state(st);
+
+        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
+            page: Some(0),
+            page_size: Some(10),
+            sort: Some(RegisteredCanisterSummarySort::TotalQualifyingContributedDesc),
+        });
+
+        assert_eq!(response.total, 2);
+        assert_eq!(response.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(), vec![second, first]);
     }
 
     #[test]

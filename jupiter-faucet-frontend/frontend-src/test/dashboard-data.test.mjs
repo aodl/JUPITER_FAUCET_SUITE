@@ -6,10 +6,10 @@ import { HttpAgent } from '@icp-sdk/core/agent';
 import {
   accountIdentifierHex,
   loadDashboardData,
+  loadRegisteredCanisterSummaryPage,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
   REGISTERED_SUMMARY_PAGE_SIZE,
-  MAX_REGISTERED_SUMMARY_PAGES,
   RECENT_CONTRIBUTION_LIMIT,
   RECENT_BURN_LIMIT,
 } from '../src/dashboard-data.js';
@@ -162,7 +162,7 @@ test('loadDashboardData uses the shared frontend actor query shapes and native l
 });
 
 
-test('loadDashboardData fetches all registered canister summary pages instead of silently truncating after page zero', async () => {
+test('loadDashboardData requests only the configured registered canister summary page', async () => {
   const registeredCalls = [];
   const makeItem = (n) => ({
     canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
@@ -173,80 +173,29 @@ test('loadDashboardData fetches all registered canister summary pages instead of
     latest_cycles: [],
     last_cycles_probe_ts: [],
   });
-  const firstPageItems = Array.from({ length: REGISTERED_SUMMARY_PAGE_SIZE }, (_, idx) => makeItem(idx + 1));
-  const secondPageItem = makeItem(REGISTERED_SUMMARY_PAGE_SIZE + 1);
+  const requestedPageItems = Array.from({ length: 6 }, (_, idx) => makeItem(idx + 1));
 
   const data = await loadDashboardData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
     agent: { test: true },
+    registeredPage: 2,
+    registeredPageSize: 6,
     historianActor: {
-      async get_public_counts() { return historianCounts({ registered_canister_count: BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1) }); },
+      async get_public_counts() { return historianCounts({ registered_canister_count: 18n }); },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries(args) {
         registeredCalls.push(args);
-        const page = args.page?.[0] ?? 0;
-        if (page === 0) {
-          return {
-            items: firstPageItems,
-            page: 0n,
-            page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
-            total: BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1),
-          };
-        }
-        if (page === 1) {
-          return {
-            items: [secondPageItem],
-            page: 1n,
-            page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
-            total: BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1),
-          };
-        }
-        throw new Error(`unexpected registered summary page: ${page}`);
-      },
-      async list_recent_contributions() { return { items: [] }; },
-      async list_recent_burns() { return { items: [] }; },
-    },
-    ledgerActorFactory: () => ({
-      async account_balance() { return { e8s: 1n }; },
-      async icrc1_balance_of() { throw new Error('fallback should not be used'); },
-    }),
-  });
-
-  assert.deepEqual(
-    registeredCalls.map((call) => call.page?.[0]),
-    [0, 1],
-  );
-  assert.equal(data.registered.items.length, REGISTERED_SUMMARY_PAGE_SIZE + 1);
-  assert.equal(data.registered.total, BigInt(REGISTERED_SUMMARY_PAGE_SIZE + 1));
-});
-
-test('loadDashboardData aborts pathological registered summary pagination instead of looping forever', async () => {
-  let registeredCalls = 0;
-  const fullPageItems = Array.from({ length: REGISTERED_SUMMARY_PAGE_SIZE }, (_, idx) => ({
-    canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
-    sources: [{ MemoContribution: null }],
-    qualifying_contribution_count: BigInt(idx + 1),
-    total_qualifying_contributed_e8s: BigInt(idx + 1),
-    last_contribution_ts: [1000n + BigInt(idx + 1)],
-    latest_cycles: [],
-    last_cycles_probe_ts: [],
-  }));
-
-  const data = await loadDashboardData({
-    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
-    host: 'https://icp0.io',
-    agent: { test: true },
-    historianActor: {
-      async get_public_counts() { return historianCounts({ registered_canister_count: BigInt(REGISTERED_SUMMARY_PAGE_SIZE * (MAX_REGISTERED_SUMMARY_PAGES + 5)) }); },
-      async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() {
-        registeredCalls += 1;
+        assert.deepEqual(args, {
+          page: [2],
+          page_size: [6],
+          sort: [{ TotalQualifyingContributedDesc: null }],
+        });
         return {
-          items: fullPageItems,
-          page: 0n,
-          page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
-          total: BigInt(REGISTERED_SUMMARY_PAGE_SIZE * (MAX_REGISTERED_SUMMARY_PAGES + 5)),
+          items: requestedPageItems,
+          page: 2n,
+          page_size: 6n,
+          total: 18n,
         };
       },
       async list_recent_contributions() { return { items: [] }; },
@@ -258,10 +207,42 @@ test('loadDashboardData aborts pathological registered summary pagination instea
     }),
   });
 
-  assert.equal(data.registered, null);
-  assert.match(data.errors.registered, /pagination exceeded/i);
-  assert.equal(data.hasAnyFailure, true);
-  assert.equal(registeredCalls, MAX_REGISTERED_SUMMARY_PAGES);
+  assert.equal(registeredCalls.length, 1);
+  assert.equal(data.registered.items.length, requestedPageItems.length);
+  assert.equal(data.registered.page, 2n);
+  assert.equal(data.registered.page_size, 6n);
+  assert.equal(data.registered.total, 18n);
+});
+
+test('loadRegisteredCanisterSummaryPage uses the shared frontend query shape for server-side pagination', async () => {
+  const calls = [];
+  const response = await loadRegisteredCanisterSummaryPage({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async list_registered_canister_summaries(args) {
+        calls.push(args);
+        return {
+          items: registeredResponse().items,
+          page: 3n,
+          page_size: 6n,
+          total: 17n,
+        };
+      },
+    },
+    page: 3,
+    pageSize: 6,
+  });
+
+  assert.deepEqual(calls, [{
+    page: [3],
+    page_size: [6],
+    sort: [{ TotalQualifyingContributedDesc: null }],
+  }]);
+  assert.equal(response.page, 3n);
+  assert.equal(response.page_size, 6n);
+  assert.equal(response.total, 17n);
 });
 
 test('loadDashboardData falls back to icrc1_balance_of when native ledger account_balance fails', async () => {
@@ -375,24 +356,24 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
       };
     };
 
-    await assert.rejects(
-      loadDashboardData({
-        historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
-        host: 'https://icp0.io',
-        historianActorFactory: () => ({
-          async get_public_counts() { return historianCounts(); },
-          async get_public_status() { return historianStatus(); },
-          async list_registered_canister_summaries() { return registeredResponse(); },
-          async list_recent_contributions() { return recentResponse(); },
-          async list_recent_burns() { return { items: [] }; },
-        }),
-        ledgerActorFactory: () => ({
-          async account_balance() { return { e8s: 1n }; },
-          async icrc1_balance_of() { throw new Error('fallback should not be used'); },
-        }),
+    const failed = await loadDashboardData({
+      historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+      host: 'https://icp0.io',
+      historianActorFactory: () => ({
+        async get_public_counts() { return historianCounts(); },
+        async get_public_status() { return historianStatus(); },
+        async list_registered_canister_summaries() { return registeredResponse(); },
+        async list_recent_contributions() { return recentResponse(); },
+        async list_recent_burns() { return { items: [] }; },
       }),
-      /transient agent creation failure/,
-    );
+      ledgerActorFactory: () => ({
+        async account_balance() { return { e8s: 1n }; },
+        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+      }),
+    });
+
+    assert.equal(failed.historianAllRejected, true);
+    assert.match(failed.errors.counts, /transient agent creation failure/);
 
     const data = await loadDashboardData({
       historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',

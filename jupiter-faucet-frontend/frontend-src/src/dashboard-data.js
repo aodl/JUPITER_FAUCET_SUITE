@@ -5,7 +5,6 @@ import { createActor as createLedgerActor } from '../declarations/icp_ledger/ind
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
-export const MAX_REGISTERED_SUMMARY_PAGES = 100;
 export const RECENT_CONTRIBUTION_LIMIT = 100;
 export const RECENT_BURN_LIMIT = 100;
 
@@ -92,34 +91,12 @@ export function accountIdentifierHex(account) {
   return bytesToHex(accountIdentifierBytes(account));
 }
 
-async function listAllRegisteredCanisterSummaries(historian) {
-  const items = [];
-  let page = 0;
-  let total = 0n;
-
-  while (true) {
-    const response = await historian.list_registered_canister_summaries({
-      page: [page],
-      page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
-      sort: [{ TotalQualifyingContributedDesc: null }],
-    });
-    const pageItems = Array.isArray(response?.items) ? response.items : [];
-    items.push(...pageItems);
-    total = response?.total ?? BigInt(items.length);
-    if (pageItems.length < REGISTERED_SUMMARY_PAGE_SIZE || BigInt(items.length) >= total) {
-      return {
-        ...response,
-        items,
-        page: 0n,
-        page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
-        total,
-      };
-    }
-    page += 1;
-    if (page >= MAX_REGISTERED_SUMMARY_PAGES) {
-      throw new Error(`Registered canister summary pagination exceeded ${MAX_REGISTERED_SUMMARY_PAGES} pages without completion`);
-    }
-  }
+function buildRegisteredCanisterSummariesRequest({ page = 0, pageSize = REGISTERED_SUMMARY_PAGE_SIZE } = {}) {
+  return {
+    page: [page],
+    page_size: [pageSize],
+    sort: [{ TotalQualifyingContributedDesc: null }],
+  };
 }
 
 export function resetAgentCacheForTests() {
@@ -154,6 +131,53 @@ async function getOrCreateAgent({ host, local, agent }) {
   return agentPromises.get(key);
 }
 
+async function createHistorianClient({
+  historianCanisterId,
+  host,
+  local = false,
+  agent = null,
+  historianActor = null,
+  historianActorFactory = createHistorianActor,
+} = {}) {
+  if (!historianActor && !historianCanisterId) {
+    throw new Error('Historian canister ID is not configured for this build');
+  }
+
+  const resolvedAgent = await getOrCreateAgent({ host, local, agent });
+
+  try {
+    return {
+      agent: resolvedAgent,
+      historian: historianActor || historianActorFactory(historianCanisterId, { agent: resolvedAgent }),
+    };
+  } catch (error) {
+    throw new Error(normalizeError(error));
+  }
+}
+
+export async function loadRegisteredCanisterSummaryPage({
+  historianCanisterId,
+  host,
+  local = false,
+  agent = null,
+  historianActor = null,
+  historianActorFactory = createHistorianActor,
+  page = 0,
+  pageSize = REGISTERED_SUMMARY_PAGE_SIZE,
+} = {}) {
+  const { historian } = await createHistorianClient({
+    historianCanisterId,
+    host,
+    local,
+    agent,
+    historianActor,
+    historianActorFactory,
+  });
+  return historian.list_registered_canister_summaries(
+    buildRegisteredCanisterSummariesRequest({ page, pageSize }),
+  );
+}
+
 export async function loadDashboardData({
   historianCanisterId,
   host,
@@ -162,16 +186,20 @@ export async function loadDashboardData({
   historianActor = null,
   historianActorFactory = createHistorianActor,
   ledgerActorFactory = createLedgerActor,
+  registeredPage = 0,
+  registeredPageSize = REGISTERED_SUMMARY_PAGE_SIZE,
 } = {}) {
-  if (!historianActor && !historianCanisterId) {
-    throw new Error('Historian canister ID is not configured for this build');
-  }
-
-  const resolvedAgent = await getOrCreateAgent({ host, local, agent });
-
+  let resolvedAgent;
   let historian;
   try {
-    historian = historianActor || historianActorFactory(historianCanisterId, { agent: resolvedAgent });
+    ({ agent: resolvedAgent, historian } = await createHistorianClient({
+      historianCanisterId,
+      host,
+      local,
+      agent,
+      historianActor,
+      historianActorFactory,
+    }));
   } catch (error) {
     const reason = normalizeError(error);
     return {
@@ -198,7 +226,12 @@ export async function loadDashboardData({
   const [countsResult, statusResult, registeredResult, recentResult, burnsResult] = await Promise.allSettled([
     historian.get_public_counts(),
     historian.get_public_status(),
-    listAllRegisteredCanisterSummaries(historian),
+    historian.list_registered_canister_summaries(
+      buildRegisteredCanisterSummariesRequest({
+        page: registeredPage,
+        pageSize: registeredPageSize,
+      }),
+    ),
     historian.list_recent_contributions({
       limit: [RECENT_CONTRIBUTION_LIMIT],
       qualifying_only: [false],

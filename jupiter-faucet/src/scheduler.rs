@@ -2747,24 +2747,32 @@ mod tests {
     }
 
     #[test]
-    fn repeated_below_threshold_history_replays_from_start_each_round_without_persisting_skip_ranges() {
+    fn repeated_below_threshold_history_replays_from_start_and_still_reaches_later_qualifying_contribution_without_persisting_skip_ranges() {
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+
         for round in 0..2_u64 {
             let now_secs = 10_150 + round;
-            let job = ActivePayoutJob::new(150 + round, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
-            let _cfg = set_active_job(now_secs, job);
-            let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+            let job = ActivePayoutJob::new(150 + round, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000);
+            let cfg = set_active_job(now_secs, job);
+            let staking_id = account_identifier_text(&cfg.staking_account);
             let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
                 .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+                .chain(std::iter::once(contribution_tx(
+                    MIN_SKIP_RANGE_TX_COUNT,
+                    &staking_id,
+                    crate::MIN_MIN_TX_E8S,
+                    Some(beneficiary.to_text().into_bytes()),
+                )))
                 .collect();
             let index = RecordingIndex::new(txs);
-            let ledger = ScriptedLedger::new(vec![]);
-            let cmc = ScriptedCmc::new(vec![]);
+            let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(400 + round), LedgerStep::Ok(500 + round)]);
+            let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
 
             assert!(run_ready(process_payout(
                 &ledger,
                 &index,
                 &cmc,
-                &crate::clients::canister_info::NoopCanisterStatusClient,
+                &ExistingCanisterStatus::new(vec![beneficiary.clone()]),
                 now_secs * 1_000_000_000,
                 now_secs,
             )));
@@ -2773,7 +2781,7 @@ mod tests {
             assert!(state::list_skip_ranges().is_empty(), "round {round} should not persist sub-threshold barren history");
             let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
             assert_eq!(summary.ignored_under_threshold, MIN_SKIP_RANGE_TX_COUNT - 1, "round {round} should still rescan and ignore the same barren span");
-            assert_eq!(summary.topped_up_count, 0, "round {round} should not record any payouts for barren sub-threshold history");
+            assert_eq!(summary.topped_up_count, 1, "round {round} should still reach the qualifying contribution after replay");
         }
     }
 

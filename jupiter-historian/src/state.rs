@@ -379,6 +379,8 @@ pub struct State {
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
     #[serde(default)]
     pub registered_canister_summaries_cache: Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
+    #[serde(default)]
+    pub registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
     pub last_indexed_staking_tx_id: Option<u64>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
@@ -406,6 +408,7 @@ impl State {
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
             registered_canister_summaries_cache: Some(BTreeMap::new()),
+            registered_canister_summaries_total_desc_index: Some(Vec::new()),
             last_indexed_staking_tx_id: None,
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
@@ -981,6 +984,7 @@ fn restore_state_current(root: StableRootState) -> State {
         cycles_history,
         per_canister_meta,
         registered_canister_summaries_cache: None,
+        registered_canister_summaries_total_desc_index: None,
         last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
         last_sns_discovery_ts: root.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
@@ -1446,6 +1450,7 @@ mod tests {
             },
         );
         st.registered_canister_summaries_cache = Some(cache);
+        st.registered_canister_summaries_total_desc_index = Some(vec![canister_id]);
         set_state(st);
 
         let restored = restore_state_from_stable().expect("expected persisted historian state");
@@ -1456,6 +1461,7 @@ mod tests {
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 123_456);
         assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);
         assert!(restored.registered_canister_summaries_cache.is_none());
+        assert!(restored.registered_canister_summaries_total_desc_index.is_none());
     }
 
 
