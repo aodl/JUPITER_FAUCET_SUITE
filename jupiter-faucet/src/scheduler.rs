@@ -211,6 +211,12 @@ pub fn schedule_immediate_resume_if_needed() {
     });
 }
 
+pub fn schedule_immediate_rescue_reconcile() {
+    ic_cdk_timers::set_timer(Duration::from_secs(1), async {
+        rescue_tick().await;
+    });
+}
+
 async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
@@ -1308,7 +1314,32 @@ async fn attempt_rescue(now_secs: u64) {
 
 async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    rescue_tick_with_resume_at(now_secs, || async {
+        main_tick(true).await;
+    }).await;
+}
+
+async fn rescue_tick_with_resume_at<F, Fut>(now_secs: u64, resume_active_job: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    // Preserve the rescue/controller-reconciliation ordering first, then use the
+    // same daily cadence as a bounded fallback resume opportunity for any
+    // unfinished payout job that remains persisted.
     attempt_rescue(now_secs).await;
+    resume_active_job_if_present(resume_active_job).await;
+}
+
+async fn resume_active_job_if_present<F, Fut>(resume_active_job: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let has_active_job = state::with_state(|st| st.active_payout_job.is_some());
+    if has_active_job {
+        resume_active_job().await;
+    }
 }
 
 
@@ -1750,6 +1781,42 @@ mod tests {
 
     fn take_test_logs() -> Vec<String> {
         TEST_LOG_LINES.with(|logs| std::mem::take(&mut *logs.borrow_mut()))
+    }
+
+    #[test]
+    fn resume_active_job_if_present_runs_when_active_job_exists() {
+        let now_secs = 1_000_u64;
+        let job = ActivePayoutJob::new(1, 10_000, 1_000_000, 2_000_000, now_secs * 1_000_000_000);
+        let _cfg = set_active_job(now_secs, job);
+
+        let resume_calls = Arc::new(AtomicUsize::new(0));
+        let resume_calls_clone = resume_calls.clone();
+        run_ready(resume_active_job_if_present(move || {
+            let resume_calls = resume_calls_clone.clone();
+            async move {
+                resume_calls.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+
+        assert_eq!(resume_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn resume_active_job_if_present_skips_when_no_active_job_exists() {
+        let now_secs = 1_001_u64;
+        let cfg = test_config();
+        state::set_state(state::State::new(cfg, now_secs));
+
+        let resume_calls = Arc::new(AtomicUsize::new(0));
+        let resume_calls_clone = resume_calls.clone();
+        run_ready(resume_active_job_if_present(move || {
+            let resume_calls = resume_calls_clone.clone();
+            async move {
+                resume_calls.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+
+        assert_eq!(resume_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -2680,6 +2747,37 @@ mod tests {
     }
 
     #[test]
+    fn repeated_below_threshold_history_replays_from_start_each_round_without_persisting_skip_ranges() {
+        for round in 0..2_u64 {
+            let now_secs = 10_150 + round;
+            let job = ActivePayoutJob::new(150 + round, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
+            let _cfg = set_active_job(now_secs, job);
+            let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+            let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
+                .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+                .collect();
+            let index = RecordingIndex::new(txs);
+            let ledger = ScriptedLedger::new(vec![]);
+            let cmc = ScriptedCmc::new(vec![]);
+
+            assert!(run_ready(process_payout(
+                &ledger,
+                &index,
+                &cmc,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+                now_secs * 1_000_000_000,
+                now_secs,
+            )));
+
+            assert_eq!(index.starts().first().copied(), Some(None), "round {round} should replay from the beginning when no skip range is persisted");
+            assert!(state::list_skip_ranges().is_empty(), "round {round} should not persist sub-threshold barren history");
+            let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
+            assert_eq!(summary.ignored_under_threshold, MIN_SKIP_RANGE_TX_COUNT - 1, "round {round} should still rescan and ignore the same barren span");
+            assert_eq!(summary.topped_up_count, 0, "round {round} should not record any payouts for barren sub-threshold history");
+        }
+    }
+
+    #[test]
     fn persisted_skip_range_causes_next_run_to_jump_before_fetching_inside_it() {
         let now_secs = 10_200;
         let mut job = ActivePayoutJob::new(7, 10_000, 500_000_000, 500_000_000, now_secs * 1_000_000_000);
@@ -2706,7 +2804,7 @@ mod tests {
             &ledger,
             &index,
             &cmc,
-            &ExistingCanisterStatus::new(vec![beneficiary]),
+            &ExistingCanisterStatus::new(vec![beneficiary.clone()]),
             now_secs * 1_000_000_000,
             now_secs,
         )));

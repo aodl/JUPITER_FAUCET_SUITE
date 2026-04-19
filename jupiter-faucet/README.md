@@ -84,6 +84,8 @@ Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ig
 
 The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
+This is an explicit economic trade-off, not an oversight. A contributor can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. The design accepts that bounded griefing surface because the alternative — probing canister existence on the hot path — would permanently add more complexity, cost, and failure surface to the blackholed value-moving path. The mitigation is the contribution floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
+
 ## Important payout semantics
 
 ### 1) Every new payout job rescans the full history
@@ -94,7 +96,9 @@ Instead, each new payout job rescans the staking account history from the beginn
 
 That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the blackholed canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
 
-To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans that were previously found to contain no transactions worth revisiting under the current attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That matches the operational model here: upgrades are rescue-only events, and conservative re-evaluation of historical staking activity is preferable to trusting old cache entries.
+To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans that were previously found to contain no transactions worth revisiting under the current attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the current contribution-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional DAO-directed recovery events after blackhole activation, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
+
+The `10_000`-transaction persistence threshold is also intentional. The goal is to avoid repeated replay work for clearly barren history without turning skip-range storage into its own durable indexing system. Below-threshold barren spans can therefore be shaped and replayed, but the chosen threshold was set conservatively below the estimated economic break-even point where repeated replay would become more expensive for the faucet than periodically inserting fresh qualifying stake to prevent larger cached spans from forming. That keeps the durable cache small, keeps the implementation simple, and still makes large barren spans worth caching.
 
 Only the **currently active** job persists the scan cursor, partial skip-span state, and aggregate counters. 
 ### 2) Contributions are not aggregated
@@ -147,7 +151,7 @@ The detailed reward-environment caveats and the rationale for the PocketIC whale
 
 ### 5) Any unallocated remainder stays useful
 
-At the end of a completed payout job, any remainder that was not successfully allocated to beneficiaries can be sent as a **remainder-to-self** CMC top-up, as long as the remaining gross amount is greater than the ledger fee.
+At the end of a completed payout job, any remainder that was not successfully allocated to beneficiaries can be sent as a **remainder-to-self** CMC top-up, as long as the remaining gross amount is greater than the ledger fee. Internally the faucet tracks `gross_outflow_e8s` as **ledger-accepted outflow**, not as a promise that every corresponding top-up ultimately produced useful beneficiary cycles. That distinction matters at failure boundaries: summary accounting treats value as committed once the ledger has accepted the transfer identity, while beneficiary success / failure / ambiguity is tracked separately.
 
 ### 6) A computed share at or below the fee is not a failure
 
@@ -205,7 +209,7 @@ Default timers are:
 - `rescue_interval_seconds = 1 day`
 - index page size = `500`
 
-Each interval timer is clamped to at least 60 seconds by the runtime code. On `post_upgrade`, if an `ActivePayoutJob` already exists, the faucet also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the regular 7-day cadence. There is no separate retry timer: retries are attempted inline during the same payout pass. The historical replay itself is chunked by index pages and by async transfer/notify boundaries, so no payout job relies on one monolithic message execution.
+Each interval timer is clamped to at least 60 seconds by the runtime code. On `post_upgrade`, if an `ActivePayoutJob` already exists, the faucet also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the regular cadence. There is no separate deferred retry queue or backoff worker: retries are attempted inline during the same payout pass. If an ordinary transient failure ends a payout tick early, the active job remains persisted. It can then resume either on the next scheduled main tick or, if the daily rescue tick fires first, as the final action of that rescue tick via a forced main resume. The historical replay itself is chunked by index pages and by async transfer/notify boundaries, so no payout job relies on one monolithic message execution.
 The PocketIC integration suite includes an end-to-end upgrade test that interrupts a live payout after the ledger transfer lands but before the faucet persists acceptance/notify progress, then upgrades and verifies duplicate-proof recovery to a single final notification.
 
 ### Main tick sequence
@@ -241,7 +245,7 @@ An active payout job persists:
 - CMC attempt / success counters used by rescue heuristics
 - the currently in-flight top-up phase (`AwaitingTransfer` vs `TransferAccepted`) together with the original `created_at_time`, so an upgrade can resume safely at the ledger or notify boundary
 
-The runtime still does **not** buffer an unbounded deferred retry queue; it only persists the single in-flight transfer/notify phase for the active job.
+The runtime still does **not** buffer an unbounded deferred retry queue; it only persists the single in-flight transfer/notify phase for the active job. That keeps state bounded, and the faucet's recovery model remains cadence-based after an ordinary failed tick: interrupted work is preserved rather than discarded, then retried on the next available scheduler opportunity. In practice that means `post_upgrade` triggers an immediate forced resume, and otherwise the unfinished job is resumed either by the next main tick or by the daily rescue tick's final forced main resume if that arrives first.
 
 ### What is retried
 
@@ -263,6 +267,7 @@ The faucet does **not** retry forever and does **not** buffer a retry queue in m
 - first accepted-ledger notify failure → retry that notify once immediately, inline
 - if both notify replies are typed terminal rejections → count that contribution as **failed** and continue
 - otherwise, if the retry still leaves transport / retryable uncertainty → count that contribution as **ambiguous** and continue
+- if the wider payout tick later aborts for some unrelated transient reason, the unfinished active job is preserved and retried on the next scheduler opportunity (weekly main tick by default, or sooner via the daily rescue tick's forced main resume)
 
 This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible contributions may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
@@ -345,17 +350,14 @@ Upgrade args currently support:
 - `blackhole_armed`
 - `clear_forced_rescue`
 
-Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative.
+Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative: skip ranges are treated as disposable replay hints rather than durable truth, and upgrades are expected to be exceptional enough that paying the re-scan cost is preferable to risking stale cache semantics.
 
 `clear_forced_rescue = true` clears:
 
 - the latched forced-rescue reason
 - the related consecutive-failure counters
 
-It intentionally does **not** force an immediate controller rewrite during `post_upgrade`.
-The intended meaning is that, after DAO-directed recovery and a successful upgrade,
-the previous forced-rescue latch is no longer authoritative. The next rescue evaluation
-recomputes controller posture from current state and current policy inputs.
+When `clear_forced_rescue = true` is used while blackhole mode remains armed, the faucet now also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the armed-mode controller policy is the only one the canister reconciles itself toward.
 
 ### Current production wiring recorded in this repo
 

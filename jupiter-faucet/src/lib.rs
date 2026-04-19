@@ -9,6 +9,11 @@ use icrc_ledger_types::icrc1::account::Account;
 
 use crate::state::State;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PostUpgradeActions {
+    pub schedule_immediate_controller_reconcile: bool,
+}
+
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
     pub staking_account: Account,
@@ -148,7 +153,8 @@ fn init(args: InitArgs) {
     crate::scheduler::install_timers();
 }
 
-pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) {
+pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) -> PostUpgradeActions {
+    let mut actions = PostUpgradeActions::default();
     if let Some(args) = args {
         if let Some(blackhole_controller) = args.blackhole_controller {
             st.config.blackhole_controller = Some(blackhole_controller);
@@ -162,11 +168,14 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
         }
         if args.clear_forced_rescue.unwrap_or(false) {
             // Clearing forced rescue is a DAO acknowledgement that the prior latch
-            // is no longer authoritative after recovery and upgrade.
-            // We intentionally do not force an immediate controller rewrite here;
-            // the next rescue evaluation recomputes controller posture from current
-            // state and current policy inputs.
+            // is no longer authoritative after recovery and upgrade. When blackhole
+            // mode remains armed, schedule an immediate rescue/controller
+            // reconciliation after post-upgrade so an obsolete widened controller
+            // set does not linger until the next periodic rescue tick.
             st.forced_rescue_reason = None;
+            if st.config.blackhole_armed.unwrap_or(false) {
+                actions.schedule_immediate_controller_reconcile = true;
+            }
             st.consecutive_index_anchor_failures = Some(0);
             st.consecutive_index_latest_invariant_failures = Some(0);
             st.consecutive_index_latest_unreadable_failures = Some(0);
@@ -174,10 +183,14 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
         }
     }
     validate_config(&st.config);
-    // Skip ranges are a replay-work cache only. Any rescue upgrade intentionally
-    // drops them so staking history is re-evaluated from first principles.
+    // Skip ranges are a replay-work cache only. Every upgrade intentionally
+    // drops them so history is re-evaluated from first principles under the
+    // newly running code and config. The operational assumption is that upgrades
+    // are exceptional, DAO-directed recovery events, so conservatism is preferred
+    // over retaining potentially stale cache entries.
     state::clear_skip_ranges();
     st.main_lock_state_ts = Some(0);
+    actions
 }
 
 #[ic_cdk::post_upgrade]
@@ -185,10 +198,13 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     crate::state::init_stable_storage();
     let mut st = crate::state::restore_state_from_stable().expect("stable state missing during faucet post_upgrade");
-    apply_upgrade_args_to_state(&mut st, args, now_secs);
+    let actions = apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
     crate::scheduler::schedule_immediate_resume_if_needed();
+    if actions.schedule_immediate_controller_reconcile {
+        crate::scheduler::schedule_immediate_rescue_reconcile();
+    }
 }
 
 #[cfg(feature = "debug_api")]
@@ -553,7 +569,7 @@ mod tests {
         crate::state::insert_skip_range(crate::state::SkipRange { start_tx_id: 10, end_tx_id: 20 });
         let mut st = State::new(sample_config(), now_secs);
         st.main_lock_state_ts = Some(99);
-        apply_upgrade_args_to_state(
+        let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
                 blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
@@ -567,6 +583,24 @@ mod tests {
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
         assert_eq!(st.main_lock_state_ts, Some(0));
         assert!(crate::state::list_skip_ranges().is_empty());
+        assert_eq!(actions, PostUpgradeActions { schedule_immediate_controller_reconcile: true });
+    }
+
+    #[test]
+    fn apply_upgrade_args_does_not_schedule_controller_reconcile_when_blackhole_not_armed() {
+        let now_secs = 456;
+        let mut st = State::new(sample_config(), now_secs);
+        st.config.blackhole_armed = Some(false);
+        let actions = apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: None,
+                blackhole_armed: Some(false),
+                clear_forced_rescue: Some(true),
+            }),
+            now_secs,
+        );
+        assert_eq!(actions, PostUpgradeActions::default());
     }
 }
 

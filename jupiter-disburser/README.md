@@ -227,7 +227,7 @@ Upgrades currently support:
 - `blackhole_armed`
 - `clear_forced_rescue`
 
-`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. It also intentionally does **not** force an immediate controller rewrite during `post_upgrade`; after DAO-directed recovery and a successful upgrade, the next rescue evaluation recomputes controller posture from current state and current policy inputs.
+`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. When used while blackhole mode remains armed, the disburser now also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the self-reconciliation policy is only defined for armed mode.
 
 ### Current production wiring recorded in this repo
 

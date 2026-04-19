@@ -64,6 +64,62 @@ test('neuron details can retry after a transient failure and then load successfu
   }
 });
 
+test('neuron details null response is treated as retryable until data is available', async () => {
+  const paneCalls = [];
+  const statusCalls = [];
+  const globalErrors = [];
+  let attempts = 0;
+
+  const controller = createNeuronDetailsController({
+    loadNeuronDetails: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return null;
+      }
+      return { id: 'neuron-3' };
+    },
+    renderStakePane: (data, neuron, options = {}) => {
+      paneCalls.push({ data, neuron, options });
+    },
+    renderStakeNeuronStatus: (options = {}) => {
+      statusCalls.push(options);
+    },
+    normalizeError: (error) => `normalized:${error.message}`,
+    setGlobalNeuronError: (value) => {
+      globalErrors.push(value);
+    },
+  });
+
+  await controller.ensureLoaded({ marker: 'dashboard' });
+  assert.equal(attempts, 1);
+  assert.equal(controller.state.loaded, false);
+  assert.equal(controller.state.inFlight, false);
+  assert.equal(controller.state.value, null);
+  assert.equal(controller.state.error, 'Public neuron details unavailable');
+
+  await controller.ensureLoaded({ marker: 'dashboard' });
+  assert.equal(attempts, 2);
+  assert.equal(controller.state.loaded, true);
+  assert.equal(controller.state.inFlight, false);
+  assert.deepEqual(controller.state.value, { id: 'neuron-3' });
+  assert.equal(controller.state.error, null);
+
+  assert.deepEqual(statusCalls, [
+    { loading: true },
+    { error: 'Public neuron details unavailable' },
+    { loading: true },
+    { error: null },
+  ]);
+  assert.deepEqual(globalErrors, ['Public neuron details unavailable', null]);
+  assert.deepEqual(paneCalls.map(({ neuron, options }) => ({ neuron, options })), [
+    { neuron: null, options: { neuronLoading: true } },
+    { neuron: null, options: { neuronError: 'Public neuron details unavailable' } },
+    { neuron: null, options: { neuronLoading: true } },
+    { neuron: { id: 'neuron-3' }, options: { neuronError: null } },
+  ]);
+});
+
+
 test('neuron details does not launch a duplicate request while one is already in flight', async () => {
   const release = {};
   const firstAttempt = new Promise((resolve) => {

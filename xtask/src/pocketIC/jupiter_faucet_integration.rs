@@ -1533,6 +1533,73 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
 
 #[test]
 #[ignore]
+fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let second_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
+
+    env.credit_payout(120_000_000)?;
+    env.credit_staking(800_000_000)?;
+    env.append_transfer(200_000_000, Some(first_target.to_text().into_bytes()))?;
+    env.append_repeated_transfer(499, 1_000_000, Some(first_target.to_text().into_bytes()))?;
+    env.append_transfer(101_000_000, Some(second_target.to_text().into_bytes()))?;
+    env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
+        DebugIndexGetBehavior::Ok,
+    ])?;
+
+    env.main_tick()?;
+    let st_after_failure = env.state()?;
+    if !st_after_failure.active_payout_job_present || st_after_failure.last_summary_present {
+        bail!("expected interrupted payout job to remain active after mid-scan failure, got {:?}", st_after_failure);
+    }
+    let notes_after_failure = env.notifications()?;
+    let first_count_after_failure = notes_after_failure.iter().filter(|n| n.canister_id == first_target).count();
+    let second_count_after_failure = notes_after_failure.iter().filter(|n| n.canister_id == second_target).count();
+    if first_count_after_failure != 1 || second_count_after_failure != 0 {
+        bail!(
+            "expected only first-page work before failure, got first_count={} second_count={}",
+            first_count_after_failure,
+            second_count_after_failure,
+        );
+    }
+
+    env.rescue_tick()?;
+
+    let st_after_rescue_resume = env.state()?;
+    if st_after_rescue_resume.active_payout_job_present || !st_after_rescue_resume.last_summary_present {
+        bail!("expected daily rescue tick to force-resume and finish the interrupted job, got {:?}", st_after_rescue_resume);
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 2 || summary.ignored_under_threshold != 499 {
+        bail!(
+            "expected rescue-driven resume to preserve first-page work and finish later work, got topped_up_count={} ignored_under_threshold={}",
+            summary.topped_up_count,
+            summary.ignored_under_threshold,
+        );
+    }
+    let notes_after_rescue_resume = env.notifications()?;
+    let first_count = notes_after_rescue_resume.iter().filter(|n| n.canister_id == first_target).count();
+    let second_count = notes_after_rescue_resume.iter().filter(|n| n.canister_id == second_target).count();
+    if first_count != 1 || second_count != 1 {
+        bail!(
+            "expected rescue-driven resume not to duplicate first-page work and to complete the later contribution, got first_count={} second_count={}",
+            first_count,
+            second_count,
+        );
+    }
+    let calls = env.index_get_calls()?;
+    if calls.len() < 3 || calls[0].start.is_some() || calls[1].start.is_none() || calls[2].start != calls[1].start {
+        bail!("expected rescue-driven resume to retry the interrupted later-page cursor, got calls {calls:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
@@ -2078,6 +2145,16 @@ fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_res
             "expected nonexistent canister-id targets not to advance the zero-success rescue threshold, got {:?}",
             st
         );
+    }
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() < 3 {
+        bail!(
+            "expected at least three beneficiary transfer attempts across repeated nonexistent-target runs, got {} transfers",
+            transfers.len(),
+        );
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected repeated nonexistent-target runs with forced mock CMC failure not to record successful notifications");
     }
 
     Ok(())

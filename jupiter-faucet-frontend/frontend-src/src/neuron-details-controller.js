@@ -49,7 +49,7 @@ export function createNeuronDetailsController({
       try {
         const neuron = await loadNeuronDetails();
         if (requestGeneration !== generation) return;
-        state.loaded = true;
+        state.loaded = Boolean(neuron);
         state.value = neuron;
         state.error = neuron ? null : 'Public neuron details unavailable';
         setGlobalNeuronError(state.error);

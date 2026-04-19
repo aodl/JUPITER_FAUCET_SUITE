@@ -234,6 +234,12 @@ pub fn schedule_immediate_resume_if_needed() {
     });
 }
 
+pub fn schedule_immediate_rescue_reconcile() {
+    ic_cdk_timers::set_timer(Duration::from_secs(1), async {
+        rescue_tick().await;
+    });
+}
+
 /// MAIN TICK:
 /// Logging:
 /// - always logs "Cycles: <amount>" once per run
