@@ -876,12 +876,13 @@ mod tests {
 
     #[derive(Clone)]
     enum TransferScriptStep {
+        Ok(BlockIndex),
         TypedErr(TransferError),
         CallErr,
     }
 
     struct ScriptedTransferLedger {
-        balance: u64,
+        balance: Mutex<u64>,
         fee: u64,
         steps: Mutex<VecDeque<TransferScriptStep>>,
         transfer_calls: AtomicUsize,
@@ -890,7 +891,7 @@ mod tests {
     impl ScriptedTransferLedger {
         fn new(balance: u64, fee: u64, steps: Vec<TransferScriptStep>) -> Self {
             Self {
-                balance,
+                balance: Mutex::new(balance),
                 fee,
                 steps: Mutex::new(steps.into()),
                 transfer_calls: AtomicUsize::new(0),
@@ -900,15 +901,31 @@ mod tests {
         fn transfer_calls(&self) -> usize {
             self.transfer_calls.load(Ordering::SeqCst)
         }
+
+        fn balance(&self) -> u64 {
+            *self.balance.lock().unwrap()
+        }
     }
 
     #[async_trait]
     impl LedgerClient for ScriptedTransferLedger {
         async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(self.fee) }
-        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { Ok(self.balance) }
-        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> {
+            Ok(*self.balance.lock().unwrap())
+        }
+
+        async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
             self.transfer_calls.fetch_add(1, Ordering::SeqCst);
             match self.steps.lock().unwrap().pop_front().expect("missing transfer step") {
+                TransferScriptStep::Ok(block) => {
+                    let amount = u64::try_from(arg.amount.0).expect("amount should fit in u64 for tests");
+                    let fee_nat = arg.fee.expect("tests always include a fee");
+                    let fee = u64::try_from(fee_nat.0).expect("fee should fit in u64 for tests");
+                    let mut balance = self.balance.lock().unwrap();
+                    *balance = balance.saturating_sub(amount.saturating_add(fee));
+                    Ok(Ok(block))
+                }
                 TransferScriptStep::TypedErr(err) => Ok(Err(err)),
                 TransferScriptStep::CallErr => Err(crate::clients::ClientError::Call("scripted transfer transport failure".to_string())),
             }
@@ -981,6 +998,85 @@ mod tests {
         assert_eq!(ledger.transfer_calls(), 1);
         assert!(state::with_state(|st| st.payout_plan.is_some()), "transport ambiguity should retain the plan for duplicate-safe retry");
         assert_eq!(gov.claim_or_refresh_calls(), 0);
+    }
+
+
+    #[test]
+    fn terminal_failure_after_partial_success_replans_from_remaining_staging_balance() {
+        let now_secs = 2_250_u64;
+        let mut st = state::State::new(test_config(), now_secs);
+        st.payout_plan = Some(state::PayoutPlan {
+            id: 17,
+            fee_e8s: 10_000,
+            created_at_base_nanos: now_secs * 1_000_000_000,
+            transfers: vec![
+                state::PlannedTransfer {
+                    to: Account { owner: Principal::from_text("aaaaa-aa").unwrap(), subaccount: None },
+                    gross_share_e8s: 50_000_000,
+                    amount_e8s: 49_990_000,
+                    created_at_time_nanos: now_secs * 1_000_000_000,
+                    memo: b"first-leg".to_vec(),
+                    status: state::TransferStatus::Pending,
+                },
+                state::PlannedTransfer {
+                    to: Account { owner: Principal::from_text("2vxsx-fae").unwrap(), subaccount: None },
+                    gross_share_e8s: 50_000_000,
+                    amount_e8s: 49_990_000,
+                    created_at_time_nanos: now_secs * 1_000_000_000 + 1,
+                    memo: b"second-leg".to_vec(),
+                    status: state::TransferStatus::Pending,
+                },
+            ],
+        });
+        state::set_state(st);
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = ScriptedTransferLedger::new(
+            100_000_000,
+            10_000,
+            vec![
+                TransferScriptStep::Ok(Nat::from(11u64)),
+                TransferScriptStep::TypedErr(TransferError::GenericError {
+                    error_code: Nat::from(5u64),
+                    message: "terminal rejection after first leg".to_string(),
+                }),
+                TransferScriptStep::CallErr,
+            ],
+        );
+        let gov = ScriptedGovernance::new(
+            vec![
+                Ok(Neuron {
+                    aging_since_timestamp_seconds: 100,
+                    maturity_disbursements_in_progress: None,
+                }),
+                Ok(Neuron {
+                    aging_since_timestamp_seconds: 100,
+                    maturity_disbursements_in_progress: None,
+                }),
+            ],
+            vec![],
+        );
+
+        let mut first = Box::pin(run_main_tick_with_clients(true, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(())));
+        assert_eq!(ledger.transfer_calls(), 2, "first run should send one leg, then stop on the terminal rejection");
+        assert_eq!(ledger.balance(), 50_000_000, "successful first leg should debit its gross share from staging");
+        assert!(state::with_state(|st| st.payout_plan.is_none()), "terminal rejection should clear the stale split so the next tick replans from current balance");
+        assert_eq!(state::with_state(|st| st.last_successful_transfer_ts), Some(now_secs));
+
+        let retry_secs = now_secs + 60;
+        let mut second = Box::pin(run_main_tick_with_clients(true, retry_secs * 1_000_000_000, retry_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(second.as_mut()), Poll::Ready(())));
+        assert_eq!(ledger.transfer_calls(), 3, "second run should attempt exactly one transfer from the replanned remainder before the scripted transport failure");
+
+        let replanned = state::with_state(|st| st.payout_plan.clone()).expect("transport ambiguity should retain the replanned remainder for inspection");
+        assert_eq!(replanned.fee_e8s, 10_000);
+        let replanned_total_gross: u64 = replanned.transfers.iter().map(|t| t.gross_share_e8s).sum();
+        assert!(replanned_total_gross <= 50_000_000, "replanned gross cost must fit within the remaining staging balance");
+        assert!(replanned_total_gross < 100_000_000, "replan must not reuse the original pre-partial-success balance");
+        assert!(replanned.transfers.iter().all(|t| matches!(t.status, state::TransferStatus::Pending)));
+        assert!(replanned.transfers.iter().all(|t| t.created_at_time_nanos >= retry_secs * 1_000_000_000));
+        assert_eq!(gov.claim_or_refresh_calls(), 0, "failed payout runs should stop before post-payout governance side effects");
     }
 
     #[test]

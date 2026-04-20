@@ -5385,7 +5385,6 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         live_denom: u64,
         effective_denom: u64,
         topped_up_count: u64,
-        ignored_bad_memo: u64,
     }
 
     #[derive(Clone, Debug)]
@@ -5407,7 +5406,6 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             live_denom: summary.denom_staking_balance_e8s,
             effective_denom: effective_denom_e8s(summary),
             topped_up_count: summary.topped_up_count,
-            ignored_bad_memo: summary.ignored_bad_memo,
         }
     }
 
