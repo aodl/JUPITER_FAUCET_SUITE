@@ -149,9 +149,13 @@
         <span class="metric-rail-link-label">Jupiter Stake</span>
         <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
       </a>
-      <a href="#metric-burned" class="metric-rail-link nav-item" data-panel="metric-burned">
-        <span class="metric-rail-link-label">Burned</span>
-        <strong class="metric-rail-link-value"><span id="landing-icp-burned">—</span><span class="metric-status" id="landing-icp-burned-status" hidden aria-hidden="true"></span></strong>
+      <a href="#metric-output" class="metric-rail-link nav-item" data-panel="metric-output">
+        <span class="metric-rail-link-label">Total Output</span>
+        <strong class="metric-rail-link-value"><span id="landing-total-output">—</span><span class="metric-status" id="landing-total-output-status" hidden aria-hidden="true"></span></strong>
+      </a>
+      <a href="#metric-rewards" class="metric-rail-link nav-item" data-panel="metric-rewards">
+        <span class="metric-rail-link-label">Total Rewards</span>
+        <strong class="metric-rail-link-value"><span id="landing-total-rewards">—</span><span class="metric-status" id="landing-total-rewards-status" hidden aria-hidden="true"></span></strong>
       </a>
       <a href="#metric-registered" class="metric-rail-link nav-item" data-panel="metric-registered">
         <span class="metric-rail-link-label">Target Canisters</span>
@@ -165,6 +169,8 @@
   </aside>
 
   <!-- Info pane opened by nav buttons -->
+  <div class="dashboard-alert dashboard-alert--error" id="historian-fault-banner" hidden role="alert"></div>
+
   <div class="nav-panel-backdrop" id="nav-panel-backdrop">
     <section class="nav-panel" role="dialog" aria-modal="true">
       <button type="button" class="nav-panel-close" aria-label="Close panel">&times;</button>
@@ -334,30 +340,24 @@
           <p class="pane-status-note" id="stake-neuron-note" hidden></p>
         </article>
 
-        <article class="nav-panel-section" data-panel="metric-burned" id="nav-panel-metric-burned">
-          <h2 class="nav-panel-title">Burned</h2>
-          <p class="nav-panel-subtitle" id="burned-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">This is historian's capped recent burn view (newest <strong>500</strong>). Older burn transactions remain durably queryable from the ICP ledger and its archive canisters.</p>
-          <p class="pane-status-note" id="burned-pane-memory-note" hidden></p>
-          <div class="pane-table-wrap">
-            <table class="pane-table">
-              <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Amount</th>
-                  <th>Type</th>
-                </tr>
-              </thead>
-              <tbody id="burn-transactions-body">
-                <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="pane-pagination">
-            <button class="pane-page-button" id="burn-prev-page" type="button">Previous</button>
-            <span id="burn-page-info">Page 1</span>
-            <button class="pane-page-button" id="burn-next-page" type="button">Next</button>
-          </div>
+        <article class="nav-panel-section" data-panel="metric-output" id="nav-panel-metric-output">
+          <h2 class="nav-panel-title">Total Output</h2>
+          <p class="nav-panel-subtitle" id="output-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the faucet payout account.</p>
+          <p class="nav-panel-content" id="output-pane-description">Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.</p>
+          <p class="pane-status-note" id="output-pane-memory-note" hidden></p>
+          <dl class="pane-detail-grid">
+            <div><dt>Total output</dt><dd class="pane-detail-value"><span id="output-pane-total"></span><span class="metric-status" id="output-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+          </dl>
+        </article>
+
+        <article class="nav-panel-section" data-panel="metric-rewards" id="nav-panel-metric-rewards">
+          <h2 class="nav-panel-title">Total Rewards</h2>
+          <p class="nav-panel-subtitle" id="rewards-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.</p>
+          <p class="nav-panel-content" id="rewards-pane-description">Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.</p>
+          <p class="pane-status-note" id="rewards-pane-memory-note" hidden></p>
+          <dl class="pane-detail-grid">
+            <div><dt>Total rewards</dt><dd class="pane-detail-value"><span id="rewards-pane-total"></span><span class="metric-status" id="rewards-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+          </dl>
         </article>
 
         <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">

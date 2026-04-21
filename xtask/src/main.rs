@@ -476,8 +476,9 @@ struct HistorianCyclesHistoryPage {
 struct HistorianPublicCounts {
     registered_canister_count: u64,
     qualifying_contribution_count: u64,
-    icp_burned_e8s: u64,
     sns_discovered_canister_count: u64,
+    total_output_e8s: u64,
+    total_rewards_e8s: u64,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -557,7 +558,8 @@ struct FrontendDashboardExpected {
 struct FrontendDashboardExpectedCounts {
     registeredCanisterCount: String,
     qualifyingContributionCount: String,
-    icpBurnedE8s: String,
+    totalOutputE8s: String,
+    totalRewardsE8s: String,
 }
 
 #[allow(non_snake_case)]
@@ -920,6 +922,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     cmd_setup_common()?;
 
     run_dfx(&["deploy", "mock_icrc_ledger"])?;
+    run_dfx(&["deploy", "mock_nns_governance"])?;
     run_dfx(&["deploy", "mock_icp_index"])?;
     run_dfx(&["deploy", "mock_cmc"])?;
     run_dfx(&["deploy", "mock_blackhole"])?;
@@ -927,10 +930,51 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     run_dfx(&["deploy", "mock_sns_root"])?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
+    let gov_id = canister_id("mock_nns_governance")?;
     let index_id = canister_id("mock_icp_index")?;
     let cmc_id = canister_id("mock_cmc")?;
     let blackhole_id = canister_id("mock_blackhole")?;
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
+    let rescue = principal_of_identity()?;
+
+    let r1 = Principal::management_canister();
+    let r2 = short_test_principal();
+    let r3 = rescue;
+
+    let disburser_args = format!(
+        r#"(record {{
+            neuron_id = 1:nat64;
+            normal_recipient = record {{ owner = principal "{r1}"; subaccount = null }};
+            age_bonus_recipient_1 = record {{ owner = principal "{r2}"; subaccount = null }};
+            age_bonus_recipient_2 = record {{ owner = principal "{r3}"; subaccount = null }};
+
+            ledger_canister_id = opt principal "{ledger_id}";
+            governance_canister_id = opt principal "{gov_id}";
+            rescue_controller = principal "{r3}";
+            blackhole_controller = opt principal "{blackhole_id}";
+            blackhole_armed = opt true;
+
+            main_interval_seconds = opt (31536000:nat64);
+            rescue_interval_seconds = opt (31536000:nat64);
+        }},)"#,
+        r1 = r1.to_text(),
+        r2 = r2.to_text(),
+        r3 = r3.to_text(),
+        ledger_id = ledger_id.trim(),
+        gov_id = gov_id.trim(),
+        blackhole_id = blackhole_id.trim(),
+    );
+
+    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &disburser_args])?;
+
+    let disb_id = canister_id("jupiter_disburser_dbg")?;
+    run_dfx(&[
+        "canister",
+        "update-settings",
+        "jupiter_disburser_dbg",
+        "--add-controller",
+        disb_id.trim(),
+    ])?;
 
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
@@ -970,9 +1014,18 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         faucet_id.trim(),
     ])?;
 
+    let faucet_accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
+    let output_source_owner = Principal::from_text(disb_id.trim())?;
+    let output_owner = faucet_accounts.payout.owner;
+    let output_subaccount = faucet_accounts.payout.subaccount;
+    let rewards_owner = short_test_principal();
+
     let historian_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
+            output_source_account = opt record {{ owner = principal "{output_source_owner}"; subaccount = null }};
+            output_account = opt record {{ owner = principal "{output_owner}"; subaccount = {output_subaccount} }};
+            rewards_account = opt record {{ owner = principal "{rewards_owner}"; subaccount = null }};
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
@@ -988,16 +1041,23 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             max_index_pages_per_tick = opt (10:nat32);
             max_canisters_per_cycles_tick = opt (10:nat32);
         }},)"#,
+        staking_owner = faucet_staking_account.owner.to_text(),
+        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
+            .subaccount
+            .unwrap()),
+        output_source_owner = output_source_owner.to_text(),
+        output_owner = output_owner.to_text(),
+        output_subaccount = match output_subaccount {
+            Some(bytes) => format!("opt blob \"{}\"", bytes_to_candid_blob(&bytes)),
+            None => "null".to_string(),
+        },
+        rewards_owner = rewards_owner.to_text(),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
         faucet_id = faucet_id.trim(),
         blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
-        staking_owner = faucet_staking_account.owner.to_text(),
-        staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
-            .subaccount
-            .unwrap()),
     );
     run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
 
@@ -1110,9 +1170,18 @@ fn cmd_setup() -> Result<()> {
         faucet_id.trim(),
     ])?;
 
+    let faucet_accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
+    let output_source_owner = Principal::from_text(disb_id.trim())?;
+    let output_owner = faucet_accounts.payout.owner;
+    let output_subaccount = faucet_accounts.payout.subaccount;
+    let rewards_owner = short_test_principal();
+
     let historian_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
+            output_source_account = opt record {{ owner = principal "{output_source_owner}"; subaccount = null }};
+            output_account = opt record {{ owner = principal "{output_owner}"; subaccount = {output_subaccount} }};
+            rewards_account = opt record {{ owner = principal "{rewards_owner}"; subaccount = null }};
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
@@ -1132,6 +1201,13 @@ fn cmd_setup() -> Result<()> {
         staking_subaccount = bytes_to_candid_blob(&faucet_staking_account
             .subaccount
             .unwrap()),
+        output_source_owner = output_source_owner.to_text(),
+        output_owner = output_owner.to_text(),
+        output_subaccount = match output_subaccount {
+            Some(bytes) => format!("opt blob \"{}\"", bytes_to_candid_blob(&bytes)),
+            None => "null".to_string(),
+        },
+        rewards_owner = rewards_owner.to_text(),
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
@@ -2485,13 +2561,15 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 1
             || counts.qualifying_contribution_count != 1
-            || counts.icp_burned_e8s != 0
+            || counts.total_output_e8s != 0
+            || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected historian public counts fixture: registered={} qualifying={} burned={}",
+                "unexpected historian public counts fixture: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
                 counts.qualifying_contribution_count,
-                counts.icp_burned_e8s
+                counts.total_output_e8s,
+                counts.total_rewards_e8s
             );
         }
 
@@ -2520,7 +2598,8 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
                 qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
-                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+                totalOutputE8s: counts.total_output_e8s.to_string(),
+                totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
             status: FrontendDashboardExpectedStatus {
                 ledgerCanisterId: ledger_id.trim().to_string(),
@@ -2779,13 +2858,15 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 1
             || counts.qualifying_contribution_count != 1
-            || counts.icp_burned_e8s != 0
+            || counts.total_output_e8s != 0
+            || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected historian public counts fixture: registered={} qualifying={} burned={}",
+                "unexpected historian public counts fixture: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
                 counts.qualifying_contribution_count,
-                counts.icp_burned_e8s
+                counts.total_output_e8s,
+                counts.total_rewards_e8s
             );
         }
 
@@ -2814,7 +2895,8 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
                 qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
-                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+                totalOutputE8s: counts.total_output_e8s.to_string(),
+                totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
             status: FrontendDashboardExpectedStatus {
                 ledgerCanisterId: ledger_id.trim().to_string(),
@@ -2863,7 +2945,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader keeps burned ICP at zero for contribution-only fixtures"), || {
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader keeps output and rewards at zero for contribution-only fixtures"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -2909,13 +2991,15 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 1
             || counts.qualifying_contribution_count != 1
-            || counts.icp_burned_e8s != 0
+            || counts.total_output_e8s != 0
+            || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected contribution-only fixture public counts: registered={} qualifying={} burned={}",
+                "unexpected contribution-only fixture public counts: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
                 counts.qualifying_contribution_count,
-                counts.icp_burned_e8s
+                counts.total_output_e8s,
+                counts.total_rewards_e8s
             );
         }
 
@@ -2936,7 +3020,8 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
                 qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
-                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+                totalOutputE8s: counts.total_output_e8s.to_string(),
+                totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
             status: FrontendDashboardExpectedStatus {
                 ledgerCanisterId: ledger_id.trim().to_string(),
@@ -2985,7 +3070,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader preserves zero burned and qualifying counts for non-qualifying memo fixture"), || {
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader preserves zero output, rewards, and qualifying counts for non-qualifying memo fixture"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -3041,13 +3126,15 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 0
             || counts.qualifying_contribution_count != 0
-            || counts.icp_burned_e8s != 0
+            || counts.total_output_e8s != 0
+            || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected non-qualifying fixture public counts: registered={} qualifying={} burned={}",
+                "unexpected non-qualifying fixture public counts: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
                 counts.qualifying_contribution_count,
-                counts.icp_burned_e8s
+                counts.total_output_e8s,
+                counts.total_rewards_e8s
             );
         }
 
@@ -3076,7 +3163,8 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
                 qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
-                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+                totalOutputE8s: counts.total_output_e8s.to_string(),
+                totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
             status: FrontendDashboardExpectedStatus {
                 ledgerCanisterId: ledger_id.trim().to_string(),
@@ -3148,13 +3236,15 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 0
             || counts.qualifying_contribution_count != 0
-            || counts.icp_burned_e8s != 0
+            || counts.total_output_e8s != 0
+            || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected SNS-only fixture public counts: registered={} qualifying={} burned={}",
+                "unexpected SNS-only fixture public counts: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
                 counts.qualifying_contribution_count,
-                counts.icp_burned_e8s
+                counts.total_output_e8s,
+                counts.total_rewards_e8s
             );
         }
         if counts.sns_discovered_canister_count < 2 {
@@ -3181,7 +3271,8 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
                 qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
-                icpBurnedE8s: counts.icp_burned_e8s.to_string(),
+                totalOutputE8s: counts.total_output_e8s.to_string(),
+                totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
             status: FrontendDashboardExpectedStatus {
                 ledgerCanisterId: ledger_id.trim().to_string(),

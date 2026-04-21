@@ -6,7 +6,6 @@ import { createActor as createLedgerActor } from '../declarations/icp_ledger/ind
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
 export const RECENT_CONTRIBUTION_LIMIT = 100;
-export const RECENT_BURN_LIMIT = 100;
 
 const agentPromises = new Map();
 
@@ -24,7 +23,8 @@ export function isMethodMissingError(error) {
 export function summaryMetricsUnavailable(data) {
   return (
     data.stakeE8s === null &&
-    data.counts?.icp_burned_e8s === undefined &&
+    data.counts?.total_output_e8s === undefined &&
+    data.counts?.total_rewards_e8s === undefined &&
     data.counts?.registered_canister_count === undefined &&
     data.counts?.qualifying_contribution_count === undefined
   );
@@ -206,7 +206,6 @@ export async function loadDashboardData({
       status: null,
       registered: null,
       recent: null,
-      burns: null,
       stakeE8s: null,
       hasAnyFailure: true,
       errors: {
@@ -214,7 +213,6 @@ export async function loadDashboardData({
         status: reason,
         registered: reason,
         recent: reason,
-        burns: reason,
         stake: 'Stake unavailable',
       },
       historianAllRejected: true,
@@ -222,7 +220,7 @@ export async function loadDashboardData({
     };
   }
 
-  const [countsResult, statusResult, registeredResult, recentResult, burnsResult] = await Promise.allSettled([
+  const [countsResult, statusResult, registeredResult, recentResult] = await Promise.allSettled([
     historian.get_public_counts(),
     historian.get_public_status(),
     historian.list_registered_canister_summaries(
@@ -235,12 +233,10 @@ export async function loadDashboardData({
       limit: [RECENT_CONTRIBUTION_LIMIT],
       qualifying_only: [false],
     }),
-    typeof historian.list_recent_burns === 'function'
-      ? historian.list_recent_burns({ limit: [RECENT_BURN_LIMIT] })
-      : Promise.resolve({ items: [] }),
   ]);
 
   let stakeResult = { status: 'rejected', reason: new Error('Stake unavailable') };
+
   if (statusResult.status === 'fulfilled') {
     let ledger;
     try {
@@ -271,32 +267,31 @@ export async function loadDashboardData({
     }
   }
 
+  const countsValue = countsResult.status === 'fulfilled' ? countsResult.value : null;
+
   const errors = {
     counts: countsResult.status === 'rejected' ? normalizeError(countsResult.reason) : null,
     status: statusResult.status === 'rejected' ? normalizeError(statusResult.reason) : null,
     registered: registeredResult.status === 'rejected' ? normalizeError(registeredResult.reason) : null,
     recent: recentResult.status === 'rejected' ? normalizeError(recentResult.reason) : null,
-    burns: burnsResult.status === 'rejected' ? normalizeError(burnsResult.reason) : null,
     stake: stakeResult.status === 'rejected' ? normalizeError(stakeResult.reason) : null,
   };
 
-  const historianFailures = [countsResult, statusResult, registeredResult, recentResult, burnsResult].filter((result) => result.status === 'rejected');
-  const historianAllRejected = historianFailures.length === 5;
+  const historianFailures = [countsResult, statusResult, registeredResult, recentResult].filter((result) => result.status === 'rejected');
+  const historianAllRejected = historianFailures.length === 4;
   const historianLikelyOutdated = historianAllRejected && historianFailures.every((result) => isMethodMissingError(result.reason));
 
   return {
-    counts: countsResult.status === 'fulfilled' ? countsResult.value : null,
+    counts: countsValue,
     status: statusResult.status === 'fulfilled' ? statusResult.value : null,
     registered: registeredResult.status === 'fulfilled' ? registeredResult.value : null,
     recent: recentResult.status === 'fulfilled' ? recentResult.value : null,
-    burns: burnsResult.status === 'fulfilled' ? burnsResult.value : null,
     stakeE8s: stakeResult.status === 'fulfilled' ? stakeResult.value : null,
     hasAnyFailure:
       countsResult.status === 'rejected' ||
       statusResult.status === 'rejected' ||
       registeredResult.status === 'rejected' ||
       recentResult.status === 'rejected' ||
-      burnsResult.status === 'rejected' ||
       stakeResult.status === 'rejected',
     errors,
     historianAllRejected,

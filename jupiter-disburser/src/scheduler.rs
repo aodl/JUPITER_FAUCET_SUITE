@@ -591,7 +591,7 @@ async fn rescue_tick() {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use candid::Principal;
+    use candid::{Nat, Principal};
     use crate::nns_types::{GovernanceError, Neuron};
     use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
     use std::collections::VecDeque;
@@ -882,13 +882,36 @@ mod tests {
     }
 
     struct ScriptedTransferLedger {
-        balance: Mutex<u64>,
+        balance: u64,
         fee: u64,
         steps: Mutex<VecDeque<TransferScriptStep>>,
         transfer_calls: AtomicUsize,
     }
 
     impl ScriptedTransferLedger {
+        fn new(balance: u64, fee: u64, steps: Vec<TransferScriptStep>) -> Self {
+            Self {
+                balance,
+                fee,
+                steps: Mutex::new(steps.into()),
+                transfer_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn transfer_calls(&self) -> usize {
+            self.transfer_calls.load(Ordering::SeqCst)
+        }
+    }
+
+
+    struct BalanceTrackingLedger {
+        balance: Mutex<u64>,
+        fee: u64,
+        steps: Mutex<VecDeque<TransferScriptStep>>,
+        transfer_calls: AtomicUsize,
+    }
+
+    impl BalanceTrackingLedger {
         fn new(balance: u64, fee: u64, steps: Vec<TransferScriptStep>) -> Self {
             Self {
                 balance: Mutex::new(balance),
@@ -908,7 +931,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl LedgerClient for ScriptedTransferLedger {
+    impl LedgerClient for BalanceTrackingLedger {
         async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(self.fee) }
 
         async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> {
@@ -917,7 +940,8 @@ mod tests {
 
         async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
             self.transfer_calls.fetch_add(1, Ordering::SeqCst);
-            match self.steps.lock().unwrap().pop_front().expect("missing transfer step") {
+            let step = self.steps.lock().unwrap().pop_front().expect("missing transfer step");
+            match step {
                 TransferScriptStep::Ok(block) => {
                     let amount = u64::try_from(arg.amount.0).expect("amount should fit in u64 for tests");
                     let fee_nat = arg.fee.expect("tests always include a fee");
@@ -926,6 +950,20 @@ mod tests {
                     *balance = balance.saturating_sub(amount.saturating_add(fee));
                     Ok(Ok(block))
                 }
+                TransferScriptStep::TypedErr(err) => Ok(Err(err)),
+                TransferScriptStep::CallErr => Err(crate::clients::ClientError::Call("scripted transfer transport failure".to_string())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LedgerClient for ScriptedTransferLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(self.fee) }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { Ok(self.balance) }
+        async fn transfer(&self, _arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.transfer_calls.fetch_add(1, Ordering::SeqCst);
+            match self.steps.lock().unwrap().pop_front().expect("missing transfer step") {
+                TransferScriptStep::Ok(block) => Ok(Ok(block)),
                 TransferScriptStep::TypedErr(err) => Ok(Err(err)),
                 TransferScriptStep::CallErr => Err(crate::clients::ClientError::Call("scripted transfer transport failure".to_string())),
             }
@@ -1031,7 +1069,7 @@ mod tests {
         state::set_state(st);
 
         let cfg = state::with_state(|st| st.config.clone());
-        let ledger = ScriptedTransferLedger::new(
+        let ledger = BalanceTrackingLedger::new(
             100_000_000,
             10_000,
             vec![

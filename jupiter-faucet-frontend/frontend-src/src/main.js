@@ -31,7 +31,6 @@ const tableState = {
     pages: new Map(),
   },
   commitments: { page: 0, items: [] },
-  burn: { page: 0, items: [] },
 };
 
 
@@ -218,7 +217,7 @@ function setMetricStatus(id, { value = null, loading = false, error = null } = {
 }
 
 function setMetricLoadingStates() {
-  ['landing-current-stake','landing-icp-burned','landing-registered-canisters','landing-qualifying-contributions'].forEach((id) => {
+  ['landing-current-stake','landing-total-output','landing-total-rewards','landing-registered-canisters','landing-qualifying-contributions'].forEach((id) => {
     setMetricStatus(id, { loading: true });
   });
   setHidden('landing-live-unavailable', true);
@@ -234,7 +233,8 @@ function nextRunLabel(status) {
 
 function renderLandingSummary(data) {
   setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8s(data.stakeE8s) });
-  setMetricStatus('landing-icp-burned', data.counts?.icp_burned_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Burned unavailable' } : { value: formatIcpE8s(data.counts.icp_burned_e8s) });
+  setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
+  setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
   setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Target canisters unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
   setMetricStatus('landing-qualifying-contributions', data.counts?.qualifying_contribution_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Commitments unavailable' } : { value: formatInteger(data.counts.qualifying_contribution_count) });
   setHidden('landing-live-unavailable', true);
@@ -242,10 +242,28 @@ function renderLandingSummary(data) {
 
 function renderLandingUnavailable(errorMessage = 'Live metrics unavailable') {
   setMetricStatus('landing-current-stake', { error: errorMessage });
-  setMetricStatus('landing-icp-burned', { error: errorMessage });
+  setMetricStatus('landing-total-output', { error: errorMessage });
+  setMetricStatus('landing-total-rewards', { error: errorMessage });
   setMetricStatus('landing-registered-canisters', { error: errorMessage });
   setMetricStatus('landing-qualifying-contributions', { error: errorMessage });
+  renderHistorianFaultBanner(null);
   setHidden('landing-live-unavailable', true);
+}
+
+function renderHistorianFaultBanner(data) {
+  const banner = document.getElementById('historian-fault-banner');
+  if (!banner) return;
+  const fault = data?.status?.contribution_index_fault?.[0] || data?.status?.contribution_index_fault || null;
+  if (!fault) {
+    banner.hidden = true;
+    banner.textContent = '';
+    return;
+  }
+  const observed = formatTimestampSeconds(fault.observed_at_ts);
+  const cursor = Array.isArray(fault.last_cursor_tx_id) ? fault.last_cursor_tx_id[0] : fault.last_cursor_tx_id;
+  const cursorText = cursor === undefined || cursor === null ? 'none' : formatInteger(cursor);
+  banner.textContent = `Historian contribution indexing is degraded. First observed at ${observed}. Last cursor: ${cursorText}. Offending tx: ${formatInteger(fault.offending_tx_id)}. ${fault.message}`;
+  banner.hidden = false;
 }
 
 function renderHowItWorksAccount() {
@@ -311,7 +329,8 @@ function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
   setText('registered-pane-subtitle', subtitle);
   setText('commitments-pane-subtitle', subtitle);
-  setText('burned-pane-subtitle', subtitle);
+  setText('output-pane-subtitle', 'Historian tracks protocol-routed ICP from the disburser to the faucet payout account.');
+  setText('rewards-pane-subtitle', 'Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.');
 
   const totalMemory = data?.status?.total_memory_bytes?.[0];
   const heapMemory = data?.status?.heap_memory_bytes?.[0];
@@ -323,7 +342,8 @@ function renderPaneSubtitles(data) {
         ? ` (${formatBytes(heapMemory)} heap + ${formatBytes(stableMemory)} stable)`
         : '');
   setStatusNote('commitments-pane-memory-note', memoryNote);
-  setStatusNote('burned-pane-memory-note', memoryNote);
+  setStatusNote('output-pane-memory-note', memoryNote);
+  setStatusNote('rewards-pane-memory-note', memoryNote);
 }
 
 function paneEmptyMessage(data, key, defaultText) {
@@ -616,20 +636,18 @@ function renderCommitmentsPane(data) {
   );
 }
 
-function renderBurnsPane(data) {
-  const items = data?.burns?.items || [];
-  paginate(
-    'burn',
-    items,
-    (item) => `
-      <tr>
-        <td>${renderCommitmentTimestampCell(item)}</td>
-        <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
-        <td>Burn</td>
-      </tr>`,
-    paneEmptyMessage(data, 'burns', 'No burn transactions indexed yet.'),
-    3,
-  );
+function renderOutputPane(data) {
+  const amount = data?.counts?.total_output_e8s;
+  setPaneValueStatus('output-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(amount) });
+  const note = 'Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.';
+  setText('output-pane-description', note);
+}
+
+function renderRewardsPane(data) {
+  const amount = data?.counts?.total_rewards_e8s;
+  setPaneValueStatus('rewards-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(amount) });
+  const note = 'Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.';
+  setText('rewards-pane-description', note);
 }
 
 function bindPaginationButtons() {
@@ -652,7 +670,6 @@ function bindPaginationButtons() {
 
   [
     ['commitments', renderCommitmentsPane],
-    ['burn', renderBurnsPane],
   ].forEach(([kind, rerender]) => {
     const prev = document.getElementById(`${kind}-prev-page`);
     const next = document.getElementById(`${kind}-next-page`);
@@ -677,11 +694,13 @@ function renderLandingPanes(data, neuron = null) {
   window.__JUPITER_LANDING_DATA__ = data;
   window.__JUPITER_NEURON_ERROR__ = neuronState.error;
   renderHowItWorksAccount();
+  renderHistorianFaultBanner(data);
   renderStakePane(data, neuron);
   renderPaneSubtitles(data);
   renderRegisteredPane(data);
   renderCommitmentsPane(data);
-  renderBurnsPane(data);
+  renderOutputPane(data);
+  renderRewardsPane(data);
 }
 
 async function loadNeuronDetails({ host, local }) {

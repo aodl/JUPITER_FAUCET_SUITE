@@ -10,12 +10,20 @@ export const idlFactory = ({ IDL }) => {
   const PublicCounts = IDL.Record({
     registered_canister_count: IDL.Nat64,
     qualifying_contribution_count: IDL.Nat64,
-    icp_burned_e8s: IDL.Nat64,
     sns_discovered_canister_count: IDL.Nat64,
+    total_output_e8s: IDL.Nat64,
+    total_rewards_e8s: IDL.Nat64,
+  });
+  const ContributionIndexFault = IDL.Record({
+    observed_at_ts: IDL.Nat64,
+    last_cursor_tx_id: IDL.Opt(IDL.Nat64),
+    offending_tx_id: IDL.Nat64,
+    message: IDL.Text,
   });
   const PublicStatus = IDL.Record({
     staking_account: Account,
     ledger_canister_id: IDL.Principal,
+    faucet_canister_id: IDL.Principal,
     last_index_run_ts: IDL.Opt(IDL.Nat64),
     index_interval_seconds: IDL.Nat64,
     last_completed_cycles_sweep_ts: IDL.Opt(IDL.Nat64),
@@ -23,6 +31,7 @@ export const idlFactory = ({ IDL }) => {
     heap_memory_bytes: IDL.Opt(IDL.Nat64),
     stable_memory_bytes: IDL.Opt(IDL.Nat64),
     total_memory_bytes: IDL.Opt(IDL.Nat64),
+    contribution_index_fault: IDL.Opt(ContributionIndexFault),
   });
   const ListRegisteredCanisterSummariesArgs = IDL.Record({
     page: IDL.Opt(IDL.Nat32),
@@ -64,18 +73,6 @@ export const idlFactory = ({ IDL }) => {
   const ListRecentContributionsResponse = IDL.Record({
     items: IDL.Vec(RecentContributionListItem),
   });
-  const ListRecentBurnsArgs = IDL.Record({
-    limit: IDL.Opt(IDL.Nat32),
-  });
-  const RecentBurnListItem = IDL.Record({
-    canister_id: IDL.Principal,
-    tx_id: IDL.Nat64,
-    timestamp_nanos: IDL.Opt(IDL.Nat64),
-    amount_e8s: IDL.Nat64,
-  });
-  const ListRecentBurnsResponse = IDL.Record({
-    items: IDL.Vec(RecentBurnListItem),
-  });
   return IDL.Service({
     get_public_counts: IDL.Func([], [PublicCounts], ['query']),
     get_public_status: IDL.Func([], [PublicStatus], ['query']),
@@ -89,7 +86,6 @@ export const idlFactory = ({ IDL }) => {
       [ListRecentContributionsResponse],
       ['query'],
     ),
-    list_recent_burns: IDL.Func([ListRecentBurnsArgs], [ListRecentBurnsResponse], ['query']),
   });
 };
 export const init = ({ IDL }) => {
@@ -99,6 +95,9 @@ export const init = ({ IDL }) => {
   });
   const InitArgs = IDL.Record({
     staking_account: Account,
+    output_source_account: IDL.Opt(Account),
+    output_account: IDL.Opt(Account),
+    rewards_account: IDL.Opt(Account),
     ledger_canister_id: IDL.Opt(IDL.Principal),
     index_canister_id: IDL.Opt(IDL.Principal),
     cmc_canister_id: IDL.Opt(IDL.Principal),

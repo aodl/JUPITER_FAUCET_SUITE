@@ -12,6 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub staking_account: Account,
+    pub output_source_account: Account,
+    pub output_account: Account,
+    pub rewards_account: Account,
     pub ledger_canister_id: Principal,
     pub index_canister_id: Principal,
     #[serde(default)]
@@ -84,6 +87,14 @@ pub struct RecentBurn {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ContributionIndexFault {
+    pub observed_at_ts: u64,
+    pub last_cursor_tx_id: Option<u64>,
+    pub offending_tx_id: u64,
+    pub message: String,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CyclesSample {
     pub timestamp_nanos: u64,
     pub cycles: u128,
@@ -118,9 +129,27 @@ pub struct ActiveCyclesSweep {
     pub next_index: u64,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum IndexedRouteKind {
+    Output,
+    Rewards,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ActiveRouteSweep {
+    pub started_at_ts_nanos: u64,
+    pub next_index: u64,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct StableConfig {
     pub staking_account: Account,
+    #[serde(default)]
+    pub output_source_account: Option<Account>,
+    #[serde(default)]
+    pub output_account: Option<Account>,
+    #[serde(default)]
+    pub rewards_account: Option<Account>,
     pub ledger_canister_id: Principal,
     pub index_canister_id: Principal,
     #[serde(default)]
@@ -157,15 +186,27 @@ pub struct StableCanisterMeta {
 pub struct StableRootState {
     pub config: StableConfig,
     pub last_indexed_staking_tx_id: Option<u64>,
+    #[serde(default)]
+    pub last_indexed_output_tx_id: Option<u64>,
+    #[serde(default)]
+    pub last_indexed_rewards_tx_id: Option<u64>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
+    #[serde(default)]
+    pub last_completed_route_sweep_ts: Option<u64>,
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
+    #[serde(default)]
+    pub active_route_sweep: Option<ActiveRouteSweep>,
     #[serde(default)]
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
     pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
     #[serde(default)]
     pub qualifying_contribution_count: Option<u64>,
+    #[serde(default)]
+    pub total_output_e8s: Option<u64>,
+    #[serde(default)]
+    pub total_rewards_e8s: Option<u64>,
     #[serde(default)]
     pub icp_burned_e8s: Option<u64>,
     #[serde(default)]
@@ -178,6 +219,8 @@ pub struct StableRootState {
     pub recent_burns: Option<Vec<RecentBurn>>,
     #[serde(default)]
     pub last_index_run_ts: Option<u64>,
+    #[serde(default)]
+    pub contribution_index_fault: Option<ContributionIndexFault>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -382,20 +425,28 @@ pub struct State {
     #[serde(default)]
     pub registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
     pub last_indexed_staking_tx_id: Option<u64>,
+    pub last_indexed_output_tx_id: Option<u64>,
+    pub last_indexed_rewards_tx_id: Option<u64>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
+    pub last_completed_route_sweep_ts: Option<u64>,
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
+    #[serde(default)]
+    pub active_route_sweep: Option<ActiveRouteSweep>,
     #[serde(default)]
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
     pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
     pub qualifying_contribution_count: Option<u64>,
+    pub total_output_e8s: Option<u64>,
+    pub total_rewards_e8s: Option<u64>,
     pub icp_burned_e8s: Option<u64>,
     pub recent_contributions: Option<Vec<RecentContribution>>,
     pub recent_under_threshold_contributions: Option<Vec<RecentContribution>>,
     pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
     pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
+    pub contribution_index_fault: Option<ContributionIndexFault>,
 }
 
 impl State {
@@ -410,19 +461,26 @@ impl State {
             registered_canister_summaries_cache: Some(BTreeMap::new()),
             registered_canister_summaries_total_desc_index: Some(Vec::new()),
             last_indexed_staking_tx_id: None,
+            last_indexed_output_tx_id: None,
+            last_indexed_rewards_tx_id: None,
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
+            last_completed_route_sweep_ts: Some(0),
             active_cycles_sweep: None,
+            active_route_sweep: None,
             active_sns_discovery: None,
             main_lock_state_ts: Some(0),
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
             qualifying_contribution_count: Some(0),
+            total_output_e8s: Some(0),
+            total_rewards_e8s: Some(0),
             icp_burned_e8s: Some(0),
             recent_contributions: Some(Vec::new()),
             recent_under_threshold_contributions: Some(Vec::new()),
             recent_invalid_contributions: Some(Vec::new()),
             recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
+            contribution_index_fault: None,
         }
     }
 }
@@ -894,19 +952,26 @@ fn build_root_snapshot(st: &State) -> StableRootState {
     StableRootState {
         config: st.config.clone().into(),
         last_indexed_staking_tx_id: st.last_indexed_staking_tx_id,
+        last_indexed_output_tx_id: st.last_indexed_output_tx_id,
+        last_indexed_rewards_tx_id: st.last_indexed_rewards_tx_id,
         last_sns_discovery_ts: st.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: st.last_completed_cycles_sweep_ts,
+        last_completed_route_sweep_ts: st.last_completed_route_sweep_ts,
         active_cycles_sweep: st.active_cycles_sweep.clone(),
+        active_route_sweep: st.active_route_sweep.clone(),
         active_sns_discovery: st.active_sns_discovery.clone(),
         main_lock_state_ts: st.main_lock_state_ts,
         last_main_run_ts: st.last_main_run_ts,
         qualifying_contribution_count: st.qualifying_contribution_count,
+        total_output_e8s: st.total_output_e8s,
+        total_rewards_e8s: st.total_rewards_e8s,
         icp_burned_e8s: st.icp_burned_e8s,
         recent_contributions: st.recent_contributions.clone(),
         recent_under_threshold_contributions: st.recent_under_threshold_contributions.clone(),
         recent_invalid_contributions: st.recent_invalid_contributions.clone(),
         recent_burns: st.recent_burns.clone(),
         last_index_run_ts: st.last_index_run_ts,
+        contribution_index_fault: st.contribution_index_fault.clone(),
     }
 }
 
@@ -986,19 +1051,26 @@ fn restore_state_current(root: StableRootState) -> State {
         registered_canister_summaries_cache: None,
         registered_canister_summaries_total_desc_index: None,
         last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
+        last_indexed_output_tx_id: root.last_indexed_output_tx_id,
+        last_indexed_rewards_tx_id: root.last_indexed_rewards_tx_id,
         last_sns_discovery_ts: root.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
+        last_completed_route_sweep_ts: root.last_completed_route_sweep_ts.or(Some(0)),
         active_cycles_sweep: root.active_cycles_sweep,
+        active_route_sweep: root.active_route_sweep,
         active_sns_discovery: root.active_sns_discovery,
         main_lock_state_ts: root.main_lock_state_ts,
         last_main_run_ts: root.last_main_run_ts,
         qualifying_contribution_count: root.qualifying_contribution_count,
+        total_output_e8s: root.total_output_e8s.or(Some(0)),
+        total_rewards_e8s: root.total_rewards_e8s.or(Some(0)),
         icp_burned_e8s: root.icp_burned_e8s,
         recent_contributions: root.recent_contributions,
         recent_under_threshold_contributions: root.recent_under_threshold_contributions,
         recent_invalid_contributions: root.recent_invalid_contributions,
         recent_burns: root.recent_burns,
         last_index_run_ts: root.last_index_run_ts,
+        contribution_index_fault: root.contribution_index_fault,
     };
     rebuild_distinct_canisters(&mut st);
     st
@@ -1223,6 +1295,9 @@ impl From<Config> for StableConfig {
     fn from(value: Config) -> Self {
         Self {
             staking_account: value.staking_account,
+            output_source_account: Some(value.output_source_account),
+            output_account: Some(value.output_account),
+            rewards_account: Some(value.rewards_account),
             ledger_canister_id: value.ledger_canister_id,
             index_canister_id: value.index_canister_id,
             cmc_canister_id: value.cmc_canister_id,
@@ -1245,6 +1320,9 @@ impl From<StableConfig> for Config {
     fn from(value: StableConfig) -> Self {
         Self {
             staking_account: value.staking_account,
+            output_source_account: value.output_source_account.unwrap_or_else(crate::mainnet_disburser_staging_account),
+            output_account: value.output_account.unwrap_or_else(crate::mainnet_output_account),
+            rewards_account: value.rewards_account.unwrap_or_else(crate::mainnet_rewards_account),
             ledger_canister_id: value.ledger_canister_id,
             index_canister_id: value.index_canister_id,
             cmc_canister_id: value.cmc_canister_id,
@@ -1322,6 +1400,9 @@ mod tests {
     fn sample_config() -> Config {
         Config {
             staking_account: Account { owner: principal(&[1]), subaccount: None },
+            output_source_account: Account { owner: principal(&[11]), subaccount: None },
+            output_account: Account { owner: principal(&[12]), subaccount: Some([3u8; 32]) },
+            rewards_account: Account { owner: principal(&[13]), subaccount: None },
             ledger_canister_id: principal(&[2]),
             index_canister_id: principal(&[3]),
             cmc_canister_id: Some(principal(&[4])),

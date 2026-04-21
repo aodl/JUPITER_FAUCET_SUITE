@@ -10,15 +10,14 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::state::{
-    CanisterMeta, CanisterSource, Config, ContributionSample, CyclesSample, InvalidContribution,
-    RecentBurn, RecentContribution, State,
+    CanisterMeta, CanisterSource, Config, ContributionIndexFault, ContributionSample, CyclesSample,
+    InvalidContribution, RecentContribution, State,
 };
 
 pub(crate) const MAX_PUBLIC_QUERY_LIMIT: u32 = 100;
 pub(crate) const MAX_RECENT_QUALIFYING_CONTRIBUTIONS: usize = 500;
 pub(crate) const MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS: usize = 100;
 pub(crate) const MAX_RECENT_INVALID_CONTRIBUTIONS: usize = 100;
-pub(crate) const MAX_RECENT_BURNS: usize = 500;
 pub(crate) const MAX_CONTRIBUTION_ENTRIES_PER_CANISTER_HARD_CAP: u32 = 250;
 pub(crate) const MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP: u32 = 250;
 pub(crate) const MAX_INDEX_PAGES_PER_TICK_HARD_CAP: u32 = 100;
@@ -31,8 +30,15 @@ fn assert_non_anonymous_principal(name: &str, principal: Principal) {
     assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
 }
 
+fn assert_non_anonymous_account(name: &str, account: &Account) {
+    assert_non_anonymous_principal(&format!("{name}.owner"), account.owner);
+}
+
 fn validate_config(cfg: &Config) {
-    assert_non_anonymous_principal("staking_account.owner", cfg.staking_account.owner);
+    assert_non_anonymous_account("staking_account", &cfg.staking_account);
+    assert_non_anonymous_account("output_source_account", &cfg.output_source_account);
+    assert_non_anonymous_account("output_account", &cfg.output_account);
+    assert_non_anonymous_account("rewards_account", &cfg.rewards_account);
     assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
     assert_non_anonymous_principal("blackhole_canister_id", cfg.blackhole_canister_id);
@@ -43,6 +49,9 @@ fn validate_config(cfg: &Config) {
     if let Some(faucet_canister_id) = cfg.faucet_canister_id {
         assert_non_anonymous_principal("faucet_canister_id", faucet_canister_id);
     }
+    assert!(cfg.output_source_account != cfg.output_account, "output_source_account and output_account must be distinct");
+    assert!(cfg.output_source_account != cfg.rewards_account, "output_source_account and rewards_account must be distinct");
+    assert!(cfg.output_account != cfg.rewards_account, "output_account and rewards_account must be distinct");
     assert!(cfg.scan_interval_seconds > 0, "scan_interval_seconds must be greater than 0");
     assert!(cfg.cycles_interval_seconds > 0, "cycles_interval_seconds must be greater than 0");
     assert!(cfg.min_tx_e8s >= MIN_MIN_TX_E8S, "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)");
@@ -53,10 +62,6 @@ fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
 }
 
 fn invalid_contribution_sort_key(item: &InvalidContribution) -> (u64, u64) {
-    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
-}
-
-fn burn_sort_key(item: &RecentBurn) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
@@ -113,13 +118,6 @@ fn normalize_recent_invalid_contributions(items: &mut Vec<InvalidContribution>) 
     let mut seen = BTreeSet::new();
     items.retain(|item| seen.insert(item.tx_id));
     items.truncate(MAX_RECENT_INVALID_CONTRIBUTIONS);
-}
-
-fn normalize_recent_burns(items: &mut Vec<RecentBurn>) {
-    items.sort_by(|a, b| burn_sort_key(b).cmp(&burn_sort_key(a)));
-    let mut seen = BTreeSet::new();
-    items.retain(|item| seen.insert(item.tx_id));
-    items.truncate(MAX_RECENT_BURNS);
 }
 
 fn memo_source_is_registered(st: &State, canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
@@ -231,11 +229,6 @@ fn normalize_runtime_state(st: &mut State) {
     normalize_recent_invalid_contributions(&mut recent_invalid);
     st.recent_invalid_contributions = Some(recent_invalid);
 
-    let mut recent_burns = st.recent_burns.take().unwrap_or_default();
-    recent_burns.extend(fallback_recent_burns_state(st));
-    normalize_recent_burns(&mut recent_burns);
-    st.recent_burns = Some(recent_burns);
-
     st.qualifying_contribution_count = Some(fallback_qualifying_contribution_count(st));
 
     let contribution_last_ts: BTreeMap<_, _> = contribution_history_canister_ids(st)
@@ -269,6 +262,9 @@ fn normalize_runtime_state(st: &mut State) {
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
     pub staking_account: Account,
+    pub output_source_account: Option<Account>,
+    pub output_account: Option<Account>,
+    pub rewards_account: Option<Account>,
     pub ledger_canister_id: Option<Principal>,
     pub index_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
@@ -287,7 +283,14 @@ pub struct InitArgs {
 
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
+    pub staking_account: Option<Account>,
+    pub ledger_canister_id: Option<Principal>,
+    pub index_canister_id: Option<Principal>,
     pub enable_sns_tracking: Option<bool>,
+    pub clear_contribution_index_fault: Option<bool>,
+    pub output_source_account: Option<Account>,
+    pub output_account: Option<Account>,
+    pub rewards_account: Option<Account>,
     pub scan_interval_seconds: Option<u64>,
     pub cycles_interval_seconds: Option<u64>,
     pub min_tx_e8s: Option<u64>,
@@ -361,14 +364,16 @@ pub struct CanisterOverview {
 pub struct PublicCounts {
     pub registered_canister_count: u64,
     pub qualifying_contribution_count: u64,
-    pub icp_burned_e8s: u64,
     pub sns_discovered_canister_count: u64,
+    pub total_output_e8s: u64,
+    pub total_rewards_e8s: u64,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct PublicStatus {
     pub staking_account: Account,
     pub ledger_canister_id: Principal,
+    pub faucet_canister_id: Principal,
     pub last_index_run_ts: Option<u64>,
     pub index_interval_seconds: u64,
     pub last_completed_cycles_sweep_ts: Option<u64>,
@@ -376,6 +381,7 @@ pub struct PublicStatus {
     pub heap_memory_bytes: Option<u64>,
     pub stable_memory_bytes: Option<u64>,
     pub total_memory_bytes: Option<u64>,
+    pub contribution_index_fault: Option<ContributionIndexFault>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
@@ -432,24 +438,6 @@ pub struct ListRecentContributionsResponse {
     pub items: Vec<RecentContributionListItem>,
 }
 
-#[derive(CandidType, Deserialize, Clone, Default)]
-pub struct ListRecentBurnsArgs {
-    pub limit: Option<u32>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RecentBurnListItem {
-    pub canister_id: Principal,
-    pub tx_id: u64,
-    pub timestamp_nanos: Option<u64>,
-    pub amount_e8s: u64,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct ListRecentBurnsResponse {
-    pub items: Vec<RecentBurnListItem>,
-}
-
 fn mainnet_ledger_id() -> Principal {
     Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("invalid hardcoded ledger principal")
 }
@@ -460,6 +448,26 @@ fn mainnet_index_id() -> Principal {
 
 fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
+}
+
+pub(crate) fn mainnet_disburser_id() -> Principal {
+    Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai").expect("invalid hardcoded disburser principal")
+}
+
+pub(crate) fn mainnet_rewards_id() -> Principal {
+    Principal::from_text("alk7f-5aaaa-aaaar-qb4ra-cai").expect("invalid hardcoded rewards principal")
+}
+
+pub(crate) fn mainnet_disburser_staging_account() -> Account {
+    Account { owner: mainnet_disburser_id(), subaccount: None }
+}
+
+pub(crate) fn mainnet_output_account() -> Account {
+    Account { owner: mainnet_faucet_id(), subaccount: None }
+}
+
+pub(crate) fn mainnet_rewards_account() -> Account {
+    Account { owner: mainnet_rewards_id(), subaccount: None }
 }
 
 pub(crate) fn mainnet_cmc_id() -> Principal {
@@ -494,6 +502,9 @@ fn guard_debug_api_not_production() {
 fn config_from_init_args(args: InitArgs) -> Config {
     let cfg = Config {
         staking_account: args.staking_account,
+        output_source_account: args.output_source_account.unwrap_or_else(mainnet_disburser_staging_account),
+        output_account: args.output_account.unwrap_or_else(mainnet_output_account),
+        rewards_account: args.rewards_account.unwrap_or_else(mainnet_rewards_account),
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: Some(args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id)),
@@ -530,22 +541,6 @@ fn count_sns_discovered_canisters(st: &State) -> u64 {
 
 fn effective_faucet_canister_id(st: &State) -> Principal {
     st.config.faucet_canister_id.clone().unwrap_or_else(mainnet_faucet_id)
-}
-
-pub(crate) fn burn_target_canisters(st: &State) -> BTreeSet<Principal> {
-    let mut out: BTreeSet<Principal> = st
-        .canister_sources
-        .iter()
-        .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
-        .map(|(canister_id, _)| *canister_id)
-        .collect();
-    for (canister_id, meta) in st.per_canister_meta.iter() {
-        if meta.last_burn_tx_id.is_some() || meta.burned_e8s > 0 {
-            out.insert(*canister_id);
-        }
-    }
-    out.insert(effective_faucet_canister_id(st));
-    out
 }
 
 fn qualifying_rollup(history: &[ContributionSample]) -> (u64, u64, Option<u64>) {
@@ -602,12 +597,6 @@ fn fallback_qualifying_contribution_count(st: &State) -> u64 {
         .count() as u64
 }
 
-fn fallback_icp_burned_e8s(st: &State) -> u64 {
-    st.per_canister_meta
-        .values()
-        .fold(0u64, |acc, meta| acc.saturating_add(meta.burned_e8s))
-}
-
 fn fallback_recent_qualifying_contributions_state(st: &State) -> Vec<RecentContribution> {
     let mut items: Vec<_> = contribution_history_canister_ids(st)
         .into_iter()
@@ -645,27 +634,6 @@ fn fallback_recent_under_threshold_contributions_state(st: &State) -> Vec<Recent
         })
         .collect();
     normalize_recent_contribution_bucket(&mut items, false, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS);
-    items
-}
-
-fn fallback_recent_burns_state(st: &State) -> Vec<RecentBurn> {
-    let mut items: Vec<_> = st
-        .per_canister_meta
-        .iter()
-        .filter_map(|(canister_id, meta)| {
-            let tx_id = meta.last_burn_tx_id?;
-            if meta.burned_e8s == 0 {
-                return None;
-            }
-            Some(RecentBurn {
-                canister_id: *canister_id,
-                tx_id,
-                timestamp_nanos: None,
-                amount_e8s: meta.burned_e8s,
-            })
-        })
-        .collect();
-    normalize_recent_burns(&mut items);
     items
 }
 
@@ -722,14 +690,20 @@ fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.faucet_canister_id.is_none() {
         st.config.faucet_canister_id = Some(mainnet_faucet_id());
     }
+    if st.total_output_e8s.is_none() {
+        st.total_output_e8s = Some(0);
+    }
+    if st.total_rewards_e8s.is_none() {
+        st.total_rewards_e8s = Some(0);
+    }
+    if st.last_completed_route_sweep_ts.is_none() {
+        st.last_completed_route_sweep_ts = Some(0);
+    }
 }
 
 fn initialize_derived_state_if_missing(st: &mut State) {
     if st.qualifying_contribution_count.is_none() {
         st.qualifying_contribution_count = Some(fallback_qualifying_contribution_count(st));
-    }
-    if st.icp_burned_e8s.is_none() {
-        st.icp_burned_e8s = Some(fallback_icp_burned_e8s(st));
     }
     if st.recent_contributions.is_none() {
         st.recent_contributions = Some(fallback_recent_qualifying_contributions_state(st));
@@ -739,9 +713,6 @@ fn initialize_derived_state_if_missing(st: &mut State) {
     }
     if st.recent_invalid_contributions.is_none() {
         st.recent_invalid_contributions = Some(Vec::new());
-    }
-    if st.recent_burns.is_none() {
-        st.recent_burns = Some(fallback_recent_burns_state(st));
     }
     if st.last_index_run_ts.is_none() {
         st.last_index_run_ts = Some(st.last_main_run_ts);
@@ -884,6 +855,15 @@ fn init(args: InitArgs) {
 
 fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
+        if let Some(v) = args.staking_account {
+            st.config.staking_account = v;
+        }
+        if let Some(v) = args.ledger_canister_id {
+            st.config.ledger_canister_id = v;
+        }
+        if let Some(v) = args.index_canister_id {
+            st.config.index_canister_id = v;
+        }
         if let Some(v) = args.enable_sns_tracking {
             st.config.enable_sns_tracking = v;
         }
@@ -919,6 +899,18 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         }
         if let Some(v) = args.faucet_canister_id {
             st.config.faucet_canister_id = Some(v);
+        }
+        if let Some(v) = args.output_source_account {
+            st.config.output_source_account = v;
+        }
+        if let Some(v) = args.output_account {
+            st.config.output_account = v;
+        }
+        if let Some(v) = args.rewards_account {
+            st.config.rewards_account = v;
+        }
+        if args.clear_contribution_index_fault.unwrap_or(false) {
+            st.contribution_index_fault = None;
         }
     }
     initialize_derived_state_if_missing(st);
@@ -1082,8 +1074,9 @@ fn get_public_counts() -> PublicCounts {
         qualifying_contribution_count: st
             .qualifying_contribution_count
             .unwrap_or_else(|| fallback_qualifying_contribution_count(st)),
-        icp_burned_e8s: st.icp_burned_e8s.unwrap_or_else(|| fallback_icp_burned_e8s(st)),
         sns_discovered_canister_count: count_sns_discovered_canisters(st),
+        total_output_e8s: st.total_output_e8s.unwrap_or(0),
+        total_rewards_e8s: st.total_rewards_e8s.unwrap_or(0),
     })
 }
 
@@ -1094,6 +1087,7 @@ fn get_public_status() -> PublicStatus {
     state::with_state(|st| PublicStatus {
         staking_account: st.config.staking_account.clone(),
         ledger_canister_id: st.config.ledger_canister_id,
+        faucet_canister_id: effective_faucet_canister_id(st),
         last_index_run_ts: st.last_index_run_ts.or(Some(st.last_main_run_ts)),
         index_interval_seconds: st.config.scan_interval_seconds,
         last_completed_cycles_sweep_ts: if st.last_completed_cycles_sweep_ts == 0 {
@@ -1105,6 +1099,7 @@ fn get_public_status() -> PublicStatus {
         heap_memory_bytes: Some(heap_memory_bytes),
         stable_memory_bytes: Some(stable_memory_bytes),
         total_memory_bytes: Some(heap_memory_bytes.saturating_add(stable_memory_bytes)),
+        contribution_index_fault: st.contribution_index_fault.clone(),
     })
 }
 
@@ -1195,35 +1190,21 @@ fn list_recent_contributions(args: ListRecentContributionsArgs) -> ListRecentCon
     })
 }
 
-#[ic_cdk::query]
-fn list_recent_burns(args: ListRecentBurnsArgs) -> ListRecentBurnsResponse {
-    state::with_state(|st| {
-        let limit = clamp_public_limit(args.limit, 20);
-        let mut items = st.recent_burns.clone().unwrap_or_default();
-        items.truncate(limit);
-        ListRecentBurnsResponse {
-            items: items
-                .into_iter()
-                .map(|item| RecentBurnListItem {
-                    canister_id: item.canister_id,
-                    tx_id: item.tx_id,
-                    timestamp_nanos: item.timestamp_nanos,
-                    amount_e8s: item.amount_e8s,
-                })
-                .collect(),
-        }
-    })
-}
 
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
 pub struct DebugState {
     pub distinct_canister_count: u32,
     pub last_indexed_staking_tx_id: Option<u64>,
+    pub last_indexed_output_tx_id: Option<u64>,
+    pub last_indexed_rewards_tx_id: Option<u64>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
+    pub last_completed_route_sweep_ts: Option<u64>,
     pub active_cycles_sweep_present: bool,
     pub active_cycles_sweep_next_index: Option<u64>,
+    pub active_route_sweep_present: bool,
+    pub active_route_sweep_next_index: Option<u64>,
     pub last_index_run_ts: Option<u64>,
 }
 
@@ -1231,6 +1212,9 @@ pub struct DebugState {
 #[derive(CandidType, Deserialize)]
 pub struct DebugConfig {
     pub staking_account: Account,
+    pub output_source_account: Account,
+    pub output_account: Account,
+    pub rewards_account: Account,
     pub ledger_canister_id: Principal,
     pub index_canister_id: Principal,
     pub cmc_canister_id: Option<Principal>,
@@ -1254,10 +1238,15 @@ fn debug_state() -> DebugState {
     state::with_state(|st| DebugState {
         distinct_canister_count: st.distinct_canisters.len() as u32,
         last_indexed_staking_tx_id: st.last_indexed_staking_tx_id,
+        last_indexed_output_tx_id: st.last_indexed_output_tx_id,
+        last_indexed_rewards_tx_id: st.last_indexed_rewards_tx_id,
         last_sns_discovery_ts: st.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: st.last_completed_cycles_sweep_ts,
+        last_completed_route_sweep_ts: st.last_completed_route_sweep_ts,
         active_cycles_sweep_present: st.active_cycles_sweep.is_some(),
         active_cycles_sweep_next_index: st.active_cycles_sweep.as_ref().map(|s| s.next_index),
+        active_route_sweep_present: st.active_route_sweep.is_some(),
+        active_route_sweep_next_index: st.active_route_sweep.as_ref().map(|s| s.next_index),
         last_index_run_ts: st.last_index_run_ts,
     })
 }
@@ -1268,6 +1257,9 @@ fn debug_config() -> DebugConfig {
     guard_debug_api_not_production();
     state::with_state(|st| DebugConfig {
         staking_account: st.config.staking_account.clone(),
+        output_source_account: st.config.output_source_account.clone(),
+        output_account: st.config.output_account.clone(),
+        rewards_account: st.config.rewards_account.clone(),
         ledger_canister_id: st.config.ledger_canister_id,
         index_canister_id: st.config.index_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
@@ -1342,18 +1334,23 @@ fn debug_reset_derived_state() {
         st.cycles_history.clear();
         st.per_canister_meta.clear();
         st.last_indexed_staking_tx_id = None;
+        st.last_indexed_output_tx_id = None;
+        st.last_indexed_rewards_tx_id = None;
         st.last_sns_discovery_ts = 0;
         st.last_completed_cycles_sweep_ts = 0;
+        st.last_completed_route_sweep_ts = Some(0);
         st.active_cycles_sweep = None;
+        st.active_route_sweep = None;
         st.main_lock_state_ts = Some(0);
         st.last_main_run_ts = 0;
         st.qualifying_contribution_count = Some(0);
-        st.icp_burned_e8s = Some(0);
+        st.total_output_e8s = Some(0);
+        st.total_rewards_e8s = Some(0);
         st.recent_contributions = Some(Vec::new());
         st.recent_under_threshold_contributions = Some(Vec::new());
         st.recent_invalid_contributions = Some(Vec::new());
-        st.recent_burns = Some(Vec::new());
         st.last_index_run_ts = Some(0);
+        st.contribution_index_fault = None;
         st.registered_canister_summaries_cache = Some(BTreeMap::new());
         st.registered_canister_summaries_total_desc_index = Some(Vec::new());
     });
@@ -1387,6 +1384,9 @@ mod tests {
         State {
             config: Config {
                 staking_account: sample_account(),
+                output_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
+                output_account: Account { owner: principal("acjuz-liaaa-aaaar-qb4qq-cai"), subaccount: None },
+                rewards_account: Account { owner: principal("alk7f-5aaaa-aaaar-qb4ra-cai"), subaccount: None },
                 ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
@@ -1408,52 +1408,39 @@ mod tests {
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
             last_indexed_staking_tx_id: None,
+            last_indexed_output_tx_id: None,
+            last_indexed_rewards_tx_id: None,
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
+            last_completed_route_sweep_ts: Some(0),
             active_cycles_sweep: None,
+            active_route_sweep: None,
             active_sns_discovery: None,
             main_lock_state_ts: Some(0),
             last_main_run_ts: 1,
             qualifying_contribution_count: None,
+            total_output_e8s: None,
+            total_rewards_e8s: None,
             icp_burned_e8s: None,
             recent_contributions: None,
             recent_under_threshold_contributions: None,
             recent_invalid_contributions: None,
             recent_burns: None,
             last_index_run_ts: None,
+            contribution_index_fault: None,
             registered_canister_summaries_cache: None,
             registered_canister_summaries_total_desc_index: None,
         }
     }
 
-    #[test]
-    fn initialize_derived_state_reconstructs_recent_burns_from_meta_fallback() {
-        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let mut st = base_state();
-        st.per_canister_meta.insert(
-            canister,
-            CanisterMeta {
-                last_burn_tx_id: Some(77),
-                burned_e8s: 123_456_789,
-                ..CanisterMeta::default()
-            },
-        );
-
-        initialize_derived_state_if_missing(&mut st);
-
-        assert_eq!(st.icp_burned_e8s, Some(123_456_789));
-        let burns = st.recent_burns.clone().expect("recent burns should be reconstructed");
-        assert_eq!(burns.len(), 1);
-        assert_eq!(burns[0].canister_id, canister);
-        assert_eq!(burns[0].tx_id, 77);
-        assert_eq!(burns[0].amount_e8s, 123_456_789);
-        assert_eq!(burns[0].timestamp_nanos, None);
-    }
 
     #[test]
     fn config_from_init_args_uses_mainnet_defaults_for_optional_canisters() {
         let cfg = config_from_init_args(InitArgs {
             staking_account: sample_account(),
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
             ledger_canister_id: None,
             index_canister_id: None,
             cmc_canister_id: None,
@@ -1473,6 +1460,9 @@ mod tests {
         assert_eq!(cfg.ledger_canister_id, mainnet_ledger_id());
         assert_eq!(cfg.index_canister_id, mainnet_index_id());
         assert_eq!(cfg.blackhole_canister_id, mainnet_blackhole_id());
+        assert_eq!(cfg.output_source_account, mainnet_disburser_staging_account());
+        assert_eq!(cfg.output_account, mainnet_output_account());
+        assert_eq!(cfg.rewards_account, mainnet_rewards_account());
         assert_eq!(cfg.cmc_canister_id, Some(mainnet_cmc_id()));
         assert_eq!(cfg.faucet_canister_id, Some(mainnet_faucet_id()));
         assert_eq!(cfg.sns_wasm_canister_id, mainnet_sns_wasm_id());
@@ -1485,6 +1475,9 @@ mod tests {
     fn config_validation_accepts_minimum_supported_threshold() {
         let mut cfg = config_from_init_args(InitArgs {
             staking_account: sample_account(),
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
             ledger_canister_id: None,
             index_canister_id: None,
             cmc_canister_id: None,
@@ -1655,6 +1648,9 @@ mod tests {
     fn config_from_init_args_rejects_threshold_below_minimum() {
         let _ = config_from_init_args(InitArgs {
             staking_account: sample_account(),
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
             ledger_canister_id: None,
             index_canister_id: None,
             cmc_canister_id: None,
@@ -1686,6 +1682,12 @@ mod tests {
             }],
         );
         st.main_lock_state_ts = Some(99);
+        st.contribution_index_fault = Some(ContributionIndexFault {
+            observed_at_ts: 77,
+            last_cursor_tx_id: Some(66),
+            offending_tx_id: 77,
+            message: "latched".to_string(),
+        });
 
         let original_account = st.config.staking_account.clone();
         let original_ledger = st.config.ledger_canister_id;
@@ -1694,7 +1696,14 @@ mod tests {
         apply_upgrade_args(
             &mut st,
             Some(UpgradeArgs {
+                staking_account: None,
+                ledger_canister_id: None,
+                index_canister_id: None,
                 enable_sns_tracking: Some(true),
+                clear_contribution_index_fault: Some(true),
+                output_source_account: None,
+                output_account: None,
+                rewards_account: None,
                 scan_interval_seconds: Some(123),
                 cycles_interval_seconds: Some(456),
                 min_tx_e8s: Some(MIN_MIN_TX_E8S),
@@ -1810,8 +1819,9 @@ mod tests {
         let counts = get_public_counts();
         assert_eq!(counts.registered_canister_count, 1);
         assert_eq!(counts.qualifying_contribution_count, 1);
-        assert_eq!(counts.icp_burned_e8s, 0);
         assert_eq!(counts.sns_discovered_canister_count, 1);
+        assert_eq!(counts.total_output_e8s, 0);
+        assert_eq!(counts.total_rewards_e8s, 0);
     }
 
     #[test]
@@ -1833,7 +1843,6 @@ mod tests {
         let counts = get_public_counts();
         assert_eq!(counts.registered_canister_count, 0);
         assert_eq!(counts.qualifying_contribution_count, 0);
-        assert_eq!(counts.icp_burned_e8s, 0);
         assert_eq!(counts.sns_discovered_canister_count, 0);
     }
 
@@ -1896,25 +1905,6 @@ mod tests {
         assert!(get_canister_overview(canister).is_none());
     }
 
-    #[test]
-    fn burn_targets_exclude_non_qualifying_memo_only_canisters() {
-        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let mut st = base_state();
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoContribution]));
-        st.contribution_history.insert(
-            canister,
-            vec![ContributionSample {
-                tx_id: 1,
-                timestamp_nanos: Some(1_000_000_000),
-                amount_e8s: 5_000_000,
-                counts_toward_faucet: false,
-            }],
-        );
-
-        let targets = burn_target_canisters(&st);
-        assert!(!targets.contains(&canister));
-        assert!(targets.contains(&effective_faucet_canister_id(&st)));
-    }
 
     #[test]
     fn list_registered_canister_summaries_uses_canister_id_as_tie_breaker_for_stable_pagination() {
@@ -2070,17 +2060,8 @@ mod tests {
                 },
             ],
         );
-        st.per_canister_meta.insert(
-            canister,
-            CanisterMeta {
-                burned_e8s: 300,
-                ..Default::default()
-            },
-        );
-
         initialize_derived_state_if_missing(&mut st);
         assert_eq!(st.qualifying_contribution_count, Some(2));
-        assert_eq!(st.icp_burned_e8s, Some(300));
         assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 3);
     }
 

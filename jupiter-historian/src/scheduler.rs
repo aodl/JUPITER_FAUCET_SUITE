@@ -2,24 +2,80 @@ use candid::Nat;
 use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;
-use crate::clients::index::{account_identifier_text, IcpIndexCanister, IndexOperation};
+use crate::clients::index::{account_identifier_text, IcpIndexCanister};
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::{BlackholeClient, IndexClient, SnsRootClient, SnsWasmClient};
 use crate::{
-    logic, mainnet_cmc_id, MAX_RECENT_BURNS, MAX_RECENT_INVALID_CONTRIBUTIONS,
-    MAX_RECENT_QUALIFYING_CONTRIBUTIONS, MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+    logic, MAX_RECENT_INVALID_CONTRIBUTIONS, MAX_RECENT_QUALIFYING_CONTRIBUTIONS,
+    MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
 };
-use crate::state::{self, ActiveCyclesSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CyclesProbeResult, CyclesSampleSource, InvalidContribution, RecentBurn, RecentContribution};
+use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, ContributionIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidContribution, RecentContribution};
 
 const PAGE_SIZE: u64 = 500;
 const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
 
-fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
-    (item.timestamp_nanos.unwrap_or(0), item.tx_id)
+
+fn indexed_route_kinds() -> [IndexedRouteKind; 2] {
+    [IndexedRouteKind::Output, IndexedRouteKind::Rewards]
 }
 
-fn burn_sort_key(item: &RecentBurn) -> (u64, u64) {
+fn indexed_route_name(kind: &IndexedRouteKind) -> &'static str {
+    match kind {
+        IndexedRouteKind::Output => "output",
+        IndexedRouteKind::Rewards => "rewards",
+    }
+}
+
+fn indexed_route_account(cfg: &state::Config, kind: &IndexedRouteKind) -> icrc_ledger_types::icrc1::account::Account {
+    match kind {
+        IndexedRouteKind::Output => cfg.output_account.clone(),
+        IndexedRouteKind::Rewards => cfg.rewards_account.clone(),
+    }
+}
+
+fn indexed_route_cursor(st: &state::State, kind: &IndexedRouteKind) -> Option<u64> {
+    match kind {
+        IndexedRouteKind::Output => st.last_indexed_output_tx_id,
+        IndexedRouteKind::Rewards => st.last_indexed_rewards_tx_id,
+    }
+}
+
+fn set_indexed_route_cursor(st: &mut state::State, kind: &IndexedRouteKind, cursor: Option<u64>) {
+    match kind {
+        IndexedRouteKind::Output => st.last_indexed_output_tx_id = cursor,
+        IndexedRouteKind::Rewards => st.last_indexed_rewards_tx_id = cursor,
+    }
+}
+
+fn add_indexed_route_amount(st: &mut state::State, kind: &IndexedRouteKind, amount_e8s: u64) {
+    match kind {
+        IndexedRouteKind::Output => {
+            let total = st.total_output_e8s.get_or_insert(0);
+            *total = total.saturating_add(amount_e8s);
+        }
+        IndexedRouteKind::Rewards => {
+            let total = st.total_rewards_e8s.get_or_insert(0);
+            *total = total.saturating_add(amount_e8s);
+        }
+    }
+}
+
+fn indexed_route_amount_from_tx(
+    tx: &crate::clients::index::IndexTransactionWithId,
+    expected_from: &str,
+    expected_to: &str,
+) -> Option<u64> {
+    match &tx.transaction.operation {
+        crate::clients::index::IndexOperation::Transfer { from, to, amount, .. }
+            if from == expected_from && to == expected_to => Some(amount.e8s()),
+        crate::clients::index::IndexOperation::TransferFrom { from, to, amount, .. }
+            if from == expected_from && to == expected_to => Some(amount.e8s()),
+        _ => None,
+    }
+}
+
+fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
@@ -42,17 +98,6 @@ fn push_recent_invalid_contribution(recent: &mut Vec<InvalidContribution>, item:
     recent.sort_by(|a, b| (b.timestamp_nanos.unwrap_or(0), b.tx_id).cmp(&(a.timestamp_nanos.unwrap_or(0), a.tx_id)));
     if recent.len() > MAX_RECENT_INVALID_CONTRIBUTIONS {
         recent.truncate(MAX_RECENT_INVALID_CONTRIBUTIONS);
-    }
-}
-
-fn push_recent_burn(recent: &mut Vec<RecentBurn>, item: RecentBurn) {
-    if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
-        return;
-    }
-    recent.push(item);
-    recent.sort_by(|a, b| burn_sort_key(b).cmp(&burn_sort_key(a)));
-    if recent.len() > MAX_RECENT_BURNS {
-        recent.truncate(MAX_RECENT_BURNS);
     }
 }
 
@@ -81,6 +126,27 @@ fn log_error(message: &str) {
     {
         ic_cdk::println!("ERR:{}", message);
     }
+}
+
+fn latch_contribution_index_fault(now_secs: u64, last_cursor_tx_id: Option<u64>, offending_tx_id: u64, message: String) -> String {
+    state::with_root_state_mut(|st| {
+        match st.contribution_index_fault.as_mut() {
+            Some(existing) => {
+                existing.last_cursor_tx_id = last_cursor_tx_id;
+                existing.offending_tx_id = offending_tx_id;
+                existing.message = message.clone();
+            }
+            None => {
+                st.contribution_index_fault = Some(ContributionIndexFault {
+                    observed_at_ts: now_secs,
+                    last_cursor_tx_id,
+                    offending_tx_id,
+                    message: message.clone(),
+                });
+            }
+        }
+    });
+    message
 }
 
 struct MainGuard {
@@ -175,8 +241,10 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     sns_wasm: &W,
     sns_root: &R,
 ) -> Result<(), String> {
-    process_contribution_indexing(index, now_secs).await?;
-    process_burn_indexing(index).await?;
+    if let Err(err) = process_contribution_indexing(index, now_secs).await {
+        log_error(&format!("historian contribution indexing degraded: {err}"));
+    }
+    process_route_indexing(now_nanos, now_secs, index).await?;
 
     let (enable_sns_tracking, last_sns_discovery_ts, last_completed_cycles_sweep_ts, active_cycles_present, active_sns_present, interval_secs) = state::with_state(|st| (
         st.config.enable_sns_tracking,
@@ -244,6 +312,7 @@ fn apply_verified_qualifying_contribution(
 
 async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
     let cfg = state::with_state(|st| st.config.clone());
+    let had_fault = state::with_state(|st| st.contribution_index_fault.is_some());
     let staking_id = account_identifier_text(&cfg.staking_account);
     let mut cursor = state::with_state(|st| st.last_indexed_staking_tx_id);
     for _ in 0..cfg.max_index_pages_per_tick.max(1) {
@@ -257,6 +326,22 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
         {
             let _batch = state::begin_persistence_batch();
             for tx in page.transactions.iter() {
+                if let Some(prev) = cursor {
+                    if tx.id == prev {
+                        continue;
+                    }
+                    if tx.id < prev {
+                        return Err(latch_contribution_index_fault(
+                            now_secs,
+                            cursor,
+                            tx.id,
+                            format!(
+                                "historian observed non-monotonic staking-account tx_id {} after cursor {:?}",
+                                tx.id, cursor,
+                            ),
+                        ));
+                    }
+                }
                 if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
                     match contribution {
                         logic::IndexedContributionEntry::Valid(contribution) => {
@@ -311,94 +396,92 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
             break;
         }
     }
-    state::with_root_state_mut(|st| st.last_index_run_ts = Some(now_secs));
+    state::with_root_state_mut(|st| {
+        st.last_index_run_ts = Some(now_secs);
+        if had_fault {
+            st.contribution_index_fault = None;
+        }
+    });
     Ok(())
 }
 
-async fn process_burn_indexing<I: IndexClient>(index: &I) -> Result<(), String> {
-    let (max_pages_per_tick, cmc_id, targets) = state::with_state(|st| (
-        st.config.max_index_pages_per_tick.max(1),
-        st.config.cmc_canister_id.clone().unwrap_or_else(mainnet_cmc_id),
-        crate::burn_target_canisters(st).into_iter().collect::<Vec<_>>(),
-    ));
-
-    for canister_id in targets {
-        let deposit_account = logic::cmc_deposit_account(cmc_id, canister_id);
-        let deposit_account_id = account_identifier_text(&deposit_account);
-        let mut cursor = state::with_state(|st| {
-            st.per_canister_meta
-                .get(&canister_id)
-                .and_then(|m| m.last_burn_scan_tx_id.or(m.last_burn_tx_id))
+async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_secs: u64, index: &I) -> Result<(), String> {
+    let cfg = state::with_state(|st| st.config.clone());
+    let routes = indexed_route_kinds();
+    let active = state::with_root_state_mut(|st| {
+        if st.active_route_sweep.is_none() {
+            st.active_route_sweep = Some(ActiveRouteSweep {
+                started_at_ts_nanos,
+                next_index: 0,
+            });
+        }
+        st.active_route_sweep.clone().expect("active route sweep")
+    });
+    if active.next_index as usize >= routes.len() {
+        state::with_root_state_mut(|st| {
+            st.active_route_sweep = None;
+            st.last_completed_route_sweep_ts = Some(now_secs);
         });
-        for _ in 0..max_pages_per_tick {
-            let page = index
-                .get_account_identifier_transactions(deposit_account_id.clone(), cursor, PAGE_SIZE)
-                .await
-                .map_err(|e| format!("burn index call failed: {e}"))?;
-            if page.transactions.is_empty() {
-                break;
-            }
+        return Ok(());
+    }
 
-            let mut last_seen = cursor;
-            let mut last_actual_burn_tx_id = None;
-            let mut added = 0u64;
-            let mut recent_burns = Vec::new();
+    let kind = &routes[active.next_index as usize];
+    let source_id = account_identifier_text(&cfg.output_source_account);
+    let route_id = account_identifier_text(&indexed_route_account(&cfg, kind));
+    let mut cursor = state::with_state(|st| indexed_route_cursor(st, kind));
+    let mut completed_route = false;
+    for _ in 0..cfg.max_index_pages_per_tick.max(1) {
+        let page = index
+            .get_account_identifier_transactions(route_id.clone(), cursor, PAGE_SIZE)
+            .await
+            .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?;
+        if page.transactions.is_empty() {
+            completed_route = true;
+            break;
+        }
+        {
+            let _batch = state::begin_persistence_batch();
             for tx in page.transactions.iter() {
-                if cursor.map(|prev| tx.id <= prev).unwrap_or(false) {
-                    // Burn indexing uses the same monotonic/exclusive cursor assumption as the main
-                    // staking-account scan. Temporary page-boundary duplication is treated as an
-                    // upstream index inconsistency rather than something we buffer additional state for.
-                    continue;
+                if let Some(prev) = cursor {
+                    if tx.id == prev {
+                        continue;
+                    }
+                    if tx.id < prev {
+                        return Err(format!(
+                            "historian observed non-monotonic {}-route tx_id {} after cursor {:?}",
+                            indexed_route_name(kind),
+                            tx.id,
+                            cursor,
+                        ));
+                    }
                 }
-                last_seen = Some(tx.id);
-                match &tx.transaction.operation {
-                    IndexOperation::Burn { amount, .. } => {
-                        let amount_e8s = amount.e8s();
-                        added = added.saturating_add(amount_e8s);
-                        last_actual_burn_tx_id = Some(tx.id);
-                        recent_burns.push(RecentBurn {
-                            canister_id,
-                            tx_id: tx.id,
-                            timestamp_nanos: tx.transaction.timestamp.as_ref().or(tx.transaction.created_at_time.as_ref()).map(|ts| ts.timestamp_nanos),
-                            amount_e8s,
-                        });
-                    }
-                    _ => {}
+                if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
+                    state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
                 }
+                cursor = Some(tx.id);
+                state::with_root_state_mut(|st| set_indexed_route_cursor(st, kind, cursor));
             }
-
-            {
-                let _batch = state::begin_persistence_batch();
-                let dirty_canister_id = canister_id.clone();
-                state::with_root_and_registry_canister_state_mut(dirty_canister_id, |st| {
-                    let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-                    if let Some(last_seen) = last_seen {
-                        meta.last_burn_scan_tx_id = Some(last_seen);
-                    }
-                    if let Some(last_actual_burn_tx_id) = last_actual_burn_tx_id {
-                        meta.last_burn_tx_id = Some(last_actual_burn_tx_id);
-                    }
-                    if added > 0 {
-                        meta.burned_e8s = meta.burned_e8s.saturating_add(added);
-                        let total = st.icp_burned_e8s.get_or_insert(0);
-                        *total = total.saturating_add(added);
-                        let recent = st.recent_burns.get_or_insert_with(Vec::new);
-                        for burn in recent_burns {
-                            push_recent_burn(recent, burn);
-                        }
-                    }
-                });
-            }
-
-            cursor = last_seen;
-            if page.transactions.len() < PAGE_SIZE as usize {
-                break;
-            }
+        }
+        if page.transactions.len() < PAGE_SIZE as usize {
+            completed_route = true;
+            break;
         }
     }
 
+    if completed_route {
+        state::with_root_state_mut(|st| {
+            if let Some(active) = st.active_route_sweep.as_mut() {
+                active.next_index = active.next_index.saturating_add(1);
+                if active.next_index as usize >= indexed_route_kinds().len() {
+                    st.active_route_sweep = None;
+                    st.last_completed_route_sweep_ts = Some(now_secs);
+                }
+            }
+        });
+    }
     Ok(())
 }
+
 
 fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
     let Some(canister_id) = summary.canister_id else { return; };
@@ -661,6 +744,9 @@ mod tests {
         state::set_state(State::new(
             Config {
                 staking_account: account,
+                output_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
+                output_account: Account { owner: principal("acjuz-liaaa-aaaar-qb4qq-cai"), subaccount: None },
+                rewards_account: Account { owner: principal("alk7f-5aaaa-aaaar-qb4ra-cai"), subaccount: None },
                 ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
@@ -720,7 +806,7 @@ mod tests {
     }
 
 
-    fn transfer_to_account_tx(id: u64, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+    fn transfer_between_accounts_tx(id: u64, from: &str, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -729,7 +815,7 @@ mod tests {
                 operation: IndexOperation::Transfer {
                     to: to.to_string(),
                     fee: Tokens::new(10_000),
-                    from: "sender".into(),
+                    from: from.to_string(),
                     amount: Tokens::new(amount_e8s),
                     spender: None,
                 },
@@ -738,24 +824,12 @@ mod tests {
             },
         }
     }
-
-
-    fn burn_tx(id: u64, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
-        IndexTransactionWithId {
-            id,
-            transaction: IndexTransaction {
-                memo: 0,
-                icrc1_memo: None,
-                operation: IndexOperation::Burn {
-                    from: "sender".into(),
-                    amount: Tokens::new(amount_e8s),
-                    spender: None,
-                },
-                created_at_time: None,
-                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
-            },
-        }
+    fn transfer_to_account_tx(id: u64, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+        transfer_between_accounts_tx(id, "sender", to, amount_e8s, timestamp_nanos)
     }
+
+
+
 
     fn seed_qualifying_memo_registration(beneficiary: candid::Principal) {
         state::with_state_mut(|st| {
@@ -1001,7 +1075,6 @@ mod tests {
         state::with_state(|st| {
             assert_eq!(st.last_indexed_staking_tx_id, Some(42));
             assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.icp_burned_e8s, Some(0));
             assert_eq!(st.recent_contributions.as_ref().unwrap().len(), 1);
             assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.last_index_run_ts, Some(200));
@@ -1032,7 +1105,6 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.icp_burned_e8s, Some(0));
             assert_eq!(st.recent_contributions.as_ref().unwrap().len(), 1);
         });
     }
@@ -1069,6 +1141,134 @@ mod tests {
             assert_eq!(recent[0].tx_id, 11);
             assert_eq!(recent[1].tx_id, 10);
             assert_eq!(st.last_indexed_staking_tx_id, Some(11));
+        });
+    }
+
+    #[test]
+    fn route_indexing_counts_only_protocol_routed_output_and_rewards_and_resumes_across_ticks() {
+        let _staking_id = configure_state(10);
+        let (source, output, rewards) = state::with_state(|st| (
+            st.config.output_source_account.clone(),
+            st.config.output_account.clone(),
+            st.config.rewards_account.clone(),
+        ));
+        let source_id = account_identifier_text(&source);
+        let output_id = account_identifier_text(&output);
+        let rewards_id = account_identifier_text(&rewards);
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![
+                    transfer_between_accounts_tx(10, &source_id, &output_id, 111_000_000, 10),
+                    transfer_between_accounts_tx(11, "third-party", &output_id, 999_000_000, 11),
+                ],
+                oldest_tx_id: Some(10),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![
+                    transfer_between_accounts_tx(20, &source_id, &rewards_id, 22_000_000, 20),
+                    transfer_between_accounts_tx(21, "third-party", &rewards_id, 333_000_000, 21),
+                ],
+                oldest_tx_id: Some(20),
+            },
+        ]);
+
+        block_on(process_route_indexing(100, 200, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(111_000_000));
+            assert_eq!(st.total_rewards_e8s, Some(0));
+            assert_eq!(st.last_indexed_output_tx_id, Some(11));
+            assert_eq!(st.last_indexed_rewards_tx_id, None);
+            let active = st.active_route_sweep.as_ref().expect("route sweep should continue to rewards");
+            assert_eq!(active.next_index, 1);
+        });
+
+        block_on(process_route_indexing(101, 201, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(111_000_000));
+            assert_eq!(st.total_rewards_e8s, Some(22_000_000));
+            assert_eq!(st.last_indexed_output_tx_id, Some(11));
+            assert_eq!(st.last_indexed_rewards_tx_id, Some(21));
+            assert!(st.active_route_sweep.is_none());
+            assert_eq!(st.last_completed_route_sweep_ts, Some(201));
+        });
+
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, output_id);
+        assert_eq!(calls[1].0, rewards_id);
+    }
+
+
+    #[test]
+    fn non_monotonic_contribution_page_latches_fault_and_stops_indexing() {
+        let staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| st.last_indexed_staking_tx_id = Some(50));
+        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 300,
+            transactions: vec![
+                transfer_to_staking_tx(51, &staking_id, beneficiary, 150, 124_000_000_000),
+                transfer_to_staking_tx(49, &staking_id, beneficiary, 150, 123_000_000_000),
+            ],
+            oldest_tx_id: Some(49),
+        }]);
+
+        let err = block_on(process_contribution_indexing(&mock, 200)).unwrap_err();
+        assert!(err.contains("non-monotonic"));
+        state::with_state(|st| {
+            let fault = st.contribution_index_fault.as_ref().expect("fault should be latched");
+            assert_eq!(fault.observed_at_ts, 200);
+            assert_eq!(fault.last_cursor_tx_id, Some(51));
+            assert_eq!(fault.offending_tx_id, 49);
+            assert_eq!(st.last_indexed_staking_tx_id, Some(51));
+            assert_eq!(st.last_index_run_ts, Some(0));
+        });
+    }
+
+    #[test]
+    fn contribution_index_fault_clears_automatically_once_index_order_recovers() {
+        let staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| st.last_indexed_staking_tx_id = Some(50));
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 150,
+                transactions: vec![
+                transfer_to_staking_tx(51, &staking_id, beneficiary, 150, 124_000_000_000),
+                transfer_to_staking_tx(49, &staking_id, beneficiary, 150, 123_000_000_000),
+            ],
+                oldest_tx_id: Some(49),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 450,
+                transactions: vec![
+                    transfer_to_staking_tx(51, &staking_id, beneficiary, 300, 124_000_000_000),
+                    transfer_to_staking_tx(52, &staking_id, beneficiary, 450, 125_000_000_000),
+                ],
+                oldest_tx_id: Some(51),
+            },
+        ]);
+
+        let err = block_on(process_contribution_indexing(&mock, 200)).unwrap_err();
+        assert!(err.contains("non-monotonic"));
+        state::with_state(|st| {
+            let fault = st.contribution_index_fault.as_ref().expect("fault should be latched");
+            assert_eq!(fault.observed_at_ts, 200);
+            assert_eq!(fault.last_cursor_tx_id, Some(51));
+            assert_eq!(fault.offending_tx_id, 49);
+            assert_eq!(st.last_indexed_staking_tx_id, Some(51));
+        });
+
+        block_on(process_contribution_indexing(&mock, 201)).unwrap();
+        state::with_state(|st| {
+            assert!(st.contribution_index_fault.is_none(), "fault should auto-clear after a clean retry");
+            assert_eq!(st.last_indexed_staking_tx_id, Some(52));
+            assert_eq!(st.last_index_run_ts, Some(201));
+            assert_eq!(st.qualifying_contribution_count, Some(2));
+            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(2));
+            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 52);
         });
     }
 
@@ -1188,138 +1388,5 @@ mod tests {
         });
     }
 
-    #[test]
-    fn burn_indexing_counts_only_actual_burn_entries() {
-        let _staking_id = configure_state(10);
-        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        seed_qualifying_memo_registration(beneficiary);
-        let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
-        let mock = MockIndexClient::new(vec![
-            GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                transactions: vec![],
-                oldest_tx_id: None,
-            },
-            GetAccountIdentifierTransactionsResponse {
-                balance: 150,
-                transactions: vec![transfer_to_account_tx(77, &cmc_account_id, 150, 123_000_000_000)],
-                oldest_tx_id: Some(77),
-            },
-        ]);
-
-        block_on(process_burn_indexing(&mock)).unwrap();
-
-        state::with_state(|st| {
-            assert_eq!(st.icp_burned_e8s, Some(0));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(0));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), None);
-            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_scan_tx_id), Some(77));
-        });
-    }
-
-    #[test]
-    fn burn_indexing_counts_burn_once_even_when_transfer_precedes_it() {
-        let _staking_id = configure_state(10);
-        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        seed_qualifying_memo_registration(beneficiary);
-        let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
-        let mock = MockIndexClient::new(vec![
-            GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                transactions: vec![],
-                oldest_tx_id: None,
-            },
-            GetAccountIdentifierTransactionsResponse {
-                balance: 150,
-                transactions: vec![
-                    transfer_to_account_tx(77, &cmc_account_id, 150, 123_000_000_000),
-                    burn_tx(78, 150, 124_000_000_000),
-                ],
-                oldest_tx_id: Some(77),
-            },
-        ]);
-
-        block_on(process_burn_indexing(&mock)).unwrap();
-
-        state::with_state(|st| {
-            assert_eq!(st.icp_burned_e8s, Some(150));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).map(|m| m.burned_e8s), Some(150));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_tx_id), Some(78));
-            assert_eq!(st.per_canister_meta.get(&beneficiary).and_then(|m| m.last_burn_scan_tx_id), Some(78));
-            assert_eq!(st.recent_burns.as_ref().map(|items| items.len()), Some(1));
-            assert_eq!(st.recent_burns.as_ref().unwrap()[0].tx_id, 78);
-        });
-    }
-
-    #[test]
-    fn burn_indexing_uses_scan_cursor_without_promoting_non_burns_to_last_burn() {
-        let _staking_id = configure_state(10);
-        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        seed_qualifying_memo_registration(beneficiary);
-        let cmc_account_id = account_identifier_text(&crate::logic::cmc_deposit_account(principal("rkp4c-7iaaa-aaaaa-aaaca-cai"), beneficiary));
-        let mock = MockIndexClient::new(vec![
-            // first run: faucet target
-            GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                transactions: vec![],
-                oldest_tx_id: None,
-            },
-            // first run: beneficiary target sees a transfer into the CMC deposit account
-            GetAccountIdentifierTransactionsResponse {
-                balance: 150,
-                transactions: vec![transfer_to_account_tx(77, &cmc_account_id, 150, 123_000_000_000)],
-                oldest_tx_id: Some(77),
-            },
-            // second run: faucet target
-            GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                transactions: vec![],
-                oldest_tx_id: None,
-            },
-            // second run: beneficiary target resumes from the scan cursor and sees the burn
-            GetAccountIdentifierTransactionsResponse {
-                balance: 300,
-                transactions: vec![burn_tx(78, 150, 124_000_000_000)],
-                oldest_tx_id: Some(77),
-            },
-        ]);
-
-        block_on(process_burn_indexing(&mock)).unwrap();
-        block_on(process_burn_indexing(&mock)).unwrap();
-
-        let calls = mock.calls();
-        let beneficiary_starts: Vec<_> = calls
-            .iter()
-            .filter(|(account_id, _, _)| account_id == &cmc_account_id)
-            .map(|(_, start, _)| *start)
-            .collect();
-        assert_eq!(beneficiary_starts, vec![None, Some(77)], "beneficiary scans should resume from the last scanned tx without treating it as the last actual burn");
-
-        state::with_state(|st| {
-            let meta = st.per_canister_meta.get(&beneficiary).expect("beneficiary meta should exist");
-            assert_eq!(meta.last_burn_tx_id, Some(78));
-            assert_eq!(meta.last_burn_scan_tx_id, Some(78));
-            assert_eq!(meta.burned_e8s, 150);
-            assert_eq!(st.icp_burned_e8s, Some(150));
-        });
-    }
-
-    #[test]
-    fn contribution_indexing_does_not_inflate_burned_totals() {
-        let staking_id = configure_state(10);
-        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
-            balance: 150,
-            transactions: vec![transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000)],
-            oldest_tx_id: Some(42),
-        }]);
-
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
-
-        state::with_state(|st| {
-            assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.icp_burned_e8s, Some(0));
-        });
-    }
 
 }

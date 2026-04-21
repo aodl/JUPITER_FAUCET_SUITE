@@ -75,6 +75,32 @@
   opacity: 0.72;
 }
 
+.dashboard-alert {
+  position: fixed;
+  top: 92px;
+  left: 20px;
+  right: 20px;
+  z-index: 19400;
+  max-width: min(980px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.45;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.dashboard-alert[hidden] {
+  display: none;
+}
+
+.dashboard-alert--error {
+  color: #ffe3de;
+  background: rgba(120, 16, 20, 0.84);
+  border: 1px solid rgba(255, 125, 125, 0.36);
+}
+
 .metric-status {
   display: inline-flex;
   align-items: center;
@@ -118,6 +144,15 @@
   .metric-rail {
     top: 0;
     right: 20px;
+  }
+
+  .dashboard-alert {
+    top: 70px;
+    left: 12px;
+    right: 12px;
+    max-width: calc(100vw - 24px);
+    padding: 10px 12px;
+    font-size: 13px;
   }
 
   .metric-rail-list {

@@ -898,8 +898,9 @@ struct HistorianGetCyclesHistoryArgs {
 struct HistorianPublicCounts {
     registered_canister_count: u64,
     qualifying_contribution_count: u64,
-    icp_burned_e8s: u64,
     sns_discovered_canister_count: u64,
+    total_output_e8s: u64,
+    total_rewards_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1188,12 +1189,13 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert!(cycles.items[0].cycles > 0);
     assert!(matches!(cycles.items[0].source, HistorianCyclesSampleSource::BlackholeStatus));
 
-    let expected_burned_e8s = 0u64;
+    let expected_output_e8s = 0u64;
 
     let counts: HistorianPublicCounts = query_one(&pic, historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 1);
     assert_eq!(counts.qualifying_contribution_count, 1);
-    assert_eq!(counts.icp_burned_e8s, expected_burned_e8s);
+    assert_eq!(counts.total_output_e8s, expected_output_e8s);
+    assert_eq!(counts.total_rewards_e8s, 0);
     assert_eq!(counts.sns_discovered_canister_count, 0);
 
     let status: HistorianPublicStatus = query_one(&pic, historian, Principal::anonymous(), "get_public_status", ())?;

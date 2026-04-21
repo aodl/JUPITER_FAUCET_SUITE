@@ -236,8 +236,9 @@ struct GetSnsCanistersSummaryResponse {
 struct PublicCounts {
     registered_canister_count: u64,
     qualifying_contribution_count: u64,
-    icp_burned_e8s: u64,
     sns_discovered_canister_count: u64,
+    total_output_e8s: u64,
+    total_rewards_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -395,15 +396,6 @@ impl Harness {
         self.pic.advance_time(Duration::from_secs(2));
         tick_n(&self.pic, 5);
     }
-}
-
-fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
-    let bytes = principal.as_slice();
-    let mut out = [0u8; 32];
-    out[0] = bytes.len() as u8;
-    let len = bytes.len().min(31);
-    out[1..1 + len].copy_from_slice(&bytes[..len]);
-    out
 }
 
 #[test]
@@ -953,14 +945,6 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
         "debug_append_transfer",
         encode_args((staking_id, 5_000_000u64, Some(target.to_text().into_bytes())))?,
     )?;
-    let burn_account = account_identifier_text(&Account { owner: h.cmc, subaccount: Some(principal_to_subaccount(target)) });
-    let _: u64 = update_bytes(
-        &h.pic,
-        h.index,
-        Principal::anonymous(),
-        "debug_append_burn",
-        encode_args((burn_account, 42_000_000u64))?,
-    )?;
 
     h.tick();
     let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
@@ -968,7 +952,8 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 1);
     assert_eq!(counts.qualifying_contribution_count, 1);
-    assert_eq!(counts.icp_burned_e8s, 42_000_000);
+    assert_eq!(counts.total_output_e8s, 0);
+    assert_eq!(counts.total_rewards_e8s, 0);
     assert_eq!(counts.sns_discovered_canister_count, 0);
 
     let status: PublicStatus = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_status", ())?;
@@ -1066,7 +1051,8 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 0);
     assert_eq!(counts.qualifying_contribution_count, 0);
-    assert_eq!(counts.icp_burned_e8s, 0);
+    assert_eq!(counts.total_output_e8s, 0);
+    assert_eq!(counts.total_rewards_e8s, 0);
     assert!(counts.sns_discovered_canister_count >= 3);
 
     let registered: ListRegisteredCanisterSummariesResponse = query_one(

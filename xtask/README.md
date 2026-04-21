@@ -161,7 +161,7 @@ Examples currently covered include:
 - faucet full-history replay on each new payout job
 - faucet notify retry without duplicate transfer
 - faucet rescue invariants before first success and after broken / healthy controller transitions
-- historian indexing, burn tracking, SNS discovery, and frontend-facing public-read-model behavior
+- historian indexing, protocol output/rewards tracking, SNS discovery, and frontend-facing public-read-model behavior
 
 ### `*_pocketic_integration`
 
@@ -193,7 +193,6 @@ Examples covered by the current PocketIC suites include:
   - `get_public_status`
   - `list_registered_canister_summaries`
   - `list_recent_contributions`
-  - `list_recent_burns`
 
 ### PocketIC maturity and reward caveats
 

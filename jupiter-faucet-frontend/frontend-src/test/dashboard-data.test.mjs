@@ -11,7 +11,6 @@ import {
   summaryMetricsUnavailable,
   REGISTERED_SUMMARY_PAGE_SIZE,
   RECENT_CONTRIBUTION_LIMIT,
-  RECENT_BURN_LIMIT,
 } from '../src/dashboard-data.js';
 
 function principal(text) {
@@ -29,6 +28,7 @@ function historianStatus(overrides = {}) {
   return {
     staking_account: stakingAccount(),
     ledger_canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
+    faucet_canister_id: principal('acjuz-liaaa-aaaar-qb4qq-cai'),
     last_index_run_ts: [123n],
     index_interval_seconds: 600n,
     last_completed_cycles_sweep_ts: [456n],
@@ -44,25 +44,24 @@ function historianCounts(overrides = {}) {
   return {
     registered_canister_count: 2n,
     qualifying_contribution_count: 3n,
-    icp_burned_e8s: 400_000_000n,
     sns_discovered_canister_count: 4n,
+    total_output_e8s: 400_000_000n,
+    total_rewards_e8s: 50_000_000n,
     ...overrides,
   };
 }
 
 function registeredResponse() {
   return {
-    items: [
-      {
-        canister_id: principal('aaaaa-aa'),
-        sources: [{ MemoContribution: null }],
-        qualifying_contribution_count: 2n,
-        total_qualifying_contributed_e8s: 300_000_000n,
-        last_contribution_ts: [1000n],
-        latest_cycles: [1234n],
-        last_cycles_probe_ts: [1001n],
-      },
-    ],
+    items: [{
+      canister_id: principal('aaaaa-aa'),
+      sources: [{ MemoContribution: null }],
+      qualifying_contribution_count: 2n,
+      total_qualifying_contributed_e8s: 300_000_000n,
+      last_contribution_ts: [1000n],
+      latest_cycles: [1234n],
+      last_cycles_probe_ts: [1001n],
+    }],
     page: 0n,
     page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE),
     total: 1n,
@@ -71,16 +70,14 @@ function registeredResponse() {
 
 function recentResponse() {
   return {
-    items: [
-      {
-        canister_id: principal('aaaaa-aa'),
-        tx_id: 22n,
-        timestamp_nanos: [1_710_000_000_000_000_000n],
-        amount_e8s: 200_000_000n,
-        counts_toward_faucet: true,
-        outcome_category: { QualifyingContribution: null },
-      },
-    ],
+    items: [{
+      canister_id: principal('aaaaa-aa'),
+      tx_id: 22n,
+      timestamp_nanos: [1_710_000_000_000_000_000n],
+      amount_e8s: 200_000_000n,
+      counts_toward_faucet: true,
+      outcome_category: { QualifyingContribution: null },
+    }],
   };
 }
 
@@ -91,89 +88,45 @@ test('accountIdentifierHex stays stable for the staking-account derivation fixtu
   );
 });
 
-test('loadDashboardData uses the shared frontend actor query shapes and native ledger stake path', async () => {
+test('loadDashboardData uses historian counts and status plus the native ledger stake path', async () => {
   const calls = [];
-  const historianActor = {
-    async get_public_counts() {
-      calls.push(['counts']);
-      return historianCounts();
-    },
-    async get_public_status() {
-      calls.push(['status']);
-      return historianStatus();
-    },
-    async list_registered_canister_summaries(args) {
-      calls.push(['registered', args]);
-      return registeredResponse();
-    },
-    async list_recent_contributions(args) {
-      calls.push(['recent', args]);
-      return recentResponse();
-    },
-    async list_recent_burns() {
-      calls.push(['burns', { limit: [RECENT_BURN_LIMIT] }]);
-      return { items: [] };
-    },
-  };
-
   let accountBalanceArg = null;
-  let ledgerActorCount = 0;
   const data = await loadDashboardData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
     agent: { test: true },
-    historianActor,
+    historianActor: {
+      async get_public_counts() { calls.push(['counts']); return historianCounts(); },
+      async get_public_status() { calls.push(['status']); return historianStatus(); },
+      async list_registered_canister_summaries(args) { calls.push(['registered', args]); return registeredResponse(); },
+      async list_recent_contributions(args) { calls.push(['recent', args]); return recentResponse(); },
+    },
     ledgerActorFactory: (canisterId, options) => {
-      ledgerActorCount += 1;
       assert.equal(canisterId, 'ryjl3-tyaaa-aaaaa-aaaba-cai');
       assert.deepEqual(options, { agent: { test: true } });
       return {
-        async account_balance(arg) {
-          accountBalanceArg = arg;
-          return { e8s: 123_456_789n };
-        },
-        async icrc1_balance_of() {
-          throw new Error('icrc1 fallback should not be used when native account_balance succeeds');
-        },
+        async account_balance(arg) { accountBalanceArg = arg; return { e8s: 123_456_789n }; },
+        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
       };
     },
   });
 
-  assert.equal(ledgerActorCount, 1);
   assert.deepEqual(calls[0], ['counts']);
   assert.deepEqual(calls[1], ['status']);
-  assert.deepEqual(calls[2], ['registered', {
-    page: [0],
-    page_size: [REGISTERED_SUMMARY_PAGE_SIZE],
-  }]);
-  assert.deepEqual(calls[3], ['recent', {
-    limit: [RECENT_CONTRIBUTION_LIMIT],
-    qualifying_only: [false],
-  }]);
-  assert.deepEqual(calls[4], ['burns', { limit: [RECENT_BURN_LIMIT] }]);
+  assert.deepEqual(calls[2], ['registered', { page: [0], page_size: [REGISTERED_SUMMARY_PAGE_SIZE] }]);
+  assert.deepEqual(calls[3], ['recent', { limit: [RECENT_CONTRIBUTION_LIMIT], qualifying_only: [false] }]);
   assert.equal(Buffer.from(accountBalanceArg.account).toString('hex'), '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3');
   assert.equal(data.stakeE8s, 123_456_789n);
-  assert.equal(data.counts.icp_burned_e8s, 400_000_000n);
+  assert.equal(data.counts.total_output_e8s, 400_000_000n);
+  assert.equal(data.counts.total_rewards_e8s, 50_000_000n);
   assert.equal(data.registered.items.length, 1);
   assert.equal(data.recent.items.length, 1);
   assert.equal(data.hasAnyFailure, false);
   assert.equal(summaryMetricsUnavailable(data), false);
 });
 
-
 test('loadDashboardData requests only the configured registered canister summary page', async () => {
   const registeredCalls = [];
-  const makeItem = (n) => ({
-    canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
-    sources: [{ MemoContribution: null }],
-    qualifying_contribution_count: BigInt(n),
-    total_qualifying_contributed_e8s: BigInt(n),
-    last_contribution_ts: [1000n + BigInt(n)],
-    latest_cycles: [],
-    last_cycles_probe_ts: [],
-  });
-  const requestedPageItems = Array.from({ length: 6 }, (_, idx) => makeItem(idx + 1));
-
   const data = await loadDashboardData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
@@ -185,28 +138,14 @@ test('loadDashboardData requests only the configured registered canister summary
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries(args) {
         registeredCalls.push(args);
-        assert.deepEqual(args, {
-          page: [2],
-          page_size: [6],
-        });
-        return {
-          items: requestedPageItems,
-          page: 2n,
-          page_size: 6n,
-          total: 18n,
-        };
+        return { items: registeredResponse().items, page: 2n, page_size: 6n, total: 18n };
       },
       async list_recent_contributions() { return { items: [] }; },
-      async list_recent_burns() { return { items: [] }; },
     },
-    ledgerActorFactory: () => ({
-      async account_balance() { return { e8s: 1n }; },
-      async icrc1_balance_of() { throw new Error('fallback should not be used'); },
-    }),
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
 
-  assert.equal(registeredCalls.length, 1);
-  assert.equal(data.registered.items.length, requestedPageItems.length);
+  assert.deepEqual(registeredCalls, [{ page: [2], page_size: [6] }]);
   assert.equal(data.registered.page, 2n);
   assert.equal(data.registered.page_size, 6n);
   assert.equal(data.registered.total, 18n);
@@ -221,22 +160,14 @@ test('loadRegisteredCanisterSummaryPage uses the shared frontend query shape for
     historianActor: {
       async list_registered_canister_summaries(args) {
         calls.push(args);
-        return {
-          items: registeredResponse().items,
-          page: 3n,
-          page_size: 6n,
-          total: 17n,
-        };
+        return { items: registeredResponse().items, page: 3n, page_size: 6n, total: 17n };
       },
     },
     page: 3,
     pageSize: 6,
   });
 
-  assert.deepEqual(calls, [{
-    page: [3],
-    page_size: [6],
-  }]);
+  assert.deepEqual(calls, [{ page: [3], page_size: [6] }]);
   assert.equal(response.page, 3n);
   assert.equal(response.page_size, 6n);
   assert.equal(response.total, 17n);
@@ -253,16 +184,10 @@ test('loadDashboardData falls back to icrc1_balance_of when native ledger accoun
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_contributions() { return recentResponse(); },
-      async list_recent_burns() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({
-      async account_balance() {
-        throw new Error('account_balance unavailable in this fixture');
-      },
-      async icrc1_balance_of(account) {
-        fallbackArg = account;
-        return 88_000_000n;
-      },
+      async account_balance() { throw new Error('account_balance unavailable in this fixture'); },
+      async icrc1_balance_of(account) { fallbackArg = account; return 88_000_000n; },
     }),
   });
 
@@ -283,11 +208,8 @@ test('loadDashboardData flags an outdated historian interface when every public 
       async get_public_status() { throw new Error('Method get_public_status not found'); },
       async list_registered_canister_summaries() { throw new Error('Method list_registered_canister_summaries is not part of the service'); },
       async list_recent_contributions() { throw new Error('Method list_recent_contributions not found'); },
-      async list_recent_burns() { throw new Error('Method list_recent_burns not found'); },
     },
-    ledgerActorFactory: () => {
-      throw new Error('ledger actor should not be created when historian status is unavailable');
-    },
+    ledgerActorFactory: () => { throw new Error('ledger actor should not be created'); },
   });
 
   assert.equal(data.historianAllRejected, true);
@@ -296,7 +218,6 @@ test('loadDashboardData flags an outdated historian interface when every public 
   assert.equal(summaryMetricsUnavailable(data), true);
 });
 
-
 test('loadDashboardData enables query signature verification when it creates an agent', async () => {
   resetAgentCacheForTests();
   const originalCreate = HttpAgent.create;
@@ -304,28 +225,19 @@ test('loadDashboardData enables query signature verification when it creates an 
   try {
     HttpAgent.create = async (options) => {
       seen.push(options);
-      return {
-        async fetchRootKey() {},
-      };
+      return { async fetchRootKey() {} };
     };
 
     const data = await loadDashboardData({
       historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
       host: 'https://icp0.io',
-      historianActorFactory: (_canisterId, { agent }) => {
-        assert.equal(typeof agent.fetchRootKey, 'function');
-        return {
-          async get_public_counts() { return historianCounts(); },
-          async get_public_status() { return historianStatus(); },
-          async list_registered_canister_summaries() { return registeredResponse(); },
-          async list_recent_contributions() { return recentResponse(); },
-          async list_recent_burns() { return { items: [] }; },
-        };
-      },
-      ledgerActorFactory: () => ({
-        async account_balance() { return { e8s: 1n }; },
-        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
+      historianActorFactory: (_canisterId, { agent }) => ({
+        async get_public_counts() { return historianCounts(); },
+        async get_public_status() { return historianStatus(); },
+        async list_registered_canister_summaries() { return registeredResponse(); },
+        async list_recent_contributions() { return recentResponse(); },
       }),
+      ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     });
 
     assert.equal(data.stakeE8s, 1n);
@@ -338,6 +250,8 @@ test('loadDashboardData enables query signature verification when it creates an 
   }
 });
 
+
+
 test('loadDashboardData evicts failed agent initialization from cache so the next attempt can retry', async () => {
   resetAgentCacheForTests();
   const originalCreate = HttpAgent.create;
@@ -348,9 +262,7 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
       if (attempts === 1) {
         throw new Error('transient agent creation failure');
       }
-      return {
-        async fetchRootKey() {},
-      };
+      return { async fetchRootKey() {} };
     };
 
     const failed = await loadDashboardData({
@@ -361,12 +273,8 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
         async get_public_status() { return historianStatus(); },
         async list_registered_canister_summaries() { return registeredResponse(); },
         async list_recent_contributions() { return recentResponse(); },
-        async list_recent_burns() { return { items: [] }; },
       }),
-      ledgerActorFactory: () => ({
-        async account_balance() { return { e8s: 1n }; },
-        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
-      }),
+      ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     });
 
     assert.equal(failed.historianAllRejected, true);
@@ -380,12 +288,8 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
         async get_public_status() { return historianStatus(); },
         async list_registered_canister_summaries() { return registeredResponse(); },
         async list_recent_contributions() { return recentResponse(); },
-        async list_recent_burns() { return { items: [] }; },
       }),
-      ledgerActorFactory: () => ({
-        async account_balance() { return { e8s: 2n }; },
-        async icrc1_balance_of() { throw new Error('fallback should not be used'); },
-      }),
+      ledgerActorFactory: () => ({ async account_balance() { return { e8s: 2n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     });
 
     assert.equal(attempts, 2);
@@ -402,29 +306,29 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
     host: 'https://icp0.io',
     agent: { test: true },
     historianActor: {
-      async get_public_counts() { return historianCounts({ registered_canister_count: 0n, qualifying_contribution_count: 0n, icp_burned_e8s: 0n }); },
+      async get_public_counts() {
+        return historianCounts({
+          registered_canister_count: 0n,
+          qualifying_contribution_count: 0n,
+          sns_discovered_canister_count: 0n,
+          total_output_e8s: 0n,
+          total_rewards_e8s: 0n,
+        });
+      },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
       async list_recent_contributions() { return { items: [] }; },
-      async list_recent_burns() { return { items: [] }; },
     },
-    ledgerActorFactory: () => ({
-      async account_balance() {
-        return { e8s: 0n };
-      },
-      async icrc1_balance_of() {
-        throw new Error('fallback should not be used');
-      },
-    }),
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 0n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
 
   assert.equal(data.stakeE8s, 0n);
-  assert.equal(data.counts.icp_burned_e8s, 0n);
+  assert.equal(data.counts.total_output_e8s, 0n);
+  assert.equal(data.counts.total_rewards_e8s, 0n);
   assert.equal(summaryMetricsUnavailable(data), false);
 });
 
-
-test('loadDashboardData can represent a registered-but-non-qualifying canister without inflating burned ICP', async () => {
+test('loadDashboardData can represent a registered-but-non-qualifying canister without inflating protocol totals', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const data = await loadDashboardData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
@@ -435,8 +339,9 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
         return historianCounts({
           registered_canister_count: 1n,
           qualifying_contribution_count: 0n,
-          icp_burned_e8s: 0n,
           sns_discovered_canister_count: 0n,
+          total_output_e8s: 0n,
+          total_rewards_e8s: 0n,
         });
       },
       async get_public_status() { return historianStatus(); },
@@ -469,25 +374,18 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
         };
       },
     },
-    ledgerActorFactory: () => ({
-      async account_balance() {
-        return { e8s: 5_000_000n };
-      },
-      async icrc1_balance_of() {
-        throw new Error('fallback should not be used');
-      },
-    }),
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 5_000_000n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
 
   assert.equal(data.stakeE8s, 5_000_000n);
   assert.equal(data.counts.registered_canister_count, 1n);
   assert.equal(data.counts.qualifying_contribution_count, 0n);
-  assert.equal(data.counts.icp_burned_e8s, 0n);
+  assert.equal(data.counts.total_output_e8s, 0n);
+  assert.equal(data.counts.total_rewards_e8s, 0n);
   assert.equal(data.registered.items[0].canister_id.toText(), target.toText());
   assert.equal(data.recent.items[0].counts_toward_faucet, false);
   assert.equal(summaryMetricsUnavailable(data), false);
 });
-
 
 test('loadDashboardData keeps SNS-only discovery out of registered frontend totals', async () => {
   const data = await loadDashboardData({
@@ -499,56 +397,26 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
         return historianCounts({
           registered_canister_count: 0n,
           qualifying_contribution_count: 0n,
-          icp_burned_e8s: 0n,
           sns_discovered_canister_count: 3n,
+          total_output_e8s: 0n,
+          total_rewards_e8s: 0n,
         });
       },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
       async list_recent_contributions() { return { items: [] }; },
-      async list_recent_burns() { return { items: [] }; },
     },
-    ledgerActorFactory: () => ({
-      async account_balance() {
-        return { e8s: 0n };
-      },
-      async icrc1_balance_of() {
-        throw new Error('fallback should not be used');
-      },
-    }),
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 0n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
 
   assert.equal(data.stakeE8s, 0n);
   assert.equal(data.counts.registered_canister_count, 0n);
   assert.equal(data.counts.qualifying_contribution_count, 0n);
-  assert.equal(data.counts.icp_burned_e8s, 0n);
+  assert.equal(data.counts.total_output_e8s, 0n);
+  assert.equal(data.counts.total_rewards_e8s, 0n);
   assert.equal(data.counts.sns_discovered_canister_count, 3n);
   assert.equal(data.registered.total, 0n);
   assert.equal(summaryMetricsUnavailable(data), false);
-});
-
-
-test('loadDashboardData tolerates a historian build that lacks list_recent_burns but still serves the other public queries', async () => {
-  const data = await loadDashboardData({
-    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
-    host: 'https://icp0.io',
-    agent: { test: true },
-    historianActor: {
-      async get_public_counts() { return historianCounts(); },
-      async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
-    },
-    ledgerActorFactory: () => ({
-      async account_balance() { return { e8s: 77n }; },
-      async icrc1_balance_of() { throw new Error('fallback should not be used'); },
-    }),
-  });
-
-  assert.deepEqual(data.burns, { items: [] });
-  assert.equal(data.errors.burns, null);
-  assert.equal(data.stakeE8s, 77n);
-  assert.equal(data.hasAnyFailure, false);
 });
 
 test('loadDashboardData returns structured failures when historian actor construction throws synchronously', async () => {
@@ -565,46 +433,16 @@ test('loadDashboardData returns structured failures when historian actor constru
   assert.equal(data.status, null);
   assert.equal(data.registered, null);
   assert.equal(data.recent, null);
-  assert.equal(data.burns, null);
   assert.equal(data.stakeE8s, null);
   assert.equal(data.hasAnyFailure, true);
   assert.equal(data.errors.counts, 'historian actor construction failed');
   assert.equal(data.errors.status, 'historian actor construction failed');
   assert.equal(data.errors.registered, 'historian actor construction failed');
   assert.equal(data.errors.recent, 'historian actor construction failed');
-  assert.equal(data.errors.burns, 'historian actor construction failed');
   assert.equal(data.errors.stake, 'Stake unavailable');
   assert.equal(data.historianAllRejected, true);
   assert.equal(data.historianLikelyOutdated, false);
 });
-
-test('loadDashboardData preserves historian data when ledger actor construction throws synchronously', async () => {
-  const data = await loadDashboardData({
-    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
-    host: 'https://icp0.io',
-    agent: { test: true },
-    historianActor: {
-      async get_public_counts() { return historianCounts(); },
-      async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
-      async list_recent_burns() { return { items: [] }; },
-    },
-    ledgerActorFactory: () => {
-      throw new Error('ledger actor construction failed');
-    },
-  });
-
-  assert.deepEqual(data.counts, historianCounts());
-  assert.deepEqual(data.status, historianStatus());
-  assert.deepEqual(data.registered, registeredResponse());
-  assert.deepEqual(data.recent, recentResponse());
-  assert.deepEqual(data.burns, { items: [] });
-  assert.equal(data.stakeE8s, null);
-  assert.equal(data.errors.stake, 'ledger actor construction failed');
-  assert.equal(data.hasAnyFailure, true);
-});
-
 
 test('loadDashboardData preserves partial dashboard data when get_public_status fails', async () => {
   let ledgerCreated = false;
@@ -617,7 +455,6 @@ test('loadDashboardData preserves partial dashboard data when get_public_status 
       async get_public_status() { throw new Error('status temporarily unavailable'); },
       async list_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_contributions() { return recentResponse(); },
-      async list_recent_burns() { return { items: [] }; },
     },
     ledgerActorFactory: () => {
       ledgerCreated = true;
@@ -645,15 +482,10 @@ test('loadDashboardData surfaces both native and icrc stake failures in one norm
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_contributions() { return recentResponse(); },
-      async list_recent_burns() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({
-      async account_balance() {
-        throw new Error('native path unavailable');
-      },
-      async icrc1_balance_of() {
-        throw new Error('icrc fallback unavailable');
-      },
+      async account_balance() { throw new Error('native path unavailable'); },
+      async icrc1_balance_of() { throw new Error('icrc fallback unavailable'); },
     }),
   });
 
@@ -662,5 +494,28 @@ test('loadDashboardData surfaces both native and icrc stake failures in one norm
     'Stake unavailable via native ledger account_balance (native path unavailable) and icrc1_balance_of (icrc fallback unavailable)',
   );
   assert.equal(data.stakeE8s, null);
+  assert.equal(data.hasAnyFailure, true);
+});
+
+test('loadDashboardData preserves historian data when ledger actor construction throws synchronously', async () => {
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+    },
+    ledgerActorFactory: () => { throw new Error('ledger actor construction failed'); },
+  });
+
+  assert.deepEqual(data.counts, historianCounts());
+  assert.deepEqual(data.status, historianStatus());
+  assert.deepEqual(data.registered, registeredResponse());
+  assert.deepEqual(data.recent, recentResponse());
+  assert.equal(data.stakeE8s, null);
+  assert.equal(data.errors.stake, 'ledger actor construction failed');
   assert.equal(data.hasAnyFailure, true);
 });

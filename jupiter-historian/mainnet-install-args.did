@@ -3,6 +3,18 @@
     owner = principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
     subaccount = opt blob "\ff\0c\0b\36\af\ef\ff\d0\c7\a4\d8\5c\0b\ce\a3\66\ac\d6\d7\4f\45\f7\70\3d\07\83\cc\64\48\89\9c\68";
   };
+  output_source_account = opt record {
+    owner = principal "uccpi-cqaaa-aaaar-qby3q-cai";
+    subaccount = null;
+  };
+  output_account = opt record {
+    owner = principal "acjuz-liaaa-aaaar-qb4qq-cai";
+    subaccount = null;
+  };
+  rewards_account = opt record {
+    owner = principal "alk7f-5aaaa-aaaar-qb4ra-cai";
+    subaccount = null;
+  };
   ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
   index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
   cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";

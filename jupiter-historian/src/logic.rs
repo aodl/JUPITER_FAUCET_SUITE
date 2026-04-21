@@ -131,22 +131,6 @@ pub fn make_cycles_sample(timestamp_nanos: u64, cycles: u128, source: CyclesSamp
 }
 
 
-pub fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
-    let bytes = principal.as_slice();
-    let mut out = [0u8; 32];
-    out[0] = bytes.len() as u8;
-    let len = bytes.len().min(31);
-    out[1..1 + len].copy_from_slice(&bytes[..len]);
-    out
-}
-
-pub fn cmc_deposit_account(cmc_id: Principal, canister_id: Principal) -> icrc_ledger_types::icrc1::account::Account {
-    icrc_ledger_types::icrc1::account::Account {
-        owner: cmc_id,
-        subaccount: Some(principal_to_subaccount(canister_id)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
