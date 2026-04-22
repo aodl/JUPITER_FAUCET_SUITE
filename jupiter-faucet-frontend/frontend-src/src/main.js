@@ -8,14 +8,14 @@ import {
 } from './dashboard-data.js';
 import { createActor as createGovernanceActor } from '../declarations/nns_governance/index.js';
 import { createNeuronDetailsController } from './neuron-details-controller.js';
-import { setLink } from './dom-helpers.js';
+import { setLink, setPaneValueText, setPaneValueTrustedHtml, setText } from './dom-helpers.js';
 import { mergeRegisteredLandingData } from './registered-page-state.js';
+import { escapeHtml, formatFolloweeLinks } from './followee-links.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
 const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
-const ALPHA_VOTE_NEURON_ID = '2947465672511369';
 const TABLE_PAGE_SIZE = 6;
 const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 
@@ -37,15 +37,6 @@ const tableState = {
 function isLocalHost() {
   const host = window.location.hostname;
   return host === '127.0.0.1' || host === 'localhost';
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 function formatPrincipal(value) {
@@ -146,46 +137,6 @@ function setHidden(id, hidden) {
   node.hidden = hidden;
 }
 
-function setText(id, value) {
-  const node = document.getElementById(id);
-  if (node) node.textContent = value;
-}
-
-function setHtml(id, value) {
-  const node = document.getElementById(id);
-  if (node) node.innerHTML = value;
-}
-
-
-function setPaneValueStatus(id, { value = null, loading = false, error = null, html = false } = {}) {
-  const valueNode = document.getElementById(id);
-  const statusNode = document.getElementById(`${id}-status`);
-  if (valueNode) {
-    if (html) {
-      valueNode.innerHTML = value ?? '';
-    } else {
-      valueNode.textContent = value ?? '';
-    }
-  }
-  if (!statusNode) return;
-  statusNode.hidden = !loading && !error;
-  statusNode.className = 'metric-status';
-  statusNode.removeAttribute('title');
-  statusNode.removeAttribute('aria-label');
-  statusNode.textContent = '';
-  if (loading) {
-    statusNode.classList.add('metric-status--loading');
-    statusNode.setAttribute('aria-label', 'Loading');
-    return;
-  }
-  if (error) {
-    statusNode.classList.add('metric-status--error');
-    statusNode.textContent = '⚠';
-    statusNode.title = error;
-    statusNode.setAttribute('aria-label', error);
-  }
-}
-
 function setStatusNote(id, value) {
   const node = document.getElementById(id);
   if (!node) return;
@@ -270,16 +221,6 @@ function renderHowItWorksAccount() {
   setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT_HEX);
 }
 
-function formatFolloweeLinks(neuron) {
-  const follows = [...new Set(neuron.followees.flatMap((entry) => entry[1].followees.map((followee) => followee.id.toString())))];
-  if (!follows.length) return 'None';
-  return follows.map((id) => {
-    const label = id === ALPHA_VOTE_NEURON_ID ? 'αlpha-vote' : id;
-    const title = id === ALPHA_VOTE_NEURON_ID ? `${label} (${id})` : id;
-    return `<a class="pane-external-link mono" href="https://dashboard.internetcomputer.org/neuron/${escapeHtml(id)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}">${escapeHtml(label)}</a>`;
-  }).join(', ');
-}
-
 function renderStakePane(data, neuron, { neuronLoading = false, neuronError = null, dataLoading = false } = {}) {
   const stakingAddress = data?.status ? accountIdentifierHex(data.status.staking_account) : JUPITER_STAKING_ACCOUNT_HEX;
   setLink('stake-pane-account-link', {
@@ -290,18 +231,18 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
     href: `https://dashboard.internetcomputer.org/neuron/${JUPITER_NEURON_ID.toString()}`,
     text: JUPITER_NEURON_ID.toString(),
   });
-  setPaneValueStatus('stake-pane-balance', dataLoading
+  setPaneValueText('stake-pane-balance', dataLoading
     ? { loading: true }
     : data?.stakeE8s === null
       ? { error: data?.errors?.stake || 'Stake unavailable' }
       : { value: formatIcpE8s(data?.stakeE8s) });
 
   if (neuron) {
-    setPaneValueStatus('stake-neuron-age', { value: formatAgeFromSeconds(neuron.aging_since_timestamp_seconds) });
-    setPaneValueStatus('stake-neuron-public', { value: 'Yes' });
-    setPaneValueStatus('stake-neuron-created', { value: formatTimestampSeconds(neuron.created_timestamp_seconds) });
-    setPaneValueStatus('stake-neuron-refresh', { value: formatTimestampSeconds(neuron.voting_power_refreshed_timestamp_seconds?.[0]) });
-    setPaneValueStatus('stake-neuron-followees', { value: formatFolloweeLinks(neuron), html: true });
+    setPaneValueText('stake-neuron-age', { value: formatAgeFromSeconds(neuron.aging_since_timestamp_seconds) });
+    setPaneValueText('stake-neuron-public', { value: 'Yes' });
+    setPaneValueText('stake-neuron-created', { value: formatTimestampSeconds(neuron.created_timestamp_seconds) });
+    setPaneValueText('stake-neuron-refresh', { value: formatTimestampSeconds(neuron.voting_power_refreshed_timestamp_seconds?.[0]) });
+    setPaneValueTrustedHtml('stake-neuron-followees', { value: formatFolloweeLinks(neuron) });
     return;
   }
 
@@ -310,11 +251,11 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
     : neuronLoading || !neuronState.loaded
       ? { loading: true }
       : { error: 'Public neuron details unavailable' };
-  setPaneValueStatus('stake-neuron-age', fallback);
-  setPaneValueStatus('stake-neuron-public', fallback);
-  setPaneValueStatus('stake-neuron-created', fallback);
-  setPaneValueStatus('stake-neuron-refresh', fallback);
-  setPaneValueStatus('stake-neuron-followees', fallback);
+  setPaneValueText('stake-neuron-age', fallback);
+  setPaneValueText('stake-neuron-public', fallback);
+  setPaneValueText('stake-neuron-created', fallback);
+  setPaneValueText('stake-neuron-refresh', fallback);
+  setPaneValueText('stake-neuron-followees', fallback);
 }
 
 function renderStakeNeuronStatus({ loading = false, error = null } = {}) {
@@ -638,14 +579,14 @@ function renderCommitmentsPane(data) {
 
 function renderOutputPane(data) {
   const amount = data?.counts?.total_output_e8s;
-  setPaneValueStatus('output-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(amount) });
+  setPaneValueText('output-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(amount) });
   const note = 'Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.';
   setText('output-pane-description', note);
 }
 
 function renderRewardsPane(data) {
   const amount = data?.counts?.total_rewards_e8s;
-  setPaneValueStatus('rewards-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(amount) });
+  setPaneValueText('rewards-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(amount) });
   const note = 'Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.';
   setText('rewards-pane-description', note);
 }

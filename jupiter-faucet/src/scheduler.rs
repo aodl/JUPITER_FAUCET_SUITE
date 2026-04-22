@@ -529,17 +529,27 @@ fn record_completed_skip_range(
     }
 }
 
-fn persist_new_skip_ranges(skip_ranges: &mut Vec<SkipRange>, pending_skip_ranges: &mut Vec<SkipRange>) {
-    for range in pending_skip_ranges.drain(..) {
-        if let Some(previous) = skip_ranges.last() {
-            assert!(
-                previous.end_tx_id.saturating_add(1) < range.start_tx_id,
-                "new skip range must be strictly disjoint from prior persisted ranges"
-            );
-        }
-        state::insert_skip_range(range.clone());
-        skip_ranges.push(range);
+fn persist_new_skip_ranges(
+    skip_ranges: &mut Vec<SkipRange>,
+    pending_skip_ranges: &mut Vec<SkipRange>,
+) -> Result<(), state::SkipRangeInsertError> {
+    let mut simulated = skip_ranges.clone();
+    for range in pending_skip_ranges.iter() {
+        state::validate_skip_range_insertion(&simulated, range)?;
+        let insert_pos = simulated.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
+        simulated.insert(insert_pos, range.clone());
     }
+    for range in pending_skip_ranges.drain(..) {
+        state::insert_skip_range(range.clone())?;
+        let insert_pos = skip_ranges.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
+        skip_ranges.insert(insert_pos, range);
+    }
+    Ok(())
+}
+
+fn latch_skip_range_invariant_rescue() {
+    log_error(3111);
+    state::latch_skip_range_invariant_fault();
 }
 fn flush_scan_progress(
     ignored_under_threshold_delta: &mut u64,
@@ -1177,7 +1187,10 @@ async fn process_payout(
                     active_job.skip_candidate_tx_count = skip_candidate.tx_count;
                 }
             });
-            persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
+            if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
+                latch_skip_range_invariant_rescue();
+                return true;
+            }
             continue;
         }
 
@@ -1250,7 +1263,10 @@ async fn process_payout(
                         &skip_candidate,
                     );
                     drop(scan_batch.take());
-                    persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
+                    if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
+                        latch_skip_range_invariant_rescue();
+                        return true;
+                    }
                     let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(snapshot.2), block_index: 0, next_start: Some(tx.id) };
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
@@ -1275,37 +1291,76 @@ async fn process_payout(
             if scan_complete { job.scan_complete = true; } else if !reached_round_end { job.next_start = last_id; }
         });
         drop(scan_batch);
-        persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges);
+        if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
+            latch_skip_range_invariant_rescue();
+            return true;
+        }
         if !scan_complete && pages_scanned >= MAX_INDEX_PAGES_PER_PAYOUT_TICK {
             return true;
         }
     }
 }
+fn desired_rescue_controllers(
+    now_secs: u64,
+    blackhole_armed: bool,
+    blackhole_controller: Option<Principal>,
+    last_xfer_opt: Option<u64>,
+    rescue_controller: Principal,
+    forced_reason_present: bool,
+    skip_range_fault: bool,
+    self_id: Principal,
+) -> Result<Option<Vec<Principal>>, u32> {
+    if !blackhole_armed {
+        return Ok(None);
+    }
+    let Some(blackhole_controller) = blackhole_controller else {
+        return Err(3107);
+    };
+    let mut desired = if forced_reason_present || skip_range_fault {
+        vec![blackhole_controller, rescue_controller, self_id]
+    } else {
+        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, Some(blackhole_controller), rescue_controller) else {
+            return Ok(None);
+        };
+        desired
+    };
+    desired.sort_by(|a: &Principal, b: &Principal| a.to_text().cmp(&b.to_text()));
+    desired.dedup();
+    Ok(Some(desired))
+}
+
 async fn attempt_rescue(now_secs: u64) {
     maybe_latch_bootstrap_rescue(now_secs);
-    let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_reason) = state::with_state(|st| {
+    let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_reason, skip_range_fault) = state::with_state(|st| {
         (
             st.config.blackhole_armed.unwrap_or(false),
             st.config.blackhole_controller,
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
             st.forced_rescue_reason.clone(),
+            st.skip_range_invariant_fault.unwrap_or(false),
         )
     });
-    if !blackhole_armed { return; }
-    let Some(blackhole_controller) = blackhole_controller else {
-        log_error(3107);
+    let self_id = self_canister_principal();
+    let desired_opt = match desired_rescue_controllers(
+        now_secs,
+        blackhole_armed,
+        blackhole_controller,
+        last_xfer_opt,
+        rescue_controller,
+        forced_reason.is_some(),
+        skip_range_fault,
+        self_id,
+    ) {
+        Ok(desired) => desired,
+        Err(code) => {
+            log_error(code);
+            return;
+        }
+    };
+    let Some(desired) = desired_opt else {
         return;
     };
-    let self_id = self_canister_principal();
-    let mut desired = if forced_reason.is_some() {
-        vec![blackhole_controller, rescue_controller, self_id]
-    } else {
-        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, Some(blackhole_controller), rescue_controller) else { return; };
-        desired
-    };
-    desired.sort_by(|a: &Principal, b: &Principal| a.to_text().cmp(&b.to_text()));
-    desired.dedup();
     let rescue_active = desired.iter().any(|p| *p == rescue_controller);
     let arg = UpdateSettingsArgs { canister_id: self_id, settings: CanisterSettings { controllers: Some(desired), ..Default::default() } };
     if update_settings(&arg).await.is_err() { log_error(3101); return; }
@@ -2794,7 +2849,8 @@ mod tests {
         state::insert_skip_range(SkipRange {
             start_tx_id: 1,
             end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
-        });
+        })
+        .expect("preexisting skip range should persist");
 
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
@@ -2820,6 +2876,85 @@ mod tests {
         assert_eq!(index.starts().first().copied(), Some(Some(MIN_SKIP_RANGE_TX_COUNT)));
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
         assert_eq!(summary.topped_up_count, 1);
+    }
+
+    #[test]
+    fn skip_range_persistence_fault_latches_sticky_fault_instead_of_trapping() {
+        let now_secs = 10_225;
+        let job = ActivePayoutJob::new(8, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
+        let cfg = set_active_job(now_secs, job);
+
+        state::insert_skip_range(SkipRange {
+            start_tx_id: MIN_SKIP_RANGE_TX_COUNT + 1,
+            end_tx_id: MIN_SKIP_RANGE_TX_COUNT + 10,
+        })
+        .expect("conflicting persisted skip range should be installed for the test");
+
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
+            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .collect();
+        let index = RecordingIndex::new(txs);
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+
+        state::with_state(|st| {
+            assert_eq!(st.forced_rescue_reason, None);
+            assert_eq!(st.skip_range_invariant_fault, Some(true));
+            assert!(st.active_payout_job.is_some(), "job should remain available for rescue inspection");
+        });
+        assert_eq!(ledger.transfer_calls(), 0);
+        assert_eq!(cmc.call_count(), 0);
+    }
+
+    #[test]
+    fn desired_rescue_controllers_widens_controllers_when_skip_range_fault_is_latched() {
+        let rescue_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let blackhole_controller = Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap();
+        let self_id = Principal::anonymous();
+
+        let desired = desired_rescue_controllers(
+            10_000,
+            true,
+            Some(blackhole_controller),
+            Some(9_000),
+            rescue_controller,
+            false,
+            true,
+            self_id,
+        )
+        .expect("skip-range fault should not error")
+        .expect("armed blackhole mode should produce a controller set");
+
+        let mut expected = vec![blackhole_controller, rescue_controller, self_id];
+        expected.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
+        expected.dedup();
+        assert_eq!(desired, expected);
+    }
+
+    #[test]
+    fn desired_rescue_controllers_returns_error_when_armed_without_blackhole_controller() {
+        let err = desired_rescue_controllers(
+            10_000,
+            true,
+            None,
+            Some(9_000),
+            Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
+            false,
+            true,
+            Principal::anonymous(),
+        )
+        .expect_err("armed blackhole mode without a controller should error");
+        assert_eq!(err, 3107);
     }
 
     #[test]

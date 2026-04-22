@@ -179,6 +179,7 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             // reconciliation after post-upgrade so an obsolete widened controller
             // set does not linger until the next periodic rescue tick.
             st.forced_rescue_reason = None;
+            st.skip_range_invariant_fault = Some(false);
             if st.config.blackhole_armed.unwrap_or(false) {
                 actions.schedule_immediate_controller_reconcile = true;
             }
@@ -224,6 +225,7 @@ pub struct DebugState {
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<crate::state::ForcedRescueReason>,
+    pub skip_range_invariant_fault: bool,
     pub consecutive_index_anchor_failures: u8,
     pub consecutive_index_latest_invariant_failures: u8,
     pub consecutive_index_latest_unreadable_failures: u8,
@@ -279,6 +281,7 @@ fn debug_state() -> DebugState {
         blackhole_controller: st.config.blackhole_controller,
         blackhole_armed_since_ts: st.blackhole_armed_since_ts,
         forced_rescue_reason: st.forced_rescue_reason.clone(),
+        skip_range_invariant_fault: st.skip_range_invariant_fault.unwrap_or(false),
         consecutive_index_anchor_failures: st.consecutive_index_anchor_failures.unwrap_or(0),
         consecutive_index_latest_invariant_failures: st.consecutive_index_latest_invariant_failures.unwrap_or(0),
         consecutive_index_latest_unreadable_failures: st.consecutive_index_latest_unreadable_failures.unwrap_or(0),
@@ -361,6 +364,7 @@ fn debug_reset_runtime_state() {
         st.rescue_triggered = false;
         st.blackhole_armed_since_ts = st.config.blackhole_armed.unwrap_or(false).then_some(now_secs);
         st.forced_rescue_reason = None;
+        st.skip_range_invariant_fault = Some(false);
         st.consecutive_index_anchor_failures = Some(0);
         st.consecutive_index_latest_invariant_failures = Some(0);
         st.consecutive_index_latest_unreadable_failures = Some(0);
@@ -425,6 +429,7 @@ fn debug_clear_forced_rescue() {
     guard_debug_api_not_production();
     crate::state::with_state_mut(|st| {
         st.forced_rescue_reason = None;
+        st.skip_range_invariant_fault = Some(false);
         st.consecutive_index_anchor_failures = Some(0);
         st.consecutive_index_latest_invariant_failures = Some(0);
         st.consecutive_index_latest_unreadable_failures = Some(0);
@@ -592,7 +597,8 @@ mod tests {
         let now_secs = 123;
         crate::state::init_stable_storage();
         crate::state::clear_skip_ranges();
-        crate::state::insert_skip_range(crate::state::SkipRange { start_tx_id: 10, end_tx_id: 20 });
+        crate::state::insert_skip_range(crate::state::SkipRange { start_tx_id: 10, end_tx_id: 20 })
+            .expect("test skip range should persist before upgrade");
         let mut st = State::new(sample_config(), now_secs);
         st.main_lock_state_ts = Some(99);
         let actions = apply_upgrade_args_to_state(
@@ -627,6 +633,37 @@ mod tests {
             now_secs,
         );
         assert_eq!(actions, PostUpgradeActions::default());
+    }
+
+    #[test]
+    fn apply_upgrade_args_clear_forced_rescue_resets_fault_latches_and_counters() {
+        let now_secs = 789;
+        let mut st = State::new(sample_config(), now_secs);
+        st.config.blackhole_armed = Some(true);
+        st.forced_rescue_reason = Some(crate::state::ForcedRescueReason::IndexLatestInvariantBroken);
+        st.skip_range_invariant_fault = Some(true);
+        st.consecutive_index_anchor_failures = Some(2);
+        st.consecutive_index_latest_invariant_failures = Some(3);
+        st.consecutive_index_latest_unreadable_failures = Some(4);
+        st.consecutive_cmc_zero_success_runs = Some(5);
+
+        let actions = apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: None,
+                blackhole_armed: Some(true),
+                clear_forced_rescue: Some(true),
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.forced_rescue_reason, None);
+        assert_eq!(st.skip_range_invariant_fault, Some(false));
+        assert_eq!(st.consecutive_index_anchor_failures, Some(0));
+        assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+        assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+        assert_eq!(st.consecutive_cmc_zero_success_runs, Some(0));
+        assert_eq!(actions, PostUpgradeActions { schedule_immediate_controller_reconcile: true });
     }
 }
 

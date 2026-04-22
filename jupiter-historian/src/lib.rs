@@ -1696,14 +1696,8 @@ mod tests {
         apply_upgrade_args(
             &mut st,
             Some(UpgradeArgs {
-                staking_account: None,
-                ledger_canister_id: None,
-                index_canister_id: None,
                 enable_sns_tracking: Some(true),
                 clear_contribution_index_fault: Some(true),
-                output_source_account: None,
-                output_account: None,
-                rewards_account: None,
                 scan_interval_seconds: Some(123),
                 cycles_interval_seconds: Some(456),
                 min_tx_e8s: Some(MIN_MIN_TX_E8S),
@@ -1713,8 +1707,7 @@ mod tests {
                 max_canisters_per_cycles_tick: Some(14),
                 blackhole_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
                 sns_wasm_canister_id: Some(principal("qaa6y-5yaaa-aaaaa-aaafa-cai")),
-                cmc_canister_id: None,
-                faucet_canister_id: None,
+                ..UpgradeArgs::default()
             }),
         );
 

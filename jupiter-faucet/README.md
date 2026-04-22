@@ -315,6 +315,8 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
   - if the staking-account balance changes and the canister cannot confirm the latest staking-account tx ID, twice in a row
 - `CmcZeroSuccessRuns`
   - if two completed payout jobs in a row make beneficiary CMC notify attempts but record zero successful beneficiary top-up notifications
+- a persisted `skip_range_invariant_fault` latch
+  - if persisted skip-range replay hints become internally inconsistent; the faucet now records an explicit fail-closed rescue latch instead of trapping so controller reconciliation can react to durable fault state
 
 These latches are persisted and can be cleared via upgrade args when appropriate.
 

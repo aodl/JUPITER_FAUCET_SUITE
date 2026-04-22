@@ -781,6 +781,14 @@ mod tests {
         future.poll(&mut cx)
     }
 
+    fn run_ready<F: Future>(future: F) -> F::Output {
+        let mut future = Box::pin(future);
+        match poll_once(future.as_mut()) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("test future unexpectedly pending"),
+        }
+    }
+
     #[test]
     fn stale_main_lease_can_be_reclaimed_without_old_guard_clearing_the_new_lease() {
         let now_secs = 1_000_u64;
@@ -970,6 +978,63 @@ mod tests {
         }
     }
 
+    struct QueuedFeeLedger {
+        balance: u64,
+        fees: Mutex<VecDeque<u64>>,
+        steps: Mutex<VecDeque<TransferScriptStep>>,
+        fee_calls: AtomicUsize,
+        transfer_fees: Mutex<Vec<u64>>,
+    }
+
+    impl QueuedFeeLedger {
+        fn new(balance: u64, fees: Vec<u64>, steps: Vec<TransferScriptStep>) -> Self {
+            Self {
+                balance,
+                fees: Mutex::new(fees.into()),
+                steps: Mutex::new(steps.into()),
+                fee_calls: AtomicUsize::new(0),
+                transfer_fees: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn fee_calls(&self) -> usize {
+            self.fee_calls.load(Ordering::SeqCst)
+        }
+
+        fn transfer_fees(&self) -> Vec<u64> {
+            self.transfer_fees.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl LedgerClient for QueuedFeeLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
+            self.fee_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(*self.fees.lock().unwrap().front().expect("missing queued fee"))
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> {
+            Ok(self.balance)
+        }
+
+        async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            let fee_nat = arg.fee.expect("tests always include a fee");
+            let fee = u64::try_from(fee_nat.0).expect("fee should fit in u64 for tests");
+            self.transfer_fees.lock().unwrap().push(fee);
+            match self.steps.lock().unwrap().pop_front().expect("missing transfer step") {
+                TransferScriptStep::Ok(block) => Ok(Ok(block)),
+                TransferScriptStep::TypedErr(err) => {
+                    let mut fees = self.fees.lock().unwrap();
+                    if !fees.is_empty() {
+                        fees.pop_front();
+                    }
+                    Ok(Err(err))
+                }
+                TransferScriptStep::CallErr => Err(crate::clients::ClientError::Call("scripted transfer transport failure".to_string())),
+            }
+        }
+    }
+
     fn set_test_payout_plan(now_secs: u64) {
         let mut st = state::State::new(test_config(), now_secs);
         st.payout_plan = Some(state::PayoutPlan {
@@ -1036,6 +1101,98 @@ mod tests {
         assert_eq!(ledger.transfer_calls(), 1);
         assert!(state::with_state(|st| st.payout_plan.is_some()), "transport ambiguity should retain the plan for duplicate-safe retry");
         assert_eq!(gov.claim_or_refresh_calls(), 0);
+    }
+
+    #[test]
+    fn too_old_and_created_in_future_clear_persisted_plan_and_allow_rebuild() {
+        for err in [
+            TransferError::TooOld,
+            TransferError::CreatedInFuture { ledger_time: 9_999u64 },
+        ] {
+            let now_secs = 2_225_u64;
+            set_test_payout_plan(now_secs);
+
+            let cfg = state::with_state(|st| st.config.clone());
+            let ledger = ScriptedTransferLedger::new(50_000_000, 10_000, vec![TransferScriptStep::TypedErr(err)]);
+            let gov = ScriptedGovernance::new(
+                vec![Ok(Neuron {
+                    aging_since_timestamp_seconds: 100,
+                    maturity_disbursements_in_progress: None,
+                })],
+                vec![],
+            );
+
+            let mut fut = Box::pin(run_main_tick_with_clients(true, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+            assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+            assert_eq!(ledger.transfer_calls(), 1);
+            assert!(state::with_state(|st| st.payout_plan.is_none()), "typed timing rejection should clear the plan so a later tick can rebuild it");
+            assert_eq!(gov.claim_or_refresh_calls(), 0);
+        }
+    }
+
+    #[test]
+    fn transport_retry_uses_persisted_fee_even_if_live_fee_changes_before_retry() {
+        let now_secs = 2_235_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = QueuedFeeLedger::new(
+            50_000_000,
+            vec![10_000, 20_000],
+            vec![TransferScriptStep::CallErr, TransferScriptStep::Ok(Nat::from(77u64))],
+        );
+
+        assert!(!run_ready(process_payout(&ledger, &cfg, now_secs * 1_000_000_000, now_secs)));
+        let persisted = state::with_state(|st| st.payout_plan.clone()).expect("transport ambiguity should retain the original plan");
+        assert_eq!(persisted.fee_e8s, 10_000);
+        assert_eq!(ledger.fee_calls(), 1, "fee should be read only when the plan is first created");
+
+        assert!(run_ready(process_payout(&ledger, &cfg, (now_secs + 1) * 1_000_000_000, now_secs + 1)));
+        assert_eq!(ledger.fee_calls(), 1, "retry should reuse the persisted fee rather than re-reading the ledger fee");
+        assert_eq!(ledger.transfer_fees(), vec![10_000, 10_000]);
+        assert!(state::with_state(|st| st.payout_plan.is_none()), "successful retry should clear the completed plan");
+    }
+
+    #[test]
+    fn rebuilt_plan_uses_new_live_fee_after_too_old_clears_stale_plan() {
+        let now_secs = 2_240_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = QueuedFeeLedger::new(
+            50_000_000,
+            vec![10_000, 20_000],
+            vec![TransferScriptStep::TypedErr(TransferError::TooOld), TransferScriptStep::CallErr],
+        );
+
+        assert!(!run_ready(process_payout(&ledger, &cfg, now_secs * 1_000_000_000, now_secs)));
+        assert!(state::with_state(|st| st.payout_plan.is_none()), "TooOld should clear the stale plan immediately");
+
+        assert!(!run_ready(process_payout(&ledger, &cfg, (now_secs + 1) * 1_000_000_000, now_secs + 1)));
+        let rebuilt = state::with_state(|st| st.payout_plan.clone()).expect("transport ambiguity on the rebuilt plan should retain it for inspection");
+        assert_eq!(rebuilt.fee_e8s, 20_000, "rebuild should pick up the new live ledger fee");
+        assert_eq!(ledger.fee_calls(), 2);
+        assert_eq!(ledger.transfer_fees(), vec![10_000, 20_000]);
+    }
+
+    #[test]
+    fn governance_ok_none_disbursement_is_treated_as_successful_initiation() {
+        let now_secs = 2_245_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = ZeroBalanceLedger;
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                aging_since_timestamp_seconds: 321,
+                maturity_disbursements_in_progress: None,
+            })],
+            vec![Ok(None)],
+        );
+
+        let mut fut = Box::pin(run_main_tick_with_clients(true, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert_eq!(gov.disburse_calls(), 1);
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
+        assert_eq!(state::with_state(|st| st.prev_age_seconds), now_secs.saturating_sub(321), "age should still be captured when governance returns Ok(None)");
     }
 
 

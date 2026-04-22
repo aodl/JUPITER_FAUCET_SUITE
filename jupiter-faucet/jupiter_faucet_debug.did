@@ -61,6 +61,7 @@ type DebugState = record {
   blackhole_controller : opt principal;
   blackhole_armed_since_ts : opt nat64;
   forced_rescue_reason : opt ForcedRescueReason;
+  skip_range_invariant_fault : bool;
   consecutive_index_anchor_failures : nat8;
   consecutive_index_latest_invariant_failures : nat8;
   consecutive_index_latest_unreadable_failures : nat8;

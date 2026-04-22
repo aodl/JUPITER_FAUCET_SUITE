@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setLink } from '../src/dom-helpers.js';
+import {
+  setLink,
+  setPaneValueText,
+  setPaneValueTrustedHtml,
+} from '../src/dom-helpers.js';
 
 function withFakeDocument(nodeMap, fn) {
   const originalDocument = globalThis.document;
@@ -35,6 +39,43 @@ function makeLinkNode() {
   };
 }
 
+function makeClassList() {
+  const values = new Set();
+  return {
+    add(value) {
+      values.add(value);
+    },
+    has(value) {
+      return values.has(value);
+    },
+  };
+}
+
+function makeStatusNode() {
+  return {
+    hidden: false,
+    className: '',
+    classList: makeClassList(),
+    textContent: '',
+    title: '',
+    ariaLabel: '',
+    removeAttribute(name) {
+      if (name === 'title') this.title = '';
+      if (name === 'aria-label') this.ariaLabel = '';
+    },
+    setAttribute(name, value) {
+      if (name === 'aria-label') this.ariaLabel = value;
+    },
+  };
+}
+
+function makeValueNode() {
+  return {
+    textContent: '',
+    innerHTML: '',
+  };
+}
+
 test('setLink clears stale visible text when a link becomes unavailable', () => {
   const node = makeLinkNode();
   const nodes = new Map([['stake-link', node]]);
@@ -53,4 +94,48 @@ test('setLink clears stale visible text when a link becomes unavailable', () => 
     assert.equal(node.title, '');
     assert.equal(node.span.textContent, '');
   });
+});
+
+test('setPaneValueText writes text content and exposes loading state without touching innerHTML', () => {
+  const valueNode = makeValueNode();
+  const statusNode = makeStatusNode();
+  const nodes = new Map([
+    ['stake-neuron-age', valueNode],
+    ['stake-neuron-age-status', statusNode],
+  ]);
+
+  withFakeDocument(nodes, () => {
+    setPaneValueText('stake-neuron-age', { value: '<b>safe</b>', loading: true });
+  });
+
+  assert.equal(valueNode.textContent, '<b>safe</b>');
+  assert.equal(valueNode.innerHTML, '');
+  assert.equal(statusNode.hidden, false);
+  assert.equal(statusNode.ariaLabel, 'Loading');
+  assert.equal(statusNode.textContent, '');
+  assert.equal(statusNode.classList.has('metric-status--loading'), true);
+});
+
+test('setPaneValueTrustedHtml is the explicit raw-html path and still renders error status metadata', () => {
+  const valueNode = makeValueNode();
+  const statusNode = makeStatusNode();
+  const nodes = new Map([
+    ['stake-neuron-followees', valueNode],
+    ['stake-neuron-followees-status', statusNode],
+  ]);
+
+  withFakeDocument(nodes, () => {
+    setPaneValueTrustedHtml('stake-neuron-followees', {
+      value: '<a href="https://example.com">followee</a>',
+      error: 'followees unavailable',
+    });
+  });
+
+  assert.equal(valueNode.innerHTML, '<a href="https://example.com">followee</a>');
+  assert.equal(valueNode.textContent, '');
+  assert.equal(statusNode.hidden, false);
+  assert.equal(statusNode.textContent, '⚠');
+  assert.equal(statusNode.title, 'followees unavailable');
+  assert.equal(statusNode.ariaLabel, 'followees unavailable');
+  assert.equal(statusNode.classList.has('metric-status--error'), true);
 });

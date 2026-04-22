@@ -138,6 +138,14 @@ pub enum ForcedRescueReason {
     CmcZeroSuccessRuns,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkipRangeInsertError {
+    InvalidRange,
+    DuplicateStart,
+    OverlapsOrAbutsPredecessor,
+    OverlapsOrAbutsSuccessor,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     pub pot_start_e8s: u64,
@@ -275,6 +283,8 @@ pub struct State {
     pub rescue_triggered: bool,
     pub blackhole_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<ForcedRescueReason>,
+    #[serde(default)]
+    pub skip_range_invariant_fault: Option<bool>,
     pub consecutive_index_anchor_failures: Option<u8>,
     pub consecutive_index_latest_invariant_failures: Option<u8>,
     #[serde(default)]
@@ -305,6 +315,7 @@ impl State {
             rescue_triggered: false,
             blackhole_armed_since_ts,
             forced_rescue_reason: None,
+            skip_range_invariant_fault: Some(false),
             consecutive_index_anchor_failures: Some(0),
             consecutive_index_latest_invariant_failures: Some(0),
             consecutive_index_latest_unreadable_failures: Some(0),
@@ -405,31 +416,58 @@ pub fn list_skip_ranges() -> Vec<SkipRange> {
     })
 }
 
-pub fn insert_skip_range(range: SkipRange) {
+pub(crate) fn validate_skip_range_insertion(existing: &[SkipRange], range: &SkipRange) -> Result<(), SkipRangeInsertError> {
+    if range.start_tx_id > range.end_tx_id {
+        return Err(SkipRangeInsertError::InvalidRange);
+    }
+    if existing.iter().any(|candidate| candidate.start_tx_id == range.start_tx_id) {
+        return Err(SkipRangeInsertError::DuplicateStart);
+    }
+    if let Some(previous) = existing
+        .iter()
+        .rev()
+        .find(|candidate| candidate.start_tx_id < range.start_tx_id)
+    {
+        if previous.end_tx_id.saturating_add(1) >= range.start_tx_id {
+            return Err(SkipRangeInsertError::OverlapsOrAbutsPredecessor);
+        }
+    }
+    if let Some(next) = existing
+        .iter()
+        .find(|candidate| candidate.start_tx_id > range.start_tx_id)
+    {
+        if range.end_tx_id.saturating_add(1) >= next.start_tx_id {
+            return Err(SkipRangeInsertError::OverlapsOrAbutsSuccessor);
+        }
+    }
+    Ok(())
+}
+
+pub fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertError> {
     // This durable cache assumes the contribution-validity rules are unchanged since the
     // range was learned. Rescue upgrades clear the whole cache before resuming, and any
     // future maintenance path that changes contribution-validity rules must do the same
     // before relying on persisted skip ranges again.
-    assert!(range.start_tx_id <= range.end_tx_id, "invalid skip range: start exceeds end");
     let existing = list_skip_ranges();
-    assert!(
-        existing.iter().all(|candidate| candidate.start_tx_id != range.start_tx_id),
-        "skip range insertion would replace an existing range with the same start"
-    );
-    if let Some(previous) = existing.iter().rev().find(|candidate| candidate.start_tx_id < range.start_tx_id) {
-        assert!(
-            previous.end_tx_id.saturating_add(1) < range.start_tx_id,
-            "skip range insertion would overlap or abut an existing predecessor"
-        );
-    }
-    if let Some(next) = existing.iter().find(|candidate| candidate.start_tx_id > range.start_tx_id) {
-        assert!(
-            range.end_tx_id.saturating_add(1) < next.start_tx_id,
-            "skip range insertion would overlap or abut an existing successor"
-        );
-    }
+    validate_skip_range_insertion(&existing, &range)?;
     with_skip_range_map(|map| {
         map.insert(U64Key::from(range.start_tx_id), U64Value::from(range.end_tx_id));
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn latch_forced_rescue_reason(reason: ForcedRescueReason) {
+    with_state_mut(|st| {
+        if st.forced_rescue_reason.is_none() {
+            st.forced_rescue_reason = Some(reason);
+        }
+    });
+}
+
+pub fn latch_skip_range_invariant_fault() {
+    with_state_mut(|st| {
+        st.skip_range_invariant_fault = Some(true);
     });
 }
 
@@ -639,8 +677,8 @@ mod tests {
     #[test]
     fn skip_ranges_round_trip_through_dedicated_stable_map() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 25 });
-        insert_skip_range(SkipRange { start_tx_id: 40, end_tx_id: 60 });
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 25 }).expect("first skip range should persist");
+        insert_skip_range(SkipRange { start_tx_id: 40, end_tx_id: 60 }).expect("second skip range should persist");
 
         assert_eq!(
             list_skip_ranges(),
@@ -654,8 +692,8 @@ mod tests {
     #[test]
     fn clear_skip_ranges_removes_all_entries() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 100, end_tx_id: 200 });
-        insert_skip_range(SkipRange { start_tx_id: 400, end_tx_id: 800 });
+        insert_skip_range(SkipRange { start_tx_id: 100, end_tx_id: 200 }).expect("first skip range should persist");
+        insert_skip_range(SkipRange { start_tx_id: 400, end_tx_id: 800 }).expect("second skip range should persist");
 
         clear_skip_ranges();
 
@@ -663,19 +701,45 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "overlap or abut")]
     fn skip_range_insertion_rejects_adjacent_ranges() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 });
-        insert_skip_range(SkipRange { start_tx_id: 21, end_tx_id: 30 });
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 }).expect("baseline range should persist");
+
+        let err = insert_skip_range(SkipRange { start_tx_id: 21, end_tx_id: 30 }).expect_err("adjacent skip range should be rejected");
+        assert_eq!(err, SkipRangeInsertError::OverlapsOrAbutsPredecessor);
     }
 
     #[test]
-    #[should_panic(expected = "same start")]
     fn skip_range_insertion_rejects_same_start_as_existing_range() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 });
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 30 });
+        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 }).expect("baseline range should persist");
+
+        let err = insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 30 }).expect_err("duplicate-start skip range should be rejected");
+        assert_eq!(err, SkipRangeInsertError::DuplicateStart);
+    }
+
+    #[test]
+    fn latch_forced_rescue_reason_only_sets_the_first_reason() {
+        reset_test_storage();
+        set_state(State::new(sample_config(), 42));
+
+        latch_forced_rescue_reason(ForcedRescueReason::IndexLatestInvariantBroken);
+        latch_forced_rescue_reason(ForcedRescueReason::BootstrapNoSuccess);
+
+        let forced = with_state(|st| st.forced_rescue_reason.clone());
+        assert_eq!(forced, Some(ForcedRescueReason::IndexLatestInvariantBroken));
+    }
+
+    #[test]
+    fn latch_skip_range_invariant_fault_sets_sticky_fault_flag() {
+        reset_test_storage();
+        set_state(State::new(sample_config(), 42));
+
+        latch_skip_range_invariant_fault();
+        latch_skip_range_invariant_fault();
+
+        let fault = with_state(|st| st.skip_range_invariant_fault);
+        assert_eq!(fault, Some(true));
     }
 
 }

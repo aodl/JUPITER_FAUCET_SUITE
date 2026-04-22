@@ -824,6 +824,25 @@ mod tests {
             },
         }
     }
+
+    fn transfer_from_between_accounts_tx(id: u64, from: &str, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::TransferFrom {
+                    to: to.to_string(),
+                    fee: Tokens::new(10_000),
+                    from: from.to_string(),
+                    amount: Tokens::new(amount_e8s),
+                    spender: "spender".into(),
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
+            },
+        }
+    }
     fn transfer_to_account_tx(id: u64, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
         transfer_between_accounts_tx(id, "sender", to, amount_e8s, timestamp_nanos)
     }
@@ -1198,6 +1217,67 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, output_id);
         assert_eq!(calls[1].0, rewards_id);
+    }
+
+    #[test]
+    fn route_indexing_counts_transfer_from_and_skips_repeated_cursor_without_double_counting() {
+        let _staking_id = configure_state(1);
+        let (source, output, rewards) = state::with_state(|st| (
+            st.config.output_source_account.clone(),
+            st.config.output_account.clone(),
+            st.config.rewards_account.clone(),
+        ));
+        let source_id = account_identifier_text(&source);
+        let output_id = account_identifier_text(&output);
+        let rewards_id = account_identifier_text(&rewards);
+        let filler: Vec<_> = (11..(10 + PAGE_SIZE))
+            .map(|id| transfer_between_accounts_tx(id, "third-party", &output_id, 1_000, id))
+            .collect();
+        let mut first_page = vec![transfer_from_between_accounts_tx(10, &source_id, &output_id, 111_000_000, 10)];
+        first_page.extend(filler);
+        let mock = MockIndexClient::new(vec![
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: first_page,
+                oldest_tx_id: Some(10),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![
+                    transfer_from_between_accounts_tx(10 + PAGE_SIZE - 1, &source_id, &output_id, 999_000_000, 20),
+                    transfer_between_accounts_tx(10 + PAGE_SIZE, &source_id, &output_id, 22_000_000, 21),
+                    transfer_between_accounts_tx(10 + PAGE_SIZE + 1, "third-party", &output_id, 333_000_000, 22),
+                ],
+                oldest_tx_id: Some(10),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: vec![transfer_between_accounts_tx(30, &source_id, &rewards_id, 5_000_000, 30)],
+                oldest_tx_id: Some(30),
+            },
+        ]);
+
+        block_on(process_route_indexing(100, 200, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(111_000_000));
+            assert_eq!(st.last_indexed_output_tx_id, Some(10 + PAGE_SIZE - 1));
+            assert_eq!(st.active_route_sweep.as_ref().map(|active| active.next_index), Some(0));
+        });
+
+        block_on(process_route_indexing(101, 201, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(133_000_000), "repeated cursor tx should be skipped while the new routed transfer is counted once");
+            assert_eq!(st.last_indexed_output_tx_id, Some(10 + PAGE_SIZE + 1));
+            assert_eq!(st.active_route_sweep.as_ref().map(|active| active.next_index), Some(1));
+        });
+
+        block_on(process_route_indexing(102, 202, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(133_000_000));
+            assert_eq!(st.total_rewards_e8s, Some(5_000_000));
+            assert_eq!(st.last_indexed_rewards_tx_id, Some(30));
+            assert!(st.active_route_sweep.is_none());
+        });
     }
 
 
