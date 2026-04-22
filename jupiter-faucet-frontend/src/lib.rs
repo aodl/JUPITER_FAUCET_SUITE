@@ -7,6 +7,7 @@ use ic_cdk::{
 };
 use ic_http_certification::{
     utils::add_v2_certificate_header, DefaultCelBuilder, DefaultResponseCertification,
+    DefaultResponseOnlyCelExpression,
     HeaderField, HttpCertification, HttpCertificationPath, HttpCertificationTree,
     HttpCertificationTreeEntry, HttpRequest, HttpResponse, StatusCode,
     CERTIFICATE_EXPRESSION_HEADER_NAME,
@@ -26,7 +27,7 @@ pub struct Metrics {
 struct CertifiedMetricsSnapshot {
     body: Vec<u8>,
     headers: Vec<HeaderField>,
-    cel_expr: String,
+    cel_expr: DefaultResponseOnlyCelExpression<'static>,
 }
 
 const METRICS_REFRESH_INTERVAL_SECS: u64 = 60;
@@ -114,11 +115,10 @@ fn metrics_tree_path() -> HttpCertificationPath<'static> {
     HttpCertificationPath::exact("/metrics")
 }
 
-fn metrics_cel_expression() -> String {
+fn metrics_cel_expression() -> DefaultResponseOnlyCelExpression<'static> {
     DefaultCelBuilder::response_only_certification()
         .with_response_certification(DefaultResponseCertification::response_header_exclusions(vec![]))
         .build()
-        .to_string()
 }
 
 fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> CertifiedMetricsSnapshot {
@@ -130,7 +130,7 @@ fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> Cert
     let body = serde_json::to_vec(&metrics).expect("failed to serialize metrics");
     let cel_expr = metrics_cel_expression();
     let headers = get_asset_headers(vec![
-        (CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(), cel_expr.clone()),
+        (CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(), cel_expr.to_string()),
         ("content-type".to_string(), "application/json".to_string()),
         ("cache-control".to_string(), NO_CACHE_ASSET_CACHE_CONTROL.to_string()),
     ]);
@@ -138,7 +138,7 @@ fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> Cert
 }
 
 fn install_metrics_refresh_timer() {
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(METRICS_REFRESH_INTERVAL_SECS), || {
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(METRICS_REFRESH_INTERVAL_SECS), || async {
         refresh_certified_metrics_snapshot();
     });
 }

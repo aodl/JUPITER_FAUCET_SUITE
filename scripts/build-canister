@@ -247,7 +247,7 @@ build_one() {
     echo "Embedding production canister id for ${target_name}: ${prod_canister_id}"
   fi
 
-  cargo build --frozen --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
+  cargo build --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
 
   local raw_in="target/wasm32-unknown-unknown/release/${raw_name}.wasm"
   local raw_out="release-artifacts/${artifact_stem}.wasm"
