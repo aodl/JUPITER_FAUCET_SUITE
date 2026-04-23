@@ -161,6 +161,7 @@ pub fn set_state(st: State) {
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 pub fn get_state() -> State {
     STATE.with(|s| s.borrow().clone()).expect("state not initialized")
 }

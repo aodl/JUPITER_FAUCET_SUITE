@@ -1217,6 +1217,7 @@ pub fn with_state_mut_sections<R>(dirty_sections: u8, f: impl FnOnce(&mut State)
     with_state_mut_sections_scoped(dirty_sections, None, None, None, f)
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections(DIRTY_ALL, f)
 }

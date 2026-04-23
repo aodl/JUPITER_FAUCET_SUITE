@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
 use sha2::{Digest, Sha224};
 
@@ -17,6 +19,24 @@ fn require_ignored_flag() -> Result<()> {
     Ok(())
 }
 fn repo_root() -> &'static str { env!("CARGO_MANIFEST_DIR") }
+
+const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+const ICP_INDEX_ID: &str = "qhbym-qaaaa-aaaaa-aaafq-cai";
+
+fn build_pic_with_real_icp() -> PocketIc {
+    let icp_features = IcpFeatures {
+        registry: Some(IcpFeaturesConfig::DefaultConfig),
+        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
+        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
+        ..Default::default()
+    };
+
+    PocketIcBuilder::new()
+        .with_nns_subnet()
+        .with_application_subnet()
+        .with_icp_features(icp_features)
+        .build()
+}
 
 fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<&str>) -> Result<Vec<u8>> {
     if let Some(bytes) = cache.get() {
@@ -202,6 +222,91 @@ struct GetCyclesHistoryArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetAccountIdentifierTransactionsArgs {
+    max_results: u64,
+    start: Option<u64>,
+    account_identifier: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetAccountIdentifierTransactionsError {
+    message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct IndexTimeStamp {
+    timestamp_nanos: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Tokens {
+    e8s: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum IndexOperation {
+    Approve {
+        fee: Tokens,
+        from: String,
+        allowance: Tokens,
+        expires_at: Option<IndexTimeStamp>,
+        spender: String,
+        expected_allowance: Option<Tokens>,
+    },
+    Burn {
+        from: String,
+        amount: Tokens,
+        spender: Option<String>,
+    },
+    Mint {
+        to: String,
+        amount: Tokens,
+    },
+    Transfer {
+        to: String,
+        fee: Tokens,
+        from: String,
+        amount: Tokens,
+        spender: Option<String>,
+    },
+    TransferFrom {
+        to: String,
+        fee: Tokens,
+        from: String,
+        amount: Tokens,
+        spender: String,
+    },
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct IndexTransaction {
+    memo: u64,
+    icrc1_memo: Option<Vec<u8>>,
+    operation: IndexOperation,
+    created_at_time: Option<IndexTimeStamp>,
+    timestamp: Option<IndexTimeStamp>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct IndexTransactionWithId {
+    id: u64,
+    transaction: IndexTransaction,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetAccountIdentifierTransactionsResponse {
+    balance: u64,
+    transactions: Vec<IndexTransactionWithId>,
+    oldest_tx_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum GetAccountIdentifierTransactionsResult {
+    Ok(GetAccountIdentifierTransactionsResponse),
+    Err(GetAccountIdentifierTransactionsError),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     distinct_canister_count: u32,
     last_indexed_staking_tx_id: Option<u64>,
@@ -326,6 +431,74 @@ struct ListRecentContributionsResponse {
 }
 
 
+fn real_icp_ledger_principal() -> Principal {
+    Principal::from_text(ICP_LEDGER_ID).expect("valid ICP ledger principal")
+}
+
+fn real_icp_index_principal() -> Principal {
+    Principal::from_text(ICP_INDEX_ID).expect("valid ICP index principal")
+}
+
+fn nat_to_u64(n: &Nat) -> Result<u64> {
+    u64::try_from(n.0.clone()).map_err(|_| anyhow!("Nat does not fit into u64: {n}"))
+}
+
+fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
+    let fee: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_fee", ())?;
+    nat_to_u64(&fee)
+}
+
+fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: TransferArg) -> Result<u64> {
+    let result: Result<Nat, TransferError> = update_one(pic, ledger, from, "icrc1_transfer", arg)?;
+    match result {
+        Ok(block_index) => nat_to_u64(&block_index),
+        Err(err) => bail!("icrc1_transfer failed: {err:?}"),
+    }
+}
+
+fn index_account_transactions(
+    pic: &PocketIc,
+    index: Principal,
+    account_identifier: String,
+    start: Option<u64>,
+    max_results: u64,
+) -> Result<GetAccountIdentifierTransactionsResponse> {
+    let result: GetAccountIdentifierTransactionsResult = update_one(
+        pic,
+        index,
+        Principal::anonymous(),
+        "get_account_identifier_transactions",
+        GetAccountIdentifierTransactionsArgs {
+            max_results,
+            start,
+            account_identifier,
+        },
+    )?;
+    match result {
+        GetAccountIdentifierTransactionsResult::Ok(resp) => Ok(resp),
+        GetAccountIdentifierTransactionsResult::Err(err) => bail!("real ICP index returned error: {}", err.message),
+    }
+}
+
+fn wait_for_index_transactions(
+    pic: &PocketIc,
+    index: Principal,
+    account_identifier: &str,
+    expected_min: usize,
+) -> Result<GetAccountIdentifierTransactionsResponse> {
+    let mut last = None;
+    for _ in 0..40 {
+        let page = index_account_transactions(pic, index, account_identifier.to_string(), None, expected_min as u64)?;
+        if page.transactions.len() >= expected_min {
+            return Ok(page);
+        }
+        last = Some(page);
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(pic, 5);
+    }
+    bail!("real ICP index did not expose {expected_min} transactions for account {} after waiting; last page: {:?}", account_identifier, last.map(|page| page.transactions.iter().map(|tx| tx.id).collect::<Vec<_>>()));
+}
+
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
     let mut hasher = Sha224::new();
@@ -344,7 +517,6 @@ struct Harness {
     pic: PocketIc,
     index: Principal,
     blackhole: Principal,
-    cmc: Principal,
     sns_wasm: Principal,
     historian: Principal,
 }
@@ -384,7 +556,7 @@ impl Harness {
             max_canisters_per_cycles_tick: Some(10),
         };
         pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
-        Ok(Self { pic, index, blackhole, cmc, sns_wasm, historian })
+        Ok(Self { pic, index, blackhole, sns_wasm, historian })
     }
 
     fn staking_identifier(&self) -> Result<String> {
@@ -396,6 +568,86 @@ impl Harness {
         self.pic.advance_time(Duration::from_secs(2));
         tick_n(&self.pic, 5);
     }
+}
+
+#[test]
+#[ignore]
+fn real_icp_index_returns_newest_first_for_account_history() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
+    let staking_id = account_identifier_text(&staking_account);
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+
+    for ordinal in 0..3u64 {
+        let memo_text = format!("real-index-ordering-{ordinal}");
+        let _block_index = icrc1_transfer(
+            &pic,
+            ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: staking_account,
+                fee: Some(Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: Some(Memo::from(memo_text.into_bytes())),
+                amount: Nat::from(100_000_000u64 + ordinal),
+            },
+        )?;
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(&pic, 3);
+    }
+
+    let page = wait_for_index_transactions(&pic, index, &staking_id, 3)?;
+    let ids: Vec<u64> = page.transactions.iter().map(|tx| tx.id).collect();
+    assert_eq!(ids.len(), 3);
+    assert!(ids.windows(2).all(|window| window[0] > window[1]), "expected real ICP index account history to be newest-first, got ids {ids:?}");
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([7u8; 32]) };
+    let staking_id = account_identifier_text(&staking_account);
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+
+    for ordinal in 0..4u64 {
+        let memo_text = format!("real-index-pagination-{ordinal}");
+        let _block_index = icrc1_transfer(
+            &pic,
+            ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: staking_account,
+                fee: Some(Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: Some(Memo::from(memo_text.into_bytes())),
+                amount: Nat::from(100_000_100u64 + ordinal),
+            },
+        )?;
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(&pic, 3);
+    }
+
+    let first_page = wait_for_index_transactions(&pic, index, &staking_id, 4)?;
+    let first_ids: Vec<u64> = first_page.transactions.iter().map(|tx| tx.id).collect();
+    assert!(first_ids.len() >= 3, "expected at least three transactions to characterize pagination, got {first_ids:?}");
+    let boundary = *first_ids.get(1).expect("at least two ids");
+
+    let second_page = index_account_transactions(&pic, index, staking_id.clone(), Some(boundary), 3)?;
+    let second_ids: Vec<u64> = second_page.transactions.iter().map(|tx| tx.id).collect();
+    assert!(!second_ids.is_empty(), "expected second page when querying real ICP index from boundary {boundary}");
+    assert!(second_ids[0] < boundary, "expected real ICP index pagination to exclude the start boundary and continue with older tx ids, first page ids={first_ids:?}, second page ids={second_ids:?}");
+    assert!(second_ids.windows(2).all(|window| window[0] > window[1]), "expected second page to stay newest-first, got ids {second_ids:?}");
+    Ok(())
 }
 
 #[test]
