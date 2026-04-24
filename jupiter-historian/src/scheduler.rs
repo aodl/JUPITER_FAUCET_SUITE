@@ -48,6 +48,50 @@ fn set_indexed_route_cursor(st: &mut state::State, kind: &IndexedRouteKind, curs
     }
 }
 
+fn indexed_route_oldest_cursor(st: &state::State, kind: &IndexedRouteKind) -> Option<u64> {
+    match kind {
+        IndexedRouteKind::Output => st.oldest_indexed_output_tx_id,
+        IndexedRouteKind::Rewards => st.oldest_indexed_rewards_tx_id,
+    }
+}
+
+fn indexed_route_order_descending(st: &state::State, kind: &IndexedRouteKind) -> Option<bool> {
+    match kind {
+        IndexedRouteKind::Output => st.output_route_index_descending,
+        IndexedRouteKind::Rewards => st.rewards_route_index_descending,
+    }
+}
+
+fn indexed_route_backfill_complete(st: &state::State, kind: &IndexedRouteKind) -> bool {
+    match kind {
+        IndexedRouteKind::Output => st.output_route_backfill_complete.unwrap_or(false),
+        IndexedRouteKind::Rewards => st.rewards_route_backfill_complete.unwrap_or(false),
+    }
+}
+
+fn set_indexed_route_descending_progress(
+    st: &mut state::State,
+    kind: &IndexedRouteKind,
+    latest: Option<u64>,
+    oldest: Option<u64>,
+    backfill_complete: bool,
+) {
+    match kind {
+        IndexedRouteKind::Output => {
+            st.last_indexed_output_tx_id = latest;
+            st.oldest_indexed_output_tx_id = oldest;
+            st.output_route_index_descending = Some(true);
+            st.output_route_backfill_complete = Some(backfill_complete);
+        }
+        IndexedRouteKind::Rewards => {
+            st.last_indexed_rewards_tx_id = latest;
+            st.oldest_indexed_rewards_tx_id = oldest;
+            st.rewards_route_index_descending = Some(true);
+            st.rewards_route_backfill_complete = Some(backfill_complete);
+        }
+    }
+}
+
 fn add_indexed_route_amount(st: &mut state::State, kind: &IndexedRouteKind, amount_e8s: u64) {
     match kind {
         IndexedRouteKind::Output => {
@@ -310,16 +354,125 @@ fn apply_verified_qualifying_contribution(
     }
 }
 
-async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
-    let cfg = state::with_state(|st| st.config.clone());
-    let had_fault = state::with_state(|st| st.contribution_index_fault.is_some());
-    let staking_id = account_identifier_text(&cfg.staking_account);
-    let mut cursor = state::with_state(|st| st.last_indexed_staking_tx_id);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageOrder {
+    Ascending,
+    Descending,
+}
+
+fn detect_page_order(page: &crate::clients::index::GetAccountIdentifierTransactionsResponse) -> Option<PageOrder> {
+    if page.transactions.len() < 2 {
+        return None;
+    }
+    let first = page.transactions.first().expect("page has a first tx").id;
+    let last = page.transactions.last().expect("page has a last tx").id;
+    if first < last {
+        Some(PageOrder::Ascending)
+    } else if first > last {
+        Some(PageOrder::Descending)
+    } else {
+        None
+    }
+}
+
+fn infer_initial_page_order(
+    page: &crate::clients::index::GetAccountIdentifierTransactionsResponse,
+    latest_cursor: Option<u64>,
+    oldest_cursor: Option<u64>,
+) -> PageOrder {
+    if let Some(order) = detect_page_order(page) {
+        return order;
+    }
+    // A single-item page is ambiguous unless a persisted cursor proves that the
+    // item is older than already-indexed history. In that case the real ICP
+    // index's newest-first pagination is the only ordering compatible with the
+    // page; otherwise keep the legacy ascending path.
+    let first_id = page.transactions.first().map(|tx| tx.id);
+    if first_id.zip(oldest_cursor.or(latest_cursor)).map(|(tx_id, cursor)| tx_id < cursor).unwrap_or(false) {
+        PageOrder::Descending
+    } else {
+        PageOrder::Ascending
+    }
+}
+
+fn apply_indexed_contribution_tx(
+    tx: &crate::clients::index::IndexTransactionWithId,
+    staking_id: &str,
+    min_tx_e8s: u64,
+    now_secs: u64,
+) {
+    if let Some(contribution) = logic::indexed_contribution_from_tx(tx, staking_id, min_tx_e8s) {
+        match contribution {
+            logic::IndexedContributionEntry::Valid(contribution) => {
+                if contribution.counts_toward_faucet {
+                    let dirty_beneficiary = contribution.beneficiary;
+                    state::with_root_registry_and_contributions_canister_state_mut(dirty_beneficiary, |st| {
+                        apply_verified_qualifying_contribution(st, contribution, now_secs);
+                    });
+                } else {
+                    state::with_root_state_mut(|st| {
+                        let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
+                        push_recent_contribution(
+                            recent,
+                            RecentContribution {
+                                canister_id: contribution.beneficiary,
+                                tx_id: contribution.tx_id,
+                                timestamp_nanos: contribution.timestamp_nanos,
+                                amount_e8s: contribution.amount_e8s,
+                                counts_toward_faucet: false,
+                            },
+                            MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+                        );
+                    });
+                }
+            }
+            logic::IndexedContributionEntry::Invalid(contribution) => {
+                state::with_root_state_mut(|st| {
+                    let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
+                    push_recent_invalid_contribution(
+                        recent,
+                        InvalidContribution {
+                            tx_id: contribution.tx_id,
+                            timestamp_nanos: contribution.timestamp_nanos,
+                            amount_e8s: contribution.amount_e8s,
+                            memo_text: contribution.memo_text,
+                        },
+                    );
+                });
+            }
+        }
+    }
+}
+
+fn apply_contribution_transactions_in_chronological_order(
+    txs: &[crate::clients::index::IndexTransactionWithId],
+    staking_id: &str,
+    min_tx_e8s: u64,
+    now_secs: u64,
+) {
+    for tx in txs.iter().rev() {
+        apply_indexed_contribution_tx(tx, staking_id, min_tx_e8s, now_secs);
+    }
+}
+
+async fn process_contribution_indexing_ascending<I: IndexClient>(
+    index: &I,
+    now_secs: u64,
+    cfg: &state::Config,
+    had_fault: bool,
+    staking_id: &str,
+    mut cursor: Option<u64>,
+    mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse>,
+) -> Result<(), String> {
     for _ in 0..cfg.max_index_pages_per_tick.max(1) {
-        let page = index
-            .get_account_identifier_transactions(staking_id.clone(), cursor, PAGE_SIZE)
-            .await
-            .map_err(|e| format!("index call failed: {e}"))?;
+        let page = match first_page.take() {
+            Some(page) => page,
+            None => index
+                .get_account_identifier_transactions(staking_id.to_string(), cursor, PAGE_SIZE)
+                .await
+                .map_err(|e| format!("index call failed: {e}"))?,
+        };
         if page.transactions.is_empty() {
             break;
         }
@@ -342,54 +495,14 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
                         ));
                     }
                 }
-                if let Some(contribution) = logic::indexed_contribution_from_tx(tx, &staking_id, cfg.min_tx_e8s) {
-                    match contribution {
-                        logic::IndexedContributionEntry::Valid(contribution) => {
-                            if contribution.counts_toward_faucet {
-                                {
-                                    let dirty_beneficiary = contribution.beneficiary.clone();
-                                    state::with_root_registry_and_contributions_canister_state_mut(dirty_beneficiary, |st| {
-                                        apply_verified_qualifying_contribution(st, contribution, now_secs);
-                                    });
-                                }
-                            } else {
-                                state::with_root_state_mut(|st| {
-                                    let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
-                                    push_recent_contribution(
-                                        recent,
-                                        RecentContribution {
-                                            canister_id: contribution.beneficiary,
-                                            tx_id: contribution.tx_id,
-                                            timestamp_nanos: contribution.timestamp_nanos,
-                                            amount_e8s: contribution.amount_e8s,
-                                            counts_toward_faucet: false,
-                                        },
-                                        MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
-                                    );
-                                });
-                            }
-                        }
-                        logic::IndexedContributionEntry::Invalid(contribution) => {
-                            state::with_root_state_mut(|st| {
-                                let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
-                                push_recent_invalid_contribution(
-                                    recent,
-                                    InvalidContribution {
-                                        tx_id: contribution.tx_id,
-                                        timestamp_nanos: contribution.timestamp_nanos,
-                                        amount_e8s: contribution.amount_e8s,
-                                        memo_text: contribution.memo_text,
-                                    },
-                                );
-                            });
-                        }
-                    }
-                }
+                apply_indexed_contribution_tx(tx, staking_id, cfg.min_tx_e8s, now_secs);
                 cursor = Some(tx.id);
-                // Historian dedupe relies on this cursor remaining monotonic in normal operation. The
-                // retained per-canister history only protects against duplicate delivery within the
-                // retained window; older tx_ids are considered already indexed once the cursor passes them.
-                state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = cursor);
+                state::with_root_state_mut(|st| {
+                    st.last_indexed_staking_tx_id = cursor;
+                    st.oldest_indexed_staking_tx_id = cursor;
+                    st.staking_index_descending = Some(false);
+                    st.staking_backfill_complete = Some(true);
+                });
             }
         }
         if page.transactions.len() < PAGE_SIZE as usize {
@@ -403,6 +516,189 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
         }
     });
     Ok(())
+}
+
+// The real ICP index returns account history newest-first and uses the `start`
+// cursor to walk toward older transactions. Descending mode therefore keeps two
+// cursors: `latest_cursor` is the highest/newest tx id observed so future ticks
+// can pick up new arrivals from the latest page, while `oldest_cursor` is the
+// oldest tx id backfilled so older history can continue without treating normal
+// lower tx ids as non-monotonic.
+async fn process_contribution_indexing_descending_seeded<I: IndexClient>(
+    index: &I,
+    now_secs: u64,
+    cfg: &state::Config,
+    had_fault: bool,
+    staking_id: &str,
+    mut latest_cursor: Option<u64>,
+    mut oldest_cursor: Option<u64>,
+    mut backfill_complete: bool,
+    mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse>,
+) -> Result<(), String> {
+    let mut remaining_pages = cfg.max_index_pages_per_tick.max(1);
+
+    if latest_cursor.is_some() && oldest_cursor.is_none() {
+        oldest_cursor = latest_cursor;
+    }
+
+    if let Some(latest) = latest_cursor {
+        let mut page_start = None;
+        while remaining_pages > 0 {
+            let page = match first_page.take() {
+                Some(page) => page,
+                None => index
+                    .get_account_identifier_transactions(staking_id.to_string(), page_start, PAGE_SIZE)
+                    .await
+                    .map_err(|e| format!("index call failed: {e}"))?,
+            };
+            remaining_pages = remaining_pages.saturating_sub(1);
+            if page.transactions.is_empty() {
+                break;
+            }
+            let mut new_items = Vec::new();
+            let mut reached_boundary = false;
+            for tx in page.transactions.iter() {
+                if tx.id == latest {
+                    reached_boundary = true;
+                    break;
+                }
+                if tx.id > latest {
+                    new_items.push(tx.clone());
+                    continue;
+                }
+                reached_boundary = true;
+                break;
+            }
+            if !new_items.is_empty() {
+                let _batch = state::begin_persistence_batch();
+                apply_contribution_transactions_in_chronological_order(&new_items, staking_id, cfg.min_tx_e8s, now_secs);
+                if let Some(max_new) = new_items.iter().map(|tx| tx.id).max() {
+                    latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_new)).unwrap_or(max_new));
+                    state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = latest_cursor);
+                }
+            }
+            if reached_boundary || page.transactions.len() < PAGE_SIZE as usize {
+                break;
+            }
+            page_start = page.transactions.last().map(|tx| tx.id);
+        }
+    }
+
+    while remaining_pages > 0 && !backfill_complete {
+        let page = match first_page.take() {
+            Some(page) => page,
+            None => index
+                .get_account_identifier_transactions(staking_id.to_string(), oldest_cursor, PAGE_SIZE)
+                .await
+                .map_err(|e| format!("index call failed: {e}"))?,
+        };
+        remaining_pages = remaining_pages.saturating_sub(1);
+        if page.transactions.is_empty() {
+            backfill_complete = true;
+            break;
+        }
+        let older_items: Vec<_> = match oldest_cursor {
+            Some(oldest) => page.transactions.iter().filter(|tx| tx.id < oldest).cloned().collect(),
+            None => page.transactions.clone(),
+        };
+        if older_items.is_empty() {
+            backfill_complete = true;
+            break;
+        }
+        {
+            let _batch = state::begin_persistence_batch();
+            apply_contribution_transactions_in_chronological_order(&older_items, staking_id, cfg.min_tx_e8s, now_secs);
+            if let Some(max_seen) = older_items.iter().map(|tx| tx.id).max() {
+                latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
+            }
+            if let Some(min_seen) = older_items.iter().map(|tx| tx.id).min() {
+                oldest_cursor = Some(oldest_cursor.map(|existing| existing.min(min_seen)).unwrap_or(min_seen));
+            }
+            state::with_root_state_mut(|st| {
+                st.last_indexed_staking_tx_id = latest_cursor;
+                st.oldest_indexed_staking_tx_id = oldest_cursor;
+                st.staking_index_descending = Some(true);
+                st.staking_backfill_complete = Some(backfill_complete);
+            });
+        }
+        if page.transactions.len() < PAGE_SIZE as usize {
+            backfill_complete = true;
+            break;
+        }
+    }
+
+    state::with_root_state_mut(|st| {
+        st.last_indexed_staking_tx_id = latest_cursor;
+        st.oldest_indexed_staking_tx_id = oldest_cursor;
+        st.staking_index_descending = Some(true);
+        st.staking_backfill_complete = Some(backfill_complete);
+        st.last_index_run_ts = Some(now_secs);
+        if had_fault {
+            st.contribution_index_fault = None;
+        }
+    });
+    Ok(())
+}
+
+async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
+    let cfg = state::with_state(|st| st.config.clone());
+    let (had_fault, latest_cursor, oldest_cursor, order_descending, backfill_complete) = state::with_state(|st| {
+        (
+            st.contribution_index_fault.is_some(),
+            st.last_indexed_staking_tx_id,
+            st.oldest_indexed_staking_tx_id,
+            st.staking_index_descending,
+            st.staking_backfill_complete.unwrap_or(false),
+        )
+    });
+    let staking_id = account_identifier_text(&cfg.staking_account);
+
+    match order_descending {
+        Some(false) => {
+            process_contribution_indexing_ascending(index, now_secs, &cfg, had_fault, &staking_id, latest_cursor, None).await
+        }
+        Some(true) => {
+            process_contribution_indexing_descending_seeded(
+                index,
+                now_secs,
+                &cfg,
+                had_fault,
+                &staking_id,
+                latest_cursor,
+                oldest_cursor,
+                backfill_complete,
+                None,
+            )
+            .await
+        }
+        None => {
+            let first_page = index
+                .get_account_identifier_transactions(staking_id.clone(), None, PAGE_SIZE)
+                .await
+                .map_err(|e| format!("index call failed: {e}"))?;
+            match infer_initial_page_order(&first_page, latest_cursor, oldest_cursor) {
+                PageOrder::Ascending => {
+                    state::with_root_state_mut(|st| st.staking_index_descending = Some(false));
+                    process_contribution_indexing_ascending(index, now_secs, &cfg, had_fault, &staking_id, latest_cursor, Some(first_page)).await
+                }
+                PageOrder::Descending => {
+                    state::with_root_state_mut(|st| st.staking_index_descending = Some(true));
+                    process_contribution_indexing_descending_seeded(
+                        index,
+                        now_secs,
+                        &cfg,
+                        had_fault,
+                        &staking_id,
+                        latest_cursor,
+                        oldest_cursor,
+                        backfill_complete,
+                        Some(first_page),
+                    )
+                    .await
+                }
+            }
+        }
+    }
 }
 
 async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_secs: u64, index: &I) -> Result<(), String> {
@@ -428,43 +724,189 @@ async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_se
     let kind = &routes[active.next_index as usize];
     let source_id = account_identifier_text(&cfg.output_source_account);
     let route_id = account_identifier_text(&indexed_route_account(&cfg, kind));
-    let mut cursor = state::with_state(|st| indexed_route_cursor(st, kind));
+    let (mut latest_cursor, mut oldest_cursor, order_descending, mut backfill_complete) = state::with_state(|st| {
+        (
+            indexed_route_cursor(st, kind),
+            indexed_route_oldest_cursor(st, kind),
+            indexed_route_order_descending(st, kind),
+            indexed_route_backfill_complete(st, kind),
+        )
+    });
+    if latest_cursor.is_some() && oldest_cursor.is_none() {
+        oldest_cursor = latest_cursor;
+    }
+
     let mut completed_route = false;
-    for _ in 0..cfg.max_index_pages_per_tick.max(1) {
-        let page = index
-            .get_account_identifier_transactions(route_id.clone(), cursor, PAGE_SIZE)
-            .await
-            .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?;
-        if page.transactions.is_empty() {
-            completed_route = true;
-            break;
+    let mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse> = None;
+    // Route indexing uses the same two-cursor model as contribution indexing in
+    // descending mode: the latest cursor detects newer routed transfers, and the
+    // oldest cursor continues the historical backfill through newest-first pages.
+    let order = match order_descending {
+        Some(true) => PageOrder::Descending,
+        Some(false) => PageOrder::Ascending,
+        None => {
+            let page = index
+                .get_account_identifier_transactions(route_id.clone(), None, PAGE_SIZE)
+                .await
+                .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?;
+            let detected = infer_initial_page_order(&page, latest_cursor, oldest_cursor);
+            first_page = Some(page);
+            detected
         }
-        {
-            let _batch = state::begin_persistence_batch();
-            for tx in page.transactions.iter() {
-                if let Some(prev) = cursor {
-                    if tx.id == prev {
-                        continue;
-                    }
-                    if tx.id < prev {
-                        return Err(format!(
-                            "historian observed non-monotonic {}-route tx_id {} after cursor {:?}",
-                            indexed_route_name(kind),
-                            tx.id,
-                            cursor,
-                        ));
+    };
+
+    match order {
+        PageOrder::Ascending => {
+            let mut cursor = latest_cursor;
+            for _ in 0..cfg.max_index_pages_per_tick.max(1) {
+                let page = match first_page.take() {
+                    Some(page) => page,
+                    None => index
+                        .get_account_identifier_transactions(route_id.clone(), cursor, PAGE_SIZE)
+                        .await
+                        .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?,
+                };
+                if page.transactions.is_empty() {
+                    completed_route = true;
+                    break;
+                }
+                {
+                    let _batch = state::begin_persistence_batch();
+                    for tx in page.transactions.iter() {
+                        if let Some(prev) = cursor {
+                            if tx.id == prev {
+                                continue;
+                            }
+                            if tx.id < prev {
+                                return Err(format!(
+                                    "historian observed non-monotonic {}-route tx_id {} after cursor {:?}",
+                                    indexed_route_name(kind),
+                                    tx.id,
+                                    cursor,
+                                ));
+                            }
+                        }
+                        if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
+                            state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                        }
+                        cursor = Some(tx.id);
+                        state::with_root_state_mut(|st| {
+                            set_indexed_route_cursor(st, kind, cursor);
+                            match kind {
+                                IndexedRouteKind::Output => {
+                                    st.oldest_indexed_output_tx_id = cursor;
+                                    st.output_route_index_descending = Some(false);
+                                    st.output_route_backfill_complete = Some(true);
+                                }
+                                IndexedRouteKind::Rewards => {
+                                    st.oldest_indexed_rewards_tx_id = cursor;
+                                    st.rewards_route_index_descending = Some(false);
+                                    st.rewards_route_backfill_complete = Some(true);
+                                }
+                            }
+                        });
                     }
                 }
-                if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
-                    state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                if page.transactions.len() < PAGE_SIZE as usize {
+                    completed_route = true;
+                    break;
                 }
-                cursor = Some(tx.id);
-                state::with_root_state_mut(|st| set_indexed_route_cursor(st, kind, cursor));
             }
         }
-        if page.transactions.len() < PAGE_SIZE as usize {
-            completed_route = true;
-            break;
+        PageOrder::Descending => {
+            let mut remaining_pages = cfg.max_index_pages_per_tick.max(1);
+
+            if latest_cursor.is_some() && backfill_complete {
+                let mut page_start = None;
+                while remaining_pages > 0 {
+                    let page = match first_page.take() {
+                        Some(page) => page,
+                        None => index
+                            .get_account_identifier_transactions(route_id.clone(), page_start, PAGE_SIZE)
+                            .await
+                            .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?,
+                    };
+                    remaining_pages = remaining_pages.saturating_sub(1);
+                    if page.transactions.is_empty() {
+                        completed_route = true;
+                        break;
+                    }
+                    let latest = latest_cursor.expect("latest cursor present in completed descending route scan");
+                    let mut new_items = Vec::new();
+                    let mut reached_boundary = false;
+                    for tx in page.transactions.iter() {
+                        if tx.id > latest {
+                            new_items.push(tx.clone());
+                        } else {
+                            reached_boundary = true;
+                            break;
+                        }
+                    }
+                    if !new_items.is_empty() {
+                        let _batch = state::begin_persistence_batch();
+                        for tx in new_items.iter().rev() {
+                            if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
+                                state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                            }
+                        }
+                        if let Some(max_seen) = new_items.iter().map(|tx| tx.id).max() {
+                            latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
+                        }
+                        state::with_root_state_mut(|st| set_indexed_route_descending_progress(st, kind, latest_cursor, oldest_cursor, true));
+                    }
+                    if reached_boundary || page.transactions.len() < PAGE_SIZE as usize {
+                        completed_route = true;
+                        break;
+                    }
+                    page_start = page.transactions.last().map(|tx| tx.id);
+                }
+            } else {
+                while remaining_pages > 0 && !backfill_complete {
+                    let page = match first_page.take() {
+                        Some(page) => page,
+                        None => index
+                            .get_account_identifier_transactions(route_id.clone(), oldest_cursor, PAGE_SIZE)
+                            .await
+                            .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?,
+                    };
+                    remaining_pages = remaining_pages.saturating_sub(1);
+                    if page.transactions.is_empty() {
+                        backfill_complete = true;
+                        completed_route = true;
+                        break;
+                    }
+                    let older_items: Vec<_> = match oldest_cursor {
+                        Some(oldest) => page.transactions.iter().filter(|tx| tx.id < oldest).cloned().collect(),
+                        None => page.transactions.clone(),
+                    };
+                    if older_items.is_empty() {
+                        backfill_complete = true;
+                        completed_route = true;
+                        break;
+                    }
+                    {
+                        let _batch = state::begin_persistence_batch();
+                        for tx in older_items.iter().rev() {
+                            if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
+                                state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                            }
+                        }
+                        if let Some(max_seen) = older_items.iter().map(|tx| tx.id).max() {
+                            latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
+                        }
+                        if let Some(min_seen) = older_items.iter().map(|tx| tx.id).min() {
+                            oldest_cursor = Some(oldest_cursor.map(|existing| existing.min(min_seen)).unwrap_or(min_seen));
+                        }
+                        state::with_root_state_mut(|st| set_indexed_route_descending_progress(st, kind, latest_cursor, oldest_cursor, backfill_complete));
+                    }
+                    if page.transactions.len() < PAGE_SIZE as usize {
+                        backfill_complete = true;
+                        completed_route = true;
+                        break;
+                    }
+                }
+                state::with_root_state_mut(|st| set_indexed_route_descending_progress(st, kind, latest_cursor, oldest_cursor, backfill_complete));
+            }
         }
     }
 
@@ -843,33 +1285,6 @@ mod tests {
             },
         }
     }
-    fn transfer_to_account_tx(id: u64, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
-        transfer_between_accounts_tx(id, "sender", to, amount_e8s, timestamp_nanos)
-    }
-
-
-
-
-    fn seed_qualifying_memo_registration(beneficiary: candid::Principal) {
-        state::with_state_mut(|st| {
-            st.canister_sources.insert(
-                beneficiary,
-                crate::logic::merge_sources(st.canister_sources.get(&beneficiary), CanisterSource::MemoContribution),
-            );
-            st.distinct_canisters.insert(beneficiary);
-            st.contribution_history.insert(
-                beneficiary,
-                vec![crate::state::ContributionSample {
-                    tx_id: 1,
-                    timestamp_nanos: Some(100_000_000_000),
-                    amount_e8s: st.config.min_tx_e8s,
-                    counts_toward_faucet: true,
-                }],
-            );
-            st.qualifying_contribution_count = Some(1);
-        });
-    }
-
     struct MockIndexClient {
         pages: Mutex<VecDeque<GetAccountIdentifierTransactionsResponse>>,
         calls: Mutex<Vec<(String, Option<u64>, u64)>>,
@@ -1285,7 +1700,12 @@ mod tests {
     fn non_monotonic_contribution_page_latches_fault_and_stops_indexing() {
         let staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| st.last_indexed_staking_tx_id = Some(50));
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = Some(50);
+            st.oldest_indexed_staking_tx_id = Some(50);
+            st.staking_index_descending = Some(false);
+            st.staking_backfill_complete = Some(true);
+        });
         let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
             balance: 300,
             transactions: vec![
@@ -1311,7 +1731,12 @@ mod tests {
     fn contribution_index_fault_clears_automatically_once_index_order_recovers() {
         let staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| st.last_indexed_staking_tx_id = Some(50));
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = Some(50);
+            st.oldest_indexed_staking_tx_id = Some(50);
+            st.staking_index_descending = Some(false);
+            st.staking_backfill_complete = Some(true);
+        });
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
                 balance: 150,

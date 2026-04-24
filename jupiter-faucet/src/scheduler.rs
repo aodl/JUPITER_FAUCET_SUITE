@@ -8,7 +8,7 @@ const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
 
 use crate::clients::canister_info::ManagementCanisterInfoClient;
 use crate::clients::cmc::CyclesMintingCanister;
-use crate::clients::index::{account_identifier_text, GetAccountIdentifierTransactionsResponse, IcpIndexCanister};
+use crate::clients::index::{account_identifier_text, GetAccountIdentifierTransactionsResponse, IcpIndexCanister, IndexTransactionWithId};
 use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CanisterStatusClient, CmcClient, IndexClient, LedgerClient};
 use crate::state::{
@@ -855,6 +855,41 @@ fn record_latest_invariant_failure(st: &mut state::State) {
     }
 }
 
+
+fn index_page_descending(txs: &[IndexTransactionWithId]) -> bool {
+    txs.first().zip(txs.last()).map(|(first, last)| first.id > last.id).unwrap_or(false)
+}
+
+fn index_page_descending_from_cursor(txs: &[IndexTransactionWithId], cursor: Option<u64>) -> bool {
+    if txs.len() >= 2 {
+        return index_page_descending(txs);
+    }
+    match (cursor, txs.first()) {
+        (Some(last_seen), Some(tx)) => tx.id < last_seen,
+        _ => false,
+    }
+}
+
+fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<u64> {
+    if index_page_descending(txs) {
+        txs.first().map(|tx| tx.id)
+    } else {
+        txs.last().map(|tx| tx.id)
+    }
+}
+
+fn index_page_next_cursor(txs: &[IndexTransactionWithId]) -> Option<u64> {
+    txs.last().map(|tx| tx.id)
+}
+
+fn tx_is_after_cursor_for_page(tx_id: u64, cursor: Option<u64>, descending: bool) -> bool {
+    match cursor {
+        None => true,
+        Some(last_seen) if descending => tx_id < last_seen,
+        Some(last_seen) => tx_id > last_seen,
+    }
+}
+
 async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: Option<u64>) -> LatestScan {
     let mut cursor = start;
     let mut latest = start;
@@ -871,15 +906,24 @@ async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: 
             Ok(resp) => resp,
             Err(_) => return LatestScan::Unreadable,
         };
-        let page_latest = resp.transactions.last().map(|tx| tx.id);
+        let page_latest = index_page_latest_tx_id(&resp.transactions);
         if page_latest.is_none() {
+            return LatestScan::Read(latest);
+        }
+        let descending = index_page_descending(&resp.transactions);
+        if descending {
+            latest = match (latest, page_latest) {
+                (Some(prev), Some(next)) => Some(prev.max(next)),
+                (None, next) => next,
+                (prev, None) => prev,
+            };
             return LatestScan::Read(latest);
         }
         if cursor.zip(page_latest).map(|(prev, next)| next <= prev).unwrap_or(false) {
             return LatestScan::InvariantBroken;
         }
         latest = page_latest;
-        cursor = page_latest;
+        cursor = index_page_next_cursor(&resp.transactions);
         if resp.transactions.len() < PAGE_SIZE as usize {
             return LatestScan::Read(latest);
         }
@@ -1052,6 +1096,7 @@ async fn process_payout(
                 Err(_) => return false,
             };
             pages_scanned = pages_scanned.saturating_add(1);
+            let descending = index_page_descending_from_cursor(&resp.transactions, job.next_start);
             let mut page_next_start = job.next_start;
             let mut denom_delta_e8s = 0u64;
             let mut reached_round_end = false;
@@ -1061,12 +1106,13 @@ async fn process_payout(
             let recognition_delay_seconds = recognition_delay_seconds();
 
             for tx in &resp.transactions {
-                if let Some(last_seen) = job.next_start {
-                    if tx.id <= last_seen {
-                        continue;
-                    }
+                if !tx_is_after_cursor_for_page(tx.id, job.next_start, descending) {
+                    continue;
                 }
                 if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
+                    if descending {
+                        continue;
+                    }
                     reached_round_end = true;
                     break;
                 }
@@ -1134,12 +1180,6 @@ async fn process_payout(
             return true;
         }
 
-        if job.round_end_latest_tx_id.zip(job.next_start).map(|(end, cursor)| cursor >= end).unwrap_or(false) {
-            state::with_state_mut(|st| if let Some(active_job) = st.active_payout_job.as_mut() {
-                active_job.scan_complete = true;
-            });
-            continue;
-        }
 
         if let Some(skip_to) = next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx) {
             if job.round_end_latest_tx_id.map(|end| skip_to >= end).unwrap_or(false) {
@@ -1162,8 +1202,12 @@ async fn process_payout(
             Err(_) => return false,
         };
         pages_scanned = pages_scanned.saturating_add(1);
-        let last_id = resp.transactions.last().map(|t| t.id);
-        if job.next_start.zip(last_id).map(|(prev, latest)| latest <= prev).unwrap_or(false) {
+        let descending = index_page_descending_from_cursor(&resp.transactions, job.next_start);
+        let last_id = index_page_next_cursor(&resp.transactions);
+        let cursor_invariant_broken = job.next_start.zip(last_id).map(|(prev, latest)| {
+            if descending { latest >= prev } else { latest <= prev }
+        }).unwrap_or(false);
+        if cursor_invariant_broken {
             state::with_state_mut(|st| {
                 if let Some(active_job) = st.active_payout_job.as_mut() {
                     if active_job.observed_oldest_tx_id.is_none() {
@@ -1203,12 +1247,13 @@ async fn process_payout(
         let mut reached_round_end = false;
         let mut scan_batch = Some(state::begin_persistence_batch());
         for tx in &resp.transactions {
-            if let Some(last_seen) = page_start {
-                if tx.id <= last_seen {
-                    continue;
-                }
+            if !tx_is_after_cursor_for_page(tx.id, page_start, descending) {
+                continue;
             }
             if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
+                if descending {
+                    continue;
+                }
                 reached_round_end = true;
                 break;
             }
@@ -2446,6 +2491,66 @@ mod tests {
         assert!(summary_present, "completed job should finalize exactly one summary");
     }
 
+
+    #[test]
+    fn scan_latest_tx_id_accepts_real_index_descending_order() {
+        let cfg = test_config();
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let index = ExclusiveIndex::new(vec![
+            contribution_tx(3, &staking_id, 50_000_000, None),
+            contribution_tx(2, &staking_id, 50_000_000, None),
+            contribution_tx(1, &staking_id, 50_000_000, None),
+        ]);
+
+        let scan = run_ready(scan_latest_tx_id(&index, staking_id, None));
+        assert_eq!(scan, LatestScan::Read(Some(3)), "latest scan should treat the first tx on a real-index newest-first page as the latest tx id");
+    }
+
+    #[test]
+    fn payout_scan_resumes_from_real_index_descending_cursor_without_invariant_failure() {
+        let now_secs = 4_260_u64;
+        let mut job = ActivePayoutJob::new(10, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000);
+        job.next_start = Some(3);
+        job.configure_round_accounting(None, None, None, now_secs * 1_000_000_000, None, 100_000_000, true);
+        let cfg = set_active_job(now_secs, job);
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = ExclusiveIndex::new(vec![
+            contribution_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            contribution_tx(2, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(701), LedgerStep::Ok(702)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(
+            run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)),
+            "faucet should continue from the next older real-index page instead of treating tx_id 2 after cursor 3 as an invariant failure",
+        );
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("payout should complete and summarize");
+        assert_eq!(summary.topped_up_count, 1, "the older beneficiary contribution behind the cursor should be paid exactly once");
+        assert_eq!(ledger.transfer_calls(), 2, "one beneficiary transfer plus one remainder-to-self transfer should be sent");
+        assert_eq!(state::with_state(|st| st.consecutive_index_latest_invariant_failures), Some(0));
+    }
+
+    #[test]
+    fn payout_scan_skips_newer_descending_txs_until_round_end_boundary_instead_of_stopping() {
+        let now_secs = 4_280_u64;
+        let mut job = ActivePayoutJob::new(11, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000);
+        job.configure_round_accounting(None, None, None, now_secs * 1_000_000_000, Some(3), 100_000_000, true);
+        let cfg = set_active_job(now_secs, job);
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = ExclusiveIndex::new(vec![
+            contribution_tx(5, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            contribution_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            contribution_tx(2, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(711), LedgerStep::Ok(712)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 2, "newer txs above the round-end boundary should be skipped while in-boundary and older eligible contributions are still paid");
+    }
 
     #[test]
     fn overlapping_index_pages_do_not_double_count_the_last_seen_tx() {

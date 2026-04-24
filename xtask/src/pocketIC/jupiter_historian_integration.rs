@@ -114,6 +114,9 @@ fn query_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(pic: &Poc
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianInitArg {
     staking_account: Account,
+    output_source_account: Option<Account>,
+    output_account: Option<Account>,
+    rewards_account: Option<Account>,
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
@@ -310,6 +313,8 @@ enum GetAccountIdentifierTransactionsResult {
 struct DebugState {
     distinct_canister_count: u32,
     last_indexed_staking_tx_id: Option<u64>,
+    last_indexed_output_tx_id: Option<u64>,
+    last_indexed_rewards_tx_id: Option<u64>,
     last_sns_discovery_ts: u64,
     last_completed_cycles_sweep_ts: u64,
     active_cycles_sweep_present: bool,
@@ -347,6 +352,14 @@ struct PublicCounts {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct ContributionIndexFault {
+    observed_at_ts: u64,
+    last_cursor_tx_id: Option<u64>,
+    offending_tx_id: u64,
+    message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct PublicStatus {
     staking_account: Account,
     ledger_canister_id: Principal,
@@ -357,6 +370,7 @@ struct PublicStatus {
     heap_memory_bytes: Option<u64>,
     stable_memory_bytes: Option<u64>,
     total_memory_bytes: Option<u64>,
+    contribution_index_fault: Option<ContributionIndexFault>,
 }
 
 
@@ -540,6 +554,9 @@ impl Harness {
         let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
         let init = HistorianInitArg {
             staking_account,
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
             ledger_canister_id: Some(index),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
@@ -649,6 +666,221 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
     assert!(second_ids.windows(2).all(|window| window[0] > window[1]), "expected second page to stay newest-first, got ids {second_ids:?}");
     Ok(())
 }
+
+#[test]
+#[ignore]
+fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monotonic_fault() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let blackhole = pic.create_canister();
+    let sns_wasm = pic.create_canister();
+    let cmc = pic.create_canister();
+    let historian = pic.create_canister();
+    for canister in [blackhole, sns_wasm, cmc, historian] {
+        pic.add_cycles(canister, 5_000_000_000_000);
+    }
+    pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
+    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
+    pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+
+    let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([6u8; 32]) };
+    let staking_id = account_identifier_text(&staking_account);
+    let init = HistorianInitArg {
+        staking_account,
+        output_source_account: None,
+        output_account: None,
+        rewards_account: None,
+        ledger_canister_id: Some(ledger),
+        index_canister_id: Some(index),
+        cmc_canister_id: Some(cmc),
+        faucet_canister_id: Some(blackhole),
+        blackhole_canister_id: Some(blackhole),
+        sns_wasm_canister_id: Some(sns_wasm),
+        enable_sns_tracking: Some(false),
+        scan_interval_seconds: Some(60),
+        cycles_interval_seconds: Some(1),
+        min_tx_e8s: Some(10_000_000),
+        max_cycles_entries_per_canister: Some(100),
+        max_contribution_entries_per_canister: Some(100),
+        max_index_pages_per_tick: Some(10),
+        max_canisters_per_cycles_tick: Some(10),
+    };
+    pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
+
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+    for ordinal in 0..3u64 {
+        let memo_text = blackhole.to_text();
+        let _block_index = icrc1_transfer(
+            &pic,
+            ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: staking_account,
+                fee: Some(Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: Some(Memo::from(memo_text.clone().into_bytes())),
+                amount: Nat::from(100_001_000u64 + ordinal),
+            },
+        )?;
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(&pic, 3);
+    }
+
+    let page = wait_for_index_transactions(&pic, index, &staking_id, 3)?;
+    let ids: Vec<u64> = page.transactions.iter().map(|tx| tx.id).collect();
+    assert_eq!(ids.len(), 3, "expected three real ICP index transactions for the dedicated staking account, got ids {ids:?}");
+    let resume_cursor = ids[1];
+    let expected_older_tx_id = *ids.last().expect("dedicated staking account should have an oldest tx id");
+
+    let _: () = update_one(&pic, historian, Principal::anonymous(), "debug_set_last_indexed_staking_tx_id", Some(resume_cursor))?;
+    let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let status: PublicStatus = query_one(&pic, historian, Principal::anonymous(), "get_public_status", ())?;
+    assert!(status.contribution_index_fault.is_none(), "historian should continue indexing older real-ICP-index pages from cursor {resume_cursor} without latching a non-monotonic fault; fault={:?}", status.contribution_index_fault);
+
+    let history: ContributionHistoryPage = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_contribution_history",
+        GetContributionHistoryArgs {
+            canister_id: blackhole,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    let recorded_ids: Vec<u64> = history.items.iter().map(|item| item.tx_id).collect();
+    assert!(recorded_ids.contains(&expected_older_tx_id), "historian should record the older tx from the real ICP index page reached via cursor {resume_cursor}; expected tx {expected_older_tx_id}, recorded ids {recorded_ids:?}");
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_without_stalling() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let blackhole = pic.create_canister();
+    let sns_wasm = pic.create_canister();
+    let cmc = pic.create_canister();
+    let historian = pic.create_canister();
+    for canister in [blackhole, sns_wasm, cmc, historian] {
+        pic.add_cycles(canister, 5_000_000_000_000);
+    }
+    pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
+    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
+    pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+
+    let source_subaccount = [31u8; 32];
+    let output_subaccount = [32u8; 32];
+    let rewards_subaccount = [33u8; 32];
+    let source_owner = blackhole;
+    let output_source_account = Account { owner: source_owner, subaccount: Some(source_subaccount) };
+    let output_account = Account { owner: Principal::management_canister(), subaccount: Some(output_subaccount) };
+    let rewards_account = Account { owner: Principal::management_canister(), subaccount: Some(rewards_subaccount) };
+    let output_id = account_identifier_text(&output_account);
+    let rewards_id = account_identifier_text(&rewards_account);
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+
+    icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: output_source_account,
+            fee: Some(Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: Some(Memo::from(b"fund-output-source".to_vec())),
+            amount: Nat::from(1_000_000_000u64),
+        },
+    )?;
+    pic.advance_time(Duration::from_secs(1));
+    tick_n(&pic, 5);
+
+    let mut expected_output = 0u64;
+    let mut expected_rewards = 0u64;
+    for ordinal in 0..3u64 {
+        let amount = 100_000_000u64 + ordinal;
+        expected_output = expected_output.saturating_add(amount);
+        icrc1_transfer(
+            &pic,
+            ledger,
+            source_owner,
+            TransferArg {
+                from_subaccount: Some(source_subaccount),
+                to: output_account,
+                fee: Some(Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: Some(Memo::from(format!("real-route-output-{ordinal}").into_bytes())),
+                amount: Nat::from(amount),
+            },
+        )?;
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(&pic, 3);
+    }
+    for ordinal in 0..3u64 {
+        let amount = 50_000_000u64 + ordinal;
+        expected_rewards = expected_rewards.saturating_add(amount);
+        icrc1_transfer(
+            &pic,
+            ledger,
+            source_owner,
+            TransferArg {
+                from_subaccount: Some(source_subaccount),
+                to: rewards_account,
+                fee: Some(Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: Some(Memo::from(format!("real-route-rewards-{ordinal}").into_bytes())),
+                amount: Nat::from(amount),
+            },
+        )?;
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(&pic, 3);
+    }
+
+    wait_for_index_transactions(&pic, index, &output_id, 3)?;
+    wait_for_index_transactions(&pic, index, &rewards_id, 3)?;
+
+    let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([34u8; 32]) };
+    let init = HistorianInitArg {
+        staking_account,
+        output_source_account: Some(output_source_account),
+        output_account: Some(output_account),
+        rewards_account: Some(rewards_account),
+        ledger_canister_id: Some(ledger),
+        index_canister_id: Some(index),
+        cmc_canister_id: Some(cmc),
+        faucet_canister_id: Some(blackhole),
+        blackhole_canister_id: Some(blackhole),
+        sns_wasm_canister_id: Some(sns_wasm),
+        enable_sns_tracking: Some(false),
+        scan_interval_seconds: Some(60),
+        cycles_interval_seconds: Some(1),
+        min_tx_e8s: Some(10_000_000),
+        max_cycles_entries_per_canister: Some(100),
+        max_contribution_entries_per_canister: Some(100),
+        max_index_pages_per_tick: Some(10),
+        max_canisters_per_cycles_tick: Some(10),
+    };
+    pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
+
+    let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
+    let counts_after_output: PublicCounts = query_one(&pic, historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts_after_output.total_output_e8s, expected_output, "historian should finish the output route's real-index newest-first page instead of stalling after the first descending tx");
+
+    let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
+    let counts: PublicCounts = query_one(&pic, historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.total_output_e8s, expected_output, "output route totals should include every real-index descending-page transfer from the source account");
+    assert_eq!(counts.total_rewards_e8s, expected_rewards, "rewards route totals should include every real-index descending-page transfer from the source account");
+    Ok(())
+}
+
 
 #[test]
 #[ignore]

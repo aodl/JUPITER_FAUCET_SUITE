@@ -187,9 +187,27 @@ pub struct StableRootState {
     pub config: StableConfig,
     pub last_indexed_staking_tx_id: Option<u64>,
     #[serde(default)]
+    pub oldest_indexed_staking_tx_id: Option<u64>,
+    #[serde(default)]
+    pub staking_index_descending: Option<bool>,
+    #[serde(default)]
+    pub staking_backfill_complete: Option<bool>,
+    #[serde(default)]
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
+    pub oldest_indexed_output_tx_id: Option<u64>,
+    #[serde(default)]
+    pub output_route_index_descending: Option<bool>,
+    #[serde(default)]
+    pub output_route_backfill_complete: Option<bool>,
+    #[serde(default)]
     pub last_indexed_rewards_tx_id: Option<u64>,
+    #[serde(default)]
+    pub oldest_indexed_rewards_tx_id: Option<u64>,
+    #[serde(default)]
+    pub rewards_route_index_descending: Option<bool>,
+    #[serde(default)]
+    pub rewards_route_backfill_complete: Option<bool>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
     #[serde(default)]
@@ -425,8 +443,26 @@ pub struct State {
     #[serde(default)]
     pub registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
     pub last_indexed_staking_tx_id: Option<u64>,
+    #[serde(default)]
+    pub oldest_indexed_staking_tx_id: Option<u64>,
+    #[serde(default)]
+    pub staking_index_descending: Option<bool>,
+    #[serde(default)]
+    pub staking_backfill_complete: Option<bool>,
     pub last_indexed_output_tx_id: Option<u64>,
+    #[serde(default)]
+    pub oldest_indexed_output_tx_id: Option<u64>,
+    #[serde(default)]
+    pub output_route_index_descending: Option<bool>,
+    #[serde(default)]
+    pub output_route_backfill_complete: Option<bool>,
     pub last_indexed_rewards_tx_id: Option<u64>,
+    #[serde(default)]
+    pub oldest_indexed_rewards_tx_id: Option<u64>,
+    #[serde(default)]
+    pub rewards_route_index_descending: Option<bool>,
+    #[serde(default)]
+    pub rewards_route_backfill_complete: Option<bool>,
     pub last_sns_discovery_ts: u64,
     pub last_completed_cycles_sweep_ts: u64,
     pub last_completed_route_sweep_ts: Option<u64>,
@@ -461,8 +497,17 @@ impl State {
             registered_canister_summaries_cache: Some(BTreeMap::new()),
             registered_canister_summaries_total_desc_index: Some(Vec::new()),
             last_indexed_staking_tx_id: None,
+            oldest_indexed_staking_tx_id: None,
+            staking_index_descending: None,
+            staking_backfill_complete: Some(false),
             last_indexed_output_tx_id: None,
+            oldest_indexed_output_tx_id: None,
+            output_route_index_descending: None,
+            output_route_backfill_complete: Some(false),
             last_indexed_rewards_tx_id: None,
+            oldest_indexed_rewards_tx_id: None,
+            rewards_route_index_descending: None,
+            rewards_route_backfill_complete: Some(false),
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
             last_completed_route_sweep_ts: Some(0),
@@ -952,8 +997,17 @@ fn build_root_snapshot(st: &State) -> StableRootState {
     StableRootState {
         config: st.config.clone().into(),
         last_indexed_staking_tx_id: st.last_indexed_staking_tx_id,
+        oldest_indexed_staking_tx_id: st.oldest_indexed_staking_tx_id,
+        staking_index_descending: st.staking_index_descending,
+        staking_backfill_complete: st.staking_backfill_complete,
         last_indexed_output_tx_id: st.last_indexed_output_tx_id,
+        oldest_indexed_output_tx_id: st.oldest_indexed_output_tx_id,
+        output_route_index_descending: st.output_route_index_descending,
+        output_route_backfill_complete: st.output_route_backfill_complete,
         last_indexed_rewards_tx_id: st.last_indexed_rewards_tx_id,
+        oldest_indexed_rewards_tx_id: st.oldest_indexed_rewards_tx_id,
+        rewards_route_index_descending: st.rewards_route_index_descending,
+        rewards_route_backfill_complete: st.rewards_route_backfill_complete,
         last_sns_discovery_ts: st.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: st.last_completed_cycles_sweep_ts,
         last_completed_route_sweep_ts: st.last_completed_route_sweep_ts,
@@ -1051,8 +1105,17 @@ fn restore_state_current(root: StableRootState) -> State {
         registered_canister_summaries_cache: None,
         registered_canister_summaries_total_desc_index: None,
         last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
+        oldest_indexed_staking_tx_id: root.oldest_indexed_staking_tx_id,
+        staking_index_descending: root.staking_index_descending,
+        staking_backfill_complete: root.staking_backfill_complete.or(Some(false)),
         last_indexed_output_tx_id: root.last_indexed_output_tx_id,
+        oldest_indexed_output_tx_id: root.oldest_indexed_output_tx_id,
+        output_route_index_descending: root.output_route_index_descending,
+        output_route_backfill_complete: root.output_route_backfill_complete.or(Some(false)),
         last_indexed_rewards_tx_id: root.last_indexed_rewards_tx_id,
+        oldest_indexed_rewards_tx_id: root.oldest_indexed_rewards_tx_id,
+        rewards_route_index_descending: root.rewards_route_index_descending,
+        rewards_route_backfill_complete: root.rewards_route_backfill_complete.or(Some(false)),
         last_sns_discovery_ts: root.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
         last_completed_route_sweep_ts: root.last_completed_route_sweep_ts.or(Some(0)),

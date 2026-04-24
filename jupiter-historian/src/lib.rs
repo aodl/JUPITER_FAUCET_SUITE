@@ -1302,7 +1302,17 @@ fn debug_set_last_sns_discovery_ts(ts: Option<u64>) {
 #[ic_cdk::update]
 fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
     guard_debug_api_not_production();
-    state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = tx_id);
+    state::with_root_state_mut(|st| {
+        st.last_indexed_staking_tx_id = tx_id;
+        // This debug hook seeds only the public/latest staking cursor. Reset the
+        // derived ordering/backfill metadata so the next driver tick redetects
+        // the real index ordering and, for newest-first indexes, resumes older
+        // backfill from the seeded cursor instead of staying in legacy ascending
+        // mode.
+        st.oldest_indexed_staking_tx_id = tx_id;
+        st.staking_index_descending = None;
+        st.staking_backfill_complete = Some(false);
+    });
 }
 
 #[cfg(feature = "debug_api")]
@@ -1334,8 +1344,17 @@ fn debug_reset_derived_state() {
         st.cycles_history.clear();
         st.per_canister_meta.clear();
         st.last_indexed_staking_tx_id = None;
+        st.oldest_indexed_staking_tx_id = None;
+        st.staking_index_descending = None;
+        st.staking_backfill_complete = Some(false);
         st.last_indexed_output_tx_id = None;
+        st.oldest_indexed_output_tx_id = None;
+        st.output_route_index_descending = None;
+        st.output_route_backfill_complete = Some(false);
         st.last_indexed_rewards_tx_id = None;
+        st.oldest_indexed_rewards_tx_id = None;
+        st.rewards_route_index_descending = None;
+        st.rewards_route_backfill_complete = Some(false);
         st.last_sns_discovery_ts = 0;
         st.last_completed_cycles_sweep_ts = 0;
         st.last_completed_route_sweep_ts = Some(0);
@@ -1407,9 +1426,20 @@ mod tests {
             contribution_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
+            registered_canister_summaries_cache: None,
+            registered_canister_summaries_total_desc_index: None,
             last_indexed_staking_tx_id: None,
+            oldest_indexed_staking_tx_id: None,
+            staking_index_descending: None,
+            staking_backfill_complete: Some(false),
             last_indexed_output_tx_id: None,
+            oldest_indexed_output_tx_id: None,
+            output_route_index_descending: None,
+            output_route_backfill_complete: Some(false),
             last_indexed_rewards_tx_id: None,
+            oldest_indexed_rewards_tx_id: None,
+            rewards_route_index_descending: None,
+            rewards_route_backfill_complete: Some(false),
             last_sns_discovery_ts: 0,
             last_completed_cycles_sweep_ts: 0,
             last_completed_route_sweep_ts: Some(0),
@@ -1428,8 +1458,6 @@ mod tests {
             recent_burns: None,
             last_index_run_ts: None,
             contribution_index_fault: None,
-            registered_canister_summaries_cache: None,
-            registered_canister_summaries_total_desc_index: None,
         }
     }
 
