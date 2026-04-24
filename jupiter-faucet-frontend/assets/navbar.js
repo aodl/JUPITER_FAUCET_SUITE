@@ -16,9 +16,8 @@
 
   function initNavbar() {
     const navbar = document.getElementById("navbar");
-    // IMPORTANT: only bind buttons that actually open panels
     const panelTriggers = Array.from(document.querySelectorAll("a[data-panel]"));
-
+    const metricsToggle = document.getElementById("metrics-menu-toggle");
     const backdrop = document.getElementById("nav-panel-backdrop");
     const metricRail = document.getElementById("landing-live-summary");
     const closeBtn = document.querySelector(".nav-panel-close");
@@ -28,10 +27,25 @@
       return;
     }
 
-    // remember trigger to restore focus on close
     let lastTriggerBtn = null;
+    let activePanelKey = "";
+    let metricsMenuOpen = false;
 
-    // move focus into the opened panel (dot first, else close button)
+    function isMetricPanelKey(key) {
+      return /^metric-/.test(key || "");
+    }
+
+    function syncMetricsUi() {
+      const panelOpen = backdrop.classList.contains("is-open");
+      const metricPanelOpen = panelOpen && isMetricPanelKey(activePanelKey);
+      const shouldShowRail = navbar.classList.contains("navbar--visible") && metricsMenuOpen && !panelOpen;
+      metricRail?.classList.toggle("metric-rail--visible", shouldShowRail);
+      if (metricsToggle) {
+        metricsToggle.classList.toggle("nav-item--active", metricsMenuOpen || metricPanelOpen);
+        metricsToggle.setAttribute("aria-expanded", shouldShowRail ? "true" : "false");
+      }
+    }
+
     function focusControlsForSection(sectionEl) {
       if (!sectionEl) return;
 
@@ -44,13 +58,12 @@
       });
     }
 
-    // ---- Scroll behaviour: show/hide navbar ----
     function updateNavbarVisibility() {
       const currentY = window.scrollY || 0;
 
       const setVisible = (visible) => {
         navbar.classList.toggle("navbar--visible", visible);
-        metricRail?.classList.toggle("metric-rail--visible", visible);
+        syncMetricsUi();
       };
 
       if (backdrop.classList.contains("is-open")) {
@@ -74,11 +87,10 @@
 
     if (window.scrollY <= VISIBILITY_SCROLL_THRESHOLD) {
       navbar.classList.add("navbar--visible");
-      metricRail?.classList.add("metric-rail--visible");
     }
+    syncMetricsUi();
     window.addEventListener("scroll", updateNavbarVisibility, { passive: true });
 
-    // ---- Helpers: section + active button ----
     function setActiveSection(key) {
       sections.forEach((section) => {
         section.classList.toggle(
@@ -94,7 +106,6 @@
       });
     }
 
-    // ---- Pagination (dots) ----
     function activatePage(sectionEl, pageIndex) {
       if (!sectionEl) return;
 
@@ -113,7 +124,6 @@
       });
     }
 
-    // Dot clicks (delegated)
     backdrop.addEventListener("click", (evt) => {
       const dot = evt.target.closest && evt.target.closest(".nav-panel-dot");
       if (!dot) return;
@@ -136,13 +146,10 @@
       activatePage(sectionEl, page);
     });
 
-    // Arrow-key support (left/right) for paging dots
     backdrop.addEventListener("keydown", (evt) => {
       if (!backdrop.classList.contains("is-open")) return;
-
       if (evt.key !== "ArrowLeft" && evt.key !== "ArrowRight") return;
 
-      // Prefer the section containing the currently focused dot, otherwise the active panel
       const focusedDot = document.activeElement?.closest?.(".nav-panel-dot");
       const sectionEl =
         focusedDot?.closest?.(".nav-panel-section") ||
@@ -164,14 +171,10 @@
       const nextIndex = (activeIndex + dir + dots.length) % dots.length;
 
       activatePage(sectionEl, nextIndex);
-
-      // Keep focus on the control the user is interacting with
       dots[nextIndex].focus();
-
       evt.preventDefault();
     });
 
-    // ---- Open/close panel ----
     function clearPanelHash() {
       if (!window.location.hash) return;
       const cleanUrl = `${window.location.pathname}${window.location.search}`;
@@ -181,27 +184,28 @@
     function openPanel(key) {
       if (!key) return;
 
+      activePanelKey = key;
+      if (isMetricPanelKey(key)) {
+        metricsMenuOpen = true;
+      }
       setActiveSection(key);
       backdrop.classList.add("is-open");
       document.body.classList.add("nav-panel-open");
       navbar.classList.add("navbar--visible");
-      metricRail?.classList.add("metric-rail--visible");
+      syncMetricsUi();
 
-      // Reset to page 1 whenever opening a section
       const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
       activatePage(sectionEl, 0);
-
-      // move focus into the dialog so keyboard works immediately
       focusControlsForSection(sectionEl);
     }
 
     function closePanel() {
       backdrop.classList.remove("is-open");
       document.body.classList.remove("nav-panel-open");
+      activePanelKey = "";
       panelTriggers.forEach((btn) => btn.classList.remove("nav-item--active"));
       sections.forEach((section) => {
         section.classList.remove("nav-panel-section--active");
-        // optional: clear page state
         section.querySelectorAll(".nav-panel-page").forEach((p) => p.classList.remove("is-active"));
         section.querySelectorAll(".nav-panel-dot").forEach((d) => {
           d.classList.remove("is-active");
@@ -211,18 +215,15 @@
 
       clearPanelHash();
       updateNavbarVisibility();
-      metricRail?.classList.toggle("metric-rail--visible", navbar.classList.contains("navbar--visible"));
+      syncMetricsUi();
 
-      // restore focus to the trigger button that opened the panel
       requestAnimationFrame(() => {
         lastTriggerBtn?.focus?.();
       });
     }
 
     function handleTriggerClick(btn) {
-      // remember for focus restore
       lastTriggerBtn = btn;
-
       const key = btn.getAttribute("data-panel");
 
       if (btn.classList.contains("nav-item--active") && backdrop.classList.contains("is-open")) {
@@ -230,6 +231,9 @@
         return;
       }
 
+      if (!isMetricPanelKey(key)) {
+        metricsMenuOpen = false;
+      }
       setActiveButton(key);
       openPanel(key);
     }
@@ -245,9 +249,15 @@
       });
     });
 
+    metricsToggle?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      lastTriggerBtn = metricsToggle;
+      metricsMenuOpen = !metricsMenuOpen;
+      syncMetricsUi();
+    });
+
     closeBtn.addEventListener("click", closePanel);
 
-    // Close when clicking outside the panel (but not when clicking inside it)
     backdrop.addEventListener("click", (evt) => {
       if (evt.target === backdrop) closePanel();
     });
@@ -256,7 +266,6 @@
       if (evt.key === "Escape" && backdrop.classList.contains("is-open")) closePanel();
     });
 
-    // ---- Hash fragment support ----
     function applyHash(hash) {
       const key = hash ? hash.replace(/^#/, "") : "";
       if (!key) return;
@@ -265,9 +274,10 @@
       const matchingSection = sections.find((section) => section.getAttribute("data-panel") === key);
       if (!matchingTrigger || !matchingSection) return;
 
-      // so close restores focus reasonably after hash-open
-      lastTriggerBtn = matchingTrigger;
-
+      lastTriggerBtn = isMetricPanelKey(key) ? metricsToggle || matchingTrigger : matchingTrigger;
+      if (isMetricPanelKey(key)) {
+        metricsMenuOpen = true;
+      }
       setActiveButton(key);
       openPanel(key);
     }
@@ -275,39 +285,33 @@
     applyHash(window.location.hash);
     window.addEventListener("hashchange", () => applyHash(window.location.hash));
 
-    // ---- Swipe navigation for touch devices ----
-    let touchStartX = 0;  // Store starting X position of touch
-    let touchEndX = 0;    // Store ending X position of touch
+    let touchStartX = 0;
+    let touchEndX = 0;
 
-    // Function to detect swipe direction and trigger navigation
     function handleSwipe() {
       const activeSection = backdrop.querySelector(".nav-panel-section--active");
+      if (!activeSection) return;
+
       const dots = Array.from(activeSection.querySelectorAll(".nav-panel-dot"));
       const activeDot = dots.find((dot) => dot.classList.contains("is-active"));
-
       if (!activeDot) return;
 
       const activeIndex = dots.indexOf(activeDot);
 
-      // Determine swipe direction
       if (touchStartX - touchEndX > SWIPE_THRESHOLD) {
-        // Swipe left -> go to the next section
-        const nextIndex = (activeIndex + 1) % dots.length;  // Wrap around
+        const nextIndex = (activeIndex + 1) % dots.length;
         activatePage(activeSection, nextIndex);
       } else if (touchEndX - touchStartX > SWIPE_THRESHOLD) {
-        // Swipe right -> go to the previous section
-        const prevIndex = (activeIndex - 1 + dots.length) % dots.length; // Wrap around
+        const prevIndex = (activeIndex - 1 + dots.length) % dots.length;
         activatePage(activeSection, prevIndex);
       }
     }
 
-    // Handle touch start (record starting position)
     backdrop.addEventListener("touchstart", (e) => {
       const touch = e.touches[0];
       touchStartX = touch.pageX;
     });
 
-    // Handle touch end (calculate swipe direction)
     backdrop.addEventListener("touchend", (e) => {
       const touch = e.changedTouches[0];
       touchEndX = touch.pageX;

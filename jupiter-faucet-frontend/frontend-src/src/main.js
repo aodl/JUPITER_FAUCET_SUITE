@@ -11,6 +11,8 @@ import { createNeuronDetailsController } from './neuron-details-controller.js';
 import { setLink, setPaneValueText, setPaneValueTrustedHtml, setText } from './dom-helpers.js';
 import { mergeRegisteredLandingData } from './registered-page-state.js';
 import { escapeHtml, formatFolloweeLinks } from './followee-links.js';
+import { readOpt } from './candid-opt.js';
+import { buildContributionIndexFaultBannerText } from './historian-fault.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -18,6 +20,12 @@ const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
 const TABLE_PAGE_SIZE = 6;
 const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
+const INLINE_TOOLTIP_CONTENT = {
+  'blackhole-controller-help': `
+    <div class="pane-fixed-tooltip-content">
+      <p><a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole" target="_blank" rel="noopener noreferrer">Blackhole controller</a> required for cycles observability.</p>
+    </div>`,
+};
 
 const tableState = {
   registered: {
@@ -204,16 +212,16 @@ function renderLandingUnavailable(errorMessage = 'Live metrics unavailable') {
 function renderHistorianFaultBanner(data) {
   const banner = document.getElementById('historian-fault-banner');
   if (!banner) return;
-  const fault = data?.status?.contribution_index_fault?.[0] || data?.status?.contribution_index_fault || null;
-  if (!fault) {
+  const text = buildContributionIndexFaultBannerText(data?.status, {
+    formatTimestampSeconds,
+    formatInteger,
+  });
+  if (!text) {
     banner.hidden = true;
     banner.textContent = '';
     return;
   }
-  const observed = formatTimestampSeconds(fault.observed_at_ts);
-  const cursor = Array.isArray(fault.last_cursor_tx_id) ? fault.last_cursor_tx_id[0] : fault.last_cursor_tx_id;
-  const cursorText = cursor === undefined || cursor === null ? 'none' : formatInteger(cursor);
-  banner.textContent = `Historian contribution indexing is degraded. First observed at ${observed}. Last cursor: ${cursorText}. Offending tx: ${formatInteger(fault.offending_tx_id)}. ${fault.message}`;
+  banner.textContent = text;
   banner.hidden = false;
 }
 
@@ -407,14 +415,13 @@ async function fetchRegisteredPage(page) {
 
 
 function renderCyclesUnavailableCell() {
-  const tooltip = 'Blackhole controller required for cycles observability.';
   return `
     <span class="pane-inline-tooltip-fallback">
       <span>unavailable</span>
       <button
         class="pane-inline-tooltip-icon"
         type="button"
-        data-tooltip-text="${escapeHtml(tooltip)}"
+        data-tooltip-id="blackhole-controller-help"
         aria-label="Cycles observability help"
       >i</button>
     </span>`;
@@ -482,28 +489,49 @@ function ensureInlineTooltipPopover() {
       <button class="pane-fixed-tooltip-close" type="button" aria-label="Close help">Close</button>
     </div>`;
   document.body.appendChild(popover);
-  popover.querySelector('.pane-fixed-tooltip-close')?.addEventListener('click', () => {
+  popover.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+  popover.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+  popover.querySelector('.pane-fixed-tooltip-close')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     popover.hidden = true;
   });
   inlineTooltipPopover = popover;
   return popover;
 }
 
-function showInlineTooltipPopover(message) {
+function showInlineTooltipPopover(content, { trustedHtml = false } = {}) {
   const popover = ensureInlineTooltipPopover();
   const textNode = popover.querySelector('#pane-fixed-tooltip-text');
-  if (textNode) textNode.textContent = message;
+  if (textNode) {
+    if (trustedHtml) {
+      textNode.innerHTML = content;
+    } else {
+      textNode.textContent = content;
+    }
+  }
   popover.hidden = false;
 }
 
 function bindInlineTooltipFallbacks() {
   document.addEventListener('click', (event) => {
-    const trigger = event.target instanceof Element ? event.target.closest('[data-tooltip-text]') : null;
+    const trigger = event.target instanceof Element
+      ? event.target.closest('[data-tooltip-text], [data-tooltip-id]')
+      : null;
     const popover = inlineTooltipPopover;
     if (trigger) {
       event.preventDefault();
       event.stopPropagation();
-      showInlineTooltipPopover(trigger.getAttribute('data-tooltip-text') || '');
+      const tooltipId = trigger.getAttribute('data-tooltip-id') || '';
+      const trustedContent = tooltipId ? INLINE_TOOLTIP_CONTENT[tooltipId] : '';
+      const fallbackText = trigger.getAttribute('data-tooltip-text') || '';
+      const content = trustedContent || fallbackText;
+      if (!content) return;
+      showInlineTooltipPopover(content, { trustedHtml: Boolean(trustedContent) });
       return;
     }
     if (popover && !popover.hidden) {
@@ -666,7 +694,7 @@ async function loadNeuronDetails({ host, local }) {
     page_size: [],
     neuron_subaccounts: [],
   });
-  return response.full_neurons?.[0] || null;
+  return readOpt(response.full_neurons);
 }
 
 const neuronDetailsController = createNeuronDetailsController({

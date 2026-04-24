@@ -140,6 +140,15 @@
         <a href="#how-it-works" class="nav-item" data-panel="how-it-works">How it works</a>
         <a href="#partners" class="nav-item" data-panel="partners">Partners</a>
       </div>
+      <div class="nav-actions">
+        <button
+          class="nav-item nav-item--metrics-toggle"
+          id="metrics-menu-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="landing-live-summary"
+        >Metrics</button>
+      </div>
     </nav>
   </header>
 
@@ -326,90 +335,100 @@
         
         <article class="nav-panel-section" data-panel="metric-stake" id="nav-panel-metric-stake">
           <h2 class="nav-panel-title">Jupiter Stake</h2>
-          <p class="nav-panel-subtitle">Direct ICP ledger balance plus public NNS neuron details on demand.</p>
-          <dl class="pane-detail-grid" id="stake-neuron-details">
-            <div><dt>Neuron ID</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-neuron-id-link" href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer"><span id="stake-neuron-id">11614578985374291210</span></a></dd></div>
-            <div><dt>Current stake</dt><dd class="pane-detail-value"><span id="stake-pane-balance"></span><span class="metric-status" id="stake-pane-balance-status" hidden aria-hidden="true"></span></dd></div>
-            <div><dt>Age</dt><dd class="pane-detail-value"><span id="stake-neuron-age"></span><span class="metric-status" id="stake-neuron-age-status" hidden aria-hidden="true"></span></dd></div>
-            <div><dt>Publicly readable</dt><dd class="pane-detail-value"><span id="stake-neuron-public"></span><span class="metric-status" id="stake-neuron-public-status" hidden aria-hidden="true"></span></dd></div>
-            <div><dt>Created</dt><dd class="pane-detail-value"><span id="stake-neuron-created"></span><span class="metric-status" id="stake-neuron-created-status" hidden aria-hidden="true"></span></dd></div>
-            <div><dt>Voting power refreshed</dt><dd class="pane-detail-value"><span id="stake-neuron-refresh"></span><span class="metric-status" id="stake-neuron-refresh-status" hidden aria-hidden="true"></span></dd></div>
-            <div><dt>Follows</dt><dd class="pane-detail-value mono"><span id="stake-neuron-followees"></span><span class="metric-status" id="stake-neuron-followees-status" hidden aria-hidden="true"></span></dd></div>
-            <div><dt>Staking account</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-pane-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><span id="stake-pane-account"></span></a></dd></div>
-          </dl>
-          <p class="pane-status-note" id="stake-neuron-note" hidden></p>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle">Direct ICP ledger balance plus public NNS neuron details.</p>
+            <dl class="pane-detail-grid" id="stake-neuron-details">
+              <div><dt>Neuron ID</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-neuron-id-link" href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer"><span id="stake-neuron-id">11614578985374291210</span></a></dd></div>
+              <div><dt>Current stake</dt><dd class="pane-detail-value"><span id="stake-pane-balance"></span><span class="metric-status" id="stake-pane-balance-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Age</dt><dd class="pane-detail-value"><span id="stake-neuron-age"></span><span class="metric-status" id="stake-neuron-age-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Publicly readable</dt><dd class="pane-detail-value"><span id="stake-neuron-public"></span><span class="metric-status" id="stake-neuron-public-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Created</dt><dd class="pane-detail-value"><span id="stake-neuron-created"></span><span class="metric-status" id="stake-neuron-created-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Voting power refreshed</dt><dd class="pane-detail-value"><span id="stake-neuron-refresh"></span><span class="metric-status" id="stake-neuron-refresh-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Follows</dt><dd class="pane-detail-value mono"><span id="stake-neuron-followees"></span><span class="metric-status" id="stake-neuron-followees-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Staking account</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-pane-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><span id="stake-pane-account"></span></a></dd></div>
+            </dl>
+            <p class="pane-status-note" id="stake-neuron-note" hidden></p>
+          </div>
         </article>
 
         <article class="nav-panel-section" data-panel="metric-output" id="nav-panel-metric-output">
           <h2 class="nav-panel-title">Total Output</h2>
-          <p class="nav-panel-subtitle" id="output-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the faucet payout account.</p>
-          <p class="nav-panel-content" id="output-pane-description">Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.</p>
-          <p class="pane-status-note" id="output-pane-memory-note" hidden></p>
-          <dl class="pane-detail-grid">
-            <div><dt>Total output</dt><dd class="pane-detail-value"><span id="output-pane-total"></span><span class="metric-status" id="output-pane-total-status" hidden aria-hidden="true"></span></dd></div>
-          </dl>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle" id="output-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the faucet payout account.</p>
+            <p class="nav-panel-content" id="output-pane-description">Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.</p>
+            <p class="pane-status-note" id="output-pane-memory-note" hidden></p>
+            <dl class="pane-detail-grid">
+              <div><dt>Total output</dt><dd class="pane-detail-value"><span id="output-pane-total"></span><span class="metric-status" id="output-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+            </dl>
+          </div>
         </article>
 
         <article class="nav-panel-section" data-panel="metric-rewards" id="nav-panel-metric-rewards">
           <h2 class="nav-panel-title">Total Rewards</h2>
-          <p class="nav-panel-subtitle" id="rewards-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.</p>
-          <p class="nav-panel-content" id="rewards-pane-description">Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.</p>
-          <p class="pane-status-note" id="rewards-pane-memory-note" hidden></p>
-          <dl class="pane-detail-grid">
-            <div><dt>Total rewards</dt><dd class="pane-detail-value"><span id="rewards-pane-total"></span><span class="metric-status" id="rewards-pane-total-status" hidden aria-hidden="true"></span></dd></div>
-          </dl>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle" id="rewards-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.</p>
+            <p class="nav-panel-content" id="rewards-pane-description">Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.</p>
+            <p class="pane-status-note" id="rewards-pane-memory-note" hidden></p>
+            <dl class="pane-detail-grid">
+              <div><dt>Total rewards</dt><dd class="pane-detail-value"><span id="rewards-pane-total"></span><span class="metric-status" id="rewards-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+            </dl>
+          </div>
         </article>
 
         <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">
           <h2 class="nav-panel-title">Target Canisters</h2>
-          <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">This registry is historian's durable set of tracked target canisters. The registry itself is not pruned, but the per-canister histories and recent feeds shown elsewhere are bounded; full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
-          <div class="pane-table-wrap">
-            <table class="pane-table">
-              <thead>
-                <tr>
-                  <th>Target canister</th>
-                  <th>Commitments</th>
-                  <th>Total ICP</th>
-                  <th>Latest cycles</th>
-                </tr>
-              </thead>
-              <tbody id="registered-pane-body">
-                <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="pane-pagination">
-            <button class="pane-page-button" id="registered-prev-page" type="button">Previous</button>
-            <span id="registered-page-info">Page 1</span>
-            <button class="pane-page-button" id="registered-next-page" type="button">Next</button>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
+            <p class="nav-panel-content">This registry is historian's durable set of tracked target canisters. The registry itself is not pruned, but the per-canister histories and recent feeds shown elsewhere are bounded; full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
+            <div class="pane-table-wrap">
+              <table class="pane-table">
+                <thead>
+                  <tr>
+                    <th>Target canister</th>
+                    <th>Commitments</th>
+                    <th>Total ICP</th>
+                    <th>Latest cycles</th>
+                  </tr>
+                </thead>
+                <tbody id="registered-pane-body">
+                  <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pane-pagination">
+              <button class="pane-page-button" id="registered-prev-page" type="button">Previous</button>
+              <span id="registered-page-info">Page 1</span>
+              <button class="pane-page-button" id="registered-next-page" type="button">Next</button>
+            </div>
           </div>
         </article>
 
         <article class="nav-panel-section" data-panel="metric-commitments" id="nav-panel-metric-commitments">
           <h2 class="nav-panel-title">Commitments</h2>
-          <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-          <p class="nav-panel-content">A commitment qualifies when the memo names a target canister ID as ASCII principal text in `icrc1_memo` (max <strong>32 bytes</strong>) and the contribution is at least <strong>1 ICP</strong>. The minimum is intentionally high to make beneficiary-registry spam expensive: historian keeps a durable beneficiary registry so it can efficiently monitor and display later cycle top-up activity. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
-          <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
-          <div class="pane-table-wrap">
-            <table class="pane-table">
-              <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Amount</th>
-                  <th>Target canister</th>
-                  <th>Category</th>
-                </tr>
-              </thead>
-              <tbody id="commitments-pane-body">
-                <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="pane-pagination">
-            <button class="pane-page-button" id="commitments-prev-page" type="button">Previous</button>
-            <span id="commitments-page-info">Page 1</span>
-            <button class="pane-page-button" id="commitments-next-page" type="button">Next</button>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
+            <p class="nav-panel-content">A commitment qualifies when the memo names a target canister ID as ASCII principal text in `icrc1_memo` (max <strong>32 bytes</strong>) and the contribution is at least <strong>1 ICP</strong>. The minimum is intentionally high to make beneficiary-registry spam expensive: historian keeps a durable beneficiary registry so it can efficiently monitor and display later cycle top-up activity. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+            <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
+            <div class="pane-table-wrap">
+              <table class="pane-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Amount</th>
+                    <th>Target canister</th>
+                    <th>Category</th>
+                  </tr>
+                </thead>
+                <tbody id="commitments-pane-body">
+                  <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pane-pagination">
+              <button class="pane-page-button" id="commitments-prev-page" type="button">Previous</button>
+              <span id="commitments-page-info">Page 1</span>
+              <button class="pane-page-button" id="commitments-next-page" type="button">Next</button>
+            </div>
           </div>
         </article>
 

@@ -26,6 +26,7 @@
   display: flex;
   align-items: center;
   gap: 24px;
+  justify-content: space-between;
 }
 
 /* Nav buttons */
@@ -42,6 +43,13 @@ button {
 }
 
 .nav-links {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.nav-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -187,6 +195,14 @@ button {
   min-height: 0;
 }
 
+.nav-panel-scroll-region {
+  flex: 1;
+  min-height: 0;
+  max-height: min(46vh, calc(100dvh - 220px));
+  overflow: auto;
+  padding-right: 6px;
+}
+
 .nav-panel-title {
   margin: 0 0 8px;
   font-size: 20px;
@@ -231,6 +247,10 @@ button {
     gap: 10px;
   }
 
+  .nav-actions {
+    gap: 10px;
+  }
+
   .nav-item {
     font-size: 10px;
     padding: 4px 10px;
@@ -239,5 +259,9 @@ button {
   .nav-panel {
     min-width: min(90dvw, 480px);
     padding: 20px 18px 18px;
+  }
+
+  .nav-panel-scroll-region {
+    max-height: min(52vh, calc(100dvh - 180px));
   }
 }
