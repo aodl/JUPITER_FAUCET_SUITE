@@ -113,6 +113,86 @@
           url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDACAWGBwYFCAcGhwkIiAmMFA0MCwsMGJGSjpQdGZ6eHJmcG6AkLicgIiuim5woNqirr7EztDOfJri8uDI8LjKzsb/2wBDASIkJDAqMF40NF7GhHCExsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsb/wgARCAA+ACADASIAAhEBAxEB/8QAGAAAAwEBAAAAAAAAAAAAAAAAAAMEAQL/xAAWAQEBAQAAAAAAAAAAAAAAAAAAAQL/2gAMAwEAAhADEAAAAYOuu81JQmtaqpSZ82blCc3nk3lAADQ//8QAHhAAAgICAgMAAAAAAAAAAAAAAQIAERASITEiMEH/2gAIAQEAAQUClZUWWvYrgMRNzHnxRCBRfxJg5jnjC99+v//EABgRAQADAQAAAAAAAAAAAAAAAAEAEBEg/9oACAEDAQE/AciUpz//xAAYEQEBAQEBAAAAAAAAAAAAAAABABESIP/aAAgBAgEBPwHYduRgfP8A/8QAGxAAAQUBAQAAAAAAAAAAAAAAAAEQESExIED/2gAIAQEABj8C5hC2otXlcMIW2jwf/8QAHxABAQEAAQMFAAAAAAAAAAAAAREAMRAhQTBRYYGh/9oACAEBAAE/IcJ4NOimGXamHBolcc72lhUe1uHez40BI0wTwv3AJw0NFMKK0o+urCnxlqvp/wD/2gAMAwEAAgADAAAAEM5iMDrXAf/EABkRAAMBAQEAAAAAAAAAAAAAAAABESEQMf/aAAgBAwEBPxBYrICbStPQTISd/8QAGREAAwEBAQAAAAAAAAAAAAAAAAERIRAx/9oACAECAQE/EHqIQKPBTGWF7//EAB4QAQADAAMBAAMAAAAAAAAAAAEAESExUXEQQWGx/9oACAEBAAE/EAg1onkxKhBcsIwEoJXBo0C4C80ilqHkDavuELbNFZH3JCti01JVfldRyk5UHEIyNYfqPmgDgOCNjBavqJoVSm7XxKnRtZ7GdN/ksPYty2CzZsqEv5//2Q==");
       }
     }
+
+
+    .github-corner,
+    .parthenon-corner {
+      position: fixed;
+      bottom: 0;
+      width: 80px;
+      height: 80px;
+      display: block;
+      line-height: 0;
+      z-index: 18500;
+      color: #fff;
+    }
+
+    .github-corner {
+      right: 0;
+    }
+
+    .parthenon-corner {
+      left: 0;
+    }
+
+    .github-corner svg,
+    .parthenon-corner svg {
+      width: 80px;
+      height: 80px;
+      display: block;
+    }
+
+    .github-corner:hover .octo-arm {
+      animation: octocat-wave 560ms ease-in-out;
+    }
+
+    .parthenon-corner .parthenon-icon {
+      transform-origin: 24px 24px;
+      transform-box: fill-box;
+      transition: transform 220ms ease;
+    }
+
+    .parthenon-corner:hover .parthenon-icon {
+      transform: scale(1.08);
+    }
+
+    @keyframes octocat-wave {
+      0%, 100% { transform: rotate(0); }
+      20%, 60% { transform: rotate(-25deg); }
+      40%, 80% { transform: rotate(10deg); }
+    }
+
+    @media (max-width: 500px) {
+      .github-corner,
+      .parthenon-corner,
+      .github-corner svg,
+      .parthenon-corner svg {
+        width: 64px;
+        height: 64px;
+      }
+
+      .github-corner:hover .octo-arm {
+        animation: none;
+      }
+
+      .github-corner .octo-arm {
+        animation: octocat-wave 560ms ease-in-out;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .github-corner .octo-arm {
+        animation: none !important;
+      }
+
+      .parthenon-corner .parthenon-icon {
+        transition: none;
+      }
+
+      .parthenon-corner:hover .parthenon-icon {
+        transform: none;
+      }
+    }
   </style>
 
   <!-- Styles: global first, then component-specific -->
@@ -223,12 +303,12 @@
 
             <div class="nav-panel-page" data-page="2">            
               <p class="nav-panel-content">
-                Open source, reproducible builds will be published soon, along with further announcements. 
-                These include decentralization of peripheral components via an SNS launch. The core component 
-                will be blackholed, with a worst-case scenario lifeline built into the canister. The lifeline mechanism is 
-                capable of temporarily reassigning its controller to the SNS DAO in the event that a breaking 
-                change has been applied to network dependencies (protocol canisters running in system subnets) preventing disbursals. 
-                Similarly the mechanism is capable of blackholing itself once disbursals begin flowing again.
+                Jupiter Faucet is open source, reproducibly buildable and designed to decentralize control over time.
+                The source code, reproducible build references and governance information are available via the fixed
+                corner links at the bottom of the page. The core component will be blackholed, with a worst-case
+                scenario lifeline built into the canister. That lifeline can temporarily hand control to the
+                <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a> if a breaking change in a network dependency prevents disbursals,
+                and can blackhole itself again once disbursals resume.
               </p>
             
               <p class="nav-panel-content">
@@ -242,6 +322,81 @@
               <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
               <button class="nav-panel-dot" type="button" data-page="2" aria-label="Page 3" aria-selected="false"></button>
             </div>
+        </article>
+
+
+        <article class="nav-panel-section" data-panel="source" id="nav-panel-source">
+          <h2 class="nav-panel-title">Source Code</h2>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-content">
+              Jupiter Faucet is composed of a suite of smart contracts that are all
+              <a href="https://github.com/aodl/JUPITER_FAUCET_SUITE" target="_blank" rel="noopener noreferrer" class="pane-external-link">open source</a>.
+            </p>
+            <p class="nav-panel-content">
+              Anyone can verify that the system components have been built from this source code by cloning the repository and running the
+              <a href="https://github.com/aodl/JUPITER_FAUCET_SUITE#reproducible-release-artifacts" target="_blank" rel="noopener noreferrer" class="pane-external-link">reproducible build script</a>.
+              The build hashes produced should match the Wasm module hashes currently deployed on mainnet.
+            </p>
+            <p class="nav-panel-content">
+              The Wasm module hashes below are retrieved on-chain from the IC management canister (`aaaaa-aa`) via `canister_info`.
+            </p>
+            <p class="nav-panel-content">
+              Once Jupiter Faucet is governed by an
+              <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a>, changes to these mainnet components will need to pass through consensus.
+            </p>
+            <div class="source-pane-canisters">
+              <article class="source-pane-canister">
+                <h3><a href="https://dashboard.internetcomputer.org/canister/uccpi-cqaaa-aaaar-qby3q-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-disburser</a></h3>
+                <p class="source-pane-canister-meta mono">Canister ID: uccpi-cqaaa-aaaar-qby3q-cai</p>
+                <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="uccpi-cqaaa-aaaar-qby3q-cai">Loading…</span></p>
+                <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-disburser" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
+                <p class="source-pane-canister-description">Controls the Jupiter NNS neuron, disburses maturity, and routes ICP into the faucet and reward flows.</p>
+              </article>
+              <article class="source-pane-canister">
+                <h3><a href="https://dashboard.internetcomputer.org/canister/acjuz-liaaa-aaaar-qb4qq-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-faucet</a></h3>
+                <p class="source-pane-canister-meta mono">Canister ID: acjuz-liaaa-aaaar-qb4qq-cai</p>
+                <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="acjuz-liaaa-aaaar-qb4qq-cai">Loading…</span></p>
+                <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-faucet" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
+                <p class="source-pane-canister-description">Converts routed ICP into cycles top-ups for eligible canisters declared through memo-based contributions.</p>
+              </article>
+              <article class="source-pane-canister">
+                <h3><a href="https://dashboard.internetcomputer.org/canister/j5gs6-uiaaa-aaaar-qb5cq-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-historian</a></h3>
+                <p class="source-pane-canister-meta mono">Canister ID: j5gs6-uiaaa-aaaar-qb5cq-cai</p>
+                <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="j5gs6-uiaaa-aaaar-qb5cq-cai">Loading…</span></p>
+                <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-historian" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
+                <p class="source-pane-canister-description">Indexes contributions, rewards, output and tracked-canister activity to power the public observability surface.</p>
+              </article>
+              <article class="source-pane-canister">
+                <h3><a href="https://dashboard.internetcomputer.org/canister/afisn-gqaaa-aaaar-qb4qa-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-lifeline</a></h3>
+                <p class="source-pane-canister-meta mono">Canister ID: afisn-gqaaa-aaaar-qb4qa-cai</p>
+                <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="afisn-gqaaa-aaaar-qb4qa-cai">Loading…</span></p>
+                <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-lifeline" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
+                <p class="source-pane-canister-description">Minimal recovery canister that broken canisters can automatically assign control to temporarily (allowing the DAO to apply a fix).</p>
+              </article>
+              <article class="source-pane-canister">
+                <h3><a href="https://dashboard.internetcomputer.org/canister/alk7f-5aaaa-aaaar-qb4ra-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-sns-rewards</a></h3>
+                <p class="source-pane-canister-meta mono">Canister ID: alk7f-5aaaa-aaaar-qb4ra-cai</p>
+                <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="alk7f-5aaaa-aaaar-qb4ra-cai">Loading…</span></p>
+                <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-sns-rewards" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
+                <p class="source-pane-canister-description">Placeholder recipient for the primary age-bonus ICP flow until the full reward logic lands.</p>
+              </article>
+              <article class="source-pane-canister">
+                <h3><a href="https://dashboard.internetcomputer.org/canister/jufzc-caaaa-aaaar-qb5da-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-faucet-frontend</a></h3>
+                <p class="source-pane-canister-meta mono">Canister ID: jufzc-caaaa-aaaar-qb5da-cai</p>
+                <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="jufzc-caaaa-aaaar-qb5da-cai">Loading…</span></p>
+                <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-faucet-frontend" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
+                <p class="source-pane-canister-description">Serves the certified frontend assets and dashboard UI (this website).</p>
+              </article>
+            </div>
+          </div>
+        </article>
+
+<article class="nav-panel-section" data-panel="governance" id="nav-panel-governance">
+          <h2 class="nav-panel-title">Governance</h2>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-content">SNS launch coming soon...</p>
+            <p class="nav-panel-content">Prior to the SNS DAO launch this system is being developed by <a href="https://forum.dfinity.org/u/lorimer/summary" target="_blank" rel="noopener noreferrer" class="pane-external-link">Alex Lorimer</a>, the controller of the <a href="https://dashboard.internetcomputer.org/neuron/16459595263909468577" target="_blank" rel="noopener noreferrer" class="pane-external-link">LORIMER ♾️ 🐶 known neuron</a>, and well-known ecosystem participant.</p>
+          </div>
         </article>
 
         <!-- How it works -->
@@ -650,5 +805,93 @@
   </div>
   <div class="measure" id="measure"></div>
   <div id="intro"></div>
+
+  <a
+    href="#source"
+    data-panel="source"
+    class="github-corner bottom-fade-widget"
+    aria-label="Open source code information"
+  >
+    <svg
+      width="80"
+      height="80"
+      viewBox="0 0 250 250"
+      style="position:absolute; bottom:0; right:0; border:0;"
+      aria-hidden="true"
+    >
+      <defs>
+        <mask id="github-corner-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="250" height="250">
+          <rect width="250" height="250" fill="black"></rect>
+          <path d="M250,250 L250,0 L0,250 Z" fill="white"></path>
+
+          <g transform="translate(18,110)">
+            <g transform="rotate(-45 145 100)">
+              <path
+                d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
+                fill="black"
+                class="octo-arm"
+                style="transform-origin:130px 106px;"
+              ></path>
+              <path
+                d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.9 141.8,141.8 Z"
+                fill="black"
+                class="octo-body"
+              ></path>
+            </g>
+          </g>
+        </mask>
+      </defs>
+
+      <rect
+        x="0"
+        y="0"
+        width="250"
+        height="250"
+        fill="white"
+        mask="url(#github-corner-cutout)"
+      ></rect>
+    </svg>
+  </a>
+
+  <a
+    href="#governance"
+    data-panel="governance"
+    class="parthenon-corner bottom-fade-widget"
+    aria-label="View governance information"
+  >
+    <svg
+      width="80"
+      height="80"
+      viewBox="0 0 250 250"
+      style="position:absolute; bottom:0; left:0; border:0;"
+      aria-hidden="true"
+    >
+      <defs>
+        <mask id="parthenon-corner-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="250" height="250">
+          <rect width="250" height="250" fill="black"></rect>
+          <path d="M0,250 L0,0 L250,250 Z" fill="white"></path>
+          <g transform="translate(20 128) scale(2.15)">
+            <g class="parthenon-icon">
+              <path
+                fill="black"
+                fill-rule="evenodd"
+                d="M 26.000,49.343 L 23.000,49.346 L 21.000,48.194 L 19.647,46.000 L 19.492,43.000 L 19.000,42.553 L 11.000,38.227 L 10.000,38.219 L 8.000,39.343 L 5.000,39.346 L 2.807,38.000 L 1.647,36.000 L 1.520,35.000 L 1.647,33.000 L 2.839,31.000 L 5.000,29.682 L 5.500,29.000 L 5.500,20.000 L 5.000,19.315 L 2.844,18.000 L 1.647,16.000 L 1.647,13.000 L 2.802,11.000 L 5.000,9.647 L 6.000,9.523 L 8.000,9.651 L 10.000,10.776 L 12.000,10.374 L 19.000,6.449 L 19.495,6.000 L 19.647,3.000 L 20.802,1.000 L 23.000,-0.353 L 24.000,-0.477 L 26.000,-0.349 L 28.193,1.000 L 29.349,3.000 L 29.505,6.000 L 30.000,6.449 L 38.000,10.773 L 39.000,10.776 L 41.000,9.647 L 44.000,9.651 L 46.193,11.000 L 47.349,13.000 L 47.477,14.000 L 47.346,16.000 L 46.156,18.000 L 44.000,19.315 L 43.500,20.000 L 43.500,29.000 L 44.000,29.682 L 46.156,31.000 L 47.349,33.000 L 47.346,36.000 L 46.188,38.000 L 44.000,39.343 L 43.000,39.475 L 41.000,39.346 L 39.000,38.219 L 38.000,38.227 L 35.000,39.729 L 29.508,43.000 L 29.346,46.000 L 29.000,46.643 L 28.000,48.189 Z M 26.187,7.000 L 27.144,6.000 L 27.453,5.000 L 27.150,3.000 L 26.000,1.828 L 24.000,1.550 L 23.000,1.823 L 21.850,3.000 L 21.547,4.000 L 21.850,6.000 L 23.000,7.177 L 24.000,7.471 L 25.000,7.471 Z M 30.532,40.000 L 37.492,36.000 L 37.647,33.000 L 38.000,32.338 L 39.000,30.839 L 41.000,29.682 L 41.500,29.000 L 41.500,20.000 L 41.000,19.315 L 39.000,18.156 L 38.000,16.656 L 37.647,16.000 L 37.492,13.000 L 30.000,8.629 L 28.000,8.219 L 26.000,9.343 L 24.000,9.475 L 23.000,9.346 L 21.000,8.219 L 20.000,8.227 L 11.508,13.000 L 11.346,16.000 L 11.000,16.643 L 10.000,18.156 L 8.000,19.315 L 7.500,20.000 L 7.500,29.000 L 8.000,29.682 L 10.000,30.844 L 11.000,32.348 L 11.349,33.000 L 11.508,36.000 L 19.000,40.371 L 21.000,40.776 L 23.000,39.647 L 25.000,39.523 L 26.000,39.651 L 28.000,40.776 L 29.000,40.773 Z M 8.187,17.000 L 9.144,16.000 L 9.453,15.000 L 9.150,13.000 L 8.000,11.828 L 6.000,11.550 L 5.000,11.823 L 3.850,13.000 L 3.547,14.000 L 3.850,16.000 L 5.000,17.177 L 6.000,17.471 L 7.000,17.471 Z M 44.187,17.000 L 45.144,16.000 L 45.453,15.000 L 45.150,13.000 L 44.000,11.828 L 42.000,11.550 L 41.000,11.823 L 39.850,13.000 L 39.547,14.000 L 39.850,16.000 L 41.000,17.177 L 42.000,17.471 L 43.000,17.471 Z M 33.000,29.343 L 16.000,29.346 L 15.654,29.000 L 15.654,28.000 L 16.000,27.654 L 17.000,27.500 L 17.500,27.000 L 17.500,22.000 L 17.000,21.500 L 16.000,21.346 L 15.654,21.000 L 15.647,19.000 L 24.000,13.607 L 25.000,13.613 L 33.353,19.000 L 33.343,21.000 L 33.000,21.343 L 32.000,21.500 L 31.500,22.000 L 31.500,27.000 L 32.000,27.500 L 33.000,27.654 L 33.346,28.000 L 33.343,29.000 Z M 29.786,19.000 L 25.000,15.988 L 24.000,15.988 L 19.214,19.000 L 20.000,19.460 L 21.000,19.500 L 29.000,19.460 Z M 21.500,27.000 L 21.500,22.000 L 21.000,21.500 L 20.000,21.500 L 19.500,22.000 L 19.500,27.000 L 20.000,27.500 L 21.000,27.500 Z M 25.500,27.000 L 25.500,22.000 L 25.000,21.500 L 24.000,21.500 L 23.500,22.000 L 23.500,27.000 L 24.000,27.500 L 25.000,27.500 Z M 29.500,27.000 L 29.500,22.000 L 29.000,21.500 L 28.000,21.500 L 27.500,22.000 L 27.500,27.000 L 28.000,27.500 L 29.000,27.500 Z M 34.000,32.343 L 16.000,32.500 L 15.000,32.346 L 14.654,32.000 L 14.654,31.000 L 15.000,30.654 L 16.000,30.500 L 33.000,30.500 L 34.000,30.654 L 34.346,31.000 L 34.343,32.000 Z M 8.187,37.000 L 9.144,36.000 L 9.453,35.000 L 9.150,33.000 L 8.000,31.828 L 6.000,31.550 L 5.000,31.823 L 3.850,33.000 L 3.547,34.000 L 3.850,36.000 L 5.000,37.177 L 6.000,37.471 L 7.000,37.471 Z M 44.187,37.000 L 45.144,36.000 L 45.453,35.000 L 45.150,33.000 L 44.000,31.828 L 42.000,31.550 L 41.000,31.823 L 39.850,33.000 L 39.547,34.000 L 39.850,36.000 L 41.000,37.177 L 42.000,37.471 L 43.000,37.471 Z M 26.187,47.000 L 27.144,46.000 L 27.453,45.000 L 27.150,43.000 L 26.000,41.828 L 24.000,41.550 L 23.000,41.823 L 21.850,43.000 L 21.545,44.000 L 21.850,46.000 L 23.000,47.177 L 24.000,47.471 L 25.000,47.471 Z"
+              ></path>
+            </g>
+          </g>
+        </mask>
+      </defs>
+
+      <rect
+        x="0"
+        y="0"
+        width="250"
+        height="250"
+        fill="white"
+        mask="url(#parthenon-corner-cutout)"
+      ></rect>
+    </svg>
+  </a>
+
 </body>
 </html>

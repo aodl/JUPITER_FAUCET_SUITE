@@ -5,6 +5,7 @@ import {
   accountIdentifierHex,
   loadDashboardData,
   loadRegisteredCanisterSummaryPage,
+  loadCanisterModuleHashes,
 } from './dashboard-data.js';
 import { createActor as createGovernanceActor } from '../declarations/nns_governance/index.js';
 import { createNeuronDetailsController } from './neuron-details-controller.js';
@@ -26,6 +27,10 @@ const INLINE_TOOLTIP_CONTENT = {
       <p><a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole" target="_blank" rel="noopener noreferrer">Blackhole controller</a> required for cycles observability.</p>
     </div>`,
 };
+
+const SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS = 60 * 60 * 1000;
+let sourcePaneModuleHashesLoadedAt = 0;
+let sourcePaneModuleHashesRequest = null;
 
 const tableState = {
   registered: {
@@ -517,6 +522,105 @@ function showInlineTooltipPopover(content, { trustedHtml = false } = {}) {
   popover.hidden = false;
 }
 
+
+function sourcePaneModuleHashNodes() {
+  return Array.from(document.querySelectorAll('[data-source-module-hash]'));
+}
+
+function sourcePaneModuleHashCacheKey() {
+  if (!FRONTEND_CONFIG?.historianCanisterId) return null;
+  return `jupiter-faucet:source-pane-module-hashes:${FRONTEND_CONFIG.historianCanisterId}`;
+}
+
+function applySourcePaneModuleHashes(hashByCanisterId, { fallbackTitle = '' } = {}) {
+  sourcePaneModuleHashNodes().forEach((node) => {
+    const canisterId = node.getAttribute('data-source-module-hash') || '';
+    const moduleHash = hashByCanisterId[canisterId] || null;
+    node.textContent = moduleHash || 'Unavailable';
+    if (moduleHash) {
+      node.setAttribute('title', moduleHash);
+    } else if (fallbackTitle) {
+      node.setAttribute('title', fallbackTitle);
+    } else {
+      node.removeAttribute('title');
+    }
+  });
+}
+
+function readSourcePaneModuleHashCache() {
+  const cacheKey = sourcePaneModuleHashCacheKey();
+  if (!cacheKey) return null;
+  try {
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const cachedAt = Number(parsed.cachedAt || 0);
+    if (!Number.isFinite(cachedAt) || cachedAt <= 0) return null;
+    if ((Date.now() - cachedAt) > SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) return null;
+    if (!parsed.hashByCanisterId || typeof parsed.hashByCanisterId !== 'object') return null;
+    return { cachedAt, hashByCanisterId: parsed.hashByCanisterId };
+  } catch {
+    return null;
+  }
+}
+
+function writeSourcePaneModuleHashCache(hashByCanisterId) {
+  const cacheKey = sourcePaneModuleHashCacheKey();
+  if (!cacheKey) return;
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify({
+      cachedAt: Date.now(),
+      hashByCanisterId,
+    }));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+async function ensureSourcePaneModuleHashesLoaded() {
+  const hashNodes = sourcePaneModuleHashNodes();
+  if (hashNodes.length === 0 || !FRONTEND_CONFIG?.historianCanisterId) return;
+  if (sourcePaneModuleHashesLoadedAt > 0 && (Date.now() - sourcePaneModuleHashesLoadedAt) <= SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) {
+    return;
+  }
+
+  const cached = readSourcePaneModuleHashCache();
+  if (cached) {
+    applySourcePaneModuleHashes(cached.hashByCanisterId);
+    sourcePaneModuleHashesLoadedAt = cached.cachedAt;
+    return;
+  }
+
+  if (sourcePaneModuleHashesRequest) {
+    await sourcePaneModuleHashesRequest;
+    return;
+  }
+
+  sourcePaneModuleHashesRequest = (async () => {
+    try {
+      const hashes = await loadCanisterModuleHashes({
+        historianCanisterId: FRONTEND_CONFIG.historianCanisterId,
+        host: window.location.origin,
+        local: isLocalHost(),
+      });
+      const hashByCanisterId = Object.fromEntries(
+        hashes.map((item) => [formatPrincipal(item.canister_id), readOpt(item.module_hash_hex) || null]),
+      );
+      applySourcePaneModuleHashes(hashByCanisterId);
+      writeSourcePaneModuleHashCache(hashByCanisterId);
+      sourcePaneModuleHashesLoadedAt = Date.now();
+    } catch (error) {
+      const reason = normalizeError(error);
+      applySourcePaneModuleHashes({}, { fallbackTitle: reason });
+    } finally {
+      sourcePaneModuleHashesRequest = null;
+    }
+  })();
+
+  await sourcePaneModuleHashesRequest;
+}
+
 function bindInlineTooltipFallbacks() {
   document.addEventListener('click', (event) => {
     const trigger = event.target instanceof Element
@@ -755,6 +859,14 @@ async function initLandingPage() {
 }
 
 bindInlineTooltipFallbacks();
+document.addEventListener('navpanel:open', (event) => {
+  if (event?.detail?.key === 'source') {
+    void ensureSourcePaneModuleHashesLoaded();
+  }
+});
+if (window.location.hash === '#source' || document.querySelector('.nav-panel-section--active[data-panel="source"]')) {
+  void ensureSourcePaneModuleHashesLoaded();
+}
 
 if (document.getElementById('landing-live-summary')) {
   initLandingPage();

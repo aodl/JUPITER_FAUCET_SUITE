@@ -85,6 +85,11 @@ fn clamp_canisters_per_cycles_tick(value: u32) -> u32 {
     value.clamp(1, MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP)
 }
 
+
+fn format_module_hash_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
 #[cfg(target_arch = "wasm32")]
 fn allocated_heap_memory_bytes() -> u64 {
     (core::arch::wasm32::memory_size(0) as u64) * 65_536
@@ -436,6 +441,12 @@ pub struct RecentContributionListItem {
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct ListRecentContributionsResponse {
     pub items: Vec<RecentContributionListItem>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize)]
+pub struct CanisterModuleHash {
+    pub canister_id: Principal,
+    pub module_hash_hex: Option<String>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -1101,6 +1112,46 @@ fn get_public_status() -> PublicStatus {
         total_memory_bytes: Some(heap_memory_bytes.saturating_add(stable_memory_bytes)),
         contribution_index_fault: st.contribution_index_fault.clone(),
     })
+}
+
+fn source_module_hash_canister_ids() -> Vec<Principal> {
+    [
+        "uccpi-cqaaa-aaaar-qby3q-cai",
+        "acjuz-liaaa-aaaar-qb4qq-cai",
+        "j5gs6-uiaaa-aaaar-qb5cq-cai",
+        "afisn-gqaaa-aaaar-qb4qa-cai",
+        "alk7f-5aaaa-aaaar-qb4ra-cai",
+        "jufzc-caaaa-aaaar-qb5da-cai",
+    ]
+    .into_iter()
+    .map(|canister_id| Principal::from_text(canister_id).expect("invalid hardcoded canister id"))
+    .collect()
+}
+
+#[ic_cdk::update]
+async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
+    let canister_ids = source_module_hash_canister_ids();
+    let mut hashes = Vec::with_capacity(canister_ids.len());
+    for canister_id in canister_ids {
+        let request = ic_cdk::management_canister::CanisterInfoArgs {
+            canister_id,
+            num_requested_changes: Some(0),
+        };
+        let module_hash_hex = match ic_cdk::management_canister::canister_info(&request).await {
+            Ok(result) => result
+                .module_hash
+                .map(|module_hash| format_module_hash_hex(module_hash.as_ref())),
+            Err(err) => {
+                ic_cdk::println!("get_canister_module_hashes failed for {}: {:?}", canister_id, err);
+                None
+            }
+        };
+        hashes.push(CanisterModuleHash {
+            canister_id,
+            module_hash_hex,
+        });
+    }
+    hashes
 }
 
 #[ic_cdk::query]

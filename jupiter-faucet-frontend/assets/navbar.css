@@ -265,3 +265,45 @@ button {
     max-height: min(52vh, calc(100dvh - 180px));
   }
 }
+
+
+.source-pane-canisters {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.source-pane-canister {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.source-pane-canister h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.source-pane-canister-meta,
+.source-pane-canister-description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.source-pane-canister-meta + .source-pane-canister-meta,
+.source-pane-canister-meta + .source-pane-canister-description {
+  margin-top: 4px;
+}
+
+.source-pane-canister-description {
+  margin-top: 8px;
+  opacity: 0.88;
+}
+
+.source-pane-canister-hash {
+  word-break: break-all;
+}

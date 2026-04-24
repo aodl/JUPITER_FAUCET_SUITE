@@ -167,7 +167,12 @@ type ListRecentContributionsArgs = record {
 type ListRecentContributionsResponse = record {
   items : vec RecentContributionListItem;
 };
+type CanisterModuleHash = record {
+  canister_id : principal;
+  module_hash_hex : opt text;
+};
 service : (InitArgs) -> {
+  get_canister_module_hashes : () -> (vec CanisterModuleHash);
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
   get_contribution_history : (GetContributionHistoryArgs) -> (ContributionHistoryPage) query;

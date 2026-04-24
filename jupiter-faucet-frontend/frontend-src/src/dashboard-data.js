@@ -177,6 +177,26 @@ export async function loadRegisteredCanisterSummaryPage({
   );
 }
 
+
+export async function loadCanisterModuleHashes({
+  historianCanisterId,
+  host,
+  local = false,
+  agent = null,
+  historianActor = null,
+  historianActorFactory = createHistorianActor,
+} = {}) {
+  const { historian } = await createHistorianClient({
+    historianCanisterId,
+    host,
+    local,
+    agent,
+    historianActor,
+    historianActorFactory,
+  });
+  return historian.get_canister_module_hashes();
+}
+
 export async function loadDashboardData({
   historianCanisterId,
   host,

@@ -73,7 +73,12 @@ export const idlFactory = ({ IDL }) => {
   const ListRecentContributionsResponse = IDL.Record({
     items: IDL.Vec(RecentContributionListItem),
   });
+  const CanisterModuleHash = IDL.Record({
+    canister_id: IDL.Principal,
+    module_hash_hex: IDL.Opt(IDL.Text),
+  });
   return IDL.Service({
+    get_canister_module_hashes: IDL.Func([], [IDL.Vec(CanisterModuleHash)], []),
     get_public_counts: IDL.Func([], [PublicCounts], ['query']),
     get_public_status: IDL.Func([], [PublicStatus], ['query']),
     list_registered_canister_summaries: IDL.Func(

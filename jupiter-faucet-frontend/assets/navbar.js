@@ -197,6 +197,9 @@
       const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
       activatePage(sectionEl, 0);
       focusControlsForSection(sectionEl);
+      document.dispatchEvent(new CustomEvent("navpanel:open", {
+        detail: { key },
+      }));
     }
 
     function closePanel() {
