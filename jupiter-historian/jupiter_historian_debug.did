@@ -111,6 +111,10 @@ type PublicStatus = record {
   staking_account : Account;
   ledger_canister_id : principal;
   faucet_canister_id : principal;
+  output_source_account : opt Account;
+  output_account : opt Account;
+  rewards_account : opt Account;
+  index_canister_id : opt principal;
   last_index_run_ts : opt nat64;
   index_interval_seconds : nat64;
   last_completed_cycles_sweep_ts : opt nat64;

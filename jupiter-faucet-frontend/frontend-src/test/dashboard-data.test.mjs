@@ -6,11 +6,13 @@ import { HttpAgent } from '@icp-sdk/core/agent';
 import {
   accountIdentifierHex,
   loadDashboardData,
+  loadRecentRouteTransfersFromIndex,
   loadRegisteredCanisterSummaryPage,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
   REGISTERED_SUMMARY_PAGE_SIZE,
   RECENT_CONTRIBUTION_LIMIT,
+  RECENT_ROUTE_TRANSFER_LIMIT,
 } from '../src/dashboard-data.js';
 
 function principal(text) {
@@ -123,6 +125,222 @@ test('loadDashboardData uses historian counts and status plus the native ledger 
   assert.equal(data.recent.items.length, 1);
   assert.equal(data.hasAnyFailure, false);
   assert.equal(summaryMetricsUnavailable(data), false);
+});
+
+function routeAccount(ownerText) {
+  return { owner: principal(ownerText), subaccount: [] };
+}
+
+function routeIndexTransaction({ id, from, to, amountE8s, timestampNanos = 1_710_000_000_000_000_000n, operationKind = 'Transfer' }) {
+  const transfer = {
+    from,
+    to,
+    amount: { e8s: BigInt(amountE8s) },
+    fee: { e8s: 10_000n },
+  };
+  if (operationKind === 'Transfer') {
+    transfer.spender = [];
+  } else {
+    transfer.spender = from;
+  }
+  return {
+    id: BigInt(id),
+    transaction: {
+      memo: 0n,
+      icrc1_memo: [],
+      created_at_time: [],
+      timestamp: [{ timestamp_nanos: timestampNanos }],
+      operation: { [operationKind]: transfer },
+    },
+  };
+}
+
+test('loadDashboardData skips recent route transfer lookups when route config is missing', async () => {
+  let indexActorConstructed = false;
+
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() { return historianStatus(); },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+    },
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
+    indexActorFactory: () => {
+      indexActorConstructed = true;
+      throw new Error('index actor should not be constructed without full route config');
+    },
+  });
+
+  assert.equal(indexActorConstructed, false);
+  assert.deepEqual(data.outputTransfers.items, []);
+  assert.deepEqual(data.rewardsTransfers.items, []);
+  assert.equal(data.errors.outputTransfers, null);
+  assert.equal(data.errors.rewardsTransfers, null);
+});
+
+test('loadDashboardData queries the ICP index directly for recent output and reward transfers', async () => {
+  const source = routeAccount('uccpi-cqaaa-aaaar-qby3q-cai');
+  const output = routeAccount('acjuz-liaaa-aaaar-qb4qq-cai');
+  const rewards = routeAccount('alk7f-5aaaa-aaaar-qb4ra-cai');
+  const sourceId = accountIdentifierHex(source);
+  const outputId = accountIdentifierHex(output);
+  const rewardsId = accountIdentifierHex(rewards);
+  const indexCalls = [];
+
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() {
+        return historianStatus({
+          output_source_account: [source],
+          output_account: [output],
+          rewards_account: [rewards],
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+    },
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
+    indexActorFactory: (canisterId, options) => {
+      assert.equal(canisterId, 'qhbym-qaaaa-aaaaa-aaafq-cai');
+      assert.deepEqual(options, { agent: { test: true } });
+      return {
+        async get_account_identifier_transactions(args) {
+          indexCalls.push(args);
+          if (args.account_identifier === outputId) {
+            return { Ok: { balance: 0n, oldest_tx_id: [40n], transactions: [
+              {
+                id: 44n,
+                transaction: {
+                  memo: 0n,
+                  icrc1_memo: [],
+                  created_at_time: [],
+                  timestamp: [{ timestamp_nanos: 1_710_000_000_000_000_044n }],
+                  operation: { Transfer: { from: sourceId, to: outputId, amount: { e8s: 111_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
+                },
+              },
+              {
+                id: 43n,
+                transaction: {
+                  memo: 0n,
+                  icrc1_memo: [],
+                  created_at_time: [],
+                  timestamp: [{ timestamp_nanos: 1_710_000_000_000_000_043n }],
+                  operation: { Transfer: { from: 'third-party', to: outputId, amount: { e8s: 999_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
+                },
+              },
+            ] } };
+          }
+          return { Ok: { balance: 0n, oldest_tx_id: [50n], transactions: [{
+            id: 55n,
+            transaction: {
+              memo: 0n,
+              icrc1_memo: [],
+              created_at_time: [{ timestamp_nanos: 1_710_000_000_000_000_055n }],
+              timestamp: [],
+              operation: { TransferFrom: { from: sourceId, to: rewardsId, amount: { e8s: 22_000_000n }, fee: { e8s: 10_000n }, spender: sourceId } },
+            },
+          }] } };
+        },
+      };
+    },
+  });
+
+  assert.equal(indexCalls.length, 2);
+  assert.deepEqual(indexCalls.map((call) => call.account_identifier).sort(), [outputId, rewardsId].sort());
+  assert.equal(indexCalls[0].max_results, BigInt(RECENT_ROUTE_TRANSFER_LIMIT));
+  assert.equal(data.outputTransfers.items.length, 1);
+  assert.equal(data.outputTransfers.items[0].tx_id, 44n);
+  assert.equal(data.outputTransfers.items[0].amount_e8s, 111_000_000n);
+  assert.equal(data.rewardsTransfers.items.length, 1);
+  assert.equal(data.rewardsTransfers.items[0].tx_id, 55n);
+  assert.equal(data.rewardsTransfers.items[0].amount_e8s, 22_000_000n);
+  assert.equal(data.errors.outputTransfers, null);
+  assert.equal(data.errors.rewardsTransfers, null);
+});
+
+
+test('loadDashboardData keeps route transfer lookup failures out of the global failure flag', async () => {
+  const source = routeAccount('uccpi-cqaaa-aaaar-qby3q-cai');
+  const output = routeAccount('acjuz-liaaa-aaaar-qb4qq-cai');
+  const rewards = routeAccount('alk7f-5aaaa-aaaar-qb4ra-cai');
+
+  const data = await loadDashboardData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    historianActor: {
+      async get_public_counts() { return historianCounts(); },
+      async get_public_status() {
+        return historianStatus({
+          output_source_account: [source],
+          output_account: [output],
+          rewards_account: [rewards],
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_recent_contributions() { return recentResponse(); },
+    },
+    ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        throw new Error('index temporarily unavailable');
+      },
+    }),
+  });
+
+  assert.equal(data.hasAnyFailure, false);
+  assert.equal(data.errors.outputTransfers, 'index temporarily unavailable');
+  assert.equal(data.errors.rewardsTransfers, 'index temporarily unavailable');
+  assert.equal(data.outputTransfers, null);
+  assert.equal(data.rewardsTransfers, null);
+});
+
+test('loadRecentRouteTransfersFromIndex de-duplicates rows before applying the limit and advances the index cursor', async () => {
+  const source = routeAccount('uccpi-cqaaa-aaaar-qby3q-cai');
+  const output = routeAccount('acjuz-liaaa-aaaar-qb4qq-cai');
+  const sourceId = accountIdentifierHex(source);
+  const outputId = accountIdentifierHex(output);
+  const calls = [];
+  const pages = [
+    [
+      routeIndexTransaction({ id: 10n, from: sourceId, to: outputId, amountE8s: 100_000_000n }),
+      routeIndexTransaction({ id: 10n, from: sourceId, to: outputId, amountE8s: 100_000_000n }),
+    ],
+    [
+      routeIndexTransaction({ id: 9n, from: sourceId, to: outputId, amountE8s: 200_000_000n }),
+      routeIndexTransaction({ id: 8n, from: 'third-party', to: outputId, amountE8s: 300_000_000n }),
+    ],
+  ];
+
+  const data = await loadRecentRouteTransfersFromIndex({
+    outputSourceAccount: source,
+    routeAccount: output,
+    limit: 2,
+    pageSize: 2,
+    maxPages: 3,
+    index: {
+      async get_account_identifier_transactions(args) {
+        calls.push(args);
+        return { Ok: { balance: 0n, oldest_tx_id: [], transactions: pages[calls.length - 1] || [] } };
+      },
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].start, []);
+  assert.deepEqual(calls[1].start, [9n]);
+  assert.deepEqual(data.items.map((item) => item.tx_id), [10n, 9n]);
+  assert.deepEqual(data.items.map((item) => item.amount_e8s), [100_000_000n, 200_000_000n]);
 });
 
 test('loadDashboardData requests only the configured registered canister summary page', async () => {

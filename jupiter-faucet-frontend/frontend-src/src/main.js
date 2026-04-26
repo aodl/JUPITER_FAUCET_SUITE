@@ -44,6 +44,8 @@ const tableState = {
     pages: new Map(),
   },
   commitments: { page: 0, items: [] },
+  output: { page: 0, items: [] },
+  rewards: { page: 0, items: [] },
 };
 
 
@@ -283,8 +285,8 @@ function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
   setText('registered-pane-subtitle', subtitle);
   setText('commitments-pane-subtitle', subtitle);
-  setText('output-pane-subtitle', 'Historian tracks protocol-routed ICP from the disburser to the faucet payout account.');
-  setText('rewards-pane-subtitle', 'Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.');
+  setText('output-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
+  setText('rewards-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
 
   const totalMemory = data?.status?.total_memory_bytes?.[0];
   const heapMemory = data?.status?.heap_memory_bytes?.[0];
@@ -296,8 +298,6 @@ function renderPaneSubtitles(data) {
         ? ` (${formatBytes(heapMemory)} heap + ${formatBytes(stableMemory)} stable)`
         : '');
   setStatusNote('commitments-pane-memory-note', memoryNote);
-  setStatusNote('output-pane-memory-note', memoryNote);
-  setStatusNote('rewards-pane-memory-note', memoryNote);
 }
 
 function paneEmptyMessage(data, key, defaultText) {
@@ -465,7 +465,7 @@ function formatCommitmentOutcome(item) {
   }
 }
 
-function commitmentTransactionHref(item) {
+function transactionHref(item) {
   const txIndex = item?.tx_id;
   if (txIndex !== undefined && txIndex !== null) {
     return `https://dashboard.internetcomputer.org/transaction/${encodeURIComponent(String(txIndex))}`;
@@ -475,7 +475,7 @@ function commitmentTransactionHref(item) {
 
 function renderCommitmentTimestampCell(item) {
   const label = escapeHtml(formatTimestampNanos(item.timestamp_nanos?.[0]));
-  const href = commitmentTransactionHref(item);
+  const href = transactionHref(item);
   if (!href) return label;
   return `<a class="pane-external-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
 }
@@ -709,18 +709,48 @@ function renderCommitmentsPane(data) {
   );
 }
 
+function renderRouteTransferTimestampCell(item) {
+  const label = escapeHtml(formatTimestampNanos(item.timestamp_nanos?.[0]));
+  const href = transactionHref(item);
+  if (!href) return label;
+  return `<a class="pane-external-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+function renderRouteTransferRow(item) {
+  return `
+    <tr>
+      <td>${renderRouteTransferTimestampCell(item)}</td>
+      <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
+      <td class="mono">${escapeHtml(formatInteger(item.tx_id))}</td>
+    </tr>`;
+}
+
 function renderOutputPane(data) {
   const amount = data?.counts?.total_output_e8s;
   setPaneValueText('output-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(amount) });
-  const note = 'Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.';
+  const note = 'Total Output counts ICP routed from the disburser staging account to the faucet payout account. The table shows recent matching transfers fetched directly from the ICP index canister.';
   setText('output-pane-description', note);
+  paginate(
+    'output',
+    data?.outputTransfers?.items || [],
+    renderRouteTransferRow,
+    paneEmptyMessage(data, 'outputTransfers', 'No output transfers found in the recent index window.'),
+    3,
+  );
 }
 
 function renderRewardsPane(data) {
   const amount = data?.counts?.total_rewards_e8s;
   setPaneValueText('rewards-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(amount) });
-  const note = 'Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.';
+  const note = 'Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. The table shows recent matching transfers fetched directly from the ICP index canister.';
   setText('rewards-pane-description', note);
+  paginate(
+    'rewards',
+    data?.rewardsTransfers?.items || [],
+    renderRouteTransferRow,
+    paneEmptyMessage(data, 'rewardsTransfers', 'No rewards transfers found in the recent index window.'),
+    3,
+  );
 }
 
 function bindPaginationButtons() {
@@ -743,6 +773,8 @@ function bindPaginationButtons() {
 
   [
     ['commitments', renderCommitmentsPane],
+    ['output', renderOutputPane],
+    ['rewards', renderRewardsPane],
   ].forEach(([kind, rerender]) => {
     const prev = document.getElementById(`${kind}-prev-page`);
     const next = document.getElementById(`${kind}-next-page`);

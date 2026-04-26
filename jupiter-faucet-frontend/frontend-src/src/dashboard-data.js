@@ -2,10 +2,14 @@ import { HttpAgent } from '@icp-sdk/core/agent';
 import { sha224 } from '@noble/hashes/sha2.js';
 import { createActor as createHistorianActor } from '../declarations/jupiter_historian/index.js';
 import { createActor as createLedgerActor } from '../declarations/icp_ledger/index.js';
+import { createActor as createIndexActor } from '../declarations/icp_index/index.js';
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
 export const RECENT_CONTRIBUTION_LIMIT = 100;
+export const RECENT_ROUTE_TRANSFER_LIMIT = 100;
+export const RECENT_ROUTE_TRANSFER_PAGE_SIZE = 100;
+export const RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES = 10;
 
 const agentPromises = new Map();
 
@@ -96,6 +100,142 @@ function buildRegisteredCanisterSummariesRequest({ page = 0, pageSize = REGISTER
     page: [page],
     page_size: [pageSize],
   };
+}
+
+function readOptional(value) {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value[0] : null;
+  }
+  return value ?? null;
+}
+
+function principalToText(value) {
+  const principal = readOptional(value);
+  if (!principal) return '';
+  return typeof principal.toText === 'function' ? principal.toText() : String(principal);
+}
+
+function compareBigIntDesc(left, right) {
+  const a = typeof left === 'bigint' ? left : BigInt(left);
+  const b = typeof right === 'bigint' ? right : BigInt(right);
+  if (a === b) return 0;
+  return a > b ? -1 : 1;
+}
+
+function routeTransferTimestampOpt(transaction) {
+  const timestamp = readOptional(transaction?.timestamp) || readOptional(transaction?.created_at_time);
+  return timestamp?.timestamp_nanos === undefined || timestamp?.timestamp_nanos === null
+    ? []
+    : [timestamp.timestamp_nanos];
+}
+
+function tokenE8s(tokens) {
+  if (tokens?.e8s === undefined || tokens?.e8s === null) return null;
+  return tokens.e8s;
+}
+
+function transferOperation(operation) {
+  if (!operation || Array.isArray(operation)) return null;
+  if (Object.prototype.hasOwnProperty.call(operation, 'Transfer')) return operation.Transfer;
+  if (Object.prototype.hasOwnProperty.call(operation, 'TransferFrom')) return operation.TransferFrom;
+  return null;
+}
+
+export function routeTransferFromIndexTransaction(tx, expectedFromAccountIdentifier, expectedToAccountIdentifier) {
+  const transfer = transferOperation(tx?.transaction?.operation);
+  if (!transfer) return null;
+
+  const from = String(transfer.from || '').toLowerCase();
+  const to = String(transfer.to || '').toLowerCase();
+  if (from !== expectedFromAccountIdentifier || to !== expectedToAccountIdentifier) {
+    return null;
+  }
+
+  const amount = tokenE8s(transfer.amount);
+  if (amount === null || tx?.id === undefined || tx?.id === null) return null;
+
+  return {
+    tx_id: tx.id,
+    timestamp_nanos: routeTransferTimestampOpt(tx.transaction),
+    amount_e8s: amount,
+  };
+}
+
+function normalizeRouteTransferItems(items, limit) {
+  const seen = new Set();
+  const unique = [];
+  for (const item of items) {
+    const key = String(item.tx_id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  unique.sort((a, b) => compareBigIntDesc(a.tx_id, b.tx_id));
+  return unique.slice(0, limit);
+}
+
+async function getAccountIdentifierTransactions(index, accountIdentifier, start, maxResults) {
+  const result = await index.get_account_identifier_transactions({
+    account_identifier: accountIdentifier,
+    start: start === null || start === undefined ? [] : [typeof start === 'bigint' ? start : BigInt(start)],
+    max_results: BigInt(maxResults),
+  });
+  if (result && Object.prototype.hasOwnProperty.call(result, 'Ok')) return result.Ok;
+  if (result && Object.prototype.hasOwnProperty.call(result, 'Err')) {
+    throw new Error(result.Err?.message || 'ICP index returned an error');
+  }
+  throw new Error('ICP index returned an unexpected response');
+}
+
+export async function loadRecentRouteTransfersFromIndex({
+  index,
+  outputSourceAccount,
+  routeAccount,
+  limit = RECENT_ROUTE_TRANSFER_LIMIT,
+  pageSize = RECENT_ROUTE_TRANSFER_PAGE_SIZE,
+  maxPages = RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES,
+} = {}) {
+  if (!index || typeof index.get_account_identifier_transactions !== 'function') {
+    throw new Error('ICP index actor is unavailable');
+  }
+  if (!outputSourceAccount || !routeAccount) {
+    return { items: [] };
+  }
+
+  const sourceAccountIdentifier = accountIdentifierHex(outputSourceAccount).toLowerCase();
+  const routeAccountIdentifier = accountIdentifierHex(routeAccount).toLowerCase();
+  const items = [];
+  const seen = new Set();
+  let start = null;
+
+  for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
+    const response = await getAccountIdentifierTransactions(index, routeAccountIdentifier, start, pageSize);
+    const transactions = response?.transactions || [];
+    for (const tx of transactions) {
+      const item = routeTransferFromIndexTransaction(tx, sourceAccountIdentifier, routeAccountIdentifier);
+      if (item) {
+        const key = String(item.tx_id);
+        if (!seen.has(key)) {
+          seen.add(key);
+          items.push(item);
+        }
+      }
+      if (items.length >= limit) break;
+    }
+
+    if (transactions.length < pageSize) break;
+    const lastId = transactions[transactions.length - 1]?.id;
+    if (lastId === undefined || lastId === null) break;
+
+    const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
+    if (lastIdBigInt === 0n) break;
+
+    const nextStart = lastIdBigInt - 1n;
+    if (start !== null && nextStart >= BigInt(start)) break;
+    start = nextStart;
+  }
+
+  return { items: normalizeRouteTransferItems(items, limit) };
 }
 
 export function resetAgentCacheForTests() {
@@ -197,6 +337,36 @@ export async function loadCanisterModuleHashes({
   return historian.get_canister_module_hashes();
 }
 
+async function loadRouteTransferTables({ status, agent, indexActorFactory }) {
+  const indexCanisterId = principalToText(status?.index_canister_id);
+  const outputSourceAccount = readOptional(status?.output_source_account);
+  const outputAccount = readOptional(status?.output_account);
+  const rewardsAccount = readOptional(status?.rewards_account);
+
+  if (!indexCanisterId || !outputSourceAccount || !outputAccount || !rewardsAccount) {
+    return {
+      outputTransfersResult: { status: 'fulfilled', value: { items: [] } },
+      rewardsTransfersResult: { status: 'fulfilled', value: { items: [] } },
+    };
+  }
+
+  const index = indexActorFactory(indexCanisterId, { agent });
+  const [outputTransfersResult, rewardsTransfersResult] = await Promise.allSettled([
+    loadRecentRouteTransfersFromIndex({
+      index,
+      outputSourceAccount,
+      routeAccount: outputAccount,
+    }),
+    loadRecentRouteTransfersFromIndex({
+      index,
+      outputSourceAccount,
+      routeAccount: rewardsAccount,
+    }),
+  ]);
+
+  return { outputTransfersResult, rewardsTransfersResult };
+}
+
 export async function loadDashboardData({
   historianCanisterId,
   host,
@@ -205,6 +375,7 @@ export async function loadDashboardData({
   historianActor = null,
   historianActorFactory = createHistorianActor,
   ledgerActorFactory = createLedgerActor,
+  indexActorFactory = createIndexActor,
   registeredPage = 0,
   registeredPageSize = REGISTERED_SUMMARY_PAGE_SIZE,
 } = {}) {
@@ -226,6 +397,8 @@ export async function loadDashboardData({
       status: null,
       registered: null,
       recent: null,
+      outputTransfers: null,
+      rewardsTransfers: null,
       stakeE8s: null,
       hasAnyFailure: true,
       errors: {
@@ -233,6 +406,8 @@ export async function loadDashboardData({
         status: reason,
         registered: reason,
         recent: reason,
+        outputTransfers: reason,
+        rewardsTransfers: reason,
         stake: 'Stake unavailable',
       },
       historianAllRejected: true,
@@ -256,6 +431,8 @@ export async function loadDashboardData({
   ]);
 
   let stakeResult = { status: 'rejected', reason: new Error('Stake unavailable') };
+  let outputTransfersResult = { status: 'fulfilled', value: { items: [] } };
+  let rewardsTransfersResult = { status: 'fulfilled', value: { items: [] } };
 
   if (statusResult.status === 'fulfilled') {
     let ledger;
@@ -285,6 +462,17 @@ export async function loadDashboardData({
           }
         });
     }
+
+    try {
+      ({ outputTransfersResult, rewardsTransfersResult } = await loadRouteTransferTables({
+        status: statusResult.value,
+        agent: resolvedAgent,
+        indexActorFactory,
+      }));
+    } catch (error) {
+      outputTransfersResult = { status: 'rejected', reason: error };
+      rewardsTransfersResult = { status: 'rejected', reason: error };
+    }
   }
 
   const countsValue = countsResult.status === 'fulfilled' ? countsResult.value : null;
@@ -294,6 +482,8 @@ export async function loadDashboardData({
     status: statusResult.status === 'rejected' ? normalizeError(statusResult.reason) : null,
     registered: registeredResult.status === 'rejected' ? normalizeError(registeredResult.reason) : null,
     recent: recentResult.status === 'rejected' ? normalizeError(recentResult.reason) : null,
+    outputTransfers: outputTransfersResult.status === 'rejected' ? normalizeError(outputTransfersResult.reason) : null,
+    rewardsTransfers: rewardsTransfersResult.status === 'rejected' ? normalizeError(rewardsTransfersResult.reason) : null,
     stake: stakeResult.status === 'rejected' ? normalizeError(stakeResult.reason) : null,
   };
 
@@ -306,6 +496,8 @@ export async function loadDashboardData({
     status: statusResult.status === 'fulfilled' ? statusResult.value : null,
     registered: registeredResult.status === 'fulfilled' ? registeredResult.value : null,
     recent: recentResult.status === 'fulfilled' ? recentResult.value : null,
+    outputTransfers: outputTransfersResult.status === 'fulfilled' ? outputTransfersResult.value : null,
+    rewardsTransfers: rewardsTransfersResult.status === 'fulfilled' ? rewardsTransfersResult.value : null,
     stakeE8s: stakeResult.status === 'fulfilled' ? stakeResult.value : null,
     hasAnyFailure:
       countsResult.status === 'rejected' ||

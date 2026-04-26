@@ -511,10 +511,28 @@
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle" id="output-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the faucet payout account.</p>
             <p class="nav-panel-content" id="output-pane-description">Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.</p>
-            <p class="pane-status-note" id="output-pane-memory-note" hidden></p>
             <dl class="pane-detail-grid">
               <div><dt>Total output</dt><dd class="pane-detail-value"><span id="output-pane-total"></span><span class="metric-status" id="output-pane-total-status" hidden aria-hidden="true"></span></dd></div>
             </dl>
+            <div class="pane-table-wrap">
+              <table class="pane-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Amount</th>
+                    <th>Tx ID</th>
+                  </tr>
+                </thead>
+                <tbody id="output-pane-body">
+                  <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pane-pagination">
+              <button class="pane-page-button" id="output-prev-page" type="button">Previous</button>
+              <span id="output-page-info">Page 1</span>
+              <button class="pane-page-button" id="output-next-page" type="button">Next</button>
+            </div>
           </div>
         </article>
 
@@ -523,10 +541,28 @@
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle" id="rewards-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.</p>
             <p class="nav-panel-content" id="rewards-pane-description">Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.</p>
-            <p class="pane-status-note" id="rewards-pane-memory-note" hidden></p>
             <dl class="pane-detail-grid">
               <div><dt>Total rewards</dt><dd class="pane-detail-value"><span id="rewards-pane-total"></span><span class="metric-status" id="rewards-pane-total-status" hidden aria-hidden="true"></span></dd></div>
             </dl>
+            <div class="pane-table-wrap">
+              <table class="pane-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Amount</th>
+                    <th>Tx ID</th>
+                  </tr>
+                </thead>
+                <tbody id="rewards-pane-body">
+                  <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pane-pagination">
+              <button class="pane-page-button" id="rewards-prev-page" type="button">Previous</button>
+              <span id="rewards-page-info">Page 1</span>
+              <button class="pane-page-button" id="rewards-next-page" type="button">Next</button>
+            </div>
           </div>
         </article>
 
