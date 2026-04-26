@@ -45,7 +45,7 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
   assert.equal(asString(data.counts?.total_output_e8s), expected.counts?.totalOutputE8s);
   assert.equal(asString(data.counts?.total_rewards_e8s), expected.counts?.totalRewardsE8s);
   assert.equal(asString(data.counts?.registered_canister_count), expected.counts?.registeredCanisterCount);
-  assert.equal(asString(data.counts?.qualifying_contribution_count), expected.counts?.qualifyingContributionCount);
+  assert.equal(asString(data.counts?.qualifying_commitment_count), expected.counts?.qualifyingCommitmentCount);
 
   if (expected.status) {
     assert.ok(data.status, 'expected historian status to be present');
@@ -65,16 +65,16 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
       const actual = data.registered.items[i];
       const exp = expected.registered.items[i];
       assert.equal(actual.canister_id.toText(), exp.canisterId);
-      assert.equal(asString(actual.qualifying_contribution_count), exp.qualifyingContributionCount);
-      assert.equal(asString(actual.total_qualifying_contributed_e8s), exp.totalQualifyingContributedE8s);
-      assert.equal(optionalBigIntString(actual.last_contribution_ts) !== null, exp.lastContributionTsPresent);
+      assert.equal(asString(actual.qualifying_commitment_count), exp.qualifyingCommitmentCount);
+      assert.equal(asString(actual.total_qualifying_committed_e8s), exp.totalQualifyingCommittedE8s);
+      assert.equal(optionalBigIntString(actual.last_commitment_ts) !== null, exp.lastCommitmentTsPresent);
       assert.equal(optionalBigIntString(actual.latest_cycles), exp.latestCycles ?? null);
       assert.equal(optionalBigIntString(actual.last_cycles_probe_ts) !== null, exp.lastCyclesProbeTsPresent);
     }
   }
 
   if (expected.recent) {
-    assert.ok(data.recent, 'expected recent contributions to be present');
+    assert.ok(data.recent, 'expected recent commitments to be present');
     assert.equal(data.recent.items.length, expected.recent.items.length);
     for (let i = 0; i < expected.recent.items.length; i += 1) {
       const actual = data.recent.items[i];

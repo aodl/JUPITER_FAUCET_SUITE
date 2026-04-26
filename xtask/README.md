@@ -192,7 +192,7 @@ Examples covered by the current PocketIC suites include:
   - `get_public_counts`
   - `get_public_status`
   - `list_registered_canister_summaries`
-  - `list_recent_contributions`
+  - `list_recent_commitments`
 
 ### PocketIC maturity and reward caveats
 
@@ -205,7 +205,7 @@ Several PocketIC tests in this repo compare round-to-round maturity and payout b
 - **Warm up and drain first.** Helpers such as `ensure_maturity_ge_1_icp(...)` intentionally leave the neuron with accumulated maturity. Any round-to-round economics comparison should drain that backlog before establishing a baseline.
 - **Prefer timing-isolated comparisons.** For the current faucet mitigation, the sharpest protocol-level check is that a very late valid top-up raises the live stake but does not reduce the existing beneficiary's payout in that affected round because the faucet now weights in-round stake conservatively instead of trusting the raw live denominator.
 - **Whales reduce noise, not signal.** A large whale neuron helps stabilize network-wide voting-power effects, but it should not remove the actual economic effect under test, such as a denominator step from a late top-up.
-- **The faucet mitigation is now timing-aware.** The live faucet code no longer relies only on the raw live staking balance at payout time. It carries a round-start snapshot forward, clamps the current round by tx id, and applies a conservative recognition delay before weighting valid in-round contributions into the effective denominator. PocketIC timing tests should therefore be read as evidence for the economic model and for the mitigation, not merely for the older unweighted denominator behavior.
+- **The faucet mitigation is now timing-aware.** The live faucet code no longer relies only on the raw live staking balance at payout time. It carries a round-start snapshot forward, clamps the current round by tx id, and applies a conservative recognition delay before weighting valid in-round commitments into the effective denominator. PocketIC timing tests should therefore be read as evidence for the economic model and for the mitigation, not merely for the older unweighted denominator behavior.
 
 The PocketIC tests named around `faucet_late_valid_top_up_*`, `faucet_baseline_round_accounting_*`, `faucet_warmup_drain_*`, and `age_bonus_baseline_matches_age0_with_whale_background` are the main reference points for these caveats.
 

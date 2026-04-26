@@ -395,7 +395,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     }
     if summary.ignored_bad_memo != 0 || summary.ignored_under_threshold != 0 {
         bail!(
-            "expected no ignored contributions, got bad_memo={} under_threshold={}",
+            "expected no ignored commitments, got bad_memo={} under_threshold={}",
             summary.ignored_bad_memo,
             summary.ignored_under_threshold
         );
@@ -529,7 +529,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         let summary: Option<FaucetSummary> = query_one(&pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
         let summary = summary.ok_or_else(|| anyhow!("expected faucet summary after payout cycle"))?;
         if summary.topped_up_count != 3 {
-            bail!("expected each payout cycle to replay the same three contributions, got {}", summary.topped_up_count);
+            bail!("expected each payout cycle to replay the same three commitments, got {}", summary.topped_up_count);
         }
     }
 
@@ -814,14 +814,14 @@ struct HistorianInitArg {
     cycles_interval_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
     max_cycles_entries_per_canister: Option<u32>,
-    max_contribution_entries_per_canister: Option<u32>,
+    max_commitment_entries_per_canister: Option<u32>,
     max_index_pages_per_tick: Option<u32>,
     max_canisters_per_cycles_tick: Option<u32>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum CanisterSource {
-    MemoContribution,
+    MemoCommitment,
     SnsDiscovery,
 }
 
@@ -845,7 +845,7 @@ struct HistorianListCanistersResponse {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianGetContributionHistoryArgs {
+struct HistorianGetCommitmentHistoryArgs {
     canister_id: Principal,
     start_after_tx_id: Option<u64>,
     limit: Option<u32>,
@@ -853,7 +853,7 @@ struct HistorianGetContributionHistoryArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianContributionSample {
+struct HistorianCommitmentSample {
     tx_id: u64,
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
@@ -861,8 +861,8 @@ struct HistorianContributionSample {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianContributionHistoryPage {
-    items: Vec<HistorianContributionSample>,
+struct HistorianCommitmentHistoryPage {
+    items: Vec<HistorianCommitmentSample>,
     next_start_after_tx_id: Option<u64>,
 }
 
@@ -897,7 +897,7 @@ struct HistorianGetCyclesHistoryArgs {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianPublicCounts {
     registered_canister_count: u64,
-    qualifying_contribution_count: u64,
+    qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
@@ -927,9 +927,9 @@ struct HistorianListRegisteredCanisterSummariesArgs {
 struct HistorianRegisteredCanisterSummary {
     canister_id: Principal,
     sources: Vec<CanisterSource>,
-    qualifying_contribution_count: u64,
-    total_qualifying_contributed_e8s: u64,
-    last_contribution_ts: Option<u64>,
+    qualifying_commitment_count: u64,
+    total_qualifying_committed_e8s: u64,
+    last_commitment_ts: Option<u64>,
     latest_cycles: Option<u128>,
     last_cycles_probe_ts: Option<u64>,
 }
@@ -943,13 +943,13 @@ struct HistorianListRegisteredCanisterSummariesResponse {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-struct HistorianListRecentContributionsArgs {
+struct HistorianListRecentCommitmentsArgs {
     limit: Option<u32>,
     qualifying_only: Option<bool>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianRecentContributionListItem {
+struct HistorianRecentCommitmentListItem {
     canister_id: Option<Principal>,
     memo_text: Option<String>,
     tx_id: u64,
@@ -960,8 +960,8 @@ struct HistorianRecentContributionListItem {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianListRecentContributionsResponse {
-    items: Vec<HistorianRecentContributionListItem>,
+struct HistorianListRecentCommitmentsResponse {
+    items: Vec<HistorianRecentCommitmentListItem>,
 }
 
 
@@ -1140,7 +1140,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         cycles_interval_seconds: Some(1),
         min_tx_e8s: Some(100_000_000),
         max_cycles_entries_per_canister: Some(100),
-        max_contribution_entries_per_canister: Some(100),
+        max_commitment_entries_per_canister: Some(100),
         max_index_pages_per_tick: Some(10),
         max_canisters_per_cycles_tick: Some(10),
     };
@@ -1180,9 +1180,9 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(listed.items.len(), 1);
     assert_eq!(listed.items[0].canister_id, target);
 
-    let contributions: HistorianContributionHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_contribution_history", HistorianGetContributionHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
-    assert_eq!(contributions.items.len(), 1);
-    assert!(contributions.items[0].counts_toward_faucet);
+    let commitments: HistorianCommitmentHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_commitment_history", HistorianGetCommitmentHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
+    assert_eq!(commitments.items.len(), 1);
+    assert!(commitments.items[0].counts_toward_faucet);
 
     let cycles: HistorianCyclesHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_cycles_history", HistorianGetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(cycles.items.len(), 1);
@@ -1193,7 +1193,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
 
     let counts: HistorianPublicCounts = query_one(&pic, historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 1);
-    assert_eq!(counts.qualifying_contribution_count, 1);
+    assert_eq!(counts.qualifying_commitment_count, 1);
     assert_eq!(counts.total_output_e8s, expected_output_e8s);
     assert_eq!(counts.total_rewards_e8s, 0);
     assert_eq!(counts.sns_discovered_canister_count, 0);
@@ -1222,18 +1222,18 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(registered.total, 1);
     assert_eq!(registered.items.len(), 1);
     assert_eq!(registered.items[0].canister_id, target);
-    assert_eq!(registered.items[0].qualifying_contribution_count, 1);
-    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 100_000_000);
-    assert!(registered.items[0].last_contribution_ts.is_some());
+    assert_eq!(registered.items[0].qualifying_commitment_count, 1);
+    assert_eq!(registered.items[0].total_qualifying_committed_e8s, 100_000_000);
+    assert!(registered.items[0].last_commitment_ts.is_some());
     assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
     assert!(registered.items[0].last_cycles_probe_ts.is_some());
 
-    let recent: HistorianListRecentContributionsResponse = query_one(
+    let recent: HistorianListRecentCommitmentsResponse = query_one(
         &pic,
         historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        HistorianListRecentContributionsArgs {
+        "list_recent_commitments",
+        HistorianListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },

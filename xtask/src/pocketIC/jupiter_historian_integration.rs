@@ -128,7 +128,7 @@ struct HistorianInitArg {
     cycles_interval_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
     max_cycles_entries_per_canister: Option<u32>,
-    max_contribution_entries_per_canister: Option<u32>,
+    max_commitment_entries_per_canister: Option<u32>,
     max_index_pages_per_tick: Option<u32>,
     max_canisters_per_cycles_tick: Option<u32>,
 }
@@ -140,7 +140,7 @@ struct HistorianUpgradeArg {
     cycles_interval_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
     max_cycles_entries_per_canister: Option<u32>,
-    max_contribution_entries_per_canister: Option<u32>,
+    max_commitment_entries_per_canister: Option<u32>,
     max_index_pages_per_tick: Option<u32>,
     max_canisters_per_cycles_tick: Option<u32>,
     blackhole_canister_id: Option<Principal>,
@@ -151,7 +151,7 @@ struct HistorianUpgradeArg {
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 enum CanisterSource {
-    MemoContribution,
+    MemoCommitment,
     SnsDiscovery,
 }
 
@@ -175,7 +175,7 @@ struct ListCanistersResponse {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct GetContributionHistoryArgs {
+struct GetCommitmentHistoryArgs {
     canister_id: Principal,
     start_after_tx_id: Option<u64>,
     limit: Option<u32>,
@@ -183,7 +183,7 @@ struct GetContributionHistoryArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct ContributionSample {
+struct CommitmentSample {
     tx_id: u64,
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
@@ -191,8 +191,8 @@ struct ContributionSample {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct ContributionHistoryPage {
-    items: Vec<ContributionSample>,
+struct CommitmentHistoryPage {
+    items: Vec<CommitmentSample>,
     next_start_after_tx_id: Option<u64>,
 }
 
@@ -345,14 +345,14 @@ struct GetSnsCanistersSummaryResponse {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PublicCounts {
     registered_canister_count: u64,
-    qualifying_contribution_count: u64,
+    qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct ContributionIndexFault {
+struct CommitmentIndexFault {
     observed_at_ts: u64,
     last_cursor_tx_id: Option<u64>,
     offending_tx_id: u64,
@@ -370,7 +370,7 @@ struct PublicStatus {
     heap_memory_bytes: Option<u64>,
     stable_memory_bytes: Option<u64>,
     total_memory_bytes: Option<u64>,
-    contribution_index_fault: Option<ContributionIndexFault>,
+    commitment_index_fault: Option<CommitmentIndexFault>,
 }
 
 
@@ -384,9 +384,9 @@ struct ListRegisteredCanisterSummariesArgs {
 struct RegisteredCanisterSummary {
     canister_id: Principal,
     sources: Vec<CanisterSource>,
-    qualifying_contribution_count: u64,
-    total_qualifying_contributed_e8s: u64,
-    last_contribution_ts: Option<u64>,
+    qualifying_commitment_count: u64,
+    total_qualifying_committed_e8s: u64,
+    last_commitment_ts: Option<u64>,
     latest_cycles: Option<u128>,
     last_cycles_probe_ts: Option<u64>,
 }
@@ -409,7 +409,7 @@ enum CyclesProbeResult {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct CanisterMeta {
     first_seen_ts: Option<u64>,
-    last_contribution_ts: Option<u64>,
+    last_commitment_ts: Option<u64>,
     last_cycles_probe_ts: Option<u64>,
     last_cycles_probe_result: Option<CyclesProbeResult>,
 }
@@ -420,17 +420,17 @@ struct CanisterOverview {
     sources: Vec<CanisterSource>,
     meta: CanisterMeta,
     cycles_points: u32,
-    contribution_points: u32,
+    commitment_points: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-struct ListRecentContributionsArgs {
+struct ListRecentCommitmentsArgs {
     limit: Option<u32>,
     qualifying_only: Option<bool>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct RecentContributionListItem {
+struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
     memo_text: Option<String>,
     tx_id: u64,
@@ -440,8 +440,8 @@ struct RecentContributionListItem {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct ListRecentContributionsResponse {
-    items: Vec<RecentContributionListItem>,
+struct ListRecentCommitmentsResponse {
+    items: Vec<RecentCommitmentListItem>,
 }
 
 
@@ -568,7 +568,7 @@ impl Harness {
             cycles_interval_seconds: Some(1),
             min_tx_e8s: Some(10_000_000),
             max_cycles_entries_per_canister: Some(100),
-            max_contribution_entries_per_canister: Some(100),
+            max_commitment_entries_per_canister: Some(100),
             max_index_pages_per_tick: Some(10),
             max_canisters_per_cycles_tick: Some(10),
         };
@@ -703,7 +703,7 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
         cycles_interval_seconds: Some(1),
         min_tx_e8s: Some(10_000_000),
         max_cycles_entries_per_canister: Some(100),
-        max_contribution_entries_per_canister: Some(100),
+        max_commitment_entries_per_canister: Some(100),
         max_index_pages_per_tick: Some(10),
         max_canisters_per_cycles_tick: Some(10),
     };
@@ -739,14 +739,14 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
     let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
 
     let status: PublicStatus = query_one(&pic, historian, Principal::anonymous(), "get_public_status", ())?;
-    assert!(status.contribution_index_fault.is_none(), "historian should continue indexing older real-ICP-index pages from cursor {resume_cursor} without latching a non-monotonic fault; fault={:?}", status.contribution_index_fault);
+    assert!(status.commitment_index_fault.is_none(), "historian should continue indexing older real-ICP-index pages from cursor {resume_cursor} without latching a non-monotonic fault; fault={:?}", status.commitment_index_fault);
 
-    let history: ContributionHistoryPage = query_one(
+    let history: CommitmentHistoryPage = query_one(
         &pic,
         historian,
         Principal::anonymous(),
-        "get_contribution_history",
-        GetContributionHistoryArgs {
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
             canister_id: blackhole,
             start_after_tx_id: None,
             limit: Some(10),
@@ -864,7 +864,7 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         cycles_interval_seconds: Some(1),
         min_tx_e8s: Some(10_000_000),
         max_cycles_entries_per_canister: Some(100),
-        max_contribution_entries_per_canister: Some(100),
+        max_commitment_entries_per_canister: Some(100),
         max_index_pages_per_tick: Some(10),
         max_canisters_per_cycles_tick: Some(10),
     };
@@ -884,7 +884,7 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
 
 #[test]
 #[ignore]
-fn historian_keeps_under_threshold_contributions_out_of_durable_tracking() -> Result<()> {
+fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.blackhole;
@@ -906,7 +906,7 @@ fn historian_keeps_under_threshold_contributions_out_of_durable_tracking() -> Re
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 0);
-    assert_eq!(counts.qualifying_contribution_count, 0);
+    assert_eq!(counts.qualifying_commitment_count, 0);
 
     let canisters: ListCanistersResponse = query_one(
         &h.pic,
@@ -930,12 +930,12 @@ fn historian_keeps_under_threshold_contributions_out_of_durable_tracking() -> Re
     assert_eq!(registered.total, 0);
     assert!(registered.items.is_empty());
 
-    let recent: ListRecentContributionsResponse = query_one(
+    let recent: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },
@@ -974,14 +974,14 @@ fn historian_ignores_missing_icrc1_memo_even_when_legacy_numeric_memo_exists() -
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 0);
-    assert_eq!(counts.qualifying_contribution_count, 0);
+    assert_eq!(counts.qualifying_commitment_count, 0);
 
-    let recent: ListRecentContributionsResponse = query_one(
+    let recent: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },
@@ -1005,14 +1005,14 @@ fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Re
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 1);
-    assert_eq!(counts.qualifying_contribution_count, 1);
+    assert_eq!(counts.qualifying_commitment_count, 1);
 
-    let recent: ListRecentContributionsResponse = query_one(
+    let recent: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },
@@ -1049,7 +1049,7 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 0);
-    assert_eq!(counts.qualifying_contribution_count, 0);
+    assert_eq!(counts.qualifying_commitment_count, 0);
 
     let canisters: ListCanistersResponse = query_one(
         &h.pic,
@@ -1083,19 +1083,19 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
         )?;
         assert!(overview.is_none(), "reserved principal {reserved} must not surface a public overview");
 
-        let contribs: ContributionHistoryPage = query_one(
+        let commitments: CommitmentHistoryPage = query_one(
             &h.pic,
             h.historian,
             Principal::anonymous(),
-            "get_contribution_history",
-            GetContributionHistoryArgs {
+            "get_commitment_history",
+            GetCommitmentHistoryArgs {
                 canister_id: reserved,
                 start_after_tx_id: None,
                 limit: Some(10),
                 descending: Some(false),
             },
         )?;
-        assert!(contribs.items.is_empty(), "reserved principal {reserved} must not gain contribution history");
+        assert!(commitments.items.is_empty(), "reserved principal {reserved} must not gain commitment history");
 
         let cycles: CyclesHistoryPage = query_one(
             &h.pic,
@@ -1112,12 +1112,12 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
         assert!(cycles.items.is_empty(), "reserved principal {reserved} must not gain cycles history");
     }
 
-    let recent: ListRecentContributionsResponse = query_one(
+    let recent: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },
@@ -1135,7 +1135,7 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
 
 #[test]
 #[ignore]
-fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
+fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.blackhole;
@@ -1152,12 +1152,12 @@ fn historian_indexes_contributions_and_blackhole_cycles() -> Result<()> {
     let canisters: ListCanistersResponse = query_one(&h.pic, h.historian, Principal::anonymous(), "list_canisters", ListCanistersArgs { start_after: None, limit: Some(10), source_filter: None })?;
     assert_eq!(canisters.items.len(), 1);
     assert_eq!(canisters.items[0].canister_id, target);
-    assert_eq!(canisters.items[0].sources, vec![CanisterSource::MemoContribution]);
+    assert_eq!(canisters.items[0].sources, vec![CanisterSource::MemoCommitment]);
 
-    let contribs: ContributionHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_contribution_history", GetContributionHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
-    assert_eq!(contribs.items.len(), 1);
-    assert_eq!(contribs.items[0].tx_id, 1);
-    assert!(contribs.items[0].counts_toward_faucet);
+    let commitments: CommitmentHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_commitment_history", GetCommitmentHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
+    assert_eq!(commitments.items.len(), 1);
+    assert_eq!(commitments.items[0].tx_id, 1);
+    assert!(commitments.items[0].counts_toward_faucet);
 
     let cycles: CyclesHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_cycles_history", GetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(cycles.items.len(), 1);
@@ -1229,8 +1229,8 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
         )
         .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
 
-    let contribs: ContributionHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_contribution_history", GetContributionHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
-    assert_eq!(contribs.items.len(), 1);
+    let commitments: CommitmentHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_commitment_history", GetCommitmentHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
+    assert_eq!(commitments.items.len(), 1);
     let cycles: CyclesHistoryPage = query_one(&h.pic, h.historian, Principal::anonymous(), "get_cycles_history", GetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
     assert_eq!(cycles.items.len(), 1);
     assert!(cycles.items[0].cycles > 0);
@@ -1348,20 +1348,20 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
     }
 
     for target in targets {
-        let contribs: ContributionHistoryPage = query_one(
+        let commitments: CommitmentHistoryPage = query_one(
             &h.pic,
             h.historian,
             Principal::anonymous(),
-            "get_contribution_history",
-            GetContributionHistoryArgs {
+            "get_commitment_history",
+            GetCommitmentHistoryArgs {
                 canister_id: target,
                 start_after_tx_id: None,
                 limit: Some(10),
                 descending: Some(false),
             },
         )?;
-        if contribs.items.len() != 1 {
-            bail!("expected one preserved contribution for {target}, got {:?}", contribs.items);
+        if commitments.items.len() != 1 {
+            bail!("expected one preserved commitment for {target}, got {:?}", commitments.items);
         }
     }
 
@@ -1395,7 +1395,7 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 
     let counts_before: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts_before.registered_canister_count, 0);
-    assert_eq!(counts_before.qualifying_contribution_count, 0);
+    assert_eq!(counts_before.qualifying_commitment_count, 0);
 
     h.pic.advance_time(Duration::from_secs(31));
     tick_n(&h.pic, 5);
@@ -1403,7 +1403,7 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 
     let counts_after: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts_after.registered_canister_count, 1);
-    assert_eq!(counts_after.qualifying_contribution_count, 1);
+    assert_eq!(counts_after.qualifying_commitment_count, 1);
     Ok(())
 }
 
@@ -1435,7 +1435,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 1);
-    assert_eq!(counts.qualifying_contribution_count, 1);
+    assert_eq!(counts.qualifying_commitment_count, 1);
     assert_eq!(counts.total_output_e8s, 0);
     assert_eq!(counts.total_rewards_e8s, 0);
     assert_eq!(counts.sns_discovered_canister_count, 0);
@@ -1464,19 +1464,19 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     assert_eq!(registered.total, 1);
     assert_eq!(registered.items.len(), 1);
     assert_eq!(registered.items[0].canister_id, target);
-    assert_eq!(registered.items[0].sources, vec![CanisterSource::MemoContribution]);
-    assert_eq!(registered.items[0].qualifying_contribution_count, 1);
-    assert_eq!(registered.items[0].total_qualifying_contributed_e8s, 42_000_000);
-    assert!(registered.items[0].last_contribution_ts.is_some());
+    assert_eq!(registered.items[0].sources, vec![CanisterSource::MemoCommitment]);
+    assert_eq!(registered.items[0].qualifying_commitment_count, 1);
+    assert_eq!(registered.items[0].total_qualifying_committed_e8s, 42_000_000);
+    assert!(registered.items[0].last_commitment_ts.is_some());
     assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
     assert!(registered.items[0].last_cycles_probe_ts.is_some());
 
-    let recent_all: ListRecentContributionsResponse = query_one(
+    let recent_all: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },
@@ -1489,12 +1489,12 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     assert_eq!(recent_all.items[1].amount_e8s, 42_000_000);
     assert!(recent_all.items[1].counts_toward_faucet);
 
-    let recent_qualifying: ListRecentContributionsResponse = query_one(
+    let recent_qualifying: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(true),
         },
@@ -1534,7 +1534,7 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
     assert_eq!(counts.registered_canister_count, 0);
-    assert_eq!(counts.qualifying_contribution_count, 0);
+    assert_eq!(counts.qualifying_commitment_count, 0);
     assert_eq!(counts.total_output_e8s, 0);
     assert_eq!(counts.total_rewards_e8s, 0);
     assert!(counts.sns_discovered_canister_count >= 3);
@@ -1552,12 +1552,12 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
     assert_eq!(registered.total, 0);
     assert!(registered.items.is_empty());
 
-    let recent: ListRecentContributionsResponse = query_one(
+    let recent: ListRecentCommitmentsResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_recent_contributions",
-        ListRecentContributionsArgs {
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
             limit: Some(10),
             qualifying_only: Some(false),
         },

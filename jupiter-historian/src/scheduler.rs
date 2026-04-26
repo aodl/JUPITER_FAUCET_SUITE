@@ -7,10 +7,10 @@ use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::{BlackholeClient, IndexClient, SnsRootClient, SnsWasmClient};
 use crate::{
-    logic, MAX_RECENT_INVALID_CONTRIBUTIONS, MAX_RECENT_QUALIFYING_CONTRIBUTIONS,
-    MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+    logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,
+    MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
 };
-use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, ContributionIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidContribution, RecentContribution};
+use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidCommitment, RecentCommitment};
 
 const PAGE_SIZE: u64 = 500;
 const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
@@ -119,29 +119,29 @@ fn indexed_route_amount_from_tx(
     }
 }
 
-fn contribution_sort_key(item: &RecentContribution) -> (u64, u64) {
+fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
-fn push_recent_contribution(recent: &mut Vec<RecentContribution>, item: RecentContribution, max_entries: usize) {
+fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: RecentCommitment, max_entries: usize) {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
         return;
     }
     recent.push(item);
-    recent.sort_by(|a, b| contribution_sort_key(b).cmp(&contribution_sort_key(a)));
+    recent.sort_by(|a, b| commitment_sort_key(b).cmp(&commitment_sort_key(a)));
     if recent.len() > max_entries {
         recent.truncate(max_entries);
     }
 }
 
-fn push_recent_invalid_contribution(recent: &mut Vec<InvalidContribution>, item: InvalidContribution) {
+fn push_recent_invalid_commitment(recent: &mut Vec<InvalidCommitment>, item: InvalidCommitment) {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
         return;
     }
     recent.push(item);
     recent.sort_by(|a, b| (b.timestamp_nanos.unwrap_or(0), b.tx_id).cmp(&(a.timestamp_nanos.unwrap_or(0), a.tx_id)));
-    if recent.len() > MAX_RECENT_INVALID_CONTRIBUTIONS {
-        recent.truncate(MAX_RECENT_INVALID_CONTRIBUTIONS);
+    if recent.len() > MAX_RECENT_INVALID_COMMITMENTS {
+        recent.truncate(MAX_RECENT_INVALID_COMMITMENTS);
     }
 }
 
@@ -172,16 +172,16 @@ fn log_error(message: &str) {
     }
 }
 
-fn latch_contribution_index_fault(now_secs: u64, last_cursor_tx_id: Option<u64>, offending_tx_id: u64, message: String) -> String {
+fn latch_commitment_index_fault(now_secs: u64, last_cursor_tx_id: Option<u64>, offending_tx_id: u64, message: String) -> String {
     state::with_root_state_mut(|st| {
-        match st.contribution_index_fault.as_mut() {
+        match st.commitment_index_fault.as_mut() {
             Some(existing) => {
                 existing.last_cursor_tx_id = last_cursor_tx_id;
                 existing.offending_tx_id = offending_tx_id;
                 existing.message = message.clone();
             }
             None => {
-                st.contribution_index_fault = Some(ContributionIndexFault {
+                st.commitment_index_fault = Some(CommitmentIndexFault {
                     observed_at_ts: now_secs,
                     last_cursor_tx_id,
                     offending_tx_id,
@@ -285,8 +285,8 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     sns_wasm: &W,
     sns_root: &R,
 ) -> Result<(), String> {
-    if let Err(err) = process_contribution_indexing(index, now_secs).await {
-        log_error(&format!("historian contribution indexing degraded: {err}"));
+    if let Err(err) = process_commitment_indexing(index, now_secs).await {
+        log_error(&format!("historian commitment indexing degraded: {err}"));
     }
     process_route_indexing(now_nanos, now_secs, index).await?;
 
@@ -312,45 +312,45 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     Ok(())
 }
 
-fn apply_verified_qualifying_contribution(
+fn apply_verified_qualifying_commitment(
     st: &mut crate::state::State,
-    contribution: crate::logic::IndexedContribution,
+    commitment: crate::logic::IndexedCommitment,
     now_secs: u64,
 ) {
-    st.distinct_canisters.insert(contribution.beneficiary);
+    st.distinct_canisters.insert(commitment.beneficiary);
     st.canister_sources.insert(
-        contribution.beneficiary,
-        logic::merge_sources(st.canister_sources.get(&contribution.beneficiary), CanisterSource::MemoContribution),
+        commitment.beneficiary,
+        logic::merge_sources(st.canister_sources.get(&commitment.beneficiary), CanisterSource::MemoCommitment),
     );
-    let recent_item = RecentContribution {
-        canister_id: contribution.beneficiary,
-        tx_id: contribution.tx_id,
-        timestamp_nanos: contribution.timestamp_nanos,
-        amount_e8s: contribution.amount_e8s,
+    let recent_item = RecentCommitment {
+        canister_id: commitment.beneficiary,
+        tx_id: commitment.tx_id,
+        timestamp_nanos: commitment.timestamp_nanos,
+        amount_e8s: commitment.amount_e8s,
         counts_toward_faucet: true,
     };
-    crate::state::ensure_contribution_history_loaded(st, contribution.beneficiary);
-    let history = st.contribution_history.entry(contribution.beneficiary).or_default();
-    let inserted = logic::push_contribution(
+    crate::state::ensure_commitment_history_loaded(st, commitment.beneficiary);
+    let history = st.commitment_history.entry(commitment.beneficiary).or_default();
+    let inserted = logic::push_commitment(
         history,
-        crate::state::ContributionSample {
-            tx_id: contribution.tx_id,
-            timestamp_nanos: contribution.timestamp_nanos,
-            amount_e8s: contribution.amount_e8s,
+        crate::state::CommitmentSample {
+            tx_id: commitment.tx_id,
+            timestamp_nanos: commitment.timestamp_nanos,
+            amount_e8s: commitment.amount_e8s,
             counts_toward_faucet: true,
         },
-        st.config.max_contribution_entries_per_canister,
+        st.config.max_commitment_entries_per_canister,
     );
     if inserted {
-        let meta = st.per_canister_meta.entry(contribution.beneficiary).or_insert_with(CanisterMeta::default);
-        logic::apply_contribution_seen(meta, contribution.timestamp_nanos, now_secs);
-        let recent = st.recent_contributions.get_or_insert_with(Vec::new);
-        push_recent_contribution(recent, recent_item, MAX_RECENT_QUALIFYING_CONTRIBUTIONS);
-        let count = st.qualifying_contribution_count.get_or_insert(0);
+        let meta = st.per_canister_meta.entry(commitment.beneficiary).or_insert_with(CanisterMeta::default);
+        logic::apply_commitment_seen(meta, commitment.timestamp_nanos, now_secs);
+        let recent = st.recent_commitments.get_or_insert_with(Vec::new);
+        push_recent_commitment(recent, recent_item, MAX_RECENT_QUALIFYING_COMMITMENTS);
+        let count = st.qualifying_commitment_count.get_or_insert(0);
         *count = count.saturating_add(1);
     }
-    if inserted || st.canister_sources.contains_key(&contribution.beneficiary) {
-        crate::refresh_registered_canister_summary(st, contribution.beneficiary);
+    if inserted || st.canister_sources.contains_key(&commitment.beneficiary) {
+        crate::refresh_registered_canister_summary(st, commitment.beneficiary);
     }
 }
 
@@ -396,47 +396,47 @@ fn infer_initial_page_order(
     }
 }
 
-fn apply_indexed_contribution_tx(
+fn apply_indexed_commitment_tx(
     tx: &crate::clients::index::IndexTransactionWithId,
     staking_id: &str,
     min_tx_e8s: u64,
     now_secs: u64,
 ) {
-    if let Some(contribution) = logic::indexed_contribution_from_tx(tx, staking_id, min_tx_e8s) {
-        match contribution {
-            logic::IndexedContributionEntry::Valid(contribution) => {
-                if contribution.counts_toward_faucet {
-                    let dirty_beneficiary = contribution.beneficiary;
-                    state::with_root_registry_and_contributions_canister_state_mut(dirty_beneficiary, |st| {
-                        apply_verified_qualifying_contribution(st, contribution, now_secs);
+    if let Some(commitment) = logic::indexed_commitment_from_tx(tx, staking_id, min_tx_e8s) {
+        match commitment {
+            logic::IndexedCommitmentEntry::Valid(commitment) => {
+                if commitment.counts_toward_faucet {
+                    let dirty_beneficiary = commitment.beneficiary;
+                    state::with_root_registry_and_commitments_canister_state_mut(dirty_beneficiary, |st| {
+                        apply_verified_qualifying_commitment(st, commitment, now_secs);
                     });
                 } else {
                     state::with_root_state_mut(|st| {
-                        let recent = st.recent_under_threshold_contributions.get_or_insert_with(Vec::new);
-                        push_recent_contribution(
+                        let recent = st.recent_under_threshold_commitments.get_or_insert_with(Vec::new);
+                        push_recent_commitment(
                             recent,
-                            RecentContribution {
-                                canister_id: contribution.beneficiary,
-                                tx_id: contribution.tx_id,
-                                timestamp_nanos: contribution.timestamp_nanos,
-                                amount_e8s: contribution.amount_e8s,
+                            RecentCommitment {
+                                canister_id: commitment.beneficiary,
+                                tx_id: commitment.tx_id,
+                                timestamp_nanos: commitment.timestamp_nanos,
+                                amount_e8s: commitment.amount_e8s,
                                 counts_toward_faucet: false,
                             },
-                            MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS,
+                            MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
                         );
                     });
                 }
             }
-            logic::IndexedContributionEntry::Invalid(contribution) => {
+            logic::IndexedCommitmentEntry::Invalid(commitment) => {
                 state::with_root_state_mut(|st| {
-                    let recent = st.recent_invalid_contributions.get_or_insert_with(Vec::new);
-                    push_recent_invalid_contribution(
+                    let recent = st.recent_invalid_commitments.get_or_insert_with(Vec::new);
+                    push_recent_invalid_commitment(
                         recent,
-                        InvalidContribution {
-                            tx_id: contribution.tx_id,
-                            timestamp_nanos: contribution.timestamp_nanos,
-                            amount_e8s: contribution.amount_e8s,
-                            memo_text: contribution.memo_text,
+                        InvalidCommitment {
+                            tx_id: commitment.tx_id,
+                            timestamp_nanos: commitment.timestamp_nanos,
+                            amount_e8s: commitment.amount_e8s,
+                            memo_text: commitment.memo_text,
                         },
                     );
                 });
@@ -445,18 +445,18 @@ fn apply_indexed_contribution_tx(
     }
 }
 
-fn apply_contribution_transactions_in_chronological_order(
+fn apply_commitment_transactions_in_chronological_order(
     txs: &[crate::clients::index::IndexTransactionWithId],
     staking_id: &str,
     min_tx_e8s: u64,
     now_secs: u64,
 ) {
     for tx in txs.iter().rev() {
-        apply_indexed_contribution_tx(tx, staking_id, min_tx_e8s, now_secs);
+        apply_indexed_commitment_tx(tx, staking_id, min_tx_e8s, now_secs);
     }
 }
 
-async fn process_contribution_indexing_ascending<I: IndexClient>(
+async fn process_commitment_indexing_ascending<I: IndexClient>(
     index: &I,
     now_secs: u64,
     cfg: &state::Config,
@@ -484,7 +484,7 @@ async fn process_contribution_indexing_ascending<I: IndexClient>(
                         continue;
                     }
                     if tx.id < prev {
-                        return Err(latch_contribution_index_fault(
+                        return Err(latch_commitment_index_fault(
                             now_secs,
                             cursor,
                             tx.id,
@@ -495,7 +495,7 @@ async fn process_contribution_indexing_ascending<I: IndexClient>(
                         ));
                     }
                 }
-                apply_indexed_contribution_tx(tx, staking_id, cfg.min_tx_e8s, now_secs);
+                apply_indexed_commitment_tx(tx, staking_id, cfg.min_tx_e8s, now_secs);
                 cursor = Some(tx.id);
                 state::with_root_state_mut(|st| {
                     st.last_indexed_staking_tx_id = cursor;
@@ -512,7 +512,7 @@ async fn process_contribution_indexing_ascending<I: IndexClient>(
     state::with_root_state_mut(|st| {
         st.last_index_run_ts = Some(now_secs);
         if had_fault {
-            st.contribution_index_fault = None;
+            st.commitment_index_fault = None;
         }
     });
     Ok(())
@@ -524,7 +524,7 @@ async fn process_contribution_indexing_ascending<I: IndexClient>(
 // can pick up new arrivals from the latest page, while `oldest_cursor` is the
 // oldest tx id backfilled so older history can continue without treating normal
 // lower tx ids as non-monotonic.
-async fn process_contribution_indexing_descending_seeded<I: IndexClient>(
+async fn process_commitment_indexing_descending_seeded<I: IndexClient>(
     index: &I,
     now_secs: u64,
     cfg: &state::Config,
@@ -571,7 +571,7 @@ async fn process_contribution_indexing_descending_seeded<I: IndexClient>(
             }
             if !new_items.is_empty() {
                 let _batch = state::begin_persistence_batch();
-                apply_contribution_transactions_in_chronological_order(&new_items, staking_id, cfg.min_tx_e8s, now_secs);
+                apply_commitment_transactions_in_chronological_order(&new_items, staking_id, cfg.min_tx_e8s, now_secs);
                 if let Some(max_new) = new_items.iter().map(|tx| tx.id).max() {
                     latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_new)).unwrap_or(max_new));
                     state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = latest_cursor);
@@ -607,7 +607,7 @@ async fn process_contribution_indexing_descending_seeded<I: IndexClient>(
         }
         {
             let _batch = state::begin_persistence_batch();
-            apply_contribution_transactions_in_chronological_order(&older_items, staking_id, cfg.min_tx_e8s, now_secs);
+            apply_commitment_transactions_in_chronological_order(&older_items, staking_id, cfg.min_tx_e8s, now_secs);
             if let Some(max_seen) = older_items.iter().map(|tx| tx.id).max() {
                 latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
             }
@@ -634,17 +634,17 @@ async fn process_contribution_indexing_descending_seeded<I: IndexClient>(
         st.staking_backfill_complete = Some(backfill_complete);
         st.last_index_run_ts = Some(now_secs);
         if had_fault {
-            st.contribution_index_fault = None;
+            st.commitment_index_fault = None;
         }
     });
     Ok(())
 }
 
-async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
+async fn process_commitment_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
     let cfg = state::with_state(|st| st.config.clone());
     let (had_fault, latest_cursor, oldest_cursor, order_descending, backfill_complete) = state::with_state(|st| {
         (
-            st.contribution_index_fault.is_some(),
+            st.commitment_index_fault.is_some(),
             st.last_indexed_staking_tx_id,
             st.oldest_indexed_staking_tx_id,
             st.staking_index_descending,
@@ -655,10 +655,10 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
 
     match order_descending {
         Some(false) => {
-            process_contribution_indexing_ascending(index, now_secs, &cfg, had_fault, &staking_id, latest_cursor, None).await
+            process_commitment_indexing_ascending(index, now_secs, &cfg, had_fault, &staking_id, latest_cursor, None).await
         }
         Some(true) => {
-            process_contribution_indexing_descending_seeded(
+            process_commitment_indexing_descending_seeded(
                 index,
                 now_secs,
                 &cfg,
@@ -679,11 +679,11 @@ async fn process_contribution_indexing<I: IndexClient>(index: &I, now_secs: u64)
             match infer_initial_page_order(&first_page, latest_cursor, oldest_cursor) {
                 PageOrder::Ascending => {
                     state::with_root_state_mut(|st| st.staking_index_descending = Some(false));
-                    process_contribution_indexing_ascending(index, now_secs, &cfg, had_fault, &staking_id, latest_cursor, Some(first_page)).await
+                    process_commitment_indexing_ascending(index, now_secs, &cfg, had_fault, &staking_id, latest_cursor, Some(first_page)).await
                 }
                 PageOrder::Descending => {
                     state::with_root_state_mut(|st| st.staking_index_descending = Some(true));
-                    process_contribution_indexing_descending_seeded(
+                    process_commitment_indexing_descending_seeded(
                         index,
                         now_secs,
                         &cfg,
@@ -738,7 +738,7 @@ async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_se
 
     let mut completed_route = false;
     let mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse> = None;
-    // Route indexing uses the same two-cursor model as contribution indexing in
+    // Route indexing uses the same two-cursor model as commitment indexing in
     // descending mode: the latest cursor detects newer routed transfers, and the
     // oldest cursor continues the historical backfill through newest-first pages.
     let order = match order_descending {
@@ -1042,9 +1042,9 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
             let mut canisters = vec![self_id];
             for canister_id in st.distinct_canisters.iter().copied() {
                 let sources = st.canister_sources.get(&canister_id).cloned().unwrap_or_default();
-                let memo_registered = sources.contains(&CanisterSource::MemoContribution)
+                let memo_registered = sources.contains(&CanisterSource::MemoCommitment)
                     && st
-                        .contribution_history
+                        .commitment_history
                         .get(&canister_id)
                         .map(|history| history.iter().any(|item| item.counts_toward_faucet))
                         .unwrap_or(false);
@@ -1200,7 +1200,7 @@ mod tests {
                 cycles_interval_seconds: 604800,
                 min_tx_e8s: 100,
                 max_cycles_entries_per_canister: 100,
-                max_contribution_entries_per_canister: 100,
+                max_commitment_entries_per_canister: 100,
                 max_index_pages_per_tick,
                 max_canisters_per_cycles_tick: 25,
             },
@@ -1495,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn indexing_single_qualifying_contribution_updates_counts() {
+    fn indexing_single_qualifying_commitment_updates_counts() {
         let staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
@@ -1504,15 +1504,15 @@ mod tests {
             oldest_tx_id: Some(42),
         }]);
 
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+        block_on(process_commitment_indexing(&mock, 200)).unwrap();
 
         state::with_state(|st| {
             assert_eq!(st.last_indexed_staking_tx_id, Some(42));
-            assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.recent_contributions.as_ref().unwrap().len(), 1);
-            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 42);
+            assert_eq!(st.qualifying_commitment_count, Some(1));
+            assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
+            assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.last_index_run_ts, Some(200));
-            assert!(st.canister_sources.get(&beneficiary).unwrap().contains(&CanisterSource::MemoContribution));
+            assert!(st.canister_sources.get(&beneficiary).unwrap().contains(&CanisterSource::MemoCommitment));
         });
     }
 
@@ -1534,17 +1534,17 @@ mod tests {
             },
         ]);
 
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
-        block_on(process_contribution_indexing(&mock, 201)).unwrap();
+        block_on(process_commitment_indexing(&mock, 200)).unwrap();
+        block_on(process_commitment_indexing(&mock, 201)).unwrap();
 
         state::with_state(|st| {
-            assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.recent_contributions.as_ref().unwrap().len(), 1);
+            assert_eq!(st.qualifying_commitment_count, Some(1));
+            assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
         });
     }
 
     #[test]
-    fn indexing_uses_cursor_and_keeps_recent_contributions_descending() {
+    fn indexing_uses_cursor_and_keeps_recent_commitments_descending() {
         let staking_id = configure_state(1);
         let first_canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let second_canister = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
@@ -1561,8 +1561,8 @@ mod tests {
             },
         ]);
 
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
-        block_on(process_contribution_indexing(&mock, 201)).unwrap();
+        block_on(process_commitment_indexing(&mock, 200)).unwrap();
+        block_on(process_commitment_indexing(&mock, 201)).unwrap();
 
         let calls = mock.calls();
         assert_eq!(calls.len(), 2);
@@ -1570,7 +1570,7 @@ mod tests {
         assert_eq!(calls[1].1, Some(10));
 
         state::with_state(|st| {
-            let recent = st.recent_contributions.as_ref().unwrap();
+            let recent = st.recent_commitments.as_ref().unwrap();
             assert_eq!(recent.len(), 2);
             assert_eq!(recent[0].tx_id, 11);
             assert_eq!(recent[1].tx_id, 10);
@@ -1697,7 +1697,7 @@ mod tests {
 
 
     #[test]
-    fn non_monotonic_contribution_page_latches_fault_and_stops_indexing() {
+    fn non_monotonic_commitment_page_latches_fault_and_stops_indexing() {
         let staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
         state::with_state_mut(|st| {
@@ -1715,10 +1715,10 @@ mod tests {
             oldest_tx_id: Some(49),
         }]);
 
-        let err = block_on(process_contribution_indexing(&mock, 200)).unwrap_err();
+        let err = block_on(process_commitment_indexing(&mock, 200)).unwrap_err();
         assert!(err.contains("non-monotonic"));
         state::with_state(|st| {
-            let fault = st.contribution_index_fault.as_ref().expect("fault should be latched");
+            let fault = st.commitment_index_fault.as_ref().expect("fault should be latched");
             assert_eq!(fault.observed_at_ts, 200);
             assert_eq!(fault.last_cursor_tx_id, Some(51));
             assert_eq!(fault.offending_tx_id, 49);
@@ -1728,7 +1728,7 @@ mod tests {
     }
 
     #[test]
-    fn contribution_index_fault_clears_automatically_once_index_order_recovers() {
+    fn commitment_index_fault_clears_automatically_once_index_order_recovers() {
         let staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
         state::with_state_mut(|st| {
@@ -1756,24 +1756,24 @@ mod tests {
             },
         ]);
 
-        let err = block_on(process_contribution_indexing(&mock, 200)).unwrap_err();
+        let err = block_on(process_commitment_indexing(&mock, 200)).unwrap_err();
         assert!(err.contains("non-monotonic"));
         state::with_state(|st| {
-            let fault = st.contribution_index_fault.as_ref().expect("fault should be latched");
+            let fault = st.commitment_index_fault.as_ref().expect("fault should be latched");
             assert_eq!(fault.observed_at_ts, 200);
             assert_eq!(fault.last_cursor_tx_id, Some(51));
             assert_eq!(fault.offending_tx_id, 49);
             assert_eq!(st.last_indexed_staking_tx_id, Some(51));
         });
 
-        block_on(process_contribution_indexing(&mock, 201)).unwrap();
+        block_on(process_commitment_indexing(&mock, 201)).unwrap();
         state::with_state(|st| {
-            assert!(st.contribution_index_fault.is_none(), "fault should auto-clear after a clean retry");
+            assert!(st.commitment_index_fault.is_none(), "fault should auto-clear after a clean retry");
             assert_eq!(st.last_indexed_staking_tx_id, Some(52));
             assert_eq!(st.last_index_run_ts, Some(201));
-            assert_eq!(st.qualifying_contribution_count, Some(2));
-            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(2));
-            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 52);
+            assert_eq!(st.qualifying_commitment_count, Some(2));
+            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(2));
+            assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 52);
         });
     }
 
@@ -1792,24 +1792,24 @@ mod tests {
             oldest_tx_id: Some(42),
         }]);
 
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+        block_on(process_commitment_indexing(&mock, 200)).unwrap();
 
         state::with_state(|st| {
-            assert_eq!(st.qualifying_contribution_count, Some(1));
-            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(st.qualifying_commitment_count, Some(1));
+            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(1));
             assert_eq!(
-                st.recent_under_threshold_contributions
+                st.recent_under_threshold_commitments
                     .as_ref()
                     .map(|items| items.len()),
                 Some(1),
             );
-            assert_eq!(st.recent_invalid_contributions.as_ref().map(|items| items.len()), Some(1));
-            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 42);
-            assert_eq!(st.recent_under_threshold_contributions.as_ref().unwrap()[0].tx_id, 43);
+            assert_eq!(st.recent_invalid_commitments.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
+            assert_eq!(st.recent_under_threshold_commitments.as_ref().unwrap()[0].tx_id, 43);
             assert!(!st.canister_sources.contains_key(&low_amount));
             assert!(!st.distinct_canisters.contains(&low_amount));
-            assert!(!st.contribution_history.contains_key(&low_amount));
-            let invalid = &st.recent_invalid_contributions.as_ref().unwrap()[0];
+            assert!(!st.commitment_history.contains_key(&low_amount));
+            let invalid = &st.recent_invalid_commitments.as_ref().unwrap()[0];
             assert_eq!(invalid.tx_id, 44);
             assert_eq!(invalid.memo_text, crate::logic::INVALID_MEMO_PLACEHOLDER);
         });
@@ -1836,21 +1836,21 @@ mod tests {
         }];
         let mock = MockIndexClient::new(pages);
 
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+        block_on(process_commitment_indexing(&mock, 200)).unwrap();
 
         state::with_state(|st| {
             let recent = st
-                .recent_under_threshold_contributions
+                .recent_under_threshold_commitments
                 .as_ref()
                 .expect("under-threshold recent list should exist");
-            assert_eq!(recent.len(), MAX_RECENT_UNDER_THRESHOLD_CONTRIBUTIONS);
+            assert_eq!(recent.len(), MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS);
             assert_eq!(recent[0].tx_id, 105);
             assert_eq!(recent.last().map(|item| item.tx_id), Some(6));
-            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(0));
+            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(0));
             assert_eq!(st.canister_sources.len(), 0);
             assert_eq!(st.distinct_canisters.len(), 0);
-            assert!(st.contribution_history.is_empty());
-            assert_eq!(st.qualifying_contribution_count, Some(0));
+            assert!(st.commitment_history.is_empty());
+            assert_eq!(st.qualifying_commitment_count, Some(0));
         });
     }
 
@@ -1861,17 +1861,17 @@ mod tests {
         state::with_state_mut(|st| {
             st.distinct_canisters.insert(existing);
             st.canister_sources
-                .insert(existing, crate::logic::merge_sources(None, CanisterSource::MemoContribution));
-            st.contribution_history.insert(
+                .insert(existing, crate::logic::merge_sources(None, CanisterSource::MemoCommitment));
+            st.commitment_history.insert(
                 existing,
-                vec![crate::state::ContributionSample {
+                vec![crate::state::CommitmentSample {
                     tx_id: 1,
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 100,
                     counts_toward_faucet: true,
                 }],
             );
-            st.qualifying_contribution_count = Some(1);
+            st.qualifying_commitment_count = Some(1);
         });
         let new_canister = candid::Principal::from_slice(&[251, 251, 251]);
         let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
@@ -1880,14 +1880,14 @@ mod tests {
             oldest_tx_id: Some(9_999),
         }]);
 
-        block_on(process_contribution_indexing(&mock, 200)).unwrap();
+        block_on(process_commitment_indexing(&mock, 200)).unwrap();
 
         state::with_state(|st| {
-            assert_eq!(st.qualifying_contribution_count, Some(2));
-            assert_eq!(st.recent_contributions.as_ref().map(|items| items.len()), Some(1));
-            assert_eq!(st.recent_contributions.as_ref().unwrap()[0].tx_id, 9_999);
+            assert_eq!(st.qualifying_commitment_count, Some(2));
+            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 9_999);
             assert!(st.canister_sources.contains_key(&new_canister));
-            assert!(st.contribution_history.contains_key(&new_canister));
+            assert!(st.commitment_history.contains_key(&new_canister));
             assert!(st.distinct_canisters.contains(&new_canister));
             assert!(st.distinct_canisters.contains(&existing));
         });

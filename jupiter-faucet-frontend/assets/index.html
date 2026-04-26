@@ -252,7 +252,10 @@
       </a>
       <a href="#metric-commitments" class="metric-rail-link nav-item" data-panel="metric-commitments">
         <span class="metric-rail-link-label">Commitments</span>
-        <strong class="metric-rail-link-value"><span id="landing-qualifying-contributions">—</span><span class="metric-status" id="landing-qualifying-contributions-status" hidden aria-hidden="true"></span></strong>
+        <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">—</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
+      </a>
+      <a href="#metric-tracker" class="metric-rail-link metric-rail-link--action nav-item" data-panel="metric-tracker">
+        <span class="metric-rail-link-label">Track Canisters</span>
       </a>
     </div>
   </aside>
@@ -357,14 +360,14 @@
                 <p class="source-pane-canister-meta mono">Canister ID: acjuz-liaaa-aaaar-qb4qq-cai</p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="acjuz-liaaa-aaaar-qb4qq-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-faucet" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
-                <p class="source-pane-canister-description">Converts routed ICP into cycles top-ups for eligible canisters declared through memo-based contributions.</p>
+                <p class="source-pane-canister-description">Converts routed ICP into cycles top-ups for eligible canisters declared through memo-based commitments.</p>
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/j5gs6-uiaaa-aaaar-qb5cq-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-historian</a></h3>
                 <p class="source-pane-canister-meta mono">Canister ID: j5gs6-uiaaa-aaaar-qb5cq-cai</p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="j5gs6-uiaaa-aaaar-qb5cq-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/jupiter-historian" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
-                <p class="source-pane-canister-description">Indexes contributions, rewards, output and tracked-canister activity to power the public observability surface.</p>
+                <p class="source-pane-canister-description">Indexes commitments, rewards, output and tracked-canister activity to power the public observability surface.</p>
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/afisn-gqaaa-aaaar-qb4qa-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-lifeline</a></h3>
@@ -434,19 +437,19 @@
               <p class="nav-panel-content">
                 That’s it. With your memo declaring a canister, that canister becomes the recipient
                 of <strong>perpetual cycles top-ups</strong>, funded by the stake’s ongoing
-                rewards (proportional to your ICP contribution and any further contributions made for that canister). 
+                rewards (proportional to your ICP commitment and any further commitments made for that canister). 
                 A monitoring workflow will soon be introduced for visualising the impact of your perpetual top-ups.
               </p>
 
               <p class="nav-panel-content">
-                While stake contributions can be made today, we recommend waiting for protocol completion (estimated Q2 2026).
+                While stake commitments can be made today, we recommend waiting for protocol completion (estimated Q2 2026).
               </p>
             </div>
               
             <div class="nav-panel-page" data-page="1">      
               <p class="nav-panel-content">
                 <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
-                maturity generated from contributed stake is used to perpetually burn ICP, mint cycles,
+                maturity generated from committed stake is used to perpetually burn ICP, mint cycles,
                 and top up the declared canister over time.
               </p>
 
@@ -475,8 +478,8 @@
               </p>
               
               <p class="nav-panel-content">
-                <strong>Also coming soon:</strong> SNS launch, and periodic JUP airdrops for users who have contributed
-                ICP to Jupiter Faucet's canister-controlled neuron, front-loaded to encourage earlier contributions
+                <strong>Also coming soon:</strong> SNS launch, and periodic JUP airdrops for users who have committed
+                ICP to Jupiter Faucet's canister-controlled neuron, front-loaded to encourage earlier commitments
               </p>
             </div>
             
@@ -598,7 +601,7 @@
           <h2 class="nav-panel-title">Commitments</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-            <p class="nav-panel-content">A commitment qualifies when the memo names a target canister ID as ASCII principal text in `icrc1_memo` (max <strong>32 bytes</strong>) and the contribution is at least <strong>1 ICP</strong>. The minimum is intentionally high to make beneficiary-registry spam expensive: historian keeps a durable beneficiary registry so it can efficiently monitor and display later cycle top-up activity. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+            <p class="nav-panel-content">A commitment qualifies when the memo names a target canister ID as ASCII principal text in `icrc1_memo` (max <strong>32 bytes</strong>) and the commitment is at least <strong>1 ICP</strong>. The minimum is intentionally high to make beneficiary-registry spam expensive: historian keeps a durable beneficiary registry so it can efficiently monitor and display later cycle top-up activity. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
             <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
             <div class="pane-table-wrap">
               <table class="pane-table">
@@ -623,6 +626,35 @@
           </div>
         </article>
 
+        <article class="nav-panel-section" data-panel="metric-tracker" id="nav-panel-metric-tracker">
+          <h2 class="nav-panel-title">Tracker</h2>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle">Inspect a commitment beneficiary’s ICP commitments, observed CMC top-ups, and cycles observations.</p>
+            <p class="nav-panel-content">Paste a target canister principal. If historian recognises it as a memo-registered commitment beneficiary, this pane shows memo-registered commitments, observed transfers into that canister’s CMC top-up account, and cycles observations as separate charts so the scales and meanings stay clear.</p>
+            <form class="tracker-form" id="tracker-form">
+              <label class="tracker-label" for="tracker-principal-input">Principal ID</label>
+              <div class="tracker-input-row">
+                <input
+                  class="tracker-input mono"
+                  id="tracker-principal-input"
+                  type="text"
+                  autocomplete="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  placeholder="aaaaa-aa"
+                />
+                <button class="pane-page-button tracker-submit" id="tracker-submit" type="submit">Track</button>
+              </div>
+            </form>
+            <div class="tracker-controls" aria-label="Tracker chart range">
+              <button class="pane-page-button" type="button" data-tracker-granularity="month" aria-pressed="true">Month view</button>
+              <button class="pane-page-button" type="button" data-tracker-granularity="year" aria-pressed="false">Year view</button>
+            </div>
+            <p class="pane-status-note tracker-status-note" id="tracker-status" hidden></p>
+            <div class="tracker-result" id="tracker-result"></div>
+          </div>
+        </article>
+
         <!-- Partners -->        
         <article
           class="nav-panel-section"
@@ -644,7 +676,7 @@
           <div class="nav-panel-page" data-page="1">               
             <p class="nav-panel-content">
               <strong>Life On Ledger</strong> has so far been a stealth mode project and is still under development.
-              It has a strong relationship to Jupiter Faucet's early contributors, and a huge demand for cycles. In short, 
+              It has a strong relationship to Jupiter Faucet's early committers, and a huge demand for cycles. In short, 
               Life On Ledger is a massive multi-player online game in the form of an unstoppable cellular automata.
               It supports up to 100K simultaneous players (potentially more with some further work) each competing to claim more territory
               than their competitors in a perpetual war. To support its long-term growth, 

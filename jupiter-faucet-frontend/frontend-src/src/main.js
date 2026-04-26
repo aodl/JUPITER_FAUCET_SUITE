@@ -1,4 +1,5 @@
 import { HttpAgent } from '@icp-sdk/core/agent';
+import { Principal } from '@icp-sdk/core/principal';
 import {
   FRONTEND_HINT,
   normalizeError,
@@ -6,6 +7,7 @@ import {
   loadDashboardData,
   loadRegisteredCanisterSummaryPage,
   loadCanisterModuleHashes,
+  loadTrackerData,
 } from './dashboard-data.js';
 import { createActor as createGovernanceActor } from '../declarations/nns_governance/index.js';
 import { createNeuronDetailsController } from './neuron-details-controller.js';
@@ -13,7 +15,7 @@ import { setLink, setPaneValueText, setPaneValueTrustedHtml, setText } from './d
 import { mergeRegisteredLandingData } from './registered-page-state.js';
 import { escapeHtml, formatFolloweeLinks } from './followee-links.js';
 import { readOpt } from './candid-opt.js';
-import { buildContributionIndexFaultBannerText } from './historian-fault.js';
+import { buildCommitmentIndexFaultBannerText } from './historian-fault.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -21,6 +23,7 @@ const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
 const TABLE_PAGE_SIZE = 6;
 const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
+const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
@@ -46,6 +49,14 @@ const tableState = {
   commitments: { page: 0, items: [] },
   output: { page: 0, items: [] },
   rewards: { page: 0, items: [] },
+};
+
+const trackerState = {
+  principalText: '',
+  data: null,
+  granularity: 'month',
+  loading: false,
+  error: null,
 };
 
 
@@ -183,7 +194,7 @@ function setMetricStatus(id, { value = null, loading = false, error = null } = {
 }
 
 function setMetricLoadingStates() {
-  ['landing-current-stake','landing-total-output','landing-total-rewards','landing-registered-canisters','landing-qualifying-contributions'].forEach((id) => {
+  ['landing-current-stake','landing-total-output','landing-total-rewards','landing-registered-canisters','landing-qualifying-commitments'].forEach((id) => {
     setMetricStatus(id, { loading: true });
   });
   setHidden('landing-live-unavailable', true);
@@ -202,7 +213,7 @@ function renderLandingSummary(data) {
   setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
   setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
   setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Target canisters unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
-  setMetricStatus('landing-qualifying-contributions', data.counts?.qualifying_contribution_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Commitments unavailable' } : { value: formatInteger(data.counts.qualifying_contribution_count) });
+  setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Commitments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
   setHidden('landing-live-unavailable', true);
 }
 
@@ -211,7 +222,7 @@ function renderLandingUnavailable(errorMessage = 'Live metrics unavailable') {
   setMetricStatus('landing-total-output', { error: errorMessage });
   setMetricStatus('landing-total-rewards', { error: errorMessage });
   setMetricStatus('landing-registered-canisters', { error: errorMessage });
-  setMetricStatus('landing-qualifying-contributions', { error: errorMessage });
+  setMetricStatus('landing-qualifying-commitments', { error: errorMessage });
   renderHistorianFaultBanner(null);
   setHidden('landing-live-unavailable', true);
 }
@@ -219,7 +230,7 @@ function renderLandingUnavailable(errorMessage = 'Live metrics unavailable') {
 function renderHistorianFaultBanner(data) {
   const banner = document.getElementById('historian-fault-banner');
   if (!banner) return;
-  const text = buildContributionIndexFaultBannerText(data?.status, {
+  const text = buildCommitmentIndexFaultBannerText(data?.status, {
     formatTimestampSeconds,
     formatInteger,
   });
@@ -443,20 +454,20 @@ function formatCommitmentTarget(item) {
 function commitmentOutcomeCategory(item) {
   const category = item?.outcome_category;
   if (category && !Array.isArray(category)) {
-    if ('QualifyingContribution' in category) return 'QualifyingContribution';
-    if ('UnderThresholdContribution' in category) return 'UnderThresholdContribution';
+    if ('QualifyingCommitment' in category) return 'QualifyingCommitment';
+    if ('UnderThresholdCommitment' in category) return 'UnderThresholdCommitment';
     if ('InvalidTargetMemo' in category) return 'InvalidTargetMemo';
   }
-  if (item?.counts_toward_faucet) return 'QualifyingContribution';
+  if (item?.counts_toward_faucet) return 'QualifyingCommitment';
   const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
-  return canister ? 'UnderThresholdContribution' : 'InvalidTargetMemo';
+  return canister ? 'UnderThresholdCommitment' : 'InvalidTargetMemo';
 }
 
 function formatCommitmentOutcome(item) {
   switch (commitmentOutcomeCategory(item)) {
-    case 'QualifyingContribution':
+    case 'QualifyingCommitment':
       return 'Qualifying';
-    case 'UnderThresholdContribution':
+    case 'UnderThresholdCommitment':
       return 'Under threshold';
     case 'InvalidTargetMemo':
       return 'Invalid target';
@@ -675,8 +686,8 @@ function renderRegisteredPane(data) {
       ? items.map((item) => `
         <tr>
           <td class="mono">${formatCommitmentTarget(item)}</td>
-          <td>${escapeHtml(formatInteger(item.qualifying_contribution_count))}</td>
-          <td>${escapeHtml(formatIcpE8s(item.total_qualifying_contributed_e8s))}</td>
+          <td>${escapeHtml(formatInteger(item.qualifying_commitment_count))}</td>
+          <td>${escapeHtml(formatIcpE8s(item.total_qualifying_committed_e8s))}</td>
           <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
         </tr>`).join('')
       : `<tr><td colspan="4" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`;
@@ -751,6 +762,447 @@ function renderRewardsPane(data) {
     paneEmptyMessage(data, 'rewardsTransfers', 'No rewards transfers found in the recent index window.'),
     3,
   );
+}
+
+
+function optValue(value) {
+  return readOpt(value);
+}
+
+function timestampNanosToDate(value) {
+  if (value === null || value === undefined) return null;
+  const nanos = typeof value === 'bigint' ? value : BigInt(value);
+  const millis = nanos / 1_000_000n;
+  const asNumber = Number(millis);
+  if (!Number.isFinite(asNumber)) return null;
+  return new Date(asNumber);
+}
+
+function sourceNames(sources) {
+  if (!Array.isArray(sources)) return [];
+  return sources
+    .map((source) => source && typeof source === 'object' && !Array.isArray(source) ? Object.keys(source)[0] : '')
+    .filter(Boolean);
+}
+
+function trackerPeriod(date, granularity) {
+  const year = date.getUTCFullYear();
+  if (granularity === 'year') {
+    return {
+      key: `${year}`,
+      label: `${year}`,
+      startMs: Date.UTC(year, 0, 1),
+    };
+  }
+  const month = date.getUTCMonth();
+  return {
+    key: `${year}-${String(month + 1).padStart(2, '0')}`,
+    label: date.toLocaleString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }),
+    startMs: Date.UTC(year, month, 1),
+  };
+}
+
+function emptyTrackerBucket(period) {
+  return {
+    ...period,
+    commitmentAmountE8s: 0n,
+    qualifyingCommitmentAmountE8s: 0n,
+    commitmentCount: 0,
+    qualifyingCommitmentCount: 0,
+    observedCmcAmountE8s: 0n,
+    observedCmcTransferCount: 0,
+    cycles: null,
+    cyclesTs: null,
+  };
+}
+
+function itemAmountE8s(item) {
+  return typeof item?.amount_e8s === 'bigint' ? item.amount_e8s : BigInt(item?.amount_e8s || 0);
+}
+
+function aggregateTrackerData(data, granularity) {
+  const buckets = new Map();
+  const ensureBucket = (period) => {
+    const existing = buckets.get(period.key);
+    if (existing) return existing;
+    const created = emptyTrackerBucket(period);
+    buckets.set(period.key, created);
+    return created;
+  };
+
+  for (const item of data?.commitments?.items || []) {
+    const timestamp = optValue(item.timestamp_nanos);
+    const date = timestampNanosToDate(timestamp);
+    if (!date) continue;
+    const bucket = ensureBucket(trackerPeriod(date, granularity));
+    const amount = itemAmountE8s(item);
+    bucket.commitmentAmountE8s += amount;
+    bucket.commitmentCount += 1;
+    if (item.counts_toward_faucet) {
+      bucket.qualifyingCommitmentAmountE8s += amount;
+      bucket.qualifyingCommitmentCount += 1;
+    }
+  }
+
+  for (const item of data?.cmcTransfers?.items || []) {
+    const timestamp = optValue(item.timestamp_nanos);
+    const date = timestampNanosToDate(timestamp);
+    if (!date) continue;
+    const bucket = ensureBucket(trackerPeriod(date, granularity));
+    bucket.observedCmcAmountE8s += itemAmountE8s(item);
+    bucket.observedCmcTransferCount += 1;
+  }
+
+  for (const item of data?.cycles?.items || []) {
+    const date = timestampNanosToDate(item?.timestamp_nanos);
+    if (!date || item?.cycles === undefined || item?.cycles === null) continue;
+    const bucket = ensureBucket(trackerPeriod(date, granularity));
+    const timestamp = typeof item.timestamp_nanos === 'bigint' ? item.timestamp_nanos : BigInt(item.timestamp_nanos);
+    if (bucket.cyclesTs === null || timestamp >= bucket.cyclesTs) {
+      bucket.cycles = typeof item.cycles === 'bigint' ? item.cycles : BigInt(item.cycles);
+      bucket.cyclesTs = timestamp;
+    }
+  }
+
+  return Array.from(buckets.values()).sort((left, right) => left.startMs - right.startMs);
+}
+
+function ratioBigInt(value, max) {
+  if (!max || max <= 0n || value === null || value === undefined) return 0;
+  const numerator = (typeof value === 'bigint' ? value : BigInt(value)) * 1_000_000n;
+  return Math.max(0, Math.min(1, Number(numerator / max) / 1_000_000));
+}
+
+function sumE8s(items) {
+  return (items || []).reduce((sum, item) => sum + itemAmountE8s(item), 0n);
+}
+
+function trackerMetricSummary(data) {
+  const commitmentItems = data?.commitments?.items || [];
+  const qualifyingCommitments = commitmentItems.filter((item) => item.counts_toward_faucet);
+  const transferItems = data?.cmcTransfers?.items || [];
+  const cyclesItems = data?.cycles?.items || [];
+  const latestCycles = cyclesItems.length ? cyclesItems[cyclesItems.length - 1]?.cycles : null;
+  return {
+    commitmentCount: commitmentItems.length,
+    qualifyingCommitmentCount: qualifyingCommitments.length,
+    totalCommittedE8s: sumE8s(commitmentItems),
+    qualifyingCommittedE8s: sumE8s(qualifyingCommitments),
+    observedCmcTransferCount: transferItems.length,
+    observedCmcE8s: sumE8s(transferItems),
+    latestCycles,
+  };
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${formatInteger(count)} ${count === 1 ? singular : plural}`;
+}
+
+function renderTrackerEmptyChart(message) {
+  return `<div class="tracker-chart-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderTrackerAmountBarChart({ buckets, amountKey, countKey, emptyMessage, ariaLabel, barClass = '', labelBuilder }) {
+  const maxAmount = buckets.reduce((max, bucket) => bucket[amountKey] > max ? bucket[amountKey] : max, 0n);
+  if (maxAmount <= 0n) {
+    return renderTrackerEmptyChart(emptyMessage);
+  }
+
+  const width = 640;
+  const height = 180;
+  const padLeft = 44;
+  const padRight = 18;
+  const padTop = 18;
+  const padBottom = 42;
+  const chartWidth = width - padLeft - padRight;
+  const chartHeight = height - padTop - padBottom;
+  const slot = chartWidth / Math.max(1, buckets.length);
+  const barWidth = Math.max(8, Math.min(44, slot * 0.58));
+  const className = `tracker-chart-bar${barClass ? ` ${barClass}` : ''}`;
+  const bars = buckets.map((bucket, index) => {
+    const amount = bucket[amountKey] || 0n;
+    const ratio = ratioBigInt(amount, maxAmount);
+    const barHeight = Math.max(amount > 0n ? 2 : 0, ratio * chartHeight);
+    const x = padLeft + (index * slot) + (slot - barWidth) / 2;
+    const y = padTop + chartHeight - barHeight;
+    const label = labelBuilder ? labelBuilder(bucket) : `${bucket.label}: ${formatIcpE8s(amount)} across ${pluralize(bucket[countKey] || 0, 'item')}`;
+    return `<rect class="${className}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="4"><title>${escapeHtml(label)}</title></rect>`;
+  }).join('');
+  const ticks = buckets.map((bucket, index) => {
+    if (buckets.length > 8 && index % Math.ceil(buckets.length / 8) !== 0 && index !== buckets.length - 1) return '';
+    const x = padLeft + (index * slot) + slot / 2;
+    return `<text class="tracker-chart-axis-label" x="${x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeHtml(bucket.label)}</text>`;
+  }).join('');
+  return `
+    <svg class="tracker-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(ariaLabel)}">
+      <line class="tracker-chart-axis" x1="${padLeft}" y1="${padTop + chartHeight}" x2="${width - padRight}" y2="${padTop + chartHeight}"></line>
+      <text class="tracker-chart-y-label" x="8" y="20">${escapeHtml(formatIcpE8s(maxAmount))}</text>
+      ${bars}
+      ${ticks}
+    </svg>`;
+}
+
+function renderTrackerCommitmentsChart(buckets) {
+  return renderTrackerAmountBarChart({
+    buckets,
+    amountKey: 'commitmentAmountE8s',
+    countKey: 'commitmentCount',
+    barClass: 'tracker-chart-bar--commitment',
+    emptyMessage: 'No dated commitments are available for this beneficiary yet.',
+    ariaLabel: `ICP commitments by ${trackerState.granularity}`,
+    labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying commitment')}`,
+  });
+}
+
+function renderTrackerObservedCmcChart(buckets) {
+  return renderTrackerAmountBarChart({
+    buckets,
+    amountKey: 'observedCmcAmountE8s',
+    countKey: 'observedCmcTransferCount',
+    barClass: 'tracker-chart-bar--observed-cmc',
+    emptyMessage: 'No dated ICP transfers to the canister’s CMC top-up account are available yet.',
+    ariaLabel: `Observed CMC top-up transfers by ${trackerState.granularity}`,
+    labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.observedCmcAmountE8s)} across ${pluralize(bucket.observedCmcTransferCount, 'observed CMC transfer')}`,
+  });
+}
+
+function renderTrackerCyclesChart(buckets) {
+  const cycleBuckets = buckets.filter((bucket) => bucket.cycles !== null && bucket.cycles !== undefined);
+  if (cycleBuckets.length === 0) {
+    return `<div class="tracker-chart-empty">Cycles data unavailable. ${renderCyclesUnavailableCell()}</div>`;
+  }
+
+  const maxCycles = cycleBuckets.reduce((max, bucket) => bucket.cycles > max ? bucket.cycles : max, 0n);
+  const width = 640;
+  const height = 180;
+  const padLeft = 44;
+  const padRight = 18;
+  const padTop = 18;
+  const padBottom = 42;
+  const chartWidth = width - padLeft - padRight;
+  const chartHeight = height - padTop - padBottom;
+  const slot = chartWidth / Math.max(1, buckets.length);
+  const pointFor = (bucket, index) => {
+    const x = padLeft + (index * slot) + slot / 2;
+    const ratio = ratioBigInt(bucket.cycles, maxCycles);
+    const y = padTop + chartHeight - ratio * chartHeight;
+    return { x, y };
+  };
+  const points = buckets
+    .map((bucket, index) => bucket.cycles === null || bucket.cycles === undefined ? null : pointFor(bucket, index))
+    .filter(Boolean);
+  const polyline = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
+  const circles = buckets.map((bucket, index) => {
+    if (bucket.cycles === null || bucket.cycles === undefined) return '';
+    const point = pointFor(bucket, index);
+    const label = `${bucket.label}: ${formatCycles(bucket.cycles)}`;
+    return `<circle class="tracker-chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4"><title>${escapeHtml(label)}</title></circle>`;
+  }).join('');
+  const ticks = buckets.map((bucket, index) => {
+    if (buckets.length > 8 && index % Math.ceil(buckets.length / 8) !== 0 && index !== buckets.length - 1) return '';
+    const x = padLeft + (index * slot) + slot / 2;
+    return `<text class="tracker-chart-axis-label" x="${x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeHtml(bucket.label)}</text>`;
+  }).join('');
+  return `
+    <svg class="tracker-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Cycles balance by ${escapeHtml(trackerState.granularity)}">
+      <line class="tracker-chart-axis" x1="${padLeft}" y1="${padTop + chartHeight}" x2="${width - padRight}" y2="${padTop + chartHeight}"></line>
+      <text class="tracker-chart-y-label" x="8" y="20">${escapeHtml(formatInteger(maxCycles))}</text>
+      <polyline class="tracker-chart-line" points="${polyline}"></polyline>
+      ${circles}
+      ${ticks}
+    </svg>`;
+}
+
+function renderTrackerCharts(data) {
+  const wrapper = document.getElementById('tracker-chart-wrapper');
+  if (!wrapper) return;
+  const buckets = aggregateTrackerData(data, trackerState.granularity);
+  if (buckets.length === 0) {
+    wrapper.innerHTML = renderTrackerEmptyChart('No dated tracker data is available for this canister yet.');
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="tracker-chart-card">
+      <div class="tracker-chart-header">
+        <h3>ICP commitments</h3>
+        <span>Memo-registered commitment history from historian.</span>
+      </div>
+      ${renderTrackerCommitmentsChart(buckets)}
+    </div>
+    <div class="tracker-chart-card">
+      <div class="tracker-chart-header">
+        <h3>Observed CMC top-ups</h3>
+        <span>All transfers to the CMC deposit account; direct non-Jupiter top-ups may appear.</span>
+      </div>
+      ${renderTrackerObservedCmcChart(buckets)}
+    </div>
+    <div class="tracker-chart-card">
+      <div class="tracker-chart-header">
+        <h3>Cycles balance</h3>
+        <span>Line uses a separate cycles scale.</span>
+      </div>
+      ${renderTrackerCyclesChart(buckets)}
+    </div>`;
+}
+
+function renderTrackerRecognitionMessage(data, principalText) {
+  const result = document.getElementById('tracker-result');
+  if (!result) return;
+  const detail = data?.isRecognized
+    ? 'Historian recognises this principal, but not as a memo-registered commitment beneficiary.'
+    : 'This principal is not a recognised commitment beneficiary.';
+  result.innerHTML = `
+    <div class="tracker-empty-state">
+      <p>${escapeHtml(detail)}</p>
+      <p>Register the canister for perpetual top-ups from the <a class="pane-external-link" href="${TRACKER_REGISTRATION_URL}" target="_blank" rel="noopener noreferrer">How it works guide</a>.</p>
+      <p class="mono">${escapeHtml(principalText)}</p>
+    </div>`;
+}
+
+function renderTrackerData(data, principalText) {
+  const result = document.getElementById('tracker-result');
+  if (!result) return;
+  if (!data?.isCommitmentBeneficiary) {
+    renderTrackerRecognitionMessage(data, principalText);
+    return;
+  }
+
+  const summary = trackerMetricSummary(data);
+  const sources = sourceNames(data.overview?.sources).join(', ') || DASH;
+  const firstSeen = formatTimestampSeconds(optValue(data.overview?.meta?.first_seen_ts));
+  const lastCommitment = formatTimestampSeconds(optValue(data.overview?.meta?.last_commitment_ts));
+  const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
+    ? escapeHtml(formatCycles(summary.latestCycles))
+    : renderCyclesUnavailableCell();
+  const commitmentError = data.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(data.errors.commitments)}</p>` : '';
+  const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
+  const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
+  result.innerHTML = `
+    <dl class="pane-detail-grid tracker-summary-grid">
+      <div><dt>Canister</dt><dd class="pane-detail-value mono">${escapeHtml(principalText)}</dd></div>
+      <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
+      <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
+      <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
+      <div><dt>Commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.commitmentCount))}</dd></div>
+      <div><dt>Total commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalCommittedE8s))}</dd></div>
+      <div><dt>Qualifying commitments shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.qualifyingCommitmentCount)} · ${formatIcpE8s(summary.qualifyingCommittedE8s)}`)}</dd></div>
+      <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.observedCmcTransferCount))}</dd></div>
+      <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.observedCmcE8s))}</dd></div>
+      <div><dt>Latest cycles</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
+    </dl>
+    <p class="pane-status-note tracker-status-note">Commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
+    ${commitmentError}
+    ${cyclesError}
+    ${cmcError}
+    <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>`;
+  renderTrackerCharts(data);
+}
+
+function setTrackerLoading(loading) {
+  const submit = document.getElementById('tracker-submit');
+  const input = document.getElementById('tracker-principal-input');
+  if (submit) submit.disabled = loading;
+  if (input) input.disabled = loading;
+}
+
+function setTrackerStatus(message = '', kind = '') {
+  const status = document.getElementById('tracker-status');
+  if (!status) return;
+  status.textContent = message;
+  status.hidden = !message;
+  status.className = kind ? `pane-status-note tracker-status-note tracker-status-note--${kind}` : 'pane-status-note tracker-status-note';
+}
+
+function renderTrackerPrompt() {
+  const result = document.getElementById('tracker-result');
+  if (!result || result.innerHTML.trim()) return;
+  result.innerHTML = `
+    <div class="tracker-empty-state">
+      <p>Paste a principal ID, usually a target canister ID, to inspect its memo-derived commitments and cycles tracking history.</p>
+    </div>`;
+}
+
+function setTrackerGranularity(granularity) {
+  trackerState.granularity = granularity === 'year' ? 'year' : 'month';
+  document.querySelectorAll('[data-tracker-granularity]').forEach((button) => {
+    const active = button.getAttribute('data-tracker-granularity') === trackerState.granularity;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  if (trackerState.data?.isCommitmentBeneficiary) {
+    renderTrackerData(trackerState.data, trackerState.principalText);
+  }
+}
+
+async function submitTrackerPrincipal() {
+  const input = document.getElementById('tracker-principal-input');
+  const result = document.getElementById('tracker-result');
+  const raw = input?.value?.trim() || '';
+  trackerState.principalText = raw;
+  trackerState.error = null;
+
+  if (!raw) {
+    setTrackerStatus('Paste a principal ID first.', 'error');
+    input?.focus?.();
+    return;
+  }
+
+  let principal;
+  try {
+    principal = Principal.fromText(raw);
+  } catch {
+    setTrackerStatus('Enter a valid principal ID.', 'error');
+    input?.focus?.();
+    return;
+  }
+
+  setTrackerLoading(true);
+  setTrackerStatus('Loading tracker data…', 'loading');
+  if (result) {
+    result.innerHTML = '<div class="tracker-empty-state"><p>Loading…</p></div>';
+  }
+
+  try {
+    const data = await loadTrackerData({
+      historianCanisterId: FRONTEND_CONFIG?.historianCanisterId,
+      host: window.location.origin,
+      local: isLocalHost(),
+      canisterId: principal,
+    });
+    trackerState.data = data;
+    setTrackerStatus('', '');
+    renderTrackerData(data, principal.toText());
+  } catch (error) {
+    trackerState.data = null;
+    trackerState.error = normalizeError(error);
+    setTrackerStatus(`Tracker unavailable: ${trackerState.error}`, 'error');
+    if (result) {
+      result.innerHTML = '<div class="tracker-empty-state"><p>Tracker data could not be loaded right now.</p></div>';
+    }
+  } finally {
+    setTrackerLoading(false);
+  }
+}
+
+function bindTrackerPane() {
+  const form = document.getElementById('tracker-form');
+  if (form && form.dataset.bound !== 'true') {
+    form.dataset.bound = 'true';
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void submitTrackerPrincipal();
+    });
+  }
+  document.querySelectorAll('[data-tracker-granularity]').forEach((button) => {
+    if (button.dataset.bound === 'true') return;
+    button.dataset.bound = 'true';
+    button.addEventListener('click', () => {
+      setTrackerGranularity(button.getAttribute('data-tracker-granularity') || 'month');
+    });
+  });
+  setTrackerGranularity(trackerState.granularity);
+  renderTrackerPrompt();
 }
 
 function bindPaginationButtons() {
@@ -891,9 +1343,14 @@ async function initLandingPage() {
 }
 
 bindInlineTooltipFallbacks();
+bindTrackerPane();
 document.addEventListener('navpanel:open', (event) => {
   if (event?.detail?.key === 'source') {
     void ensureSourcePaneModuleHashesLoaded();
+  }
+  if (event?.detail?.key === 'metric-tracker') {
+    renderTrackerPrompt();
+    window.setTimeout(() => document.getElementById('tracker-principal-input')?.focus?.(), 0);
   }
 });
 if (window.location.hash === '#source' || document.querySelector('.nav-panel-section--active[data-panel="source"]')) {

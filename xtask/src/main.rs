@@ -422,7 +422,7 @@ struct FaucetSummary {
 
 #[derive(Debug, CandidType, Deserialize)]
 enum HistorianCanisterSource {
-    MemoContribution,
+    MemoCommitment,
     SnsDiscovery,
 }
 
@@ -439,7 +439,7 @@ struct HistorianListCanistersResponse {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct HistorianContributionSample {
+struct HistorianCommitmentSample {
     tx_id: u64,
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
@@ -447,8 +447,8 @@ struct HistorianContributionSample {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct HistorianContributionHistoryPage {
-    items: Vec<HistorianContributionSample>,
+struct HistorianCommitmentHistoryPage {
+    items: Vec<HistorianCommitmentSample>,
     next_start_after_tx_id: Option<u64>,
 }
 
@@ -475,7 +475,7 @@ struct HistorianCyclesHistoryPage {
 #[derive(Debug, CandidType, Deserialize)]
 struct HistorianPublicCounts {
     registered_canister_count: u64,
-    qualifying_contribution_count: u64,
+    qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
@@ -505,7 +505,7 @@ struct HistorianDebugConfig {
     cycles_interval_seconds: u64,
     min_tx_e8s: u64,
     max_cycles_entries_per_canister: u32,
-    max_contribution_entries_per_canister: u32,
+    max_commitment_entries_per_canister: u32,
     max_index_pages_per_tick: u32,
     max_canisters_per_cycles_tick: u32,
 }
@@ -513,9 +513,9 @@ struct HistorianDebugConfig {
 #[derive(Debug, CandidType, Deserialize)]
 struct HistorianRegisteredCanisterSummary {
     canister_id: Principal,
-    qualifying_contribution_count: u64,
-    total_qualifying_contributed_e8s: u64,
-    last_contribution_ts: Option<u64>,
+    qualifying_commitment_count: u64,
+    total_qualifying_committed_e8s: u64,
+    last_commitment_ts: Option<u64>,
     latest_cycles: Option<Nat>,
     last_cycles_probe_ts: Option<u64>,
 }
@@ -529,7 +529,7 @@ struct ListRegisteredCanisterSummariesResponse {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct RecentContributionListItem {
+struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
     memo_text: Option<String>,
     tx_id: u64,
@@ -538,8 +538,8 @@ struct RecentContributionListItem {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct ListRecentContributionsResponse {
-    items: Vec<RecentContributionListItem>,
+struct ListRecentCommitmentsResponse {
+    items: Vec<RecentCommitmentListItem>,
 }
 
 #[allow(non_snake_case)]
@@ -557,7 +557,7 @@ struct FrontendDashboardExpected {
 #[derive(Debug, serde::Serialize)]
 struct FrontendDashboardExpectedCounts {
     registeredCanisterCount: String,
-    qualifyingContributionCount: String,
+    qualifyingCommitmentCount: String,
     totalOutputE8s: String,
     totalRewardsE8s: String,
 }
@@ -584,9 +584,9 @@ struct FrontendDashboardExpectedRegistered {
 #[derive(Debug, serde::Serialize)]
 struct FrontendDashboardExpectedRegisteredItem {
     canisterId: String,
-    qualifyingContributionCount: String,
-    totalQualifyingContributedE8s: String,
-    lastContributionTsPresent: bool,
+    qualifyingCommitmentCount: String,
+    totalQualifyingCommittedE8s: String,
+    lastCommitmentTsPresent: bool,
     latestCycles: Option<String>,
     lastCyclesProbeTsPresent: bool,
 }
@@ -1037,7 +1037,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             cycles_interval_seconds = opt (1:nat64);
             min_tx_e8s = opt (100000000:nat64);
             max_cycles_entries_per_canister = opt (100:nat32);
-            max_contribution_entries_per_canister = opt (100:nat32);
+            max_commitment_entries_per_canister = opt (100:nat32);
             max_index_pages_per_tick = opt (10:nat32);
             max_canisters_per_cycles_tick = opt (10:nat32);
         }},)"#,
@@ -1193,7 +1193,7 @@ fn cmd_setup() -> Result<()> {
             cycles_interval_seconds = opt (1:nat64);
             min_tx_e8s = opt (100000000:nat64);
             max_cycles_entries_per_canister = opt (100:nat32);
-            max_contribution_entries_per_canister = opt (100:nat32);
+            max_commitment_entries_per_canister = opt (100:nat32);
             max_index_pages_per_tick = opt (10:nat32);
             max_canisters_per_cycles_tick = opt (10:nat32);
         }},)"#,
@@ -1697,7 +1697,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
 
-    run_scenario(outcomes, label("dfx", "faucet", "same beneficiary contributions stay separate (no aggregation)"), || {
+    run_scenario(outcomes, label("dfx", "faucet", "same beneficiary commitments stay separate (no aggregation)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2560,14 +2560,14 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 1
-            || counts.qualifying_contribution_count != 1
+            || counts.qualifying_commitment_count != 1
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
                 "unexpected historian public counts fixture: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
-                counts.qualifying_contribution_count,
+                counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
             );
@@ -2579,9 +2579,9 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "list_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
-        let recent: ListRecentContributionsResponse = call_raw(
+        let recent: ListRecentCommitmentsResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_recent_contributions",
+            "list_recent_commitments",
             "(record { limit = opt (10:nat32); qualifying_only = opt false })",
         )?;
 
@@ -2597,7 +2597,7 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             stakeE8s: "123000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
-                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
@@ -2616,9 +2616,9 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                     .iter()
                     .map(|item| FrontendDashboardExpectedRegisteredItem {
                         canisterId: item.canister_id.to_text(),
-                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
-                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
-                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
+                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
+                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
                         latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
                         lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
                     })
@@ -2654,7 +2654,7 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
 fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
-    run_scenario(outcomes, label("dfx", "historian", "indexes memo-derived contribution exactly once"), || {
+    run_scenario(outcomes, label("dfx", "historian", "indexes memo-derived commitment exactly once"), || {
         reset_historian_local_replica_state()?;
         let listed_before: HistorianListCanistersResponse = call_raw(
             "jupiter_historian_dbg",
@@ -2694,29 +2694,29 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             bail!("unexpected historian list response: {:?}", listed.items.iter().map(|i| i.canister_id.to_text()).collect::<Vec<_>>());
         }
 
-        let history: HistorianContributionHistoryPage = call_raw(
+        let history: HistorianCommitmentHistoryPage = call_raw(
             "jupiter_historian_dbg",
-            "get_contribution_history",
+            "get_commitment_history",
             &format!(
                 r#"(record {{ canister_id = principal "{}"; start_after_tx_id = null; limit = opt (10:nat32); descending = opt false }})"#,
                 target.to_text()
             ),
         )?;
         if history.items.len() != 1 || history.items[0].tx_id != 1 {
-            bail!("expected one indexed contribution, got {}", history.items.len());
+            bail!("expected one indexed commitment, got {}", history.items.len());
         }
 
         let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
-        let history2: HistorianContributionHistoryPage = call_raw(
+        let history2: HistorianCommitmentHistoryPage = call_raw(
             "jupiter_historian_dbg",
-            "get_contribution_history",
+            "get_commitment_history",
             &format!(
                 r#"(record {{ canister_id = principal "{}"; start_after_tx_id = null; limit = opt (10:nat32); descending = opt false }})"#,
                 target.to_text()
             ),
         )?;
         if history2.items.len() != 1 {
-            bail!("expected historian not to duplicate contributions, got {}", history2.items.len());
+            bail!("expected historian not to duplicate commitments, got {}", history2.items.len());
         }
         Ok(())
     });
@@ -2857,14 +2857,14 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 1
-            || counts.qualifying_contribution_count != 1
+            || counts.qualifying_commitment_count != 1
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
                 "unexpected historian public counts fixture: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
-                counts.qualifying_contribution_count,
+                counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
             );
@@ -2876,9 +2876,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             "list_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
-        let recent: ListRecentContributionsResponse = call_raw(
+        let recent: ListRecentCommitmentsResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_recent_contributions",
+            "list_recent_commitments",
             "(record { limit = opt (10:nat32); qualifying_only = opt false })",
         )?;
 
@@ -2894,7 +2894,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             stakeE8s: "123000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
-                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
@@ -2913,9 +2913,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .iter()
                     .map(|item| FrontendDashboardExpectedRegisteredItem {
                         canisterId: item.canister_id.to_text(),
-                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
-                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
-                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
+                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
+                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
                         latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
                         lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
                     })
@@ -2945,7 +2945,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader keeps output and rewards at zero for contribution-only fixtures"), || {
+    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader keeps output and rewards at zero for commitment-only fixtures"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -2990,14 +2990,14 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 1
-            || counts.qualifying_contribution_count != 1
+            || counts.qualifying_commitment_count != 1
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected contribution-only fixture public counts: registered={} qualifying={} output={} rewards={}",
+                "unexpected commitment-only fixture public counts: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
-                counts.qualifying_contribution_count,
+                counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
             );
@@ -3009,9 +3009,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             "list_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
-        let recent: ListRecentContributionsResponse = call_raw(
+        let recent: ListRecentCommitmentsResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_recent_contributions",
+            "list_recent_commitments",
             "(record { limit = opt (10:nat32); qualifying_only = opt false })",
         )?;
 
@@ -3019,7 +3019,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             stakeE8s: "123000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
-                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
@@ -3038,9 +3038,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .iter()
                     .map(|item| FrontendDashboardExpectedRegisteredItem {
                         canisterId: item.canister_id.to_text(),
-                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
-                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
-                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
+                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
+                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
                         latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
                         lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
                     })
@@ -3125,14 +3125,14 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 0
-            || counts.qualifying_contribution_count != 0
+            || counts.qualifying_commitment_count != 0
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
                 "unexpected non-qualifying fixture public counts: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
-                counts.qualifying_contribution_count,
+                counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
             );
@@ -3144,9 +3144,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             "list_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
-        let recent: ListRecentContributionsResponse = call_raw(
+        let recent: ListRecentCommitmentsResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_recent_contributions",
+            "list_recent_commitments",
             "(record { limit = opt (10:nat32); qualifying_only = opt false })",
         )?;
 
@@ -3162,7 +3162,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             stakeE8s: "5000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
-                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
@@ -3181,9 +3181,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .iter()
                     .map(|item| FrontendDashboardExpectedRegisteredItem {
                         canisterId: item.canister_id.to_text(),
-                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
-                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
-                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
+                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
+                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
                         latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
                         lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
                     })
@@ -3235,14 +3235,14 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
         if counts.registered_canister_count != 0
-            || counts.qualifying_contribution_count != 0
+            || counts.qualifying_commitment_count != 0
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
                 "unexpected SNS-only fixture public counts: registered={} qualifying={} output={} rewards={}",
                 counts.registered_canister_count,
-                counts.qualifying_contribution_count,
+                counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
             );
@@ -3260,9 +3260,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             "list_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
-        let recent: ListRecentContributionsResponse = call_raw(
+        let recent: ListRecentCommitmentsResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_recent_contributions",
+            "list_recent_commitments",
             "(record { limit = opt (10:nat32); qualifying_only = opt false })",
         )?;
 
@@ -3270,7 +3270,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             stakeE8s: "0".to_string(),
             counts: FrontendDashboardExpectedCounts {
                 registeredCanisterCount: counts.registered_canister_count.to_string(),
-                qualifyingContributionCount: counts.qualifying_contribution_count.to_string(),
+                qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
             },
@@ -3289,9 +3289,9 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
                     .iter()
                     .map(|item| FrontendDashboardExpectedRegisteredItem {
                         canisterId: item.canister_id.to_text(),
-                        qualifyingContributionCount: item.qualifying_contribution_count.to_string(),
-                        totalQualifyingContributedE8s: item.total_qualifying_contributed_e8s.to_string(),
-                        lastContributionTsPresent: item.last_contribution_ts.is_some(),
+                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
+                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
+                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
                         latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
                         lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
                     })
@@ -3342,7 +3342,7 @@ fn run_dfx_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutcom
             || cfg.cycles_interval_seconds != 604_800
             || cfg.min_tx_e8s != 100_000_000
             || cfg.max_cycles_entries_per_canister != 100
-            || cfg.max_contribution_entries_per_canister != 100
+            || cfg.max_commitment_entries_per_canister != 100
             || cfg.max_index_pages_per_tick != 10
             || cfg.max_canisters_per_cycles_tick != 25
         {

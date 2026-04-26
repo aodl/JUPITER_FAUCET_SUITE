@@ -28,14 +28,14 @@ pub struct Config {
     pub cycles_interval_seconds: u64,
     pub min_tx_e8s: u64,
     pub max_cycles_entries_per_canister: u32,
-    pub max_contribution_entries_per_canister: u32,
+    pub max_commitment_entries_per_canister: u32,
     pub max_index_pages_per_tick: u32,
     pub max_canisters_per_cycles_tick: u32,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CanisterSource {
-    MemoContribution,
+    MemoCommitment,
     SnsDiscovery,
 }
 
@@ -54,7 +54,7 @@ pub enum CyclesProbeResult {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct ContributionSample {
+pub struct CommitmentSample {
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
@@ -62,7 +62,7 @@ pub struct ContributionSample {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct InvalidContribution {
+pub struct InvalidCommitment {
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
@@ -70,7 +70,7 @@ pub struct InvalidContribution {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct RecentContribution {
+pub struct RecentCommitment {
     pub canister_id: Principal,
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
@@ -87,7 +87,7 @@ pub struct RecentBurn {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct ContributionIndexFault {
+pub struct CommitmentIndexFault {
     pub observed_at_ts: u64,
     pub last_cursor_tx_id: Option<u64>,
     pub offending_tx_id: u64,
@@ -104,7 +104,7 @@ pub struct CyclesSample {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CanisterMeta {
     pub first_seen_ts: Option<u64>,
-    pub last_contribution_ts: Option<u64>,
+    pub last_commitment_ts: Option<u64>,
     pub last_cycles_probe_ts: Option<u64>,
     pub last_cycles_probe_result: Option<CyclesProbeResult>,
     #[serde(default)]
@@ -163,7 +163,7 @@ pub struct StableConfig {
     pub cycles_interval_seconds: u64,
     pub min_tx_e8s: u64,
     pub max_cycles_entries_per_canister: u32,
-    pub max_contribution_entries_per_canister: u32,
+    pub max_commitment_entries_per_canister: u32,
     pub max_index_pages_per_tick: u32,
     pub max_canisters_per_cycles_tick: u32,
 }
@@ -171,7 +171,7 @@ pub struct StableConfig {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct StableCanisterMeta {
     pub first_seen_ts: Option<u64>,
-    pub last_contribution_ts: Option<u64>,
+    pub last_commitment_ts: Option<u64>,
     pub last_cycles_probe_ts: Option<u64>,
     pub last_cycles_probe_result: Option<CyclesProbeResult>,
     #[serde(default)]
@@ -220,7 +220,7 @@ pub struct StableRootState {
     pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
     #[serde(default)]
-    pub qualifying_contribution_count: Option<u64>,
+    pub qualifying_commitment_count: Option<u64>,
     #[serde(default)]
     pub total_output_e8s: Option<u64>,
     #[serde(default)]
@@ -228,17 +228,17 @@ pub struct StableRootState {
     #[serde(default)]
     pub icp_burned_e8s: Option<u64>,
     #[serde(default)]
-    pub recent_contributions: Option<Vec<RecentContribution>>,
+    pub recent_commitments: Option<Vec<RecentCommitment>>,
     #[serde(default)]
-    pub recent_under_threshold_contributions: Option<Vec<RecentContribution>>,
+    pub recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
     #[serde(default)]
-    pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
+    pub recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
     #[serde(default)]
     pub recent_burns: Option<Vec<RecentBurn>>,
     #[serde(default)]
     pub last_index_run_ts: Option<u64>,
     #[serde(default)]
-    pub contribution_index_fault: Option<ContributionIndexFault>,
+    pub commitment_index_fault: Option<CommitmentIndexFault>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -309,12 +309,12 @@ impl Storable for StableU64List {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct ContributionEntryKey {
+struct CommitmentEntryKey {
     canister: PrincipalKey,
     tx_id: u64,
 }
 
-impl ContributionEntryKey {
+impl CommitmentEntryKey {
     fn new(canister: impl Into<PrincipalKey>, tx_id: u64) -> Self {
         Self {
             canister: canister.into(),
@@ -323,7 +323,7 @@ impl ContributionEntryKey {
     }
 }
 
-impl Storable for ContributionEntryKey {
+impl Storable for CommitmentEntryKey {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut out = Vec::with_capacity(1 + self.canister.0.len() + 8);
         out.push(self.canister.0.len() as u8);
@@ -335,7 +335,7 @@ impl Storable for ContributionEntryKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let bytes = bytes.as_ref();
         let len = bytes.first().copied().unwrap_or(0) as usize;
-        assert!(bytes.len() == 1 + len + 8, "invalid historian contribution entry key length");
+        assert!(bytes.len() == 1 + len + 8, "invalid historian commitment entry key length");
         let canister = PrincipalKey(bytes[1..1 + len].to_vec());
         let mut tx_id = [0u8; 8];
         tx_id.copy_from_slice(&bytes[1 + len..]);
@@ -394,13 +394,13 @@ impl Storable for CyclesEntryKey {
     };
 }
 
-impl Storable for ContributionSample {
+impl Storable for CommitmentSample {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian contribution sample"))
+        Cow::Owned(candid::encode_one(self).expect("failed to encode historian commitment sample"))
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian contribution sample")
+        candid::decode_one(bytes.as_ref()).expect("failed to decode historian commitment sample")
     }
 
     const BOUND: Bound = Bound::Unbounded;
@@ -435,7 +435,7 @@ pub struct State {
     pub config: Config,
     pub distinct_canisters: BTreeSet<Principal>,
     pub canister_sources: BTreeMap<Principal, BTreeSet<CanisterSource>>,
-    pub contribution_history: BTreeMap<Principal, Vec<ContributionSample>>,
+    pub commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
     #[serde(default)]
@@ -473,16 +473,16 @@ pub struct State {
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
     pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
-    pub qualifying_contribution_count: Option<u64>,
+    pub qualifying_commitment_count: Option<u64>,
     pub total_output_e8s: Option<u64>,
     pub total_rewards_e8s: Option<u64>,
     pub icp_burned_e8s: Option<u64>,
-    pub recent_contributions: Option<Vec<RecentContribution>>,
-    pub recent_under_threshold_contributions: Option<Vec<RecentContribution>>,
-    pub recent_invalid_contributions: Option<Vec<InvalidContribution>>,
+    pub recent_commitments: Option<Vec<RecentCommitment>>,
+    pub recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
+    pub recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
     pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
-    pub contribution_index_fault: Option<ContributionIndexFault>,
+    pub commitment_index_fault: Option<CommitmentIndexFault>,
 }
 
 impl State {
@@ -491,7 +491,7 @@ impl State {
             config,
             distinct_canisters: BTreeSet::new(),
             canister_sources: BTreeMap::new(),
-            contribution_history: BTreeMap::new(),
+            commitment_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
             registered_canister_summaries_cache: Some(BTreeMap::new()),
@@ -516,16 +516,16 @@ impl State {
             active_sns_discovery: None,
             main_lock_state_ts: Some(0),
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
-            qualifying_contribution_count: Some(0),
+            qualifying_commitment_count: Some(0),
             total_output_e8s: Some(0),
             total_rewards_e8s: Some(0),
             icp_burned_e8s: Some(0),
-            recent_contributions: Some(Vec::new()),
-            recent_under_threshold_contributions: Some(Vec::new()),
-            recent_invalid_contributions: Some(Vec::new()),
+            recent_commitments: Some(Vec::new()),
+            recent_under_threshold_commitments: Some(Vec::new()),
+            recent_invalid_commitments: Some(Vec::new()),
             recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
-            contribution_index_fault: None,
+            commitment_index_fault: None,
         }
     }
 }
@@ -559,11 +559,11 @@ thread_local! {
         std::cell::RefCell::new(None);
     static STABLE_CANISTER_META_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableCanisterMeta, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_CONTRIBUTION_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
+    static STABLE_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
     static STABLE_CYCLES_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_CONTRIBUTION_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<ContributionEntryKey, ContributionSample, Memory>>> =
+    static STABLE_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>>> =
         std::cell::RefCell::new(None);
     static STABLE_CYCLES_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CyclesEntryKey, CyclesSample, Memory>>> =
         std::cell::RefCell::new(None);
@@ -571,15 +571,15 @@ thread_local! {
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static PERSISTENCE_DIRTY_SECTIONS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     static DIRTY_REGISTRY_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
-    static DIRTY_CONTRIBUTION_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    static DIRTY_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
     static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
 }
 
 pub const DIRTY_ROOT: u8 = 1 << 0;
 pub const DIRTY_REGISTRY: u8 = 1 << 1;
-pub const DIRTY_CONTRIBUTIONS: u8 = 1 << 2;
+pub const DIRTY_COMMITMENTS: u8 = 1 << 2;
 pub const DIRTY_CYCLES: u8 = 1 << 3;
-pub const DIRTY_ALL: u8 = DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_CONTRIBUTIONS | DIRTY_CYCLES;
+pub const DIRTY_ALL: u8 = DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_COMMITMENTS | DIRTY_CYCLES;
 
 fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
     STABLE_ROOT_STATE.with(|cell| {
@@ -634,10 +634,10 @@ fn with_canister_meta_map<R>(
 
 
 
-fn with_contribution_history_index_map<R>(
+fn with_commitment_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
 ) -> R {
-    STABLE_CONTRIBUTION_HISTORY_INDEX_MAP.with(|map| {
+    STABLE_COMMITMENT_HISTORY_INDEX_MAP.with(|map| {
         if map.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(14));
@@ -646,7 +646,7 @@ fn with_contribution_history_index_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian contribution-history index map not initialized"))
+        f(borrow.as_mut().expect("historian commitment-history index map not initialized"))
     })
 }
 
@@ -666,10 +666,10 @@ fn with_cycles_history_index_map<R>(
     })
 }
 
-fn with_contribution_entry_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<ContributionEntryKey, ContributionSample, Memory>) -> R,
+fn with_commitment_entry_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>) -> R,
 ) -> R {
-    STABLE_CONTRIBUTION_ENTRY_MAP.with(|map| {
+    STABLE_COMMITMENT_ENTRY_MAP.with(|map| {
         if map.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(16));
@@ -678,7 +678,7 @@ fn with_contribution_entry_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian contribution entry map not initialized"))
+        f(borrow.as_mut().expect("historian commitment entry map not initialized"))
     })
 }
 
@@ -704,8 +704,8 @@ fn mark_registry_principal_dirty(canister_id: Principal) {
     });
 }
 
-fn mark_contribution_principal_dirty(canister_id: Principal) {
-    DIRTY_CONTRIBUTION_PRINCIPALS.with(|dirty| {
+fn mark_commitment_principal_dirty(canister_id: Principal) {
+    DIRTY_COMMITMENT_PRINCIPALS.with(|dirty| {
         dirty.borrow_mut().insert(canister_id);
     });
 }
@@ -720,32 +720,32 @@ fn dirty_registry_principals() -> BTreeSet<Principal> {
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| dirty.borrow().clone())
 }
 
-fn dirty_contribution_principals() -> BTreeSet<Principal> {
-    DIRTY_CONTRIBUTION_PRINCIPALS.with(|dirty| dirty.borrow().clone())
+fn dirty_commitment_principals() -> BTreeSet<Principal> {
+    DIRTY_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow().clone())
 }
 
 fn dirty_cycles_principals() -> BTreeSet<Principal> {
     DIRTY_CYCLES_PRINCIPALS.with(|dirty| dirty.borrow().clone())
 }
 
-fn stable_contribution_history_keys_internal() -> BTreeSet<Principal> {
-    with_contribution_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
+fn stable_commitment_history_keys_internal() -> BTreeSet<Principal> {
+    with_commitment_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
 }
 
 fn stable_cycles_history_keys_internal() -> BTreeSet<Principal> {
     with_cycles_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
 }
 
-fn load_stable_contribution_history_internal(canister_id: Principal) -> Vec<ContributionSample> {
-    with_contribution_history_index_map(|index_map| {
+fn load_stable_commitment_history_internal(canister_id: Principal) -> Vec<CommitmentSample> {
+    with_commitment_history_index_map(|index_map| {
         index_map
             .get(&PrincipalKey::from(canister_id))
             .map(|ids| {
                 ids.0
                     .into_iter()
                     .filter_map(|tx_id| {
-                        with_contribution_entry_map(|entry_map| {
-                            entry_map.get(&ContributionEntryKey::new(canister_id, tx_id))
+                        with_commitment_entry_map(|entry_map| {
+                            entry_map.get(&CommitmentEntryKey::new(canister_id, tx_id))
                         })
                     })
                     .collect()
@@ -777,8 +777,8 @@ fn rebuild_distinct_canisters(st: &mut State) {
         .canister_sources
         .keys()
         .copied()
-        .chain(st.contribution_history.keys().copied())
-        .chain(stable_contribution_history_keys_internal())
+        .chain(st.commitment_history.keys().copied())
+        .chain(stable_commitment_history_keys_internal())
         .chain(st.cycles_history.keys().copied())
         .chain(stable_cycles_history_keys_internal())
         .chain(st.per_canister_meta.keys().copied())
@@ -868,31 +868,31 @@ fn sync_canister_meta_map(current: &BTreeMap<Principal, CanisterMeta>, scope: Op
     });
 }
 
-fn sync_all_contribution_history_maps(current: &BTreeMap<Principal, Vec<ContributionSample>>) {
-    with_contribution_history_index_map(|map| map.clear_new());
-    with_contribution_entry_map(|map| map.clear_new());
+fn sync_all_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
+    with_commitment_history_index_map(|map| map.clear_new());
+    with_commitment_entry_map(|map| map.clear_new());
     for (principal, samples) in current {
         let ids: Vec<u64> = samples.iter().map(|sample| sample.tx_id).collect();
         if !ids.is_empty() {
-            with_contribution_history_index_map(|map| {
+            with_commitment_history_index_map(|map| {
                 map.insert(PrincipalKey::from(principal), StableU64List(ids));
             });
-            with_contribution_entry_map(|map| {
+            with_commitment_entry_map(|map| {
                 for sample in samples {
-                    map.insert(ContributionEntryKey::new(principal, sample.tx_id), sample.clone());
+                    map.insert(CommitmentEntryKey::new(principal, sample.tx_id), sample.clone());
                 }
             });
         }
     }
 }
 
-fn sync_contribution_history_principals(
-    current: &BTreeMap<Principal, Vec<ContributionSample>>,
+fn sync_commitment_history_principals(
+    current: &BTreeMap<Principal, Vec<CommitmentSample>>,
     principals: &BTreeSet<Principal>,
 ) {
     for principal in principals {
         let principal_key = PrincipalKey::from(principal);
-        let existing_ids = with_contribution_history_index_map(|map| {
+        let existing_ids = with_commitment_history_index_map(|map| {
             map.get(&principal_key)
                 .map(|ids| ids.0.clone())
                 .unwrap_or_default()
@@ -901,14 +901,14 @@ fn sync_contribution_history_principals(
         let current_ids: Vec<u64> = current_samples.iter().map(|sample| sample.tx_id).collect();
         let current_id_set: BTreeSet<u64> = current_ids.iter().copied().collect();
 
-        with_contribution_entry_map(|map| {
+        with_commitment_entry_map(|map| {
             for tx_id in &existing_ids {
                 if !current_id_set.contains(tx_id) {
-                    map.remove(&ContributionEntryKey::new(principal, *tx_id));
+                    map.remove(&CommitmentEntryKey::new(principal, *tx_id));
                 }
             }
             for sample in &current_samples {
-                let key = ContributionEntryKey::new(principal, sample.tx_id);
+                let key = CommitmentEntryKey::new(principal, sample.tx_id);
                 let needs_update = map.get(&key).map(|existing| existing != *sample).unwrap_or(true);
                 if needs_update {
                     map.insert(key, sample.clone());
@@ -916,7 +916,7 @@ fn sync_contribution_history_principals(
             }
         });
 
-        with_contribution_history_index_map(|map| {
+        with_commitment_history_index_map(|map| {
             if current_ids.is_empty() {
                 map.remove(&principal_key);
             } else {
@@ -1016,16 +1016,16 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         active_sns_discovery: st.active_sns_discovery.clone(),
         main_lock_state_ts: st.main_lock_state_ts,
         last_main_run_ts: st.last_main_run_ts,
-        qualifying_contribution_count: st.qualifying_contribution_count,
+        qualifying_commitment_count: st.qualifying_commitment_count,
         total_output_e8s: st.total_output_e8s,
         total_rewards_e8s: st.total_rewards_e8s,
         icp_burned_e8s: st.icp_burned_e8s,
-        recent_contributions: st.recent_contributions.clone(),
-        recent_under_threshold_contributions: st.recent_under_threshold_contributions.clone(),
-        recent_invalid_contributions: st.recent_invalid_contributions.clone(),
+        recent_commitments: st.recent_commitments.clone(),
+        recent_under_threshold_commitments: st.recent_under_threshold_commitments.clone(),
+        recent_invalid_commitments: st.recent_invalid_commitments.clone(),
         recent_burns: st.recent_burns.clone(),
         last_index_run_ts: st.last_index_run_ts,
-        contribution_index_fault: st.contribution_index_fault.clone(),
+        commitment_index_fault: st.commitment_index_fault.clone(),
     }
 }
 
@@ -1033,18 +1033,18 @@ fn persist_snapshot_sections_scoped(
     st: &State,
     dirty_sections: u8,
     registry_scope: Option<&BTreeSet<Principal>>,
-    contribution_scope: Option<&BTreeSet<Principal>>,
+    commitment_scope: Option<&BTreeSet<Principal>>,
     cycles_scope: Option<&BTreeSet<Principal>>,
 ) {
     if dirty_sections & DIRTY_REGISTRY != 0 {
         sync_canister_sources_map(&st.canister_sources, registry_scope);
         sync_canister_meta_map(&st.per_canister_meta, registry_scope);
     }
-    if dirty_sections & DIRTY_CONTRIBUTIONS != 0 {
-        if let Some(scope) = contribution_scope {
-            sync_contribution_history_principals(&st.contribution_history, scope);
+    if dirty_sections & DIRTY_COMMITMENTS != 0 {
+        if let Some(scope) = commitment_scope {
+            sync_commitment_history_principals(&st.commitment_history, scope);
         } else {
-            sync_all_contribution_history_maps(&st.contribution_history);
+            sync_all_commitment_history_maps(&st.commitment_history);
         }
     }
     if dirty_sections & DIRTY_CYCLES != 0 {
@@ -1085,7 +1085,7 @@ fn restore_state_current(root: StableRootState) -> State {
         }
         out
     });
-    let contribution_history = BTreeMap::new();
+    let commitment_history = BTreeMap::new();
     let cycles_history = BTreeMap::new();
     let per_canister_meta = with_canister_meta_map(|map| {
         let mut out = BTreeMap::new();
@@ -1099,7 +1099,7 @@ fn restore_state_current(root: StableRootState) -> State {
         config: root.config.into(),
         distinct_canisters: BTreeSet::new(),
         canister_sources,
-        contribution_history,
+        commitment_history,
         cycles_history,
         per_canister_meta,
         registered_canister_summaries_cache: None,
@@ -1124,16 +1124,16 @@ fn restore_state_current(root: StableRootState) -> State {
         active_sns_discovery: root.active_sns_discovery,
         main_lock_state_ts: root.main_lock_state_ts,
         last_main_run_ts: root.last_main_run_ts,
-        qualifying_contribution_count: root.qualifying_contribution_count,
+        qualifying_commitment_count: root.qualifying_commitment_count,
         total_output_e8s: root.total_output_e8s.or(Some(0)),
         total_rewards_e8s: root.total_rewards_e8s.or(Some(0)),
         icp_burned_e8s: root.icp_burned_e8s,
-        recent_contributions: root.recent_contributions,
-        recent_under_threshold_contributions: root.recent_under_threshold_contributions,
-        recent_invalid_contributions: root.recent_invalid_contributions,
+        recent_commitments: root.recent_commitments,
+        recent_under_threshold_commitments: root.recent_under_threshold_commitments,
+        recent_invalid_commitments: root.recent_invalid_commitments,
         recent_burns: root.recent_burns,
         last_index_run_ts: root.last_index_run_ts,
-        contribution_index_fault: root.contribution_index_fault,
+        commitment_index_fault: root.commitment_index_fault,
     };
     rebuild_distinct_canisters(&mut st);
     st
@@ -1178,7 +1178,7 @@ fn mark_persistence_dirty(dirty_sections: u8) {
 fn clear_persistence_dirty() {
     PERSISTENCE_DIRTY_SECTIONS.with(|dirty| dirty.set(0));
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
-    DIRTY_CONTRIBUTION_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
+    DIRTY_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
     DIRTY_CYCLES_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
 }
 
@@ -1188,14 +1188,14 @@ pub fn persist_dirty_state() {
         return;
     }
     let registry_scope = dirty_registry_principals();
-    let contribution_scope = dirty_contribution_principals();
+    let commitment_scope = dirty_commitment_principals();
     let cycles_scope = dirty_cycles_principals();
     let snapshot = get_state();
     persist_snapshot_sections_scoped(
         &snapshot,
         dirty_sections,
         (!registry_scope.is_empty()).then_some(&registry_scope),
-        (!contribution_scope.is_empty()).then_some(&contribution_scope),
+        (!commitment_scope.is_empty()).then_some(&commitment_scope),
         (!cycles_scope.is_empty()).then_some(&cycles_scope),
     );
     clear_persistence_dirty();
@@ -1237,7 +1237,7 @@ pub fn begin_persistence_batch() -> PersistenceBatch {
 fn with_state_mut_sections_scoped<R>(
     dirty_sections: u8,
     registry_principal: Option<Principal>,
-    contribution_principal: Option<Principal>,
+    commitment_principal: Option<Principal>,
     cycles_principal: Option<Principal>,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
@@ -1250,13 +1250,13 @@ fn with_state_mut_sections_scoped<R>(
             let snapshot = st.clone();
             drop(borrow);
             let registry_scope = registry_principal.into_iter().collect::<BTreeSet<_>>();
-            let contribution_scope = contribution_principal.into_iter().collect::<BTreeSet<_>>();
+            let commitment_scope = commitment_principal.into_iter().collect::<BTreeSet<_>>();
             let cycles_scope = cycles_principal.into_iter().collect::<BTreeSet<_>>();
             persist_snapshot_sections_scoped(
                 &snapshot,
                 dirty_sections,
                 (!registry_scope.is_empty()).then_some(&registry_scope),
-                (!contribution_scope.is_empty()).then_some(&contribution_scope),
+                (!commitment_scope.is_empty()).then_some(&commitment_scope),
                 (!cycles_scope.is_empty()).then_some(&cycles_scope),
             );
             return out;
@@ -1264,8 +1264,8 @@ fn with_state_mut_sections_scoped<R>(
         if let Some(canister_id) = registry_principal {
             mark_registry_principal_dirty(canister_id);
         }
-        if let Some(canister_id) = contribution_principal {
-            mark_contribution_principal_dirty(canister_id);
+        if let Some(canister_id) = commitment_principal {
+            mark_commitment_principal_dirty(canister_id);
         }
         if let Some(canister_id) = cycles_principal {
             mark_cycles_principal_dirty(canister_id);
@@ -1289,29 +1289,29 @@ pub fn with_root_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections(DIRTY_ROOT, f)
 }
 
-pub fn stable_contribution_history_keys() -> BTreeSet<Principal> {
-    stable_contribution_history_keys_internal()
+pub fn stable_commitment_history_keys() -> BTreeSet<Principal> {
+    stable_commitment_history_keys_internal()
 }
 
 pub fn stable_cycles_history_keys() -> BTreeSet<Principal> {
     stable_cycles_history_keys_internal()
 }
 
-pub fn stable_contribution_history_for(canister_id: Principal) -> Vec<ContributionSample> {
-    load_stable_contribution_history_internal(canister_id)
+pub fn stable_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
+    load_stable_commitment_history_internal(canister_id)
 }
 
 pub fn stable_cycles_history_for(canister_id: Principal) -> Vec<CyclesSample> {
     load_stable_cycles_history_internal(canister_id)
 }
 
-pub fn ensure_contribution_history_loaded(st: &mut State, canister_id: Principal) {
-    if st.contribution_history.contains_key(&canister_id) {
+pub fn ensure_commitment_history_loaded(st: &mut State, canister_id: Principal) {
+    if st.commitment_history.contains_key(&canister_id) {
         return;
     }
-    let history = load_stable_contribution_history_internal(canister_id);
+    let history = load_stable_commitment_history_internal(canister_id);
     if !history.is_empty() {
-        st.contribution_history.insert(canister_id, history);
+        st.commitment_history.insert(canister_id, history);
     }
 }
 
@@ -1329,12 +1329,12 @@ pub fn with_root_and_registry_canister_state_mut<R>(canister_id: Principal, f: i
     with_state_mut_sections_scoped(DIRTY_ROOT | DIRTY_REGISTRY, Some(canister_id), None, None, f)
 }
 
-pub fn with_root_registry_and_contributions_canister_state_mut<R>(
+pub fn with_root_registry_and_commitments_canister_state_mut<R>(
     canister_id: Principal,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
     with_state_mut_sections_scoped(
-        DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_CONTRIBUTIONS,
+        DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_COMMITMENTS,
         Some(canister_id),
         Some(canister_id),
         None,
@@ -1373,7 +1373,7 @@ impl From<Config> for StableConfig {
             cycles_interval_seconds: value.cycles_interval_seconds,
             min_tx_e8s: value.min_tx_e8s,
             max_cycles_entries_per_canister: value.max_cycles_entries_per_canister,
-            max_contribution_entries_per_canister: value.max_contribution_entries_per_canister,
+            max_commitment_entries_per_canister: value.max_commitment_entries_per_canister,
             max_index_pages_per_tick: value.max_index_pages_per_tick,
             max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
         }
@@ -1398,7 +1398,7 @@ impl From<StableConfig> for Config {
             cycles_interval_seconds: value.cycles_interval_seconds,
             min_tx_e8s: value.min_tx_e8s,
             max_cycles_entries_per_canister: value.max_cycles_entries_per_canister,
-            max_contribution_entries_per_canister: value.max_contribution_entries_per_canister,
+            max_commitment_entries_per_canister: value.max_commitment_entries_per_canister,
             max_index_pages_per_tick: value.max_index_pages_per_tick,
             max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
         }
@@ -1409,7 +1409,7 @@ impl From<CanisterMeta> for StableCanisterMeta {
     fn from(value: CanisterMeta) -> Self {
         Self {
             first_seen_ts: value.first_seen_ts,
-            last_contribution_ts: value.last_contribution_ts,
+            last_commitment_ts: value.last_commitment_ts,
             last_cycles_probe_ts: value.last_cycles_probe_ts,
             last_cycles_probe_result: value.last_cycles_probe_result,
             last_burn_tx_id: value.last_burn_tx_id,
@@ -1423,7 +1423,7 @@ impl From<StableCanisterMeta> for CanisterMeta {
     fn from(value: StableCanisterMeta) -> Self {
         Self {
             first_seen_ts: value.first_seen_ts,
-            last_contribution_ts: value.last_contribution_ts,
+            last_commitment_ts: value.last_commitment_ts,
             last_cycles_probe_ts: value.last_cycles_probe_ts,
             last_cycles_probe_result: value.last_cycles_probe_result,
             last_burn_tx_id: value.last_burn_tx_id,
@@ -1448,8 +1448,8 @@ mod tests {
         });
         with_canister_sources_map(|map| map.clear_new());
         with_canister_meta_map(|map| map.clear_new());
-        with_contribution_history_index_map(|map| map.clear_new());
-        with_contribution_entry_map(|map| map.clear_new());
+        with_commitment_history_index_map(|map| map.clear_new());
+        with_commitment_entry_map(|map| map.clear_new());
         with_cycles_history_index_map(|map| map.clear_new());
         with_cycles_entry_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
@@ -1478,7 +1478,7 @@ mod tests {
             cycles_interval_seconds: 120,
             min_tx_e8s: 100_000_000,
             max_cycles_entries_per_canister: 100,
-            max_contribution_entries_per_canister: 100,
+            max_commitment_entries_per_canister: 100,
             max_index_pages_per_tick: 10,
             max_canisters_per_cycles_tick: 10,
         }
@@ -1504,15 +1504,15 @@ mod tests {
         })
     }
 
-    fn snapshot_contribution_history_map() -> BTreeMap<Principal, Vec<ContributionSample>> {
-        with_contribution_history_index_map(|index_map| {
+    fn snapshot_commitment_history_map() -> BTreeMap<Principal, Vec<CommitmentSample>> {
+        with_commitment_history_index_map(|index_map| {
             let mut out = BTreeMap::new();
             for (key, ids) in index_map.iter() {
                 let canister_id = key.to_principal();
                 let mut samples = Vec::new();
                 for tx_id in ids.0 {
-                    if let Some(sample) = with_contribution_entry_map(|entry_map| {
-                        entry_map.get(&ContributionEntryKey::new(canister_id, tx_id))
+                    if let Some(sample) = with_commitment_entry_map(|entry_map| {
+                        entry_map.get(&CommitmentEntryKey::new(canister_id, tx_id))
                     }) {
                         samples.push(sample);
                     }
@@ -1559,9 +1559,9 @@ mod tests {
         let mut st = State::new(sample_config(), 5_000);
         st.distinct_canisters.insert(canister_id);
         let mut sources = BTreeSet::new();
-        sources.insert(CanisterSource::MemoContribution);
+        sources.insert(CanisterSource::MemoCommitment);
         st.canister_sources.insert(canister_id, sources);
-        st.contribution_history.insert(canister_id, vec![ContributionSample {
+        st.commitment_history.insert(canister_id, vec![CommitmentSample {
             tx_id: 7,
             timestamp_nanos: Some(77),
             amount_e8s: 100_000_000,
@@ -1574,7 +1574,7 @@ mod tests {
         }]);
         st.per_canister_meta.insert(canister_id, CanisterMeta {
             first_seen_ts: Some(1),
-            last_contribution_ts: Some(77),
+            last_commitment_ts: Some(77),
             last_cycles_probe_ts: Some(88),
             last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus)),
             last_burn_tx_id: Some(11),
@@ -1586,10 +1586,10 @@ mod tests {
             canister_id,
             RegisteredCanisterSummary {
                 canister_id,
-                sources: vec![CanisterSource::MemoContribution],
-                qualifying_contribution_count: 1,
-                total_qualifying_contributed_e8s: 100_000_000,
-                last_contribution_ts: Some(77),
+                sources: vec![CanisterSource::MemoCommitment],
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 100_000_000,
+                last_commitment_ts: Some(77),
                 latest_cycles: Some(123_456),
                 last_cycles_probe_ts: Some(88),
             },
@@ -1600,9 +1600,9 @@ mod tests {
 
         let restored = restore_state_from_stable().expect("expected persisted historian state");
         assert_eq!(restored.distinct_canisters.len(), 1);
-        assert!(restored.contribution_history.get(&canister_id).is_none());
+        assert!(restored.commitment_history.get(&canister_id).is_none());
         assert!(restored.cycles_history.get(&canister_id).is_none());
-        assert_eq!(stable_contribution_history_for(canister_id)[0].tx_id, 7);
+        assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 7);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 123_456);
         assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);
         assert!(restored.registered_canister_summaries_cache.is_none());
@@ -1620,7 +1620,7 @@ mod tests {
         set_state(State::new(sample_config(), 6_000));
 
         with_state_mut(|st| {
-            st.recent_invalid_contributions = Some(vec![InvalidContribution {
+            st.recent_invalid_commitments = Some(vec![InvalidCommitment {
                 tx_id: 12,
                 timestamp_nanos: Some(120),
                 amount_e8s: 99,
@@ -1637,7 +1637,7 @@ mod tests {
 
         let restored = restore_state_from_stable().expect("expected persisted historian state after mutation");
         assert_eq!(restored.main_lock_state_ts, Some(66));
-        assert_eq!(restored.recent_invalid_contributions.as_ref().expect("missing invalid contributions")[0].tx_id, 12);
+        assert_eq!(restored.recent_invalid_commitments.as_ref().expect("missing invalid commitments")[0].tx_id, 12);
         assert_eq!(restored.recent_burns.as_ref().expect("missing recent burns")[0].canister_id, canister_id);
     }
 
@@ -1668,8 +1668,8 @@ mod tests {
         reset_test_storage();
         let canister_id = principal(&[12]);
         let mut st = State::new(sample_config(), 9_000);
-        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoContribution]));
-        st.contribution_history.insert(canister_id, vec![ContributionSample {
+        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.commitment_history.insert(canister_id, vec![CommitmentSample {
             tx_id: 31,
             timestamp_nanos: Some(310),
             amount_e8s: 500,
@@ -1682,7 +1682,7 @@ mod tests {
         }]);
         st.per_canister_meta.insert(canister_id, CanisterMeta {
             first_seen_ts: Some(1),
-            last_contribution_ts: Some(2),
+            last_commitment_ts: Some(2),
             last_cycles_probe_ts: Some(3),
             last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister)),
             last_burn_tx_id: Some(4),
@@ -1693,7 +1693,7 @@ mod tests {
 
         let sources_before = snapshot_sources_map();
         let meta_before = snapshot_meta_map();
-        let contributions_before = snapshot_contribution_history_map();
+        let commitments_before = snapshot_commitment_history_map();
         let cycles_before = snapshot_cycles_history_map();
 
         with_root_state_mut(|st| {
@@ -1704,7 +1704,7 @@ mod tests {
         assert_eq!(restored.main_lock_state_ts, Some(1234));
         assert_eq!(snapshot_sources_map(), sources_before);
         assert_eq!(snapshot_meta_map(), meta_before);
-        assert_eq!(snapshot_contribution_history_map(), contributions_before);
+        assert_eq!(snapshot_commitment_history_map(), commitments_before);
         assert_eq!(snapshot_cycles_history_map(), cycles_before);
     }
 
@@ -1713,8 +1713,8 @@ mod tests {
         reset_test_storage();
         let canister_id = principal(&[31]);
         let mut st = State::new(sample_config(), 10_000);
-        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoContribution]));
-        st.contribution_history.insert(canister_id, vec![ContributionSample {
+        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.commitment_history.insert(canister_id, vec![CommitmentSample {
             tx_id: 91,
             timestamp_nanos: Some(910),
             amount_e8s: 111,
@@ -1728,34 +1728,34 @@ mod tests {
         set_state(st);
 
         let restored = restore_state_from_stable().expect("expected restored historian state");
-        assert!(restored.contribution_history.is_empty());
+        assert!(restored.commitment_history.is_empty());
         assert!(restored.cycles_history.is_empty());
-        assert_eq!(stable_contribution_history_for(canister_id)[0].tx_id, 91);
+        assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 91);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 222);
     }
 
     #[test]
-    fn canister_scoped_contribution_flush_only_rewrites_target_canister_history() {
+    fn canister_scoped_commitment_flush_only_rewrites_target_canister_history() {
         reset_test_storage();
         let canister_a = principal(&[21]);
         let canister_b = principal(&[22]);
         let mut st = State::new(sample_config(), 9_500);
         for canister_id in [canister_a, canister_b] {
-            st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoContribution]));
+            st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoCommitment]));
             st.per_canister_meta.insert(canister_id, CanisterMeta::default());
         }
-        st.contribution_history.insert(
+        st.commitment_history.insert(
             canister_a,
-            vec![ContributionSample {
+            vec![CommitmentSample {
                 tx_id: 1,
                 timestamp_nanos: Some(10),
                 amount_e8s: 100,
                 counts_toward_faucet: true,
             }],
         );
-        st.contribution_history.insert(
+        st.commitment_history.insert(
             canister_b,
-            vec![ContributionSample {
+            vec![CommitmentSample {
                 tx_id: 2,
                 timestamp_nanos: Some(20),
                 amount_e8s: 200,
@@ -1764,23 +1764,23 @@ mod tests {
         );
         set_state(st);
 
-        let contributions_before = snapshot_contribution_history_map();
-        assert_eq!(contributions_before.get(&canister_b).unwrap()[0].tx_id, 2);
+        let commitments_before = snapshot_commitment_history_map();
+        assert_eq!(commitments_before.get(&canister_b).unwrap()[0].tx_id, 2);
 
-        with_root_registry_and_contributions_canister_state_mut(canister_a, |st| {
-            st.contribution_history.get_mut(&canister_a).unwrap().push(ContributionSample {
+        with_root_registry_and_commitments_canister_state_mut(canister_a, |st| {
+            st.commitment_history.get_mut(&canister_a).unwrap().push(CommitmentSample {
                 tx_id: 3,
                 timestamp_nanos: Some(30),
                 amount_e8s: 300,
                 counts_toward_faucet: true,
             });
-            st.per_canister_meta.entry(canister_a).or_default().last_contribution_ts = Some(30);
+            st.per_canister_meta.entry(canister_a).or_default().last_commitment_ts = Some(30);
         });
 
-        let contributions_after = snapshot_contribution_history_map();
-        assert_eq!(contributions_after.get(&canister_a).unwrap().len(), 2);
-        assert_eq!(contributions_after.get(&canister_a).unwrap()[1].tx_id, 3);
-        assert_eq!(contributions_after.get(&canister_b), contributions_before.get(&canister_b));
+        let commitments_after = snapshot_commitment_history_map();
+        assert_eq!(commitments_after.get(&canister_a).unwrap().len(), 2);
+        assert_eq!(commitments_after.get(&canister_a).unwrap()[1].tx_id, 3);
+        assert_eq!(commitments_after.get(&canister_b), commitments_before.get(&canister_b));
     }
 
 }

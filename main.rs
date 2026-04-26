@@ -869,12 +869,12 @@ fn cmd_test_disburser_integration() -> Result<()> {
 fn cmd_test_faucet_integration() -> Result<()> {
     let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
 
-    run_scenario(&mut outcomes, "Faucet happy path: one eligible contribution top-ups beneficiary and returns remainder", || {
+    run_scenario(&mut outcomes, "Faucet happy path: one eligible commitment top-ups beneficiary and returns remainder", || {
         let accounts = reset_faucet_fixture()?;
         let target = Principal::from_text(canister_id("mock_icp_index")?.trim())?;
         let payout_credit = 100_000_000u64;
         let denom = 400_000_000u64;
-        let contribution = 100_000_000u64;
+        let commitment = 100_000_000u64;
         let staking_id = account_identifier_text(&accounts.staking);
 
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = null }}, {}:nat64)", accounts.payout.owner.to_text(), payout_credit))?;
@@ -882,7 +882,7 @@ fn cmd_test_faucet_integration() -> Result<()> {
         let sub_vec = staking_sub.iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("(record {{ owner = principal \"{}\"; subaccount = opt vec {{ {} }} }}, {}:nat64)", accounts.staking.owner.to_text(), sub_vec, denom))?;
         let memo_vec = target.as_slice().iter().map(|b| format!("{}:nat8", b)).collect::<Vec<_>>().join("; ");
-        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", {}:nat64, opt vec {{ {} }})", staking_id, contribution, memo_vec))?;
+        let _: u64 = call_raw("mock_icp_index", "debug_append_transfer", &format!("(\"{}\", {}:nat64, opt vec {{ {} }})", staking_id, commitment, memo_vec))?;
 
         let _: () = call_raw_noargs("jupiter_faucet_dbg", "debug_main_tick")?;
 
@@ -937,7 +937,7 @@ fn cmd_test_faucet_integration() -> Result<()> {
         let second_summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
         let second_summary = second_summary.context("expected second faucet summary")?;
         if second_summary.topped_up_count != 1 || second_summary.topped_up_sum_e8s != 59_990_000 {
-            bail!("expected historical contribution to be revisited on second run; got topped_up_count={}, topped_up_sum_e8s={}", second_summary.topped_up_count, second_summary.topped_up_sum_e8s);
+            bail!("expected historical commitment to be revisited on second run; got topped_up_count={}, topped_up_sum_e8s={}", second_summary.topped_up_count, second_summary.topped_up_sum_e8s);
         }
 
         let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
@@ -951,7 +951,7 @@ fn cmd_test_faucet_integration() -> Result<()> {
         Ok(())
     });
 
-    run_scenario(&mut outcomes, "Faucet scans past the first index page and still processes later eligible contributions", || {
+    run_scenario(&mut outcomes, "Faucet scans past the first index page and still processes later eligible commitments", || {
         let accounts = reset_faucet_fixture()?;
         let target = Principal::from_text(canister_id("mock_icp_index")?.trim())?;
         let staking_id = account_identifier_text(&accounts.staking);

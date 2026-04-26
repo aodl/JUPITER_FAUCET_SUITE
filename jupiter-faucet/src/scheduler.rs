@@ -23,7 +23,7 @@ const MAX_INDEX_PAGES_PER_PAYOUT_TICK: u64 = 64;
 const MAX_INDEX_PAGES_PER_LATEST_SCAN: u64 = 128;
 // Only persist large barren spans so the durable skip-range cache stays small and a
 // one-time adversarial history scan remains much more expensive for the attacker than for
-// the faucet. These ranges are only valid while contribution-classification policy is
+// the faucet. These ranges are only valid while commitment-classification policy is
 // unchanged; if min_tx_e8s or memo-policy semantics ever change, the cache must be reset.
 const MIN_SKIP_RANGE_TX_COUNT: u64 = 10_000;
 const LEDGER_CREATED_AT_MAX_AGE_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
@@ -1072,7 +1072,7 @@ async fn process_payout(
 
     // Skip ranges are a durable cache of barren tx-id spans discovered by earlier jobs.
     // They deliberately optimize replay work only; if future maintenance changes the rules
-    // for what counts as a contribution, the cache must be cleared before relying on it.
+    // for what counts as a commitment, the cache must be cleared before relying on it.
     let mut skip_ranges = state::list_skip_ranges();
     let mut skip_range_idx = initial_skip_range_index(
         &skip_ranges,
@@ -1117,14 +1117,14 @@ async fn process_payout(
                     break;
                 }
                 page_next_start = Some(tx.id);
-                let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
+                let Some(commitment) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
                     continue;
                 };
-                if !matches!(logic::classify_contribution(min_tx_e8s, &contribution), logic::ContributionValidity::Valid { .. }) {
+                if !matches!(logic::classify_commitment(min_tx_e8s, &commitment), logic::CommitmentValidity::Valid { .. }) {
                     continue;
                 }
-                let weighted_amount_e8s = logic::contribution_amount_for_round_e8s(
-                    &contribution,
+                let weighted_amount_e8s = logic::commitment_amount_for_round_e8s(
+                    &commitment,
                     tx.id,
                     logic::index_tx_timestamp_nanos(tx),
                     job.round_start_latest_tx_id,
@@ -1150,7 +1150,7 @@ async fn process_payout(
                         // The effective-denominator pre-scan only needs to visit current-round
                         // transactions. The payout scan that follows still needs to revisit the
                         // full beneficiary history up to the round-end boundary so pre-existing
-                        // contributors continue to receive payouts each round.
+                        // committers continue to receive payouts each round.
                         active_job.next_start = None;
                         active_job.skip_candidate_start_tx_id = None;
                         active_job.skip_candidate_end_tx_id = None;
@@ -1258,7 +1258,7 @@ async fn process_payout(
                 break;
             }
             page_next_start = Some(tx.id);
-            let Some(contribution) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
+            let Some(commitment) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
                 skip_candidate.note_skippable(tx.id);
                 continue;
             };
@@ -1275,18 +1275,18 @@ async fn process_payout(
                     job.round_end_time_nanos.unwrap_or(now_nanos),
                 )
             });
-            match logic::classify_contribution(snapshot.3, &contribution) {
-                logic::ContributionValidity::IgnoreUnderThreshold => {
+            match logic::classify_commitment(snapshot.3, &commitment) {
+                logic::CommitmentValidity::IgnoreUnderThreshold => {
                     skip_candidate.note_skippable(tx.id);
                     ignored_under_threshold_delta = ignored_under_threshold_delta.saturating_add(1);
                 }
-                logic::ContributionValidity::IgnoreBadMemo => {
+                logic::CommitmentValidity::IgnoreBadMemo => {
                     skip_candidate.note_skippable(tx.id);
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
                 }
-                logic::ContributionValidity::Valid { beneficiary } => {
-                    let amount_for_round_e8s = logic::contribution_amount_for_round_e8s(
-                        &contribution,
+                logic::CommitmentValidity::Valid { beneficiary } => {
+                    let amount_for_round_e8s = logic::commitment_amount_for_round_e8s(
+                        &commitment,
                         tx.id,
                         logic::index_tx_timestamp_nanos(tx),
                         snapshot.4,
@@ -1758,7 +1758,7 @@ mod tests {
             }
             let first_id = page_idx * PAGE_SIZE + 1;
             let transactions = (0..max_results)
-                .map(|offset| contribution_tx(first_id + offset, &self.staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+                .map(|offset| commitment_tx(first_id + offset, &self.staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
                 .collect();
             Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
@@ -1802,7 +1802,7 @@ mod tests {
         }
     }
 
-    fn contribution_tx_at(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>, timestamp_nanos: u64) -> IndexTransactionWithId {
+    fn commitment_tx_at(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>, timestamp_nanos: u64) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -1821,8 +1821,8 @@ mod tests {
         }
     }
 
-    fn contribution_tx(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>) -> IndexTransactionWithId {
-        contribution_tx_at(id, staking_id, amount_e8s, memo, 0)
+    fn commitment_tx(id: u64, staking_id: &str, amount_e8s: u64, memo: Option<Vec<u8>>) -> IndexTransactionWithId {
+        commitment_tx_at(id, staking_id, amount_e8s, memo, 0)
     }
 
     fn test_config_with_intervals(main_interval_seconds: u64, rescue_interval_seconds: u64) -> state::Config {
@@ -1984,7 +1984,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::TemporarilyUnavailable,
@@ -1994,7 +1994,7 @@ mod tests {
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
 
         assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
-        assert_eq!(ledger.transfer_calls(), 3, "first contribution should retry inline once and the job should still send the remainder");
+        assert_eq!(ledger.transfer_calls(), 3, "first commitment should retry inline once and the job should still send the remainder");
         let created_at_times = ledger.created_at_times();
         assert_eq!(created_at_times.len(), 3);
         assert_eq!(created_at_times[0], created_at_times[1], "immediate retry must reuse the original transfer identity");
@@ -2015,7 +2015,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::TemporarilyUnavailable,
@@ -2045,8 +2045,8 @@ mod tests {
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary_a.to_text().into_bytes())),
-            contribution_tx(11, &staking_id, 60_000_000, Some(beneficiary_b.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary_a.to_text().into_bytes())),
+            commitment_tx(11, &staking_id, 60_000_000, Some(beneficiary_b.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::TemporarilyUnavailable,
@@ -2075,7 +2075,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::CallErr,
@@ -2102,7 +2102,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::CallErr,
@@ -2126,7 +2126,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::PermanentErr,
@@ -2174,7 +2174,7 @@ mod tests {
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(4, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(88), LedgerStep::Ok(188)]);
         let cmc = ScriptedCmc::new(vec![CmcStep::RetryableErr, CmcStep::RetryableErr, CmcStep::Ok]);
@@ -2197,7 +2197,7 @@ mod tests {
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(4025, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(89), LedgerStep::Ok(189)]);
         let cmc = ScriptedCmc::new(vec![CmcStep::TerminalErr, CmcStep::TerminalErr, CmcStep::Ok]);
@@ -2370,8 +2370,8 @@ mod tests {
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary_a.to_text().into_bytes())),
-            contribution_tx(11, &staking_id, 60_000_000, Some(beneficiary_b.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary_a.to_text().into_bytes())),
+            commitment_tx(11, &staking_id, 60_000_000, Some(beneficiary_b.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::TemporarilyUnavailable,
@@ -2476,7 +2476,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::TemporarilyUnavailable,
@@ -2497,9 +2497,9 @@ mod tests {
         let cfg = test_config();
         let staking_id = account_identifier_text(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(3, &staking_id, 50_000_000, None),
-            contribution_tx(2, &staking_id, 50_000_000, None),
-            contribution_tx(1, &staking_id, 50_000_000, None),
+            commitment_tx(3, &staking_id, 50_000_000, None),
+            commitment_tx(2, &staking_id, 50_000_000, None),
+            commitment_tx(1, &staking_id, 50_000_000, None),
         ]);
 
         let scan = run_ready(scan_latest_tx_id(&index, staking_id, None));
@@ -2516,8 +2516,8 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
-            contribution_tx(2, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(2, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(701), LedgerStep::Ok(702)]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
@@ -2527,7 +2527,7 @@ mod tests {
             "faucet should continue from the next older real-index page instead of treating tx_id 2 after cursor 3 as an invariant failure",
         );
         let summary = state::with_state(|st| st.last_summary.clone()).expect("payout should complete and summarize");
-        assert_eq!(summary.topped_up_count, 1, "the older beneficiary contribution behind the cursor should be paid exactly once");
+        assert_eq!(summary.topped_up_count, 1, "the older beneficiary commitment behind the cursor should be paid exactly once");
         assert_eq!(ledger.transfer_calls(), 2, "one beneficiary transfer plus one remainder-to-self transfer should be sent");
         assert_eq!(state::with_state(|st| st.consecutive_index_latest_invariant_failures), Some(0));
     }
@@ -2541,15 +2541,15 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(5, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
-            contribution_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
-            contribution_tx(2, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(5, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
+            commitment_tx(2, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(711), LedgerStep::Ok(712)]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
 
         assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
-        assert_eq!(ledger.transfer_calls(), 2, "newer txs above the round-end boundary should be skipped while in-boundary and older eligible contributions are still paid");
+        assert_eq!(ledger.transfer_calls(), 2, "newer txs above the round-end boundary should be skipped while in-boundary and older eligible commitments are still paid");
     }
 
     #[test]
@@ -2562,13 +2562,13 @@ mod tests {
 
         let mut first_page = Vec::new();
         for id in 1..500u64 {
-            first_page.push(contribution_tx(id, &staking_id, 1, None));
+            first_page.push(commitment_tx(id, &staking_id, 1, None));
         }
-        first_page.push(contribution_tx(500, &staking_id, 50_000_000, Some(first.to_text().into_bytes())));
+        first_page.push(commitment_tx(500, &staking_id, 50_000_000, Some(first.to_text().into_bytes())));
 
         let second_page = vec![
-            contribution_tx(500, &staking_id, 50_000_000, Some(first.to_text().into_bytes())),
-            contribution_tx(501, &staking_id, 50_000_000, Some(second.to_text().into_bytes())),
+            commitment_tx(500, &staking_id, 50_000_000, Some(first.to_text().into_bytes())),
+            commitment_tx(501, &staking_id, 50_000_000, Some(second.to_text().into_bytes())),
         ];
 
         let index = ScriptedIndex::new(vec![
@@ -2591,7 +2591,7 @@ mod tests {
         assert_eq!(cmc.call_count(), 3);
 
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
-        assert_eq!(summary.topped_up_count, 2, "overlapping page replay must not duplicate the tx id 500 contribution");
+        assert_eq!(summary.topped_up_count, 2, "overlapping page replay must not duplicate the tx id 500 commitment");
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.ignored_under_threshold, 499);
         assert_eq!(summary.ignored_bad_memo, 0);
@@ -2603,12 +2603,12 @@ mod tests {
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
                 oldest_tx_id: Some(1),
-                transactions: (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, "staking", 1, None)).collect(),
+                transactions: (11..=(10 + PAGE_SIZE)).map(|id| commitment_tx(id, "staking", 1, None)).collect(),
             }),
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
                 oldest_tx_id: Some(1),
-                transactions: (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, "staking", 1, None)).collect(),
+                transactions: (11..=(10 + PAGE_SIZE)).map(|id| commitment_tx(id, "staking", 1, None)).collect(),
             }),
         ]);
 
@@ -2625,7 +2625,7 @@ mod tests {
             job.next_start = Some(10);
         });
         let staking_id = account_identifier_text(&cfg.staking_account);
-        let repeated_page: Vec<_> = (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, &staking_id, 1, None)).collect();
+        let repeated_page: Vec<_> = (11..=(10 + PAGE_SIZE)).map(|id| commitment_tx(id, &staking_id, 1, None)).collect();
         let index = ScriptedIndex::new(vec![
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
@@ -2651,7 +2651,7 @@ mod tests {
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
                 oldest_tx_id: Some(1),
-                transactions: (11..=(10 + PAGE_SIZE)).map(|id| contribution_tx(id, &staking_id, 1, None)).collect(),
+                transactions: (11..=(10 + PAGE_SIZE)).map(|id| commitment_tx(id, &staking_id, 1, None)).collect(),
             }),
         ]);
         assert!(!run_ready(process_payout(&ledger, &second_index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
@@ -2682,9 +2682,9 @@ mod tests {
         let cfg = test_config();
         let staking_id = account_identifier_text(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
-            contribution_tx(10, &staking_id, 1, None),
-            contribution_tx(11, &staking_id, 1, None),
-            contribution_tx(12, &staking_id, 1, None),
+            commitment_tx(10, &staking_id, 1, None),
+            commitment_tx(11, &staking_id, 1, None),
+            commitment_tx(12, &staking_id, 1, None),
         ]);
 
         let latest = run_ready(scan_latest_tx_id(&index, staking_id, Some(10)));
@@ -2782,18 +2782,18 @@ mod tests {
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 200,
                 oldest_tx_id: Some(10),
-                transactions: vec![contribution_tx(10, &staking_id, 100, None)],
+                transactions: vec![commitment_tx(10, &staking_id, 100, None)],
             }),
             IndexResponseStep::Err,
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 200,
                 oldest_tx_id: Some(10),
-                transactions: vec![contribution_tx(10, &staking_id, 100, None)],
+                transactions: vec![commitment_tx(10, &staking_id, 100, None)],
             }),
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 200,
                 oldest_tx_id: Some(10),
-                transactions: vec![contribution_tx(11, &staking_id, 100, None)],
+                transactions: vec![commitment_tx(11, &staking_id, 100, None)],
             }),
         ]);
 
@@ -2852,7 +2852,7 @@ mod tests {
 
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
-            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
         let index = RecordingIndex::new(txs);
         let ledger = ScriptedLedger::new(vec![]);
@@ -2888,7 +2888,7 @@ mod tests {
 
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
-            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
         let index = RecordingIndex::new(txs);
         let ledger = ScriptedLedger::new(vec![]);
@@ -2907,7 +2907,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_below_threshold_history_replays_from_start_and_still_reaches_later_qualifying_contribution_without_persisting_skip_ranges() {
+    fn repeated_below_threshold_history_replays_from_start_and_still_reaches_later_qualifying_commitment_without_persisting_skip_ranges() {
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
 
         for round in 0..2_u64 {
@@ -2916,8 +2916,8 @@ mod tests {
             let cfg = set_active_job(now_secs, job);
             let staking_id = account_identifier_text(&cfg.staking_account);
             let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
-                .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
-                .chain(std::iter::once(contribution_tx(
+                .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+                .chain(std::iter::once(commitment_tx(
                     MIN_SKIP_RANGE_TX_COUNT,
                     &staking_id,
                     crate::MIN_MIN_TX_E8S,
@@ -2941,7 +2941,7 @@ mod tests {
             assert!(state::list_skip_ranges().is_empty(), "round {round} should not persist sub-threshold barren history");
             let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
             assert_eq!(summary.ignored_under_threshold, MIN_SKIP_RANGE_TX_COUNT - 1, "round {round} should still rescan and ignore the same barren span");
-            assert_eq!(summary.topped_up_count, 1, "round {round} should still reach the qualifying contribution after replay");
+            assert_eq!(summary.topped_up_count, 1, "round {round} should still reach the qualifying commitment after replay");
         }
     }
 
@@ -2959,7 +2959,7 @@ mod tests {
 
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let txs = vec![contribution_tx(
+        let txs = vec![commitment_tx(
             MIN_SKIP_RANGE_TX_COUNT + 1,
             &staking_id,
             500_000_000,
@@ -2997,7 +2997,7 @@ mod tests {
 
         let staking_id = account_identifier_text(&cfg.staking_account);
         let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
-            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
         let index = RecordingIndex::new(txs);
         let ledger = ScriptedLedger::new(vec![]);
@@ -3071,7 +3071,7 @@ mod tests {
 
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
-            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
         let first_page = GetAccountIdentifierTransactionsResponse {
             balance: 0,
@@ -3128,9 +3128,9 @@ mod tests {
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let mut txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
-            .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
+            .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
-        txs.push(contribution_tx(
+        txs.push(commitment_tx(
             MIN_SKIP_RANGE_TX_COUNT + 1,
             &staking_id,
             crate::MIN_MIN_TX_E8S,
@@ -3138,7 +3138,7 @@ mod tests {
         ));
         txs.extend(
             ((MIN_SKIP_RANGE_TX_COUNT + 2)..=(2 * MIN_SKIP_RANGE_TX_COUNT + 1))
-                .map(|id| contribution_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None)),
+                .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None)),
         );
         let index = RecordingIndex::new(txs);
         let ledger = ScriptedLedger::new(vec![]);
@@ -3193,10 +3193,10 @@ mod tests {
         let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
         let beneficiary_c = Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap();
         let index = RecordingIndex::new(vec![
-            contribution_tx_at(1, &staking_id, 1_000_000_000, Some(beneficiary_a.to_text().into_bytes()), 0),
-            contribution_tx_at(2, &staking_id, 900_000_000, Some(beneficiary_b.to_text().into_bytes()), 80_000_000_000),
+            commitment_tx_at(1, &staking_id, 1_000_000_000, Some(beneficiary_a.to_text().into_bytes()), 0),
+            commitment_tx_at(2, &staking_id, 900_000_000, Some(beneficiary_b.to_text().into_bytes()), 80_000_000_000),
             // Same timestamp as tx 2 on purpose: tx-id, not timestamp, defines the round range.
-            contribution_tx_at(3, &staking_id, 900_000_000, Some(beneficiary_c.to_text().into_bytes()), 80_000_000_000),
+            commitment_tx_at(3, &staking_id, 900_000_000, Some(beneficiary_c.to_text().into_bytes()), 80_000_000_000),
         ]);
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 1_900_000_000, vec![11, 12]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
@@ -3221,7 +3221,7 @@ mod tests {
     }
 
     #[test]
-    fn process_payout_still_pays_pre_round_contributions_after_effective_denom_prescan() {
+    fn process_payout_still_pays_pre_round_commitments_after_effective_denom_prescan() {
         let now_secs = 2_500;
         let mut job = ActivePayoutJob::new(78, 10_000, 100_000_000, 1_400_000_000, now_secs * 1_000_000_000);
         job.next_start = Some(1);
@@ -3240,7 +3240,7 @@ mod tests {
         let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = RecordingIndex::new(vec![
-            contribution_tx_at(1, &staking_id, 400_000_000, Some(beneficiary.to_text().into_bytes()), 0),
+            commitment_tx_at(1, &staking_id, 400_000_000, Some(beneficiary.to_text().into_bytes()), 0),
         ]);
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 1_400_000_000, vec![31, 32]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
@@ -3273,7 +3273,7 @@ mod tests {
         let staking_id = account_identifier_text(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = RecordingIndex::new(vec![
-            contribution_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), now_secs * 1_000_000_000),
+            commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), now_secs * 1_000_000_000),
         ]);
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![21, 22]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);

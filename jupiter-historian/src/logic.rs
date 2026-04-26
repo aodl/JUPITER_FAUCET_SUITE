@@ -6,10 +6,10 @@ const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CA
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
-use crate::state::{CanisterMeta, CanisterSource, ContributionSample, CyclesProbeResult, CyclesSample, CyclesSampleSource};
+use crate::state::{CanisterMeta, CanisterSource, CommitmentSample, CyclesProbeResult, CyclesSample, CyclesSampleSource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexedContribution {
+pub struct IndexedCommitment {
     pub tx_id: u64,
     pub beneficiary: Principal,
     pub amount_e8s: u64,
@@ -18,7 +18,7 @@ pub struct IndexedContribution {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexedInvalidContribution {
+pub struct IndexedInvalidCommitment {
     pub tx_id: u64,
     pub amount_e8s: u64,
     pub timestamp_nanos: Option<u64>,
@@ -26,9 +26,9 @@ pub struct IndexedInvalidContribution {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IndexedContributionEntry {
-    Valid(IndexedContribution),
-    Invalid(IndexedInvalidContribution),
+pub enum IndexedCommitmentEntry {
+    Valid(IndexedCommitment),
+    Invalid(IndexedInvalidCommitment),
 }
 
 
@@ -53,11 +53,11 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id:
     }
 }
 
-pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedContributionEntry> {
+pub fn indexed_commitment_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedCommitmentEntry> {
     let (tx_id, memo_opt, amount_e8s, timestamp_nanos) = memo_bytes_from_index_tx(tx, staking_account_id)?;
     let memo = memo_opt?;
     if let Some(beneficiary) = parse_target_canister_from_memo(&memo) {
-        Some(IndexedContributionEntry::Valid(IndexedContribution {
+        Some(IndexedCommitmentEntry::Valid(IndexedCommitment {
             tx_id,
             beneficiary,
             amount_e8s,
@@ -65,7 +65,7 @@ pub fn indexed_contribution_from_tx(tx: &IndexTransactionWithId, staking_account
             counts_toward_faucet: amount_e8s >= min_tx_e8s,
         }))
     } else {
-        Some(IndexedContributionEntry::Invalid(IndexedInvalidContribution {
+        Some(IndexedCommitmentEntry::Invalid(IndexedInvalidCommitment {
             tx_id,
             amount_e8s,
             timestamp_nanos,
@@ -80,7 +80,7 @@ pub fn merge_sources(existing: Option<&BTreeSet<CanisterSource>>, add: CanisterS
     out
 }
 
-pub fn push_contribution(history: &mut Vec<ContributionSample>, sample: ContributionSample, max_entries: u32) -> bool {
+pub fn push_commitment(history: &mut Vec<CommitmentSample>, sample: CommitmentSample, max_entries: u32) -> bool {
     if history.iter().any(|existing| existing.tx_id == sample.tx_id) {
         return false;
     }
@@ -115,11 +115,11 @@ pub fn apply_cycles_probe_result(meta: &mut CanisterMeta, timestamp_nanos: u64, 
     meta.last_cycles_probe_result = Some(result);
 }
 
-pub fn apply_contribution_seen(meta: &mut CanisterMeta, timestamp_nanos: Option<u64>, now_secs: u64) {
+pub fn apply_commitment_seen(meta: &mut CanisterMeta, timestamp_nanos: Option<u64>, now_secs: u64) {
     if meta.first_seen_ts.is_none() {
         meta.first_seen_ts = Some(timestamp_nanos.map(|ts| ts / 1_000_000_000).unwrap_or(now_secs));
     }
-    meta.last_contribution_ts = Some(timestamp_nanos.map(|ts| ts / 1_000_000_000).unwrap_or(now_secs));
+    meta.last_commitment_ts = Some(timestamp_nanos.map(|ts| ts / 1_000_000_000).unwrap_or(now_secs));
 }
 
 pub fn should_skip_blackhole_for_sources(sources: &BTreeSet<CanisterSource>) -> bool {
@@ -224,7 +224,7 @@ mod tests {
 
 
     #[test]
-    fn indexed_contribution_uses_icrc1_memo_and_threshold_flag() {
+    fn indexed_commitment_uses_icrc1_memo_and_threshold_flag() {
         let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
         let beneficiary = target_canister();
         let tx = IndexTransactionWithId {
@@ -243,14 +243,14 @@ mod tests {
                 timestamp: Some(IndexTimeStamp { timestamp_nanos: 99 }),
             },
         };
-        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
-            IndexedContributionEntry::Valid(c) => {
+            IndexedCommitmentEntry::Valid(c) => {
                 assert_eq!(c.beneficiary, beneficiary);
                 assert!(!c.counts_toward_faucet);
                 assert_eq!(c.timestamp_nanos, Some(99));
             }
-            IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
         }
     }
 
@@ -274,7 +274,7 @@ mod tests {
                 timestamp: Some(IndexTimeStamp { timestamp_nanos: 99 }),
             },
         };
-        let c = indexed_contribution_from_tx(&tx, &staking, 100);
+        let c = indexed_commitment_from_tx(&tx, &staking, 100);
         assert!(c.is_none());
     }
 
@@ -297,12 +297,12 @@ mod tests {
                 timestamp: None,
             },
         };
-        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
-            IndexedContributionEntry::Invalid(c) => {
+            IndexedCommitmentEntry::Invalid(c) => {
                 assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER);
             }
-            IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
+            IndexedCommitmentEntry::Valid(_) => panic!("expected invalid commitment"),
         }
     }
 
@@ -325,13 +325,13 @@ mod tests {
                 timestamp: None,
             },
         };
-        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
-            IndexedContributionEntry::Valid(c) => {
+            IndexedCommitmentEntry::Valid(c) => {
                 assert_eq!(c.beneficiary, Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap());
                 assert!(c.counts_toward_faucet);
             }
-            IndexedContributionEntry::Invalid(_) => panic!("expected valid contribution"),
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
         }
     }
 
@@ -354,10 +354,10 @@ mod tests {
                 timestamp: None,
             },
         };
-        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
-            IndexedContributionEntry::Invalid(c) => assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER),
-            IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
+            IndexedCommitmentEntry::Invalid(c) => assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER),
+            IndexedCommitmentEntry::Valid(_) => panic!("expected invalid commitment"),
         }
     }
 
@@ -380,10 +380,10 @@ mod tests {
                 timestamp: None,
             },
         };
-        let c = indexed_contribution_from_tx(&tx, &staking, 100).unwrap();
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
-            IndexedContributionEntry::Invalid(c) => assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER),
-            IndexedContributionEntry::Valid(_) => panic!("expected invalid contribution"),
+            IndexedCommitmentEntry::Invalid(c) => assert_eq!(c.memo_text, INVALID_MEMO_PLACEHOLDER),
+            IndexedCommitmentEntry::Valid(_) => panic!("expected invalid commitment"),
         }
     }
 
@@ -397,12 +397,12 @@ mod tests {
     }
 
     #[test]
-    fn push_contribution_dedupes_tx_and_prunes() {
+    fn push_commitment_dedupes_tx_and_prunes() {
         let mut history = vec![];
-        assert!(push_contribution(&mut history, ContributionSample { tx_id: 1, timestamp_nanos: Some(1), amount_e8s: 10, counts_toward_faucet: true }, 2));
-        assert!(!push_contribution(&mut history, ContributionSample { tx_id: 1, timestamp_nanos: Some(1), amount_e8s: 10, counts_toward_faucet: true }, 2));
-        assert!(push_contribution(&mut history, ContributionSample { tx_id: 2, timestamp_nanos: Some(2), amount_e8s: 20, counts_toward_faucet: true }, 2));
-        assert!(push_contribution(&mut history, ContributionSample { tx_id: 3, timestamp_nanos: Some(3), amount_e8s: 30, counts_toward_faucet: true }, 2));
+        assert!(push_commitment(&mut history, CommitmentSample { tx_id: 1, timestamp_nanos: Some(1), amount_e8s: 10, counts_toward_faucet: true }, 2));
+        assert!(!push_commitment(&mut history, CommitmentSample { tx_id: 1, timestamp_nanos: Some(1), amount_e8s: 10, counts_toward_faucet: true }, 2));
+        assert!(push_commitment(&mut history, CommitmentSample { tx_id: 2, timestamp_nanos: Some(2), amount_e8s: 20, counts_toward_faucet: true }, 2));
+        assert!(push_commitment(&mut history, CommitmentSample { tx_id: 3, timestamp_nanos: Some(3), amount_e8s: 30, counts_toward_faucet: true }, 2));
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].tx_id, 2);
         assert_eq!(history[1].tx_id, 3);
@@ -410,13 +410,13 @@ mod tests {
 
     #[test]
     fn source_merge_and_blackhole_skip_behave() {
-        let merged = merge_sources(None, CanisterSource::MemoContribution);
+        let merged = merge_sources(None, CanisterSource::MemoCommitment);
         let merged = merge_sources(Some(&merged), CanisterSource::SnsDiscovery);
-        assert!(merged.contains(&CanisterSource::MemoContribution));
+        assert!(merged.contains(&CanisterSource::MemoCommitment));
         assert!(should_skip_blackhole_for_sources(&merged));
     }
     #[test]
-    fn transfer_from_transactions_do_not_count_as_staking_contributions() {
+    fn transfer_from_transactions_do_not_count_as_staking_commitments() {
         let tx = IndexTransactionWithId {
             id: 42,
             transaction: IndexTransaction {
@@ -434,7 +434,7 @@ mod tests {
             },
         };
         assert!(memo_bytes_from_index_tx(&tx, "staking-account").is_none());
-        assert!(indexed_contribution_from_tx(&tx, "staking-account", 1).is_none());
+        assert!(indexed_commitment_from_tx(&tx, "staking-account", 1).is_none());
     }
 
 

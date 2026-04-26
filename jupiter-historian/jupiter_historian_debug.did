@@ -1,24 +1,24 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
-type CanisterSource = variant { MemoContribution; SnsDiscovery };
-type ContributionSample = record {
+type CanisterSource = variant { MemoCommitment; SnsDiscovery };
+type CommitmentSample = record {
   tx_id : nat64;
   timestamp_nanos : opt nat64;
   amount_e8s : nat64;
   counts_toward_faucet : bool;
 };
-type RecentContributionOutcomeCategory = variant {
-  QualifyingContribution;
-  UnderThresholdContribution;
+type RecentCommitmentOutcomeCategory = variant {
+  QualifyingCommitment;
+  UnderThresholdCommitment;
   InvalidTargetMemo;
 };
-type RecentContributionListItem = record {
+type RecentCommitmentListItem = record {
   canister_id : opt principal;
   memo_text : opt text;
   tx_id : nat64;
   timestamp_nanos : opt nat64;
   amount_e8s : nat64;
   counts_toward_faucet : bool;
-  outcome_category : RecentContributionOutcomeCategory;
+  outcome_category : RecentCommitmentOutcomeCategory;
 };
 type CyclesSampleSource = variant { BlackholeStatus; SelfCanister; SnsRootSummary };
 type CyclesSample = record {
@@ -33,11 +33,11 @@ type CyclesProbeResult = variant {
 };
 type CanisterMeta = record {
   first_seen_ts : opt nat64;
-  last_contribution_ts : opt nat64;
+  last_commitment_ts : opt nat64;
   last_cycles_probe_ts : opt nat64;
   last_cycles_probe_result : opt CyclesProbeResult;
 };
-type ContributionIndexFault = record {
+type CommitmentIndexFault = record {
   observed_at_ts : nat64;
   last_cursor_tx_id : opt nat64;
   offending_tx_id : nat64;
@@ -59,7 +59,7 @@ type InitArgs = record {
   cycles_interval_seconds : opt nat64;
   min_tx_e8s : opt nat64;
   max_cycles_entries_per_canister : opt nat32;
-  max_contribution_entries_per_canister : opt nat32;
+  max_commitment_entries_per_canister : opt nat32;
   max_index_pages_per_tick : opt nat32;
   max_canisters_per_cycles_tick : opt nat32;
 };
@@ -83,14 +83,14 @@ type CyclesHistoryPage = record {
   items : vec CyclesSample;
   next_start_after_ts : opt nat64;
 };
-type GetContributionHistoryArgs = record {
+type GetCommitmentHistoryArgs = record {
   canister_id : principal;
   start_after_tx_id : opt nat64;
   limit : opt nat32;
   descending : opt bool;
 };
-type ContributionHistoryPage = record {
-  items : vec ContributionSample;
+type CommitmentHistoryPage = record {
+  items : vec CommitmentSample;
   next_start_after_tx_id : opt nat64;
 };
 type CanisterOverview = record {
@@ -98,11 +98,11 @@ type CanisterOverview = record {
   sources : vec CanisterSource;
   meta : CanisterMeta;
   cycles_points : nat32;
-  contribution_points : nat32;
+  commitment_points : nat32;
 };
 type PublicCounts = record {
   registered_canister_count : nat64;
-  qualifying_contribution_count : nat64;
+  qualifying_commitment_count : nat64;
   sns_discovered_canister_count : nat64;
   total_output_e8s : nat64;
   total_rewards_e8s : nat64;
@@ -111,6 +111,7 @@ type PublicStatus = record {
   staking_account : Account;
   ledger_canister_id : principal;
   faucet_canister_id : principal;
+  cmc_canister_id : opt principal;
   output_source_account : opt Account;
   output_account : opt Account;
   rewards_account : opt Account;
@@ -122,7 +123,7 @@ type PublicStatus = record {
   heap_memory_bytes : opt nat64;
   stable_memory_bytes : opt nat64;
   total_memory_bytes : opt nat64;
-  contribution_index_fault : opt ContributionIndexFault;
+  commitment_index_fault : opt CommitmentIndexFault;
 };
 type ListRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
@@ -131,9 +132,9 @@ type ListRegisteredCanisterSummariesArgs = record {
 type RegisteredCanisterSummary = record {
   canister_id : principal;
   sources : vec CanisterSource;
-  qualifying_contribution_count : nat64;
-  total_qualifying_contributed_e8s : nat64;
-  last_contribution_ts : opt nat64;
+  qualifying_commitment_count : nat64;
+  total_qualifying_committed_e8s : nat64;
+  last_commitment_ts : opt nat64;
   latest_cycles : opt nat;
   last_cycles_probe_ts : opt nat64;
 };
@@ -143,12 +144,12 @@ type ListRegisteredCanisterSummariesResponse = record {
   page_size : nat32;
   total : nat64;
 };
-type ListRecentContributionsArgs = record {
+type ListRecentCommitmentsArgs = record {
   limit : opt nat32;
   qualifying_only : opt bool;
 };
-type ListRecentContributionsResponse = record {
-  items : vec RecentContributionListItem;
+type ListRecentCommitmentsResponse = record {
+  items : vec RecentCommitmentListItem;
 };
 type DebugState = record {
   distinct_canister_count : nat32;
@@ -180,19 +181,19 @@ type DebugConfig = record {
   cycles_interval_seconds : nat64;
   min_tx_e8s : nat64;
   max_cycles_entries_per_canister : nat32;
-  max_contribution_entries_per_canister : nat32;
+  max_commitment_entries_per_canister : nat32;
   max_index_pages_per_tick : nat32;
   max_canisters_per_cycles_tick : nat32;
 };
 service : (InitArgs) -> {
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
-  get_contribution_history : (GetContributionHistoryArgs) -> (ContributionHistoryPage) query;
+  get_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
   list_registered_canister_summaries : (ListRegisteredCanisterSummariesArgs) -> (ListRegisteredCanisterSummariesResponse) query;
-  list_recent_contributions : (ListRecentContributionsArgs) -> (ListRecentContributionsResponse) query;
+  list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;
   debug_driver_tick : () -> ();

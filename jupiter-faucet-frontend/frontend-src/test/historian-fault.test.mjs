@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 
 import { readOpt } from '../src/candid-opt.js';
 import {
-  buildContributionIndexFaultBannerText,
-  readContributionIndexFault,
+  buildCommitmentIndexFaultBannerText,
+  readCommitmentIndexFault,
 } from '../src/historian-fault.js';
 
 test('readOpt returns null for a candid opt none array', () => {
@@ -15,14 +15,14 @@ test('readOpt unwraps a candid opt some array', () => {
   assert.equal(readOpt([42n]), 42n);
 });
 
-test('readContributionIndexFault ignores a candid opt none array', () => {
-  assert.equal(readContributionIndexFault({ contribution_index_fault: [] }), null);
+test('readCommitmentIndexFault ignores a candid opt none array', () => {
+  assert.equal(readCommitmentIndexFault({ commitment_index_fault: [] }), null);
 });
 
-test('buildContributionIndexFaultBannerText formats a valid historian fault', () => {
-  const text = buildContributionIndexFaultBannerText(
+test('buildCommitmentIndexFaultBannerText formats a valid historian fault', () => {
+  const text = buildCommitmentIndexFaultBannerText(
     {
-      contribution_index_fault: [{
+      commitment_index_fault: [{
         observed_at_ts: 123n,
         last_cursor_tx_id: [51n],
         offending_tx_id: 49n,
@@ -37,13 +37,13 @@ test('buildContributionIndexFaultBannerText formats a valid historian fault', ()
 
   assert.equal(
     text,
-    'Historian contribution indexing is degraded. First observed at ts:123. Last cursor: n:51. Offending tx: n:49. Non-monotonic transaction ids observed from the index.',
+    'Historian commitment indexing is degraded. First observed at ts:123. Last cursor: n:51. Offending tx: n:49. Non-monotonic transaction ids observed from the index.',
   );
 });
 
-test('buildContributionIndexFaultBannerText does not append undefined text for malformed payloads', () => {
-  const text = buildContributionIndexFaultBannerText(
-    { contribution_index_fault: [{}] },
+test('buildCommitmentIndexFaultBannerText does not append undefined text for malformed payloads', () => {
+  const text = buildCommitmentIndexFaultBannerText(
+    { commitment_index_fault: [{}] },
     {
       formatTimestampSeconds: () => 'unused',
       formatInteger: () => 'unused',

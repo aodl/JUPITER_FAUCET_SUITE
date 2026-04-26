@@ -80,9 +80,9 @@ Used for:
 - `get_public_counts`
 - `get_public_status`
 - `list_registered_canister_summaries`
-- `list_recent_contributions`
+- `list_recent_commitments`
 
-These power the registry table, contribution feed, and historian-backed status surface.
+These power the registry table, commitment feed, and historian-backed status surface.
 
 ### 2) the configured ledger canister
 
@@ -103,7 +103,7 @@ No browser requests are made to custom `/dashboard/*` routes.
 
 The browser data loader is intentionally defensive:
 
-- it fetches historian counts, status, registered-canister summaries, and recent contributions together, then uses historian status to discover the ledger canister id for stake
+- it fetches historian counts, status, registered-canister summaries, and recent commitments together, then uses historian status to discover the ledger canister id for stake
 - the displayed historian history tables are intentionally bounded views and now also show the historian canister's current allocated memory footprint; the tracked target-canister registry is not pruned, and full transfer history still lives on the ICP ledger and its archive canisters
 - invalid memo text is not echoed back in the dashboard tables; invalid entries render as a generic placeholder instead
 - it only instantiates the ledger actor after historian status reveals the staking account and ledger canister ID

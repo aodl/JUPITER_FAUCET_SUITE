@@ -1,4 +1,5 @@
 import { HttpAgent } from '@icp-sdk/core/agent';
+import { Principal } from '@icp-sdk/core/principal';
 import { sha224 } from '@noble/hashes/sha2.js';
 import { createActor as createHistorianActor } from '../declarations/jupiter_historian/index.js';
 import { createActor as createLedgerActor } from '../declarations/icp_ledger/index.js';
@@ -6,10 +7,12 @@ import { createActor as createIndexActor } from '../declarations/icp_index/index
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
-export const RECENT_CONTRIBUTION_LIMIT = 100;
+export const RECENT_COMMITMENT_LIMIT = 100;
 export const RECENT_ROUTE_TRANSFER_LIMIT = 100;
 export const RECENT_ROUTE_TRANSFER_PAGE_SIZE = 100;
 export const RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES = 10;
+export const TRACKER_HISTORY_PAGE_SIZE = 100;
+export const MAINNET_CMC_CANISTER_ID = 'rkp4c-7iaaa-aaaaa-aaaca-cai';
 
 const agentPromises = new Map();
 
@@ -30,7 +33,7 @@ export function summaryMetricsUnavailable(data) {
     data.counts?.total_output_e8s === undefined &&
     data.counts?.total_rewards_e8s === undefined &&
     data.counts?.registered_canister_count === undefined &&
-    data.counts?.qualifying_contribution_count === undefined
+    data.counts?.qualifying_commitment_count === undefined
   );
 }
 
@@ -294,6 +297,239 @@ async function createHistorianClient({
   }
 }
 
+
+function buildGetCyclesHistoryArgs({ canisterId, startAfter = null, limit = TRACKER_HISTORY_PAGE_SIZE, descending = false } = {}) {
+  return {
+    canister_id: canisterId,
+    start_after_ts: startAfter === null || startAfter === undefined ? [] : [typeof startAfter === 'bigint' ? startAfter : BigInt(startAfter)],
+    limit: [limit],
+    descending: [Boolean(descending)],
+  };
+}
+
+function buildGetCommitmentHistoryArgs({ canisterId, startAfter = null, limit = TRACKER_HISTORY_PAGE_SIZE, descending = false } = {}) {
+  return {
+    canister_id: canisterId,
+    start_after_tx_id: startAfter === null || startAfter === undefined ? [] : [typeof startAfter === 'bigint' ? startAfter : BigInt(startAfter)],
+    limit: [limit],
+    descending: [Boolean(descending)],
+  };
+}
+
+function variantName(value) {
+  if (!value || Array.isArray(value) || typeof value !== 'object') return '';
+  return Object.keys(value)[0] || '';
+}
+
+export function hasCanisterSource(sources, sourceName) {
+  return Array.isArray(sources) && sources.some((source) => variantName(source) === sourceName);
+}
+
+function fulfilledOrNull(result) {
+  return result.status === 'fulfilled' ? result.value : null;
+}
+
+async function loadTrackerCommitments(historian, args) {
+  if (typeof historian?.get_commitment_history !== 'function') {
+    throw new Error('Historian commitment history query is unavailable');
+  }
+  return historian.get_commitment_history(args);
+}
+
+
+export function cmcDepositSubaccount(canisterId) {
+  const principalBytes = canisterId.toUint8Array();
+  if (principalBytes.length > 31) {
+    throw new Error('Principal is too long for a CMC top-up subaccount');
+  }
+  const subaccount = new Uint8Array(32);
+  subaccount[0] = principalBytes.length;
+  subaccount.set(principalBytes, 1);
+  return subaccount;
+}
+
+export function cmcDepositAccount({ canisterId, cmcCanisterId = MAINNET_CMC_CANISTER_ID } = {}) {
+  if (!canisterId) throw new Error('A target canister principal is required');
+  const owner = typeof cmcCanisterId === 'string' ? Principal.fromText(cmcCanisterId) : cmcCanisterId;
+  return {
+    owner,
+    subaccount: [Array.from(cmcDepositSubaccount(canisterId))],
+  };
+}
+
+function cmcTopUpTransferTimestampOpt(transaction) {
+  const timestamp = readOptional(transaction?.timestamp) || readOptional(transaction?.created_at_time);
+  return timestamp?.timestamp_nanos === undefined || timestamp?.timestamp_nanos === null
+    ? []
+    : [timestamp.timestamp_nanos];
+}
+
+export function cmcTopUpTransferFromIndexTransaction(tx, expectedToAccountIdentifier) {
+  const transfer = transferOperation(tx?.transaction?.operation);
+  if (!transfer) return null;
+
+  const to = String(transfer.to || '').toLowerCase();
+  if (to !== expectedToAccountIdentifier) {
+    return null;
+  }
+
+  const amount = tokenE8s(transfer.amount);
+  if (amount === null || tx?.id === undefined || tx?.id === null) return null;
+
+  return {
+    tx_id: tx.id,
+    timestamp_nanos: cmcTopUpTransferTimestampOpt(tx.transaction),
+    amount_e8s: amount,
+    from_account_identifier: String(transfer.from || ''),
+  };
+}
+
+export async function loadCmcTopUpTransfersFromIndex({
+  index,
+  canisterId,
+  cmcCanisterId = MAINNET_CMC_CANISTER_ID,
+  limit = RECENT_ROUTE_TRANSFER_LIMIT,
+  pageSize = RECENT_ROUTE_TRANSFER_PAGE_SIZE,
+  maxPages = RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES,
+} = {}) {
+  if (!index || typeof index.get_account_identifier_transactions !== 'function') {
+    throw new Error('ICP index actor is unavailable');
+  }
+  if (!canisterId) {
+    return { items: [] };
+  }
+
+  const depositAccountIdentifier = accountIdentifierHex(cmcDepositAccount({ canisterId, cmcCanisterId })).toLowerCase();
+  const items = [];
+  const seen = new Set();
+  let start = null;
+
+  for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
+    const response = await getAccountIdentifierTransactions(index, depositAccountIdentifier, start, pageSize);
+    const transactions = response?.transactions || [];
+    for (const tx of transactions) {
+      const item = cmcTopUpTransferFromIndexTransaction(tx, depositAccountIdentifier);
+      if (item) {
+        const key = String(item.tx_id);
+        if (!seen.has(key)) {
+          seen.add(key);
+          items.push(item);
+        }
+      }
+      if (items.length >= limit) break;
+    }
+
+    if (transactions.length < pageSize) break;
+    const lastId = transactions[transactions.length - 1]?.id;
+    if (lastId === undefined || lastId === null) break;
+
+    const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
+    if (lastIdBigInt === 0n) break;
+
+    const nextStart = lastIdBigInt - 1n;
+    if (start !== null && nextStart >= BigInt(start)) break;
+    start = nextStart;
+  }
+
+  return { items: normalizeRouteTransferItems(items, limit) };
+}
+
+async function loadTrackerCmcTransfers({ historian, agent, indexActorFactory, canisterId, cmcCanisterId, historyLimit }) {
+  const status = await historian.get_public_status();
+  const indexCanisterId = principalToText(status?.index_canister_id);
+  if (!indexCanisterId) {
+    throw new Error('Historian status does not expose an ICP index canister ID');
+  }
+  const effectiveCmcCanisterId = cmcCanisterId || readOptional(status?.cmc_canister_id) || MAINNET_CMC_CANISTER_ID;
+  const index = indexActorFactory(indexCanisterId, { agent });
+  return loadCmcTopUpTransfersFromIndex({
+    index,
+    canisterId,
+    cmcCanisterId: effectiveCmcCanisterId,
+    limit: historyLimit,
+  });
+}
+
+
+export async function loadTrackerData({
+  historianCanisterId,
+  host,
+  local = false,
+  agent = null,
+  historianActor = null,
+  historianActorFactory = createHistorianActor,
+  indexActorFactory = createIndexActor,
+  canisterId,
+  cmcCanisterId = null,
+  historyLimit = TRACKER_HISTORY_PAGE_SIZE,
+} = {}) {
+  if (!canisterId) {
+    throw new Error('A principal ID is required');
+  }
+
+  const { agent: resolvedAgent, historian } = await createHistorianClient({
+    historianCanisterId,
+    host,
+    local,
+    agent,
+    historianActor,
+    historianActorFactory,
+  });
+
+  const overview = await historian.get_canister_overview(canisterId);
+  const overviewValue = readOptional(overview);
+  const isCommitmentBeneficiary = hasCanisterSource(overviewValue?.sources, 'MemoCommitment');
+
+  if (!overviewValue || !isCommitmentBeneficiary) {
+    return {
+      canisterId,
+      overview: overviewValue,
+      isRecognized: Boolean(overviewValue),
+      isCommitmentBeneficiary,
+      commitments: { items: [] },
+      cycles: { items: [] },
+      cmcTransfers: { items: [] },
+      errors: { commitments: null, cycles: null, cmcTransfers: null },
+    };
+  }
+
+  const [commitmentsResult, cyclesResult, cmcTransfersResult] = await Promise.allSettled([
+    loadTrackerCommitments(historian, buildGetCommitmentHistoryArgs({
+      canisterId,
+      limit: historyLimit,
+      descending: false,
+    })),
+    historian.get_cycles_history(buildGetCyclesHistoryArgs({
+      canisterId,
+      limit: historyLimit,
+      descending: false,
+    })),
+    loadTrackerCmcTransfers({
+      historian,
+      agent: resolvedAgent,
+      indexActorFactory,
+      canisterId,
+      cmcCanisterId,
+      historyLimit,
+    }),
+  ]);
+
+  return {
+    canisterId,
+    overview: overviewValue,
+    isRecognized: true,
+    isCommitmentBeneficiary: true,
+    commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
+    cycles: fulfilledOrNull(cyclesResult) || { items: [] },
+    cmcTransfers: fulfilledOrNull(cmcTransfersResult) || { items: [] },
+    errors: {
+      commitments: commitmentsResult.status === 'rejected' ? normalizeError(commitmentsResult.reason) : null,
+      cycles: cyclesResult.status === 'rejected' ? normalizeError(cyclesResult.reason) : null,
+      cmcTransfers: cmcTransfersResult.status === 'rejected' ? normalizeError(cmcTransfersResult.reason) : null,
+    },
+  };
+}
+
 export async function loadRegisteredCanisterSummaryPage({
   historianCanisterId,
   host,
@@ -424,8 +660,8 @@ export async function loadDashboardData({
         pageSize: registeredPageSize,
       }),
     ),
-    historian.list_recent_contributions({
-      limit: [RECENT_CONTRIBUTION_LIMIT],
+    historian.list_recent_commitments({
+      limit: [RECENT_COMMITMENT_LIMIT],
       qualifying_only: [false],
     }),
   ]);

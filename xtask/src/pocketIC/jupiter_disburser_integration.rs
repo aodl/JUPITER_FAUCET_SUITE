@@ -5359,20 +5359,20 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
     // This is the canonical post-mitigation economics test.
     //
     // Setup:
-    // * one existing beneficiary contributes before the measured round starts
-    // * a second valid contribution is added only after that round's reward has already accrued
+    // * one existing beneficiary commits before the measured round starts
+    // * a second valid commitment is added only after that round's reward has already accrued
     //
     // Expectation under the faucet mitigation:
-    // * the late contribution increases the live neuron stake before payout
+    // * the late commitment increases the live neuron stake before payout
     // * but it should not reduce the existing beneficiary's payout in that affected round,
     //   because the faucet now uses a tx-id-bounded round-effective denominator and a
-    //   conservative stake-recognition delay when weighting in-round contributions
-    // * by the following clean round, the new contributor should start participating normally
+    //   conservative stake-recognition delay when weighting in-round commitments
+    // * by the following clean round, the new committer should start participating normally
     //
     // Assertion shape:
     // * use a matched control path and a treatment path
     // * require the affected round to remain aligned within a very tight tolerance
-    // * do NOT require later rounds to stay identical, because once the contribution becomes
+    // * do NOT require later rounds to stay identical, because once the commitment becomes
     //   eligible it legitimately changes beneficiary participation and any later tiny residuals
     //   can also reflect real age-bonus timing differences rather than unfair first-round skew
 
@@ -5639,7 +5639,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                     backlog,
                 );
             }
-            // Make the second valid contribution land only after the round's payout pot has
+            // Make the second valid commitment land only after the round's payout pot has
             // already been staged to the faucet but immediately before the faucet snapshots the
             // denominator. With the faucet's conservative one-day stake-recognition delay, this
             // should leave the affected-round effective denominator unchanged even though live
@@ -5779,13 +5779,13 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
     }
     if treatment.round3.topped_up_count != 2 {
         bail!(
-            "expected the late contributor to begin participating by the following clean round; treatment_round3={:?}",
+            "expected the late committer to begin participating by the following clean round; treatment_round3={:?}",
             treatment.round3,
         );
     }
     if treatment.round3.effective_denom <= control.round3.effective_denom {
         bail!(
-            "expected the following clean round to include the late contributor in the effective denominator; control_round3_effective_denom={} treatment_round3_effective_denom={}",
+            "expected the following clean round to include the late committer in the effective denominator; control_round3_effective_denom={} treatment_round3_effective_denom={}",
             control.round3.effective_denom,
             treatment.round3.effective_denom,
         );
@@ -5797,11 +5797,11 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
 #[test]
 #[ignore]
 fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting() -> Result<()> {
-    // This is the invalid-contribution analogue of the canonical post-mitigation economics test.
+    // This is the invalid-commitment analogue of the canonical post-mitigation economics test.
     //
     // Control vs treatment:
-    // * control: one existing beneficiary contributes before the measured round starts
-    // * treatment: the same setup, plus a second contribution with an invalid memo that lands
+    // * control: one existing beneficiary commits before the measured round starts
+    // * treatment: the same setup, plus a second commitment with an invalid memo that lands
     //   very close to the payout boundary after that round's reward has already accrued
     //
     // Assertions:
@@ -6186,7 +6186,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
     }
     if treatment.round2.ignored_bad_memo != 1 {
         bail!(
-            "expected the late invalid contribution to be recorded as one ignored bad memo in the affected round; treatment_round2={:?}",
+            "expected the late invalid commitment to be recorded as one ignored bad memo in the affected round; treatment_round2={:?}",
             treatment.round2,
         );
     }
@@ -6228,7 +6228,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
     }
     if treatment.round3.topped_up_count != 1 {
         bail!(
-            "expected the invalid contributor never to become a beneficiary in the following clean round; treatment_round3={:?}",
+            "expected the invalid committer never to become a beneficiary in the following clean round; treatment_round3={:?}",
             treatment.round3,
         );
     }

@@ -626,7 +626,7 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 
     let first_summary = env.summary()?;
     if first_summary.topped_up_count != 3 {
-        bail!("expected first payout job to top up three separate historical contributions, got {}", first_summary.topped_up_count);
+        bail!("expected first payout job to top up three separate historical commitments, got {}", first_summary.topped_up_count);
     }
     let first_calls = env.index_get_calls()?;
     let first_starts: Vec<Option<u64>> = first_calls.iter().map(|c| c.start).collect();
@@ -639,7 +639,7 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 
     let second_summary = env.summary()?;
     if second_summary.topped_up_count != 3 {
-        bail!("expected second payout job to replay the same three contributions, got {}", second_summary.topped_up_count);
+        bail!("expected second payout job to replay the same three commitments, got {}", second_summary.topped_up_count);
     }
     let notifications = env.notifications()?;
     let beneficiary_notes = notifications.iter().filter(|n| n.canister_id == target).count();
@@ -675,10 +675,10 @@ fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoni
 
     let summary = env.summary()?;
     if summary.topped_up_count != 1 {
-        bail!("expected exactly one qualifying contribution across many pages, got {}", summary.topped_up_count);
+        bail!("expected exactly one qualifying commitment across many pages, got {}", summary.topped_up_count);
     }
     if summary.ignored_under_threshold != 1000 {
-        bail!("expected 1000 under-threshold contributions to be counted, got {}", summary.ignored_under_threshold);
+        bail!("expected 1000 under-threshold commitments to be counted, got {}", summary.ignored_under_threshold);
     }
     if summary.ignored_bad_memo != 1 {
         bail!("expected one bad memo to be skipped, got {}", summary.ignored_bad_memo);
@@ -1364,7 +1364,7 @@ fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transf
 
 #[test]
 #[ignore]
-fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accounting() -> Result<()> {
+fn faucet_retry_exhaustion_skips_commitment_and_finishes_with_remainder_accounting() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -1413,7 +1413,7 @@ fn faucet_retry_exhaustion_skips_contribution_and_finishes_with_remainder_accoun
 
 #[test]
 #[ignore]
-fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_same_job() -> Result<()> {
+fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_same_job() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let failed_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -1432,7 +1432,7 @@ fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_s
     env.main_tick()?;
     let st = env.state()?;
     if st.active_payout_job_present || !st.last_summary_present {
-        bail!("expected inline retry exhaustion on the first contribution not to leave work behind");
+        bail!("expected inline retry exhaustion on the first commitment not to leave work behind");
     }
     let summary = env.summary()?;
     if summary.topped_up_count != 1 || summary.failed_topups != 0 || summary.ambiguous_topups != 1 {
@@ -1452,7 +1452,7 @@ fn faucet_retry_exhaustion_on_one_contribution_does_not_block_later_success_in_s
     let self_count = notes.iter().filter(|n| n.canister_id == faucet_id).count();
     if success_count != 1 || failed_count != 0 || self_count != 1 {
         bail!(
-            "expected only the later contribution and the self remainder to notify successfully, got success_count={} failed_count={} self_count={}",
+            "expected only the later commitment and the self remainder to notify successfully, got success_count={} failed_count={} self_count={}",
             success_count,
             failed_count,
             self_count
@@ -1518,7 +1518,7 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
     let second_count = notes.iter().filter(|n| n.canister_id == second_target).count();
     if first_count != 1 || second_count != 1 {
         bail!(
-            "expected resumed scan not to duplicate first-page work and to complete the later contribution, got first_count={} second_count={}",
+            "expected resumed scan not to duplicate first-page work and to complete the later commitment, got first_count={} second_count={}",
             first_count,
             second_count
         );
@@ -1585,7 +1585,7 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
     let second_count = notes_after_rescue_resume.iter().filter(|n| n.canister_id == second_target).count();
     if first_count != 1 || second_count != 1 {
         bail!(
-            "expected rescue-driven resume not to duplicate first-page work and to complete the later contribution, got first_count={} second_count={}",
+            "expected rescue-driven resume not to duplicate first-page work and to complete the later commitment, got first_count={} second_count={}",
             first_count,
             second_count,
         );

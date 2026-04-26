@@ -1,7 +1,7 @@
 import { readOpt } from './candid-opt.js';
 
-export function readContributionIndexFault(status) {
-  const fault = readOpt(status?.contribution_index_fault);
+export function readCommitmentIndexFault(status) {
+  const fault = readOpt(status?.commitment_index_fault);
   if (!fault || typeof fault !== 'object' || Array.isArray(fault)) {
     return null;
   }
@@ -20,17 +20,17 @@ export function readContributionIndexFault(status) {
   };
 }
 
-export function buildContributionIndexFaultBannerText(status, {
+export function buildCommitmentIndexFaultBannerText(status, {
   formatTimestampSeconds,
   formatInteger,
 } = {}) {
-  const fault = readContributionIndexFault(status);
+  const fault = readCommitmentIndexFault(status);
   if (!fault) return null;
   const observedText = fault.observedAtTs === null ? '—' : formatTimestampSeconds(fault.observedAtTs);
   const cursorText = fault.lastCursorTxId === null ? 'none' : formatInteger(fault.lastCursorTxId);
   const offendingText = fault.offendingTxId === null ? '—' : formatInteger(fault.offendingTxId);
   const parts = [
-    'Historian contribution indexing is degraded.',
+    'Historian commitment indexing is degraded.',
     `First observed at ${observedText}.`,
     `Last cursor: ${cursorText}.`,
     `Offending tx: ${offendingText}.`,

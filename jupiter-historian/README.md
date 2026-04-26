@@ -2,7 +2,7 @@
 
 `jupiter-historian` is the indexing and observability canister for the Jupiter Faucet Suite.
 
-It keeps a durable set of target canisters discovered from faucet staking-account transfer memos, records bounded contribution history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
+It keeps a durable set of target canisters discovered from faucet staking-account transfer memos, records bounded commitment history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -12,16 +12,16 @@ See the suite overview in [`../README.md`](../README.md).
 
 1. incrementally indexing the faucet staking account without reprocessing the same transfer twice
 2. keeping distinct canister sets discovered from transfer memos and optional SNS discovery
-3. recording capped per-canister contribution history so frontends can graph participation over time
+3. recording capped per-canister commitment history so frontends can graph participation over time
 4. recording protocol-routed ICP output and rewards totals for the dashboard
-5. recording capped cycles history so frontends can show what happened after contribution
+5. recording capped cycles history so frontends can show what happened after commitment
 6. exposing the public read model consumed by the production frontend
 
 This canister is **read-oriented**. It does not move value, control the NNS neuron, or perform top-ups.
 
 ## Observation model
 
-### Contribution indexing
+### Commitment indexing
 
 The historian scans the same staking account that `jupiter-faucet` uses.
 
@@ -32,7 +32,7 @@ For each eligible incoming `Transfer` **to** the staking account (`TransferFrom`
 - transaction ID
 - timestamp (from index timestamp when available, otherwise created-at time if available)
 - transfer amount
-- whether the contribution counts toward faucet eligibility under the current `min_tx_e8s`
+- whether the commitment counts toward faucet eligibility under the current `min_tx_e8s`
 
 Memo handling mirrors the faucet’s input rules:
 
@@ -41,13 +41,13 @@ Memo handling mirrors the faucet’s input rules:
 - treat an empty `icrc1_memo` as missing / invalid
 - trim ASCII text before trying to parse principal text (the supported UX is to enter the target canister ID)
 
-If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the principal as a beneficiary derived from memo text. The supported UX is still to enter the target canister ID in the memo. Below-threshold memo contributions are kept only in a separate capped recent feed and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
+If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the principal as a beneficiary derived from memo text. The supported UX is still to enter the target canister ID in the memo. Below-threshold memo commitments are kept only in a separate capped recent feed and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
 
-Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold contributions never create durable tracking.
+Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold commitments never create durable tracking.
 
 Memo encoding uses `icrc1_memo` principal text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic. This mirrors the faucet’s policy-only memo validation: accepted short principal text is not itself a proof that the target is an installed canister.
 
-If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-contribution marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
+If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-commitment marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
 ### Output and rewards accounting
 
@@ -91,21 +91,21 @@ SNS-discovered canisters are not probed through blackhole status in the regular 
 
 ## Retention and deduplication
 
-The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry. Derived caches are rebuilt at runtime instead of being treated as durable source-of-truth state, and the durable contribution/cycles histories are stored as entry-keyed stable maps with per-canister retained-key indexes so hot-path updates do not rewrite whole per-canister sample vectors in stable memory.
+The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry. Derived caches are rebuilt at runtime instead of being treated as durable source-of-truth state, and the durable commitment/cycles histories are stored as entry-keyed stable maps with per-canister retained-key indexes so hot-path updates do not rewrite whole per-canister sample vectors in stable memory.
 
 Durable bounded state currently uses these caps:
 
 - the tracked target-canister registry is **not pruned**
 - `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
-- `max_contribution_entries_per_canister` default `100`, hard-clamped to `250`
-- recent qualifying contributions: `500`
-- recent below-threshold memo contributions: `100`
-- recent invalid-memo contributions: `100`
+- `max_commitment_entries_per_canister` default `100`, hard-clamped to `250`
+- recent qualifying commitments: `500`
+- recent below-threshold memo commitments: `100`
+- recent invalid-memo commitments: `100`
 
 Deduplication rules are:
 
-- contributions are deduped by transaction ID within the retained per-canister history window
-- recent contributions and invalid contributions are deduped by transaction ID
+- commitments are deduped by transaction ID within the retained per-canister history window
+- recent commitments and invalid commitments are deduped by transaction ID
 - cycles samples are not appended twice for the same canister and timestamp
 
 ## Public query interface
@@ -113,11 +113,11 @@ Deduplication rules are:
 Production methods:
 
 - `list_canisters`
-  - paged list of tracked canisters, optionally filtered by `MemoContribution` vs `SnsDiscovery`
+  - paged list of tracked canisters, optionally filtered by `MemoCommitment` vs `SnsDiscovery`
 - `get_cycles_history`
   - paged cycles history for one canister
-- `get_contribution_history`
-  - paged contribution history for one canister
+- `get_commitment_history`
+  - paged commitment history for one canister
 - `get_canister_overview`
   - one-canister overview including source set, metadata, and point counts
 - `get_public_counts`
@@ -126,9 +126,9 @@ Production methods:
   - dashboard status, including staking account and configured ledger canister ID
 - `list_registered_canister_summaries`
   - paged summary list used by the frontend registry table
-  - always ordered by total qualifying contributed ICP descending, with canister id as the stable tie-breaker
-- `list_recent_contributions`
-  - recent valid and invalid contribution feed used by the frontend
+  - always ordered by total qualifying committed ICP descending, with canister id as the stable tie-breaker
+- `list_recent_commitments`
+  - recent valid and invalid commitment feed used by the frontend
   - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and a generic placeholder memo label rather than the original attacker-provided text
 
 The public read model is intentionally richer than the raw history methods because the production frontend should not need to reconstruct aggregate dashboard state in the browser.
@@ -139,9 +139,9 @@ The main public queries use these code-backed defaults:
 
 - `list_canisters`: default `limit = 50`, clamped to `1..=100`
 - `get_cycles_history`: default `limit = 100`, clamped to `1..=100`
-- `get_contribution_history`: default `limit = 100`, clamped to `1..=100`
+- `get_commitment_history`: default `limit = 100`, clamped to `1..=100`
 - `list_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
-- `list_recent_contributions`: default `limit = 20`, clamped to `1..=100`
+- `list_recent_commitments`: default `limit = 20`, clamped to `1..=100`
 
 ## Timers and driver model
 
@@ -160,11 +160,11 @@ The historian also schedules an immediate one-shot tick roughly 1 second after i
 
 On each driver run it:
 
-1. advances contribution indexing
+1. advances commitment indexing
 2. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
 3. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
 
-Contribution indexing now records a visible durable fault if the historian observes non-monotonic staking-account transaction ids from the index. While the fault is present the dashboard surfaces the degraded state, and later driver ticks retry contribution indexing from the last known-good cursor. Once the upstream index recovers and forward progress resumes cleanly, the fault clears automatically.
+Commitment indexing now records a visible durable fault if the historian observes non-monotonic staking-account transaction ids from the index. While the fault is present the dashboard surfaces the degraded state, and later driver ticks retry commitment indexing from the last known-good cursor. Once the upstream index recovers and forward progress resumes cleanly, the fault clears automatically.
 
 The historian logs its own `Cycles: <amount>` line only once per completed sweep sample of **itself**, not on every 10-minute driver tick.
 
@@ -199,7 +199,7 @@ Optional:
 - `cycles_interval_seconds` (defaults to `604800`)
 - `min_tx_e8s` (defaults to `100_000_000`; must be at least `10_000_000`)
 - `max_cycles_entries_per_canister` (defaults to `100`)
-- `max_contribution_entries_per_canister` (defaults to `100`)
+- `max_commitment_entries_per_canister` (defaults to `100`)
 - `max_index_pages_per_tick` (defaults to `10`)
 - `max_canisters_per_cycles_tick` (defaults to `25`)
 
@@ -212,7 +212,7 @@ Upgrades can change:
 - `cycles_interval_seconds`
 - `min_tx_e8s`
 - `max_cycles_entries_per_canister`
-- `max_contribution_entries_per_canister`
+- `max_commitment_entries_per_canister`
 - `max_index_pages_per_tick`
 - `max_canisters_per_cycles_tick`
 - `blackhole_canister_id`
@@ -224,14 +224,14 @@ Upgrades can change:
 
 The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently configures:
 
-- the Jupiter staking account as the contribution source
+- the Jupiter staking account as the commitment source
 - default ICP Ledger, ICP Index, canonical blackhole, CMC, faucet, and SNS-WASM IDs by leaving those principals as `null`
 - `enable_sns_tracking = false`
 - `scan_interval_seconds = 600`
 - `cycles_interval_seconds = 604800`
 - `min_tx_e8s = 100_000_000` (must match the faucet config, and both are validated by `scripts/validate-mainnet-install-args`)
 - `max_cycles_entries_per_canister = 100`
-- `max_contribution_entries_per_canister = 100`
+- `max_commitment_entries_per_canister = 100`
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
@@ -270,9 +270,9 @@ The suite-level PocketIC E2E tests also exercise historian-adjacent read-model e
 
 Coverage includes, among other things:
 
-- memo-derived contribution indexing without duplicate replay
+- memo-derived commitment indexing without duplicate replay
 - recent invalid-memo handling
-- contribution-index degraded-state detection and automatic recovery on non-monotonic staking-account tx pages
+- commitment-index degraded-state detection and automatic recovery on non-monotonic staking-account tx pages
 - weekly blackhole-based cycles sampling
 - SNS discovery and SNS-root-summary cycles sampling
 - state preservation across historian upgrades
@@ -280,7 +280,7 @@ Coverage includes, among other things:
   - `get_public_counts`
   - `get_public_status`
   - `list_registered_canister_summaries`
-  - `list_recent_contributions`
+  - `list_recent_commitments`
 
 For the broader test matrix, see [`../xtask/README.md`](../xtask/README.md).
 

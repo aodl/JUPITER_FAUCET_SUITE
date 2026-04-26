@@ -8,10 +8,14 @@ import {
   loadDashboardData,
   loadRecentRouteTransfersFromIndex,
   loadRegisteredCanisterSummaryPage,
+  loadTrackerData,
+  loadCmcTopUpTransfersFromIndex,
+  cmcDepositAccount,
+  hasCanisterSource,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
   REGISTERED_SUMMARY_PAGE_SIZE,
-  RECENT_CONTRIBUTION_LIMIT,
+  RECENT_COMMITMENT_LIMIT,
   RECENT_ROUTE_TRANSFER_LIMIT,
 } from '../src/dashboard-data.js';
 
@@ -45,7 +49,7 @@ function historianStatus(overrides = {}) {
 function historianCounts(overrides = {}) {
   return {
     registered_canister_count: 2n,
-    qualifying_contribution_count: 3n,
+    qualifying_commitment_count: 3n,
     sns_discovered_canister_count: 4n,
     total_output_e8s: 400_000_000n,
     total_rewards_e8s: 50_000_000n,
@@ -57,10 +61,10 @@ function registeredResponse() {
   return {
     items: [{
       canister_id: principal('aaaaa-aa'),
-      sources: [{ MemoContribution: null }],
-      qualifying_contribution_count: 2n,
-      total_qualifying_contributed_e8s: 300_000_000n,
-      last_contribution_ts: [1000n],
+      sources: [{ MemoCommitment: null }],
+      qualifying_commitment_count: 2n,
+      total_qualifying_committed_e8s: 300_000_000n,
+      last_commitment_ts: [1000n],
       latest_cycles: [1234n],
       last_cycles_probe_ts: [1001n],
     }],
@@ -78,7 +82,7 @@ function recentResponse() {
       timestamp_nanos: [1_710_000_000_000_000_000n],
       amount_e8s: 200_000_000n,
       counts_toward_faucet: true,
-      outcome_category: { QualifyingContribution: null },
+      outcome_category: { QualifyingCommitment: null },
     }],
   };
 }
@@ -101,7 +105,7 @@ test('loadDashboardData uses historian counts and status plus the native ledger 
       async get_public_counts() { calls.push(['counts']); return historianCounts(); },
       async get_public_status() { calls.push(['status']); return historianStatus(); },
       async list_registered_canister_summaries(args) { calls.push(['registered', args]); return registeredResponse(); },
-      async list_recent_contributions(args) { calls.push(['recent', args]); return recentResponse(); },
+      async list_recent_commitments(args) { calls.push(['recent', args]); return recentResponse(); },
     },
     ledgerActorFactory: (canisterId, options) => {
       assert.equal(canisterId, 'ryjl3-tyaaa-aaaaa-aaaba-cai');
@@ -116,7 +120,7 @@ test('loadDashboardData uses historian counts and status plus the native ledger 
   assert.deepEqual(calls[0], ['counts']);
   assert.deepEqual(calls[1], ['status']);
   assert.deepEqual(calls[2], ['registered', { page: [0], page_size: [REGISTERED_SUMMARY_PAGE_SIZE] }]);
-  assert.deepEqual(calls[3], ['recent', { limit: [RECENT_CONTRIBUTION_LIMIT], qualifying_only: [false] }]);
+  assert.deepEqual(calls[3], ['recent', { limit: [RECENT_COMMITMENT_LIMIT], qualifying_only: [false] }]);
   assert.equal(Buffer.from(accountBalanceArg.account).toString('hex'), '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3');
   assert.equal(data.stakeE8s, 123_456_789n);
   assert.equal(data.counts.total_output_e8s, 400_000_000n);
@@ -166,7 +170,7 @@ test('loadDashboardData skips recent route transfer lookups when route config is
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     indexActorFactory: () => {
@@ -206,7 +210,7 @@ test('loadDashboardData queries the ICP index directly for recent output and rew
         });
       },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     indexActorFactory: (canisterId, options) => {
@@ -288,7 +292,7 @@ test('loadDashboardData keeps route transfer lookup failures out of the global f
         });
       },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     indexActorFactory: () => ({
@@ -358,7 +362,7 @@ test('loadDashboardData requests only the configured registered canister summary
         registeredCalls.push(args);
         return { items: registeredResponse().items, page: 2n, page_size: 6n, total: 18n };
       },
-      async list_recent_contributions() { return { items: [] }; },
+      async list_recent_commitments() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
@@ -401,7 +405,7 @@ test('loadDashboardData falls back to icrc1_balance_of when native ledger accoun
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({
       async account_balance() { throw new Error('account_balance unavailable in this fixture'); },
@@ -425,7 +429,7 @@ test('loadDashboardData flags an outdated historian interface when every public 
       async get_public_counts() { throw methodMissing; },
       async get_public_status() { throw new Error('Method get_public_status not found'); },
       async list_registered_canister_summaries() { throw new Error('Method list_registered_canister_summaries is not part of the service'); },
-      async list_recent_contributions() { throw new Error('Method list_recent_contributions not found'); },
+      async list_recent_commitments() { throw new Error('Method list_recent_commitments not found'); },
     },
     ledgerActorFactory: () => { throw new Error('ledger actor should not be created'); },
   });
@@ -453,7 +457,7 @@ test('loadDashboardData enables query signature verification when it creates an 
         async get_public_counts() { return historianCounts(); },
         async get_public_status() { return historianStatus(); },
         async list_registered_canister_summaries() { return registeredResponse(); },
-        async list_recent_contributions() { return recentResponse(); },
+        async list_recent_commitments() { return recentResponse(); },
       }),
       ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     });
@@ -490,7 +494,7 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
         async get_public_counts() { return historianCounts(); },
         async get_public_status() { return historianStatus(); },
         async list_registered_canister_summaries() { return registeredResponse(); },
-        async list_recent_contributions() { return recentResponse(); },
+        async list_recent_commitments() { return recentResponse(); },
       }),
       ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     });
@@ -505,7 +509,7 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
         async get_public_counts() { return historianCounts(); },
         async get_public_status() { return historianStatus(); },
         async list_registered_canister_summaries() { return registeredResponse(); },
-        async list_recent_contributions() { return recentResponse(); },
+        async list_recent_commitments() { return recentResponse(); },
       }),
       ledgerActorFactory: () => ({ async account_balance() { return { e8s: 2n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
     });
@@ -527,7 +531,7 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
       async get_public_counts() {
         return historianCounts({
           registered_canister_count: 0n,
-          qualifying_contribution_count: 0n,
+          qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 0n,
           total_output_e8s: 0n,
           total_rewards_e8s: 0n,
@@ -535,7 +539,7 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
       },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
-      async list_recent_contributions() { return { items: [] }; },
+      async list_recent_commitments() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 0n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
@@ -556,7 +560,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
       async get_public_counts() {
         return historianCounts({
           registered_canister_count: 1n,
-          qualifying_contribution_count: 0n,
+          qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 0n,
           total_output_e8s: 0n,
           total_rewards_e8s: 0n,
@@ -567,10 +571,10 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
         return {
           items: [{
             canister_id: target,
-            sources: [{ MemoContribution: null }],
-            qualifying_contribution_count: 0n,
-            total_qualifying_contributed_e8s: 0n,
-            last_contribution_ts: [2000n],
+            sources: [{ MemoCommitment: null }],
+            qualifying_commitment_count: 0n,
+            total_qualifying_committed_e8s: 0n,
+            last_commitment_ts: [2000n],
             latest_cycles: [],
             last_cycles_probe_ts: [],
           }],
@@ -579,7 +583,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
           total: 1n,
         };
       },
-      async list_recent_contributions() {
+      async list_recent_commitments() {
         return {
           items: [{
             canister_id: target,
@@ -587,7 +591,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
             timestamp_nanos: [1_710_000_000_000_000_001n],
             amount_e8s: 5_000_000n,
             counts_toward_faucet: false,
-            outcome_category: { UnderThresholdContribution: null },
+            outcome_category: { UnderThresholdCommitment: null },
           }],
         };
       },
@@ -597,7 +601,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
 
   assert.equal(data.stakeE8s, 5_000_000n);
   assert.equal(data.counts.registered_canister_count, 1n);
-  assert.equal(data.counts.qualifying_contribution_count, 0n);
+  assert.equal(data.counts.qualifying_commitment_count, 0n);
   assert.equal(data.counts.total_output_e8s, 0n);
   assert.equal(data.counts.total_rewards_e8s, 0n);
   assert.equal(data.registered.items[0].canister_id.toText(), target.toText());
@@ -614,7 +618,7 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
       async get_public_counts() {
         return historianCounts({
           registered_canister_count: 0n,
-          qualifying_contribution_count: 0n,
+          qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 3n,
           total_output_e8s: 0n,
           total_rewards_e8s: 0n,
@@ -622,14 +626,14 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
       },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
-      async list_recent_contributions() { return { items: [] }; },
+      async list_recent_commitments() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 0n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
 
   assert.equal(data.stakeE8s, 0n);
   assert.equal(data.counts.registered_canister_count, 0n);
-  assert.equal(data.counts.qualifying_contribution_count, 0n);
+  assert.equal(data.counts.qualifying_commitment_count, 0n);
   assert.equal(data.counts.total_output_e8s, 0n);
   assert.equal(data.counts.total_rewards_e8s, 0n);
   assert.equal(data.counts.sns_discovered_canister_count, 3n);
@@ -672,7 +676,7 @@ test('loadDashboardData preserves partial dashboard data when get_public_status 
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { throw new Error('status temporarily unavailable'); },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => {
       ledgerCreated = true;
@@ -699,7 +703,7 @@ test('loadDashboardData surfaces both native and icrc stake failures in one norm
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({
       async account_balance() { throw new Error('native path unavailable'); },
@@ -724,7 +728,7 @@ test('loadDashboardData preserves historian data when ledger actor construction 
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries() { return registeredResponse(); },
-      async list_recent_contributions() { return recentResponse(); },
+      async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => { throw new Error('ledger actor construction failed'); },
   });
@@ -736,4 +740,214 @@ test('loadDashboardData preserves historian data when ledger actor construction 
   assert.equal(data.stakeE8s, null);
   assert.equal(data.errors.stake, 'ledger actor construction failed');
   assert.equal(data.hasAnyFailure, true);
+});
+
+test('hasCanisterSource detects candid variant-style source values', () => {
+  assert.equal(hasCanisterSource([{ MemoCommitment: null }], 'MemoCommitment'), true);
+  assert.equal(hasCanisterSource([{ SnsDiscovery: null }], 'MemoCommitment'), false);
+  assert.equal(hasCanisterSource([], 'MemoCommitment'), false);
+});
+
+test('loadTrackerData returns unrecognised state without history queries', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  let commitmentHistoryCalled = false;
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_canister_overview(canisterId) {
+        assert.equal(canisterId.toText(), target.toText());
+        return [];
+      },
+      async get_commitment_history() {
+        commitmentHistoryCalled = true;
+        throw new Error('should not query commitment history for an unrecognised canister');
+      },
+      async get_cycles_history() {
+        throw new Error('should not query cycles history for an unrecognised canister');
+      },
+    },
+  });
+
+  assert.equal(commitmentHistoryCalled, false);
+  assert.equal(data.isRecognized, false);
+  assert.equal(data.isCommitmentBeneficiary, false);
+  assert.deepEqual(data.commitments.items, []);
+  assert.deepEqual(data.cycles.items, []);
+});
+
+test('loadTrackerData loads commitment, observed CMC top-up, and cycles histories for memo-registered beneficiaries', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const calls = [];
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historyLimit: 12,
+    historianActor: {
+      async get_canister_overview(canisterId) {
+        calls.push(['overview', canisterId.toText()]);
+        return [{
+          canister_id: target,
+          sources: [{ MemoCommitment: null }],
+          meta: {
+            first_seen_ts: [100n],
+            last_commitment_ts: [200n],
+            last_cycles_probe_ts: [300n],
+            last_cycles_probe_result: [{ Ok: { BlackholeStatus: null } }],
+          },
+          cycles_points: 1,
+          commitment_points: 1,
+        }];
+      },
+      async get_commitment_history(args) {
+        calls.push(['commitments', args]);
+        return {
+          items: [{
+            tx_id: 22n,
+            timestamp_nanos: [1_710_000_000_000_000_000n],
+            amount_e8s: 200_000_000n,
+            counts_toward_faucet: true,
+          }],
+          next_start_after_tx_id: [],
+        };
+      },
+      async get_cycles_history(args) {
+        calls.push(['cycles', args]);
+        return {
+          items: [{
+            timestamp_nanos: 1_710_010_000_000_000_000n,
+            cycles: 1_000_000_000_000n,
+            source: { BlackholeStatus: null },
+          }],
+          next_start_after_ts: [],
+        };
+      },
+      async get_public_status() {
+        calls.push(['status']);
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+    },
+    indexActorFactory: (canisterId, options) => {
+      assert.equal(canisterId, 'qhbym-qaaaa-aaaaa-aaafq-cai');
+      assert.deepEqual(options, { agent: { test: true } });
+      const depositId = accountIdentifierHex(cmcDepositAccount({ canisterId: target }));
+      return {
+        async get_account_identifier_transactions(args) {
+          calls.push(['index', args]);
+          assert.equal(args.account_identifier, depositId);
+          return { Ok: { balance: 0n, oldest_tx_id: [66n], transactions: [{
+            id: 66n,
+            transaction: {
+              memo: 0n,
+              icrc1_memo: [],
+              created_at_time: [],
+              timestamp: [{ timestamp_nanos: 1_710_020_000_000_000_000n }],
+              operation: { Transfer: { from: 'faucet-account', to: depositId, amount: { e8s: 123_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
+            },
+          }] } };
+        },
+      };
+    },
+  });
+
+  assert.equal(data.isRecognized, true);
+  assert.equal(data.isCommitmentBeneficiary, true);
+  assert.equal(data.commitments.items.length, 1);
+  assert.equal(data.cycles.items.length, 1);
+  assert.equal(data.cmcTransfers.items.length, 1);
+  assert.equal(data.cmcTransfers.items[0].amount_e8s, 123_000_000n);
+  assert.deepEqual(calls[0], ['overview', target.toText()]);
+  assert.equal(calls[1][1].limit[0], 12);
+  assert.equal(calls[1][1].descending[0], false);
+  assert.equal(calls[1][1].canister_id.toText(), target.toText());
+  assert.equal(calls[2][1].limit[0], 12);
+  assert.equal(calls[2][1].descending[0], false);
+  assert.equal(calls[2][1].canister_id.toText(), target.toText());
+});
+
+test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_canister_overview() {
+        return [{
+          canister_id: target,
+          sources: [{ SnsDiscovery: null }],
+          meta: {
+            first_seen_ts: [100n],
+            last_commitment_ts: [],
+            last_cycles_probe_ts: [300n],
+            last_cycles_probe_result: [{ Ok: { SnsRootSummary: null } }],
+          },
+          cycles_points: 1,
+          commitment_points: 0,
+        }];
+      },
+      async get_commitment_history() {
+        throw new Error('SNS-only canisters should not query commitment history');
+      },
+      async get_cycles_history() {
+        throw new Error('SNS-only canisters should not query cycles history');
+      },
+    },
+  });
+
+  assert.equal(data.isRecognized, true);
+  assert.equal(data.isCommitmentBeneficiary, false);
+  assert.deepEqual(data.commitments.items, []);
+  assert.deepEqual(data.cycles.items, []);
+});
+
+test('loadCmcTopUpTransfersFromIndex builds the CMC deposit account and filters matching transfers', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const depositId = accountIdentifierHex(cmcDepositAccount({ canisterId: target }));
+  const calls = [];
+  const result = await loadCmcTopUpTransfersFromIndex({
+    canisterId: target,
+    index: {
+      async get_account_identifier_transactions(args) {
+        calls.push(args);
+        return { Ok: { balance: 0n, oldest_tx_id: [10n], transactions: [
+          {
+            id: 11n,
+            transaction: {
+              memo: 0n,
+              icrc1_memo: [],
+              created_at_time: [],
+              timestamp: [{ timestamp_nanos: 1_710_000_000_000_000_011n }],
+              operation: { Transfer: { from: 'faucet-account', to: depositId, amount: { e8s: 250_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
+            },
+          },
+          {
+            id: 10n,
+            transaction: {
+              memo: 0n,
+              icrc1_memo: [],
+              created_at_time: [],
+              timestamp: [{ timestamp_nanos: 1_710_000_000_000_000_010n }],
+              operation: { Transfer: { from: 'someone-else', to: 'not-the-deposit-account', amount: { e8s: 500_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
+            },
+          },
+        ] } };
+      },
+    },
+    limit: 10,
+    pageSize: 10,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].account_identifier, depositId);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].tx_id, 11n);
+  assert.equal(result.items[0].amount_e8s, 250_000_000n);
 });
