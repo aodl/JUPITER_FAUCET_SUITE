@@ -193,6 +193,41 @@
         transform: none;
       }
     }
+
+    .how-it-works-guide {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 18px 0 20px;
+    }
+
+    .how-it-works-guide-card {
+      margin: 0;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .how-it-works-guide-card img {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin-bottom: 12px;
+    }
+
+    .how-it-works-guide-card figcaption {
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.88);
+    }
+
+    @media (max-width: 900px) {
+      .how-it-works-guide {
+        grid-template-columns: 1fr;
+      }
+    }
+
   </style>
 
   <!-- Styles: global first, then component-specific -->
@@ -288,7 +323,7 @@
             <div class="nav-panel-page" data-page="1">
               <p class="nav-panel-content">
                 The perpetual top-up workflow is intentionally designed to be so simple that anyone can
-                carry it out as a <strong>one-off operation</strong> directly from the <strong>NNS dapp</strong> 
+                carry it out as a <strong>one-off operation</strong> directly from <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link"><strong>NNS dapp</strong></a> 
                 using the enhanced transfer <em>and memo</em> flow - no further setup required.
               </p>
   
@@ -434,10 +469,25 @@
                   <strong>Staking account</strong>
                   <button class="pane-copy-button" id="copy-how-staking-account" type="button">Copy</button>
                 </div>
-                <a class="pane-external-link pane-inline-code-link mono" id="how-staking-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="how-staking-account-address">22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d</code></a>
+                <a class="pane-external-link pane-inline-code-link mono" id="how-staking-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="how-staking-account-address">rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68</code></a>
                 <p class="pane-inline-help">
-                  Transfer ICP to this staking account, then paste your target canister ID into the NNS dapp memo field as plain ASCII text. The faucet accepts short ASCII principal text in `icrc1_memo`; entering the target canister ID is the supported UX, and ordinary self-authenticating user principals do not fit. <br/>(<b>Ctrl + k</b>, and search '<b>memo</b>' if the field is not yet visible).
+                  Transfer ICP to the long-form ICRC-1 staking account address displayed above, then paste your target canister ID into the <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">NNS dapp</a> memo field as plain ASCII text. Do not use the short-form legacy account identifier for this transfer: the NNS dapp requires the ICRC-1 account format to enable larger text-based memos. The faucet accepts short ASCII principal text in `icrc1_memo`; entering the target canister ID is the supported UX, and ordinary self-authenticating user principals do not fit.
                 </p>
+              </div>
+
+              <div class="how-it-works-guide">
+                <figure class="how-it-works-guide-card">
+                  <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">
+                    <img src="how-it-works-memo-search.png?v=__ASSET_VERSION__" alt="NNS dapp command palette with memo search shown" />
+                  </a>
+                  <figcaption><strong>1.</strong> If the memo field is hidden in the <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">NNS dapp</a>, press <strong>Ctrl + K</strong>, type <strong>memo</strong>, then select <strong>Show transaction memo</strong>.</figcaption>
+                </figure>
+                <figure class="how-it-works-guide-card">
+                  <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">
+                    <img src="how-it-works-send-icp.png?v=__ASSET_VERSION__" alt="NNS dapp send ICP dialog using the long-form ICRC-1 destination address and a canister ID memo" />
+                  </a>
+                  <figcaption><strong>2.</strong> Use the long-form ICRC-1 destination address shown above, not the short-form legacy account identifier. The <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">NNS dapp</a> only enables larger text-based memos on the ICRC-1 address path, so that is the format required for the destination account in order for the memo to be capable of holding the target canister ID.</figcaption>
+                </figure>
               </div>
 
               <p class="nav-panel-content">

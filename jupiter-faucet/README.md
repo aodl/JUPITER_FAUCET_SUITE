@@ -365,6 +365,7 @@ When `clear_forced_rescue = true` is used while blackhole mode remains armed, th
 
 The committed mainnet install args wire the current production constants used by the suite:
 
+- staking account address (ICRC-1 text): `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 - staking account owner: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
 - staking account subaccount bytes:
   `ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`

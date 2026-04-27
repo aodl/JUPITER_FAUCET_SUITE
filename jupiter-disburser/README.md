@@ -235,7 +235,7 @@ The committed mainnet install args currently wire:
 
 - normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
-- age bonus recipient 2: D-QUORUM staking account on NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` plus the committed subaccount bytes)
+- age bonus recipient 2: D-QUORUM staking account `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68` (NNS Governance owner with the committed subaccount bytes)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
 - blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)

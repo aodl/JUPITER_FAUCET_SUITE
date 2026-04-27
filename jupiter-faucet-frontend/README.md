@@ -179,7 +179,7 @@ npm run test:frontend-dashboard-local
 
 The checked-in Node tests cover the highest-value browser-side invariants, including:
 
-- stable account-identifier derivation for the staking account path
+- stable internal account-identifier derivation for ledger/index reads while displaying the ICRC-1 staking account address to users
 - the exact historian query shapes and limits the dashboard loader issues
 - native-ledger balance reads with `icrc1_balance_of` fallback
 - graceful handling of zero-valued metrics

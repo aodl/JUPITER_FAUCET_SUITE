@@ -4,6 +4,8 @@ import {
   FRONTEND_HINT,
   normalizeError,
   accountIdentifierHex,
+  bytesToHex,
+  uint8ArrayFromOptBytes,
   loadDashboardData,
   loadRegisteredCanisterSummaryPage,
   loadCanisterModuleHashes,
@@ -22,7 +24,10 @@ const DASH = '—';
 const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
 const TABLE_PAGE_SIZE = 6;
-const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
+const JUPITER_STAKING_ACCOUNT_ADDRESS = 'rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
+const JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
+const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
+const JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX = 'ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
 const BLACKHOLE_CANISTER_ID = 'e3mmv-5qaaa-aaaah-aadma-cai';
 const INLINE_TOOLTIP_CONTENT = {
@@ -264,14 +269,39 @@ function renderHistorianFaultBanner(data) {
   banner.hidden = false;
 }
 
+function isJupiterStakingAccount(account) {
+  if (!account) return true;
+  const owner = formatPrincipal(account.owner);
+  const subaccountHex = bytesToHex(uint8ArrayFromOptBytes(account.subaccount));
+  return owner === JUPITER_STAKING_ACCOUNT_OWNER && subaccountHex === JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX;
+}
+
+function stakingAccountDisplayAddress(account) {
+  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT_ADDRESS;
+  return accountIdentifierHex(account);
+}
+
+function stakingAccountExplorerAddress(account) {
+  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX;
+  return accountIdentifierHex(account);
+}
+
 function renderHowItWorksAccount() {
-  setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT_HEX);
+  setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT_ADDRESS);
+  setText('how-staking-account-address', JUPITER_STAKING_ACCOUNT_ADDRESS);
+  const stakingAccountLink = document.getElementById('how-staking-account-link');
+  if (stakingAccountLink) {
+    stakingAccountLink.href = `https://dashboard.internetcomputer.org/account/${JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX}`;
+    stakingAccountLink.title = JUPITER_STAKING_ACCOUNT_ADDRESS;
+  }
 }
 
 function renderStakePane(data, neuron, { neuronLoading = false, neuronError = null, dataLoading = false } = {}) {
-  const stakingAddress = data?.status ? accountIdentifierHex(data.status.staking_account) : JUPITER_STAKING_ACCOUNT_HEX;
+  const stakingAccount = data?.status?.staking_account;
+  const stakingAddress = stakingAccountDisplayAddress(stakingAccount);
+  const stakingExplorerAddress = stakingAccountExplorerAddress(stakingAccount);
   setLink('stake-pane-account-link', {
-    href: stakingAddress ? `https://dashboard.internetcomputer.org/account/${stakingAddress}` : '',
+    href: stakingExplorerAddress ? `https://dashboard.internetcomputer.org/account/${stakingExplorerAddress}` : '',
     text: stakingAddress,
   });
   setLink('stake-neuron-id-link', {

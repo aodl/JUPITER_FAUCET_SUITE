@@ -23,7 +23,7 @@ This canister is **read-oriented**. It does not move value, control the NNS neur
 
 ### Commitment indexing
 
-The historian scans the same staking account that `jupiter-faucet` uses.
+The historian scans the same ICRC-1 staking account address that `jupiter-faucet` uses: `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`.
 
 Unlike the faucet, it keeps an incremental cursor and does not rescan old staking transfers after they have already been indexed.
 

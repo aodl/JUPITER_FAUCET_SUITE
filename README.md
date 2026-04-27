@@ -75,18 +75,33 @@ For the exact split math, memo formats, retry semantics, and rescue logic, the c
 
 At a high level, a participant:
 
-1. transfers ICP into the faucet neuron’s configured `staking_account`
+1. transfers ICP into the faucet neuron’s configured ICRC-1 staking account address `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 2. puts the **target canister ID** in the transfer memo as ASCII text
 
 The committer does **not** need to own the target canister. The faucet accepts short ASCII principal text in the memo; the supported UX is to enter the beneficiary target canister ID there.
 
-The supported memo path is ASCII principal text carried in `icrc1_memo`, intended to be the target canister ID. The old 64-bit numeric memo field is intentionally ignored, which keeps the policy aligned with “enter the canister ID as text” rather than trying to reinterpret numeric values as UTF-8.
+The supported memo path is ASCII principal text carried in `icrc1_memo`, intended to be the target canister ID; use the ICRC-1 account address above in the [NNS dapp](https://nns.ic0.app/wallet/?u=) so that text memo path is available. The old 64-bit numeric memo field is intentionally ignored, which keeps the policy aligned with “enter the canister ID as text” rather than trying to reinterpret numeric values as UTF-8.
 
 The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Principal text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up.
 
 That means the project deliberately accepts a bounded griefing surface: a committer can supply syntactically valid short principal text that does not correspond to a useful installed canister, and the faucet may still spend ledger fee / CMC work attempting the top-up. The production answer to that trade-off is economic rather than heuristic. The memo path is kept simple and non-probing, while the production `min_tx_e8s` remains high enough that repeatedly funding such attempts is materially costly to the attacker and simultaneously adds real protocol funding into the staking path.
 
 This distinction matters because the ICP/Cycles ecosystem now has two different concepts: principals can hold cycles directly through the cycles ledger, but the faucet's `notify_top_up` path is still a **canister top-up** path rather than a general “mint cycles to arbitrary principal” path. Operationally, the supported UX remains: put the **target canister ID** in `icrc1_memo`.
+
+### [NNS dapp](https://nns.ic0.app/wallet/?u=) memo tip
+
+In the [NNS dapp](https://nns.ic0.app/wallet/?u=), the transaction memo field may be hidden by default. If it is not visible:
+
+1. press **Ctrl + K**
+2. type **memo**
+3. select **Show transaction memo**
+4. send ICP to the long-form **ICRC-1** staking account address above (not the short-form legacy account identifier), then put your **target canister ID** into the memo field as plain ASCII text
+
+The long-form ICRC-1 destination address is important: the [NNS dapp](https://nns.ic0.app/wallet/?u=) only enables larger text-based memos on that path, so that is the format required for the destination account in order for the memo to be capable of holding the target canister ID.
+
+[![NNS dapp memo search](jupiter-faucet-frontend/assets/how-it-works-memo-search.png)](https://nns.ic0.app/wallet/?u=)
+
+[![NNS dapp send ICP dialog using the long-form ICRC-1 destination address and memo field](jupiter-faucet-frontend/assets/how-it-works-send-icp.png)](https://nns.ic0.app/wallet/?u=)
 
 Important details that matter in practice:
 
