@@ -1,6 +1,9 @@
 # Jupiter Faucet Suite
 
-[Jupiter Faucet](https://jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol for the Internet Computer. Its goal is simple: turn a durable ICP source into durable cycles for canisters, while keeping the value-moving path narrow, deterministic, and hard to tamper with.
+![Jupiter Faucet](jupiter-faucet-frontend/assets/background-orbit/background-orbit.jpg)
+
+### [Jupiter Faucet](https://jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol for the Internet Computer - built to help canister smart contracts keep running indefinitely.
+Its goal is simple: turn a durable ICP source into durable cycles for canisters, while keeping the value-moving path narrow, deterministic, and hard to tamper with. The [Internet Computer](https://dashboard.internetcomputer.org/) is designed for tamperproof, "unstoppable" on-chain services; Jupiter Faucet focuses on the practical part: making sure canisters don’t run out of cycles, even if nobody is maintaining the project.
 
 In the current production design, one NNS neuron is the economic source of truth. The suite uses that neuron’s recurring maturity to sustain two long-lived on-chain flows:
 
