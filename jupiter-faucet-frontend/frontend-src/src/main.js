@@ -943,6 +943,19 @@ function trackerRangeLabel(range = trackerState.range) {
   return TRACKER_RANGE_LABELS[range] || TRACKER_RANGE_LABELS.month;
 }
 
+function renderTrackerRangeControls() {
+  const button = (range, label) => {
+    const active = trackerState.range === range;
+    return `<button class="pane-page-button${active ? ' is-active' : ''}" type="button" data-tracker-range="${range}" aria-pressed="${active ? 'true' : 'false'}">${label}</button>`;
+  };
+  return `
+    <div class="tracker-controls tracker-controls--charts" aria-label="Tracker chart range">
+      ${button('month', 'Latest Month')}
+      ${button('year', 'Latest Year')}
+      ${button('all', 'All')}
+    </div>`;
+}
+
 function trackerBucketDescription(range = trackerState.range) {
   return range === 'month' ? 'daily buckets' : 'monthly buckets';
 }
@@ -1367,6 +1380,7 @@ function renderTrackerData(data, principalText) {
     ${cyclesStatusNote}
     ${cyclesError}
     ${cmcError}
+    ${renderTrackerRangeControls()}
     <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>`;
   renderTrackerCharts(visibleData, data);
 }
@@ -1507,13 +1521,16 @@ function bindTrackerPane() {
       void submitTrackerPrincipal();
     });
   }
-  document.querySelectorAll('[data-tracker-range]').forEach((button) => {
-    if (button.dataset.bound === 'true') return;
-    button.dataset.bound = 'true';
-    button.addEventListener('click', () => {
+  const result = document.getElementById('tracker-result');
+  if (result && result.dataset.rangeBound !== 'true') {
+    result.dataset.rangeBound = 'true';
+    result.addEventListener('click', (event) => {
+      const button = event.target instanceof Element ? event.target.closest('[data-tracker-range]') : null;
+      if (!button || !result.contains(button)) return;
+      event.preventDefault();
       setTrackerRange(button.getAttribute('data-tracker-range') || 'month');
     });
-  });
+  }
   setTrackerRange(trackerState.range);
   renderTrackerPrompt();
 }
