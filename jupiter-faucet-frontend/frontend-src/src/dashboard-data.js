@@ -434,13 +434,13 @@ export async function loadCmcTopUpTransfersFromIndex({
   return { items: normalizeRouteTransferItems(items, limit) };
 }
 
-async function loadTrackerCmcTransfers({ historian, agent, indexActorFactory, canisterId, cmcCanisterId, historyLimit }) {
-  const status = await historian.get_public_status();
-  const indexCanisterId = principalToText(status?.index_canister_id);
+async function loadTrackerCmcTransfers({ historian, status = null, agent, indexActorFactory, canisterId, cmcCanisterId, historyLimit }) {
+  const resolvedStatus = status || await historian.get_public_status();
+  const indexCanisterId = principalToText(resolvedStatus?.index_canister_id);
   if (!indexCanisterId) {
     throw new Error('Historian status does not expose an ICP index canister ID');
   }
-  const effectiveCmcCanisterId = cmcCanisterId || readOptional(status?.cmc_canister_id) || MAINNET_CMC_CANISTER_ID;
+  const effectiveCmcCanisterId = cmcCanisterId || readOptional(resolvedStatus?.cmc_canister_id) || MAINNET_CMC_CANISTER_ID;
   const index = indexActorFactory(indexCanisterId, { agent });
   return loadCmcTopUpTransfersFromIndex({
     index,
@@ -493,30 +493,38 @@ export async function loadTrackerData({
     };
   }
 
-  const [commitmentsResult, cyclesResult, cmcTransfersResult] = await Promise.allSettled([
-    loadTrackerCommitments(historian, buildGetCommitmentHistoryArgs({
-      canisterId,
-      limit: historyLimit,
-      descending: false,
-    })),
-    historian.get_cycles_history(buildGetCyclesHistoryArgs({
-      canisterId,
-      limit: historyLimit,
-      descending: false,
-    })),
-    loadTrackerCmcTransfers({
-      historian,
-      agent: resolvedAgent,
-      indexActorFactory,
-      canisterId,
-      cmcCanisterId,
-      historyLimit,
-    }),
+  const commitmentsPromise = loadTrackerCommitments(historian, buildGetCommitmentHistoryArgs({
+    canisterId,
+    limit: historyLimit,
+    descending: false,
+  }));
+  const cyclesPromise = historian.get_cycles_history(buildGetCyclesHistoryArgs({
+    canisterId,
+    limit: historyLimit,
+    descending: false,
+  }));
+  const statusPromise = historian.get_public_status();
+  const cmcTransfersPromise = statusPromise.then((status) => loadTrackerCmcTransfers({
+    historian,
+    status,
+    agent: resolvedAgent,
+    indexActorFactory,
+    canisterId,
+    cmcCanisterId,
+    historyLimit,
+  }));
+
+  const [commitmentsResult, cyclesResult, statusResult, cmcTransfersResult] = await Promise.allSettled([
+    commitmentsPromise,
+    cyclesPromise,
+    statusPromise,
+    cmcTransfersPromise,
   ]);
 
   return {
     canisterId,
     overview: overviewValue,
+    status: fulfilledOrNull(statusResult),
     isRecognized: true,
     isCommitmentBeneficiary: true,
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
