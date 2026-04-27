@@ -33,7 +33,8 @@ const BLACKHOLE_CANISTER_ID = 'e3mmv-5qaaa-aaaah-aadma-cai';
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
-      <p><a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole" target="_blank" rel="noopener noreferrer">Blackhole controller</a> required for cycles observability.</p>
+      <p>Cycles balances are sampled periodically by historian.</p>
+      <p>For ordinary canisters, cycles observability requires the canister to expose public status through the <a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole" target="_blank" rel="noopener noreferrer">blackhole controller</a>. Newly registered canisters may show as pending until the next cycles sweep completes.</p>
     </div>`,
 };
 
@@ -481,17 +482,68 @@ async function fetchRegisteredPage(page) {
 }
 
 
-function renderCyclesUnavailableCell() {
+function renderCyclesHelpIcon() {
+  return `
+    <button
+      class="pane-inline-tooltip-icon"
+      type="button"
+      data-tooltip-id="blackhole-controller-help"
+      aria-label="Cycles observability help"
+    >i</button>`;
+}
+
+function renderCyclesStatusCell(label = 'unavailable') {
   return `
     <span class="pane-inline-tooltip-fallback">
-      <span>unavailable</span>
-      <button
-        class="pane-inline-tooltip-icon"
-        type="button"
-        data-tooltip-id="blackhole-controller-help"
-        aria-label="Cycles observability help"
-      >i</button>
+      <span>${escapeHtml(label)}</span>
+      ${renderCyclesHelpIcon()}
     </span>`;
+}
+
+function variantNameFromValue(value) {
+  if (!value || Array.isArray(value) || typeof value !== 'object') return '';
+  return Object.keys(value)[0] || '';
+}
+
+function cyclesProbeStatusInfo(data) {
+  const meta = data?.overview?.meta || {};
+  const probeResult = optValue(meta.last_cycles_probe_result);
+  const probeTs = optValue(meta.last_cycles_probe_ts);
+
+  if (!probeTs && !probeResult) {
+    return {
+      label: 'pending first sweep',
+      chartMessage: 'Cycles data pending first historian sweep.',
+      note: 'Cycles data is pending: historian has registered this canister, but the first cycles sweep has not recorded a balance yet.',
+    };
+  }
+
+  const resultName = variantNameFromValue(probeResult);
+  if (resultName === 'Error') {
+    const errorText = typeof probeResult.Error === 'string' ? probeResult.Error : 'unknown error';
+    const when = formatTimestampSeconds(probeTs);
+    return {
+      label: 'probe failed',
+      chartMessage: 'Cycles probe failed.',
+      note: `Cycles data is unavailable because the last historian cycles probe failed${when !== DASH ? ` at ${when}` : ''}: ${errorText}`,
+    };
+  }
+
+  if (resultName === 'NotAvailable') {
+    const when = formatTimestampSeconds(probeTs);
+    return {
+      label: 'not available',
+      chartMessage: 'Cycles data not available.',
+      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Ordinary canisters must expose public status through the blackhole controller for cycles observability.`,
+    };
+  }
+
+  const when = formatTimestampSeconds(probeTs);
+  return {
+    label: 'pending update',
+    chartMessage: 'Cycles data pending update.',
+    note: `Cycles data has not been recorded for this tracker view yet${when !== DASH ? `; the last probe was at ${when}` : ''}.`,
+  };
 }
 
 function formatCommitmentTarget(item) {
@@ -767,7 +819,7 @@ function renderRegisteredPane(data) {
           <td>${formatCommitmentTarget(item)}</td>
           <td>${escapeHtml(formatInteger(item.qualifying_commitment_count))}</td>
           <td>${escapeHtml(formatIcpE8s(item.total_qualifying_committed_e8s))}</td>
-          <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
+          <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesStatusCell(item.last_cycles_probe_ts?.[0] !== undefined && item.last_cycles_probe_ts?.[0] !== null ? 'unavailable' : 'pending')}</td>
         </tr>`).join('')
       : `<tr><td colspan="4" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`;
   }
@@ -1045,10 +1097,11 @@ function renderTrackerObservedCmcChart(buckets) {
   });
 }
 
-function renderTrackerCyclesChart(buckets) {
+function renderTrackerCyclesChart(buckets, data) {
   const cycleBuckets = buckets.filter((bucket) => bucket.cycles !== null && bucket.cycles !== undefined);
   if (cycleBuckets.length === 0) {
-    return `<div class="tracker-chart-empty">Cycles data unavailable. ${renderCyclesUnavailableCell()}</div>`;
+    const status = cyclesProbeStatusInfo(data);
+    return `<div class="tracker-chart-empty">${escapeHtml(status.chartMessage)} ${renderCyclesHelpIcon()}</div>`;
   }
 
   const maxCycles = cycleBuckets.reduce((max, bucket) => bucket.cycles > max ? bucket.cycles : max, 0n);
@@ -1121,7 +1174,7 @@ function renderTrackerCharts(data) {
         <h3>Cycles balance</h3>
         <span>Line uses a separate cycles scale.</span>
       </div>
-      ${renderTrackerCyclesChart(buckets)}
+      ${renderTrackerCyclesChart(buckets, data)}
     </div>`;
 }
 
@@ -1152,11 +1205,15 @@ function renderTrackerData(data, principalText) {
   const sources = sourceNames(data.overview?.sources).join(', ') || DASH;
   const firstSeen = formatTimestampSeconds(optValue(data.overview?.meta?.first_seen_ts));
   const lastCommitment = formatTimestampSeconds(optValue(data.overview?.meta?.last_commitment_ts));
+  const cyclesStatus = cyclesProbeStatusInfo(data);
   const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
     ? escapeHtml(formatCycles(summary.latestCycles))
-    : renderCyclesUnavailableCell();
+    : renderCyclesStatusCell(cyclesStatus.label);
   const commitmentError = data.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(data.errors.commitments)}</p>` : '';
   const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
+  const cyclesStatusNote = summary.latestCycles === null || summary.latestCycles === undefined
+    ? `<p class="pane-status-note tracker-status-note">${escapeHtml(cyclesStatus.note)}</p>`
+    : '';
   const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
   result.innerHTML = `
     <dl class="pane-detail-grid tracker-summary-grid">
@@ -1174,6 +1231,7 @@ function renderTrackerData(data, principalText) {
     </dl>
     <p class="pane-status-note tracker-status-note">Commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
     ${commitmentError}
+    ${cyclesStatusNote}
     ${cyclesError}
     ${cmcError}
     <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>`;

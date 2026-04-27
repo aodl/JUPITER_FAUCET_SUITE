@@ -13,6 +13,7 @@ use crate::{
 use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidCommitment, RecentCommitment};
 
 const PAGE_SIZE: u64 = 500;
+const MAX_INITIAL_CYCLES_PROBE_QUEUE: usize = 256;
 const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
 
 
@@ -290,11 +291,20 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     }
     process_route_indexing(now_nanos, now_secs, index).await?;
 
-    let (enable_sns_tracking, last_sns_discovery_ts, last_completed_cycles_sweep_ts, active_cycles_present, active_sns_present, interval_secs) = state::with_state(|st| (
+    let (
+        enable_sns_tracking,
+        last_sns_discovery_ts,
+        last_completed_cycles_sweep_ts,
+        active_cycles_present,
+        initial_cycles_probe_queue_present,
+        active_sns_present,
+        interval_secs,
+    ) = state::with_state(|st| (
         st.config.enable_sns_tracking,
         st.last_sns_discovery_ts,
         st.last_completed_cycles_sweep_ts,
         st.active_cycles_sweep.is_some(),
+        !st.initial_cycles_probe_queue.is_empty(),
         st.active_sns_discovery.is_some(),
         st.config.cycles_interval_seconds,
     ));
@@ -304,12 +314,45 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
         process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root).await?;
     }
 
+    if initial_cycles_probe_queue_present {
+        process_initial_cycles_probe_queue(now_nanos, now_secs, blackhole).await?;
+    }
+
     let cycles_due = active_cycles_present || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
     if cycles_due {
         process_cycles_sweep(now_nanos, now_secs, blackhole).await?;
     }
 
     Ok(())
+}
+
+
+fn enqueue_initial_cycles_probe(st: &mut crate::state::State, canister_id: candid::Principal) {
+    if st.initial_cycles_probe_queue.contains(&canister_id) {
+        return;
+    }
+    if st.initial_cycles_probe_queue.len() >= MAX_INITIAL_CYCLES_PROBE_QUEUE {
+        // The normal periodic sweep still covers this canister. Refusing to
+        // grow the targeted queue further keeps a burst of paid commitments from
+        // turning into unbounded historian work or state growth.
+        return;
+    }
+    st.initial_cycles_probe_queue.push(canister_id);
+}
+
+fn should_probe_memo_registered_canister(st: &crate::state::State, canister_id: candid::Principal) -> bool {
+    let Some(sources) = st.canister_sources.get(&canister_id) else {
+        return false;
+    };
+    if logic::should_skip_blackhole_for_sources(sources) {
+        return false;
+    }
+    sources.contains(&CanisterSource::MemoCommitment)
+        && st
+            .commitment_history
+            .get(&canister_id)
+            .map(|history| history.iter().any(|item| item.counts_toward_faucet))
+            .unwrap_or(false)
 }
 
 fn apply_verified_qualifying_commitment(
@@ -343,11 +386,18 @@ fn apply_verified_qualifying_commitment(
     );
     if inserted {
         let meta = st.per_canister_meta.entry(commitment.beneficiary).or_insert_with(CanisterMeta::default);
+        let needs_initial_cycles_probe = meta.last_cycles_probe_ts.is_none();
         logic::apply_commitment_seen(meta, commitment.timestamp_nanos, now_secs);
         let recent = st.recent_commitments.get_or_insert_with(Vec::new);
         push_recent_commitment(recent, recent_item, MAX_RECENT_QUALIFYING_COMMITMENTS);
         let count = st.qualifying_commitment_count.get_or_insert(0);
         *count = count.saturating_add(1);
+
+        // Newly registered memo beneficiaries should get an early targeted
+        // cycles probe without resetting or starving the normal full sweep.
+        if needs_initial_cycles_probe {
+            enqueue_initial_cycles_probe(st, commitment.beneficiary);
+        }
     }
     if inserted || st.canister_sources.contains_key(&commitment.beneficiary) {
         crate::refresh_registered_canister_summary(st, commitment.beneficiary);
@@ -1035,6 +1085,125 @@ async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     Ok(())
 }
 
+
+async fn probe_and_record_cycles<B: BlackholeClient>(
+    timestamp_nanos: u64,
+    now_secs: u64,
+    canister_id: candid::Principal,
+    max_entries: u32,
+    self_canister_id: Option<candid::Principal>,
+    blackhole: &B,
+) -> Result<(), String> {
+    if self_canister_id.map(|self_id| canister_id == self_id).unwrap_or(false) {
+        let cycles = ic_cdk::api::canister_cycle_balance();
+        log_cycles_once_per_week(cycles);
+        state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+            crate::state::ensure_cycles_history_loaded(st, canister_id);
+            let history = st.cycles_history.entry(canister_id).or_default();
+            let inserted = logic::push_cycles_sample(
+                history,
+                logic::make_cycles_sample(timestamp_nanos, cycles, CyclesSampleSource::SelfCanister),
+                max_entries,
+            );
+            let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+            if meta.first_seen_ts.is_none() {
+                meta.first_seen_ts = Some(now_secs);
+            }
+            if inserted {
+                logic::apply_cycles_probe_result(
+                    meta,
+                    timestamp_nanos,
+                    CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister),
+                );
+            }
+            crate::refresh_registered_canister_summary(st, canister_id);
+        });
+        return Ok(());
+    }
+
+    match blackhole.canister_status(canister_id).await {
+        Ok(status) => {
+            let cycles = nat_to_u128(&status.cycles)
+                .ok_or_else(|| "cycles overflow converting nat to u128".to_string())?;
+            state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+                crate::state::ensure_cycles_history_loaded(st, canister_id);
+                let history = st.cycles_history.entry(canister_id).or_default();
+                let inserted = logic::push_cycles_sample(
+                    history,
+                    logic::make_cycles_sample(
+                        timestamp_nanos,
+                        cycles,
+                        CyclesSampleSource::BlackholeStatus,
+                    ),
+                    max_entries,
+                );
+                let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+                if meta.first_seen_ts.is_none() {
+                    meta.first_seen_ts = Some(now_secs);
+                }
+                if inserted {
+                    logic::apply_cycles_probe_result(
+                        meta,
+                        timestamp_nanos,
+                        CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus),
+                    );
+                }
+                crate::refresh_registered_canister_summary(st, canister_id);
+            });
+        }
+        Err(err) => {
+            state::with_root_and_registry_canister_state_mut(canister_id, |st| {
+                let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+                if meta.first_seen_ts.is_none() {
+                    meta.first_seen_ts = Some(now_secs);
+                }
+                logic::apply_cycles_probe_result(
+                    meta,
+                    timestamp_nanos,
+                    CyclesProbeResult::Error(err.to_string()),
+                );
+                crate::refresh_registered_canister_summary(st, canister_id);
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn process_initial_cycles_probe_queue<B: BlackholeClient>(
+    timestamp_nanos: u64,
+    now_secs: u64,
+    blackhole: &B,
+) -> Result<(), String> {
+    let (targets, max_entries) = state::with_root_state_mut(|st| {
+        let max_per_tick = st.config.max_canisters_per_cycles_tick.max(1) as usize;
+        let mut pending = std::mem::take(&mut st.initial_cycles_probe_queue);
+        let mut selected = Vec::new();
+
+        while selected.len() < max_per_tick && !pending.is_empty() {
+            let canister_id = pending.remove(0);
+            let already_probed = st
+                .per_canister_meta
+                .get(&canister_id)
+                .and_then(|meta| meta.last_cycles_probe_ts)
+                .is_some();
+            if already_probed {
+                continue;
+            }
+            if should_probe_memo_registered_canister(st, canister_id) {
+                selected.push(canister_id);
+            }
+        }
+
+        st.initial_cycles_probe_queue = pending;
+        (selected, st.config.max_cycles_entries_per_canister)
+    });
+
+    for canister_id in targets {
+        probe_and_record_cycles(timestamp_nanos, now_secs, canister_id, max_entries, None, blackhole).await?;
+    }
+    Ok(())
+}
+
 async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs: u64, blackhole: &B) -> Result<(), String> {
     let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
         if st.active_cycles_sweep.is_none() {
@@ -1074,78 +1243,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
     let start = snapshot.next_index as usize;
     let end = (snapshot.next_index + max_per_tick as u64).min(snapshot.canisters.len() as u64) as usize;
     for canister_id in snapshot.canisters[start..end].iter().copied() {
-        if canister_id == self_id {
-            let cycles = ic_cdk::api::canister_cycle_balance();
-            log_cycles_once_per_week(cycles);
-            state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
-                crate::state::ensure_cycles_history_loaded(st, canister_id);
-                let history = st.cycles_history.entry(canister_id).or_default();
-                let inserted = logic::push_cycles_sample(
-                    history,
-                    logic::make_cycles_sample(started_at_ts_nanos, cycles, CyclesSampleSource::SelfCanister),
-                    max_entries,
-                );
-                let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-                if meta.first_seen_ts.is_none() {
-                    meta.first_seen_ts = Some(now_secs);
-                }
-                if inserted {
-                    logic::apply_cycles_probe_result(
-                        meta,
-                        started_at_ts_nanos,
-                        CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister),
-                    );
-                }
-                crate::refresh_registered_canister_summary(st, canister_id);
-            });
-            continue;
-        }
-
-        match blackhole.canister_status(canister_id).await {
-            Ok(status) => {
-                let cycles = nat_to_u128(&status.cycles)
-                    .ok_or_else(|| "cycles overflow converting nat to u128".to_string())?;
-                state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
-                    crate::state::ensure_cycles_history_loaded(st, canister_id);
-                    let history = st.cycles_history.entry(canister_id).or_default();
-                    let inserted = logic::push_cycles_sample(
-                        history,
-                        logic::make_cycles_sample(
-                            started_at_ts_nanos,
-                            cycles,
-                            CyclesSampleSource::BlackholeStatus,
-                        ),
-                        max_entries,
-                    );
-                    let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-                    if meta.first_seen_ts.is_none() {
-                        meta.first_seen_ts = Some(now_secs);
-                    }
-                    if inserted {
-                        logic::apply_cycles_probe_result(
-                            meta,
-                            started_at_ts_nanos,
-                            CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus),
-                        );
-                    }
-                    crate::refresh_registered_canister_summary(st, canister_id);
-                });
-            }
-            Err(err) => {
-                state::with_root_and_registry_canister_state_mut(canister_id, |st| {
-                    let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
-                    if meta.first_seen_ts.is_none() {
-                        meta.first_seen_ts = Some(now_secs);
-                    }
-                    logic::apply_cycles_probe_result(
-                        meta,
-                        started_at_ts_nanos,
-                        CyclesProbeResult::Error(err.to_string()),
-                    );
-                    crate::refresh_registered_canister_summary(st, canister_id);
-                });
-            }
-        }
+        probe_and_record_cycles(started_at_ts_nanos, now_secs, canister_id, max_entries, Some(self_id), blackhole).await?;
     }
 
     state::with_root_state_mut(|st| {
@@ -1164,7 +1262,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
 mod tests {
     use super::*;
     use crate::clients::index::{GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens};
-    use crate::state::{Config, State};
+    use crate::state::{ActiveCyclesSweep, Config, State};
     use async_trait::async_trait;
     use candid::Principal;
     use futures::executor::block_on;
@@ -1407,6 +1505,32 @@ mod tests {
         }
     }
 
+    struct RecordingBlackholeClient {
+        cycles: u64,
+        calls: Mutex<Vec<Principal>>,
+    }
+
+    impl RecordingBlackholeClient {
+        fn new(cycles: u64) -> Self {
+            Self { cycles, calls: Mutex::new(Vec::new()) }
+        }
+
+        fn calls(&self) -> Vec<Principal> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl BlackholeClient for RecordingBlackholeClient {
+        async fn canister_status(&self, canister_id: Principal) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError> {
+            self.calls.lock().unwrap().push(canister_id);
+            Ok(crate::clients::blackhole::BlackholeCanisterStatus {
+                cycles: Nat::from(self.cycles),
+                settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
+            })
+        }
+    }
+
 
     #[test]
     fn sns_discovery_chunks_across_ticks_and_resumes_from_persisted_state() {
@@ -1513,6 +1637,86 @@ mod tests {
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.last_index_run_ts, Some(200));
             assert!(st.canister_sources.get(&beneficiary).unwrap().contains(&CanisterSource::MemoCommitment));
+        });
+    }
+
+    #[test]
+    fn new_qualifying_commitment_enqueues_initial_cycles_probe_without_resetting_full_sweep() {
+        let staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let existing = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+        state::with_state_mut(|st| {
+            st.last_completed_cycles_sweep_ts = 10_000;
+            st.config.cycles_interval_seconds = 3_600;
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 55,
+                canisters: vec![existing],
+                next_index: 0,
+            });
+        });
+        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 150,
+            transactions: vec![transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000)],
+            oldest_tx_id: Some(42),
+        }]);
+
+        block_on(process_commitment_indexing(&mock, 20_000)).unwrap();
+
+        state::with_state(|st| {
+            let active = st.active_cycles_sweep.as_ref().expect("active sweep should not be reset");
+            assert_eq!(active.started_at_ts_nanos, 55);
+            assert_eq!(active.canisters, vec![existing]);
+            assert_eq!(active.next_index, 0);
+            assert_eq!(st.last_completed_cycles_sweep_ts, 10_000);
+            assert_eq!(st.initial_cycles_probe_queue, vec![beneficiary]);
+        });
+    }
+
+    #[test]
+    fn initial_cycles_probe_queue_probes_only_queued_canister() {
+        let _staking_id = configure_state(10);
+        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let existing = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.last_completed_cycles_sweep_ts = 10_000;
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 55,
+                canisters: vec![existing],
+                next_index: 0,
+            });
+            st.distinct_canisters.insert(beneficiary);
+            st.canister_sources.insert(
+                beneficiary,
+                std::iter::once(CanisterSource::MemoCommitment).collect(),
+            );
+            st.commitment_history.insert(
+                beneficiary,
+                vec![crate::state::CommitmentSample {
+                    tx_id: 42,
+                    timestamp_nanos: Some(123_000_000_000),
+                    amount_e8s: 150,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.initial_cycles_probe_queue.push(beneficiary);
+        });
+        let blackhole = RecordingBlackholeClient::new(777);
+
+        block_on(process_initial_cycles_probe_queue(999_000_000_000, 999, &blackhole)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(blackhole.calls(), vec![beneficiary]);
+            assert!(st.initial_cycles_probe_queue.is_empty());
+            assert_eq!(st.last_completed_cycles_sweep_ts, 10_000);
+            assert!(st.active_cycles_sweep.is_some(), "targeted first probe should not disturb active full sweep");
+            assert_eq!(
+                st.cycles_history
+                    .get(&beneficiary)
+                    .and_then(|history| history.last())
+                    .map(|sample| sample.cycles),
+                Some(777)
+            );
         });
     }
 

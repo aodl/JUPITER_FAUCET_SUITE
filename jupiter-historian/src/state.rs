@@ -214,6 +214,8 @@ pub struct StableRootState {
     pub last_completed_route_sweep_ts: Option<u64>,
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
     #[serde(default)]
+    pub initial_cycles_probe_queue: Vec<Principal>,
+    #[serde(default)]
     pub active_route_sweep: Option<ActiveRouteSweep>,
     #[serde(default)]
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
@@ -468,6 +470,8 @@ pub struct State {
     pub last_completed_route_sweep_ts: Option<u64>,
     pub active_cycles_sweep: Option<ActiveCyclesSweep>,
     #[serde(default)]
+    pub initial_cycles_probe_queue: Vec<Principal>,
+    #[serde(default)]
     pub active_route_sweep: Option<ActiveRouteSweep>,
     #[serde(default)]
     pub active_sns_discovery: Option<ActiveSnsDiscovery>,
@@ -512,6 +516,7 @@ impl State {
             last_completed_cycles_sweep_ts: 0,
             last_completed_route_sweep_ts: Some(0),
             active_cycles_sweep: None,
+            initial_cycles_probe_queue: Vec::new(),
             active_route_sweep: None,
             active_sns_discovery: None,
             main_lock_state_ts: Some(0),
@@ -1012,6 +1017,7 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         last_completed_cycles_sweep_ts: st.last_completed_cycles_sweep_ts,
         last_completed_route_sweep_ts: st.last_completed_route_sweep_ts,
         active_cycles_sweep: st.active_cycles_sweep.clone(),
+        initial_cycles_probe_queue: st.initial_cycles_probe_queue.clone(),
         active_route_sweep: st.active_route_sweep.clone(),
         active_sns_discovery: st.active_sns_discovery.clone(),
         main_lock_state_ts: st.main_lock_state_ts,
@@ -1120,6 +1126,7 @@ fn restore_state_current(root: StableRootState) -> State {
         last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
         last_completed_route_sweep_ts: root.last_completed_route_sweep_ts.or(Some(0)),
         active_cycles_sweep: root.active_cycles_sweep,
+        initial_cycles_probe_queue: root.initial_cycles_probe_queue,
         active_route_sweep: root.active_route_sweep,
         active_sns_discovery: root.active_sns_discovery,
         main_lock_state_ts: root.main_lock_state_ts,
