@@ -77,10 +77,16 @@ function renderCanisterTrackerLink(value, { label = null, className = 'pane-cani
   return `<a href="#metric-tracker" data-tracker-principal="${escapeHtml(principalText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
 }
 
+function renderCanisterDashboardLink(value, label = 'Open dashboard') {
+  const principalText = formatPrincipal(value).trim();
+  if (!principalText) return DASH;
+  return `<a href="https://dashboard.internetcomputer.org/canister/${escapeHtml(principalText)}" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">${escapeHtml(label)}</a>`;
+}
+
 function formatSourceController(value) {
   const principalText = formatPrincipal(value).trim();
   if (!principalText) return '';
-  if (principalText === BLACKHOLE_CANISTER_ID) return 'blackhole';
+  if (principalText === BLACKHOLE_CANISTER_ID) return renderCanisterTrackerLink(principalText, { label: 'blackhole' });
   return renderCanisterTrackerLink(principalText);
 }
 
@@ -1100,6 +1106,7 @@ function renderTrackerRecognitionMessage(data, principalText) {
       <p>${escapeHtml(detail)}</p>
       <p>Register the canister for perpetual top-ups from the <a class="pane-external-link" href="${TRACKER_REGISTRATION_URL}" target="_blank" rel="noopener noreferrer">How it works guide</a>.</p>
       <p>${renderCanisterTrackerLink(principalText)}</p>
+      <p>${renderCanisterDashboardLink(principalText)}</p>
     </div>`;
 }
 
@@ -1124,6 +1131,7 @@ function renderTrackerData(data, principalText) {
   result.innerHTML = `
     <dl class="pane-detail-grid tracker-summary-grid">
       <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
+      <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
       <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
       <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
       <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
