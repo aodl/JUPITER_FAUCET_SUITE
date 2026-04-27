@@ -175,6 +175,7 @@ type ListRecentCommitmentsResponse = record {
 type CanisterModuleHash = record {
   canister_id : principal;
   module_hash_hex : opt text;
+  controllers : opt vec principal;
 };
 service : (InitArgs) -> {
   get_canister_module_hashes : () -> (vec CanisterModuleHash);

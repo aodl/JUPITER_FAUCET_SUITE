@@ -453,6 +453,7 @@ pub struct ListRecentCommitmentsResponse {
 pub struct CanisterModuleHash {
     pub canister_id: Principal,
     pub module_hash_hex: Option<String>,
+    pub controllers: Option<Vec<Principal>>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -1153,18 +1154,22 @@ async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
             canister_id,
             num_requested_changes: Some(0),
         };
-        let module_hash_hex = match ic_cdk::management_canister::canister_info(&request).await {
-            Ok(result) => result
-                .module_hash
-                .map(|module_hash| format_module_hash_hex(module_hash.as_ref())),
+        let (module_hash_hex, controllers) = match ic_cdk::management_canister::canister_info(&request).await {
+            Ok(result) => (
+                result
+                    .module_hash
+                    .map(|module_hash| format_module_hash_hex(module_hash.as_ref())),
+                Some(result.controllers),
+            ),
             Err(err) => {
                 ic_cdk::println!("get_canister_module_hashes failed for {}: {:?}", canister_id, err);
-                None
+                (None, None)
             }
         };
         hashes.push(CanisterModuleHash {
             canister_id,
             module_hash_hex,
+            controllers,
         });
     }
     hashes

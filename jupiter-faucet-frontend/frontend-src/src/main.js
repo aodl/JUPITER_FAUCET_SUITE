@@ -24,6 +24,7 @@ const JUPITER_NEURON_ID = 11614578985374291210n;
 const TABLE_PAGE_SIZE = 6;
 const JUPITER_STAKING_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
+const BLACKHOLE_CANISTER_ID = 'e3mmv-5qaaa-aaaah-aadma-cai';
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
@@ -67,6 +68,20 @@ function isLocalHost() {
 
 function formatPrincipal(value) {
   return value?.toText ? value.toText() : String(value || '');
+}
+
+function renderCanisterTrackerLink(value, { label = null, className = 'pane-canister-tracker-link pane-external-link mono' } = {}) {
+  const principalText = formatPrincipal(value).trim();
+  if (!principalText) return DASH;
+  const display = label === null || label === undefined ? principalText : String(label);
+  return `<a href="#metric-tracker" data-tracker-principal="${escapeHtml(principalText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
+}
+
+function formatSourceController(value) {
+  const principalText = formatPrincipal(value).trim();
+  if (!principalText) return '';
+  if (principalText === BLACKHOLE_CANISTER_ID) return 'blackhole';
+  return renderCanisterTrackerLink(principalText);
 }
 
 function formatIcpE8s(value) {
@@ -445,9 +460,7 @@ function renderCyclesUnavailableCell() {
 
 function formatCommitmentTarget(item) {
   const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
-  if (canister) {
-    return escapeHtml(formatPrincipal(canister));
-  }
+  if (canister) return renderCanisterTrackerLink(canister);
   return 'invalid target canister memo';
 }
 
@@ -538,23 +551,63 @@ function sourcePaneModuleHashNodes() {
   return Array.from(document.querySelectorAll('[data-source-module-hash]'));
 }
 
-function sourcePaneModuleHashCacheKey() {
-  if (!FRONTEND_CONFIG?.historianCanisterId) return null;
-  return `jupiter-faucet:source-pane-module-hashes:${FRONTEND_CONFIG.historianCanisterId}`;
+function sourcePaneControllerNodes() {
+  return Array.from(document.querySelectorAll('[data-source-controllers]'));
 }
 
-function applySourcePaneModuleHashes(hashByCanisterId, { fallbackTitle = '' } = {}) {
+function sourcePaneCanisterInfoNodes() {
+  return [...sourcePaneModuleHashNodes(), ...sourcePaneControllerNodes()];
+}
+
+function sourcePaneModuleHashCacheKey() {
+  if (!FRONTEND_CONFIG?.historianCanisterId) return null;
+  return `jupiter-faucet:source-pane-canister-info:v3:${FRONTEND_CONFIG.historianCanisterId}`;
+}
+
+function normalizeSourcePaneInfo(infoByCanisterId, canisterId) {
+  const entry = infoByCanisterId?.[canisterId];
+  if (!entry) return { moduleHash: null, controllers: null };
+  if (typeof entry === 'string') return { moduleHash: entry || null, controllers: null };
+  if (typeof entry !== 'object' || Array.isArray(entry)) return { moduleHash: null, controllers: null };
+  return {
+    moduleHash: entry.moduleHash || entry.module_hash_hex || null,
+    controllers: Array.isArray(entry.controllers) ? entry.controllers : null,
+  };
+}
+
+function renderSourceControllers(controllers) {
+  if (controllers === null || controllers === undefined) return 'Unavailable';
+  if (!Array.isArray(controllers) || controllers.length === 0) return 'none';
+  return controllers.map(formatSourceController).filter(Boolean).join(', ') || 'none';
+}
+
+function sourcePaneExpectedCanisterIds() {
+  return Array.from(new Set(sourcePaneCanisterInfoNodes()
+    .map((node) => node.getAttribute('data-source-module-hash') || node.getAttribute('data-source-controllers') || '')
+    .filter(Boolean)));
+}
+
+function sourcePaneInfoHasCompleteControllerData(infoByCanisterId) {
+  return sourcePaneExpectedCanisterIds().every((canisterId) => (
+    Array.isArray(normalizeSourcePaneInfo(infoByCanisterId, canisterId).controllers)
+  ));
+}
+
+function applySourcePaneModuleHashes(infoByCanisterId, { fallbackTitle = '' } = {}) {
   sourcePaneModuleHashNodes().forEach((node) => {
     const canisterId = node.getAttribute('data-source-module-hash') || '';
-    const moduleHash = hashByCanisterId[canisterId] || null;
+    const { moduleHash } = normalizeSourcePaneInfo(infoByCanisterId, canisterId);
     node.textContent = moduleHash || 'Unavailable';
-    if (moduleHash) {
-      node.setAttribute('title', moduleHash);
-    } else if (fallbackTitle) {
-      node.setAttribute('title', fallbackTitle);
-    } else {
-      node.removeAttribute('title');
-    }
+    if (moduleHash) node.setAttribute('title', moduleHash);
+    else if (fallbackTitle) node.setAttribute('title', fallbackTitle);
+    else node.removeAttribute('title');
+  });
+  sourcePaneControllerNodes().forEach((node) => {
+    const canisterId = node.getAttribute('data-source-controllers') || '';
+    const { controllers } = normalizeSourcePaneInfo(infoByCanisterId, canisterId);
+    node.innerHTML = renderSourceControllers(controllers);
+    if (controllers === null && fallbackTitle) node.setAttribute('title', fallbackTitle);
+    else node.removeAttribute('title');
   });
 }
 
@@ -569,57 +622,48 @@ function readSourcePaneModuleHashCache() {
     const cachedAt = Number(parsed.cachedAt || 0);
     if (!Number.isFinite(cachedAt) || cachedAt <= 0) return null;
     if ((Date.now() - cachedAt) > SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) return null;
-    if (!parsed.hashByCanisterId || typeof parsed.hashByCanisterId !== 'object') return null;
-    return { cachedAt, hashByCanisterId: parsed.hashByCanisterId };
-  } catch {
-    return null;
-  }
+    const infoByCanisterId = parsed.infoByCanisterId || parsed.hashByCanisterId;
+    if (!infoByCanisterId || typeof infoByCanisterId !== 'object') return null;
+    return { cachedAt, infoByCanisterId };
+  } catch { return null; }
 }
 
-function writeSourcePaneModuleHashCache(hashByCanisterId) {
+function writeSourcePaneModuleHashCache(infoByCanisterId) {
   const cacheKey = sourcePaneModuleHashCacheKey();
-  if (!cacheKey) return;
-  try {
-    window.localStorage.setItem(cacheKey, JSON.stringify({
-      cachedAt: Date.now(),
-      hashByCanisterId,
-    }));
-  } catch {
-    // Ignore storage failures.
-  }
+  if (!cacheKey || !sourcePaneInfoHasCompleteControllerData(infoByCanisterId)) return;
+  try { window.localStorage.setItem(cacheKey, JSON.stringify({ cachedAt: Date.now(), infoByCanisterId })); }
+  catch { /* Ignore storage failures. */ }
 }
 
 async function ensureSourcePaneModuleHashesLoaded() {
-  const hashNodes = sourcePaneModuleHashNodes();
-  if (hashNodes.length === 0 || !FRONTEND_CONFIG?.historianCanisterId) return;
-  if (sourcePaneModuleHashesLoadedAt > 0 && (Date.now() - sourcePaneModuleHashesLoadedAt) <= SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) {
-    return;
-  }
-
+  const infoNodes = sourcePaneCanisterInfoNodes();
+  if (infoNodes.length === 0 || !FRONTEND_CONFIG?.historianCanisterId) return;
+  if (sourcePaneModuleHashesLoadedAt > 0 && (Date.now() - sourcePaneModuleHashesLoadedAt) <= SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) return;
   const cached = readSourcePaneModuleHashCache();
   if (cached) {
-    applySourcePaneModuleHashes(cached.hashByCanisterId);
+    applySourcePaneModuleHashes(cached.infoByCanisterId);
     sourcePaneModuleHashesLoadedAt = cached.cachedAt;
     return;
   }
-
   if (sourcePaneModuleHashesRequest) {
     await sourcePaneModuleHashesRequest;
     return;
   }
-
   sourcePaneModuleHashesRequest = (async () => {
     try {
-      const hashes = await loadCanisterModuleHashes({
+      const infos = await loadCanisterModuleHashes({
         historianCanisterId: FRONTEND_CONFIG.historianCanisterId,
         host: window.location.origin,
         local: isLocalHost(),
       });
-      const hashByCanisterId = Object.fromEntries(
-        hashes.map((item) => [formatPrincipal(item.canister_id), readOpt(item.module_hash_hex) || null]),
+      const infoByCanisterId = Object.fromEntries(
+        infos.map((item) => [formatPrincipal(item.canister_id), {
+          moduleHash: readOpt(item.module_hash_hex) || null,
+          controllers: readOpt(item.controllers)?.map(formatPrincipal) || null,
+        }]),
       );
-      applySourcePaneModuleHashes(hashByCanisterId);
-      writeSourcePaneModuleHashCache(hashByCanisterId);
+      applySourcePaneModuleHashes(infoByCanisterId);
+      writeSourcePaneModuleHashCache(infoByCanisterId);
       sourcePaneModuleHashesLoadedAt = Date.now();
     } catch (error) {
       const reason = normalizeError(error);
@@ -628,7 +672,6 @@ async function ensureSourcePaneModuleHashesLoaded() {
       sourcePaneModuleHashesRequest = null;
     }
   })();
-
   await sourcePaneModuleHashesRequest;
 }
 
@@ -685,7 +728,7 @@ function renderRegisteredPane(data) {
     body.innerHTML = items.length
       ? items.map((item) => `
         <tr>
-          <td class="mono">${formatCommitmentTarget(item)}</td>
+          <td>${formatCommitmentTarget(item)}</td>
           <td>${escapeHtml(formatInteger(item.qualifying_commitment_count))}</td>
           <td>${escapeHtml(formatIcpE8s(item.total_qualifying_committed_e8s))}</td>
           <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesUnavailableCell()}</td>
@@ -712,7 +755,7 @@ function renderCommitmentsPane(data) {
       <tr>
         <td>${renderCommitmentTimestampCell(item)}</td>
         <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
-        <td class="mono">${formatCommitmentTarget(item)}</td>
+        <td>${formatCommitmentTarget(item)}</td>
         <td>${escapeHtml(formatCommitmentOutcome(item))}</td>
       </tr>`,
     paneEmptyMessage(data, 'recent', 'No commitments indexed yet.'),
@@ -1056,7 +1099,7 @@ function renderTrackerRecognitionMessage(data, principalText) {
     <div class="tracker-empty-state">
       <p>${escapeHtml(detail)}</p>
       <p>Register the canister for perpetual top-ups from the <a class="pane-external-link" href="${TRACKER_REGISTRATION_URL}" target="_blank" rel="noopener noreferrer">How it works guide</a>.</p>
-      <p class="mono">${escapeHtml(principalText)}</p>
+      <p>${renderCanisterTrackerLink(principalText)}</p>
     </div>`;
 }
 
@@ -1080,7 +1123,7 @@ function renderTrackerData(data, principalText) {
   const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
   result.innerHTML = `
     <dl class="pane-detail-grid tracker-summary-grid">
-      <div><dt>Canister</dt><dd class="pane-detail-value mono">${escapeHtml(principalText)}</dd></div>
+      <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
       <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
       <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
       <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
@@ -1183,6 +1226,47 @@ async function submitTrackerPrincipal() {
   } finally {
     setTrackerLoading(false);
   }
+}
+
+function openTrackerPanelForLinkedPrincipal() {
+  const trackerSection = document.querySelector('.nav-panel-section[data-panel="metric-tracker"]');
+  const trackerAlreadyOpen = document.body.classList.contains('nav-panel-open')
+    && trackerSection?.classList.contains('nav-panel-section--active');
+  if (trackerAlreadyOpen) return;
+  const trigger = document.querySelector('a[data-panel="metric-tracker"]');
+  if (trigger) {
+    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    return;
+  }
+  if (window.location.hash !== '#metric-tracker') window.location.hash = '#metric-tracker';
+}
+
+function trackLinkedPrincipal(principalText) {
+  const text = String(principalText || '').trim();
+  if (!text) return;
+  trackerState.principalText = text;
+  const input = document.getElementById('tracker-principal-input');
+  if (input) input.value = text;
+  openTrackerPanelForLinkedPrincipal();
+  window.setTimeout(() => {
+    const refreshedInput = document.getElementById('tracker-principal-input');
+    if (refreshedInput) refreshedInput.value = text;
+    void submitTrackerPrincipal();
+  }, 0);
+}
+
+function bindTrackerLinks() {
+  if (document.documentElement.dataset.trackerLinksBound === 'true') return;
+  document.documentElement.dataset.trackerLinksBound = 'true';
+  document.addEventListener('click', (event) => {
+    const trigger = event.target instanceof Element ? event.target.closest('[data-tracker-principal]') : null;
+    if (!trigger) return;
+    const principalText = trigger.getAttribute('data-tracker-principal') || '';
+    if (!principalText) return;
+    event.preventDefault();
+    event.stopPropagation();
+    trackLinkedPrincipal(principalText);
+  }, true);
 }
 
 function bindTrackerPane() {
@@ -1344,6 +1428,7 @@ async function initLandingPage() {
 
 bindInlineTooltipFallbacks();
 bindTrackerPane();
+bindTrackerLinks();
 document.addEventListener('navpanel:open', (event) => {
   if (event?.detail?.key === 'source') {
     void ensureSourcePaneModuleHashesLoaded();

@@ -148,6 +148,7 @@ export const idlFactory = ({ IDL }) => {
   const CanisterModuleHash = IDL.Record({
     canister_id: IDL.Principal,
     module_hash_hex: IDL.Opt(IDL.Text),
+    controllers: IDL.Opt(IDL.Vec(IDL.Principal)),
   });
   return IDL.Service({
     get_canister_module_hashes: IDL.Func([], [IDL.Vec(CanisterModuleHash)], []),

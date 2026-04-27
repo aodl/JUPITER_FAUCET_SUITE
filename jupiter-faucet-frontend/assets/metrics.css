@@ -703,3 +703,11 @@
     justify-content: space-between;
   }
 }
+
+.pane-canister-tracker-link {
+  cursor: pointer;
+}
+
+.source-pane-canister-controllers {
+  overflow-wrap: anywhere;
+}
