@@ -1516,6 +1516,7 @@ mod tests {
             last_completed_cycles_sweep_ts: 0,
             last_completed_route_sweep_ts: Some(0),
             active_cycles_sweep: None,
+            initial_cycles_probe_queue: Vec::new(),
             active_route_sweep: None,
             active_sns_discovery: None,
             main_lock_state_ts: Some(0),

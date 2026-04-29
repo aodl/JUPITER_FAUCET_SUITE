@@ -370,6 +370,9 @@ struct DebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     payout_plan_present: bool,
+    payout_plan_transfer_count: u64,
+    last_main_run_ts: u64,
+    main_lock_state_ts: Option<u64>,
     blackhole_controller: Option<Principal>,
     blackhole_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
@@ -583,6 +586,32 @@ fn query_call<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
 
 fn debug_state(pic: &PocketIc, canister: Principal) -> Result<DebugState> {
     query_call(pic, canister, Principal::anonymous(), "debug_state", ())
+}
+
+fn debug_build_payout_plan(pic: &PocketIc, canister: Principal) -> Result<bool> {
+    update_noargs(pic, canister, Principal::anonymous(), "debug_build_payout_plan")
+}
+
+fn payout_plan_failure_context(
+    pic: &PocketIc,
+    disburser_canister: Principal,
+    ledger: Principal,
+    staging: &Account,
+) -> String {
+    let debug_state = debug_state(pic, disburser_canister)
+        .map(|st| format!("{st:?}"))
+        .unwrap_or_else(|err| format!("debug_state failed: {err:?}"));
+    let staging_balance = icrc1_balance(pic, ledger, staging)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|err| format!("staging balance query failed: {err:?}"));
+    let fee = icrc1_fee(pic, ledger)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|err| format!("fee query failed: {err:?}"));
+    let now_secs = pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000;
+
+    format!(
+        "debug_state={debug_state}; staging_balance_e8s={staging_balance}; ledger_fee_e8s={fee}; pocketic_now_secs={now_secs}"
+    )
 }
 
 fn debug_set_prev_age_seconds(pic: &PocketIc, canister: Principal, age_seconds: u64) -> Result<()> {
@@ -3145,17 +3174,18 @@ fn partial_execution_retry_duplicate_proof() -> Result<()> {
     let rb1_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
     let rb2_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
 
-    // 1) Persist plan but do NOT execute transfers (debug-only pause after planning).
-    debug_set_pause_after_planning(&pic, disburser_canister, true)?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
-
+    // 1) Persist plan but do NOT execute transfers. Use the narrow debug helper so this
+    // setup does not depend on scheduler lock/timer/maintenance behavior.
+    let built = debug_build_payout_plan(&pic, disburser_canister)?;
     let dbg = debug_state(&pic, disburser_canister)?;
-    if !dbg.payout_plan_present {
-        bail!("expected payout plan to be present after planning pause");
+    if !built || !dbg.payout_plan_present {
+        bail!(
+            "expected payout plan to be present after debug_build_payout_plan; built={built}; {}",
+            payout_plan_failure_context(&pic, disburser_canister, ledger, &staging)
+        );
     }
 
     // 2) Execute transfers, but trap after the first successful transfer reply.
-    debug_set_pause_after_planning(&pic, disburser_canister, false)?;
     // Execute transfers, but abort after the first successful transfer reply.
     debug_set_trap_after_successful_transfers(&pic, disburser_canister, Some(1))?;
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
@@ -3287,8 +3317,6 @@ fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Resu
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let forced_age = MAX_AGE_FOR_BONUS_SECS;
     debug_set_prev_age_seconds(&pic, disburser_canister, forced_age)?;
-    debug_set_pause_after_planning(&pic, disburser_canister, true)?;
-
     let (_gross, planned) = expected_plan_payout_transfers(
         staging_balance,
         fee_e8s,
@@ -3306,15 +3334,17 @@ fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Resu
     let rb1_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
     let rb2_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let built = debug_build_payout_plan(&pic, disburser_canister)?;
     let dbg_planned = debug_state(&pic, disburser_canister)?;
-    if !dbg_planned.payout_plan_present {
-        bail!("expected payout plan to be present after planning pause");
+    if !built || !dbg_planned.payout_plan_present {
+        bail!(
+            "expected payout plan to be present after debug_build_payout_plan; built={built}; {}",
+            payout_plan_failure_context(&pic, disburser_canister, ledger, &staging)
+        );
     }
 
     let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
     debug_set_main_lock_expires_at_ts(&pic, disburser_canister, Some(now_secs + 7 * DAY_SECS))?;
-    debug_set_pause_after_planning(&pic, disburser_canister, false)?;
 
     pic.upgrade_canister(
         disburser_canister,
@@ -3452,18 +3482,22 @@ fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer
     let rb1_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
     let rb2_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
 
-    debug_set_pause_after_planning(&pic, disburser_canister, true)?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let built = debug_build_payout_plan(&pic, disburser_canister)?;
     let dbg_planned = debug_state(&pic, disburser_canister)?;
-    if !dbg_planned.payout_plan_present {
-        bail!("expected payout plan to be present after planning pause");
+    if !built || !dbg_planned.payout_plan_present {
+        bail!(
+            "expected payout plan to be present after debug_build_payout_plan; built={built}; {}",
+            payout_plan_failure_context(&pic, disburser_canister, ledger, &staging)
+        );
     }
 
-    debug_set_pause_after_planning(&pic, disburser_canister, false)?;
     debug_set_real_trap_after_successful_transfers(&pic, disburser_canister, Some(1))?;
-    let trapped = update_noargs::<()>(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick");
+    let trapped = update_noargs::<bool>(&pic, disburser_canister, Principal::anonymous(), "debug_execute_payout_plan");
     if trapped.is_ok() {
-        bail!("expected debug_main_tick to reject after injected real trap");
+        bail!(
+            "expected debug_execute_payout_plan to reject after injected real trap; {}",
+            payout_plan_failure_context(&pic, disburser_canister, ledger, &staging)
+        );
     }
     tick_n(&pic, 10);
 
@@ -3803,11 +3837,13 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
         },
     )?;
 
-    debug_set_pause_after_planning(&pic, disburser_canister, true)?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let built = debug_build_payout_plan(&pic, disburser_canister)?;
     let planned = debug_state(&pic, disburser_canister)?;
-    if !planned.payout_plan_present {
-        bail!("expected payout plan to be persisted before simulating staging-balance drift");
+    if !built || !planned.payout_plan_present {
+        bail!(
+            "expected payout plan to be persisted before simulating staging-balance drift; built={built}; {}",
+            payout_plan_failure_context(&pic, disburser_canister, ledger, &staging)
+        );
     }
 
     let staging_before_drain = icrc1_balance(&pic, ledger, &staging)?;
@@ -3830,7 +3866,6 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
         },
     )?;
 
-    debug_set_pause_after_planning(&pic, disburser_canister, false)?;
     let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 

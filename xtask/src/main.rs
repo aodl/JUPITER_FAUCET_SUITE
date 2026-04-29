@@ -345,6 +345,9 @@ struct DebugState {
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
     payout_plan_present: bool,
+    payout_plan_transfer_count: u64,
+    last_main_run_ts: u64,
+    main_lock_state_ts: Option<u64>,
     blackhole_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
 }
@@ -1358,7 +1361,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "In-flight skip is a true no-op"), || {
+    run_scenario(outcomes, label("dfx", "disburser", "In-flight skip skips payout and disbursement"), || {
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(true)")?;
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &staging_arg)?;
         let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_main_tick")?;
@@ -1369,8 +1372,8 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         }
 
         let calls: u64 = call_raw_noargs("mock_nns_governance", "debug_get_manage_calls")?;
-        if calls != 1 {
-            bail!("expected 1 manage_neuron call (best-effort ClaimOrRefresh), got {}", calls);
+        if calls != 2 {
+            bail!("expected 2 manage_neuron calls (best-effort ClaimOrRefresh + RefreshVotingPower), got {}", calls);
         }
         Ok(())
     });
@@ -1405,8 +1408,8 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         }
 
         let calls: u64 = call_raw_noargs("mock_nns_governance", "debug_get_manage_calls")?;
-        if calls != 4 {
-            bail!("expected 4 manage_neuron calls, got {}", calls);
+        if calls != 5 {
+            bail!("expected 5 manage_neuron calls, got {}", calls);
         }
 
         Ok(())

@@ -31,6 +31,9 @@ type DebugState = record {
   last_rescue_check_ts : nat64;
   rescue_triggered : bool;
   payout_plan_present : bool;
+  payout_plan_transfer_count : nat64;
+  last_main_run_ts : nat64;
+  main_lock_state_ts : opt nat64;
   blackhole_controller : opt principal;
   blackhole_armed_since_ts : opt nat64;
   forced_rescue_reason : opt ForcedRescueReason;
@@ -68,4 +71,5 @@ service : (InitArgs) -> {
   debug_set_simulate_low_cycles : (bool) -> ();
   debug_set_skip_maturity_initiation : (bool) -> ();
   debug_build_payout_plan : () -> (bool);
+  debug_execute_payout_plan : () -> (bool);
 }

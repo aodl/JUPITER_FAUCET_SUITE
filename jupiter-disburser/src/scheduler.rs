@@ -285,7 +285,30 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         return;
     }
 
-    // Read neuron info (source of truth for whether a disbursement is still in progress)
+    #[cfg(feature = "debug_api")]
+    if debug_pause_after_planning() {
+        // Debug-only isolation for persisted-plan recovery tests: build and persist the
+        // payout plan, then stop before transfers, maturity initiation, or unrelated
+        // governance maintenance. Production builds never take this branch.
+        let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
+        guard.finish(now_secs, if payout_ok { None } else { Some(1002) });
+        return;
+    }
+
+    // Best-effort maintenance runs independently of the payout / maturity path. These
+    // governance calls only need the configured neuron id, so a temporary failure to read
+    // the full neuron must not prevent stake or voting-power refresh.
+    if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
+        log_error(1006);
+    }
+
+    if gov.refresh_voting_power(cfg.neuron_id).await.is_err() {
+        log_error(1005);
+    }
+
+    // Read neuron info after maintenance. This source-of-truth read is needed only for
+    // payout / maturity logic: it tells us whether a disbursement is still in flight and
+    // supplies the aging timestamp used to snapshot the age-bonus split.
     let neuron = match gov.get_full_neuron(cfg.neuron_id).await {
         Ok(n) => n,
         Err(_) => {
@@ -306,51 +329,37 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
         if !payout_ok {
             err = Some(1002);
-            guard.finish(now_secs, err);
-            return;
-        }
+        } else {
+            // 2) initiate a new disbursement to default staging account (subaccount=None)
+            let skip_maturity_initiation = {
+                #[cfg(feature = "debug_api")]
+                {
+                    debug_skip_maturity_initiation()
+                }
+                #[cfg(not(feature = "debug_api"))]
+                {
+                    false
+                }
+            };
 
-        // 2) initiate a new disbursement to default staging account (subaccount=None)
-        #[cfg(feature = "debug_api")]
-        if debug_skip_maturity_initiation() {
-            if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
-                log_error(1006);
+            if !skip_maturity_initiation {
+                let canister_owner = self_canister_principal();
+                let age_seconds = now_secs.saturating_sub(neuron.aging_since_timestamp_seconds);
+
+                let disb_ok = gov
+                    .disburse_maturity_to_account(cfg.neuron_id, 100, canister_owner, None)
+                    .await
+                    .is_ok();
+
+                if disb_ok {
+                    // 3) record age for next payout split
+                    state::with_state_mut(|st| st.prev_age_seconds = age_seconds);
+                } else {
+                    // do not update prev_age_seconds if initiation failed
+                    err = Some(1003);
+                }
             }
-            guard.finish(now_secs, err);
-            return;
         }
-
-        let canister_owner = self_canister_principal();
-        let age_seconds = now_secs.saturating_sub(neuron.aging_since_timestamp_seconds);
-
-        let disb_ok = gov
-            .disburse_maturity_to_account(cfg.neuron_id, 100, canister_owner, None)
-            .await
-            .is_ok();
-
-        if !disb_ok {
-            // do not update prev_age_seconds if initiation failed
-            err = Some(1003);
-            guard.finish(now_secs, err);
-            return;
-        }
-
-        // 3) record age for next payout split
-        state::with_state_mut(|st| st.prev_age_seconds = age_seconds);
-
-        // 4) best-effort voting-power refresh after maturity work has been actioned.
-        // This is intentionally late so a refresh API issue cannot block payout or
-        // disbursement initiation.
-        if gov.refresh_voting_power(cfg.neuron_id).await.is_err() {
-            log_error(1005);
-        }
-    }
-
-    // 5) best-effort neuron stake refresh on every successful tick. This runs after
-    // any main work above so user / protocol top-ups into the staking subaccount are
-    // recognized without requiring a user-side governance call.
-    if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
-        log_error(1006);
     }
 
     guard.finish(now_secs, err);
@@ -659,6 +668,7 @@ mod tests {
         get_full_neuron_calls: AtomicUsize,
         disburse_calls: AtomicUsize,
         claim_or_refresh_calls: AtomicUsize,
+        refresh_voting_power_calls: AtomicUsize,
     }
 
     impl ScriptedGovernance {
@@ -672,6 +682,7 @@ mod tests {
                 get_full_neuron_calls: AtomicUsize::new(0),
                 disburse_calls: AtomicUsize::new(0),
                 claim_or_refresh_calls: AtomicUsize::new(0),
+                refresh_voting_power_calls: AtomicUsize::new(0),
             }
         }
 
@@ -685,6 +696,10 @@ mod tests {
 
         fn claim_or_refresh_calls(&self) -> usize {
             self.claim_or_refresh_calls.load(Ordering::SeqCst)
+        }
+
+        fn refresh_voting_power_calls(&self) -> usize {
+            self.refresh_voting_power_calls.load(Ordering::SeqCst)
         }
     }
 
@@ -715,6 +730,7 @@ mod tests {
         }
 
         async fn refresh_voting_power(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
+            self.refresh_voting_power_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
@@ -742,11 +758,11 @@ mod tests {
         }
 
         async fn refresh_voting_power(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
-            panic!("refresh_voting_power should not be called")
+            Ok(())
         }
 
         async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), GovernanceError> {
-            panic!("claim_or_refresh_neuron should not be called")
+            Ok(())
         }
     }
 
@@ -826,6 +842,29 @@ mod tests {
 
         drop(fut2);
         assert_eq!(state::with_state(|st| st.main_lock_state_ts), Some(0));
+    }
+
+    #[test]
+    fn maintenance_refresh_runs_even_when_neuron_read_fails() {
+        let now_secs = 1_150_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = UnexpectedLedger;
+        let gov = ScriptedGovernance::new(
+            vec![Err(GovernanceError {
+                error_message: "temporary governance read failure".to_string(),
+                error_type: 1,
+            })],
+            vec![],
+        );
+
+        let mut fut = Box::pin(run_main_tick_with_clients(true, now_secs * 1_000_000_000, now_secs, &cfg, &ledger, &gov));
+        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert_eq!(gov.claim_or_refresh_calls(), 1, "stake refresh should not depend on get_full_neuron");
+        assert_eq!(gov.refresh_voting_power_calls(), 1, "voting-power refresh should run after stake refresh even when get_full_neuron fails");
+        assert_eq!(gov.get_full_neuron_calls(), 1);
+        assert_eq!(gov.disburse_calls(), 0);
     }
 
     #[test]
@@ -1077,7 +1116,7 @@ mod tests {
             assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
             assert_eq!(ledger.transfer_calls(), 1);
             assert!(state::with_state(|st| st.payout_plan.is_none()), "permanent ledger error should clear the persisted plan");
-            assert_eq!(gov.claim_or_refresh_calls(), 0, "failed payout should short-circuit before later governance side effects");
+            assert_eq!(gov.claim_or_refresh_calls(), 1, "stake refresh should still run after a failed payout");
         }
     }
 
@@ -1100,7 +1139,7 @@ mod tests {
         assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
         assert_eq!(ledger.transfer_calls(), 1);
         assert!(state::with_state(|st| st.payout_plan.is_some()), "transport ambiguity should retain the plan for duplicate-safe retry");
-        assert_eq!(gov.claim_or_refresh_calls(), 0);
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
     }
 
     #[test]
@@ -1126,7 +1165,7 @@ mod tests {
             assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
             assert_eq!(ledger.transfer_calls(), 1);
             assert!(state::with_state(|st| st.payout_plan.is_none()), "typed timing rejection should clear the plan so a later tick can rebuild it");
-            assert_eq!(gov.claim_or_refresh_calls(), 0);
+            assert_eq!(gov.claim_or_refresh_calls(), 1);
         }
     }
 
@@ -1271,7 +1310,7 @@ mod tests {
         assert!(replanned_total_gross < 100_000_000, "replan must not reuse the original pre-partial-success balance");
         assert!(replanned.transfers.iter().all(|t| matches!(t.status, state::TransferStatus::Pending)));
         assert!(replanned.transfers.iter().all(|t| t.created_at_time_nanos >= retry_secs * 1_000_000_000));
-        assert_eq!(gov.claim_or_refresh_calls(), 0, "failed payout runs should stop before post-payout governance side effects");
+        assert_eq!(gov.claim_or_refresh_calls(), 2, "stake refresh should run after each failed payout tick");
     }
 
     #[test]
@@ -1302,7 +1341,7 @@ mod tests {
         assert!(matches!(poll_once(first.as_mut()), Poll::Ready(())));
         assert_eq!(gov.get_full_neuron_calls(), 1);
         assert_eq!(gov.disburse_calls(), 1);
-        assert_eq!(gov.claim_or_refresh_calls(), 0);
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
         assert_eq!(state::with_state(|st| st.prev_age_seconds), 0, "failed initiation must not update prev_age_seconds");
 
         let later_secs = now_secs + 61;
@@ -1310,7 +1349,7 @@ mod tests {
         assert!(matches!(poll_once(second.as_mut()), Poll::Ready(())));
         assert_eq!(gov.get_full_neuron_calls(), 2);
         assert_eq!(gov.disburse_calls(), 1, "in-flight source-of-truth state must suppress a second initiation");
-        assert_eq!(gov.claim_or_refresh_calls(), 1);
+        assert_eq!(gov.claim_or_refresh_calls(), 2);
     }
 }
 
@@ -1322,6 +1361,15 @@ pub async fn debug_main_tick_impl() {
 #[cfg(feature = "debug_api")]
 pub async fn debug_rescue_tick_impl() {
     rescue_tick().await;
+}
+
+#[cfg(feature = "debug_api")]
+pub async fn debug_execute_payout_plan_impl() -> bool {
+    let now_nanos = ic_cdk::api::time() as u64;
+    let now_secs = now_nanos / 1_000_000_000;
+    let cfg = state::with_state(|st| st.config.clone());
+    let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
+    process_payout(&ledger, &cfg, now_nanos, now_secs).await
 }
 
 #[cfg(feature = "debug_api")]

@@ -2,10 +2,11 @@ use candid::Nat;
 use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;
+use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::index::{account_identifier_text, IcpIndexCanister};
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
-use crate::clients::{BlackholeClient, IndexClient, SnsRootClient, SnsWasmClient};
+use crate::clients::{BlackholeClient, GovernanceClient, IndexClient, SnsRootClient, SnsWasmClient};
 use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,
     MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
@@ -263,28 +264,31 @@ pub async fn main_tick(force: bool) {
         }
     }
 
-    let (index_id, blackhole_id, sns_wasm_id) = state::with_state(|st| (
+    let (index_id, blackhole_id, sns_wasm_id, governance_id) = state::with_state(|st| (
         st.config.index_canister_id,
         st.config.blackhole_canister_id,
         st.config.sns_wasm_canister_id,
+        st.config.staking_account.owner,
     ));
     let index = IcpIndexCanister::new(index_id);
     let blackhole = BlackholeCanister::new(blackhole_id);
     let sns_wasm = SnsWasmCanister::new(sns_wasm_id);
     let sns_root = SnsRootCanister;
-    if let Err(err) = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root).await {
+    let governance = NnsGovernanceCanister::new(governance_id);
+    if let Err(err) = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root, &governance).await {
         log_error(&format!("historian main tick failed: {err}"));
     }
     guard.finish(now_secs);
 }
 
-async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient>(
+async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient, G: GovernanceClient>(
     now_nanos: u64,
     now_secs: u64,
     index: &I,
     blackhole: &B,
     sns_wasm: &W,
     sns_root: &R,
+    governance: &G,
 ) -> Result<(), String> {
     if let Err(err) = process_commitment_indexing(index, now_secs).await {
         log_error(&format!("historian commitment indexing degraded: {err}"));
@@ -315,7 +319,7 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     }
 
     if initial_cycles_probe_queue_present {
-        process_initial_cycles_probe_queue(now_nanos, now_secs, blackhole).await?;
+        process_initial_cycles_probe_queue(now_nanos, now_secs, blackhole, governance).await?;
     }
 
     let cycles_due = active_cycles_present || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
@@ -1169,10 +1173,11 @@ async fn probe_and_record_cycles<B: BlackholeClient>(
     Ok(())
 }
 
-async fn process_initial_cycles_probe_queue<B: BlackholeClient>(
+async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: GovernanceClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     blackhole: &B,
+    governance: &G,
 ) -> Result<(), String> {
     let (targets, max_entries) = state::with_root_state_mut(|st| {
         let max_per_tick = st.config.max_canisters_per_cycles_tick.max(1) as usize;
@@ -1198,10 +1203,42 @@ async fn process_initial_cycles_probe_queue<B: BlackholeClient>(
         (selected, st.config.max_cycles_entries_per_canister)
     });
 
+    let should_refresh_stake = !targets.is_empty();
+    let mut first_probe_error = None;
+
     for canister_id in targets {
-        probe_and_record_cycles(timestamp_nanos, now_secs, canister_id, max_entries, None, blackhole).await?;
+        if let Err(err) = probe_and_record_cycles(timestamp_nanos, now_secs, canister_id, max_entries, None, blackhole).await {
+            if first_probe_error.is_none() {
+                first_probe_error = Some(err);
+            }
+        }
+    }
+
+    if should_refresh_stake {
+        refresh_staking_neuron_after_registration(governance).await;
+    }
+
+    if let Some(err) = first_probe_error {
+        return Err(err);
     }
     Ok(())
+}
+
+async fn refresh_staking_neuron_after_registration<G: GovernanceClient>(governance: &G) {
+    let subaccount = state::with_state(|st| st.config.staking_account.subaccount);
+    let Some(subaccount) = subaccount else {
+        log_error("historian staking neuron refresh skipped: staking account has no subaccount");
+        return;
+    };
+
+    // A qualifying registration is a staking-account top-up, so ask NNS governance
+    // to refresh the neuron stake cache immediately rather than waiting for the
+    // disburser's next periodic maintenance tick. This is best-effort: historian
+    // cycles history should not fail just because the NNS refresh is temporarily
+    // unavailable.
+    if let Err(err) = governance.claim_or_refresh_neuron_by_subaccount(subaccount).await {
+        log_error(&format!("historian staking neuron refresh failed: {err}"));
+    }
 }
 
 async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs: u64, blackhole: &B) -> Result<(), String> {
@@ -1531,6 +1568,28 @@ mod tests {
         }
     }
 
+    struct RecordingGovernanceClient {
+        calls: Mutex<Vec<[u8; 32]>>,
+    }
+
+    impl RecordingGovernanceClient {
+        fn new() -> Self {
+            Self { calls: Mutex::new(Vec::new()) }
+        }
+
+        fn calls(&self) -> Vec<[u8; 32]> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl GovernanceClient for RecordingGovernanceClient {
+        async fn claim_or_refresh_neuron_by_subaccount(&self, subaccount: [u8; 32]) -> Result<(), crate::clients::ClientError> {
+            self.calls.lock().unwrap().push(subaccount);
+            Ok(())
+        }
+    }
+
 
     #[test]
     fn sns_discovery_chunks_across_ticks_and_resumes_from_persisted_state() {
@@ -1607,8 +1666,9 @@ mod tests {
         let mut summaries = BTreeMap::new();
         summaries.insert(root_b.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_b.clone(), 44)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
         let sns_root = MockSnsRootClient::new(summaries);
+        let governance = RecordingGovernanceClient::new();
 
-        block_on(run_main_tick_with_clients(999, 10_000, &index, &blackhole, &sns_wasm, &sns_root)).unwrap();
+        block_on(run_main_tick_with_clients(999, 10_000, &index, &blackhole, &sns_wasm, &sns_root, &governance)).unwrap();
         state::with_state(|st| {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 10_000);
@@ -1677,8 +1737,10 @@ mod tests {
         let _staking_id = configure_state(10);
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let existing = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+        let staking_subaccount = [7u8; 32];
         state::with_state_mut(|st| {
             st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some(staking_subaccount);
             st.last_completed_cycles_sweep_ts = 10_000;
             st.active_cycles_sweep = Some(ActiveCyclesSweep {
                 started_at_ts_nanos: 55,
@@ -1702,11 +1764,13 @@ mod tests {
             st.initial_cycles_probe_queue.push(beneficiary);
         });
         let blackhole = RecordingBlackholeClient::new(777);
+        let governance = RecordingGovernanceClient::new();
 
-        block_on(process_initial_cycles_probe_queue(999_000_000_000, 999, &blackhole)).unwrap();
+        block_on(process_initial_cycles_probe_queue(999_000_000_000, 999, &blackhole, &governance)).unwrap();
 
         state::with_state(|st| {
             assert_eq!(blackhole.calls(), vec![beneficiary]);
+            assert_eq!(governance.calls(), vec![staking_subaccount], "targeted registration probe should refresh the staking neuron directly via NNS governance");
             assert!(st.initial_cycles_probe_queue.is_empty());
             assert_eq!(st.last_completed_cycles_sweep_ts, 10_000);
             assert!(st.active_cycles_sweep.is_some(), "targeted first probe should not disturb active full sweep");

@@ -1,4 +1,5 @@
 pub mod blackhole;
+pub mod governance;
 pub mod index;
 pub mod sns_root;
 pub mod sns_wasm;
@@ -30,6 +31,11 @@ pub trait IndexClient: Send + Sync {
 #[async_trait]
 pub trait BlackholeClient: Send + Sync {
     async fn canister_status(&self, canister_id: Principal) -> Result<BlackholeCanisterStatus, ClientError>;
+}
+
+#[async_trait]
+pub trait GovernanceClient: Send + Sync {
+    async fn claim_or_refresh_neuron_by_subaccount(&self, subaccount: [u8; 32]) -> Result<(), ClientError>;
 }
 
 #[async_trait]

@@ -197,6 +197,9 @@ pub struct DebugState {
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
     pub payout_plan_present: bool,
+    pub payout_plan_transfer_count: u64,
+    pub last_main_run_ts: u64,
+    pub main_lock_state_ts: Option<u64>,
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<ForcedRescueReason>,
@@ -228,6 +231,9 @@ fn debug_state() -> DebugState {
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
         payout_plan_present: st.payout_plan.is_some(),
+        payout_plan_transfer_count: st.payout_plan.as_ref().map(|p| p.transfers.len() as u64).unwrap_or(0),
+        last_main_run_ts: st.last_main_run_ts,
+        main_lock_state_ts: st.main_lock_state_ts,
         blackhole_controller: st.config.blackhole_controller,
         blackhole_armed_since_ts: st.blackhole_armed_since_ts,
         forced_rescue_reason: st.forced_rescue_reason.clone(),
@@ -360,6 +366,13 @@ fn debug_set_skip_maturity_initiation(enabled: bool) {
 async fn debug_build_payout_plan() -> bool {
     guard_debug_api_not_production();
     crate::scheduler::debug_build_payout_plan_impl().await
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+async fn debug_execute_payout_plan() -> bool {
+    guard_debug_api_not_production();
+    crate::scheduler::debug_execute_payout_plan_impl().await
 }
 
 
