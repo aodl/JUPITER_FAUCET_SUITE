@@ -26,6 +26,20 @@ function indexOfInput(simulator, id) {
   return index;
 }
 
+function elementById(markup, id) {
+  const index = markup.indexOf(`id="${id}"`);
+  assert.ok(index >= 0, `missing element ${id}`);
+  const tagStart = markup.lastIndexOf('<', index);
+  const tagEnd = markup.indexOf('>', index);
+  assert.ok(tagStart >= 0 && tagEnd > tagStart, `malformed element ${id}`);
+  return markup.slice(tagStart, tagEnd + 1);
+}
+
+function attrValue(tag, name) {
+  const match = tag.match(new RegExp(`${name}="([^"]*)"`));
+  return match ? match[1] : null;
+}
+
 test('top navbar exposes Simulator and no longer exposes Partners', () => {
   assert.match(indexHtml, /<a href="#simulator" class="nav-item" data-panel="simulator">Simulator<\/a>/);
   assert.doesNotMatch(indexHtml, /data-panel="partners"/i);
@@ -64,6 +78,8 @@ test('simulator pane keeps controls outside the scroll region and places intro d
   assert.ok(chartIndex > introIndex, 'intro should appear directly above the charts');
   assert.ok(statusIndex > chartIndex, 'assumption text should appear below the charts');
   assert.ok(summaryIndex > chartIndex, 'stats grid should appear below the charts');
+  assert.match(simulator, /target canister/);
+  assert.doesNotMatch(simulator, /elected canister/);
 });
 
 test('simulator inputs are ordered by user control priority and use compact numeric controls', () => {
@@ -77,10 +93,19 @@ test('simulator inputs are ordered by user control priority and use compact nume
   assert.ok(burnIndex < priceIndex, 'daily burn should be second');
   assert.ok(priceIndex < apyIndex, 'APY should follow price');
 
-  assert.match(simulator, /id="simulator-icp-commitment"[^>]+min="1"[^>]+step="0\.1"[^>]+value="100\.0"/);
-  assert.match(simulator, /id="simulator-daily-burn"[^>]+step="0\.001"[^>]+value="0\.001"/);
-  assert.match(simulator, /id="simulator-icp-price"[^>]+step="0\.1"[^>]+value="10\.0"/);
-  assert.match(simulator, /id="simulator-apy"[^>]+step="0\.1"[^>]+value="7\.0"/);
+  const commitment = elementById(simulator, 'simulator-icp-commitment');
+  const burn = elementById(simulator, 'simulator-daily-burn');
+  const price = elementById(simulator, 'simulator-icp-price');
+  const apy = elementById(simulator, 'simulator-apy');
+  assert.equal(attrValue(commitment, 'min'), '1');
+  assert.equal(attrValue(commitment, 'step'), '0.1');
+  assert.equal(attrValue(commitment, 'value'), '100.0');
+  assert.equal(attrValue(burn, 'step'), '0.001');
+  assert.equal(attrValue(burn, 'value'), '0.001');
+  assert.equal(attrValue(price, 'step'), '0.1');
+  assert.equal(attrValue(price, 'value'), '10.0');
+  assert.equal(attrValue(apy, 'step'), '0.1');
+  assert.equal(attrValue(apy, 'value'), '7.0');
   assert.match(simulator, /Daily burn \(T cycles\)/);
   assert.match(simulator, /APY \(%\)/);
 });
@@ -117,6 +142,8 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   assert.match(simulator, /id="simulator-age-bonus"/);
   assert.match(simulator, /Effective top-up APY/);
   assert.match(simulator, /id="simulator-effective-apy"/);
+  assert.match(simulator, /ICP\/XDR rate source/);
+  assert.match(simulator, /id="simulator-icp-xdr-source"/);
   assert.match(stake, /Age bonus diverted/);
   assert.match(stake, /id="stake-neuron-age-bonus"/);
   assert.match(mainJs, /calculateAgeBonusBasisPointsFromAgingSince/);
@@ -156,4 +183,10 @@ test('simulator prepopulates ICP/XDR price from historian XRC cache without over
   assert.match(mainJs, /simulatorState\.icpPriceUserEdited/);
   assert.match(mainJs, /historian’s daily XRC cache/);
   assert.match(mainJs, /No cached XRC ICP\/XDR rate is available yet/);
+  assert.match(mainJs, /formatIcpXdrRateSource/);
+  assert.match(mainJs, /Historian XRC cache:/);
+  assert.match(mainJs, /Fetched \$\{formatTimestampSeconds/);
+  assert.match(mainJs, /formatIcpXdrRateSource\(snapshot, manualOverride = false\)/);
+  assert.match(mainJs, /Manual override; \$\{cacheText\}/);
+  assert.match(mainJs, /formatIcpXdrRateSource\(\s*simulatorState\.icpXdrRateSnapshot,\s*simulatorState\.icpPriceUserEdited,\s*\)/);
 });

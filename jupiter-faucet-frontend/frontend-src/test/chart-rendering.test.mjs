@@ -8,6 +8,17 @@ function countLabels(html, prefix) {
   return matches.length;
 }
 
+function labels(html, prefix) {
+  return Array.from(html.matchAll(new RegExp(`>${prefix}(\\d+)<\\/text>`, 'g'))).map((match) => `${prefix}${match[1]}`);
+}
+
+function firstRectY(html) {
+  const match = html.match(/<rect[^>]+ y="([0-9.]+)"/);
+  assert.ok(match, 'missing rect y coordinate');
+  return Number(match[1]);
+}
+
+
 test('renderAmountBarChart uses caller-provided formatting and escapes labels', () => {
   const html = renderAmountBarChart({
     buckets: [{ label: 'M<1>', projectedTopupCycles: 10n, topupDays: 1 }],
@@ -94,6 +105,38 @@ test('renderAmountBarChart can show all x-axis labels when explicitly requested'
 
   assert.equal(countLabels(html, 'W'), 12);
 });
+
+test('weekly default ticks are evenly distributed without crowding the final labels', () => {
+  const buckets = Array.from({ length: 52 }, (_, index) => ({
+    label: `W${index + 1}`,
+    projectedBalanceCycles: BigInt(index + 1),
+  }));
+
+  const html = renderLineChart({
+    buckets,
+    valueKey: 'projectedBalanceCycles',
+    emptyMessage: 'empty',
+    ariaLabel: 'weekly ticks',
+  });
+
+  const rendered = labels(html, 'W');
+  assert.equal(rendered.length, 8);
+  assert.equal(rendered.at(-1), 'W52');
+  assert.ok(!rendered.includes('W50'), `unexpected crowded penultimate tick: ${rendered.join(', ')}`);
+});
+
+test('amount bar chart reserves headroom so max bars do not overlap the y-axis label', () => {
+  const html = renderAmountBarChart({
+    buckets: [{ label: 'W1', projectedTopupCycles: 100n }],
+    amountKey: 'projectedTopupCycles',
+    countKey: 'count',
+    emptyMessage: 'empty',
+    ariaLabel: 'headroom',
+  });
+
+  assert.ok(firstRectY(html) >= 36, `expected y-axis label headroom, got y=${firstRectY(html)}`);
+});
+
 
 test('scaleBigInt maps signed ranges into chart ratios and clamps out-of-range values', () => {
   assert.equal(scaleBigInt(-10n, -10n, 10n), 0);
