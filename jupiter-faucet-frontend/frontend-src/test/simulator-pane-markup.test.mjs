@@ -56,7 +56,13 @@ test('partners pane content has been removed', () => {
 test('About pane uses a single consolidated page', () => {
   const about = sectionMarkup('about');
   assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol/);
+  assert.match(about, /href="https:\/\/internetcomputer\.org\/"[^>]*>Internet Computer<\/a>/);
+  assert.match(about, /href="https:\/\/learn\.internetcomputer\.org\/hc\/en-us\/articles\/34573913497108-Cycles"[^>]*>Internet Computer cycles guide<\/a>/);
   assert.match(about, /one-off operation/);
+  assert.match(about, /data-panel="how-it-works"[^>]*>How It Works<\/a>/);
+  assert.match(about, /The core components will be blackholed/);
+  assert.match(about, /network dependency prevents disbursals\s*or other core functionality/);
+  assert.match(about, /blackhole themself again once service resumes/);
   assert.match(about, /data-panel="source"[^>]*>open source<\/a>/);
   assert.match(about, /data-panel="governance"[^>]*>decentralize control<\/a>/);
   assert.doesNotMatch(about, /fixed\s*corner links at the bottom of the page/);
@@ -64,6 +70,19 @@ test('About pane uses a single consolidated page', () => {
   assert.doesNotMatch(about, /planned launch within/);
   assert.doesNotMatch(about, /nav-panel-dots/);
   assert.doesNotMatch(about, /data-page="1"/);
+});
+
+test('Source and Governance panes expose subnet context', () => {
+  const source = sectionMarkup('source');
+  const governance = sectionMarkup('governance');
+  assert.match(source, /source-pane-subnet-link pane-external-link[^>]*>Subnet pzp6e<\/a>/);
+  assert.match(source, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae/);
+  assert.match(navbarCss, /\.source-pane-canister \{[\s\S]*position: relative;[\s\S]*\}/);
+  assert.match(navbarCss, /\.source-pane-subnet-link \{[\s\S]*position: absolute;[\s\S]*right: 16px;[\s\S]*\}/);
+  assert.match(governance, /All Jupiter Faucet suite canisters reside on either the/);
+  assert.match(governance, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae[^>]*>Fiduciary<\/a>/);
+  assert.match(governance, /network\/subnets\/x33ed-h457x-bsgyx-oqxqf-6pzwv-wkhzr-rm2j3-npodi-purzm-n66cg-gae[^>]*>SNS subnet<\/a>/);
+  assert.match(governance, /both composed of over 30 nodes/);
 });
 
 test('How it works copy is concise and links tracker, simulator, and rewards references', () => {
@@ -83,6 +102,8 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d[^>]*>staking account<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);
   assert.match(howItWorks, /data-page-target="0"[^>]*>rules described<\/a>/);
+  assert.match(howItWorks, /Contributions must meet the requirements in order to be counted/);
+  assert.match(howItWorks, /transactions of at least 1 ICP featuring a memo that declares a valid canister principal/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f[^>]*>rewards account<\/a>/);
   assert.match(howItWorks, /data-panel="governance"[^>]*>Governance<\/a>/);
   assert.match(navbarJs, /data-page-target/);
@@ -155,18 +176,21 @@ test('simulator no longer exposes a starting-buffer stat or copy', () => {
   assert.doesNotMatch(mainJs, /one-year starting buffer/i);
 });
 
-test('simulator renders the cycles balance chart before the top-ups chart and clarifies APY copy', () => {
+test('simulator renders the cycles balance chart before a CMC top-ups headline and clarifies APY copy', () => {
   const balanceIndex = mainJs.indexOf('<h3>Projected cycles balance</h3>');
-  const topupsIndex = mainJs.indexOf('<h3>Projected CMC top-ups</h3>');
+  const topupsIndex = mainJs.indexOf('Projected CMC top-ups:');
   assert.ok(balanceIndex >= 0, 'missing balance chart header');
-  assert.ok(topupsIndex >= 0, 'missing top-ups chart header');
-  assert.ok(balanceIndex < topupsIndex, 'balance chart should render before top-ups chart');
+  assert.ok(topupsIndex >= 0, 'missing top-ups headline');
+  assert.ok(balanceIndex < topupsIndex, 'balance chart should render before top-ups headline');
   assert.match(mainJs, /Projection uses the configured APY\. Exact APY depends on numerous factors/);
   assert.match(mainJs, /dashboard\.internetcomputer\.org\/neuron\/\$\{JUPITER_NEURON_ID\.toString\(\)\}/);
   assert.match(mainJs, /effective top-up APY discounts the current age-bonus component/);
   assert.match(mainJs, /first projected payout happens on day one/);
   assert.match(mainJs, /weekly-cadence one-year projection/);
-  assert.match(mainJs, /Projected weekly CMC top-up cycles over one year/);
+  assert.match(mainJs, /formatCompactTrillionCycles\(weeklyTopupCycles\)/);
+  assert.match(mainJs, /Per weekly CMC top-up, based on the configured APY/);
+  assert.doesNotMatch(mainJs, /Projected weekly CMC top-up cycles over one year/);
+  assert.doesNotMatch(mainJs, /amountKey: 'projectedTopupCycles'/);
   assert.match(mainJs, /Projected weekly cycles balance over one year/);
 });
 
@@ -232,10 +256,11 @@ test('maturity route pages clarify staging account routing and D-QUORUM account 
   assert.match(indexHtml, /a well-known ecosystem participant/);
 });
 
-test('simulator displays T-cycle values with three decimal places and uses weekly chart copy', () => {
+test('simulator displays T-cycle values with three decimal places and uses weekly headline copy', () => {
   assert.match(mainJs, /const thousandths = \(absolute \* 1000n\) \/ 1_000_000_000_000n;/);
   assert.match(mainJs, /padStart\(3, '0'\)/);
-  assert.match(mainJs, /Weekly projection of cycles minted from the configured APY/);
+  assert.match(mainJs, /formatCompactTrillionCycles/);
+  assert.match(mainJs, /Per weekly CMC top-up, based on the configured APY/);
   assert.match(mainJs, /Line samples the weekly cadence/);
 });
 

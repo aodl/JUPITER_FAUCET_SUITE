@@ -170,6 +170,12 @@ function formatTrillionCycles(value) {
   return `${sign}${whole}.${fraction.toString().padStart(3, '0')}T cycles`;
 }
 
+function formatCompactTrillionCycles(value) {
+  return formatTrillionCycles(value)
+    .replace(/\.000T cycles$/, 'T cycles')
+    .replace(/(\.\d*?[1-9])0+T cycles$/, '$1T cycles');
+}
+
 function formatScaledRateForOneDecimal(rate, decimals) {
   if (rate === null || rate === undefined || decimals === null || decimals === undefined) return null;
   const numerator = typeof rate === 'bigint' ? rate : BigInt(rate);
@@ -1533,6 +1539,7 @@ function renderSimulatorCharts(projection) {
   const wrapper = document.getElementById('simulator-chart-wrapper');
   if (!wrapper) return;
   const buckets = projection?.buckets || [];
+  const weeklyTopupCycles = projection?.summary?.weeklyTopupCycles ?? 0n;
   wrapper.innerHTML = `
     <div class="tracker-chart-card">
       <div class="tracker-chart-header">
@@ -1549,22 +1556,11 @@ function renderSimulatorCharts(projection) {
         showAllTicks: false,
       })}
     </div>
-    <div class="tracker-chart-card">
-      <div class="tracker-chart-header">
-        <h3>Projected CMC top-ups</h3>
-        <span>Weekly projection of cycles minted from the configured APY.</span>
+    <div class="tracker-chart-card simulator-topup-headline-card">
+      <div class="tracker-chart-header tracker-chart-header--headline">
+        <h3>Projected CMC top-ups: ${escapeHtml(formatCompactTrillionCycles(weeklyTopupCycles))}</h3>
+        <span>Per weekly CMC top-up, based on the configured APY.</span>
       </div>
-      ${renderAmountBarChart({
-        buckets,
-        amountKey: 'projectedTopupCycles',
-        countKey: 'projectedTopupEvents',
-        emptyMessage: 'No projected CMC top-ups: increase the commitment or APY assumption.',
-        ariaLabel: 'Projected weekly CMC top-up cycles over one year',
-        barClass: 'tracker-chart-bar--observed-cmc',
-        valueFormatter: formatTrillionCycles,
-        labelBuilder: (bucket) => `${bucket.label}: ${formatTrillionCycles(bucket.projectedTopupCycles)} projected from ${formatIcpE8s(bucket.projectedTopupE8s)} of ICP sent to CMC`,
-        showAllTicks: false,
-      })}
     </div>`;
 }
 

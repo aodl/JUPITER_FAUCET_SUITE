@@ -273,6 +273,7 @@ button {
 }
 
 .source-pane-canister {
+  position: relative;
   padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -281,9 +282,18 @@ button {
 
 .source-pane-canister h3 {
   margin: 0 0 8px;
+  padding-right: 116px;
   font-size: 15px;
   letter-spacing: 0.04em;
   text-transform: none;
+}
+
+.source-pane-subnet-link {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .source-pane-canister-meta,

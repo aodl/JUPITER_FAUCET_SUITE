@@ -304,17 +304,23 @@
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-content">
               <strong>Jupiter Faucet</strong> is a perpetual cycles top-up protocol for the
-              Internet Computer - built to help canister smart contracts keep running
-              <strong>indefinitely</strong>. The Internet
-              Computer is designed for tamperproof, "unstoppable" on-chain services; Jupiter
+              <a href="https://internetcomputer.org/" target="_blank" rel="noopener noreferrer" class="pane-external-link">Internet Computer</a> - built to help canister smart contracts keep running
+              <strong>indefinitely</strong>. The
+              <a href="https://internetcomputer.org/" target="_blank" rel="noopener noreferrer" class="pane-external-link">Internet Computer</a> is designed for tamperproof, "unstoppable" on-chain services; Jupiter
               Faucet focuses on the practical part: making sure canisters don’t run out of
               cycles, <strong>even if nobody is maintaining the project</strong>.
+            </p>
+
+            <p class="nav-panel-content">
+              To learn more about cycles, what they are, and why they matter, visit the
+              <a href="https://learn.internetcomputer.org/hc/en-us/articles/34573913497108-Cycles" target="_blank" rel="noopener noreferrer" class="pane-external-link">Internet Computer cycles guide</a>.
             </p>
 
             <p class="nav-panel-content">
               The perpetual top-up workflow is intentionally designed to be so simple that anyone can
               carry it out as a <strong>one-off operation</strong> directly from <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link"><strong>NNS dapp</strong></a>
               using the enhanced transfer <em>and memo</em> flow - no further setup required.
+              See <a href="#how-it-works" data-panel="how-it-works" class="pane-external-link">How It Works</a> for more information.
             </p>
 
             <p class="nav-panel-content">
@@ -331,10 +337,10 @@
             <p class="nav-panel-content">
               Jupiter Faucet is <a href="#source" data-panel="source" class="pane-external-link">open source</a>, reproducibly buildable, and designed to
               <a href="#governance" data-panel="governance" class="pane-external-link">decentralize control</a> over time.
-              The core component will be blackholed. A worst-case scenario
-              lifeline is built into the canister so it can temporarily hand control to the
-              <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a> if a breaking change in a network dependency prevents disbursals,
-              then blackhole itself again once disbursals resume.
+              The core components will be blackholed. A worst-case scenario
+              lifeline is built into the canisters so they can temporarily hand control to the
+              <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a> if a breaking change in a network dependency prevents disbursals
+              or other core functionality, then blackhole themself again once service resumes.
             </p>
           </div>
         </article>
@@ -362,6 +368,7 @@
             <div class="source-pane-canisters">
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/uccpi-cqaaa-aaaar-qby3q-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-disburser</a></h3>
+                <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="source-pane-subnet-link pane-external-link">Subnet pzp6e</a>
                 <p class="source-pane-canister-meta mono">Canister ID: <a href="#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai" data-tracker-principal="uccpi-cqaaa-aaaar-qby3q-cai" class="pane-canister-tracker-link pane-external-link mono">uccpi-cqaaa-aaaar-qby3q-cai</a></p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="uccpi-cqaaa-aaaar-qby3q-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="uccpi-cqaaa-aaaar-qby3q-cai">Loading…</span></p>
@@ -370,6 +377,7 @@
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/acjuz-liaaa-aaaar-qb4qq-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-faucet</a></h3>
+                <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="source-pane-subnet-link pane-external-link">Subnet pzp6e</a>
                 <p class="source-pane-canister-meta mono">Canister ID: <a href="#metric-tracker-acjuz-liaaa-aaaar-qb4qq-cai" data-tracker-principal="acjuz-liaaa-aaaar-qb4qq-cai" class="pane-canister-tracker-link pane-external-link mono">acjuz-liaaa-aaaar-qb4qq-cai</a></p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="acjuz-liaaa-aaaar-qb4qq-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="acjuz-liaaa-aaaar-qb4qq-cai">Loading…</span></p>
@@ -378,6 +386,7 @@
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/j5gs6-uiaaa-aaaar-qb5cq-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-historian</a></h3>
+                <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="source-pane-subnet-link pane-external-link">Subnet pzp6e</a>
                 <p class="source-pane-canister-meta mono">Canister ID: <a href="#metric-tracker-j5gs6-uiaaa-aaaar-qb5cq-cai" data-tracker-principal="j5gs6-uiaaa-aaaar-qb5cq-cai" class="pane-canister-tracker-link pane-external-link mono">j5gs6-uiaaa-aaaar-qb5cq-cai</a></p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="j5gs6-uiaaa-aaaar-qb5cq-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="j5gs6-uiaaa-aaaar-qb5cq-cai">Loading…</span></p>
@@ -386,6 +395,7 @@
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/afisn-gqaaa-aaaar-qb4qa-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-lifeline</a></h3>
+                <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="source-pane-subnet-link pane-external-link">Subnet pzp6e</a>
                 <p class="source-pane-canister-meta mono">Canister ID: <a href="#metric-tracker-afisn-gqaaa-aaaar-qb4qa-cai" data-tracker-principal="afisn-gqaaa-aaaar-qb4qa-cai" class="pane-canister-tracker-link pane-external-link mono">afisn-gqaaa-aaaar-qb4qa-cai</a></p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="afisn-gqaaa-aaaar-qb4qa-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="afisn-gqaaa-aaaar-qb4qa-cai">Loading…</span></p>
@@ -394,6 +404,7 @@
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/alk7f-5aaaa-aaaar-qb4ra-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-sns-rewards</a></h3>
+                <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="source-pane-subnet-link pane-external-link">Subnet pzp6e</a>
                 <p class="source-pane-canister-meta mono">Canister ID: <a href="#metric-tracker-alk7f-5aaaa-aaaar-qb4ra-cai" data-tracker-principal="alk7f-5aaaa-aaaar-qb4ra-cai" class="pane-canister-tracker-link pane-external-link mono">alk7f-5aaaa-aaaar-qb4ra-cai</a></p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="alk7f-5aaaa-aaaar-qb4ra-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="alk7f-5aaaa-aaaar-qb4ra-cai">Loading…</span></p>
@@ -402,6 +413,7 @@
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/jufzc-caaaa-aaaar-qb5da-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-faucet-frontend</a></h3>
+                <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="source-pane-subnet-link pane-external-link">Subnet pzp6e</a>
                 <p class="source-pane-canister-meta mono">Canister ID: <a href="#metric-tracker-jufzc-caaaa-aaaar-qb5da-cai" data-tracker-principal="jufzc-caaaa-aaaar-qb5da-cai" class="pane-canister-tracker-link pane-external-link mono">jufzc-caaaa-aaaar-qb5da-cai</a></p>
                 <p class="source-pane-canister-meta mono">Module hash: <span class="source-pane-canister-hash" data-source-module-hash="jufzc-caaaa-aaaar-qb5da-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="jufzc-caaaa-aaaar-qb5da-cai">Loading…</span></p>
@@ -416,6 +428,7 @@
           <h2 class="nav-panel-title">Governance</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-content">SNS launch coming soon...</p>
+            <p class="nav-panel-content">All Jupiter Faucet suite canisters reside on either the <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="pane-external-link">Fiduciary</a> or <a href="https://dashboard.internetcomputer.org/network/subnets/x33ed-h457x-bsgyx-oqxqf-6pzwv-wkhzr-rm2j3-npodi-purzm-n66cg-gae" target="_blank" rel="noopener noreferrer" class="pane-external-link">SNS subnet</a> (both composed of over 30 nodes) for superior deterministic decentralization, resilience and security.</p>
             <p class="nav-panel-content">Prior to the SNS DAO launch this system is being developed by <a href="https://forum.dfinity.org/u/lorimer/summary" target="_blank" rel="noopener noreferrer" class="pane-external-link">Alex Lorimer</a>, the controller of the <a href="https://dashboard.internetcomputer.org/neuron/16459595263909468577" target="_blank" rel="noopener noreferrer" class="pane-external-link">LORIMER ♾️ 🐶 known neuron</a>, a well-known ecosystem participant.</p>
           </div>
         </article>
@@ -504,7 +517,7 @@
                 <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
                 to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
                 of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
-                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>).
+                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a valid canister principal).
               </p>
 
               <p class="nav-panel-content">
