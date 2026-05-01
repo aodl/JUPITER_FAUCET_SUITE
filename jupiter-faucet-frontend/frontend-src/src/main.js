@@ -31,6 +31,9 @@ const JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX = '22594ba982e201a96a8e3e5110
 const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
 const JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX = 'ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
+const TRACKER_HASH_PREFIX = '#metric-tracker-';
+const NANOS_PER_DAY = 86_400_000_000_000n;
+const ICP_TENTH_E8S = 10_000_000n;
 const TRACKER_RANGE_LABELS = {
   month: 'last month',
   year: 'last year',
@@ -38,7 +41,6 @@ const TRACKER_RANGE_LABELS = {
 };
 const BLACKHOLE_CANISTER_ID = 'e3mmv-5qaaa-aaaah-aadma-cai';
 const SIMULATOR_DEFAULTS = {
-  icpCommitment: '100.0',
   dailyBurnTrillionCycles: '0.001',
   assumedIcpPrice: '10.0',
   annualApyPercent: '7.0',
@@ -78,12 +80,14 @@ const trackerState = {
   loading: false,
   error: null,
 };
+let lastTrackerHashSubmitPrincipal = '';
 
 const simulatorState = {
   initialised: false,
   ageBonusBasisPoints: 0n,
   ageBonusAvailable: false,
   icpPriceUserEdited: false,
+  icpCommitmentUserEdited: false,
   icpXdrRateSnapshot: null,
 };
 
@@ -97,11 +101,26 @@ function formatPrincipal(value) {
   return value?.toText ? value.toText() : String(value || '');
 }
 
+function trackerHashForPrincipal(principalText) {
+  const text = String(principalText || '').trim();
+  return text ? `${TRACKER_HASH_PREFIX}${encodeURIComponent(text)}` : '#metric-tracker';
+}
+
+function trackerPrincipalFromHash(hash = window.location.hash) {
+  const fragment = String(hash || '');
+  if (!fragment.startsWith(TRACKER_HASH_PREFIX)) return '';
+  try {
+    return decodeURIComponent(fragment.slice(TRACKER_HASH_PREFIX.length)).trim();
+  } catch {
+    return fragment.slice(TRACKER_HASH_PREFIX.length).trim();
+  }
+}
+
 function renderCanisterTrackerLink(value, { label = null, className = 'pane-canister-tracker-link pane-external-link mono' } = {}) {
   const principalText = formatPrincipal(value).trim();
   if (!principalText) return DASH;
   const display = label === null || label === undefined ? principalText : String(label);
-  return `<a href="#metric-tracker" data-tracker-principal="${escapeHtml(principalText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
+  return `<a href="${escapeHtml(trackerHashForPrincipal(principalText))}" data-tracker-principal="${escapeHtml(principalText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
 }
 
 function renderCanisterDashboardLink(value, label = 'Open dashboard') {
@@ -135,9 +154,7 @@ function formatGroupedBigInt(value) {
 }
 
 function formatCycles(value) {
-  if (value === null || value === undefined) return DASH;
-  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
-  return `${formatGroupedBigInt(asBigInt)} cycles`;
+  return formatTrillionCycles(value);
 }
 
 function formatTrillionCycles(value) {
@@ -172,7 +189,6 @@ function formatIcpXdrRateDisplay(snapshot) {
 
 function formatIcpXdrRateSource(snapshot, manualOverride = false) {
   if (!snapshot) return 'Manual input';
-
   const fetchedAt = Number(snapshot.fetched_at_ts || 0);
   const ageSeconds = fetchedAt > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - fetchedAt) : null;
   const ageText = ageSeconds === null ? 'freshness unknown' : `${formatDurationSeconds(ageSeconds)} old`;
@@ -428,6 +444,7 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
     setPaneValueText('stake-neuron-created', { value: formatTimestampSeconds(neuron.created_timestamp_seconds) });
     setPaneValueText('stake-neuron-refresh', { value: formatTimestampSeconds(neuron.voting_power_refreshed_timestamp_seconds?.[0]) });
     setPaneValueTrustedHtml('stake-neuron-followees', { value: formatFolloweeLinks(neuron) });
+    maybePrepopulateSimulatorMinimumCommitment();
     renderCommitmentSimulator();
     return;
   }
@@ -1186,6 +1203,42 @@ function aggregateTrackerData(data, range) {
 }
 
 
+function sortedCycleSamples(data) {
+  return (data?.cycles?.items || [])
+    .filter((item) => item?.timestamp_nanos !== undefined && item?.timestamp_nanos !== null && item?.cycles !== undefined && item?.cycles !== null)
+    .map((item) => ({
+      timestampNanos: typeof item.timestamp_nanos === 'bigint' ? item.timestamp_nanos : BigInt(item.timestamp_nanos),
+      cycles: typeof item.cycles === 'bigint' ? item.cycles : BigInt(item.cycles),
+    }))
+    .sort((left, right) => left.timestampNanos < right.timestampNanos ? -1 : left.timestampNanos > right.timestampNanos ? 1 : 0);
+}
+
+function estimateCyclesBurnedPerDay(data) {
+  const samples = sortedCycleSamples(data);
+  if (samples.length < 2) return null;
+
+  let observedBurnCycles = 0n;
+  let observedBurnNanos = 0n;
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    const elapsed = current.timestampNanos - previous.timestampNanos;
+    if (elapsed <= 0n) continue;
+    if (previous.cycles > current.cycles) {
+      observedBurnCycles += previous.cycles - current.cycles;
+      observedBurnNanos += elapsed;
+    }
+  }
+
+  if (observedBurnNanos === 0n) return 0n;
+  return (observedBurnCycles * NANOS_PER_DAY) / observedBurnNanos;
+}
+
+function formatTrillionCyclesPerDay(value) {
+  if (value === null || value === undefined) return DASH;
+  return `${formatTrillionCycles(value).replace(' cycles', '')} cycles/day`;
+}
+
 function sumE8s(items) {
   return (items || []).reduce((sum, item) => sum + itemAmountE8s(item), 0n);
 }
@@ -1301,7 +1354,7 @@ function renderTrackerCyclesChart(buckets, data, fullData = data) {
     valueKey: 'cycles',
     emptyMessage: `No cycles samples are available in ${trackerRangeLabel()}.`,
     ariaLabel: `Cycles balance in ${trackerRangeLabel()}`,
-    valueFormatter: formatInteger,
+    valueFormatter: formatCycles,
     pointLabelBuilder: (bucket) => `${bucket.label}: ${formatCycles(bucket.cycles)}`,
   });
 }
@@ -1343,6 +1396,36 @@ function renderTrackerCharts(data, fullData = data) {
     </div>`;
 }
 
+function formatIcpCommitmentInputRoundedUp(e8s) {
+  if (e8s === null || e8s === undefined) return null;
+  const asBigInt = typeof e8s === 'bigint' ? e8s : BigInt(e8s);
+  const roundedTenths = (asBigInt + ICP_TENTH_E8S - 1n) / ICP_TENTH_E8S;
+  const clampedTenths = roundedTenths < 10n ? 10n : roundedTenths;
+  return `${clampedTenths / 10n}.${(clampedTenths % 10n).toString()}`;
+}
+
+function calculateSimulatorMinimumCommitmentInput() {
+  const projection = buildSimulatorProjection({
+    icpCommitment: '1.0',
+    dailyBurnTrillionCycles: simulatorInputValue('simulator-daily-burn') || SIMULATOR_DEFAULTS.dailyBurnTrillionCycles,
+    assumedIcpPrice: simulatorInputValue('simulator-icp-price') || SIMULATOR_DEFAULTS.assumedIcpPrice,
+    annualApyPercent: simulatorInputValue('simulator-apy') || SIMULATOR_DEFAULTS.annualApyPercent,
+    ageBonusBasisPoints: simulatorState.ageBonusBasisPoints,
+  });
+  if (!projection.ok || projection.summary.requiredCommitmentE8s === null) return null;
+  return formatIcpCommitmentInputRoundedUp(projection.summary.requiredCommitmentE8s);
+}
+
+function maybePrepopulateSimulatorMinimumCommitment() {
+  if (simulatorState.icpCommitmentUserEdited) return;
+  const input = document.getElementById('simulator-icp-commitment');
+  if (!input) return;
+  const minimumCommitment = calculateSimulatorMinimumCommitmentInput();
+  if (minimumCommitment && input.value !== minimumCommitment) {
+    input.value = minimumCommitment;
+  }
+}
+
 function applySimulatorIcpXdrRateFromStatus(status) {
   const snapshot = readOpt(status?.icp_xdr_rate);
   simulatorState.icpXdrRateSnapshot = snapshot || null;
@@ -1353,6 +1436,7 @@ function applySimulatorIcpXdrRateFromStatus(status) {
       input.value = formatted;
     }
   }
+  maybePrepopulateSimulatorMinimumCommitment();
   renderCommitmentSimulator();
 }
 
@@ -1495,7 +1579,6 @@ function bindCommitmentSimulator() {
   if (!form || simulatorState.initialised) return;
   simulatorState.initialised = true;
   [
-    ['simulator-icp-commitment', SIMULATOR_DEFAULTS.icpCommitment],
     ['simulator-daily-burn', SIMULATOR_DEFAULTS.dailyBurnTrillionCycles],
     ['simulator-icp-price', SIMULATOR_DEFAULTS.assumedIcpPrice],
     ['simulator-apy', SIMULATOR_DEFAULTS.annualApyPercent],
@@ -1503,10 +1586,14 @@ function bindCommitmentSimulator() {
     const input = document.getElementById(id);
     if (input && !input.value) input.value = value;
   });
+  maybePrepopulateSimulatorMinimumCommitment();
   form.addEventListener('submit', (event) => event.preventDefault());
   form.addEventListener('input', (event) => {
     if (event.target?.id === 'simulator-icp-price') {
       simulatorState.icpPriceUserEdited = true;
+    }
+    if (event.target?.id === 'simulator-icp-commitment') {
+      simulatorState.icpCommitmentUserEdited = true;
     }
     renderCommitmentSimulator();
   });
@@ -1547,6 +1634,10 @@ function renderTrackerData(data, principalText) {
   const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
     ? escapeHtml(formatCycles(summary.latestCycles))
     : renderCyclesStatusCell(cyclesStatus.label);
+  const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay(data);
+  const estimatedCyclesBurnHtml = estimatedObservedCyclesBurnedPerDay === null
+    ? null
+    : escapeHtml(formatTrillionCyclesPerDay(estimatedObservedCyclesBurnedPerDay));
   const commitmentError = data.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(data.errors.commitments)}</p>` : '';
   const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
   const hasCyclesOutsideRange = (data?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
@@ -1567,8 +1658,10 @@ function renderTrackerData(data, principalText) {
       <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.observedCmcTransferCount))}</dd></div>
       <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.observedCmcE8s))}</dd></div>
       <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
+      ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
     </dl>
     <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
+    ${estimatedCyclesBurnHtml === null ? '' : '<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from downward balance changes between all loaded cycle probes. Top-ups between probes can affect the estimate.</p>'}
     ${renderTrackerCadenceNote(data)}
     ${commitmentError}
     ${cyclesStatusNote}
@@ -1665,17 +1758,45 @@ async function submitTrackerPrincipal() {
   }
 }
 
-function openTrackerPanelForLinkedPrincipal() {
+function replaceTrackerLocationHash(principalText) {
+  const hash = trackerHashForPrincipal(principalText);
+  if (window.location.hash !== hash) {
+    history.replaceState(null, '', hash);
+  }
+}
+
+function hydrateTrackerFromLocationHash({ submit = false } = {}) {
+  const principalText = trackerPrincipalFromHash();
+  if (!principalText) return false;
+  trackerState.principalText = principalText;
+  const input = document.getElementById('tracker-principal-input');
+  if (input) input.value = principalText;
+  if (submit && lastTrackerHashSubmitPrincipal !== principalText) {
+    lastTrackerHashSubmitPrincipal = principalText;
+    window.setTimeout(() => {
+      const refreshedInput = document.getElementById('tracker-principal-input');
+      if (refreshedInput) refreshedInput.value = principalText;
+      void submitTrackerPrincipal();
+    }, 0);
+  }
+  return true;
+}
+
+function openTrackerPanelForLinkedPrincipal(principalText = '') {
   const trackerSection = document.querySelector('.nav-panel-section[data-panel="metric-tracker"]');
   const trackerAlreadyOpen = document.body.classList.contains('nav-panel-open')
     && trackerSection?.classList.contains('nav-panel-section--active');
-  if (trackerAlreadyOpen) return;
+  if (trackerAlreadyOpen) {
+    if (principalText) replaceTrackerLocationHash(principalText);
+    return;
+  }
   const trigger = document.querySelector('a[data-panel="metric-tracker"]');
   if (trigger) {
     trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    if (principalText) replaceTrackerLocationHash(principalText);
     return;
   }
-  if (window.location.hash !== '#metric-tracker') window.location.hash = '#metric-tracker';
+  window.location.hash = principalText ? trackerHashForPrincipal(principalText) : '#metric-tracker';
 }
 
 function trackLinkedPrincipal(principalText) {
@@ -1684,10 +1805,11 @@ function trackLinkedPrincipal(principalText) {
   trackerState.principalText = text;
   const input = document.getElementById('tracker-principal-input');
   if (input) input.value = text;
-  openTrackerPanelForLinkedPrincipal();
+  openTrackerPanelForLinkedPrincipal(text);
   window.setTimeout(() => {
     const refreshedInput = document.getElementById('tracker-principal-input');
     if (refreshedInput) refreshedInput.value = text;
+    replaceTrackerLocationHash(text);
     void submitTrackerPrincipal();
   }, 0);
 }
@@ -1871,6 +1993,10 @@ bindInlineTooltipFallbacks();
 bindTrackerPane();
 bindCommitmentSimulator();
 bindTrackerLinks();
+hydrateTrackerFromLocationHash({ submit: true });
+window.addEventListener('hashchange', () => {
+  hydrateTrackerFromLocationHash({ submit: true });
+});
 document.addEventListener('navpanel:open', (event) => {
   if (event?.detail?.key === 'source') {
     void ensureSourcePaneModuleHashesLoaded();
@@ -1879,7 +2005,8 @@ document.addEventListener('navpanel:open', (event) => {
     void ensureNeuronDetailsLoaded(window.__JUPITER_LANDING_DATA__ || null);
   }
   if (event?.detail?.key === 'metric-tracker') {
-    renderTrackerPrompt();
+    const hydrated = hydrateTrackerFromLocationHash({ submit: true });
+    if (!hydrated) renderTrackerPrompt();
     window.setTimeout(() => document.getElementById('tracker-principal-input')?.focus?.(), 0);
   }
 });

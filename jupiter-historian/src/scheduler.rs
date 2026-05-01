@@ -2,7 +2,6 @@ use candid::Nat;
 
 #[cfg(feature = "debug_api")]
 use candid::Principal;
-
 use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;

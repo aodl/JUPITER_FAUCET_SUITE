@@ -99,7 +99,7 @@ test('simulator inputs are ordered by user control priority and use compact nume
   const apy = elementById(simulator, 'simulator-apy');
   assert.equal(attrValue(commitment, 'min'), '1');
   assert.equal(attrValue(commitment, 'step'), '0.1');
-  assert.equal(attrValue(commitment, 'value'), '100.0');
+  assert.equal(attrValue(commitment, 'value'), null);
   assert.equal(attrValue(burn, 'step'), '0.001');
   assert.equal(attrValue(burn, 'value'), '0.001');
   assert.equal(attrValue(price, 'step'), '0.1');
@@ -108,6 +108,7 @@ test('simulator inputs are ordered by user control priority and use compact nume
   assert.equal(attrValue(apy, 'value'), '7.0');
   assert.match(simulator, /Daily burn \(T cycles\)/);
   assert.match(simulator, /APY \(%\)/);
+  assert.doesNotMatch(simulator, /id="simulator-icp-commitment"[^>]*value="100\.0"/);
 });
 
 test('simulator no longer exposes a starting-buffer stat or copy', () => {
@@ -189,4 +190,38 @@ test('simulator prepopulates ICP/XDR price from historian XRC cache without over
   assert.match(mainJs, /formatIcpXdrRateSource\(snapshot, manualOverride = false\)/);
   assert.match(mainJs, /Manual override; \$\{cacheText\}/);
   assert.match(mainJs, /formatIcpXdrRateSource\(\s*simulatorState\.icpXdrRateSnapshot,\s*simulatorState\.icpPriceUserEdited,\s*\)/);
+});
+
+
+test('canister tracker links use shareable metric-tracker fragments', () => {
+  assert.match(mainJs, /const TRACKER_HASH_PREFIX = '#metric-tracker-'/);
+  assert.match(mainJs, /trackerHashForPrincipal/);
+  assert.match(mainJs, /trackerPrincipalFromHash/);
+  assert.match(navbarJs, /key\.startsWith\("metric-tracker-"\)/);
+  assert.match(indexHtml, /href="#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai"/);
+});
+
+test('metric tracker hash deep links submit once on cold load and panel open', () => {
+  assert.match(mainJs, /let lastTrackerHashSubmitPrincipal = ''/);
+  assert.match(mainJs, /hydrateTrackerFromLocationHash\(\{ submit: true \}\);/);
+  assert.match(mainJs, /submit && lastTrackerHashSubmitPrincipal !== principalText/);
+  assert.match(mainJs, /lastTrackerHashSubmitPrincipal = principalText/);
+  assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*hydrateTrackerFromLocationHash\(\{ submit: true \}\)/);
+});
+
+test('canister tracker displays cycles as T cycles and estimates burn per day', () => {
+  assert.match(mainJs, /function formatCycles\(value\) \{\n  return formatTrillionCycles\(value\);/);
+  assert.match(mainJs, /Estimated observed cycles burned\/day/);
+  assert.match(mainJs, /downward balance changes between all loaded cycle probes/);
+  assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(data\);/);
+  assert.match(mainJs, /estimateCyclesBurnedPerDay/);
+  assert.match(mainJs, /formatTrillionCyclesPerDay/);
+});
+
+test('simulator prepopulates commitment from calculated break-even minimum', () => {
+  assert.match(mainJs, /maybePrepopulateSimulatorMinimumCommitment/);
+  assert.match(mainJs, /calculateSimulatorMinimumCommitmentInput/);
+  assert.match(mainJs, /formatIcpCommitmentInputRoundedUp/);
+  assert.match(mainJs, /simulatorState\.icpCommitmentUserEdited/);
+  assert.match(mainJs, /maybePrepopulateSimulatorMinimumCommitment\(\);\n  renderCommitmentSimulator\(\);/);
 });

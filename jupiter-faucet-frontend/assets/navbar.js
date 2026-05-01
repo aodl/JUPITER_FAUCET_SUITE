@@ -275,8 +275,14 @@
       if (evt.key === "Escape" && backdrop.classList.contains("is-open")) closePanel();
     });
 
-    function applyHash(hash) {
+    function panelKeyFromHash(hash) {
       const key = hash ? hash.replace(/^#/, "") : "";
+      if (key.startsWith("metric-tracker-")) return "metric-tracker";
+      return key;
+    }
+
+    function applyHash(hash) {
+      const key = panelKeyFromHash(hash);
       if (!key) return;
 
       const matchingTrigger = panelTriggers.find((btn) => btn.getAttribute("data-panel") === key);
