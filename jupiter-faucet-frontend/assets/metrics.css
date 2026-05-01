@@ -819,7 +819,8 @@
 }
 
 .simulator-scroll-region {
-  max-height: min(62vh, calc(100dvh - 210px));
+  flex: 1;
+  min-height: 0;
 }
 
 .simulator-intro {

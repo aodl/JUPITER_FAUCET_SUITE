@@ -273,14 +273,6 @@
         <span class="metric-rail-link-label">Jupiter Stake</span>
         <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
       </a>
-      <a href="#metric-output" class="metric-rail-link nav-item" data-panel="metric-output">
-        <span class="metric-rail-link-label">Total Output</span>
-        <strong class="metric-rail-link-value"><span id="landing-total-output">—</span><span class="metric-status" id="landing-total-output-status" hidden aria-hidden="true"></span></strong>
-      </a>
-      <a href="#metric-rewards" class="metric-rail-link nav-item" data-panel="metric-rewards">
-        <span class="metric-rail-link-label">Total Rewards</span>
-        <strong class="metric-rail-link-value"><span id="landing-total-rewards">—</span><span class="metric-status" id="landing-total-rewards-status" hidden aria-hidden="true"></span></strong>
-      </a>
       <a href="#metric-registered" class="metric-rail-link nav-item" data-panel="metric-registered">
         <span class="metric-rail-link-label">Target Canisters</span>
         <strong class="metric-rail-link-value"><span id="landing-registered-canisters">—</span><span class="metric-status" id="landing-registered-canisters-status" hidden aria-hidden="true"></span></strong>
@@ -536,80 +528,116 @@
         
         <article class="nav-panel-section" data-panel="metric-stake" id="nav-panel-metric-stake">
           <h2 class="nav-panel-title">Jupiter Stake</h2>
-          <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle">Direct ICP ledger balance plus public NNS neuron details.</p>
-            <dl class="pane-detail-grid" id="stake-neuron-details">
-              <div><dt>Neuron ID</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-neuron-id-link" href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer"><span id="stake-neuron-id">11614578985374291210</span></a></dd></div>
-              <div><dt>Current stake</dt><dd class="pane-detail-value"><span id="stake-pane-balance"></span><span class="metric-status" id="stake-pane-balance-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Age</dt><dd class="pane-detail-value"><span id="stake-neuron-age"></span><span class="metric-status" id="stake-neuron-age-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Age bonus diverted</dt><dd class="pane-detail-value"><span id="stake-neuron-age-bonus"></span><span class="metric-status" id="stake-neuron-age-bonus-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Publicly readable</dt><dd class="pane-detail-value"><span id="stake-neuron-public"></span><span class="metric-status" id="stake-neuron-public-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Created</dt><dd class="pane-detail-value"><span id="stake-neuron-created"></span><span class="metric-status" id="stake-neuron-created-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Voting power refreshed</dt><dd class="pane-detail-value"><span id="stake-neuron-refresh"></span><span class="metric-status" id="stake-neuron-refresh-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Follows</dt><dd class="pane-detail-value mono"><span id="stake-neuron-followees"></span><span class="metric-status" id="stake-neuron-followees-status" hidden aria-hidden="true"></span></dd></div>
-              <div><dt>Staking account</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-pane-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><span id="stake-pane-account"></span></a></dd></div>
-            </dl>
-            <p class="pane-status-note" id="stake-neuron-note" hidden></p>
-          </div>
-        </article>
-
-        <article class="nav-panel-section" data-panel="metric-output" id="nav-panel-metric-output">
-          <h2 class="nav-panel-title">Total Output</h2>
-          <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle" id="output-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the faucet payout account.</p>
-            <p class="nav-panel-content" id="output-pane-description">Total Output counts ICP routed from the disburser staging account to the faucet payout account. It does not attempt to measure downstream burn or spending.</p>
-            <dl class="pane-detail-grid">
-              <div><dt>Total output</dt><dd class="pane-detail-value"><span id="output-pane-total"></span><span class="metric-status" id="output-pane-total-status" hidden aria-hidden="true"></span></dd></div>
-            </dl>
-            <div class="pane-table-wrap">
-              <table class="pane-table">
-                <thead>
-                  <tr>
-                    <th>Timestamp</th>
-                    <th>Amount</th>
-                    <th>Tx ID</th>
-                  </tr>
-                </thead>
-                <tbody id="output-pane-body">
-                  <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="pane-pagination">
-              <button class="pane-page-button" id="output-prev-page" type="button">Previous</button>
-              <span id="output-page-info">Page 1</span>
-              <button class="pane-page-button" id="output-next-page" type="button">Next</button>
+          <div class="nav-panel-page is-active" data-page="0">
+            <div class="nav-panel-scroll-region">
+              <p class="nav-panel-subtitle">Direct ICP ledger balance plus public NNS neuron details.</p>
+              <p class="nav-panel-content">The Jupiter neuron is publicly visible on the ICP dashboard. Its maturity is disbursed to the controlling disburser canister before being routed to the faucet, SNS rewards, and D-QUORUM destinations shown on the following pages.</p>
+              <dl class="pane-detail-grid" id="stake-neuron-details">
+                <div><dt>Jupiter neuron</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-neuron-id-link" href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer"><span id="stake-neuron-id">11614578985374291210</span></a></dd></div>
+                <div><dt>Current stake</dt><dd class="pane-detail-value"><span id="stake-pane-balance"></span><span class="metric-status" id="stake-pane-balance-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Age</dt><dd class="pane-detail-value"><span id="stake-neuron-age"></span><span class="metric-status" id="stake-neuron-age-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Age bonus diverted</dt><dd class="pane-detail-value"><span id="stake-neuron-age-bonus"></span><span class="metric-status" id="stake-neuron-age-bonus-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Publicly readable</dt><dd class="pane-detail-value"><span id="stake-neuron-public"></span><span class="metric-status" id="stake-neuron-public-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Created</dt><dd class="pane-detail-value"><span id="stake-neuron-created"></span><span class="metric-status" id="stake-neuron-created-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Voting power refreshed</dt><dd class="pane-detail-value"><span id="stake-neuron-refresh"></span><span class="metric-status" id="stake-neuron-refresh-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Follows</dt><dd class="pane-detail-value mono"><span id="stake-neuron-followees"></span><span class="metric-status" id="stake-neuron-followees-status" hidden aria-hidden="true"></span></dd></div>
+                <div><dt>Staking account</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-pane-account-link" href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer"><span id="stake-pane-account"></span></a></dd></div>
+              </dl>
+              <p class="pane-status-note" id="stake-neuron-note" hidden></p>
             </div>
           </div>
-        </article>
-
-        <article class="nav-panel-section" data-panel="metric-rewards" id="nav-panel-metric-rewards">
-          <h2 class="nav-panel-title">Total Rewards</h2>
-          <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle" id="rewards-pane-subtitle">Historian tracks protocol-routed ICP from the disburser to the SNS rewards account.</p>
-            <p class="nav-panel-content" id="rewards-pane-description">Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. It is a Jupiter routing metric rather than a downstream burn metric.</p>
-            <dl class="pane-detail-grid">
-              <div><dt>Total rewards</dt><dd class="pane-detail-value"><span id="rewards-pane-total"></span><span class="metric-status" id="rewards-pane-total-status" hidden aria-hidden="true"></span></dd></div>
-            </dl>
-            <div class="pane-table-wrap">
-              <table class="pane-table">
-                <thead>
-                  <tr>
-                    <th>Timestamp</th>
-                    <th>Amount</th>
-                    <th>Tx ID</th>
-                  </tr>
-                </thead>
-                <tbody id="rewards-pane-body">
-                  <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
-                </tbody>
-              </table>
+          <div class="nav-panel-page" data-page="1">
+            <div class="nav-panel-scroll-region">
+              <h3 class="pane-section-title">Total Output</h3>
+              <p class="nav-panel-subtitle" id="output-pane-subtitle">Historian tracks the aggregate; recent rows are queried live from the ICP index canister.</p>
+              <p class="nav-panel-content" id="output-pane-description">Total Output counts ICP routed from the disburser staging account to the faucet payout account.</p>
+              <dl class="pane-detail-grid">
+                <div><dt>Total output</dt><dd class="pane-detail-value"><span id="output-pane-total"></span><span class="metric-status" id="output-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+              </dl>
+              <div class="pane-table-wrap">
+                <table class="pane-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Amount</th>
+                      <th>Tx ID</th>
+                    </tr>
+                  </thead>
+                  <tbody id="output-pane-body">
+                    <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pane-pagination">
+                <button class="pane-page-button" id="output-prev-page" type="button">Previous</button>
+                <span id="output-page-info">Page 1</span>
+                <button class="pane-page-button" id="output-next-page" type="button">Next</button>
+              </div>
             </div>
-            <div class="pane-pagination">
-              <button class="pane-page-button" id="rewards-prev-page" type="button">Previous</button>
-              <span id="rewards-page-info">Page 1</span>
-              <button class="pane-page-button" id="rewards-next-page" type="button">Next</button>
+          </div>
+          <div class="nav-panel-page" data-page="2">
+            <div class="nav-panel-scroll-region">
+              <h3 class="pane-section-title">Total Rewards</h3>
+              <p class="nav-panel-subtitle" id="rewards-pane-subtitle">Historian tracks the aggregate; recent rows are queried live from the ICP index canister.</p>
+              <p class="nav-panel-content" id="rewards-pane-description">Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account.</p>
+              <dl class="pane-detail-grid">
+                <div><dt>Total rewards</dt><dd class="pane-detail-value"><span id="rewards-pane-total"></span><span class="metric-status" id="rewards-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+              </dl>
+              <div class="pane-table-wrap">
+                <table class="pane-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Amount</th>
+                      <th>Tx ID</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rewards-pane-body">
+                    <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pane-pagination">
+                <button class="pane-page-button" id="rewards-prev-page" type="button">Previous</button>
+                <span id="rewards-page-info">Page 1</span>
+                <button class="pane-page-button" id="rewards-next-page" type="button">Next</button>
+              </div>
             </div>
+          </div>
+          <div class="nav-panel-page" data-page="3">
+            <div class="nav-panel-scroll-region">
+              <h3 class="pane-section-title">D-QUORUM Route</h3>
+              <p class="nav-panel-subtitle" id="dquorum-pane-subtitle">Recent rows are queried live from the ICP index canister.</p>
+              <p class="nav-panel-content" id="dquorum-pane-description">D-QUORUM Route shows ICP routed from the disburser staging account to D-QUORUM's staking account.</p>
+              <dl class="pane-detail-grid">
+                <div><dt>D-QUORUM routed shown</dt><dd class="pane-detail-value"><span id="dquorum-pane-total"></span><span class="metric-status" id="dquorum-pane-total-status" hidden aria-hidden="true"></span></dd></div>
+              </dl>
+              <div class="pane-table-wrap">
+                <table class="pane-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Amount</th>
+                      <th>Tx ID</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dquorum-pane-body">
+                    <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pane-pagination">
+                <button class="pane-page-button" id="dquorum-prev-page" type="button">Previous</button>
+                <span id="dquorum-page-info">Page 1</span>
+                <button class="pane-page-button" id="dquorum-next-page" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+          <div class="nav-panel-dots" role="tablist" aria-label="Jupiter Stake pages">
+            <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Jupiter neuron" aria-selected="true"></button>
+            <button class="nav-panel-dot" type="button" data-page="1" aria-label="Total Output" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="2" aria-label="Total Rewards" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="3" aria-label="D-QUORUM route" aria-selected="false"></button>
           </div>
         </article>
 

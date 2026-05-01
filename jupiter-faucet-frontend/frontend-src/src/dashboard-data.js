@@ -13,6 +13,8 @@ export const RECENT_ROUTE_TRANSFER_PAGE_SIZE = 100;
 export const RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES = 10;
 export const TRACKER_HISTORY_PAGE_SIZE = 100;
 export const MAINNET_CMC_CANISTER_ID = 'rkp4c-7iaaa-aaaaa-aaaca-cai';
+export const MAINNET_GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
+export const DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX = '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f';
 
 const agentPromises = new Map();
 
@@ -77,6 +79,26 @@ function crc32(bytes) {
 
 export function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function hexToBytes(hex) {
+  const text = String(hex || '').trim();
+  if (text.length % 2 !== 0 || /[^0-9a-f]/i.test(text)) {
+    throw new Error('Invalid hex byte string');
+  }
+  const bytes = new Uint8Array(text.length / 2);
+  for (let index = 0; index < text.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(text.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+export function dquorumStakingAccount(governanceCanisterId = MAINNET_GOVERNANCE_CANISTER_ID) {
+  const owner = typeof governanceCanisterId === 'string' ? Principal.fromText(governanceCanisterId) : governanceCanisterId;
+  return {
+    owner,
+    subaccount: [Array.from(hexToBytes(DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX))],
+  };
 }
 
 export function accountIdentifierBytes(account) {
@@ -586,16 +608,18 @@ async function loadRouteTransferTables({ status, agent, indexActorFactory }) {
   const outputSourceAccount = readOptional(status?.output_source_account);
   const outputAccount = readOptional(status?.output_account);
   const rewardsAccount = readOptional(status?.rewards_account);
+  const dquorumAccount = dquorumStakingAccount();
 
   if (!indexCanisterId || !outputSourceAccount || !outputAccount || !rewardsAccount) {
     return {
       outputTransfersResult: { status: 'fulfilled', value: { items: [] } },
       rewardsTransfersResult: { status: 'fulfilled', value: { items: [] } },
+      dquorumTransfersResult: { status: 'fulfilled', value: { items: [] } },
     };
   }
 
   const index = indexActorFactory(indexCanisterId, { agent });
-  const [outputTransfersResult, rewardsTransfersResult] = await Promise.allSettled([
+  const [outputTransfersResult, rewardsTransfersResult, dquorumTransfersResult] = await Promise.allSettled([
     loadRecentRouteTransfersFromIndex({
       index,
       outputSourceAccount,
@@ -606,9 +630,14 @@ async function loadRouteTransferTables({ status, agent, indexActorFactory }) {
       outputSourceAccount,
       routeAccount: rewardsAccount,
     }),
+    loadRecentRouteTransfersFromIndex({
+      index,
+      outputSourceAccount,
+      routeAccount: dquorumAccount,
+    }),
   ]);
 
-  return { outputTransfersResult, rewardsTransfersResult };
+  return { outputTransfersResult, rewardsTransfersResult, dquorumTransfersResult };
 }
 
 export async function loadDashboardData({
@@ -643,6 +672,7 @@ export async function loadDashboardData({
       recent: null,
       outputTransfers: null,
       rewardsTransfers: null,
+      dquorumTransfers: null,
       stakeE8s: null,
       hasAnyFailure: true,
       errors: {
@@ -652,6 +682,7 @@ export async function loadDashboardData({
         recent: reason,
         outputTransfers: reason,
         rewardsTransfers: reason,
+        dquorumTransfers: reason,
         stake: 'Stake unavailable',
       },
       historianAllRejected: true,
@@ -677,6 +708,7 @@ export async function loadDashboardData({
   let stakeResult = { status: 'rejected', reason: new Error('Stake unavailable') };
   let outputTransfersResult = { status: 'fulfilled', value: { items: [] } };
   let rewardsTransfersResult = { status: 'fulfilled', value: { items: [] } };
+  let dquorumTransfersResult = { status: 'fulfilled', value: { items: [] } };
 
   if (statusResult.status === 'fulfilled') {
     let ledger;
@@ -708,7 +740,7 @@ export async function loadDashboardData({
     }
 
     try {
-      ({ outputTransfersResult, rewardsTransfersResult } = await loadRouteTransferTables({
+      ({ outputTransfersResult, rewardsTransfersResult, dquorumTransfersResult } = await loadRouteTransferTables({
         status: statusResult.value,
         agent: resolvedAgent,
         indexActorFactory,
@@ -716,6 +748,7 @@ export async function loadDashboardData({
     } catch (error) {
       outputTransfersResult = { status: 'rejected', reason: error };
       rewardsTransfersResult = { status: 'rejected', reason: error };
+      dquorumTransfersResult = { status: 'rejected', reason: error };
     }
   }
 
@@ -728,6 +761,7 @@ export async function loadDashboardData({
     recent: recentResult.status === 'rejected' ? normalizeError(recentResult.reason) : null,
     outputTransfers: outputTransfersResult.status === 'rejected' ? normalizeError(outputTransfersResult.reason) : null,
     rewardsTransfers: rewardsTransfersResult.status === 'rejected' ? normalizeError(rewardsTransfersResult.reason) : null,
+    dquorumTransfers: dquorumTransfersResult.status === 'rejected' ? normalizeError(dquorumTransfersResult.reason) : null,
     stake: stakeResult.status === 'rejected' ? normalizeError(stakeResult.reason) : null,
   };
 
@@ -742,6 +776,7 @@ export async function loadDashboardData({
     recent: recentResult.status === 'fulfilled' ? recentResult.value : null,
     outputTransfers: outputTransfersResult.status === 'fulfilled' ? outputTransfersResult.value : null,
     rewardsTransfers: rewardsTransfersResult.status === 'fulfilled' ? rewardsTransfersResult.value : null,
+    dquorumTransfers: dquorumTransfersResult.status === 'fulfilled' ? dquorumTransfersResult.value : null,
     stakeE8s: stakeResult.status === 'fulfilled' ? stakeResult.value : null,
     hasAnyFailure:
       countsResult.status === 'rejected' ||

@@ -5,6 +5,7 @@ import {
   normalizeError,
   accountIdentifierHex,
   bytesToHex,
+  dquorumStakingAccount,
   uint8ArrayFromOptBytes,
   loadDashboardData,
   loadRegisteredCanisterSummaryPage,
@@ -71,6 +72,7 @@ const tableState = {
   commitments: { page: 0, items: [] },
   output: { page: 0, items: [] },
   rewards: { page: 0, items: [] },
+  dquorum: { page: 0, items: [] },
 };
 
 const trackerState = {
@@ -476,6 +478,7 @@ function renderPaneSubtitles(data) {
   setText('commitments-pane-subtitle', subtitle);
   setText('output-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
   setText('rewards-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
+  setText('dquorum-pane-subtitle', 'Recent rows are queried live from the ICP index canister.');
 
   const totalMemory = data?.status?.total_memory_bytes?.[0];
   const heapMemory = data?.status?.heap_memory_bytes?.[0];
@@ -993,11 +996,38 @@ function renderRouteTransferRow(item) {
     </tr>`;
 }
 
+function dashboardAccountLink(account, label, fallbackExplorerAccountId = '') {
+  const text = escapeHtml(label);
+  let explorerAccountId = fallbackExplorerAccountId;
+  if (!explorerAccountId && account) {
+    try {
+      explorerAccountId = accountIdentifierHex(account);
+    } catch {
+      explorerAccountId = '';
+    }
+  }
+  if (!explorerAccountId) return text;
+  return `<a class="pane-external-link" href="https://dashboard.internetcomputer.org/account/${escapeHtml(explorerAccountId)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+}
+
+function setRouteDescription(id, data, routeLabel, destinationLabel, destinationAccount = null, { aggregate = true } = {}) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  const stagingLink = dashboardAccountLink(data?.status?.output_source_account?.[0] || data?.status?.output_source_account, 'staging account');
+  const destination = destinationAccount
+    ? dashboardAccountLink(destinationAccount, destinationLabel)
+    : escapeHtml(destinationLabel);
+  node.innerHTML = `Jupiter neuron maturity is disbursed to the controlling canister's ${stagingLink}. ${escapeHtml(routeLabel)} counts ICP routed from that staging account to ${destination}. ${aggregate ? 'Historian tracks the aggregate; ' : ''}recent rows are fetched directly from the ICP index canister.`;
+}
+
+function sumRouteTransferE8s(items) {
+  return (items || []).reduce((sum, item) => sum + itemAmountE8s(item), 0n);
+}
+
 function renderOutputPane(data) {
   const amount = data?.counts?.total_output_e8s;
   setPaneValueText('output-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(amount) });
-  const note = 'Total Output counts ICP routed from the disburser staging account to the faucet payout account. The table shows recent matching transfers fetched directly from the ICP index canister.';
-  setText('output-pane-description', note);
+  setRouteDescription('output-pane-description', data, 'Total Output', 'the faucet payout account', data?.status?.output_account?.[0] || data?.status?.output_account);
   paginate(
     'output',
     data?.outputTransfers?.items || [],
@@ -1010,13 +1040,28 @@ function renderOutputPane(data) {
 function renderRewardsPane(data) {
   const amount = data?.counts?.total_rewards_e8s;
   setPaneValueText('rewards-pane-total', amount === undefined || amount === null ? { error: data?.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(amount) });
-  const note = 'Total Rewards counts ICP routed from the disburser staging account to the SNS rewards account. The table shows recent matching transfers fetched directly from the ICP index canister.';
-  setText('rewards-pane-description', note);
+  setRouteDescription('rewards-pane-description', data, 'Total Rewards', 'the SNS rewards account', data?.status?.rewards_account?.[0] || data?.status?.rewards_account);
   paginate(
     'rewards',
     data?.rewardsTransfers?.items || [],
     renderRouteTransferRow,
     paneEmptyMessage(data, 'rewardsTransfers', 'No rewards transfers found in the recent index window.'),
+    3,
+  );
+}
+
+function renderDquorumPane(data) {
+  const transfers = data?.dquorumTransfers?.items || [];
+  const dquorumAccount = dquorumStakingAccount();
+  setPaneValueText('dquorum-pane-total', data?.errors?.dquorumTransfers
+    ? { error: data.errors.dquorumTransfers }
+    : { value: formatIcpE8s(sumRouteTransferE8s(transfers)) });
+  setRouteDescription('dquorum-pane-description', data, 'D-QUORUM Route', "D-QUORUM's staking account", dquorumAccount, { aggregate: false });
+  paginate(
+    'dquorum',
+    transfers,
+    renderRouteTransferRow,
+    paneEmptyMessage(data, 'dquorumTransfers', 'No D-QUORUM route transfers found in the recent index window.'),
     3,
   );
 }
@@ -1873,6 +1918,7 @@ function bindPaginationButtons() {
     ['commitments', renderCommitmentsPane],
     ['output', renderOutputPane],
     ['rewards', renderRewardsPane],
+    ['dquorum', renderDquorumPane],
   ].forEach(([kind, rerender]) => {
     const prev = document.getElementById(`${kind}-prev-page`);
     const next = document.getElementById(`${kind}-next-page`);
@@ -1905,6 +1951,7 @@ function renderLandingPanes(data, neuron = null) {
   renderCommitmentsPane(data);
   renderOutputPane(data);
   renderRewardsPane(data);
+  renderDquorumPane(data);
 }
 
 async function loadNeuronDetails({ host, local }) {

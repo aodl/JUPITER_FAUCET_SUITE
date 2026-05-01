@@ -9,6 +9,7 @@ const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'u
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
 const mainJs = readFileSync(resolve(__dirname, '../src/main.js'), 'utf8');
 const navbarJs = readFileSync(resolve(__dirname, '../../assets/navbar.js'), 'utf8');
+const navbarCss = readFileSync(resolve(__dirname, '../../assets/navbar.css'), 'utf8');
 
 function sectionMarkup(panelId) {
   const start = indexHtml.indexOf(`id="nav-panel-${panelId}"`);
@@ -151,6 +152,45 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   assert.match(mainJs, /simulatorState\.ageBonusBasisPoints/);
 });
 
+test('Total Output and Total Rewards are pages of Jupiter Stake rather than metric rail buttons', () => {
+  const stake = sectionMarkup('metric-stake');
+  const rail = indexHtml.slice(indexHtml.indexOf('<aside class="metric-rail"'), indexHtml.indexOf('</aside>') + '</aside>'.length);
+
+  assert.doesNotMatch(rail, /data-panel="metric-output"/);
+  assert.doesNotMatch(rail, /data-panel="metric-rewards"/);
+  assert.doesNotMatch(indexHtml, /id="nav-panel-metric-output"/);
+  assert.doesNotMatch(indexHtml, /id="nav-panel-metric-rewards"/);
+  assert.match(stake, /data-page="1"[\s\S]*Total Output/);
+  assert.match(stake, /data-page="2"[\s\S]*Total Rewards/);
+  assert.match(stake, /data-page="3"[\s\S]*D-QUORUM Route/);
+  assert.match(stake, /aria-label="D-QUORUM route"/);
+  assert.match(navbarJs, /key === "metric-output"[\s\S]*key: "metric-stake", page: 1/);
+  assert.match(navbarJs, /key === "metric-rewards"[\s\S]*key: "metric-stake", page: 2/);
+});
+
+
+
+test('paged nav panel content keeps a stable panel height while preserving overflow scrolling', () => {
+  assert.match(navbarCss, /\.nav-panel \{[\s\S]*height: min\(720px, calc\(100dvh - 112px\)\);[\s\S]*overflow: hidden;[\s\S]*\}/);
+  assert.match(navbarCss, /\.nav-panel-page\.is-active \{[\s\S]*display: flex;[\s\S]*flex: 1;[\s\S]*overflow: auto;[\s\S]*\}/);
+  assert.match(navbarCss, /\.nav-panel-page\.is-active > \.nav-panel-scroll-region \{[\s\S]*padding-right: 0;[\s\S]*\}/);
+  assert.doesNotMatch(navbarCss, /\.nav-panel-page\.is-active \{[\s\S]*max-height: 40vh;[\s\S]*\}/);
+  assert.match(navbarCss, /\.nav-panel-scroll-region \{[\s\S]*overflow: auto;[\s\S]*\}/);
+  assert.doesNotMatch(navbarCss, /\.nav-panel-scroll-region \{[\s\S]*max-height: min\(46vh, calc\(100dvh - 220px\)\);[\s\S]*\}/);
+  assert.match(navbarJs, /pointerDownOnBackdrop = evt\.target === backdrop/);
+  assert.match(navbarJs, /const shouldClose = evt\.target === backdrop && pointerDownOnBackdrop/);
+});
+
+test('maturity route pages clarify staging account routing and D-QUORUM account lookup', () => {
+  assert.match(mainJs, /Jupiter neuron maturity is disbursed to the controlling canister's/);
+  assert.match(mainJs, /dashboardAccountLink\(data\?\.status\?\.output_source_account/);
+  assert.doesNotMatch(mainJs, /DQUORUM_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX/);
+  assert.match(mainJs, /dashboardAccountLink\(destinationAccount, destinationLabel\)/);
+  assert.match(mainJs, /renderDquorumPane/);
+  assert.match(mainJs, /dquorumStakingAccount/);
+  assert.match(mainJs, /No D-QUORUM route transfers found in the recent index window/);
+});
+
 test('simulator displays T-cycle values with three decimal places and uses weekly chart copy', () => {
   assert.match(mainJs, /const thousandths = \(absolute \* 1000n\) \/ 1_000_000_000_000n;/);
   assert.match(mainJs, /padStart\(3, '0'\)/);
@@ -170,7 +210,8 @@ test('canister tracker defaults to all loaded history', () => {
 test('simulator header and scroll region have dedicated compact layout CSS', () => {
   assert.match(metricsCss, /\.simulator-pane-header\s*\{/);
   assert.match(metricsCss, /\.simulator-form--header\s*\{/);
-  assert.match(metricsCss, /\.simulator-scroll-region\s*\{/);
+  assert.match(metricsCss, /\.simulator-scroll-region\s*\{[\s\S]*flex: 1;[\s\S]*min-height: 0;[\s\S]*\}/);
+  assert.doesNotMatch(metricsCss, /\.simulator-scroll-region\s*\{[\s\S]*max-height:/);
   assert.match(metricsCss, /display: flex;/);
   assert.match(metricsCss, /flex-wrap: wrap;/);
   assert.match(metricsCss, /#simulator-daily-burn \{\n  width: 112px;/);

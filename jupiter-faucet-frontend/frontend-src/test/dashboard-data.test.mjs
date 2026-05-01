@@ -11,6 +11,7 @@ import {
   loadTrackerData,
   loadCmcTopUpTransfersFromIndex,
   cmcDepositAccount,
+  dquorumStakingAccount,
   hasCanisterSource,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
@@ -91,6 +92,13 @@ test('accountIdentifierHex stays stable for the staking-account derivation fixtu
   assert.equal(
     accountIdentifierHex(stakingAccount()),
     '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3',
+  );
+});
+
+test('dquorumStakingAccount uses the committed production staking subaccount', () => {
+  assert.equal(
+    accountIdentifierHex(dquorumStakingAccount()),
+    '52991edd749dc095b2f15121289f3697543aad08db6f01a7ff840818a84fda10',
   );
 });
 
@@ -182,17 +190,20 @@ test('loadDashboardData skips recent route transfer lookups when route config is
   assert.equal(indexActorConstructed, false);
   assert.deepEqual(data.outputTransfers.items, []);
   assert.deepEqual(data.rewardsTransfers.items, []);
+  assert.deepEqual(data.dquorumTransfers.items, []);
   assert.equal(data.errors.outputTransfers, null);
   assert.equal(data.errors.rewardsTransfers, null);
+  assert.equal(data.errors.dquorumTransfers, null);
 });
 
-test('loadDashboardData queries the ICP index directly for recent output and reward transfers', async () => {
+test('loadDashboardData queries the ICP index directly for recent maturity route transfers', async () => {
   const source = routeAccount('uccpi-cqaaa-aaaar-qby3q-cai');
   const output = routeAccount('acjuz-liaaa-aaaar-qb4qq-cai');
   const rewards = routeAccount('alk7f-5aaaa-aaaar-qb4ra-cai');
   const sourceId = accountIdentifierHex(source);
   const outputId = accountIdentifierHex(output);
   const rewardsId = accountIdentifierHex(rewards);
+  const dquorumId = accountIdentifierHex(dquorumStakingAccount());
   const indexCalls = [];
 
   const data = await loadDashboardData({
@@ -243,14 +254,26 @@ test('loadDashboardData queries the ICP index directly for recent output and rew
               },
             ] } };
           }
-          return { Ok: { balance: 0n, oldest_tx_id: [50n], transactions: [{
-            id: 55n,
+          if (args.account_identifier === rewardsId) {
+            return { Ok: { balance: 0n, oldest_tx_id: [50n], transactions: [{
+              id: 55n,
+              transaction: {
+                memo: 0n,
+                icrc1_memo: [],
+                created_at_time: [{ timestamp_nanos: 1_710_000_000_000_000_055n }],
+                timestamp: [],
+                operation: { TransferFrom: { from: sourceId, to: rewardsId, amount: { e8s: 22_000_000n }, fee: { e8s: 10_000n }, spender: sourceId } },
+              },
+            }] } };
+          }
+          return { Ok: { balance: 0n, oldest_tx_id: [60n], transactions: [{
+            id: 66n,
             transaction: {
               memo: 0n,
               icrc1_memo: [],
-              created_at_time: [{ timestamp_nanos: 1_710_000_000_000_000_055n }],
-              timestamp: [],
-              operation: { TransferFrom: { from: sourceId, to: rewardsId, amount: { e8s: 22_000_000n }, fee: { e8s: 10_000n }, spender: sourceId } },
+              created_at_time: [],
+              timestamp: [{ timestamp_nanos: 1_710_000_000_000_000_066n }],
+              operation: { Transfer: { from: sourceId, to: dquorumId, amount: { e8s: 5_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
             },
           }] } };
         },
@@ -258,8 +281,8 @@ test('loadDashboardData queries the ICP index directly for recent output and rew
     },
   });
 
-  assert.equal(indexCalls.length, 2);
-  assert.deepEqual(indexCalls.map((call) => call.account_identifier).sort(), [outputId, rewardsId].sort());
+  assert.equal(indexCalls.length, 3);
+  assert.deepEqual(indexCalls.map((call) => call.account_identifier).sort(), [outputId, rewardsId, dquorumId].sort());
   assert.equal(indexCalls[0].max_results, BigInt(RECENT_ROUTE_TRANSFER_LIMIT));
   assert.equal(data.outputTransfers.items.length, 1);
   assert.equal(data.outputTransfers.items[0].tx_id, 44n);
@@ -267,8 +290,12 @@ test('loadDashboardData queries the ICP index directly for recent output and rew
   assert.equal(data.rewardsTransfers.items.length, 1);
   assert.equal(data.rewardsTransfers.items[0].tx_id, 55n);
   assert.equal(data.rewardsTransfers.items[0].amount_e8s, 22_000_000n);
+  assert.equal(data.dquorumTransfers.items.length, 1);
+  assert.equal(data.dquorumTransfers.items[0].tx_id, 66n);
+  assert.equal(data.dquorumTransfers.items[0].amount_e8s, 5_000_000n);
   assert.equal(data.errors.outputTransfers, null);
   assert.equal(data.errors.rewardsTransfers, null);
+  assert.equal(data.errors.dquorumTransfers, null);
 });
 
 
@@ -305,8 +332,10 @@ test('loadDashboardData keeps route transfer lookup failures out of the global f
   assert.equal(data.hasAnyFailure, false);
   assert.equal(data.errors.outputTransfers, 'index temporarily unavailable');
   assert.equal(data.errors.rewardsTransfers, 'index temporarily unavailable');
+  assert.equal(data.errors.dquorumTransfers, 'index temporarily unavailable');
   assert.equal(data.outputTransfers, null);
   assert.equal(data.rewardsTransfers, null);
+  assert.equal(data.dquorumTransfers, null);
 });
 
 test('loadRecentRouteTransfersFromIndex de-duplicates rows before applying the limit and advances the index cursor', async () => {

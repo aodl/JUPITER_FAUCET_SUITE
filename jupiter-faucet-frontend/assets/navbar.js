@@ -30,6 +30,7 @@
     let lastTriggerBtn = null;
     let activePanelKey = "";
     let metricsMenuOpen = false;
+    let pointerDownOnBackdrop = false;
 
     function isMetricPanelKey(key) {
       return /^metric-/.test(key || "");
@@ -267,22 +268,31 @@
 
     closeBtn.addEventListener("click", closePanel);
 
+    backdrop.addEventListener("pointerdown", (evt) => {
+      pointerDownOnBackdrop = evt.target === backdrop;
+    });
+
     backdrop.addEventListener("click", (evt) => {
-      if (evt.target === backdrop) closePanel();
+      const shouldClose = evt.target === backdrop && pointerDownOnBackdrop;
+      pointerDownOnBackdrop = false;
+      if (shouldClose) closePanel();
     });
 
     document.addEventListener("keydown", (evt) => {
       if (evt.key === "Escape" && backdrop.classList.contains("is-open")) closePanel();
     });
 
-    function panelKeyFromHash(hash) {
+    function panelTargetFromHash(hash) {
       const key = hash ? hash.replace(/^#/, "") : "";
-      if (key.startsWith("metric-tracker-")) return "metric-tracker";
-      return key;
+      if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0 };
+      if (key === "metric-output") return { key: "metric-stake", page: 1 };
+      if (key === "metric-rewards") return { key: "metric-stake", page: 2 };
+      return { key, page: 0 };
     }
 
+
     function applyHash(hash) {
-      const key = panelKeyFromHash(hash);
+      const { key, page } = panelTargetFromHash(hash);
       if (!key) return;
 
       const matchingTrigger = panelTriggers.find((btn) => btn.getAttribute("data-panel") === key);
@@ -295,6 +305,7 @@
       }
       setActiveButton(key);
       openPanel(key);
+      activatePage(matchingSection, page);
     }
 
     applyHash(window.location.hash);

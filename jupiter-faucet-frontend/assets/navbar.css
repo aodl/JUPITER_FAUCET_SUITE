@@ -94,18 +94,17 @@ button {
 }
 
 .nav-panel-page.is-active {
-  display: block;
+  display: flex;
   flex: 1;
   min-height: 0;
+  flex-direction: column;
   overflow: auto;
+  overscroll-behavior: contain;
   padding-right: 6px;
 }
 
-/* Optional: if a page still gets tall, allow internal scrolling */
-.nav-panel-page.is-active {
-  max-height: 40vh;
-  overflow: auto;
-  padding-right: 6px;
+.nav-panel-page.is-active > .nav-panel-scroll-region {
+  padding-right: 0;
 }
 
 /* Dots navigation */
@@ -161,6 +160,7 @@ button {
 .nav-panel {
   min-width: min(640px, 90dvw);
   min-height: 50vh;
+  height: min(720px, calc(100dvh - 112px));
   max-width: 50dvw;
   padding: 24px 28px 22px;
   border-radius: 16px;
@@ -198,7 +198,6 @@ button {
 .nav-panel-scroll-region {
   flex: 1;
   min-height: 0;
-  max-height: min(46vh, calc(100dvh - 220px));
   overflow: auto;
   padding-right: 6px;
 }
@@ -262,7 +261,7 @@ button {
   }
 
   .nav-panel-scroll-region {
-    max-height: min(52vh, calc(100dvh - 180px));
+    max-height: none;
   }
 }
 
