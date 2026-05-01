@@ -1,4 +1,8 @@
 use candid::Nat;
+
+#[cfg(feature = "debug_api")]
+use candid::Principal;
+
 use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;
@@ -285,20 +289,7 @@ pub async fn main_tick(force: bool) {
     guard.finish(now_secs);
 }
 
-async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {
-    let due = state::with_state(|st| {
-        if let Some(last_attempt_ts) = st.last_icp_xdr_rate_attempt_ts {
-            return now_secs.saturating_sub(last_attempt_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS;
-        }
-        st.icp_xdr_rate
-            .as_ref()
-            .map(|snapshot| now_secs.saturating_sub(snapshot.fetched_at_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS)
-            .unwrap_or(true)
-    });
-    if !due {
-        return Ok(());
-    }
-
+async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {
     state::with_root_state_mut(|st| st.last_icp_xdr_rate_attempt_ts = Some(now_secs));
     match xrc.get_icp_xdr_rate().await {
         Ok(rate) => {
@@ -323,6 +314,29 @@ async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(now_secs: u64, xrc: 
             Err(message)
         }
     }
+}
+
+async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {
+    let due = state::with_state(|st| {
+        if let Some(last_attempt_ts) = st.last_icp_xdr_rate_attempt_ts {
+            return now_secs.saturating_sub(last_attempt_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS;
+        }
+        st.icp_xdr_rate
+            .as_ref()
+            .map(|snapshot| now_secs.saturating_sub(snapshot.fetched_at_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS)
+            .unwrap_or(true)
+    });
+    if !due {
+        return Ok(());
+    }
+
+    refresh_icp_xdr_rate(now_secs, xrc).await
+}
+
+#[cfg(feature = "debug_api")]
+pub async fn debug_refresh_icp_xdr_rate_now(now_secs: u64, xrc_canister_id: Principal) -> Result<(), String> {
+    let xrc = XrcCanister::with_canister_id(xrc_canister_id);
+    refresh_icp_xdr_rate(now_secs, &xrc).await
 }
 
 async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient, G: GovernanceClient, X: ExchangeRateClient>(

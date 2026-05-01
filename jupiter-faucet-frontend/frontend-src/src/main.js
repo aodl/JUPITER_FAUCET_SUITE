@@ -170,6 +170,19 @@ function formatIcpXdrRateDisplay(snapshot) {
   return input ? `${input} XDR/ICP` : DASH;
 }
 
+function formatIcpXdrRateSource(snapshot, manualOverride = false) {
+  if (!snapshot) return 'Manual input';
+
+  const fetchedAt = Number(snapshot.fetched_at_ts || 0);
+  const ageSeconds = fetchedAt > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - fetchedAt) : null;
+  const ageText = ageSeconds === null ? 'freshness unknown' : `${formatDurationSeconds(ageSeconds)} old`;
+  const cacheText = `historian XRC cache: ${formatIcpXdrRateDisplay(snapshot)} (${ageText})`;
+
+  return manualOverride
+    ? `Manual override; ${cacheText}`
+    : `Historian XRC cache: ${formatIcpXdrRateDisplay(snapshot)} (${ageText})`;
+}
+
 function formatBasisPointsAsPercent(value, decimals = 1) {
   if (value === null || value === undefined) return DASH;
   const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
@@ -1366,6 +1379,7 @@ function setSimulatorStatus(message, kind = '') {
 function clearSimulatorSummary() {
   [
     'simulator-cycles-per-icp',
+    'simulator-icp-xdr-source',
     'simulator-annual-topup-icp',
     'simulator-annual-topup-cycles',
     'simulator-annual-burn-cycles',
@@ -1450,6 +1464,14 @@ function renderCommitmentSimulator() {
 
   const { summary } = projection;
   setSimulatorText('simulator-cycles-per-icp', formatTrillionCycles(summary.cyclesPerIcp));
+  setSimulatorText(
+    'simulator-icp-xdr-source',
+    formatIcpXdrRateSource(
+      simulatorState.icpXdrRateSnapshot,
+      simulatorState.icpPriceUserEdited,
+    ),
+    simulatorState.icpXdrRateSnapshot?.fetched_at_ts ? `Fetched ${formatTimestampSeconds(simulatorState.icpXdrRateSnapshot.fetched_at_ts)}` : ''
+  );
   setSimulatorText('simulator-annual-topup-icp', formatIcpE8s(summary.annualTopupE8s));
   setSimulatorText('simulator-annual-topup-cycles', formatTrillionCycles(summary.annualTopupCycles));
   setSimulatorText('simulator-annual-burn-cycles', formatTrillionCycles(summary.annualBurnCycles));

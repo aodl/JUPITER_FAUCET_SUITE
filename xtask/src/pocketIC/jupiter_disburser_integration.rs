@@ -626,17 +626,6 @@ fn debug_set_prev_age_seconds(pic: &PocketIc, canister: Principal, age_seconds: 
 }
 
 
-fn debug_set_pause_after_planning(pic: &PocketIc, canister: Principal, enabled: bool) -> Result<()> {
-    let _: () = update_call(
-        pic,
-        canister,
-        Principal::anonymous(),
-        "debug_set_pause_after_planning",
-        enabled,
-    )?;
-    Ok(())
-}
-
 fn debug_set_main_lock_expires_at_ts(pic: &PocketIc, canister: Principal, ts: Option<u64>) -> Result<()> {
     let _: () = update_call(
         pic,

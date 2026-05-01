@@ -526,6 +526,12 @@ struct HistorianDebugConfig {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
+enum DebugRefreshIcpXdrRateResult {
+    Ok,
+    Err(String),
+}
+
+#[derive(Debug, CandidType, Deserialize)]
 struct MockXrcCall {
     base_symbol: String,
     quote_symbol: String,
@@ -2752,6 +2758,18 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         let calls5: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
         if calls5.len() != 3 {
             bail!("failed XRC refresh should be cached for one day to prevent a cycle drain, got {} calls", calls5.len());
+        }
+
+        let _: () = call_raw("mock_xrc", "debug_set_error", "(null)")?;
+        let _: () = call_raw("mock_xrc", "debug_set_rate", "(777777:nat64, 4:nat32, 1700007777:nat64)")?;
+        let refresh_result: DebugRefreshIcpXdrRateResult = call_raw_noargs("jupiter_historian_dbg", "debug_refresh_icp_xdr_rate_cache")?;
+        if !matches!(refresh_result, DebugRefreshIcpXdrRateResult::Ok) {
+            bail!("debug ICP/XDR refresh should succeed after clearing mock error: {:?}", refresh_result);
+        }
+        let calls6: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
+        let status6: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        if calls6.len() != 4 || status6.icp_xdr_rate.as_ref().map(|s| s.rate) != Some(777777) {
+            bail!("debug ICP/XDR refresh should bypass the normal TTL once; calls={} status={:?}", calls6.len(), status6.icp_xdr_rate);
         }
         Ok(())
     });

@@ -174,6 +174,7 @@ type DebugState = record {
   active_route_sweep_next_index : opt nat64;
   last_index_run_ts : opt nat64;
 };
+type DebugRefreshIcpXdrRateResult = variant { Ok; Err : text };
 type DebugConfig = record {
   staking_account : Account;
   output_source_account : Account;
@@ -207,6 +208,7 @@ service : (InitArgs) -> {
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;
   debug_driver_tick : () -> ();
+  debug_refresh_icp_xdr_rate_cache : () -> (DebugRefreshIcpXdrRateResult);
   debug_set_last_completed_cycles_sweep_ts : (opt nat64) -> ();
   debug_set_last_sns_discovery_ts : (opt nat64) -> ();
   debug_set_last_indexed_staking_tx_id : (opt nat64) -> ();

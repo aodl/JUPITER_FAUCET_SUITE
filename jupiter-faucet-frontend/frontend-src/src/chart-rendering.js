@@ -4,6 +4,7 @@ const DEFAULT_PAD_LEFT = 44;
 const DEFAULT_PAD_RIGHT = 18;
 const DEFAULT_PAD_TOP = 18;
 const DEFAULT_PAD_BOTTOM = 42;
+const BAR_TOP_LABEL_HEADROOM = 18;
 
 function escapeChartHtml(value) {
   return String(value ?? '')
@@ -54,9 +55,25 @@ function chartGeometry() {
   };
 }
 
+function visibleTickIndexes(length, showAllTicks = false) {
+  if (length <= 0) return new Set();
+  if (showAllTicks || length <= 8) {
+    return new Set(Array.from({ length }, (_, index) => index));
+  }
+
+  const targetTicks = 8;
+  const lastIndex = length - 1;
+  const indexes = new Set([0, lastIndex]);
+  for (let tick = 1; tick < targetTicks - 1; tick += 1) {
+    indexes.add(Math.round((lastIndex * tick) / (targetTicks - 1)));
+  }
+  return indexes;
+}
+
 function renderBucketTicks({ buckets, slot, padLeft, height, showAllTicks = false }) {
+  const visible = visibleTickIndexes(buckets.length, showAllTicks);
   return buckets.map((bucket, index) => {
-    if (!showAllTicks && buckets.length > 8 && index % Math.ceil(buckets.length / 8) !== 0 && index !== buckets.length - 1) return '';
+    if (!visible.has(index)) return '';
     const x = padLeft + (index * slot) + slot / 2;
     return `<text class="tracker-chart-axis-label" x="${x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeChartHtml(bucket.label)}</text>`;
   }).join('');
@@ -89,9 +106,10 @@ export function renderAmountBarChart({
   const bars = rows.map((bucket, index) => {
     const amount = toBigIntValue(bucket?.[amountKey], 0n);
     const ratio = ratioBigInt(amount, maxAmount);
-    const barHeight = Math.max(amount > 0n ? 2 : 0, ratio * chartHeight);
+    const usableBarHeight = Math.max(1, chartHeight - BAR_TOP_LABEL_HEADROOM);
+    const barHeight = Math.max(amount > 0n ? 2 : 0, ratio * usableBarHeight);
     const x = padLeft + (index * slot) + (slot - barWidth) / 2;
-    const y = padTop + chartHeight - barHeight;
+    const y = padTop + BAR_TOP_LABEL_HEADROOM + usableBarHeight - barHeight;
     const label = labelBuilder
       ? labelBuilder(bucket)
       : `${bucket.label}: ${valueFormatter ? valueFormatter(amount) : amount.toString()} across ${bucket?.[countKey] || 0} items`;

@@ -1320,6 +1320,13 @@ pub struct DebugConfig {
 }
 
 #[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub enum DebugRefreshIcpXdrRateResult {
+    Ok,
+    Err(String),
+}
+
+#[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 fn debug_state() -> DebugState {
     guard_debug_api_not_production();
@@ -1371,6 +1378,18 @@ fn debug_config() -> DebugConfig {
 async fn debug_driver_tick() {
     guard_debug_api_not_production();
     scheduler::main_tick(true).await;
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+async fn debug_refresh_icp_xdr_rate_cache() -> DebugRefreshIcpXdrRateResult {
+    guard_debug_api_not_production();
+    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let xrc_canister_id = state::with_state(|st| st.config.xrc_canister_id);
+    match scheduler::debug_refresh_icp_xdr_rate_now(now_secs, xrc_canister_id).await {
+        Ok(()) => DebugRefreshIcpXdrRateResult::Ok,
+        Err(err) => DebugRefreshIcpXdrRateResult::Err(err),
+    }
 }
 
 #[cfg(feature = "debug_api")]
