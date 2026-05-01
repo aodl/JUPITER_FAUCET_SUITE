@@ -55,7 +55,7 @@ A staking-account transaction is only included in attribution if all of the foll
 
 1. it is an incoming `Transfer` **to** the configured `staking_account` (`TransferFrom` records are ignored)
 2. the transferred amount is at least `min_tx_e8s`
-3. the memo can be decoded as short ASCII principal text for the beneficiary (the supported UX is to enter the target canister ID)
+3. the memo can be decoded as short ASCII principal text for the beneficiary (the supported UX is to enter the declared canister ID)
 
 ### Memo parsing rules
 
@@ -80,7 +80,7 @@ The default minimum tracked commitment is:
 
 Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. They also do **not** create durable historian tracking for the memo target. The production minimum is intentionally high because historian only keeps a durable beneficiary registry for memo-derived targets that actually qualify; a much lower threshold would make registry spam far cheaper.
 
-Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended target canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
+Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
 
 The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
@@ -452,7 +452,7 @@ The most important thing to remember is that the faucet is **job-snapshot based*
 
 Treat the memo requirement as canonical:
 
-- beneficiary is identified by short ASCII principal text in `icrc1_memo` (the supported usage is to put the target canister ID there)
+- beneficiary is identified by short ASCII principal text in `icrc1_memo` (the supported usage is to put the declared canister ID there)
 - malformed or missing memos are ignored
 - ownership of the beneficiary canister is not checked by the faucet
 

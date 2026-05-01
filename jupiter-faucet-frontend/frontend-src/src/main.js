@@ -357,8 +357,8 @@ function renderLandingSummary(data) {
   setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8s(data.stakeE8s) });
   setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
   setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
-  setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Target canisters unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
-  setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Commitments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
+  setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Declared canisters unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
+  setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Patron commitments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
   setHidden('landing-live-unavailable', true);
 }
 
@@ -678,7 +678,7 @@ function cyclesProbeStatusInfo(data) {
 function formatCommitmentTarget(item) {
   const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
   if (canister) return renderCanisterTrackerLink(canister);
-  return 'invalid target canister memo';
+  return 'invalid declared canister memo';
 }
 
 function commitmentOutcomeCategory(item) {
@@ -700,7 +700,7 @@ function formatCommitmentOutcome(item) {
     case 'UnderThresholdCommitment':
       return 'Under threshold';
     case 'InvalidTargetMemo':
-      return 'Invalid target';
+      return 'Invalid declared canister';
     default:
       return item?.counts_toward_faucet ? 'Qualifying' : 'Non-qualifying';
   }
@@ -939,8 +939,8 @@ function renderRegisteredPane(data) {
   const body = document.getElementById('registered-pane-body');
   const items = state.items || [];
   const emptyMessage = state.error
-    ? `Target canisters unavailable (${state.error})`
-    : paneEmptyMessage(data, 'registered', 'No target canisters indexed yet.');
+    ? `Declared canisters unavailable (${state.error})`
+    : paneEmptyMessage(data, 'registered', 'No declared canisters indexed yet.');
   if (body) {
     body.innerHTML = items.length
       ? items.map((item) => `
@@ -1697,7 +1697,7 @@ function renderTrackerData(data, principalText) {
       <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
       <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
       <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
-      <div><dt>Commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.commitmentCount))}</dd></div>
+      <div><dt>Patron commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.commitmentCount))}</dd></div>
       <div><dt>Total commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalCommittedE8s))}</dd></div>
       <div><dt>Qualifying commitments shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.qualifyingCommitmentCount)} · ${formatIcpE8s(summary.qualifyingCommittedE8s)}`)}</dd></div>
       <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.observedCmcTransferCount))}</dd></div>
@@ -1705,7 +1705,7 @@ function renderTrackerData(data, principalText) {
       <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
       ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
     </dl>
-    <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
+    <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
     ${estimatedCyclesBurnHtml === null ? '' : '<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from downward balance changes between all loaded cycle probes. Top-ups between probes can affect the estimate.</p>'}
     ${renderTrackerCadenceNote(data)}
     ${commitmentError}
@@ -1737,7 +1737,7 @@ function renderTrackerPrompt() {
   if (!result || result.innerHTML.trim()) return;
   result.innerHTML = `
     <div class="tracker-empty-state">
-      <p>Paste a principal ID, usually a target canister ID, to inspect its memo-derived commitments and cycles tracking history.</p>
+      <p>Paste a principal ID, usually a declared canister ID, to inspect its memo-derived commitments and cycles tracking history.</p>
     </div>`;
 }
 

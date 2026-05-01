@@ -2,7 +2,7 @@
 
 `jupiter-historian` is the indexing and observability canister for the Jupiter Faucet Suite.
 
-It keeps a durable set of target canisters discovered from faucet staking-account transfer memos, records bounded commitment history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
+It keeps a durable set of declared canisters discovered from faucet staking-account transfer memos, records bounded commitment history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
 
 See the suite overview in [`../README.md`](../README.md).
 
@@ -39,9 +39,9 @@ Memo handling mirrors the faucet’s input rules:
 - only consider non-empty `icrc1_memo` bytes
 - ignore legacy numeric memos entirely
 - treat an empty `icrc1_memo` as missing / invalid
-- trim ASCII text before trying to parse principal text (the supported UX is to enter the target canister ID)
+- trim ASCII text before trying to parse principal text (the supported UX is to enter the declared canister ID)
 
-If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the principal as a beneficiary derived from memo text. The supported UX is still to enter the target canister ID in the memo. Below-threshold memo commitments are kept only in a separate capped recent feed and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
+If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the principal as a beneficiary derived from memo text. The supported UX is still to enter the declared canister ID in the memo. Below-threshold memo commitments are kept only in a separate capped recent feed and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
 
 Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold commitments never create durable tracking.
 

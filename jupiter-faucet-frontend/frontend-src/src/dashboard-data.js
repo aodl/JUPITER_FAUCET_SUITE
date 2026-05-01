@@ -371,7 +371,7 @@ export function cmcDepositSubaccount(canisterId) {
 }
 
 export function cmcDepositAccount({ canisterId, cmcCanisterId = MAINNET_CMC_CANISTER_ID } = {}) {
-  if (!canisterId) throw new Error('A target canister principal is required');
+  if (!canisterId) throw new Error('A declared canister principal is required');
   const owner = typeof cmcCanisterId === 'string' ? Principal.fromText(cmcCanisterId) : cmcCanisterId;
   return {
     owner,

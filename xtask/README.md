@@ -215,7 +215,7 @@ Runs the suite-level PocketIC end-to-end tests across the disburser and faucet t
 
 The current E2E coverage includes:
 
-- disburser paying faucet and faucet topping up a target canister
+- disburser paying faucet and faucet topping up a declared canister
 - repeated disburser payouts feeding faucet full-history replay
 - a real-ICP PocketIC diagnostic probe for the CMC top-up flow that logs the exact deposit account, memo bytes, ledger transfer block, and raw `notify_top_up` result for comparison against `dfx ledger top-up`
 - retry safety across the disburser → faucet → CMC boundary

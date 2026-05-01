@@ -53,6 +53,41 @@ test('partners pane content has been removed', () => {
   assert.doesNotMatch(indexHtml, /WaterNeuron/);
 });
 
+test('About pane uses a single consolidated page', () => {
+  const about = sectionMarkup('about');
+  assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol/);
+  assert.match(about, /one-off operation/);
+  assert.match(about, /data-panel="source"[^>]*>open source<\/a>/);
+  assert.match(about, /data-panel="governance"[^>]*>decentralize control<\/a>/);
+  assert.doesNotMatch(about, /fixed\s*corner links at the bottom of the page/);
+  assert.doesNotMatch(about, /Status:/);
+  assert.doesNotMatch(about, /planned launch within/);
+  assert.doesNotMatch(about, /nav-panel-dots/);
+  assert.doesNotMatch(about, /data-page="1"/);
+});
+
+test('How it works copy is concise and links tracker, simulator, and rewards references', () => {
+  const howItWorks = sectionMarkup('how-it-works');
+  assert.match(howItWorks, /set your <strong>declared canister ID<\/strong> as the transaction\s*<strong>memo<\/strong> \(see example below\)/);
+  assert.doesNotMatch(howItWorks, /plain ASCII text \(see <i>Ctrl \+ K 'memo'<\/i> tip below\)/);
+  assert.doesNotMatch(howItWorks, /The 1 ICP minimum is intentional/);
+  assert.doesNotMatch(howItWorks, /target canister ID/);
+  assert.match(howItWorks, /set the transaction memo to your declared canister ID/);
+  assert.doesNotMatch(howItWorks, /Transfer ICP to the long-form ICRC-1 staking account address displayed above/);
+  assert.doesNotMatch(howItWorks, /While stake commitments can be made today/);
+  assert.match(howItWorks, /data-panel="metric-tracker"[^>]*>canister tracker<\/a>/);
+  assert.match(howItWorks, /data-panel="simulator"[^>]*>simulator<\/a>/);
+  assert.match(howItWorks, /newly minted <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
+  assert.match(howItWorks, /pre-requisite for truly unstoppable canisters is a secure and decentralized network/);
+  assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>committed ICP<\/a>/);
+  assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d[^>]*>staking account<\/a>/);
+  assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);
+  assert.match(howItWorks, /data-page-target="0"[^>]*>rules described<\/a>/);
+  assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f[^>]*>rewards account<\/a>/);
+  assert.match(howItWorks, /data-panel="governance"[^>]*>Governance<\/a>/);
+  assert.match(navbarJs, /data-page-target/);
+});
+
 test('How it works pane no longer contains the simulator slide', () => {
   const howItWorks = sectionMarkup('how-it-works');
   assert.doesNotMatch(howItWorks, /commitment-simulator-form/);
@@ -79,7 +114,7 @@ test('simulator pane keeps controls outside the scroll region and places intro d
   assert.ok(chartIndex > introIndex, 'intro should appear directly above the charts');
   assert.ok(statusIndex > chartIndex, 'assumption text should appear below the charts');
   assert.ok(summaryIndex > chartIndex, 'stats grid should appear below the charts');
-  assert.match(simulator, /target canister/);
+  assert.match(simulator, /declared canister/);
   assert.doesNotMatch(simulator, /elected canister/);
 });
 
@@ -156,10 +191,15 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   const stake = sectionMarkup('metric-stake');
   const rail = indexHtml.slice(indexHtml.indexOf('<aside class="metric-rail"'), indexHtml.indexOf('</aside>') + '</aside>'.length);
 
+  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Declared Canisters[\s\S]*Track Canisters/);
+  assert.doesNotMatch(rail, /Target Canisters/);
+  assert.doesNotMatch(rail, />Commitments<\/span>/);
   assert.doesNotMatch(rail, /data-panel="metric-output"/);
   assert.doesNotMatch(rail, /data-panel="metric-rewards"/);
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-output"/);
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-rewards"/);
+  assert.match(indexHtml, /id="nav-panel-metric-commitments"[\s\S]*Patron Commitments/);
+  assert.match(indexHtml, /id="nav-panel-metric-registered"[\s\S]*Declared Canisters/);
   assert.match(stake, /data-page="1"[\s\S]*Total Output/);
   assert.match(stake, /data-page="2"[\s\S]*Total Rewards/);
   assert.match(stake, /data-page="3"[\s\S]*D-QUORUM Route/);
@@ -189,6 +229,7 @@ test('maturity route pages clarify staging account routing and D-QUORUM account 
   assert.match(mainJs, /renderDquorumPane/);
   assert.match(mainJs, /dquorumStakingAccount/);
   assert.match(mainJs, /No D-QUORUM route transfers found in the recent index window/);
+  assert.match(indexHtml, /a well-known ecosystem participant/);
 });
 
 test('simulator displays T-cycle values with three decimal places and uses weekly chart copy', () => {

@@ -126,6 +126,19 @@
     }
 
     backdrop.addEventListener("click", (evt) => {
+      const pageLink = evt.target.closest && evt.target.closest("[data-page-target]");
+      if (pageLink) {
+        const sectionEl =
+          pageLink.closest(".nav-panel-section") ||
+          backdrop.querySelector(".nav-panel-section--active");
+        const page = Number(pageLink.getAttribute("data-page-target"));
+        if (sectionEl && Number.isFinite(page)) {
+          evt.preventDefault();
+          activatePage(sectionEl, page);
+        }
+        return;
+      }
+
       const dot = evt.target.closest && evt.target.closest(".nav-panel-dot");
       if (!dot) return;
 
@@ -289,7 +302,6 @@
       if (key === "metric-rewards") return { key: "metric-stake", page: 2 };
       return { key, page: 0 };
     }
-
 
     function applyHash(hash) {
       const { key, page } = panelTargetFromHash(hash);
