@@ -711,3 +711,143 @@
 .source-pane-canister-controllers {
   overflow-wrap: anywhere;
 }
+
+.simulator-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0 12px;
+}
+
+.simulator-field {
+  display: grid;
+  gap: 6px;
+}
+
+.simulator-field span {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.simulator-input {
+  width: 100%;
+}
+
+.simulator-summary-grid {
+  margin-top: 14px;
+}
+
+.simulator-chart-wrapper {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.tracker-chart-axis--zero {
+  stroke-dasharray: 4 4;
+  opacity: 0.85;
+}
+
+@media (max-width: 900px) {
+  .simulator-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.simulator-pane-header {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+  margin-bottom: 12px;
+  padding-right: 24px;
+}
+
+.simulator-pane-title {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.simulator-form--header {
+  display: flex;
+  flex: 1 1 540px;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 12px 16px;
+  margin: 0;
+}
+
+.simulator-form--header .simulator-field {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.simulator-form--header .simulator-field span {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.simulator-form--header .simulator-input {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.simulator-form--header #simulator-icp-commitment {
+  width: 118px;
+}
+
+.simulator-form--header #simulator-daily-burn {
+  width: 112px;
+}
+
+.simulator-form--header #simulator-icp-price {
+  width: 96px;
+}
+
+.simulator-form--header #simulator-apy {
+  width: 78px;
+}
+
+.simulator-scroll-region {
+  max-height: min(62vh, calc(100dvh - 210px));
+}
+
+.simulator-intro {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .simulator-pane-header {
+    align-items: stretch;
+    gap: 10px;
+    padding-right: 24px;
+  }
+
+  .simulator-form--header {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .simulator-form {
+    grid-template-columns: 1fr;
+  }
+
+  .simulator-form--header .simulator-field {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .simulator-form--header .simulator-input {
+    width: 100%;
+  }
+}

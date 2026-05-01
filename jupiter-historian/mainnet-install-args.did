@@ -21,6 +21,7 @@
   faucet_canister_id = opt principal "acjuz-liaaa-aaaar-qb4qq-cai";
   blackhole_canister_id = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
   sns_wasm_canister_id = opt principal "qaa6y-5yaaa-aaaaa-aaafa-cai";
+  xrc_canister_id = opt principal "uf6dk-hyaaa-aaaaq-qaaaq-cai";
   enable_sns_tracking = opt false;
   scan_interval_seconds = opt (600 : nat64);
   cycles_interval_seconds = opt (604800 : nat64);

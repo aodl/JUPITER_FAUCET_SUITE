@@ -18,6 +18,8 @@ import { mergeRegisteredLandingData } from './registered-page-state.js';
 import { escapeHtml, formatFolloweeLinks } from './followee-links.js';
 import { readOpt } from './candid-opt.js';
 import { buildCommitmentIndexFaultBannerText } from './historian-fault.js';
+import { renderAmountBarChart, renderEmptyChart, renderLineChart } from './chart-rendering.js';
+import { buildSimulatorProjection, calculateAgeBonusBasisPointsFromAgingSince, calculateAgeBonusMaturityShareBasisPoints } from './projection-simulator.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -35,6 +37,12 @@ const TRACKER_RANGE_LABELS = {
   all: 'all currently loaded history',
 };
 const BLACKHOLE_CANISTER_ID = 'e3mmv-5qaaa-aaaah-aadma-cai';
+const SIMULATOR_DEFAULTS = {
+  icpCommitment: '100.0',
+  dailyBurnTrillionCycles: '0.001',
+  assumedIcpPrice: '10.0',
+  annualApyPercent: '7.0',
+};
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
@@ -66,9 +74,17 @@ const tableState = {
 const trackerState = {
   principalText: '',
   data: null,
-  range: 'month',
+  range: 'all',
   loading: false,
   error: null,
+};
+
+const simulatorState = {
+  initialised: false,
+  ageBonusBasisPoints: 0n,
+  ageBonusAvailable: false,
+  icpPriceUserEdited: false,
+  icpXdrRateSnapshot: null,
 };
 
 
@@ -122,6 +138,54 @@ function formatCycles(value) {
   if (value === null || value === undefined) return DASH;
   const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
   return `${formatGroupedBigInt(asBigInt)} cycles`;
+}
+
+function formatTrillionCycles(value) {
+  if (value === null || value === undefined) return DASH;
+  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
+  const sign = asBigInt < 0n ? '-' : '';
+  const absolute = asBigInt < 0n ? -asBigInt : asBigInt;
+  const thousandths = (absolute * 1000n) / 1_000_000_000_000n;
+  const whole = thousandths / 1000n;
+  const fraction = thousandths % 1000n;
+  return `${sign}${whole}.${fraction.toString().padStart(3, '0')}T cycles`;
+}
+
+function formatScaledRateForOneDecimal(rate, decimals) {
+  if (rate === null || rate === undefined || decimals === null || decimals === undefined) return null;
+  const numerator = typeof rate === 'bigint' ? rate : BigInt(rate);
+  const scale = 10n ** BigInt(decimals);
+  if (scale <= 0n) return null;
+  const tenths = (numerator * 10n + scale / 2n) / scale;
+  return `${tenths / 10n}.${(tenths % 10n).toString()}`;
+}
+
+function formatIcpXdrRateInput(snapshot) {
+  if (!snapshot) return null;
+  return formatScaledRateForOneDecimal(snapshot.rate, snapshot.decimals);
+}
+
+function formatIcpXdrRateDisplay(snapshot) {
+  const input = formatIcpXdrRateInput(snapshot);
+  return input ? `${input} XDR/ICP` : DASH;
+}
+
+function formatBasisPointsAsPercent(value, decimals = 1) {
+  if (value === null || value === undefined) return DASH;
+  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
+  const sign = asBigInt < 0n ? '-' : '';
+  const absolute = asBigInt < 0n ? -asBigInt : asBigInt;
+  const scale = 10n ** BigInt(Math.max(0, decimals));
+  const scaled = (absolute * scale) / 100n;
+  const whole = scaled / scale;
+  const fraction = scaled % scale;
+  if (decimals <= 0) return `${sign}${whole}%`;
+  return `${sign}${whole}.${fraction.toString().padStart(decimals, '0')}%`;
+}
+
+function formatAgeBonusDisplay(ageBonusBasisPoints) {
+  const maturityShare = calculateAgeBonusMaturityShareBasisPoints(ageBonusBasisPoints);
+  return `${formatBasisPointsAsPercent(maturityShare)} of maturity diverted (${formatBasisPointsAsPercent(ageBonusBasisPoints)} age bonus)`;
 }
 
 function formatInteger(value) {
@@ -339,11 +403,19 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
       : { value: formatIcpE8s(data?.stakeE8s) });
 
   if (neuron) {
+    const ageBonusBasisPoints = calculateAgeBonusBasisPointsFromAgingSince(
+      neuron.aging_since_timestamp_seconds,
+      Math.floor(Date.now() / 1000),
+    ) ?? 0n;
+    simulatorState.ageBonusBasisPoints = ageBonusBasisPoints;
+    simulatorState.ageBonusAvailable = true;
     setPaneValueText('stake-neuron-age', { value: formatAgeFromSeconds(neuron.aging_since_timestamp_seconds) });
+    setPaneValueText('stake-neuron-age-bonus', { value: formatAgeBonusDisplay(ageBonusBasisPoints) });
     setPaneValueText('stake-neuron-public', { value: 'Yes' });
     setPaneValueText('stake-neuron-created', { value: formatTimestampSeconds(neuron.created_timestamp_seconds) });
     setPaneValueText('stake-neuron-refresh', { value: formatTimestampSeconds(neuron.voting_power_refreshed_timestamp_seconds?.[0]) });
     setPaneValueTrustedHtml('stake-neuron-followees', { value: formatFolloweeLinks(neuron) });
+    renderCommitmentSimulator();
     return;
   }
 
@@ -353,6 +425,7 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
       ? { loading: true }
       : { error: 'Public neuron details unavailable' };
   setPaneValueText('stake-neuron-age', fallback);
+  setPaneValueText('stake-neuron-age-bonus', fallback);
   setPaneValueText('stake-neuron-public', fallback);
   setPaneValueText('stake-neuron-created', fallback);
   setPaneValueText('stake-neuron-refresh', fallback);
@@ -1099,11 +1172,6 @@ function aggregateTrackerData(data, range) {
   return Array.from(buckets.values()).sort((left, right) => left.startMs - right.startMs);
 }
 
-function ratioBigInt(value, max) {
-  if (!max || max <= 0n || value === null || value === undefined) return 0;
-  const numerator = (typeof value === 'bigint' ? value : BigInt(value)) * 1_000_000n;
-  return Math.max(0, Math.min(1, Number(numerator / max) / 1_000_000));
-}
 
 function sumE8s(items) {
   return (items || []).reduce((sum, item) => sum + itemAmountE8s(item), 0n);
@@ -1150,7 +1218,7 @@ function pluralize(count, singular, plural = `${singular}s`) {
 }
 
 function renderTrackerEmptyChart(message) {
-  return `<div class="tracker-chart-empty">${escapeHtml(message)}</div>`;
+  return renderEmptyChart(message);
 }
 
 function trackerRangeEmptyMessage({ fullItems, rangeMessage, emptyMessage }) {
@@ -1161,43 +1229,16 @@ function trackerRangeEmptyMessage({ fullItems, rangeMessage, emptyMessage }) {
 }
 
 function renderTrackerAmountBarChart({ buckets, amountKey, countKey, emptyMessage, ariaLabel, barClass = '', labelBuilder }) {
-  const maxAmount = buckets.reduce((max, bucket) => bucket[amountKey] > max ? bucket[amountKey] : max, 0n);
-  if (maxAmount <= 0n) {
-    return renderTrackerEmptyChart(emptyMessage);
-  }
-
-  const width = 640;
-  const height = 180;
-  const padLeft = 44;
-  const padRight = 18;
-  const padTop = 18;
-  const padBottom = 42;
-  const chartWidth = width - padLeft - padRight;
-  const chartHeight = height - padTop - padBottom;
-  const slot = chartWidth / Math.max(1, buckets.length);
-  const barWidth = Math.max(8, Math.min(44, slot * 0.58));
-  const className = `tracker-chart-bar${barClass ? ` ${barClass}` : ''}`;
-  const bars = buckets.map((bucket, index) => {
-    const amount = bucket[amountKey] || 0n;
-    const ratio = ratioBigInt(amount, maxAmount);
-    const barHeight = Math.max(amount > 0n ? 2 : 0, ratio * chartHeight);
-    const x = padLeft + (index * slot) + (slot - barWidth) / 2;
-    const y = padTop + chartHeight - barHeight;
-    const label = labelBuilder ? labelBuilder(bucket) : `${bucket.label}: ${formatIcpE8s(amount)} across ${pluralize(bucket[countKey] || 0, 'item')}`;
-    return `<rect class="${className}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="4"><title>${escapeHtml(label)}</title></rect>`;
-  }).join('');
-  const ticks = buckets.map((bucket, index) => {
-    if (buckets.length > 8 && index % Math.ceil(buckets.length / 8) !== 0 && index !== buckets.length - 1) return '';
-    const x = padLeft + (index * slot) + slot / 2;
-    return `<text class="tracker-chart-axis-label" x="${x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeHtml(bucket.label)}</text>`;
-  }).join('');
-  return `
-    <svg class="tracker-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(ariaLabel)}">
-      <line class="tracker-chart-axis" x1="${padLeft}" y1="${padTop + chartHeight}" x2="${width - padRight}" y2="${padTop + chartHeight}"></line>
-      <text class="tracker-chart-y-label" x="8" y="20">${escapeHtml(formatIcpE8s(maxAmount))}</text>
-      ${bars}
-      ${ticks}
-    </svg>`;
+  return renderAmountBarChart({
+    buckets,
+    amountKey,
+    countKey,
+    emptyMessage,
+    ariaLabel,
+    barClass,
+    labelBuilder,
+    valueFormatter: formatIcpE8s,
+  });
 }
 
 function renderTrackerCommitmentsChart(buckets, fullData = null) {
@@ -1242,45 +1283,14 @@ function renderTrackerCyclesChart(buckets, data, fullData = data) {
     return `<div class="tracker-chart-empty">${escapeHtml(status.chartMessage)} ${renderCyclesHelpIcon()}</div>`;
   }
 
-  const maxCycles = cycleBuckets.reduce((max, bucket) => bucket.cycles > max ? bucket.cycles : max, 0n);
-  const width = 640;
-  const height = 180;
-  const padLeft = 44;
-  const padRight = 18;
-  const padTop = 18;
-  const padBottom = 42;
-  const chartWidth = width - padLeft - padRight;
-  const chartHeight = height - padTop - padBottom;
-  const slot = chartWidth / Math.max(1, buckets.length);
-  const pointFor = (bucket, index) => {
-    const x = padLeft + (index * slot) + slot / 2;
-    const ratio = ratioBigInt(bucket.cycles, maxCycles);
-    const y = padTop + chartHeight - ratio * chartHeight;
-    return { x, y };
-  };
-  const points = buckets
-    .map((bucket, index) => bucket.cycles === null || bucket.cycles === undefined ? null : pointFor(bucket, index))
-    .filter(Boolean);
-  const polyline = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
-  const circles = buckets.map((bucket, index) => {
-    if (bucket.cycles === null || bucket.cycles === undefined) return '';
-    const point = pointFor(bucket, index);
-    const label = `${bucket.label}: ${formatCycles(bucket.cycles)}`;
-    return `<circle class="tracker-chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4"><title>${escapeHtml(label)}</title></circle>`;
-  }).join('');
-  const ticks = buckets.map((bucket, index) => {
-    if (buckets.length > 8 && index % Math.ceil(buckets.length / 8) !== 0 && index !== buckets.length - 1) return '';
-    const x = padLeft + (index * slot) + slot / 2;
-    return `<text class="tracker-chart-axis-label" x="${x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeHtml(bucket.label)}</text>`;
-  }).join('');
-  return `
-    <svg class="tracker-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Cycles balance in ${escapeHtml(trackerRangeLabel())}">
-      <line class="tracker-chart-axis" x1="${padLeft}" y1="${padTop + chartHeight}" x2="${width - padRight}" y2="${padTop + chartHeight}"></line>
-      <text class="tracker-chart-y-label" x="8" y="20">${escapeHtml(formatInteger(maxCycles))}</text>
-      <polyline class="tracker-chart-line" points="${polyline}"></polyline>
-      ${circles}
-      ${ticks}
-    </svg>`;
+  return renderLineChart({
+    buckets,
+    valueKey: 'cycles',
+    emptyMessage: `No cycles samples are available in ${trackerRangeLabel()}.`,
+    ariaLabel: `Cycles balance in ${trackerRangeLabel()}`,
+    valueFormatter: formatInteger,
+    pointLabelBuilder: (bucket) => `${bucket.label}: ${formatCycles(bucket.cycles)}`,
+  });
 }
 
 function renderTrackerCharts(data, fullData = data) {
@@ -1318,6 +1328,168 @@ function renderTrackerCharts(data, fullData = data) {
       </div>
       ${renderTrackerCyclesChart(buckets, data, fullData)}
     </div>`;
+}
+
+function applySimulatorIcpXdrRateFromStatus(status) {
+  const snapshot = readOpt(status?.icp_xdr_rate);
+  simulatorState.icpXdrRateSnapshot = snapshot || null;
+  const formatted = formatIcpXdrRateInput(snapshot);
+  if (formatted && !simulatorState.icpPriceUserEdited) {
+    const input = document.getElementById('simulator-icp-price');
+    if (input && input.value !== formatted) {
+      input.value = formatted;
+    }
+  }
+  renderCommitmentSimulator();
+}
+
+function simulatorInputValue(id) {
+  return document.getElementById(id)?.value ?? '';
+}
+
+function setSimulatorText(id, text, title = '') {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.textContent = text;
+  if (title) node.title = title;
+  else node.removeAttribute?.('title');
+}
+
+function setSimulatorStatus(message, kind = '') {
+  const status = document.getElementById('simulator-status');
+  if (!status) return;
+  status.textContent = message;
+  status.hidden = !message;
+  status.className = kind ? `pane-status-note tracker-status-note tracker-status-note--${kind}` : 'pane-status-note tracker-status-note';
+}
+
+function clearSimulatorSummary() {
+  [
+    'simulator-cycles-per-icp',
+    'simulator-annual-topup-icp',
+    'simulator-annual-topup-cycles',
+    'simulator-annual-burn-cycles',
+    'simulator-age-bonus',
+    'simulator-effective-apy',
+    'simulator-year-end-balance',
+    'simulator-required-commitment',
+  ].forEach((id) => setSimulatorText(id, DASH));
+}
+
+function readSimulatorInputs() {
+  return {
+    icpCommitment: simulatorInputValue('simulator-icp-commitment'),
+    dailyBurnTrillionCycles: simulatorInputValue('simulator-daily-burn'),
+    assumedIcpPrice: simulatorInputValue('simulator-icp-price'),
+    annualApyPercent: simulatorInputValue('simulator-apy'),
+    ageBonusBasisPoints: simulatorState.ageBonusBasisPoints,
+  };
+}
+
+function renderSimulatorCharts(projection) {
+  const wrapper = document.getElementById('simulator-chart-wrapper');
+  if (!wrapper) return;
+  const buckets = projection?.buckets || [];
+  wrapper.innerHTML = `
+    <div class="tracker-chart-card">
+      <div class="tracker-chart-header">
+        <h3>Projected cycles balance</h3>
+        <span>Line samples the weekly cadence, assuming the first projected payout happens on day one, then shows cumulative projected top-ups minus the configured burn.</span>
+      </div>
+      ${renderLineChart({
+        buckets,
+        valueKey: 'projectedBalanceCycles',
+        emptyMessage: 'No balance projection is available for these inputs.',
+        ariaLabel: 'Projected weekly cycles balance over one year',
+        valueFormatter: formatTrillionCycles,
+        pointLabelBuilder: (bucket) => `${bucket.label}: ${formatTrillionCycles(bucket.projectedBalanceCycles)} projected balance after ${formatTrillionCycles(bucket.projectedBurnCycles)} burned in bucket`,
+        showAllTicks: false,
+      })}
+    </div>
+    <div class="tracker-chart-card">
+      <div class="tracker-chart-header">
+        <h3>Projected CMC top-ups</h3>
+        <span>Weekly projection of cycles minted from the configured APY.</span>
+      </div>
+      ${renderAmountBarChart({
+        buckets,
+        amountKey: 'projectedTopupCycles',
+        countKey: 'projectedTopupEvents',
+        emptyMessage: 'No projected CMC top-ups: increase the commitment or APY assumption.',
+        ariaLabel: 'Projected weekly CMC top-up cycles over one year',
+        barClass: 'tracker-chart-bar--observed-cmc',
+        valueFormatter: formatTrillionCycles,
+        labelBuilder: (bucket) => `${bucket.label}: ${formatTrillionCycles(bucket.projectedTopupCycles)} projected from ${formatIcpE8s(bucket.projectedTopupE8s)} of ICP sent to CMC`,
+        showAllTicks: false,
+      })}
+    </div>`;
+}
+
+function renderCommitmentSimulator() {
+  const projection = buildSimulatorProjection(readSimulatorInputs());
+  const assumption = document.getElementById('simulator-assumption-note');
+  if (assumption) {
+    const dashboardHref = `https://dashboard.internetcomputer.org/neuron/${JUPITER_NEURON_ID.toString()}`;
+    const ageBonusCopy = simulatorState.ageBonusAvailable
+      ? `The effective top-up APY discounts the current age-bonus component (${formatAgeBonusDisplay(simulatorState.ageBonusBasisPoints)}) because Jupiter Faucet routes that component to SNS holders instead of CMC top-ups.`
+      : 'Neuron age-bonus details are still loading; the projection temporarily assumes no age-bonus diversion.';
+    const rateSnapshot = simulatorState.icpXdrRateSnapshot;
+    const rateCopy = rateSnapshot
+      ? `The ICP/XDR input is prefilled from historian’s daily XRC cache at ${formatIcpXdrRateDisplay(rateSnapshot)}${rateSnapshot.fetched_at_ts ? `, fetched ${formatTimestampSeconds(rateSnapshot.fetched_at_ts)}` : ''}.`
+      : 'No cached XRC ICP/XDR rate is available yet; edit the ICP/XDR input manually until historian completes its next refresh.';
+    assumption.innerHTML = `Projection uses the configured APY. Exact APY depends on numerous factors — consult the <a class="pane-external-link" href="${dashboardHref}" target="_blank" rel="noopener noreferrer">dashboard</a> for the current annualised rewards estimate. ${ageBonusCopy} ${rateCopy} It assumes 1T cycles per ICP/XDR price unit and a weekly-cadence one-year projection.`;
+  }
+
+  if (!projection.ok) {
+    clearSimulatorSummary();
+    setSimulatorStatus(projection.errors.join(' '), 'error');
+    const wrapper = document.getElementById('simulator-chart-wrapper');
+    if (wrapper) wrapper.innerHTML = renderEmptyChart('Enter valid simulator inputs to render the projection.');
+    return;
+  }
+
+  const { summary } = projection;
+  setSimulatorText('simulator-cycles-per-icp', formatTrillionCycles(summary.cyclesPerIcp));
+  setSimulatorText('simulator-annual-topup-icp', formatIcpE8s(summary.annualTopupE8s));
+  setSimulatorText('simulator-annual-topup-cycles', formatTrillionCycles(summary.annualTopupCycles));
+  setSimulatorText('simulator-annual-burn-cycles', formatTrillionCycles(summary.annualBurnCycles));
+  setSimulatorText('simulator-age-bonus', simulatorState.ageBonusAvailable ? formatAgeBonusDisplay(summary.ageBonusBasisPoints) : 'Loading; assuming 0.0%');
+  setSimulatorText('simulator-effective-apy', formatBasisPointsAsPercent(summary.effectiveApyBasisPoints));
+  setSimulatorText('simulator-year-end-balance', formatTrillionCycles(summary.yearEndBalanceCycles));
+  setSimulatorText('simulator-required-commitment', summary.requiredCommitmentE8s === null ? DASH : formatIcpE8s(summary.requiredCommitmentE8s));
+  if (summary.annualTopupCycles >= summary.annualBurnCycles) {
+    const surplus = summary.annualTopupCycles - summary.annualBurnCycles;
+    setSimulatorStatus(`At these assumptions the commitment covers the configured annual burn, with a projected annual surplus of ${formatTrillionCycles(surplus)}.`, '');
+  } else {
+    const shortfall = summary.annualBurnCycles - summary.annualTopupCycles;
+    const required = summary.requiredCommitmentE8s === null ? 'a larger commitment' : formatIcpE8s(summary.requiredCommitmentE8s);
+    setSimulatorStatus(`At these assumptions the canister is underfunded by ${formatTrillionCycles(shortfall)} per year. Increase the commitment to at least ${required} for an indefinite weekly projection.`, 'error');
+  }
+  renderSimulatorCharts(projection);
+}
+
+function bindCommitmentSimulator() {
+  const form = document.getElementById('commitment-simulator-form');
+  if (!form || simulatorState.initialised) return;
+  simulatorState.initialised = true;
+  [
+    ['simulator-icp-commitment', SIMULATOR_DEFAULTS.icpCommitment],
+    ['simulator-daily-burn', SIMULATOR_DEFAULTS.dailyBurnTrillionCycles],
+    ['simulator-icp-price', SIMULATOR_DEFAULTS.assumedIcpPrice],
+    ['simulator-apy', SIMULATOR_DEFAULTS.annualApyPercent],
+  ].forEach(([id, value]) => {
+    const input = document.getElementById(id);
+    if (input && !input.value) input.value = value;
+  });
+  form.addEventListener('submit', (event) => event.preventDefault());
+  form.addEventListener('input', (event) => {
+    if (event.target?.id === 'simulator-icp-price') {
+      simulatorState.icpPriceUserEdited = true;
+    }
+    renderCommitmentSimulator();
+  });
+  form.addEventListener('change', renderCommitmentSimulator);
+  renderCommitmentSimulator();
 }
 
 function renderTrackerRecognitionMessage(data, principalText) {
@@ -1579,6 +1751,7 @@ function bindPaginationButtons() {
 
 function renderLandingPanes(data, neuron = null) {
   window.__JUPITER_LANDING_DATA__ = data;
+  applySimulatorIcpXdrRateFromStatus(data?.status);
   window.__JUPITER_NEURON_ERROR__ = neuronState.error;
   renderHowItWorksAccount();
   renderHistorianFaultBanner(data);
@@ -1633,11 +1806,11 @@ function bindNeuronDetailsLoader(data) {
     void ensureNeuronDetailsLoaded(data);
   };
   const maybeLoadFromLocation = () => {
-    if (window.location.hash === '#metric-stake') {
+    if (window.location.hash === '#metric-stake' || window.location.hash === '#simulator') {
       load();
     }
   };
-  document.querySelectorAll('a[data-panel="metric-stake"]').forEach((trigger) => {
+  document.querySelectorAll('a[data-panel="metric-stake"], a[data-panel="simulator"]').forEach((trigger) => {
     if (trigger.dataset.neuronBound === 'true') return;
     trigger.dataset.neuronBound = 'true';
     trigger.addEventListener('click', load);
@@ -1674,10 +1847,14 @@ async function initLandingPage() {
 
 bindInlineTooltipFallbacks();
 bindTrackerPane();
+bindCommitmentSimulator();
 bindTrackerLinks();
 document.addEventListener('navpanel:open', (event) => {
   if (event?.detail?.key === 'source') {
     void ensureSourcePaneModuleHashesLoaded();
+  }
+  if (event?.detail?.key === 'simulator') {
+    void ensureNeuronDetailsLoaded(window.__JUPITER_LANDING_DATA__ || null);
   }
   if (event?.detail?.key === 'metric-tracker') {
     renderTrackerPrompt();

@@ -255,6 +255,12 @@
     metricsToggle?.addEventListener("click", (evt) => {
       evt.preventDefault();
       lastTriggerBtn = metricsToggle;
+      if (backdrop.classList.contains("is-open")) {
+        metricsMenuOpen = true;
+        closePanel();
+        syncMetricsUi();
+        return;
+      }
       metricsMenuOpen = !metricsMenuOpen;
       syncMetricsUi();
     });

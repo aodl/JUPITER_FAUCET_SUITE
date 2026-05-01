@@ -62,11 +62,13 @@ fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_WASM_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> { build_wasm_cached(&INDEX_WASM, "mock-icp-index", None) }
 fn sns_wasm_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_WASM_WASM, "mock-sns-wasm", None) }
 fn sns_root_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_ROOT_WASM, "mock-sns-root", None) }
+fn xrc_wasm() -> Result<Vec<u8>> { build_wasm_cached(&XRC_WASM, "mock-xrc", None) }
 fn historian_wasm() -> Result<Vec<u8>> { build_wasm_cached(&HISTORIAN_WASM, "jupiter-historian", Some("debug_api")) }
 
 fn tick_n(pic: &PocketIc, n: usize) {
@@ -123,6 +125,7 @@ struct HistorianInitArg {
     faucet_canister_id: Option<Principal>,
     blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
+    xrc_canister_id: Option<Principal>,
     enable_sns_tracking: Option<bool>,
     scan_interval_seconds: Option<u64>,
     cycles_interval_seconds: Option<u64>,
@@ -145,6 +148,7 @@ struct HistorianUpgradeArg {
     max_canisters_per_cycles_tick: Option<u32>,
     blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
+    xrc_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
     faucet_canister_id: Option<Principal>,
 }
@@ -532,6 +536,7 @@ struct Harness {
     index: Principal,
     blackhole: Principal,
     sns_wasm: Principal,
+    xrc: Principal,
     historian: Principal,
 }
 
@@ -542,14 +547,16 @@ impl Harness {
         let blackhole = pic.create_canister();
         let sns_wasm = pic.create_canister();
         let cmc = pic.create_canister();
+    let xrc = pic.create_canister();
         let historian = pic.create_canister();
-        for canister in [index, blackhole, sns_wasm, cmc, historian] {
+        for canister in [index, blackhole, sns_wasm, cmc, xrc, historian] {
             pic.add_cycles(canister, 5_000_000_000_000);
         }
         pic.install_canister(index, index_wasm()?, vec![], None);
         pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
         set_controllers_exact(&pic, blackhole, vec![blackhole])?;
         pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+    pic.install_canister(xrc, xrc_wasm()?, vec![], None);
 
         let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
         let init = HistorianInitArg {
@@ -563,6 +570,7 @@ impl Harness {
             faucet_canister_id: Some(blackhole),
             blackhole_canister_id: Some(blackhole),
             sns_wasm_canister_id: Some(sns_wasm),
+            xrc_canister_id: Some(xrc),
             enable_sns_tracking: Some(enable_sns_tracking),
             scan_interval_seconds: Some(60),
             cycles_interval_seconds: Some(1),
@@ -573,7 +581,7 @@ impl Harness {
             max_canisters_per_cycles_tick: Some(10),
         };
         pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
-        Ok(Self { pic, index, blackhole, sns_wasm, historian })
+        Ok(Self { pic, index, blackhole, sns_wasm, xrc, historian })
     }
 
     fn staking_identifier(&self) -> Result<String> {
@@ -677,13 +685,15 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
     let blackhole = pic.create_canister();
     let sns_wasm = pic.create_canister();
     let cmc = pic.create_canister();
+    let xrc = pic.create_canister();
     let historian = pic.create_canister();
-    for canister in [blackhole, sns_wasm, cmc, historian] {
+    for canister in [blackhole, sns_wasm, cmc, xrc, historian] {
         pic.add_cycles(canister, 5_000_000_000_000);
     }
     pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
     set_controllers_exact(&pic, blackhole, vec![blackhole])?;
     pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+    pic.install_canister(xrc, xrc_wasm()?, vec![], None);
 
     let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([6u8; 32]) };
     let staking_id = account_identifier_text(&staking_account);
@@ -698,6 +708,7 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
         faucet_canister_id: Some(blackhole),
         blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: Some(sns_wasm),
+        xrc_canister_id: Some(xrc),
         enable_sns_tracking: Some(false),
         scan_interval_seconds: Some(60),
         cycles_interval_seconds: Some(1),
@@ -768,13 +779,15 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
     let blackhole = pic.create_canister();
     let sns_wasm = pic.create_canister();
     let cmc = pic.create_canister();
+    let xrc = pic.create_canister();
     let historian = pic.create_canister();
-    for canister in [blackhole, sns_wasm, cmc, historian] {
+    for canister in [blackhole, sns_wasm, cmc, xrc, historian] {
         pic.add_cycles(canister, 5_000_000_000_000);
     }
     pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
     set_controllers_exact(&pic, blackhole, vec![blackhole])?;
     pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+    pic.install_canister(xrc, xrc_wasm()?, vec![], None);
 
     let source_subaccount = [31u8; 32];
     let output_subaccount = [32u8; 32];
@@ -859,6 +872,7 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         faucet_canister_id: Some(blackhole),
         blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: Some(sns_wasm),
+        xrc_canister_id: Some(xrc),
         enable_sns_tracking: Some(false),
         scan_interval_seconds: Some(60),
         cycles_interval_seconds: Some(1),

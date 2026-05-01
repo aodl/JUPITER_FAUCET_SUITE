@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::state::{
     CanisterMeta, CanisterSource, Config, CommitmentIndexFault, CommitmentSample, CyclesSample,
-    InvalidCommitment, RecentCommitment, State,
+    InvalidCommitment, IcpXdrRateSnapshot, RecentCommitment, State,
 };
 
 pub(crate) const MAX_PUBLIC_QUERY_LIMIT: u32 = 100;
@@ -43,6 +43,7 @@ fn validate_config(cfg: &Config) {
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
     assert_non_anonymous_principal("blackhole_canister_id", cfg.blackhole_canister_id);
     assert_non_anonymous_principal("sns_wasm_canister_id", cfg.sns_wasm_canister_id);
+    assert_non_anonymous_principal("xrc_canister_id", cfg.xrc_canister_id);
     if let Some(cmc_canister_id) = cfg.cmc_canister_id {
         assert_non_anonymous_principal("cmc_canister_id", cmc_canister_id);
     }
@@ -276,6 +277,7 @@ pub struct InitArgs {
     pub faucet_canister_id: Option<Principal>,
     pub blackhole_canister_id: Option<Principal>,
     pub sns_wasm_canister_id: Option<Principal>,
+    pub xrc_canister_id: Option<Principal>,
     pub enable_sns_tracking: Option<bool>,
     pub scan_interval_seconds: Option<u64>,
     pub cycles_interval_seconds: Option<u64>,
@@ -307,6 +309,7 @@ pub struct UpgradeArgs {
     pub sns_wasm_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
     pub faucet_canister_id: Option<Principal>,
+    pub xrc_canister_id: Option<Principal>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
@@ -393,6 +396,8 @@ pub struct PublicStatus {
     pub stable_memory_bytes: Option<u64>,
     pub total_memory_bytes: Option<u64>,
     pub commitment_index_fault: Option<CommitmentIndexFault>,
+    pub icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+    pub last_icp_xdr_rate_error: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
@@ -500,6 +505,10 @@ fn mainnet_sns_wasm_id() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("invalid hardcoded sns-wasm principal")
 }
 
+pub(crate) fn mainnet_xrc_id() -> Principal {
+    crate::clients::xrc::mainnet_xrc_canister_id()
+}
+
 #[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
     Principal::from_text(env!("JUPITER_HISTORIAN_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
@@ -529,6 +538,7 @@ fn config_from_init_args(args: InitArgs) -> Config {
         faucet_canister_id: Some(args.faucet_canister_id.unwrap_or_else(mainnet_faucet_id)),
         blackhole_canister_id: args.blackhole_canister_id.unwrap_or_else(mainnet_blackhole_id),
         sns_wasm_canister_id: args.sns_wasm_canister_id.unwrap_or_else(mainnet_sns_wasm_id),
+        xrc_canister_id: args.xrc_canister_id.unwrap_or_else(mainnet_xrc_id),
         enable_sns_tracking: args.enable_sns_tracking.unwrap_or(false),
         scan_interval_seconds: args.scan_interval_seconds.unwrap_or(10 * 60),
         cycles_interval_seconds: args.cycles_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
@@ -918,6 +928,9 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         if let Some(v) = args.faucet_canister_id {
             st.config.faucet_canister_id = Some(v);
         }
+        if let Some(v) = args.xrc_canister_id {
+            st.config.xrc_canister_id = v;
+        }
         if let Some(v) = args.output_source_account {
             st.config.output_source_account = v;
         }
@@ -1128,6 +1141,8 @@ fn get_public_status() -> PublicStatus {
         stable_memory_bytes: Some(stable_memory_bytes),
         total_memory_bytes: Some(heap_memory_bytes.saturating_add(stable_memory_bytes)),
         commitment_index_fault: st.commitment_index_fault.clone(),
+        icp_xdr_rate: st.icp_xdr_rate.clone(),
+        last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
     })
 }
 
@@ -1293,6 +1308,7 @@ pub struct DebugConfig {
     pub faucet_canister_id: Option<Principal>,
     pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
+    pub xrc_canister_id: Principal,
     pub enable_sns_tracking: bool,
     pub scan_interval_seconds: u64,
     pub cycles_interval_seconds: u64,
@@ -1338,6 +1354,7 @@ fn debug_config() -> DebugConfig {
         faucet_canister_id: st.config.faucet_canister_id,
         blackhole_canister_id: st.config.blackhole_canister_id,
         sns_wasm_canister_id: st.config.sns_wasm_canister_id,
+        xrc_canister_id: st.config.xrc_canister_id,
         enable_sns_tracking: st.config.enable_sns_tracking,
         scan_interval_seconds: st.config.scan_interval_seconds,
         cycles_interval_seconds: st.config.cycles_interval_seconds,
@@ -1442,11 +1459,26 @@ fn debug_reset_derived_state() {
         st.recent_invalid_commitments = Some(Vec::new());
         st.last_index_run_ts = Some(0);
         st.commitment_index_fault = None;
+        st.icp_xdr_rate = None;
+        st.last_icp_xdr_rate_attempt_ts = None;
+        st.last_icp_xdr_rate_error = None;
         st.registered_canister_summaries_cache = Some(BTreeMap::new());
         st.registered_canister_summaries_total_desc_index = Some(Vec::new());
     });
 }
 
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_set_icp_xdr_rate_fetched_at_ts(ts: Option<u64>) {
+    guard_debug_api_not_production();
+    state::with_root_state_mut(|st| {
+        st.last_icp_xdr_rate_attempt_ts = ts;
+        if let Some(snapshot) = st.icp_xdr_rate.as_mut() {
+            snapshot.fetched_at_ts = ts.unwrap_or(0);
+        }
+    });
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1484,6 +1516,7 @@ mod tests {
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
                 blackhole_canister_id: principal("e3mmv-5qaaa-aaaah-aadma-cai"),
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
+                xrc_canister_id: mainnet_xrc_id(),
                 enable_sns_tracking: false,
                 scan_interval_seconds: 600,
                 cycles_interval_seconds: 604800,
@@ -1531,6 +1564,9 @@ mod tests {
             recent_burns: None,
             last_index_run_ts: None,
             commitment_index_fault: None,
+            icp_xdr_rate: None,
+            last_icp_xdr_rate_attempt_ts: None,
+            last_icp_xdr_rate_error: None,
         }
     }
 
@@ -1548,6 +1584,7 @@ mod tests {
             faucet_canister_id: None,
             blackhole_canister_id: None,
             sns_wasm_canister_id: None,
+            xrc_canister_id: None,
             enable_sns_tracking: None,
             scan_interval_seconds: None,
             cycles_interval_seconds: None,
@@ -1585,6 +1622,7 @@ mod tests {
             faucet_canister_id: None,
             blackhole_canister_id: None,
             sns_wasm_canister_id: None,
+            xrc_canister_id: None,
             enable_sns_tracking: None,
             scan_interval_seconds: Some(600),
             cycles_interval_seconds: Some(604800),
@@ -1758,6 +1796,7 @@ mod tests {
             faucet_canister_id: None,
             blackhole_canister_id: None,
             sns_wasm_canister_id: None,
+            xrc_canister_id: None,
             enable_sns_tracking: None,
             scan_interval_seconds: Some(600),
             cycles_interval_seconds: Some(604800),

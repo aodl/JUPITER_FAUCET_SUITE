@@ -87,6 +87,12 @@ export const idlFactory = ({ IDL }) => {
     total_output_e8s: IDL.Nat64,
     total_rewards_e8s: IDL.Nat64,
   });
+  const IcpXdrRateSnapshot = IDL.Record({
+    rate: IDL.Nat64,
+    decimals: IDL.Nat32,
+    timestamp: IDL.Nat64,
+    fetched_at_ts: IDL.Nat64,
+  });
   const PublicStatus = IDL.Record({
     staking_account: Account,
     ledger_canister_id: IDL.Principal,
@@ -104,6 +110,8 @@ export const idlFactory = ({ IDL }) => {
     stable_memory_bytes: IDL.Opt(IDL.Nat64),
     total_memory_bytes: IDL.Opt(IDL.Nat64),
     commitment_index_fault: IDL.Opt(CommitmentIndexFault),
+    icp_xdr_rate: IDL.Opt(IcpXdrRateSnapshot),
+    last_icp_xdr_rate_error: IDL.Opt(IDL.Text),
   });
   const ListRegisteredCanisterSummariesArgs = IDL.Record({
     page: IDL.Opt(IDL.Nat32),
@@ -186,6 +194,7 @@ export const init = ({ IDL }) => {
     faucet_canister_id: IDL.Opt(IDL.Principal),
     blackhole_canister_id: IDL.Opt(IDL.Principal),
     sns_wasm_canister_id: IDL.Opt(IDL.Principal),
+    xrc_canister_id: IDL.Opt(IDL.Principal),
     enable_sns_tracking: IDL.Opt(IDL.Bool),
     scan_interval_seconds: IDL.Opt(IDL.Nat64),
     cycles_interval_seconds: IDL.Opt(IDL.Nat64),

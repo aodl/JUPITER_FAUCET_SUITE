@@ -253,7 +253,7 @@
       <div class="nav-links">
         <a href="#about" class="nav-item" data-panel="about">About</a>
         <a href="#how-it-works" class="nav-item" data-panel="how-it-works">How it works</a>
-        <a href="#partners" class="nav-item" data-panel="partners">Partners</a>
+        <a href="#simulator" class="nav-item" data-panel="simulator">Simulator</a>
       </div>
       <div class="nav-actions">
         <button
@@ -527,22 +527,9 @@
               </p>
             </div>
               
-            <div class="nav-panel-page" data-page="2">              
-              <p class="nav-panel-content">
-                <strong>Coming soon:</strong> detailed step-by-step instructions. 
-				Jupiter Faucet is in the final stages of development.
-              </p>
-              
-              <p class="nav-panel-content">
-                <strong>Also coming soon:</strong> SNS launch, and periodic JUP airdrops for users who have committed
-                ICP to Jupiter Faucet's canister-controlled neuron, front-loaded to encourage earlier commitments
-              </p>
-            </div>
-            
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
               <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
-              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Page 3" aria-selected="false"></button>
             </div>
 
         </article>
@@ -555,6 +542,7 @@
               <div><dt>Neuron ID</dt><dd class="pane-detail-value mono"><a class="pane-external-link mono" id="stake-neuron-id-link" href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer"><span id="stake-neuron-id">11614578985374291210</span></a></dd></div>
               <div><dt>Current stake</dt><dd class="pane-detail-value"><span id="stake-pane-balance"></span><span class="metric-status" id="stake-pane-balance-status" hidden aria-hidden="true"></span></dd></div>
               <div><dt>Age</dt><dd class="pane-detail-value"><span id="stake-neuron-age"></span><span class="metric-status" id="stake-neuron-age-status" hidden aria-hidden="true"></span></dd></div>
+              <div><dt>Age bonus diverted</dt><dd class="pane-detail-value"><span id="stake-neuron-age-bonus"></span><span class="metric-status" id="stake-neuron-age-bonus-status" hidden aria-hidden="true"></span></dd></div>
               <div><dt>Publicly readable</dt><dd class="pane-detail-value"><span id="stake-neuron-public"></span><span class="metric-status" id="stake-neuron-public-status" hidden aria-hidden="true"></span></dd></div>
               <div><dt>Created</dt><dd class="pane-detail-value"><span id="stake-neuron-created"></span><span class="metric-status" id="stake-neuron-created-status" hidden aria-hidden="true"></span></dd></div>
               <div><dt>Voting power refreshed</dt><dd class="pane-detail-value"><span id="stake-neuron-refresh"></span><span class="metric-status" id="stake-neuron-refresh-status" hidden aria-hidden="true"></span></dd></div>
@@ -707,99 +695,55 @@
           </div>
         </article>
 
-        <!-- Partners -->        
+        <!-- Simulator -->
         <article
-          class="nav-panel-section"
-          data-panel="partners"
-          id="nav-panel-partners"
+          class="nav-panel-section nav-panel-section--simulator"
+          data-panel="simulator"
+          id="nav-panel-simulator"
         >
-          <h2 class="nav-panel-title">Partners</h2>
-
-          <div class="nav-panel-page is-active" data-page="0">              
-            <p class="nav-panel-content">
-              Jupiter Faucet is helping to propel <strong>big burners</strong>: projects with
-              meaningful, continuous cycles demand (on-chain AI and other
-              high-throughput workloads). By making perpetual top-ups "set-and-forget", we
-              aim to reduce operational friction and help these applications scale on the
-              Internet Computer.
-            </p>
-		  </div>
- 
-          <div class="nav-panel-page" data-page="1">               
-            <p class="nav-panel-content">
-              <strong>Life On Ledger</strong> has so far been a stealth mode project and is still under development.
-              It has a strong relationship to Jupiter Faucet's early committers, and a huge demand for cycles. In short, 
-              Life On Ledger is a massive multi-player online game in the form of an unstoppable cellular automata.
-              It supports up to 100K simultaneous players (potentially more with some further work) each competing to claim more territory
-              than their competitors in a perpetual war. To support its long-term growth, 
-              the upcoming <strong>LOL SNS DAO</strong> will be the recipient of a
-              <strong>10% allocation</strong> of JUP genesis tokens.
-            </p>
-
-            <p class="nav-panel-content"> 
-              We're confident LOL's high burn rate and affinity for a VERY large community of CA fanatics will help put the IC on the map for good.
-            </p>
-		  </div>
-		   
-          <div class="nav-panel-page" data-page="2">              
-            <p class="nav-panel-content">
-              We also recognize that unstoppable smart contracts depend on the safety and
-              resilience of the network they run on. That’s why we support
-                <a
-                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  ><strong>D-QUORUM</strong></a
-                >, and why a small portion of age-bonus maturity (0 - 4% of total maturity depending on age) is
-              restaked into the D-QUORUM neuron to help bootstrap protocol-funded,
-              decentralised due diligence of NNS proposals, to strengthen Internet
-              Computer governance over time.
-            </p>
-		  </div>
-
-          <div class="nav-panel-page" data-page="3">
-            <p class="nav-panel-content">
-              The future is arriving faster than many are ready for, and onchain governance will revolve just as much around
-              capable onchain AI as it does around human participation and off-chain tooling. 
-              A stealth-mode AI project that is currently under development (and goes by more than one name) will be 
-              the recipient of an additional 15% allocation of JUP genesis tokens. This project stands to become the largest burner
-              on the IC, while helping to secure the network and inform human voters of network activity in 
-              a trust-minimised way. This project demands significant resources which will be ongoing. Jupiter Faucet will help it get there.
-            </p>
+          <div class="simulator-pane-header">
+            <h2 class="nav-panel-title simulator-pane-title">Simulator</h2>
+            <form class="simulator-form simulator-form--header" id="commitment-simulator-form">
+              <label class="simulator-field" for="simulator-icp-commitment">
+                <span>ICP commitment</span>
+                <input class="tracker-input simulator-input" id="simulator-icp-commitment" type="number" min="1" step="0.1" inputmode="decimal" value="100.0" />
+              </label>
+              <label class="simulator-field" for="simulator-daily-burn">
+                <span>Daily burn (T cycles)</span>
+                <input class="tracker-input simulator-input" id="simulator-daily-burn" type="number" min="0" step="0.001" inputmode="decimal" value="0.001" />
+              </label>
+              <label class="simulator-field" for="simulator-icp-price">
+                <span>ICP/XDR price</span>
+                <input class="tracker-input simulator-input" id="simulator-icp-price" type="number" min="0.1" step="0.1" inputmode="decimal" value="10.0" />
+              </label>
+              <label class="simulator-field" for="simulator-apy">
+                <span>APY (%)</span>
+                <input class="tracker-input simulator-input" id="simulator-apy" type="number" min="0" step="0.1" inputmode="decimal" value="7.0" />
+              </label>
+            </form>
           </div>
-            
-          <div class="nav-panel-page" data-page="4">              
-            <p class="nav-panel-content">          
-              Stimulating the adoption of liquid staking tokens is also an important goal. 
-              We believe <strong>nICP</strong> will help insulate ICP from price volatility.
-              Issuing JUP rewards as nICP also helps users maximise long-term gains with minimal effort or opportunity cost. 
-              As the IC's leading liquid staking protocol,              
-                 <a
-                  href="https://waterneuron.fi/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  ><strong>WaterNeuron</strong></a
-                >'s nICP is the go-to choice.
+
+          <div class="nav-panel-scroll-region simulator-scroll-region">
+            <p class="nav-panel-content simulator-intro">
+              Model how much ICP you may need to commit for an elected canister so Jupiter Faucet's recurring maturity can keep pace with the canister's daily cycles burn.
             </p>
-		  </div>
-		  
-          <div class="nav-panel-page" data-page="5">              
-		    <p class="nav-panel-content">        
-              <strong>We believe these strategic alliances will help decentralize Jupiter Faucet at genesis
-              and beyond, while also helping to elevate and secure the
-              Internet Computer - for the benefit of everyone building on it, everyone
-              staked on it, and everyone holding valuable on-chain assets.</strong>
-            </p>
-		  </div>
-		  
-          <div class="nav-panel-dots" role="tablist">
-            <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
-            <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
-            <button class="nav-panel-dot" type="button" data-page="2" aria-label="Page 3" aria-selected="false"></button>
-            <button class="nav-panel-dot" type="button" data-page="3" aria-label="Page 4" aria-selected="false"></button>
-            <button class="nav-panel-dot" type="button" data-page="4" aria-label="Page 5" aria-selected="false"></button>
-            <button class="nav-panel-dot" type="button" data-page="5" aria-label="Page 6" aria-selected="false"></button>
-          </div> 
+
+            <div class="tracker-chart-wrapper simulator-chart-wrapper" id="simulator-chart-wrapper"></div>
+
+            <p class="pane-status-note tracker-status-note" id="simulator-assumption-note"></p>
+            <p class="pane-status-note tracker-status-note" id="simulator-status" hidden></p>
+
+            <dl class="pane-detail-grid tracker-summary-grid simulator-summary-grid">
+              <div><dt>Cycles per ICP</dt><dd class="pane-detail-value" id="simulator-cycles-per-icp">—</dd></div>
+              <div><dt>Projected annual ICP to CMC</dt><dd class="pane-detail-value" id="simulator-annual-topup-icp">—</dd></div>
+              <div><dt>Projected annual cycles</dt><dd class="pane-detail-value" id="simulator-annual-topup-cycles">—</dd></div>
+              <div><dt>Projected annual burn</dt><dd class="pane-detail-value" id="simulator-annual-burn-cycles">—</dd></div>
+              <div><dt>Age bonus diverted</dt><dd class="pane-detail-value" id="simulator-age-bonus">—</dd></div>
+              <div><dt>Effective top-up APY</dt><dd class="pane-detail-value" id="simulator-effective-apy">—</dd></div>
+              <div><dt>Year-end projected balance</dt><dd class="pane-detail-value" id="simulator-year-end-balance">—</dd></div>
+              <div><dt>Break-even commitment</dt><dd class="pane-detail-value" id="simulator-required-commitment">—</dd></div>
+            </dl>
+          </div>
         </article>
       </div>
     </section>

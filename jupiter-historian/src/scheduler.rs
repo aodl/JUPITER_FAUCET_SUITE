@@ -6,7 +6,8 @@ use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::index::{account_identifier_text, IcpIndexCanister};
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
-use crate::clients::{BlackholeClient, GovernanceClient, IndexClient, SnsRootClient, SnsWasmClient};
+use crate::clients::xrc::XrcCanister;
+use crate::clients::{BlackholeClient, ExchangeRateClient, GovernanceClient, IndexClient, SnsRootClient, SnsWasmClient};
 use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,
     MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
@@ -16,6 +17,7 @@ use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery
 const PAGE_SIZE: u64 = 500;
 const MAX_INITIAL_CYCLES_PROBE_QUEUE: usize = 256;
 const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
+const ICP_XDR_RATE_CACHE_TTL_SECONDS: u64 = 24 * 60 * 60;
 
 
 fn indexed_route_kinds() -> [IndexedRouteKind; 2] {
@@ -264,24 +266,66 @@ pub async fn main_tick(force: bool) {
         }
     }
 
-    let (index_id, blackhole_id, sns_wasm_id, governance_id) = state::with_state(|st| (
+    let (index_id, blackhole_id, sns_wasm_id, governance_id, xrc_id) = state::with_state(|st| (
         st.config.index_canister_id,
         st.config.blackhole_canister_id,
         st.config.sns_wasm_canister_id,
         st.config.staking_account.owner,
+        st.config.xrc_canister_id,
     ));
     let index = IcpIndexCanister::new(index_id);
     let blackhole = BlackholeCanister::new(blackhole_id);
     let sns_wasm = SnsWasmCanister::new(sns_wasm_id);
     let sns_root = SnsRootCanister;
     let governance = NnsGovernanceCanister::new(governance_id);
-    if let Err(err) = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root, &governance).await {
+    let xrc = XrcCanister::with_canister_id(xrc_id);
+    if let Err(err) = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root, &governance, &xrc).await {
         log_error(&format!("historian main tick failed: {err}"));
     }
     guard.finish(now_secs);
 }
 
-async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient, G: GovernanceClient>(
+async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {
+    let due = state::with_state(|st| {
+        if let Some(last_attempt_ts) = st.last_icp_xdr_rate_attempt_ts {
+            return now_secs.saturating_sub(last_attempt_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS;
+        }
+        st.icp_xdr_rate
+            .as_ref()
+            .map(|snapshot| now_secs.saturating_sub(snapshot.fetched_at_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS)
+            .unwrap_or(true)
+    });
+    if !due {
+        return Ok(());
+    }
+
+    state::with_root_state_mut(|st| st.last_icp_xdr_rate_attempt_ts = Some(now_secs));
+    match xrc.get_icp_xdr_rate().await {
+        Ok(rate) => {
+            state::with_root_state_mut(|st| {
+                st.icp_xdr_rate = Some(state::IcpXdrRateSnapshot {
+                    rate: rate.rate,
+                    decimals: rate.decimals,
+                    timestamp: rate.timestamp,
+                    fetched_at_ts: now_secs,
+                });
+                st.last_icp_xdr_rate_attempt_ts = Some(now_secs);
+                st.last_icp_xdr_rate_error = None;
+            });
+            Ok(())
+        }
+        Err(err) => {
+            let message = err.to_string();
+            state::with_root_state_mut(|st| {
+                st.last_icp_xdr_rate_attempt_ts = Some(now_secs);
+                st.last_icp_xdr_rate_error = Some(message.clone());
+            });
+            Err(message)
+        }
+    }
+}
+
+async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient, G: GovernanceClient, X: ExchangeRateClient>(
     now_nanos: u64,
     now_secs: u64,
     index: &I,
@@ -289,7 +333,11 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
     sns_wasm: &W,
     sns_root: &R,
     governance: &G,
+    xrc: &X,
 ) -> Result<(), String> {
+    if let Err(err) = refresh_icp_xdr_rate_if_due(now_secs, xrc).await {
+        log_error(&format!("historian ICP/XDR rate refresh degraded: {err}"));
+    }
     if let Err(err) = process_commitment_indexing(index, now_secs).await {
         log_error(&format!("historian commitment indexing degraded: {err}"));
     }
@@ -1330,6 +1378,7 @@ mod tests {
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
                 blackhole_canister_id: principal("e3mmv-5qaaa-aaaah-aadma-cai"),
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
+                xrc_canister_id: principal("uf6dk-hyaaa-aaaaq-qaaaq-cai"),
                 enable_sns_tracking: false,
                 scan_interval_seconds: 600,
                 cycles_interval_seconds: 604800,
@@ -1590,6 +1639,88 @@ mod tests {
         }
     }
 
+    struct MockXrcClient {
+        responses: Mutex<VecDeque<Result<crate::clients::IcpXdrRate, crate::clients::ClientError>>>,
+        calls: Mutex<u32>,
+    }
+
+    impl MockXrcClient {
+        fn new(responses: Vec<Result<crate::clients::IcpXdrRate, crate::clients::ClientError>>) -> Self {
+            Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(0) }
+        }
+
+        fn success(rate: u64, decimals: u32, timestamp: u64) -> Self {
+            Self::new(vec![Ok(crate::clients::IcpXdrRate { rate, decimals, timestamp })])
+        }
+
+        fn calls(&self) -> u32 { *self.calls.lock().unwrap() }
+    }
+
+    #[async_trait]
+    impl ExchangeRateClient for MockXrcClient {
+        async fn get_icp_xdr_rate(&self) -> Result<crate::clients::IcpXdrRate, crate::clients::ClientError> {
+            *self.calls.lock().unwrap() += 1;
+            self.responses.lock().unwrap().pop_front().unwrap_or_else(|| Err(crate::clients::ClientError::Call("missing XRC mock response".into())))
+        }
+    }
+
+
+    #[test]
+    fn icp_xdr_rate_refresh_caches_success_for_one_day() {
+        configure_state(10);
+        let xrc = MockXrcClient::new(vec![
+            Ok(crate::clients::IcpXdrRate { rate: 720_000_000, decimals: 8, timestamp: 1_000 }),
+            Ok(crate::clients::IcpXdrRate { rate: 735_000_000, decimals: 8, timestamp: 2_000 }),
+        ]);
+
+        block_on(refresh_icp_xdr_rate_if_due(10_000, &xrc)).unwrap();
+        state::with_state(|st| {
+            let snapshot = st.icp_xdr_rate.as_ref().expect("rate should be cached");
+            assert_eq!(snapshot.rate, 720_000_000);
+            assert_eq!(snapshot.decimals, 8);
+            assert_eq!(snapshot.timestamp, 1_000);
+            assert_eq!(snapshot.fetched_at_ts, 10_000);
+            assert_eq!(st.last_icp_xdr_rate_error, None);
+        });
+        assert_eq!(xrc.calls(), 1);
+
+        block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS - 1, &xrc)).unwrap();
+        assert_eq!(xrc.calls(), 1, "fresh daily cache should suppress another XRC call");
+
+        block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS, &xrc)).unwrap();
+        state::with_state(|st| {
+            let snapshot = st.icp_xdr_rate.as_ref().expect("rate should be refreshed");
+            assert_eq!(snapshot.rate, 735_000_000);
+            assert_eq!(snapshot.timestamp, 2_000);
+            assert_eq!(snapshot.fetched_at_ts, 10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS);
+        });
+        assert_eq!(xrc.calls(), 2);
+    }
+
+    #[test]
+    fn icp_xdr_rate_refresh_records_errors_without_clearing_last_good_rate() {
+        configure_state(10);
+        let xrc = MockXrcClient::new(vec![
+            Ok(crate::clients::IcpXdrRate { rate: 720_000_000, decimals: 8, timestamp: 1_000 }),
+            Err(crate::clients::ClientError::Call("NotEnoughCycles".into())),
+        ]);
+
+        block_on(refresh_icp_xdr_rate_if_due(10_000, &xrc)).unwrap();
+        let err = block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS, &xrc)).unwrap_err();
+        assert!(err.contains("NotEnoughCycles"));
+        state::with_state(|st| {
+            let snapshot = st.icp_xdr_rate.as_ref().expect("last good rate should remain cached");
+            assert_eq!(snapshot.rate, 720_000_000);
+            assert_eq!(st.last_icp_xdr_rate_error.as_deref(), Some("inter-canister call failed: NotEnoughCycles"));
+        });
+        assert_eq!(xrc.calls(), 2);
+
+        block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS + 1, &xrc)).unwrap();
+        assert_eq!(xrc.calls(), 2, "failed XRC refresh should be throttled for one day to prevent a cycle drain");
+
+        block_on(refresh_icp_xdr_rate_if_due(10_000 + (2 * ICP_XDR_RATE_CACHE_TTL_SECONDS), &xrc)).unwrap_err();
+        assert_eq!(xrc.calls(), 3, "retry should only happen after failed-attempt TTL expires");
+    }
 
     #[test]
     fn sns_discovery_chunks_across_ticks_and_resumes_from_persisted_state() {
@@ -1668,7 +1799,8 @@ mod tests {
         let sns_root = MockSnsRootClient::new(summaries);
         let governance = RecordingGovernanceClient::new();
 
-        block_on(run_main_tick_with_clients(999, 10_000, &index, &blackhole, &sns_wasm, &sns_root, &governance)).unwrap();
+        let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
+        block_on(run_main_tick_with_clients(999, 10_000, &index, &blackhole, &sns_wasm, &sns_root, &governance, &xrc)).unwrap();
         state::with_state(|st| {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 10_000);

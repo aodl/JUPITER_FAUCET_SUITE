@@ -3,6 +3,7 @@ pub mod governance;
 pub mod index;
 pub mod sns_root;
 pub mod sns_wasm;
+pub mod xrc;
 
 use async_trait::async_trait;
 use candid::Principal;
@@ -11,6 +12,13 @@ use crate::clients::blackhole::BlackholeCanisterStatus;
 use crate::clients::index::GetAccountIdentifierTransactionsResponse;
 use crate::clients::sns_root::GetSnsCanistersSummaryResponse;
 use crate::clients::sns_wasm::ListDeployedSnsesResponse;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IcpXdrRate {
+    pub rate: u64,
+    pub decimals: u32,
+    pub timestamp: u64,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
@@ -46,4 +54,9 @@ pub trait SnsWasmClient: Send + Sync {
 #[async_trait]
 pub trait SnsRootClient: Send + Sync {
     async fn get_sns_canisters_summary(&self, root_id: Principal) -> Result<GetSnsCanistersSummaryResponse, ClientError>;
+}
+
+#[async_trait]
+pub trait ExchangeRateClient: Send + Sync {
+    async fn get_icp_xdr_rate(&self) -> Result<IcpXdrRate, ClientError>;
 }

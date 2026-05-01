@@ -54,6 +54,7 @@ type InitArgs = record {
   faucet_canister_id : opt principal;
   blackhole_canister_id : opt principal;
   sns_wasm_canister_id : opt principal;
+  xrc_canister_id : opt principal;
   enable_sns_tracking : opt bool;
   scan_interval_seconds : opt nat64;
   cycles_interval_seconds : opt nat64;
@@ -107,6 +108,12 @@ type PublicCounts = record {
   total_output_e8s : nat64;
   total_rewards_e8s : nat64;
 };
+type IcpXdrRateSnapshot = record {
+  rate : nat64;
+  decimals : nat32;
+  timestamp : nat64;
+  fetched_at_ts : nat64;
+};
 type PublicStatus = record {
   staking_account : Account;
   ledger_canister_id : principal;
@@ -124,6 +131,8 @@ type PublicStatus = record {
   stable_memory_bytes : opt nat64;
   total_memory_bytes : opt nat64;
   commitment_index_fault : opt CommitmentIndexFault;
+  icp_xdr_rate : opt IcpXdrRateSnapshot;
+  last_icp_xdr_rate_error : opt text;
 };
 type ListRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
@@ -176,6 +185,7 @@ type DebugConfig = record {
   faucet_canister_id : opt principal;
   blackhole_canister_id : principal;
   sns_wasm_canister_id : principal;
+  xrc_canister_id : principal;
   enable_sns_tracking : bool;
   scan_interval_seconds : nat64;
   cycles_interval_seconds : nat64;
@@ -201,6 +211,7 @@ service : (InitArgs) -> {
   debug_set_last_sns_discovery_ts : (opt nat64) -> ();
   debug_set_last_indexed_staking_tx_id : (opt nat64) -> ();
   debug_set_main_lock_expires_at_ts : (opt nat64) -> ();
+  debug_set_icp_xdr_rate_fetched_at_ts : (opt nat64) -> ();
   debug_reset_runtime_state : () -> ();
   debug_reset_derived_state : () -> ();
 }

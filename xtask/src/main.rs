@@ -248,6 +248,7 @@ fn candid_path_for_canister(canister: &str) -> Option<String> {
         "mock_nns_governance" => "mock-nns-governance/mock_nns_governance.did",
         "mock_icp_index" => "mock-icp-index/mock_icp_index.did",
         "mock_cmc" => "mock-cmc/mock_cmc.did",
+        "mock_xrc" => "mock-xrc/mock_xrc.did",
         "mock_blackhole" => "mock-blackhole/mock_blackhole.did",
         "mock_sns_wasm" => "mock-sns-wasm/mock_sns_wasm.did",
         "mock_sns_root" => "mock-sns-root/mock_sns_root.did",
@@ -485,6 +486,14 @@ struct HistorianPublicCounts {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
+struct HistorianIcpXdrRateSnapshot {
+    rate: u64,
+    decimals: u32,
+    timestamp: u64,
+    fetched_at_ts: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
 struct HistorianPublicStatus {
     staking_account: Account,
     ledger_canister_id: Principal,
@@ -492,6 +501,8 @@ struct HistorianPublicStatus {
     index_interval_seconds: u64,
     last_completed_cycles_sweep_ts: Option<u64>,
     cycles_interval_seconds: u64,
+    icp_xdr_rate: Option<HistorianIcpXdrRateSnapshot>,
+    last_icp_xdr_rate_error: Option<String>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -503,6 +514,7 @@ struct HistorianDebugConfig {
     faucet_canister_id: Option<Principal>,
     blackhole_canister_id: Principal,
     sns_wasm_canister_id: Principal,
+    xrc_canister_id: Principal,
     enable_sns_tracking: bool,
     scan_interval_seconds: u64,
     cycles_interval_seconds: u64,
@@ -511,6 +523,15 @@ struct HistorianDebugConfig {
     max_commitment_entries_per_canister: u32,
     max_index_pages_per_tick: u32,
     max_canisters_per_cycles_tick: u32,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct MockXrcCall {
+    base_symbol: String,
+    quote_symbol: String,
+    requested_timestamp: Option<u64>,
+    attached_cycles: Nat,
+    accepted_cycles: Nat,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -783,6 +804,10 @@ fn mainnet_sns_wasm_principal() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid sns wasm principal")
 }
 
+fn mainnet_xrc_principal() -> Principal {
+    Principal::from_text("uf6dk-hyaaa-aaaaq-qaaaq-cai").expect("valid XRC principal")
+}
+
 fn prod_lifeline_principal() -> Principal {
     Principal::from_text("afisn-gqaaa-aaaar-qb4qa-cai").expect("valid lifeline principal")
 }
@@ -928,6 +953,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     run_dfx(&["deploy", "mock_nns_governance"])?;
     run_dfx(&["deploy", "mock_icp_index"])?;
     run_dfx(&["deploy", "mock_cmc"])?;
+    run_dfx(&["deploy", "mock_xrc"])?;
     run_dfx(&["deploy", "mock_blackhole"])?;
     run_dfx(&["deploy", "mock_sns_wasm"])?;
     run_dfx(&["deploy", "mock_sns_root"])?;
@@ -936,6 +962,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
     let gov_id = canister_id("mock_nns_governance")?;
     let index_id = canister_id("mock_icp_index")?;
     let cmc_id = canister_id("mock_cmc")?;
+    let xrc_id = canister_id("mock_xrc")?;
     let blackhole_id = canister_id("mock_blackhole")?;
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
     let rescue = principal_of_identity()?;
@@ -1035,6 +1062,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
             faucet_canister_id = opt principal "{faucet_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
+            xrc_canister_id = opt principal "{xrc_id}";
             enable_sns_tracking = opt true;
             scan_interval_seconds = opt (31536000:nat64);
             cycles_interval_seconds = opt (1:nat64);
@@ -1061,6 +1089,7 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         faucet_id = faucet_id.trim(),
         blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
+        xrc_id = xrc_id.trim(),
     );
     run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
 
@@ -1083,6 +1112,7 @@ fn cmd_setup() -> Result<()> {
     run_dfx(&["deploy", "mock_nns_governance"])?;
     run_dfx(&["deploy", "mock_icp_index"])?;
     run_dfx(&["deploy", "mock_cmc"])?;
+    run_dfx(&["deploy", "mock_xrc"])?;
     run_dfx(&["deploy", "mock_blackhole"])?;
     run_dfx(&["deploy", "mock_sns_wasm"])?;
     run_dfx(&["deploy", "mock_sns_root"])?;
@@ -1091,6 +1121,7 @@ fn cmd_setup() -> Result<()> {
     let gov_id = canister_id("mock_nns_governance")?;
     let index_id = canister_id("mock_icp_index")?;
     let cmc_id = canister_id("mock_cmc")?;
+    let xrc_id = canister_id("mock_xrc")?;
     let blackhole_id = canister_id("mock_blackhole")?;
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
     let rescue = principal_of_identity()?;
@@ -1191,6 +1222,7 @@ fn cmd_setup() -> Result<()> {
             faucet_canister_id = opt principal "{faucet_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
+            xrc_canister_id = opt principal "{xrc_id}";
             enable_sns_tracking = opt true;
             scan_interval_seconds = opt (31536000:nat64);
             cycles_interval_seconds = opt (1:nat64);
@@ -1217,6 +1249,7 @@ fn cmd_setup() -> Result<()> {
         faucet_id = faucet_id.trim(),
         blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
+        xrc_id = xrc_id.trim(),
     );
     run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
 
@@ -2498,6 +2531,7 @@ fn reset_historian_local_replica_state() -> Result<()> {
     let _: () = call_raw_noargs("mock_icp_index", "debug_reset")?;
     let _: () = call_raw_noargs("mock_blackhole", "debug_reset")?;
     let _: () = call_raw_noargs("mock_icrc_ledger", "debug_reset")?;
+    let _: () = call_raw_noargs("mock_xrc", "debug_reset")?;
     let _: () = call_raw_noargs("jupiter_historian_dbg", "debug_reset_derived_state")?;
     Ok(())
 }
@@ -2516,6 +2550,7 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             .collect::<Vec<_>>()
             .join("; ");
         let target = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+
         let blackhole_id = canister_id("mock_blackhole")?;
         let ledger_id = canister_id("mock_icrc_ledger")?;
 
@@ -2656,6 +2691,70 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
 
 fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+
+    run_scenario(outcomes, label("dfx", "historian", "caches ICP/XDR rate and protects XRC cycles"), || {
+        reset_historian_local_replica_state()?;
+        let _: () = call_raw("mock_xrc", "debug_set_rate", "(123456:nat64, 4:nat32, 1700000001:nat64)")?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let status1: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        let snapshot1 = status1.icp_xdr_rate.as_ref().context("expected ICP/XDR rate after first tick")?;
+        if snapshot1.rate != 123456 || snapshot1.decimals != 4 || snapshot1.timestamp != 1700000001 || status1.last_icp_xdr_rate_error.is_some() {
+            bail!("unexpected initial ICP/XDR status: {:?}", status1);
+        }
+        let calls1: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
+        if calls1.len() != 1 {
+            bail!("expected exactly one XRC call after first tick, got {}", calls1.len());
+        }
+        let attached = calls1[0].attached_cycles.0.to_u128().unwrap_or(0);
+        let accepted = calls1[0].accepted_cycles.0.to_u128().unwrap_or(0);
+        if calls1[0].base_symbol != "ICP"
+            || calls1[0].quote_symbol != "XDR"
+            || calls1[0].requested_timestamp.is_some()
+            || attached < 1_000_000_000
+            || accepted != 260_000_000
+        {
+            bail!("unexpected XRC call details: {:?}", calls1[0]);
+        }
+
+        let _: () = call_raw("mock_xrc", "debug_set_rate", "(999999:nat64, 4:nat32, 1700000999:nat64)")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let calls2: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
+        let status2: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        if calls2.len() != 1 {
+            bail!("cache bypass: expected still one XRC call inside one-day TTL, got {}", calls2.len());
+        }
+        if status2.icp_xdr_rate.as_ref().map(|s| s.rate) != Some(123456) {
+            bail!("cached rate should remain unchanged inside TTL: {:?}", status2.icp_xdr_rate);
+        }
+
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_icp_xdr_rate_fetched_at_ts", "(opt (1:nat64))")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let calls3: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
+        let status3: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        if calls3.len() != 2 || status3.icp_xdr_rate.as_ref().map(|s| s.rate) != Some(999999) {
+            bail!("expected stale cache refresh to call XRC once and update rate; calls={} status={:?}", calls3.len(), status3.icp_xdr_rate);
+        }
+
+        let _: () = call_raw("mock_xrc", "debug_set_error", "(opt variant { RateLimited })")?;
+        let _: () = call_raw("jupiter_historian_dbg", "debug_set_icp_xdr_rate_fetched_at_ts", "(opt (1:nat64))")?;
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let calls4: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
+        let status4: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
+        if calls4.len() != 3 {
+            bail!("expected one failed stale refresh call, got {}", calls4.len());
+        }
+        if status4.icp_xdr_rate.as_ref().map(|s| s.rate) != Some(999999) || status4.last_icp_xdr_rate_error.is_none() {
+            bail!("failed refresh should preserve last good rate and expose error: {:?}", status4);
+        }
+
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+        let calls5: Vec<MockXrcCall> = call_raw_noargs("mock_xrc", "debug_get_calls")?;
+        if calls5.len() != 3 {
+            bail!("failed XRC refresh should be cached for one day to prevent a cycle drain, got {} calls", calls5.len());
+        }
+        Ok(())
+    });
 
     run_scenario(outcomes, label("dfx", "historian", "indexes memo-derived commitment exactly once"), || {
         reset_historian_local_replica_state()?;
@@ -2813,6 +2912,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             .collect::<Vec<_>>()
             .join("; ");
         let target = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+
         let blackhole_id = canister_id("mock_blackhole")?;
         let ledger_id = canister_id("mock_icrc_ledger")?;
 
@@ -2961,6 +3061,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             .collect::<Vec<_>>()
             .join("; ");
         let target = Principal::from_text(canister_id("jupiter_faucet_dbg")?.trim())?;
+
         let ledger_id = canister_id("mock_icrc_ledger")?;
 
         let _: () = call_raw(
@@ -3086,6 +3187,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             .collect::<Vec<_>>()
             .join("; ");
         let target = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+
         let ledger_id = canister_id("mock_icrc_ledger")?;
 
         let _: () = call_raw(
@@ -3340,6 +3442,7 @@ fn run_dfx_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutcom
             || cfg.faucet_canister_id != Some(prod_faucet_principal())
             || cfg.blackhole_canister_id != mainnet_blackhole_principal()
             || cfg.sns_wasm_canister_id != mainnet_sns_wasm_principal()
+            || cfg.xrc_canister_id != mainnet_xrc_principal()
             || cfg.enable_sns_tracking
             || cfg.scan_interval_seconds != 600
             || cfg.cycles_interval_seconds != 604_800

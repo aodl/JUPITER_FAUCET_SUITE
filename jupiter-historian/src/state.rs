@@ -23,6 +23,7 @@ pub struct Config {
     pub faucet_canister_id: Option<Principal>,
     pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
+    pub xrc_canister_id: Principal,
     pub enable_sns_tracking: bool,
     pub scan_interval_seconds: u64,
     pub cycles_interval_seconds: u64,
@@ -95,6 +96,14 @@ pub struct CommitmentIndexFault {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct IcpXdrRateSnapshot {
+    pub rate: u64,
+    pub decimals: u32,
+    pub timestamp: u64,
+    pub fetched_at_ts: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CyclesSample {
     pub timestamp_nanos: u64,
     pub cycles: u128,
@@ -158,6 +167,8 @@ pub struct StableConfig {
     pub faucet_canister_id: Option<Principal>,
     pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
+    #[serde(default)]
+    pub xrc_canister_id: Option<Principal>,
     pub enable_sns_tracking: bool,
     pub scan_interval_seconds: u64,
     pub cycles_interval_seconds: u64,
@@ -241,6 +252,12 @@ pub struct StableRootState {
     pub last_index_run_ts: Option<u64>,
     #[serde(default)]
     pub commitment_index_fault: Option<CommitmentIndexFault>,
+    #[serde(default)]
+    pub icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+    #[serde(default)]
+    pub last_icp_xdr_rate_attempt_ts: Option<u64>,
+    #[serde(default)]
+    pub last_icp_xdr_rate_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -487,6 +504,9 @@ pub struct State {
     pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
     pub commitment_index_fault: Option<CommitmentIndexFault>,
+    pub icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+    pub last_icp_xdr_rate_attempt_ts: Option<u64>,
+    pub last_icp_xdr_rate_error: Option<String>,
 }
 
 impl State {
@@ -531,6 +551,9 @@ impl State {
             recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
             commitment_index_fault: None,
+            icp_xdr_rate: None,
+            last_icp_xdr_rate_attempt_ts: None,
+            last_icp_xdr_rate_error: None,
         }
     }
 }
@@ -1032,6 +1055,9 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         recent_burns: st.recent_burns.clone(),
         last_index_run_ts: st.last_index_run_ts,
         commitment_index_fault: st.commitment_index_fault.clone(),
+        icp_xdr_rate: st.icp_xdr_rate.clone(),
+        last_icp_xdr_rate_attempt_ts: st.last_icp_xdr_rate_attempt_ts,
+        last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
     }
 }
 
@@ -1141,6 +1167,9 @@ fn restore_state_current(root: StableRootState) -> State {
         recent_burns: root.recent_burns,
         last_index_run_ts: root.last_index_run_ts,
         commitment_index_fault: root.commitment_index_fault,
+        icp_xdr_rate: root.icp_xdr_rate,
+        last_icp_xdr_rate_attempt_ts: root.last_icp_xdr_rate_attempt_ts,
+        last_icp_xdr_rate_error: root.last_icp_xdr_rate_error,
     };
     rebuild_distinct_canisters(&mut st);
     st
@@ -1375,6 +1404,7 @@ impl From<Config> for StableConfig {
             faucet_canister_id: value.faucet_canister_id,
             blackhole_canister_id: value.blackhole_canister_id,
             sns_wasm_canister_id: value.sns_wasm_canister_id,
+            xrc_canister_id: Some(value.xrc_canister_id),
             enable_sns_tracking: value.enable_sns_tracking,
             scan_interval_seconds: value.scan_interval_seconds,
             cycles_interval_seconds: value.cycles_interval_seconds,
@@ -1400,6 +1430,7 @@ impl From<StableConfig> for Config {
             faucet_canister_id: value.faucet_canister_id,
             blackhole_canister_id: value.blackhole_canister_id,
             sns_wasm_canister_id: value.sns_wasm_canister_id,
+            xrc_canister_id: value.xrc_canister_id.unwrap_or_else(crate::mainnet_xrc_id),
             enable_sns_tracking: value.enable_sns_tracking,
             scan_interval_seconds: value.scan_interval_seconds,
             cycles_interval_seconds: value.cycles_interval_seconds,
@@ -1480,6 +1511,7 @@ mod tests {
             faucet_canister_id: Some(principal(&[5])),
             blackhole_canister_id: principal(&[6]),
             sns_wasm_canister_id: principal(&[7]),
+            xrc_canister_id: principal(&[8]),
             enable_sns_tracking: true,
             scan_interval_seconds: 60,
             cycles_interval_seconds: 120,

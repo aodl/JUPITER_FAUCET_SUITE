@@ -121,6 +121,19 @@
         }
       ]
     },
+    "mock_xrc": {
+      "type": "rust",
+      "package": "mock-xrc",
+      "candid": "xtask/src/mocks/mock_xrc/mock_xrc.did",
+      "optimize": "cycles",
+      "skip_cargo_audit": true,
+      "metadata": [
+        {
+          "name": "candid:service",
+          "path": "xtask/src/mocks/mock_xrc/mock_xrc.did"
+        }
+      ]
+    },
     "jupiter_historian": {
       "type": "custom",
       "candid": "jupiter-historian/jupiter_historian.did",

@@ -1,0 +1,66 @@
+type AssetClass = variant { Cryptocurrency; FiatCurrency };
+type Asset = record { symbol : text; class : AssetClass };
+type GetExchangeRateRequest = record {
+  base_asset : Asset;
+  quote_asset : Asset;
+  timestamp : opt nat64;
+};
+type ExchangeRateMetadata = record { decimals : nat32 };
+type ExchangeRate = record {
+  rate : nat64;
+  metadata : ExchangeRateMetadata;
+  timestamp : nat64;
+};
+type ExchangeRateError = variant {
+  AnonymousPrincipalNotAllowed;
+  CryptoBaseAssetNotFound;
+  CryptoQuoteAssetNotFound;
+  StablecoinRateTooFewRates;
+  StablecoinRateZeroRate;
+  ForexAssetsNotFound;
+  ForexBaseAssetNotFound;
+  ForexQuoteAssetNotFound;
+  ForexInvalidTimestamp;
+  RateLimited;
+  NotEnoughCycles;
+  NotEnoughStablecoinRates;
+  StablecoinRateNotFound;
+  InconsistentRatesReceived;
+  FailedToAcceptCycles;
+  Pending;
+  Other : record { code : nat32; description : text };
+};
+type GetExchangeRateResult = variant { Ok : ExchangeRate; Err : ExchangeRateError };
+type DebugExchangeRateCall = record {
+  base_symbol : text;
+  quote_symbol : text;
+  requested_timestamp : opt nat64;
+  attached_cycles : nat;
+  accepted_cycles : nat;
+};
+type DebugExchangeRateError = variant {
+  AnonymousPrincipalNotAllowed;
+  CryptoBaseAssetNotFound;
+  CryptoQuoteAssetNotFound;
+  StablecoinRateTooFewRates;
+  StablecoinRateZeroRate;
+  ForexAssetsNotFound;
+  ForexBaseAssetNotFound;
+  ForexQuoteAssetNotFound;
+  ForexInvalidTimestamp;
+  RateLimited;
+  NotEnoughCycles;
+  NotEnoughStablecoinRates;
+  StablecoinRateNotFound;
+  InconsistentRatesReceived;
+  FailedToAcceptCycles;
+  Pending;
+  Other : record { code : nat32; description : text };
+};
+service : {
+  get_exchange_rate : (GetExchangeRateRequest) -> (GetExchangeRateResult);
+  debug_reset : () -> ();
+  debug_set_rate : (nat64, nat32, nat64) -> ();
+  debug_set_error : (opt DebugExchangeRateError) -> ();
+  debug_get_calls : () -> (vec DebugExchangeRateCall) query;
+};
