@@ -160,12 +160,24 @@ test('simulator inputs are ordered by user control priority and use compact nume
   assert.equal(attrValue(burn, 'step'), '0.001');
   assert.equal(attrValue(burn, 'value'), '0.001');
   assert.equal(attrValue(price, 'step'), '0.1');
-  assert.equal(attrValue(price, 'value'), '10.0');
+  assert.equal(attrValue(price, 'value'), null);
+  assert.equal(attrValue(price, 'placeholder'), 'Loading');
   assert.equal(attrValue(apy, 'step'), '0.1');
   assert.equal(attrValue(apy, 'value'), '7.0');
   assert.match(simulator, /Daily burn \(T cycles\)/);
   assert.match(simulator, /APY \(%\)/);
   assert.doesNotMatch(simulator, /id="simulator-icp-commitment"[^>]*value="100\.0"/);
+});
+
+test('simulator input binding blocks negative values and excess decimal precision', () => {
+  assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS/);
+  assert.match(mainJs, /'simulator-icp-commitment': \{ min: 1, fractionDigits: 1 \}/);
+  assert.match(mainJs, /'simulator-daily-burn': \{ min: 0, fractionDigits: 3 \}/);
+  assert.match(mainJs, /'simulator-icp-price': \{ min: 0\.1, fractionDigits: 1 \}/);
+  assert.match(mainJs, /'simulator-apy': \{ min: 0, fractionDigits: 1 \}/);
+  assert.match(mainJs, /beforeinput/);
+  assert.match(mainJs, /wouldAcceptSimulatorInput/);
+  assert.match(mainJs, /sanitiseSimulatorInput/);
 });
 
 test('simulator no longer exposes a starting-buffer stat or copy', () => {

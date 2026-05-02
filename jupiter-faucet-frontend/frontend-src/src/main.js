@@ -46,6 +46,12 @@ const SIMULATOR_DEFAULTS = {
   assumedIcpPrice: '10.0',
   annualApyPercent: '7.0',
 };
+const SIMULATOR_INPUT_CONSTRAINTS = {
+  'simulator-icp-commitment': { min: 1, fractionDigits: 1 },
+  'simulator-daily-burn': { min: 0, fractionDigits: 3 },
+  'simulator-icp-price': { min: 0.1, fractionDigits: 1 },
+  'simulator-apy': { min: 0, fractionDigits: 1 },
+};
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
@@ -1477,6 +1483,50 @@ function maybePrepopulateSimulatorMinimumCommitment() {
   }
 }
 
+function simulatorInputConstraint(input) {
+  return input?.id ? SIMULATOR_INPUT_CONSTRAINTS[input.id] : null;
+}
+
+function simulatorDecimalPattern(fractionDigits) {
+  return new RegExp(`^\\d*(?:\\.\\d{0,${fractionDigits}})?$`);
+}
+
+function clampSimulatorInputValue(value, constraint) {
+  if (!constraint) return value;
+  const text = String(value ?? '').replace(/,/g, '').replace(/[^\d.]/g, '');
+  const firstDot = text.indexOf('.');
+  const whole = (firstDot === -1 ? text : text.slice(0, firstDot)).replace(/^0+(?=\d)/, '');
+  const rawFraction = firstDot === -1 ? '' : text.slice(firstDot + 1).replace(/\./g, '');
+  const fraction = rawFraction.slice(0, constraint.fractionDigits);
+  const normalised = firstDot === -1 ? whole : `${whole}.${fraction}`;
+  if (!normalised || normalised === '.') return '';
+
+  const numeric = Number(normalised);
+  if (Number.isFinite(numeric) && numeric < constraint.min) {
+    return constraint.min.toFixed(constraint.fractionDigits).replace(/\.?0+$/, '');
+  }
+  return normalised.startsWith('.') ? `0${normalised}` : normalised;
+}
+
+function wouldAcceptSimulatorInput(input, insertedText) {
+  const constraint = simulatorInputConstraint(input);
+  if (!constraint || insertedText === null) return true;
+  if (!/^[\d.]+$/.test(insertedText)) return false;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const candidate = `${input.value.slice(0, start)}${insertedText}${input.value.slice(end)}`;
+  return simulatorDecimalPattern(constraint.fractionDigits).test(candidate);
+}
+
+function sanitiseSimulatorInput(input) {
+  const constraint = simulatorInputConstraint(input);
+  if (!constraint) return false;
+  const cleanValue = clampSimulatorInputValue(input.value, constraint);
+  if (input.value === cleanValue) return false;
+  input.value = cleanValue;
+  return true;
+}
+
 function applySimulatorIcpXdrRateFromStatus(status) {
   const snapshot = readOpt(status?.icp_xdr_rate);
   simulatorState.icpXdrRateSnapshot = snapshot || null;
@@ -1493,6 +1543,12 @@ function applySimulatorIcpXdrRateFromStatus(status) {
 
 function simulatorInputValue(id) {
   return document.getElementById(id)?.value ?? '';
+}
+
+function simulatorProjectionInputValue(id, fallback) {
+  const value = simulatorInputValue(id);
+  const normalised = value.endsWith('.') ? value.slice(0, -1) : value;
+  return normalised || fallback;
 }
 
 function setSimulatorText(id, text, title = '') {
@@ -1527,10 +1583,10 @@ function clearSimulatorSummary() {
 
 function readSimulatorInputs() {
   return {
-    icpCommitment: simulatorInputValue('simulator-icp-commitment'),
-    dailyBurnTrillionCycles: simulatorInputValue('simulator-daily-burn'),
-    assumedIcpPrice: simulatorInputValue('simulator-icp-price'),
-    annualApyPercent: simulatorInputValue('simulator-apy'),
+    icpCommitment: simulatorProjectionInputValue('simulator-icp-commitment', '1.0'),
+    dailyBurnTrillionCycles: simulatorProjectionInputValue('simulator-daily-burn', SIMULATOR_DEFAULTS.dailyBurnTrillionCycles),
+    assumedIcpPrice: simulatorProjectionInputValue('simulator-icp-price', SIMULATOR_DEFAULTS.assumedIcpPrice),
+    annualApyPercent: simulatorProjectionInputValue('simulator-apy', SIMULATOR_DEFAULTS.annualApyPercent),
     ageBonusBasisPoints: simulatorState.ageBonusBasisPoints,
   };
 }
@@ -1621,7 +1677,6 @@ function bindCommitmentSimulator() {
   simulatorState.initialised = true;
   [
     ['simulator-daily-burn', SIMULATOR_DEFAULTS.dailyBurnTrillionCycles],
-    ['simulator-icp-price', SIMULATOR_DEFAULTS.assumedIcpPrice],
     ['simulator-apy', SIMULATOR_DEFAULTS.annualApyPercent],
   ].forEach(([id, value]) => {
     const input = document.getElementById(id);
@@ -1629,7 +1684,15 @@ function bindCommitmentSimulator() {
   });
   maybePrepopulateSimulatorMinimumCommitment();
   form.addEventListener('submit', (event) => event.preventDefault());
+  form.addEventListener('beforeinput', (event) => {
+    if (event.target instanceof HTMLInputElement && !wouldAcceptSimulatorInput(event.target, event.data)) {
+      event.preventDefault();
+    }
+  });
   form.addEventListener('input', (event) => {
+    if (event.target instanceof HTMLInputElement) {
+      sanitiseSimulatorInput(event.target);
+    }
     if (event.target?.id === 'simulator-icp-price') {
       simulatorState.icpPriceUserEdited = true;
     }
