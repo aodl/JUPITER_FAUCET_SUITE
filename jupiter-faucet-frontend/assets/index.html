@@ -222,9 +222,25 @@
       color: rgba(255, 255, 255, 0.88);
     }
 
+    .how-it-works-guide-card.is-optional {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .how-it-works-guide-card.is-send-step {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+    }
+
     @media (max-width: 900px) {
       .how-it-works-guide {
         grid-template-columns: 1fr;
+      }
+
+      .how-it-works-guide-card.is-optional,
+      .how-it-works-guide-card.is-send-step {
+        grid-column: auto;
+        grid-row: auto;
       }
     }
 
@@ -469,7 +485,13 @@
                   </a>
                   <figcaption><strong>1.</strong> If the memo field is hidden in the <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">NNS dapp</a>, press <strong>Ctrl + K</strong>, type <strong>memo</strong>, then select <strong>Show transaction memo</strong>.</figcaption>
                 </figure>
-                <figure class="how-it-works-guide-card">
+                <figure class="how-it-works-guide-card is-optional">
+                  <a href="https://nns.ic0.app/address-book" target="_blank" rel="noopener noreferrer" class="pane-external-link">
+                    <img src="how-it-works-edit-address.png?v=__ASSET_VERSION__" alt="NNS dapp address book entry for the Jupiter Faucet staking account with a nickname" />
+                  </a>
+                  <figcaption><strong>Optional.</strong> Add the Jupiter Faucet staking account to your <a href="https://nns.ic0.app/address-book" target="_blank" rel="noopener noreferrer" class="pane-external-link">NNS dapp address book</a> with a nickname to make future commitments easier.</figcaption>
+                </figure>
+                <figure class="how-it-works-guide-card is-send-step">
                   <a href="https://nns.ic0.app/wallet/?u=" target="_blank" rel="noopener noreferrer" class="pane-external-link">
                     <img src="how-it-works-send-icp.png?v=__ASSET_VERSION__" alt="NNS dapp send ICP dialog using the staking account address and declared canister ID memo" />
                   </a>

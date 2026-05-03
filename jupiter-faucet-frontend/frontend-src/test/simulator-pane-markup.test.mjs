@@ -91,6 +91,10 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.doesNotMatch(howItWorks, /plain ASCII text \(see <i>Ctrl \+ K 'memo'<\/i> tip below\)/);
   assert.doesNotMatch(howItWorks, /The 1 ICP minimum is intentional/);
   assert.doesNotMatch(howItWorks, /target canister ID/);
+  assert.match(howItWorks, /how-it-works-guide-card is-optional/);
+  assert.match(howItWorks, /href="https:\/\/nns\.ic0\.app\/address-book"[^>]*>[\s\S]*how-it-works-edit-address\.png/);
+  assert.match(howItWorks, /with a nickname to make future commitments easier/);
+  assert.match(indexHtml, /\.how-it-works-guide-card\.is-send-step \{[\s\S]*grid-row: 1 \/ span 2;[\s\S]*\}/);
   assert.match(howItWorks, /set the transaction memo to your declared canister ID/);
   assert.doesNotMatch(howItWorks, /Transfer ICP to the long-form ICRC-1 staking account address displayed above/);
   assert.doesNotMatch(howItWorks, /While stake commitments can be made today/);
@@ -188,9 +192,9 @@ test('simulator no longer exposes a starting-buffer stat or copy', () => {
   assert.doesNotMatch(mainJs, /one-year starting buffer/i);
 });
 
-test('simulator renders the cycles balance chart before a CMC top-ups headline and clarifies APY copy', () => {
+test('simulator renders the cycles balance chart before a weekly top-ups headline and clarifies APY copy', () => {
   const balanceIndex = mainJs.indexOf('<h3>Projected cycles balance</h3>');
-  const topupsIndex = mainJs.indexOf('Projected CMC top-ups:');
+  const topupsIndex = mainJs.indexOf('Projected weekly top-ups:');
   assert.ok(balanceIndex >= 0, 'missing balance chart header');
   assert.ok(topupsIndex >= 0, 'missing top-ups headline');
   assert.ok(balanceIndex < topupsIndex, 'balance chart should render before top-ups headline');

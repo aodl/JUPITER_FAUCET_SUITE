@@ -1614,7 +1614,7 @@ function renderSimulatorCharts(projection) {
     </div>
     <div class="tracker-chart-card simulator-topup-headline-card">
       <div class="tracker-chart-header tracker-chart-header--headline">
-        <h3>Projected CMC top-ups: ${escapeHtml(formatCompactTrillionCycles(weeklyTopupCycles))}</h3>
+        <h3>Projected weekly top-ups: ${escapeHtml(formatCompactTrillionCycles(weeklyTopupCycles))}</h3>
         <span>Per weekly CMC top-up, based on the configured APY.</span>
       </div>
     </div>`;
