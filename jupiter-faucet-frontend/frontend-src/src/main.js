@@ -26,7 +26,10 @@ const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
 const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
-const TABLE_PAGE_SIZE = 6;
+const TABLE_MIN_PAGE_SIZE = 6;
+const TABLE_MAX_PAGE_SIZE = 18;
+const TABLE_ROW_ESTIMATE_PX = 48;
+const TABLE_VERTICAL_RESERVE_PX = 460;
 const JUPITER_STAKING_ACCOUNT_ADDRESS = 'rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
@@ -63,13 +66,15 @@ const INLINE_TOOLTIP_CONTENT = {
 const SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS = 60 * 60 * 1000;
 let sourcePaneModuleHashesLoadedAt = 0;
 let sourcePaneModuleHashesRequest = null;
+let tablePageSize = calculateResponsiveTablePageSize();
+let tableResizeTimer = null;
 
 const tableState = {
   registered: {
     page: 0,
     items: [],
     total: 0,
-    pageSize: TABLE_PAGE_SIZE,
+    pageSize: tablePageSize,
     loading: false,
     pendingPage: null,
     error: null,
@@ -103,6 +108,18 @@ const simulatorState = {
 function isLocalHost() {
   const host = window.location.hostname;
   return host === '127.0.0.1' || host === 'localhost';
+}
+
+function calculateResponsiveTablePageSize(viewportHeight = window.innerHeight) {
+  const height = Number(viewportHeight);
+  if (!Number.isFinite(height) || height <= 0) return TABLE_MIN_PAGE_SIZE;
+  const available = Math.max(0, height - TABLE_VERTICAL_RESERVE_PX);
+  const estimatedRows = Math.floor(available / TABLE_ROW_ESTIMATE_PX);
+  return Math.min(TABLE_MAX_PAGE_SIZE, Math.max(TABLE_MIN_PAGE_SIZE, estimatedRows));
+}
+
+function currentTablePageSize() {
+  return tablePageSize;
 }
 
 function formatPrincipal(value) {
@@ -532,11 +549,12 @@ function setCopyButton(id, valueProvider) {
 
 function paginate(kind, items, renderRow, emptyMessage, colspan) {
   const state = tableState[kind];
+  const pageSize = currentTablePageSize();
   state.items = items || [];
-  const totalPages = Math.max(1, Math.ceil(state.items.length / TABLE_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(state.items.length / pageSize));
   if (state.page >= totalPages) state.page = totalPages - 1;
-  const start = state.page * TABLE_PAGE_SIZE;
-  const pageItems = state.items.slice(start, start + TABLE_PAGE_SIZE);
+  const start = state.page * pageSize;
+  const pageItems = state.items.slice(start, start + pageSize);
   const body = document.getElementById(`${kind}-pane-body`) || document.getElementById(`${kind}-transactions-body`);
   if (body) {
     body.innerHTML = pageItems.length
@@ -558,7 +576,7 @@ function cacheRegisteredPage(response) {
   if (!response) return;
   const state = tableState.registered;
   const page = numericValue(response.page, 0);
-  const pageSize = Math.max(1, numericValue(response.page_size, TABLE_PAGE_SIZE));
+  const pageSize = Math.max(1, numericValue(response.page_size, currentTablePageSize()));
   const items = Array.isArray(response.items) ? response.items : [];
   state.pages.set(registeredPageCacheKey(page, pageSize), response);
   state.page = page;
@@ -570,13 +588,13 @@ function cacheRegisteredPage(response) {
 
 function registeredTotalPages() {
   const state = tableState.registered;
-  return Math.max(1, Math.ceil(state.total / Math.max(1, state.pageSize || TABLE_PAGE_SIZE)));
+  return Math.max(1, Math.ceil(state.total / Math.max(1, state.pageSize || currentTablePageSize())));
 }
 
 async function fetchRegisteredPage(page) {
   const state = tableState.registered;
   if (state.loading) return;
-  const pageSize = Math.max(1, state.pageSize || TABLE_PAGE_SIZE);
+  const pageSize = Math.max(1, state.pageSize || currentTablePageSize());
   const cacheKey = registeredPageCacheKey(page, pageSize);
   const cached = state.pages.get(cacheKey);
   if (cached) {
@@ -942,7 +960,7 @@ function renderRegisteredPane(data) {
     state.items = [];
     state.total = 0;
     state.page = 0;
-    state.pageSize = TABLE_PAGE_SIZE;
+    state.pageSize = currentTablePageSize();
     state.error = data?.errors?.registered || null;
   }
 
@@ -2013,6 +2031,43 @@ function renderLandingPanes(data, neuron = null) {
   renderDquorumPane(data);
 }
 
+function applyResponsiveTablePageSize() {
+  const previousPageSize = currentTablePageSize();
+  const nextPageSize = calculateResponsiveTablePageSize();
+  if (nextPageSize === previousPageSize) return;
+
+  tablePageSize = nextPageSize;
+  ['commitments', 'output', 'rewards', 'dquorum'].forEach((kind) => {
+    const state = tableState[kind];
+    const firstVisibleItem = state.page * previousPageSize;
+    state.page = Math.max(0, Math.floor(firstVisibleItem / nextPageSize));
+  });
+
+  const data = window.__JUPITER_LANDING_DATA__ || null;
+  renderCommitmentsPane(data);
+  renderOutputPane(data);
+  renderRewardsPane(data);
+  renderDquorumPane(data);
+
+  const registered = tableState.registered;
+  const firstVisibleRegistered = registered.page * Math.max(1, registered.pageSize || previousPageSize);
+  const targetRegisteredPage = Math.max(0, Math.floor(firstVisibleRegistered / nextPageSize));
+  registered.pageSize = nextPageSize;
+  registered.page = targetRegisteredPage;
+  if (registered.pages.size > 0 || data?.registered) {
+    void fetchRegisteredPage(targetRegisteredPage);
+  } else {
+    renderRegisteredPane(data);
+  }
+}
+
+function bindResponsiveTablePageSize() {
+  window.addEventListener('resize', () => {
+    window.clearTimeout(tableResizeTimer);
+    tableResizeTimer = window.setTimeout(applyResponsiveTablePageSize, 150);
+  });
+}
+
 async function loadNeuronDetails({ host, local }) {
   const agent = await HttpAgent.create({
     host,
@@ -2080,7 +2135,7 @@ async function initLandingPage() {
       historianCanisterId: FRONTEND_CONFIG?.historianCanisterId,
       host: window.location.origin,
       local: isLocalHost(),
-      registeredPageSize: TABLE_PAGE_SIZE,
+      registeredPageSize: currentTablePageSize(),
     });
     if (data.historianLikelyOutdated) {
       console.warn(`${FRONTEND_HINT} Redeploy jupiter_historian, then hard-refresh the frontend.`);
@@ -2096,6 +2151,7 @@ async function initLandingPage() {
 }
 
 bindInlineTooltipFallbacks();
+bindResponsiveTablePageSize();
 bindTrackerPane();
 bindCommitmentSimulator();
 bindTrackerLinks();

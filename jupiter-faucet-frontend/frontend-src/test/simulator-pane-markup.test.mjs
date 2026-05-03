@@ -53,6 +53,16 @@ test('partners pane content has been removed', () => {
   assert.doesNotMatch(indexHtml, /WaterNeuron/);
 });
 
+test('transaction table pagination uses a responsive page size', () => {
+  assert.match(mainJs, /const TABLE_MIN_PAGE_SIZE = 6;/);
+  assert.match(mainJs, /function calculateResponsiveTablePageSize\(viewportHeight = window\.innerHeight\)/);
+  assert.match(mainJs, /Math\.min\(TABLE_MAX_PAGE_SIZE, Math\.max\(TABLE_MIN_PAGE_SIZE, estimatedRows\)\)/);
+  assert.match(mainJs, /const pageSize = currentTablePageSize\(\);[\s\S]*state\.items\.slice\(start, start \+ pageSize\)/);
+  assert.match(mainJs, /registeredPageSize: currentTablePageSize\(\)/);
+  assert.match(mainJs, /window\.addEventListener\('resize'/);
+  assert.doesNotMatch(mainJs, /const TABLE_PAGE_SIZE = 6;/);
+});
+
 test('About pane uses a single consolidated page', () => {
   const about = sectionMarkup('about');
   assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol/);
