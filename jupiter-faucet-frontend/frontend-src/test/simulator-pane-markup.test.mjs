@@ -183,14 +183,14 @@ test('simulator inputs are ordered by user control priority and use compact nume
   assert.doesNotMatch(simulator, /id="simulator-icp-commitment"[^>]*value="100\.0"/);
 });
 
-test('simulator input binding blocks negative values and excess decimal precision', () => {
+test('simulator input binding sanitizes invalid values without blocking native controls', () => {
   assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS/);
   assert.match(mainJs, /'simulator-icp-commitment': \{ min: 1, fractionDigits: 1 \}/);
   assert.match(mainJs, /'simulator-daily-burn': \{ min: 0, fractionDigits: 3 \}/);
   assert.match(mainJs, /'simulator-icp-price': \{ min: 0\.1, fractionDigits: 1 \}/);
   assert.match(mainJs, /'simulator-apy': \{ min: 0, fractionDigits: 1 \}/);
-  assert.match(mainJs, /beforeinput/);
-  assert.match(mainJs, /wouldAcceptSimulatorInput/);
+  assert.doesNotMatch(mainJs, /beforeinput/);
+  assert.doesNotMatch(mainJs, /wouldAcceptSimulatorInput/);
   assert.match(mainJs, /sanitiseSimulatorInput/);
 });
 

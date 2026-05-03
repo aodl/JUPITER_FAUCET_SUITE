@@ -1505,10 +1505,6 @@ function simulatorInputConstraint(input) {
   return input?.id ? SIMULATOR_INPUT_CONSTRAINTS[input.id] : null;
 }
 
-function simulatorDecimalPattern(fractionDigits) {
-  return new RegExp(`^\\d*(?:\\.\\d{0,${fractionDigits}})?$`);
-}
-
 function clampSimulatorInputValue(value, constraint) {
   if (!constraint) return value;
   const text = String(value ?? '').replace(/,/g, '').replace(/[^\d.]/g, '');
@@ -1524,16 +1520,6 @@ function clampSimulatorInputValue(value, constraint) {
     return constraint.min.toFixed(constraint.fractionDigits).replace(/\.?0+$/, '');
   }
   return normalised.startsWith('.') ? `0${normalised}` : normalised;
-}
-
-function wouldAcceptSimulatorInput(input, insertedText) {
-  const constraint = simulatorInputConstraint(input);
-  if (!constraint || insertedText === null) return true;
-  if (!/^[\d.]+$/.test(insertedText)) return false;
-  const start = input.selectionStart ?? input.value.length;
-  const end = input.selectionEnd ?? start;
-  const candidate = `${input.value.slice(0, start)}${insertedText}${input.value.slice(end)}`;
-  return simulatorDecimalPattern(constraint.fractionDigits).test(candidate);
 }
 
 function sanitiseSimulatorInput(input) {
@@ -1702,11 +1688,6 @@ function bindCommitmentSimulator() {
   });
   maybePrepopulateSimulatorMinimumCommitment();
   form.addEventListener('submit', (event) => event.preventDefault());
-  form.addEventListener('beforeinput', (event) => {
-    if (event.target instanceof HTMLInputElement && !wouldAcceptSimulatorInput(event.target, event.data)) {
-      event.preventDefault();
-    }
-  });
   form.addEventListener('input', (event) => {
     if (event.target instanceof HTMLInputElement) {
       sanitiseSimulatorInput(event.target);
