@@ -1384,7 +1384,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
     let disb_principal =
         Principal::from_text(canister_id("jupiter_disburser_dbg")?.trim())?;
     let staging_arg = format!(
-        "(record {{ owner = principal \"{}\"; subaccount = null }}, 125:nat64)",
+        "(record {{ owner = principal \"{}\"; subaccount = null }}, 500:nat64)",
         disb_principal.to_text()
     );
 
@@ -1417,7 +1417,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "Happy path: bonus split (3 transfers, 99/19/4 net)"), || {
+    run_scenario(outcomes, label("dfx", "disburser", "Happy path: bonus split (3 transfers, 399/94/4 net)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(false)")?;
 
@@ -1442,7 +1442,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
             .collect();
         amts.sort_unstable();
 
-        if amts != vec![4, 19, 99] {
+        if amts != vec![4, 94, 399] {
             bail!("unexpected transfer amounts: {:?}", amts);
         }
 

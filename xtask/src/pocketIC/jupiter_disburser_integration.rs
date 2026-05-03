@@ -708,16 +708,16 @@ struct ExpectedPlanned {
 #[derive(Clone, Debug)]
 struct ExpectedGrossSplit {
     base_e8s: u64,
-    bonus80_e8s: u64,
-    bonus20_e8s: u64,
+    bonus_recipient_1_e8s: u64,
+    bonus_recipient_2_e8s: u64,
 }
 
 fn expected_compute_gross_split(total_e8s: u64, age_seconds: u64) -> ExpectedGrossSplit {
     if total_e8s == 0 {
         return ExpectedGrossSplit {
             base_e8s: 0,
-            bonus80_e8s: 0,
-            bonus20_e8s: 0,
+            bonus_recipient_1_e8s: 0,
+            bonus_recipient_2_e8s: 0,
         };
     }
 
@@ -729,15 +729,15 @@ fn expected_compute_gross_split(total_e8s: u64, age_seconds: u64) -> ExpectedGro
     let base = ((total_e8s as u128) * den / num) as u64;
     let bonus = total_e8s.saturating_sub(base);
 
-    // 80/20, rounding toward 80 side (ceil)
-    let b80 = (((bonus as u128) * 80) + 99) / 100;
-    let b80 = b80 as u64;
-    let b20 = bonus.saturating_sub(b80);
+    // 95/5, rounding toward recipient 1 side (ceil).
+    let bonus1 = (((bonus as u128) * 95) + 99) / 100;
+    let bonus1 = bonus1 as u64;
+    let bonus2 = bonus.saturating_sub(bonus1);
 
     ExpectedGrossSplit {
         base_e8s: base,
-        bonus80_e8s: b80,
-        bonus20_e8s: b20,
+        bonus_recipient_1_e8s: bonus1,
+        bonus_recipient_2_e8s: bonus2,
     }
 }
 
@@ -764,8 +764,8 @@ fn expected_plan_payout_transfers(
     };
 
     push(normal_to, gross.base_e8s);
-    push(bonus1_to, gross.bonus80_e8s);
-    push(bonus2_to, gross.bonus20_e8s);
+    push(bonus1_to, gross.bonus_recipient_1_e8s);
+    push(bonus2_to, gross.bonus_recipient_2_e8s);
 
     (gross, out)
 }
@@ -2258,8 +2258,9 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let staging = Account { owner: disburser_canister, subaccount: None };
 
-    // total > 25*fee ensures even the 4% share is > fee at max bonus (0.04*total).
-    let staging_fund = 100 * fee_e8s;
+    // total > 100*fee ensures even the 5%-of-bonus share is > fee at max bonus
+    // (max bonus is 20% of total, and recipient 2 receives 5% of that bonus).
+    let staging_fund = 125 * fee_e8s;
 
     icrc1_transfer(
         &pic,
@@ -4342,7 +4343,7 @@ bonus1_net_e8s: u64,
         );
         if planned.len() != 3 {
             bail!(
-                "expected 3 transfers (normal+bonus80+bonus20) for staging_after={staging_after}, fee={fee_e8s}, age={age_used}; got {}",
+                "expected 3 transfers (normal+bonus1+bonus2) for staging_after={staging_after}, fee={fee_e8s}, age={age_used}; got {}",
                 planned.len()
             );
         }
@@ -4427,8 +4428,8 @@ bonus1_net_e8s: u64,
         Ok(Cycle {
             total_disbursed_e8s: staging_after,
             age_seconds_used: age_used,
-bonus_gross_e8s: gross.bonus80_e8s + gross.bonus20_e8s,
-bonus1_net_e8s: b1_delta,
+            bonus_gross_e8s: gross.bonus_recipient_1_e8s + gross.bonus_recipient_2_e8s,
+            bonus1_net_e8s: b1_delta,
             bonus2_net_e8s: b2_delta,
         })
     };
@@ -4643,7 +4644,7 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         &init.age_bonus_recipient_2,
     );
     if planned2.len() != 3 {
-        bail!("2y checkpoint: expected 3 transfers (normal+bonus80+bonus20), got {}", planned2.len());
+        bail!("2y checkpoint: expected 3 transfers (normal+bonus1+bonus2), got {}", planned2.len());
     }
 
     // Execute payout and verify exact on-ledger deltas.
@@ -4683,8 +4684,16 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
 
     // Exact split checks (gross shares).
     assert_eq_with_diff("2y base_gross", expected_base, gross2.base_e8s)?;
-    assert_eq_with_diff("2y bonus_gross_total", expected_bonus, gross2.bonus80_e8s + gross2.bonus20_e8s)?;
-    assert_eq_with_diff("2y total_gross", staging_after, gross2.base_e8s + gross2.bonus80_e8s + gross2.bonus20_e8s)?;
+    assert_eq_with_diff(
+        "2y bonus_gross_total",
+        expected_bonus,
+        gross2.bonus_recipient_1_e8s + gross2.bonus_recipient_2_e8s,
+    )?;
+    assert_eq_with_diff(
+        "2y total_gross",
+        staging_after,
+        gross2.base_e8s + gross2.bonus_recipient_1_e8s + gross2.bonus_recipient_2_e8s,
+    )?;
     // ----------------- Check clamp beyond 4 years -----------------
     // Rebuild some maturity for the second checkpoint. Keep the disburser stopped so long
     // reward/age advances cannot consume maturity before the explicit 5y checkpoint.
@@ -4750,7 +4759,10 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         &init.age_bonus_recipient_2,
     );
 
-    if gross5.base_e8s != gross4.base_e8s || gross5.bonus80_e8s != gross4.bonus80_e8s || gross5.bonus20_e8s != gross4.bonus20_e8s {
+    if gross5.base_e8s != gross4.base_e8s
+        || gross5.bonus_recipient_1_e8s != gross4.bonus_recipient_1_e8s
+        || gross5.bonus_recipient_2_e8s != gross4.bonus_recipient_2_e8s
+    {
         bail!(
             "expected age bonus clamp at 4y: gross@4y={:?}, gross@age_used({})={:?}",
             gross4,

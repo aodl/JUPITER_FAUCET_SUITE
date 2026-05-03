@@ -5,8 +5,8 @@
 It controls one NNS neuron, periodically disburses maturity as ICP, and routes that ICP according to a fixed three-recipient policy:
 
 - the **age-neutral base** payout goes to `jupiter-faucet`
-- **80% of the age bonus** goes to `jupiter-sns-rewards`
-- **20% of the age bonus** goes to the D-QUORUM neuron staking account
+- **95% of the age bonus** goes to `jupiter-sns-rewards`
+- **5% of the age bonus** goes to the D-QUORUM neuron staking account
 
 This canister is intentionally narrow in scope. It does not top up cycles directly and it does not expose a public production API.
 
@@ -113,10 +113,10 @@ Given a total staged ICP amount:
 
 - `base = floor(total / multiplier)`
 - `bonus = total - base`
-- `bonus80 = ceil(0.8 * bonus)`
-- `bonus20 = bonus - bonus80`
+- `bonus_recipient_1 = ceil(0.95 * bonus)`
+- `bonus_recipient_2 = bonus - bonus_recipient_1`
 
-That means the 80% side receives the rounding bias.
+That means the 95% side receives the rounding bias.
 
 ### Outgoing transfer memo format
 
@@ -203,9 +203,9 @@ Without a recorded successful transfer, the time-based rescue logic has no proof
 - `normal_recipient`
   - recipient of the age-neutral base payout
 - `age_bonus_recipient_1`
-  - recipient of the 80% age-bonus share
+  - recipient of the 95% age-bonus share
 - `age_bonus_recipient_2`
-  - recipient of the 20% age-bonus share
+  - recipient of the 5% age-bonus share
 
 The three configured recipients must be pairwise distinct. The runtime also rejects any recipient that equals the disburser staging account.
 

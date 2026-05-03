@@ -11,7 +11,7 @@ See the suite overview in [`../README.md`](../README.md).
 
 ## Current role in the live wiring
 
-Today this canister is the configured recipient for **80% of the disburser’s age-bonus ICP flow**.
+Today this canister is the configured recipient for **95% of the disburser’s age-bonus ICP flow**.
 
 Its main practical role right now is to reserve the production canister principal and its default ledger account so that reward-distribution logic can be added later without changing the live routing destination.
 

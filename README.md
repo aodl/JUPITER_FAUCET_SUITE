@@ -58,8 +58,8 @@ The live value-moving path is:
 3. In that same no-overlap case, the disburser then initiates `DisburseMaturity` for **100%** of available maturity to its own default ledger account.
 4. When that staged ICP is later paid out, it is split into:
    - the **age-neutral base** share for `jupiter-faucet`
-   - **80% of the age bonus** for `jupiter-sns-rewards`
-   - **20% of the age bonus** for the D-QUORUM neuron staking account
+   - **95% of the age bonus** for `jupiter-sns-rewards`
+   - **5% of the age bonus** for the D-QUORUM neuron staking account
 5. `jupiter-faucet` periodically snapshots:
    - its own payout-account ICP balance
    - the configured staking-account ICP balance

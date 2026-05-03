@@ -4,13 +4,13 @@ pub const SECS_PER_DAY: u64 = 86_400;
 pub const SECS_PER_YEAR: u64 = 365 * SECS_PER_DAY;
 pub const MAX_AGE_FOR_BONUS_SECS: u64 = 4 * SECS_PER_YEAR;
 
-pub const BONUS_RECIPIENT_1_PCT: u64 = 80;
+pub const BONUS_RECIPIENT_1_PCT: u64 = 95;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GrossSplit {
     pub base_e8s: u64,
-    pub bonus80_e8s: u64,
-    pub bonus20_e8s: u64,
+    pub bonus_recipient_1_e8s: u64,
+    pub bonus_recipient_2_e8s: u64,
 }
 
 pub fn age_multiplier_fraction(age_seconds: u64) -> (u128, u128) {
@@ -25,8 +25,8 @@ pub fn compute_gross_split(total_e8s: u64, age_seconds: u64) -> GrossSplit {
     if total_e8s == 0 {
         return GrossSplit {
             base_e8s: 0,
-            bonus80_e8s: 0,
-            bonus20_e8s: 0,
+            bonus_recipient_1_e8s: 0,
+            bonus_recipient_2_e8s: 0,
         };
     }
 
@@ -34,15 +34,15 @@ pub fn compute_gross_split(total_e8s: u64, age_seconds: u64) -> GrossSplit {
     let base = ((total_e8s as u128) * den / num) as u64;
     let bonus = total_e8s.saturating_sub(base);
 
-    // 80/20, rounding toward 80 side (ceil)
-    let b80 = (((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128) + 99) / 100;
-    let b80 = b80 as u64;
-    let b20 = bonus.saturating_sub(b80);
+    // 95/5, rounding toward recipient 1 side (ceil).
+    let bonus1 = (((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128) + 99) / 100;
+    let bonus1 = bonus1 as u64;
+    let bonus2 = bonus.saturating_sub(bonus1);
 
     GrossSplit {
         base_e8s: base,
-        bonus80_e8s: b80,
-        bonus20_e8s: b20,
+        bonus_recipient_1_e8s: bonus1,
+        bonus_recipient_2_e8s: bonus2,
     }
 }
 
@@ -98,8 +98,8 @@ pub fn plan_payout_transfers(
     };
 
     push(normal_to, gross.base_e8s);
-    push(bonus1_to, gross.bonus80_e8s);
-    push(bonus2_to, gross.bonus20_e8s);
+    push(bonus1_to, gross.bonus_recipient_1_e8s);
+    push(bonus2_to, gross.bonus_recipient_2_e8s);
 
     (gross, out)
 }
@@ -121,18 +121,18 @@ mod tests {
     fn gross_split_age0_bonus0() {
         let g = compute_gross_split(1000, 0);
         assert_eq!(g.base_e8s, 1000);
-        assert_eq!(g.bonus80_e8s, 0);
-        assert_eq!(g.bonus20_e8s, 0);
+        assert_eq!(g.bonus_recipient_1_e8s, 0);
+        assert_eq!(g.bonus_recipient_2_e8s, 0);
     }
 
     #[test]
-    fn gross_split_max_age_125_total() {
-        // multiplier 1.25 => base=100, bonus=25 => 80/20 => 20/5
-        let g = compute_gross_split(125, 4 * SECS_PER_YEAR);
-        assert_eq!(g.base_e8s, 100);
-        assert_eq!(g.bonus80_e8s, 20);
-        assert_eq!(g.bonus20_e8s, 5);
-        assert_eq!(g.base_e8s + g.bonus80_e8s + g.bonus20_e8s, 125);
+    fn gross_split_max_age_500_total() {
+        // multiplier 1.25 => base=400, bonus=100 => 95/5 => 95/5
+        let g = compute_gross_split(500, 4 * SECS_PER_YEAR);
+        assert_eq!(g.base_e8s, 400);
+        assert_eq!(g.bonus_recipient_1_e8s, 95);
+        assert_eq!(g.bonus_recipient_2_e8s, 5);
+        assert_eq!(g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s, 500);
     }
 
     #[test]
@@ -159,13 +159,12 @@ mod tests {
         let age = 4 * SECS_PER_YEAR;
         for total in 1u64..200 {
             let g = compute_gross_split(total, age);
-            assert_eq!(g.base_e8s + g.bonus80_e8s + g.bonus20_e8s, total);
+            assert_eq!(g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s, total);
 
             let bonus = total - g.base_e8s;
-            // b80 is ceil(0.8*bonus)
-            let expected_b80 = (((bonus as u128) * 80) + 99) / 100;
-            assert_eq!(g.bonus80_e8s, expected_b80 as u64);
-            assert_eq!(g.bonus20_e8s, bonus - g.bonus80_e8s);
+            let expected_bonus1 = (((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128) + 99) / 100;
+            assert_eq!(g.bonus_recipient_1_e8s, expected_bonus1 as u64);
+            assert_eq!(g.bonus_recipient_2_e8s, bonus - g.bonus_recipient_1_e8s);
         }
     }
 
@@ -202,7 +201,7 @@ mod tests {
     fn memo_unique_per_transfer_index() {
         let a = acct();
         let fee = 1;
-        let (_gross, plan) = plan_payout_transfers(7, 1000, 125, fee, 4 * SECS_PER_YEAR, &a, &a, &a);
+        let (_gross, plan) = plan_payout_transfers(7, 1000, 1000, fee, 4 * SECS_PER_YEAR, &a, &a, &a);
         assert_eq!(plan.len(), 3);
 
         let mut set = HashSet::new();
@@ -253,7 +252,7 @@ mod tests {
             for &total in &totals {
                 let g = compute_gross_split(total, age);
                 assert_eq!(
-                    g.base_e8s + g.bonus80_e8s + g.bonus20_e8s,
+                    g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s,
                     total,
                     "sum invariant failed for total={total}, age={age}"
                 );
@@ -298,8 +297,8 @@ mod tests {
         );
     
         assert_eq!(g1.base_e8s, g2.base_e8s);
-        assert_eq!(g1.bonus80_e8s, g2.bonus80_e8s);
-        assert_eq!(g1.bonus20_e8s, g2.bonus20_e8s);
+        assert_eq!(g1.bonus_recipient_1_e8s, g2.bonus_recipient_1_e8s);
+        assert_eq!(g1.bonus_recipient_2_e8s, g2.bonus_recipient_2_e8s);
     
         assert_eq!(p1.len(), p2.len());
         for (x, y) in p1.iter().zip(p2.iter()) {
@@ -360,7 +359,7 @@ mod tests {
                 "base drifted at age={age} total={total}"
             );
 
-            let bonus = g.bonus80_e8s + g.bonus20_e8s;
+            let bonus = g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s;
             assert!(
                 bonus >= prev_bonus,
                 "bonus should be monotone in age: prev={prev_bonus} now={bonus} age={age}"
@@ -369,4 +368,3 @@ mod tests {
         }
     }
 }
-
