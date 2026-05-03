@@ -216,7 +216,7 @@
       }));
     }
 
-    function closePanel() {
+    function closePanel({ syncHash = true, restoreFocus = true } = {}) {
       backdrop.classList.remove("is-open");
       document.body.classList.remove("nav-panel-open");
       activePanelKey = "";
@@ -230,13 +230,17 @@
         });
       });
 
-      clearPanelHash();
+      if (syncHash) {
+        clearPanelHash();
+      }
       updateNavbarVisibility();
       syncMetricsUi();
 
-      requestAnimationFrame(() => {
-        lastTriggerBtn?.focus?.();
-      });
+      if (restoreFocus) {
+        requestAnimationFrame(() => {
+          lastTriggerBtn?.focus?.();
+        });
+      }
     }
 
     function handleTriggerClick(btn) {
@@ -260,7 +264,7 @@
         evt.preventDefault();
         const key = btn.getAttribute("data-panel");
         if (key && window.location.hash !== `#${key}`) {
-          history.replaceState(null, "", `#${key}`);
+          history.pushState(null, "", `#${key}`);
         }
         handleTriggerClick(btn);
       });
@@ -305,7 +309,12 @@
 
     function applyHash(hash) {
       const { key, page } = panelTargetFromHash(hash);
-      if (!key) return;
+      if (!key) {
+        if (backdrop.classList.contains("is-open")) {
+          closePanel({ syncHash: false, restoreFocus: false });
+        }
+        return;
+      }
 
       const matchingTrigger = panelTriggers.find((btn) => btn.getAttribute("data-panel") === key);
       const matchingSection = sections.find((section) => section.getAttribute("data-panel") === key);
@@ -322,6 +331,7 @@
 
     applyHash(window.location.hash);
     window.addEventListener("hashchange", () => applyHash(window.location.hash));
+    window.addEventListener("popstate", () => applyHash(window.location.hash));
 
     let touchStartX = 0;
     let touchEndX = 0;

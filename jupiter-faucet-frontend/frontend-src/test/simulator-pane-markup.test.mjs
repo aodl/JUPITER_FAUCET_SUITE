@@ -295,6 +295,15 @@ test('metrics nav button closes an open pane before showing the metrics rail', (
   assert.match(navbarJs, /metricsMenuOpen = true;[\s\S]*?closePanel\(\);/);
 });
 
+test('pane fragment navigation participates in browser history', () => {
+  assert.match(navbarJs, /history\.pushState\(null, "", `#\$\{key\}`\);/);
+  assert.match(navbarJs, /window\.addEventListener\("popstate", \(\) => applyHash\(window\.location\.hash\)\);/);
+  assert.match(navbarJs, /if \(!key\) \{[\s\S]*closePanel\(\{ syncHash: false, restoreFocus: false \}\);/);
+  assert.match(navbarJs, /function closePanel\(\{ syncHash = true, restoreFocus = true \} = \{\}\)/);
+  assert.match(navbarJs, /if \(syncHash\) \{[\s\S]*clearPanelHash\(\);[\s\S]*\}/);
+  assert.doesNotMatch(navbarJs, /history\.replaceState\(null, "", `#\$\{key\}`\);/);
+});
+
 test('canister tracker defaults to all loaded history', () => {
   assert.match(mainJs, /const trackerState = \{[\s\S]*?range: 'all'/);
 });
