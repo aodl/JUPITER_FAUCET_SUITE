@@ -566,7 +566,7 @@
 .tracker-chart-wrapper {
   display: grid;
   gap: 14px;
-  margin-top: 16px;
+  margin: 16px 0 20px;
 }
 
 .tracker-chart-card {

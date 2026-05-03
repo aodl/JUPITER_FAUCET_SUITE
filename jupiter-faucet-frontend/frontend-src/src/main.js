@@ -711,31 +711,6 @@ function formatCommitmentTarget(item) {
   return 'invalid declared canister memo';
 }
 
-function commitmentOutcomeCategory(item) {
-  const category = item?.outcome_category;
-  if (category && !Array.isArray(category)) {
-    if ('QualifyingCommitment' in category) return 'QualifyingCommitment';
-    if ('UnderThresholdCommitment' in category) return 'UnderThresholdCommitment';
-    if ('InvalidTargetMemo' in category) return 'InvalidTargetMemo';
-  }
-  if (item?.counts_toward_faucet) return 'QualifyingCommitment';
-  const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
-  return canister ? 'UnderThresholdCommitment' : 'InvalidTargetMemo';
-}
-
-function formatCommitmentOutcome(item) {
-  switch (commitmentOutcomeCategory(item)) {
-    case 'QualifyingCommitment':
-      return 'Qualifying';
-    case 'UnderThresholdCommitment':
-      return 'Under threshold';
-    case 'InvalidTargetMemo':
-      return 'Invalid declared canister';
-    default:
-      return item?.counts_toward_faucet ? 'Qualifying' : 'Non-qualifying';
-  }
-}
-
 function transactionHref(item) {
   const txIndex = item?.tx_id;
   if (txIndex !== undefined && txIndex !== null) {
@@ -1003,10 +978,9 @@ function renderCommitmentsPane(data) {
         <td>${renderCommitmentTimestampCell(item)}</td>
         <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
         <td>${formatCommitmentTarget(item)}</td>
-        <td>${escapeHtml(formatCommitmentOutcome(item))}</td>
       </tr>`,
     paneEmptyMessage(data, 'recent', 'No commitments indexed yet.'),
-    4,
+    3,
   );
 }
 
@@ -1749,6 +1723,8 @@ function renderTrackerData(data, principalText) {
     : '';
   const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
   result.innerHTML = `
+    ${renderTrackerRangeControls()}
+    <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>
     <dl class="pane-detail-grid tracker-summary-grid">
       <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
       <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
@@ -1769,9 +1745,7 @@ function renderTrackerData(data, principalText) {
     ${commitmentError}
     ${cyclesStatusNote}
     ${cyclesError}
-    ${cmcError}
-    ${renderTrackerRangeControls()}
-    <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>`;
+    ${cmcError}`;
   renderTrackerCharts(visibleData, data);
 }
 

@@ -258,6 +258,29 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.match(navbarJs, /key === "metric-rewards"[\s\S]*key: "metric-stake", page: 2/);
 });
 
+test('Patron Commitments table omits redundant category column', () => {
+  const commitments = sectionMarkup('metric-commitments');
+  assert.match(commitments, /<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared canister<\/th>/);
+  assert.doesNotMatch(commitments, /<th>Category<\/th>/);
+  assert.match(commitments, /<td colspan="3" class="empty-cell">Loading…<\/td>/);
+  assert.doesNotMatch(mainJs, /formatCommitmentOutcome/);
+  assert.doesNotMatch(mainJs, /commitmentOutcomeCategory/);
+  assert.match(mainJs, /renderCommitmentsPane\(data\)[\s\S]*<td>\$\{formatCommitmentTarget\(item\)\}<\/td>[\s\S]*paneEmptyMessage\(data, 'recent', 'No commitments indexed yet\.'\),\s*3,/);
+});
+
+test('Tracker results render chart controls and graphs before explanatory text', () => {
+  const rangeControlsIndex = mainJs.indexOf('${renderTrackerRangeControls()}');
+  const chartWrapperIndex = mainJs.indexOf('<div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>');
+  const summaryGridIndex = mainJs.indexOf('<dl class="pane-detail-grid tracker-summary-grid">');
+  const showingNoteIndex = mainJs.indexOf('Showing ${escapeHtml(rangeLabel)} using');
+
+  assert.ok(rangeControlsIndex >= 0, 'missing tracker range controls render');
+  assert.ok(chartWrapperIndex > rangeControlsIndex, 'chart wrapper should render after range controls');
+  assert.ok(summaryGridIndex > chartWrapperIndex, 'summary text should render below charts');
+  assert.ok(showingNoteIndex > summaryGridIndex, 'explanatory text should render below summary');
+  assert.match(metricsCss, /\.tracker-chart-wrapper \{[\s\S]*margin: 16px 0 20px;/);
+});
+
 
 
 test('paged nav panel content keeps a stable panel height while preserving overflow scrolling', () => {
