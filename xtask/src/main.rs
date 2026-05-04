@@ -6,13 +6,14 @@ use sha2::{Digest, Sha224};
 use std::env;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
-const DFX_IDENTITY: &str = "xtask-dev";
+const LOCAL_IDENTITY: &str = "xtask-dev";
+const LOCAL_ENVIRONMENT: &str = "local";
 
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
@@ -99,35 +100,35 @@ enum TestComponent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TestScope {
     Unit,
-    DfxIntegration,
+    LocalIntegration,
     PocketicIntegration,
     All,
 }
 
 fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
     use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Test};
-    use TestScope::{All, DfxIntegration, PocketicIntegration, Unit};
+    use TestScope::{All, LocalIntegration, PocketicIntegration, Unit};
 
     match cmd {
         "disburser_unit" => Some((Disburser, Unit)),
-        "disburser_dfx_integration" => Some((Disburser, DfxIntegration)),
+        "disburser_local_integration" => Some((Disburser, LocalIntegration)),
         "disburser_pocketic_integration" => Some((Disburser, PocketicIntegration)),
         "disburser_all" => Some((Disburser, All)),
         "faucet_unit" => Some((Faucet, Unit)),
-        "faucet_dfx_integration" => Some((Faucet, DfxIntegration)),
+        "faucet_local_integration" => Some((Faucet, LocalIntegration)),
         "faucet_pocketic_integration" => Some((Faucet, PocketicIntegration)),
         "faucet_all" => Some((Faucet, All)),
         "historian_unit" => Some((Historian, Unit)),
-        "historian_dfx_integration" => Some((Historian, DfxIntegration)),
+        "historian_local_integration" => Some((Historian, LocalIntegration)),
         "historian_pocketic_integration" => Some((Historian, PocketicIntegration)),
         "historian_all" => Some((Historian, All)),
         "frontend_unit" => Some((Frontend, Unit)),
-        "frontend_dfx_integration" => Some((Frontend, DfxIntegration)),
+        "frontend_local_integration" => Some((Frontend, LocalIntegration)),
         "frontend_all" => Some((Frontend, All)),
         "e2e_all" => Some((E2e, All)),
         "e2e_pocketic_integration" => Some((E2e, PocketicIntegration)),
         "test_unit" => Some((Test, Unit)),
-        "test_dfx_integration" => Some((Test, DfxIntegration)),
+        "test_local_integration" => Some((Test, LocalIntegration)),
         "test_pocketic_integration" => Some((Test, PocketicIntegration)),
         "test_all" => Some((Test, All)),
         _ => None,
@@ -175,7 +176,7 @@ fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
 }
 
 
-fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
+fn is_suppressed_icp_success_stderr_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.is_empty()
         || trimmed.contains("] Cycles: ")
@@ -185,21 +186,21 @@ fn is_suppressed_dfx_success_stderr_line(line: &str) -> bool {
         || trimmed.starts_with("Reinstalled code for canister ")
 }
 
-fn run_dfx(args: &[&str]) -> Result<String> {
-    let mut cmd = Command::new("dfx");
+fn run_icp(args: &[&str]) -> Result<String> {
+    let root = repo_root();
+    let mut cmd = Command::new("icp");
 
-    // Always use a dedicated, non-interactive identity
-    cmd.args(["--identity", DFX_IDENTITY]);
+    cmd.args(["--project-root-override", &root]);
     cmd.args(args);
 
     let rendered_cmd = format!(
-        "dfx {}",
+        "icp {}",
         cmd.get_args()
             .map(|s| s.to_string_lossy())
             .collect::<Vec<_>>()
             .join(" ")
     );
-    let verbose = env::var("VERBOSE_DFX")
+    let verbose = env::var("VERBOSE_ICP")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     if verbose {
@@ -210,12 +211,12 @@ fn run_dfx(args: &[&str]) -> Result<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .context("failed to spawn dfx")?;
+        .context("failed to spawn icp")?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {
         for line in stderr.lines() {
-            if is_suppressed_dfx_success_stderr_line(line) {
+            if is_suppressed_icp_success_stderr_line(line) {
                 continue;
             }
             let trimmed = line.trim();
@@ -229,54 +230,137 @@ fn run_dfx(args: &[&str]) -> Result<String> {
 
     if !output.status.success() {
         eprintln!("▶ {rendered_cmd}");
-        bail!("dfx {:?} failed", args);
+        bail!("icp {:?} failed", args);
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn run_icp_with_identity(args: &[&str]) -> Result<String> {
+    let mut owned = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    owned.push("--identity".to_string());
+    owned.push(LOCAL_IDENTITY.to_string());
+    let refs = owned.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
+    run_icp(&refs)
+}
+
+fn run_cargo_build(package: &str, features: &[&str]) -> Result<()> {
+    let root = repo_root();
+    let mut args = vec![
+        "build".to_string(),
+        "--target".to_string(),
+        "wasm32-unknown-unknown".to_string(),
+        "--release".to_string(),
+        "-p".to_string(),
+        package.to_string(),
+        "--locked".to_string(),
+    ];
+    if !features.is_empty() {
+        args.push("--features".to_string());
+        args.push(features.join(","));
+    }
+
+    eprintln!("▶ cargo {}", args.join(" "));
+    let status = Command::new("cargo")
+        .args(&args)
+        .current_dir(&root)
+        .status()
+        .with_context(|| format!("failed to build {package}"))?;
+    if !status.success() {
+        bail!("cargo build failed for {package}");
+    }
+    Ok(())
+}
+
 fn candid_path_for_canister(canister: &str) -> Option<String> {
     let repo = repo_root();
     let relative = match canister {
-        "jupiter_disburser" => "jupiter-disburser/jupiter_disburser.did",
         "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => "jupiter-disburser/jupiter_disburser_debug.did",
-        "jupiter_faucet" => "jupiter-faucet/jupiter_faucet.did",
         "jupiter_faucet_dbg" | "jupiter_faucet_args_dbg" => "jupiter-faucet/jupiter_faucet_debug.did",
-        "jupiter_historian" => "jupiter-historian/jupiter_historian.did",
         "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => "jupiter-historian/jupiter_historian_debug.did",
-        "mock_icrc_ledger" => "mock-icrc-ledger/mock_icrc_ledger.did",
-        "mock_nns_governance" => "mock-nns-governance/mock_nns_governance.did",
-        "mock_icp_index" => "mock-icp-index/mock_icp_index.did",
-        "mock_cmc" => "mock-cmc/mock_cmc.did",
-        "mock_xrc" => "mock-xrc/mock_xrc.did",
-        "mock_blackhole" => "mock-blackhole/mock_blackhole.did",
-        "mock_sns_wasm" => "mock-sns-wasm/mock_sns_wasm.did",
-        "mock_sns_root" => "mock-sns-root/mock_sns_root.did",
+        "mock_icrc_ledger" => "xtask/src/mocks/mock_icrc_ledger/mock_icrc_ledger.did",
+        "mock_nns_governance" => "xtask/src/mocks/mock_nns_governance/mock_nns_governance.did",
+        "mock_icp_index" => "xtask/src/mocks/mock_icp_index/mock_icp_index.did",
+        "mock_cmc" => "xtask/src/mocks/mock_cmc/mock_cmc.did",
+        "mock_xrc" => "xtask/src/mocks/mock_xrc/mock_xrc.did",
+        "mock_blackhole" => "xtask/src/mocks/mock_blackhole/mock_blackhole.did",
+        "mock_sns_wasm" => "xtask/src/mocks/mock_sns_wasm/mock_sns_wasm.did",
+        "mock_sns_root" => "xtask/src/mocks/mock_sns_root/mock_sns_root.did",
         _ => return None,
     };
     let path = std::path::Path::new(&repo).join(relative).canonicalize().ok()?;
     Some(path.to_string_lossy().into_owned())
 }
 
+fn embed_candid_metadata(canister: &str) -> Result<()> {
+    let Some(candid) = candid_path_for_canister(canister) else {
+        return Ok(());
+    };
+    let wasm = wasm_path_for_canister(canister)?;
+    let output = format!("{wasm}.metadata");
+    let status = Command::new("ic-wasm")
+        .args([
+            wasm.as_str(),
+            "-o",
+            output.as_str(),
+            "metadata",
+            "candid:service",
+            "--file",
+            candid.as_str(),
+            "--visibility",
+            "public",
+        ])
+        .status()
+        .with_context(|| format!("failed to embed Candid metadata for {canister}"))?;
+    if !status.success() {
+        bail!("ic-wasm metadata failed for {canister}");
+    }
+    fs::rename(&output, &wasm)
+        .with_context(|| format!("failed to replace Wasm with metadata-enhanced output for {canister}"))?;
+    Ok(())
+}
+
+fn build_canister_wasm(canister: &str) -> Result<()> {
+    match canister {
+        "mock_icrc_ledger" => run_cargo_build("mock-icrc-ledger", &[]),
+        "mock_nns_governance" => run_cargo_build("mock-nns-governance", &[]),
+        "mock_icp_index" => run_cargo_build("mock-icp-index", &[]),
+        "mock_cmc" => run_cargo_build("mock-cmc", &[]),
+        "mock_xrc" => run_cargo_build("mock-xrc", &[]),
+        "mock_blackhole" => run_cargo_build("mock-blackhole", &[]),
+        "mock_sns_wasm" => run_cargo_build("mock-sns-wasm", &[]),
+        "mock_sns_root" => run_cargo_build("mock-sns-root", &[]),
+        "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => {
+            run_cargo_build("jupiter-disburser", &["debug_api"])
+        }
+        "jupiter_faucet_dbg" | "jupiter_faucet_args_dbg" => {
+            run_cargo_build("jupiter-faucet", &["debug_api"])
+        }
+        "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => {
+            run_cargo_build("jupiter-historian", &["debug_api"])
+        }
+        _ => bail!("no local build mapping configured for {canister}"),
+    }?;
+    embed_candid_metadata(canister)
+}
+
 fn call_raw<T>(canister: &str, method: &str, args: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de> + CandidType,
 {
-    let mut cmd: Vec<String> = vec![
+    let cmd: Vec<String> = vec![
         "canister".into(),
         "call".into(),
+        "--environment".into(),
+        LOCAL_ENVIRONMENT.into(),
         canister.into(),
         method.into(),
         args.into(),
         "--output".into(),
-        "raw".into(),
+        "hex".into(),
     ];
-    if let Some(candid) = candid_path_for_canister(canister) {
-        cmd.push("--candid".into());
-        cmd.push(candid);
-    }
     let refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
-    let out = run_dfx(&refs)?;
+    let out = run_icp_with_identity(&refs)?;
     let hex_str = out.trim().trim_start_matches("0x");
     let bytes = hex::decode(hex_str)?;
     Ok(decode_one(&bytes)?)
@@ -290,33 +374,23 @@ where
 }
 
 fn canister_id(name: &str) -> Result<String> {
-    let out = run_dfx(&["canister", "id", name])?;
+    let out = run_icp_with_identity(&["canister", "status", name, "--id-only", "--environment", LOCAL_ENVIRONMENT])?;
     Ok(out.trim().to_string())
 }
 
 fn local_replica_host() -> String {
-    if let Ok(host) = env::var("DFX_LOCAL_HOST") {
+    if let Ok(host) = env::var("ICP_LOCAL_HOST") {
         let trimmed = host.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();
         }
     }
 
-    match run_dfx(&["info", "webserver-port"]) {
-        Ok(port) => {
-            let port = port.trim();
-            if port.is_empty() {
-                "http://localhost:4943".to_string()
-            } else {
-                format!("http://localhost:{port}")
-            }
-        }
-        Err(_) => "http://localhost:4943".to_string(),
-    }
+    "http://localhost:4943".to_string()
 }
 
 fn principal_of_identity() -> Result<Principal> {
-    let p = run_dfx(&["identity", "get-principal"])?;
+    let p = run_icp(&["identity", "principal", "--identity", LOCAL_IDENTITY])?;
     Ok(Principal::from_text(p.trim())?)
 }
 
@@ -709,36 +783,38 @@ fn opt_nat64_to_candid(v: u64) -> String {
 
 fn ensure_identity() -> Result<()> {
     // If identity already exists, this returns OK.
-    let list = Command::new("dfx")
-        .args(["identity", "list"])
+    let list = Command::new("icp")
+        .args(["identity", "list", "--quiet"])
         .output()
-        .context("failed to run dfx identity list")?;
+        .context("failed to run icp identity list")?;
 
     if !list.status.success() {
-        bail!("dfx identity list failed");
+        bail!("icp identity list failed");
     }
 
     let stdout = String::from_utf8_lossy(&list.stdout);
     let exists = stdout
         .lines()
-        .any(|l| l.trim().trim_start_matches('*').trim() == DFX_IDENTITY);
+        .any(|l| l.trim().trim_start_matches('*').trim() == LOCAL_IDENTITY);
 
     if exists {
         return Ok(());
     }
 
-    eprintln!("▶ creating non-interactive dfx identity: {DFX_IDENTITY}");
+    eprintln!("▶ creating non-interactive icp identity: {LOCAL_IDENTITY}");
 
     // Create plaintext storage identity (no passphrase prompts).
-    let status = Command::new("dfx")
-        .args(["identity", "new", DFX_IDENTITY, "--storage-mode", "plaintext"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .context("failed to run dfx identity new")?;
+    let output = Command::new("icp")
+        .args(["identity", "new", LOCAL_IDENTITY, "--storage", "plaintext"])
+        .output()
+        .context("failed to run icp identity new")?;
 
-    if !status.success() {
-        bail!("dfx identity new {DFX_IDENTITY} failed");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim_end());
+        }
+        bail!("icp identity new {LOCAL_IDENTITY} failed");
     }
 
     Ok(())
@@ -748,34 +824,63 @@ fn cmd_setup_common() -> Result<()> {
     ensure_identity()?;
 
     // Stop any running local replica (ignore errors), then start clean.
-    let _ = run_dfx(&["stop"]);
-    // Start replica quietly and send background replica logs to a file so they
-    // do not pollute the scenario-by-scenario test output.
-    {
-        let repo = repo_root();
-        let dfx_dir = std::path::Path::new(&repo).join(".dfx");
-        fs::create_dir_all(&dfx_dir).context("failed to create .dfx directory for replica logs")?;
-        let replica_log_path = dfx_dir.join("xtask-replica.log");
-        let replica_log = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&replica_log_path)
-            .with_context(|| format!("failed to open replica log at {}", replica_log_path.display()))?;
-        let replica_log_err = replica_log
-            .try_clone()
-            .context("failed to clone replica log file handle")?;
-
-        let mut start = Command::new("dfx");
-        start.args(["start", "--background", "--clean"]);
-        start.stdout(Stdio::from(replica_log));
-        start.stderr(Stdio::from(replica_log_err));
-        let status = start.status().context("dfx start failed")?;
-        if !status.success() {
-            bail!("dfx start failed");
-        }
+    let _ = run_icp(&["network", "stop", LOCAL_ENVIRONMENT]);
+    let cache_dir = std::path::Path::new(&repo_root()).join(".icp").join("cache");
+    if cache_dir.exists() {
+        fs::remove_dir_all(&cache_dir)
+            .with_context(|| format!("failed to clear {}", cache_dir.display()))?;
     }
+    run_icp(&["network", "start", "-d", LOCAL_ENVIRONMENT])
+        .context("icp network start failed")?;
+    run_icp(&["network", "ping", "--wait-healthy", LOCAL_ENVIRONMENT])?;
 
+    Ok(())
+}
+
+fn deploy_local_canister(canister: &str, args: Option<&str>) -> Result<()> {
+    build_canister_wasm(canister)?;
+    let wasm = wasm_path_for_canister(canister)?;
+    run_icp_with_identity(&[
+        "canister",
+        "create",
+        "--environment",
+        LOCAL_ENVIRONMENT,
+        canister,
+        "--quiet",
+    ])?;
+    let mut install = vec![
+        "canister",
+        "install",
+        "--environment",
+        LOCAL_ENVIRONMENT,
+        canister,
+        "--wasm",
+        wasm.as_str(),
+        "--mode",
+        "reinstall",
+        "--yes",
+    ];
+    if let Some(args) = args {
+        install.push("--args");
+        install.push(args);
+    }
+    run_icp_with_identity(&install)?;
+    Ok(())
+}
+
+fn add_self_controller(canister: &str) -> Result<()> {
+    let canister_id = canister_id(canister)?;
+    run_icp_with_identity(&[
+        "canister",
+        "settings",
+        "update",
+        "--environment",
+        LOCAL_ENVIRONMENT,
+        canister,
+        "--add-controller",
+        canister_id.trim(),
+        "--force",
+    ])?;
     Ok(())
 }
 
@@ -847,12 +952,12 @@ fn expected_mainnet_staking_account() -> Account {
     }
 }
 
-fn cmd_setup_disburser_dfx() -> Result<()> {
+fn cmd_setup_disburser_local() -> Result<()> {
     cmd_setup_common()?;
 
-    run_dfx(&["deploy", "mock_icrc_ledger"])?;
-    run_dfx(&["deploy", "mock_nns_governance"])?;
-    run_dfx(&["deploy", "mock_blackhole"])?;
+    deploy_local_canister("mock_icrc_ledger", None)?;
+    deploy_local_canister("mock_nns_governance", None)?;
+    deploy_local_canister("mock_blackhole", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -884,27 +989,19 @@ fn cmd_setup_disburser_dfx() -> Result<()> {
         r3 = r3.to_text(),
     );
 
-    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &args])?;
-
-    let disb_id = canister_id("jupiter_disburser_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_disburser_dbg",
-        "--add-controller",
-        disb_id.trim(),
-    ])?;
+    deploy_local_canister("jupiter_disburser_dbg", Some(&args))?;
+    add_self_controller("jupiter_disburser_dbg")?;
 
     Ok(())
 }
 
-fn cmd_setup_faucet_dfx() -> Result<()> {
+fn cmd_setup_faucet_local() -> Result<()> {
     cmd_setup_common()?;
 
-    run_dfx(&["deploy", "mock_icrc_ledger"])?;
-    run_dfx(&["deploy", "mock_icp_index"])?;
-    run_dfx(&["deploy", "mock_cmc"])?;
-    run_dfx(&["deploy", "mock_blackhole"])?;
+    deploy_local_canister("mock_icrc_ledger", None)?;
+    deploy_local_canister("mock_icp_index", None)?;
+    deploy_local_canister("mock_cmc", None)?;
+    deploy_local_canister("mock_blackhole", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let index_id = canister_id("mock_icp_index")?;
@@ -938,31 +1035,23 @@ fn cmd_setup_faucet_dfx() -> Result<()> {
         blackhole_id = blackhole_id.trim(),
     );
 
-    run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
-
-    let faucet_id = canister_id("jupiter_faucet_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_faucet_dbg",
-        "--add-controller",
-        faucet_id.trim(),
-    ])?;
+    deploy_local_canister("jupiter_faucet_dbg", Some(&faucet_args))?;
+    add_self_controller("jupiter_faucet_dbg")?;
 
     Ok(())
 }
 
-fn cmd_setup_historian_dfx() -> Result<()> {
+fn cmd_setup_historian_local() -> Result<()> {
     cmd_setup_common()?;
 
-    run_dfx(&["deploy", "mock_icrc_ledger"])?;
-    run_dfx(&["deploy", "mock_nns_governance"])?;
-    run_dfx(&["deploy", "mock_icp_index"])?;
-    run_dfx(&["deploy", "mock_cmc"])?;
-    run_dfx(&["deploy", "mock_xrc"])?;
-    run_dfx(&["deploy", "mock_blackhole"])?;
-    run_dfx(&["deploy", "mock_sns_wasm"])?;
-    run_dfx(&["deploy", "mock_sns_root"])?;
+    deploy_local_canister("mock_icrc_ledger", None)?;
+    deploy_local_canister("mock_nns_governance", None)?;
+    deploy_local_canister("mock_icp_index", None)?;
+    deploy_local_canister("mock_cmc", None)?;
+    deploy_local_canister("mock_xrc", None)?;
+    deploy_local_canister("mock_blackhole", None)?;
+    deploy_local_canister("mock_sns_wasm", None)?;
+    deploy_local_canister("mock_sns_root", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -1001,16 +1090,9 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         blackhole_id = blackhole_id.trim(),
     );
 
-    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &disburser_args])?;
-
+    deploy_local_canister("jupiter_disburser_dbg", Some(&disburser_args))?;
+    add_self_controller("jupiter_disburser_dbg")?;
     let disb_id = canister_id("jupiter_disburser_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_disburser_dbg",
-        "--add-controller",
-        disb_id.trim(),
-    ])?;
 
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
@@ -1039,16 +1121,9 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
-    run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
-
+    deploy_local_canister("jupiter_faucet_dbg", Some(&faucet_args))?;
+    add_self_controller("jupiter_faucet_dbg")?;
     let faucet_id = canister_id("jupiter_faucet_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_faucet_dbg",
-        "--add-controller",
-        faucet_id.trim(),
-    ])?;
 
     let faucet_accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
     let output_source_owner = Principal::from_text(disb_id.trim())?;
@@ -1097,16 +1172,8 @@ fn cmd_setup_historian_dfx() -> Result<()> {
         sns_wasm_id = sns_wasm_id.trim(),
         xrc_id = xrc_id.trim(),
     );
-    run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
-
-    let historian_id = canister_id("jupiter_historian_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_historian_dbg",
-        "--add-controller",
-        historian_id.trim(),
-    ])?;
+    deploy_local_canister("jupiter_historian_dbg", Some(&historian_args))?;
+    add_self_controller("jupiter_historian_dbg")?;
 
     Ok(())
 }
@@ -1114,14 +1181,14 @@ fn cmd_setup_historian_dfx() -> Result<()> {
 fn cmd_setup() -> Result<()> {
     cmd_setup_common()?;
 
-    run_dfx(&["deploy", "mock_icrc_ledger"])?;
-    run_dfx(&["deploy", "mock_nns_governance"])?;
-    run_dfx(&["deploy", "mock_icp_index"])?;
-    run_dfx(&["deploy", "mock_cmc"])?;
-    run_dfx(&["deploy", "mock_xrc"])?;
-    run_dfx(&["deploy", "mock_blackhole"])?;
-    run_dfx(&["deploy", "mock_sns_wasm"])?;
-    run_dfx(&["deploy", "mock_sns_root"])?;
+    deploy_local_canister("mock_icrc_ledger", None)?;
+    deploy_local_canister("mock_nns_governance", None)?;
+    deploy_local_canister("mock_icp_index", None)?;
+    deploy_local_canister("mock_cmc", None)?;
+    deploy_local_canister("mock_xrc", None)?;
+    deploy_local_canister("mock_blackhole", None)?;
+    deploy_local_canister("mock_sns_wasm", None)?;
+    deploy_local_canister("mock_sns_root", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -1160,16 +1227,9 @@ fn cmd_setup() -> Result<()> {
         blackhole_id = blackhole_id.trim(),
     );
 
-    run_dfx(&["deploy", "jupiter_disburser_dbg", "--argument", &args])?;
-
+    deploy_local_canister("jupiter_disburser_dbg", Some(&args))?;
+    add_self_controller("jupiter_disburser_dbg")?;
     let disb_id = canister_id("jupiter_disburser_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_disburser_dbg",
-        "--add-controller",
-        disb_id.trim(),
-    ])?;
 
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
@@ -1199,16 +1259,9 @@ fn cmd_setup() -> Result<()> {
         blackhole_id = blackhole_id.trim(),
     );
 
-    run_dfx(&["deploy", "jupiter_faucet_dbg", "--argument", &faucet_args])?;
-
+    deploy_local_canister("jupiter_faucet_dbg", Some(&faucet_args))?;
+    add_self_controller("jupiter_faucet_dbg")?;
     let faucet_id = canister_id("jupiter_faucet_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_faucet_dbg",
-        "--add-controller",
-        faucet_id.trim(),
-    ])?;
 
     let faucet_accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
     let output_source_owner = Principal::from_text(disb_id.trim())?;
@@ -1257,35 +1310,39 @@ fn cmd_setup() -> Result<()> {
         sns_wasm_id = sns_wasm_id.trim(),
         xrc_id = xrc_id.trim(),
     );
-    run_dfx(&["deploy", "jupiter_historian_dbg", "--argument", &historian_args])?;
-
-    let historian_id = canister_id("jupiter_historian_dbg")?;
-    run_dfx(&[
-        "canister",
-        "update-settings",
-        "jupiter_historian_dbg",
-        "--add-controller",
-        historian_id.trim(),
-    ])?;
+    deploy_local_canister("jupiter_historian_dbg", Some(&historian_args))?;
+    add_self_controller("jupiter_historian_dbg")?;
 
     Ok(())
 }
 
 fn cmd_teardown() -> Result<()> {
-    let _ = run_dfx(&["stop"])?;
+    let _ = run_icp(&["network", "stop", LOCAL_ENVIRONMENT])?;
     Ok(())
 }
 
 fn create_canister(canister: &str) -> Result<()> {
-    run_dfx(&["canister", "create", canister])?;
+    build_canister_wasm(canister)?;
+    run_icp_with_identity(&["canister", "create", "--environment", LOCAL_ENVIRONMENT, canister, "--quiet"])?;
     Ok(())
 }
 
 fn wasm_path_for_canister(canister: &str) -> Result<String> {
     let repo = repo_root();
     let relative = match canister {
+        "mock_icrc_ledger" => "target/wasm32-unknown-unknown/release/mock_icrc_ledger.wasm",
+        "mock_nns_governance" => "target/wasm32-unknown-unknown/release/mock_nns_governance.wasm",
+        "mock_icp_index" => "target/wasm32-unknown-unknown/release/mock_icp_index.wasm",
+        "mock_cmc" => "target/wasm32-unknown-unknown/release/mock_cmc.wasm",
+        "mock_xrc" => "target/wasm32-unknown-unknown/release/mock_xrc.wasm",
+        "mock_blackhole" => "target/wasm32-unknown-unknown/release/mock_blackhole.wasm",
+        "mock_sns_wasm" => "target/wasm32-unknown-unknown/release/mock_sns_wasm.wasm",
+        "mock_sns_root" => "target/wasm32-unknown-unknown/release/mock_sns_root.wasm",
+        "jupiter_disburser_dbg" |
         "jupiter_disburser_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_disburser.wasm",
+        "jupiter_faucet_dbg" |
         "jupiter_faucet_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_faucet.wasm",
+        "jupiter_historian_dbg" |
         "jupiter_historian_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_historian.wasm",
         _ => bail!("no explicit wasm path configured for {canister}"),
     };
@@ -1309,16 +1366,19 @@ fn install_with_argument_file(canister: &str, relative_path: &str) -> Result<()>
         .to_str()
         .context("argument file path is not valid UTF-8")?;
     let wasm = wasm_path_for_canister(canister)?;
-    run_dfx(&[
+    run_icp_with_identity(&[
         "canister",
         "install",
+        "--environment",
+        LOCAL_ENVIRONMENT,
         canister,
         "--wasm",
         &wasm,
-        "--argument-type",
-        "idl",
-        "--argument-file",
+        "--args-format",
+        "candid",
+        "--args-file",
         arg_file,
+        "--yes",
     ])?;
     Ok(())
 }
@@ -1328,7 +1388,7 @@ fn get_canister_controllers(canister: &str) -> Result<BTreeSet<String>> {
     // Example output typically contains a line like:
     //   Controllers: <principal1> <principal2>
     // We parse that line and return a deterministic set of principal text values.
-    let out = run_dfx(&["canister", "info", canister])?;
+    let out = run_icp_with_identity(&["canister", "status", "--environment", LOCAL_ENVIRONMENT, canister])?;
 
     for line in out.lines() {
         let l = line.trim();
@@ -1356,7 +1416,7 @@ fn get_canister_controllers(canister: &str) -> Result<BTreeSet<String>> {
         }
     }
 
-    bail!("could not find Controllers line in `dfx canister info {canister}` output");
+    bail!("could not find Controllers line in `icp canister status {canister}` output");
 }
 
 fn assert_controllers_eq(canister: &str, actual: &BTreeSet<String>, expected: &BTreeSet<String>) -> Result<()> {
@@ -1369,7 +1429,7 @@ fn assert_controllers_eq(canister: &str, actual: &BTreeSet<String>, expected: &B
     );
 }
 
-fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
     // Shared time base for scenarios that need it.
     let now_secs = (std::time::SystemTime::now()
@@ -1389,7 +1449,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
     );
 
     // Always start from a known governance age.
-    run_scenario(outcomes, label("dfx", "disburser", "Setup: reset mocks + set aging_since"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Setup: reset mocks + set aging_since"), || {
         let _: () = call_raw_noargs("mock_icrc_ledger", "debug_reset")?;
         let _: () = call_raw_noargs("mock_nns_governance", "debug_reset")?;
         let _: () = call_raw(
@@ -1400,7 +1460,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "In-flight skip skips payout and disbursement"), || {
+    run_scenario(outcomes, label("icp", "disburser", "In-flight skip skips payout and disbursement"), || {
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(true)")?;
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &staging_arg)?;
         let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_main_tick")?;
@@ -1417,7 +1477,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "Happy path: bonus split (3 transfers, 399/94/4 net)"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Happy path: bonus split (3 transfers, 399/94/4 net)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(false)")?;
 
@@ -1454,7 +1514,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "Retry: TemporarilyUnavailable preserves plan and later succeeds"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Retry: TemporarilyUnavailable preserves plan and later succeeds"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(false)")?;
@@ -1491,7 +1551,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "BadFee: clears plan then rebuilds with new fee"), || {
+    run_scenario(outcomes, label("icp", "disburser", "BadFee: clears plan then rebuilds with new fee"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(false)")?;
@@ -1526,7 +1586,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "checked-in mainnet install args round-trip into config"), || {
+    run_scenario(outcomes, label("icp", "disburser", "checked-in mainnet install args round-trip into config"), || {
         create_canister("jupiter_disburser_args_dbg")?;
         install_with_argument_file("jupiter_disburser_args_dbg", "jupiter-disburser/mainnet-install-args.did")?;
         let cfg: DisburserDebugConfig = call_raw_noargs("jupiter_disburser_args_dbg", "debug_config")?;
@@ -1553,7 +1613,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 
     run_scenario(
         outcomes,
-        label("dfx", "disburser", "Rescue controllers invariants (broken→blackhole+rescue+self, healthy→blackhole+self)"),
+        label("icp", "disburser", "Rescue controllers invariants (broken→blackhole+rescue+self, healthy→blackhole+self)"),
         || {
             // Determine expected principals from reality (not mocks).
             let self_id = Principal::from_text(canister_id("jupiter_disburser_dbg")?.trim())?;
@@ -1596,7 +1656,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         },
     );
 
-    run_scenario(outcomes, label("dfx", "disburser", "Rescue healthy no-op (controllers remain blackhole+self)"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Rescue healthy no-op (controllers remain blackhole+self)"), || {
         let self_id = Principal::from_text(canister_id("jupiter_disburser_dbg")?.trim())?;
         let self_txt = self_id.to_text();
         let blackhole_txt = canister_id("mock_blackhole")?.trim().to_string();
@@ -1621,7 +1681,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "Rescue is not armed before first successful payout"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Rescue is not armed before first successful payout"), || {
         let before = get_canister_controllers("jupiter_disburser_dbg")?;
 
         let _: () = call_raw(
@@ -1642,7 +1702,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "Plan persistence: present after failure, cleared after retry success"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Plan persistence: present after failure, cleared after retry success"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(false)")?;
@@ -1686,7 +1746,7 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "disburser", "Dust stays in staging when below fee (no transfers, no plan)"), || {
+    run_scenario(outcomes, label("icp", "disburser", "Dust stays in staging when below fee (no transfers, no plan)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_reset", "()")?;
         let _: () = call_raw("mock_nns_governance", "debug_set_in_flight", "(false)")?;
@@ -1736,10 +1796,10 @@ fn run_dfx_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
     Ok(())
 }
 
-fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
 
-    run_scenario(outcomes, label("dfx", "faucet", "same beneficiary commitments stay separate (no aggregation)"), || {
+    run_scenario(outcomes, label("icp", "faucet", "same beneficiary commitments stay separate (no aggregation)"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -1783,7 +1843,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "every new payout job rescans full history from the beginning"), || {
+    run_scenario(outcomes, label("icp", "faucet", "every new payout job rescans full history from the beginning"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -1834,7 +1894,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "page-boundary scan skips bad/small entries and still finds late eligible tx"), || {
+    run_scenario(outcomes, label("icp", "faucet", "page-boundary scan skips bad/small entries and still finds late eligible tx"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -1905,7 +1965,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "notify retry completes inline without duplicate transfer"), || {
+    run_scenario(outcomes, label("icp", "faucet", "notify retry completes inline without duplicate transfer"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -1954,7 +2014,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "multiple beneficiaries are processed independently"), || {
+    run_scenario(outcomes, label("icp", "faucet", "multiple beneficiaries are processed independently"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2005,7 +2065,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "empty history returns payout remainder to self"), || {
+    run_scenario(outcomes, label("icp", "faucet", "empty history returns payout remainder to self"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2044,7 +2104,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "zero payout pot produces no work"), || {
+    run_scenario(outcomes, label("icp", "faucet", "zero payout pot produces no work"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2080,7 +2140,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "payout pot at or below fee produces no work"), || {
+    run_scenario(outcomes, label("icp", "faucet", "payout pot at or below fee produces no work"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2116,7 +2176,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "tiny computed shares are skipped and payout falls back to self"), || {
+    run_scenario(outcomes, label("icp", "faucet", "tiny computed shares are skipped and payout falls back to self"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2159,7 +2219,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "temporary pre-transfer ledger failure is retried inline without blocking the job"), || {
+    run_scenario(outcomes, label("icp", "faucet", "temporary pre-transfer ledger failure is retried inline without blocking the job"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2204,7 +2264,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "duplicate ledger result reuses prior block index and still notifies"), || {
+    run_scenario(outcomes, label("icp", "faucet", "duplicate ledger result reuses prior block index and still notifies"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2254,7 +2314,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "CMC Processing response is retried without duplicate transfer"), || {
+    run_scenario(outcomes, label("icp", "faucet", "CMC Processing response is retried without duplicate transfer"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2304,7 +2364,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     });
 
 
-    run_scenario(outcomes, label("dfx", "faucet", "terminal CMC responses are retried safely without duplicate transfer"), || {
+    run_scenario(outcomes, label("icp", "faucet", "terminal CMC responses are retried safely without duplicate transfer"), || {
         for (label, script) in [
             (
                 "Refunded",
@@ -2364,7 +2424,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "deterministic pre-transfer ledger errors are skipped without blocking the job"), || {
+    run_scenario(outcomes, label("icp", "faucet", "deterministic pre-transfer ledger errors are skipped without blocking the job"), || {
         for (label, err_arg) in [
             ("TooOld", "(opt variant { TooOld })"),
             ("CreatedInFuture", "(opt variant { CreatedInFuture = record { ledger_time = 123:nat64 } })"),
@@ -2422,7 +2482,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "checked-in mainnet install args round-trip into config"), || {
+    run_scenario(outcomes, label("icp", "faucet", "checked-in mainnet install args round-trip into config"), || {
         create_canister("jupiter_faucet_args_dbg")?;
         install_with_argument_file("jupiter_faucet_args_dbg", "jupiter-faucet/mainnet-install-args.did")?;
         let cfg: FaucetDebugConfig = call_raw_noargs("jupiter_faucet_args_dbg", "debug_config")?;
@@ -2445,7 +2505,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "rescue: before first successful top-up it stays on current controllers"), || {
+    run_scenario(outcomes, label("icp", "faucet", "rescue: before first successful top-up it stays on current controllers"), || {
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
         let _: () = call_raw("jupiter_faucet_dbg", "debug_set_blackhole_armed", "(opt true)")?;
         let _: () = call_raw("jupiter_faucet_dbg", "debug_set_last_successful_transfer_ts", "(null)")?;
@@ -2460,7 +2520,7 @@ fn run_dfx_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "faucet", "rescue: broken path adds lifeline alongside blackhole+self and healthy path recovers to blackhole+self"), || {
+    run_scenario(outcomes, label("icp", "faucet", "rescue: broken path adds lifeline alongside blackhole+self and healthy path recovers to blackhole+self"), || {
         let faucet_id = Principal::from_text(canister_id("jupiter_faucet_dbg")?.trim())?;
         let rescue = Principal::from_text(canister_id("mock_cmc")?.trim())?;
         let blackhole = canister_id("mock_blackhole")?.trim().to_string();
@@ -2542,8 +2602,8 @@ fn reset_historian_local_replica_state() -> Result<()> {
     Ok(())
 }
 
-fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
-    run_scenario(outcomes, label("dfx", "frontend", "dashboard loader matches local replica fixture"), || {
+fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_scenario(outcomes, label("icp", "frontend", "dashboard loader matches local replica fixture"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -2695,10 +2755,10 @@ fn run_dfx_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
     Ok(())
 }
 
-fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
-    run_scenario(outcomes, label("dfx", "historian", "caches ICP/XDR rate and protects XRC cycles"), || {
+    run_scenario(outcomes, label("icp", "historian", "caches ICP/XDR rate and protects XRC cycles"), || {
         reset_historian_local_replica_state()?;
         let _: () = call_raw("mock_xrc", "debug_set_rate", "(123456:nat64, 4:nat32, 1700000001:nat64)")?;
 
@@ -2774,7 +2834,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "indexes memo-derived commitment exactly once"), || {
+    run_scenario(outcomes, label("icp", "historian", "indexes memo-derived commitment exactly once"), || {
         reset_historian_local_replica_state()?;
         let listed_before: HistorianListCanistersResponse = call_raw(
             "jupiter_historian_dbg",
@@ -2841,7 +2901,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "weekly sweep records blackhole cycles"), || {
+    run_scenario(outcomes, label("icp", "historian", "weekly sweep records blackhole cycles"), || {
         reset_historian_local_replica_state()?;
         let staking = faucet_staking_account();
         let staking_id = account_identifier_text(&staking);
@@ -2889,7 +2949,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "SNS discovery adds summary-tracked canisters"), || {
+    run_scenario(outcomes, label("icp", "historian", "SNS discovery adds summary-tracked canisters"), || {
         reset_historian_local_replica_state()?;
         let sns_root = Principal::from_text(canister_id("mock_sns_root")?.trim())?;
         let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
@@ -2917,7 +2977,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader matches local replica fixture"), || {
+    run_scenario(outcomes, label("icp", "historian", "frontend dashboard loader matches local replica fixture"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -3066,7 +3126,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader keeps output and rewards at zero for commitment-only fixtures"), || {
+    run_scenario(outcomes, label("icp", "historian", "frontend dashboard loader keeps output and rewards at zero for commitment-only fixtures"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -3192,7 +3252,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader preserves zero output, rewards, and qualifying counts for non-qualifying memo fixture"), || {
+    run_scenario(outcomes, label("icp", "historian", "frontend dashboard loader preserves zero output, rewards, and qualifying counts for non-qualifying memo fixture"), || {
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
@@ -3336,7 +3396,7 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
         Ok(())
     });
 
-    run_scenario(outcomes, label("dfx", "historian", "frontend dashboard loader excludes SNS-only canisters from registered totals"), || {
+    run_scenario(outcomes, label("icp", "historian", "frontend dashboard loader excludes SNS-only canisters from registered totals"), || {
         reset_historian_local_replica_state()?;
 
         let sns_root = Principal::from_text(canister_id("mock_sns_root")?.trim())?;
@@ -3448,8 +3508,8 @@ fn run_dfx_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()
 
     Ok(())
 }
-fn run_dfx_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
-    run_scenario(outcomes, label("dfx", "historian", "checked-in mainnet install args round-trip into config"), || {
+fn run_local_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_scenario(outcomes, label("icp", "historian", "checked-in mainnet install args round-trip into config"), || {
         create_canister("jupiter_historian_args_dbg")?;
         install_with_argument_file("jupiter_historian_args_dbg", "jupiter-historian/mainnet-install-args.did")?;
         let cfg: HistorianDebugConfig = call_raw_noargs("jupiter_historian_args_dbg", "debug_config")?;
@@ -3479,12 +3539,12 @@ fn run_dfx_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutcom
 }
 
 
-fn run_dfx_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
-    run_dfx_disburser_scenarios(outcomes)?;
-    run_dfx_faucet_scenarios(outcomes)?;
-    run_dfx_historian_scenarios(outcomes)?;
-    run_dfx_frontend_scenarios(outcomes)?;
-    run_dfx_historian_config_roundtrip_scenario(outcomes)?;
+fn run_local_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_local_disburser_scenarios(outcomes)?;
+    run_local_faucet_scenarios(outcomes)?;
+    run_local_historian_scenarios(outcomes)?;
+    run_local_frontend_scenarios(outcomes)?;
+    run_local_historian_config_roundtrip_scenario(outcomes)?;
     Ok(())
 }
 
@@ -3633,9 +3693,9 @@ fn run_frontend_unit_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     )
 }
 
-fn run_frontend_dfx_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+fn run_frontend_local_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     ensure_frontend_node_modules()?;
-    run_dfx_frontend_scenarios(outcomes)
+    run_local_frontend_scenarios(outcomes)
 }
 
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
@@ -3725,17 +3785,17 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
     Ok(())
 }
 
-fn run_dfx_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestComponent) -> Result<()> {
+fn run_local_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestComponent) -> Result<()> {
     match component {
-        TestComponent::Test => run_dfx_scenarios(outcomes)?,
-        TestComponent::Disburser => run_dfx_disburser_scenarios(outcomes)?,
-        TestComponent::Faucet => run_dfx_faucet_scenarios(outcomes)?,
+        TestComponent::Test => run_local_scenarios(outcomes)?,
+        TestComponent::Disburser => run_local_disburser_scenarios(outcomes)?,
+        TestComponent::Faucet => run_local_faucet_scenarios(outcomes)?,
         TestComponent::Historian => {
-            run_dfx_historian_scenarios(outcomes)?;
-            run_dfx_historian_config_roundtrip_scenario(outcomes)?;
+            run_local_historian_scenarios(outcomes)?;
+            run_local_historian_config_roundtrip_scenario(outcomes)?;
         }
-        TestComponent::Frontend => run_frontend_dfx_suite(outcomes)?,
-        TestComponent::E2e => bail!("e2e_dfx_integration is not supported; use e2e_all"),
+        TestComponent::Frontend => run_frontend_local_suite(outcomes)?,
+        TestComponent::E2e => bail!("e2e_local_integration is not supported; use e2e_all"),
     }
     Ok(())
 }
@@ -3751,15 +3811,15 @@ fn run_pocketic_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCo
         TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_pocketic_faucet_suite(outcomes)?,
         TestComponent::Historian => run_pocketic_historian_suite(outcomes)?,
-        TestComponent::Frontend => bail!("frontend_pocketic_integration is not supported; use frontend_all or frontend_dfx_integration"),
+        TestComponent::Frontend => bail!("frontend_pocketic_integration is not supported; use frontend_all or frontend_local_integration"),
         TestComponent::E2e => run_e2e_suite(outcomes)?,
     }
     Ok(())
 }
 
-fn scoped_command_needs_dfx_env(component: TestComponent, scope: TestScope) -> bool {
+fn scoped_command_needs_local_env(component: TestComponent, scope: TestScope) -> bool {
     match scope {
-        TestScope::DfxIntegration => true,
+        TestScope::LocalIntegration => true,
         TestScope::All => component != TestComponent::E2e,
         TestScope::Unit | TestScope::PocketicIntegration => false,
     }
@@ -3770,22 +3830,22 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
 
     match scope {
         TestScope::Unit => run_unit_component(&mut outcomes, component)?,
-        TestScope::DfxIntegration => run_dfx_component(&mut outcomes, component)?,
+        TestScope::LocalIntegration => run_local_component(&mut outcomes, component)?,
         TestScope::PocketicIntegration => run_pocketic_component(&mut outcomes, component)?,
         TestScope::All => match component {
             TestComponent::Test => {
-                run_dfx_component(&mut outcomes, component)?;
+                run_local_component(&mut outcomes, component)?;
                 run_unit_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
             }
             TestComponent::Disburser | TestComponent::Faucet | TestComponent::Historian => {
                 run_unit_component(&mut outcomes, component)?;
-                run_dfx_component(&mut outcomes, component)?;
+                run_local_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
             }
             TestComponent::Frontend => {
                 run_unit_component(&mut outcomes, component)?;
-                run_dfx_component(&mut outcomes, component)?;
+                run_local_component(&mut outcomes, component)?;
             }
             TestComponent::E2e => run_e2e_suite(&mut outcomes)?,
         },
@@ -3793,23 +3853,23 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
 
     let failure_message = match (component, scope) {
         (TestComponent::Test, TestScope::Unit) => "one or more unit test suites failed",
-        (TestComponent::Test, TestScope::DfxIntegration) => "one or more dfx integration scenario suites failed",
+        (TestComponent::Test, TestScope::LocalIntegration) => "one or more local icp integration scenario suites failed",
         (TestComponent::Test, TestScope::PocketicIntegration) => "one or more pocketic integration or e2e suites failed",
-        (TestComponent::Test, TestScope::All) => "one or more tests failed across dfx, unit, pocketic, or e2e layers",
+        (TestComponent::Test, TestScope::All) => "one or more tests failed across icp, unit, pocketic, or e2e layers",
         (TestComponent::Disburser, TestScope::Unit) => "the disburser unit test suite failed",
-        (TestComponent::Disburser, TestScope::DfxIntegration) => "one or more disburser dfx integration scenarios failed",
+        (TestComponent::Disburser, TestScope::LocalIntegration) => "one or more disburser local icp integration scenarios failed",
         (TestComponent::Disburser, TestScope::PocketicIntegration) => "the disburser pocketic integration suite failed",
         (TestComponent::Disburser, TestScope::All) => "one or more disburser test suites failed",
         (TestComponent::Faucet, TestScope::Unit) => "the faucet unit test suite failed",
-        (TestComponent::Faucet, TestScope::DfxIntegration) => "one or more faucet dfx integration scenarios failed",
+        (TestComponent::Faucet, TestScope::LocalIntegration) => "one or more faucet local icp integration scenarios failed",
         (TestComponent::Faucet, TestScope::PocketicIntegration) => "the faucet pocketic integration suite failed",
         (TestComponent::Faucet, TestScope::All) => "one or more faucet test suites failed",
         (TestComponent::Historian, TestScope::Unit) => "the historian unit test suite failed",
-        (TestComponent::Historian, TestScope::DfxIntegration) => "one or more historian dfx integration scenarios failed",
+        (TestComponent::Historian, TestScope::LocalIntegration) => "one or more historian local icp integration scenarios failed",
         (TestComponent::Historian, TestScope::PocketicIntegration) => "the historian pocketic integration suite failed",
         (TestComponent::Historian, TestScope::All) => "one or more historian test suites failed",
         (TestComponent::Frontend, TestScope::Unit) => "the frontend unit test suite failed",
-        (TestComponent::Frontend, TestScope::DfxIntegration) => "one or more frontend dfx integration scenarios failed",
+        (TestComponent::Frontend, TestScope::LocalIntegration) => "one or more frontend local icp integration scenarios failed",
         (TestComponent::Frontend, TestScope::All) => "one or more frontend test suites failed",
         (TestComponent::E2e, TestScope::PocketicIntegration) | (TestComponent::E2e, TestScope::All) => "the e2e suite failed",
         _ => "the selected xtask command failed",
@@ -3817,23 +3877,23 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
 
     let success_message = match (component, scope) {
         (TestComponent::Test, TestScope::Unit) => "test_unit complete",
-        (TestComponent::Test, TestScope::DfxIntegration) => "test_dfx_integration complete",
+        (TestComponent::Test, TestScope::LocalIntegration) => "test_local_integration complete",
         (TestComponent::Test, TestScope::PocketicIntegration) => "test_pocketic_integration complete",
         (TestComponent::Test, TestScope::All) => "test_all complete",
         (TestComponent::Disburser, TestScope::Unit) => "disburser_unit complete",
-        (TestComponent::Disburser, TestScope::DfxIntegration) => "disburser_dfx_integration complete",
+        (TestComponent::Disburser, TestScope::LocalIntegration) => "disburser_local_integration complete",
         (TestComponent::Disburser, TestScope::PocketicIntegration) => "disburser_pocketic_integration complete",
         (TestComponent::Disburser, TestScope::All) => "disburser_all complete",
         (TestComponent::Faucet, TestScope::Unit) => "faucet_unit complete",
-        (TestComponent::Faucet, TestScope::DfxIntegration) => "faucet_dfx_integration complete",
+        (TestComponent::Faucet, TestScope::LocalIntegration) => "faucet_local_integration complete",
         (TestComponent::Faucet, TestScope::PocketicIntegration) => "faucet_pocketic_integration complete",
         (TestComponent::Faucet, TestScope::All) => "faucet_all complete",
         (TestComponent::Historian, TestScope::Unit) => "historian_unit complete",
-        (TestComponent::Historian, TestScope::DfxIntegration) => "historian_dfx_integration complete",
+        (TestComponent::Historian, TestScope::LocalIntegration) => "historian_local_integration complete",
         (TestComponent::Historian, TestScope::PocketicIntegration) => "historian_pocketic_integration complete",
         (TestComponent::Historian, TestScope::All) => "historian_all complete",
         (TestComponent::Frontend, TestScope::Unit) => "frontend_unit complete",
-        (TestComponent::Frontend, TestScope::DfxIntegration) => "frontend_dfx_integration complete",
+        (TestComponent::Frontend, TestScope::LocalIntegration) => "frontend_local_integration complete",
         (TestComponent::Frontend, TestScope::All) => "frontend_all complete",
         (TestComponent::E2e, TestScope::PocketicIntegration) => "e2e_pocketic_integration complete",
         (TestComponent::E2e, TestScope::All) => "e2e_all complete",
@@ -3844,15 +3904,15 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
 }
 
 fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
-    if !scoped_command_needs_dfx_env(component, scope) {
+    if !scoped_command_needs_local_env(component, scope) {
         return run_scoped_command(component, scope);
     }
 
     let setup_res = match (component, scope) {
-        (TestComponent::Disburser, TestScope::DfxIntegration | TestScope::All) => cmd_setup_disburser_dfx(),
-        (TestComponent::Faucet, TestScope::DfxIntegration | TestScope::All) => cmd_setup_faucet_dfx(),
-        (TestComponent::Historian, TestScope::DfxIntegration | TestScope::All) => cmd_setup_historian_dfx(),
-        (TestComponent::Frontend, TestScope::DfxIntegration | TestScope::All) => cmd_setup_historian_dfx(),
+        (TestComponent::Disburser, TestScope::LocalIntegration | TestScope::All) => cmd_setup_disburser_local(),
+        (TestComponent::Faucet, TestScope::LocalIntegration | TestScope::All) => cmd_setup_faucet_local(),
+        (TestComponent::Historian, TestScope::LocalIntegration | TestScope::All) => cmd_setup_historian_local(),
+        (TestComponent::Frontend, TestScope::LocalIntegration | TestScope::All) => cmd_setup_historian_local(),
         _ => cmd_setup(),
     };
     setup_res?;
@@ -3864,7 +3924,7 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
         (Err(run_err), Ok(())) => Err(run_err),
         (Ok(()), Err(teardown_err)) => Err(teardown_err),
         (Err(run_err), Err(teardown_err)) => {
-            eprintln!("⚠️ teardown also failed after scoped dfx run: {teardown_err:#}");
+            eprintln!("⚠️ teardown also failed after scoped local icp run: {teardown_err:#}");
             Err(run_err)
         }
     }
@@ -4121,24 +4181,24 @@ fn main() -> Result<()> {
 
                  Scoped commands:
                  - disburser_unit
-                 - disburser_dfx_integration
+                 - disburser_local_integration
                  - disburser_pocketic_integration
                  - disburser_all
                  - faucet_unit
-                 - faucet_dfx_integration
+                 - faucet_local_integration
                  - faucet_pocketic_integration
                  - faucet_all
                  - historian_unit
-                 - historian_dfx_integration
+                 - historian_local_integration
                  - historian_pocketic_integration
                  - historian_all
                  - frontend_unit
-                 - frontend_dfx_integration
+                 - frontend_local_integration
                  - frontend_all
                  - e2e_all
                  - e2e_pocketic_integration
                  - test_unit
-                 - test_dfx_integration
+                 - test_local_integration
                  - test_pocketic_integration
                  - test_all
 "

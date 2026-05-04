@@ -44,7 +44,7 @@ Build:
 Upgrade:
 
 ```bash
-dfx canister install jupiter_sns_rewards \
+icp canister install jupiter_sns_rewards \
   --network ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz

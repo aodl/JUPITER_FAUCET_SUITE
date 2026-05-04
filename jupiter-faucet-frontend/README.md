@@ -38,7 +38,7 @@ Asset responses also carry the canister’s standard security headers, including
 
 The frontend keeps the certified-asset Rust canister, but the in-page dashboard data path now follows the normal ICP browser path:
 
-- declarations are generated from `dfx generate`
+- declarations are checked in under `frontend-src/declarations/`
 - the browser uses generated declarations with `@icp-sdk/core/agent`
 - actors are created through the generated `createActor(...)` helpers
 - dashboard data comes from Candid query calls, not from custom `/dashboard/*` JSON routes
@@ -64,10 +64,10 @@ The browser bundle is built with a tiny runtime config object that currently car
 During the build, those values are resolved in this order:
 
 1. explicit `CANISTER_ID_<NAME>` environment variables
-2. `canister_ids.json` for the selected network
-3. fallback `ic` / `local` entries when present
+2. `.icp/data/mappings/<network>.ids.json` for mainnet-style networks
+3. `.icp/cache/mappings/local.ids.json` for local builds
 
-The selected network comes from `DFX_NETWORK`, then `JUPITER_FRONTEND_NETWORK`, and otherwise defaults to `ic`.
+The selected network comes from `JUPITER_FRONTEND_NETWORK`, then `ICP_ENVIRONMENT`, then `ICP_NETWORK`, and otherwise defaults to `ic`.
 
 ## Data sources
 
@@ -144,15 +144,9 @@ Example asset-version override:
 ASSET_VERSION=2026-03-19 ./scripts/build-canister jupiter-faucet-frontend
 ```
 
-## Regenerating declarations
+## Declarations
 
-The checked-in historian declarations under `frontend-src/declarations/jupiter_historian/` can be regenerated with:
-
-```bash
-dfx generate jupiter_historian
-```
-
-The relevant `declarations` output paths are configured in `dfx.json`.
+The checked-in historian declarations under `frontend-src/declarations/jupiter_historian/` are the browser-facing Candid bindings used by the bundle.
 
 `frontend-src/declarations/icp_ledger/` is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the actor is pointed at the ledger canister ID returned by historian status.
 
@@ -163,7 +157,7 @@ These browser/data-loader checks can now be driven through `xtask` as well:
 ```bash
 cargo run -p xtask -- frontend_setup
 cargo run -p xtask -- frontend_unit
-cargo run -p xtask -- frontend_dfx_integration
+cargo run -p xtask -- frontend_local_integration
 cargo run -p xtask -- frontend_all
 ```
 
@@ -193,7 +187,7 @@ The local-replica variant is fixture-driven: it compares the live loader result 
 ## Upgrade command
 
 ```bash
-dfx canister install jupiter_faucet_frontend \
+icp canister install jupiter_faucet_frontend \
   --network ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_faucet_frontend.wasm.gz

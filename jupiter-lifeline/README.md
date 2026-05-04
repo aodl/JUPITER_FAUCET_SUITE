@@ -35,7 +35,7 @@ That means this canister is mostly a **reserved rescue principal** today, not an
 Fresh install:
 
 ```bash
-dfx canister install jupiter_lifeline \
+icp canister install jupiter_lifeline \
   --network ic \
   --wasm release-artifacts/jupiter_lifeline.wasm.gz
 ```
@@ -43,7 +43,7 @@ dfx canister install jupiter_lifeline \
 Upgrade:
 
 ```bash
-dfx canister install jupiter_lifeline \
+icp canister install jupiter_lifeline \
   --network ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_lifeline.wasm.gz

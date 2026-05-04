@@ -15,13 +15,13 @@ MAINNET = {
     "sns_wasm": "qaa6y-5yaaa-aaaaa-aaafa-cai",
 }
 
-CANISTER_IDS = json.loads((REPO_ROOT / "canister_ids.json").read_text())
+CANISTER_IDS = json.loads((REPO_ROOT / ".icp" / "data" / "mappings" / "ic.ids.json").read_text())
 PROD = {
-    "jupiter_disburser": CANISTER_IDS["jupiter_disburser"]["ic"],
-    "jupiter_faucet": CANISTER_IDS["jupiter_faucet"]["ic"],
-    "jupiter_historian": CANISTER_IDS["jupiter_historian"]["ic"],
-    "jupiter_lifeline": CANISTER_IDS["jupiter_lifeline"]["ic"],
-    "jupiter_sns_rewards": CANISTER_IDS["jupiter_sns_rewards"]["ic"],
+    "jupiter_disburser": CANISTER_IDS["jupiter_disburser"],
+    "jupiter_faucet": CANISTER_IDS["jupiter_faucet"],
+    "jupiter_historian": CANISTER_IDS["jupiter_historian"],
+    "jupiter_lifeline": CANISTER_IDS["jupiter_lifeline"],
+    "jupiter_sns_rewards": CANISTER_IDS["jupiter_sns_rewards"],
 }
 
 EXPECTED_DQUORUM_SUBACCOUNT = (

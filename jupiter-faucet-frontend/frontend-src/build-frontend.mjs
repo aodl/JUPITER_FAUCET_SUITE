@@ -13,18 +13,23 @@ const entryPoint = path.join(__dirname, 'src', 'main.js');
 const manifestPath = path.join(outDir, 'frontend-bundle.json');
 const tempOutfile = path.join(outDir, '__app-build.js');
 
-const canisterIdsPath = path.join(repoRoot, 'canister_ids.json');
+const network = process.env.JUPITER_FRONTEND_NETWORK || process.env.ICP_ENVIRONMENT || process.env.ICP_NETWORK || 'ic';
+const mappingPath = path.join(
+  repoRoot,
+  '.icp',
+  network === 'local' ? 'cache' : 'data',
+  'mappings',
+  `${network}.ids.json`
+);
 let canisterIds = {};
 try {
-  canisterIds = JSON.parse(await readFile(canisterIdsPath, 'utf8'));
+  canisterIds = JSON.parse(await readFile(mappingPath, 'utf8'));
 } catch {
   canisterIds = {};
 }
 
-const network = process.env.DFX_NETWORK || process.env.JUPITER_FRONTEND_NETWORK || 'ic';
 const resolveCanisterId = (name) => {
-  const entry = canisterIds?.[name] || {};
-  return process.env[`CANISTER_ID_${name.toUpperCase()}`] || entry?.[network] || entry?.ic || entry?.local || '';
+  return process.env[`CANISTER_ID_${name.toUpperCase()}`] || canisterIds?.[name] || '';
 };
 
 const runtimeConfig = {

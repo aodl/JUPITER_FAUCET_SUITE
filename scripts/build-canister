@@ -49,7 +49,7 @@ info = {
         "Cargo.lock": sha256("Cargo.lock"),
         "package-lock.json": sha256("package-lock.json"),
         "rust-toolchain.toml": sha256("rust-toolchain.toml"),
-        "canister_ids.json": sha256("canister_ids.json"),
+        ".icp/data/mappings/ic.ids.json": sha256(".icp/data/mappings/ic.ids.json"),
         "scripts/build-canister": sha256("scripts/build-canister"),
         "package.json": sha256("package.json"),
     },
@@ -222,8 +222,8 @@ import json
 import sys
 
 key = sys.argv[1]
-data = json.loads(Path('canister_ids.json').read_text())
-print(data[key]['ic'])
+data = json.loads(Path('.icp/data/mappings/ic.ids.json').read_text())
+print(data[key])
 PY
 }
 

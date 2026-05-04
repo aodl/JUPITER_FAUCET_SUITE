@@ -6,7 +6,7 @@ It wraps four different layers of validation:
 
 - fast Rust unit tests
 - browser/data-loader frontend unit tests
-- local `dfx` integration scenarios against debug canisters and mocks
+- local `icp-cli` integration scenarios against debug canisters and mocks
 - PocketIC integration / end-to-end suites
 
 Using `xtask` keeps the command surface stable and avoids having to remember which mocks, features, identities, and ignored tests need to be wired together manually.
@@ -20,7 +20,7 @@ The long-running PocketIC suites are intentionally marked `#[ignore]` so a plain
 ```bash
 cargo run -p xtask -- frontend_setup
 cargo run -p xtask -- frontend_unit
-cargo run -p xtask -- frontend_dfx_integration
+cargo run -p xtask -- frontend_local_integration
 cargo run -p xtask -- frontend_all
 ```
 
@@ -39,7 +39,7 @@ npm run test:frontend-dashboard-local
 Commonly useful tools for `xtask` workflows are:
 
 - Rust / Cargo
-- `dfx`
+- `icp`
 - Node.js / npm for frontend unit tests and local frontend scripts
 - `make` and `nix-build` for historian and suite-level PocketIC paths that build the vendored real blackhole canister reproducibly
 
@@ -49,7 +49,7 @@ Commonly useful tools for `xtask` workflows are:
 cargo run -p xtask -- setup
 ```
 
-`setup` prepares the local `dfx` environment by:
+`setup` prepares the local `icp` environment by:
 
 - creating a dedicated non-interactive identity named `xtask-dev` if needed
 - starting the local replica
@@ -70,7 +70,7 @@ cargo run -p xtask -- setup
 
 The deployed debug canisters intentionally use long timer intervals in most local scenarios so tests can drive the runtime explicitly through debug methods instead of waiting for ambient timers.
 
-In normal use you usually do **not** need to call `setup` directly because the scoped `dfx` commands do it automatically.
+In normal use you usually do **not** need to call `setup` directly because the scoped `icp` commands do it automatically.
 
 ## What `teardown` does
 
@@ -78,7 +78,7 @@ In normal use you usually do **not** need to call `setup` directly because the s
 cargo run -p xtask -- teardown
 ```
 
-`teardown` stops the local `dfx` environment created for xtask-driven scenarios.
+`teardown` stops the local `icp` environment created for xtask-driven scenarios.
 
 ## Command matrix
 
@@ -94,7 +94,7 @@ cargo run -p xtask -- frontend_setup
 
 ```bash
 cargo run -p xtask -- disburser_unit
-cargo run -p xtask -- disburser_dfx_integration
+cargo run -p xtask -- disburser_local_integration
 cargo run -p xtask -- disburser_pocketic_integration
 cargo run -p xtask -- disburser_all
 ```
@@ -103,7 +103,7 @@ cargo run -p xtask -- disburser_all
 
 ```bash
 cargo run -p xtask -- faucet_unit
-cargo run -p xtask -- faucet_dfx_integration
+cargo run -p xtask -- faucet_local_integration
 cargo run -p xtask -- faucet_pocketic_integration
 cargo run -p xtask -- faucet_all
 ```
@@ -112,7 +112,7 @@ cargo run -p xtask -- faucet_all
 
 ```bash
 cargo run -p xtask -- historian_unit
-cargo run -p xtask -- historian_dfx_integration
+cargo run -p xtask -- historian_local_integration
 cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
@@ -124,13 +124,13 @@ cargo run -p xtask -- e2e_pocketic_integration
 cargo run -p xtask -- e2e_all
 ```
 
-There is intentionally **no** `e2e_dfx_integration` command.
+There is intentionally **no** `e2e_local_integration` command.
 
 ### Whole-suite commands
 
 ```bash
 cargo run -p xtask -- test_unit
-cargo run -p xtask -- test_dfx_integration
+cargo run -p xtask -- test_local_integration
 cargo run -p xtask -- test_pocketic_integration
 cargo run -p xtask -- test_all
 ```
@@ -143,9 +143,9 @@ Runs the regular Rust unit tests for the relevant crate(s).
 
 Use this when iterating on pure logic and state transitions.
 
-### `*_dfx_integration`
+### `*_local_integration`
 
-Runs scenario-based integration checks against the local `dfx` replica using the mock canisters declared in `dfx.json`.
+Runs scenario-based integration checks against the local `icp-cli` managed replica using the mock canisters declared in `icp.yaml`.
 
 These scenarios are especially useful for validating:
 
@@ -176,7 +176,7 @@ The heavier suites live under `xtask/src/pocketIC/`:
 - `jupiter_historian_integration.rs`
 - `e2e.rs`
 
-The mock canisters used by the local-`dfx` scenarios live under `xtask/src/mocks/`.
+The mock canisters used by the local-`icp-cli` scenarios live under `xtask/src/mocks/`.
 
 Examples covered by the current PocketIC suites include:
 
@@ -217,7 +217,7 @@ The current E2E coverage includes:
 
 - disburser paying faucet and faucet topping up a declared canister
 - repeated disburser payouts feeding faucet full-history replay
-- a real-ICP PocketIC diagnostic probe for the CMC top-up flow that logs the exact deposit account, memo bytes, ledger transfer block, and raw `notify_top_up` result for comparison against `dfx ledger top-up`
+- a real-ICP PocketIC diagnostic probe for the CMC top-up flow that logs the exact deposit account, memo bytes, ledger transfer block, and raw `notify_top_up` result for comparison against a manual top-up flow
 - retry safety across the disburser → faucet → CMC boundary
 - faucet upgrade during retry-state recovery
 
@@ -250,7 +250,7 @@ cargo test -p jupiter-historian --test jupiter_historian_integration -- --ignore
 
 ```bash
 cargo run -p xtask -- test_unit
-cargo run -p xtask -- test_dfx_integration
+cargo run -p xtask -- test_local_integration
 ```
 
 ### Strong local confidence pass

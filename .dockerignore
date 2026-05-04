@@ -1,6 +1,6 @@
 .git
 .github
-.dfx
+.icp/cache
 .repro-out
 release-artifacts
 target
@@ -9,4 +9,3 @@ node_modules
 .env
 .env.*
 *.log
-

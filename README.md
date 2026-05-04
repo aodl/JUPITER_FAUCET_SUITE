@@ -150,7 +150,7 @@ The release build expects committed lockfiles (`Cargo.lock` and `package-lock.js
 
 ## Production canisters recorded in this repo
 
-These production canister IDs are recorded in `canister_ids.json`:
+These production canister IDs are recorded in `.icp/data/mappings/ic.ids.json`:
 
 - `jupiter-disburser` — `uccpi-cqaaa-aaaar-qby3q-cai`
 - `jupiter-faucet` — `acjuz-liaaa-aaaar-qb4qq-cai`
@@ -252,7 +252,7 @@ Examples:
 
 ```bash
 cargo run -p xtask -- test_unit
-cargo run -p xtask -- test_dfx_integration
+cargo run -p xtask -- test_local_integration
 cargo run -p xtask -- test_pocketic_integration
 cargo run -p xtask -- test_all
 ```
@@ -262,7 +262,7 @@ Frontend-focused browser/data-loader tests are also available through `xtask` no
 ```bash
 cargo run -p xtask -- frontend_setup
 cargo run -p xtask -- frontend_unit
-cargo run -p xtask -- frontend_dfx_integration
+cargo run -p xtask -- frontend_local_integration
 cargo run -p xtask -- frontend_all
 ```
 

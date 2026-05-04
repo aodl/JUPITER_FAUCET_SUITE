@@ -286,7 +286,7 @@ cargo test -p jupiter-disburser --lib
 ### Preferred integration and PocketIC entry points
 
 ```bash
-cargo run -p xtask -- disburser_dfx_integration
+cargo run -p xtask -- disburser_local_integration
 cargo run -p xtask -- disburser_pocketic_integration
 cargo run -p xtask -- disburser_all
 ```
@@ -315,10 +315,10 @@ chmod +x ../scripts/docker-build ../scripts/build-canister
 ### Install release artifact
 
 ```bash
-dfx canister install jupiter_disburser \
+icp canister install jupiter_disburser \
   --network ic \
   --wasm release-artifacts/jupiter_disburser.wasm.gz \
-  --argument-file jupiter-disburser/mainnet-install-args.did
+  --args-file jupiter-disburser/mainnet-install-args.did
 ```
 
 ### Upgrade release artifact
@@ -326,7 +326,7 @@ dfx canister install jupiter_disburser \
 Upgrades preserve existing state and do not require args unless you are intentionally toggling upgrade-only settings.
 
 ```bash
-dfx canister install jupiter_disburser \
+icp canister install jupiter_disburser \
   --network ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
@@ -337,30 +337,30 @@ dfx canister install jupiter_disburser \
 Arm:
 
 ```bash
-dfx canister install jupiter_disburser \
+icp canister install jupiter_disburser \
   --network ic \
   --mode upgrade \
-  --argument '(opt record { blackhole_armed = opt true; })' \
+  --args '(opt record { blackhole_armed = opt true; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
 Disarm:
 
 ```bash
-dfx canister install jupiter_disburser \
+icp canister install jupiter_disburser \
   --network ic \
   --mode upgrade \
-  --argument '(opt record { blackhole_armed = opt false; })' \
+  --args '(opt record { blackhole_armed = opt false; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
 Clear a latched forced-rescue reason:
 
 ```bash
-dfx canister install jupiter_disburser \
+icp canister install jupiter_disburser \
   --network ic \
   --mode upgrade \
-  --argument '(opt record { clear_forced_rescue = opt true; })' \
+  --args '(opt record { clear_forced_rescue = opt true; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
@@ -371,14 +371,14 @@ Before handing the canister off to self-management, the DAO-governed deployment 
 Example:
 
 ```bash
-dfx canister update-settings jupiter_disburser --network ic --log-visibility public
-dfx canister update-settings jupiter_disburser --network ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
+icp canister settings update jupiter_disburser --network ic --log-visibility public
+icp canister settings update jupiter_disburser --network ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
 After blackhole mode is armed and at least one successful payout transfer has been recorded, the DAO-governed deployment flow can hand the canister off to the healthy `self + blackhole` controller set:
 
 ```bash
-dfx canister update-settings jupiter_disburser \
+icp canister settings update jupiter_disburser \
   --network ic \
   --set-controller uccpi-cqaaa-aaaar-qby3q-cai \
   --add-controller e3mmv-5qaaa-aaaah-aadma-cai

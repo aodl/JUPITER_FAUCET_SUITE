@@ -422,7 +422,7 @@ cargo test -p jupiter-faucet --lib
 ### Preferred integration and PocketIC entry points
 
 ```bash
-cargo run -p xtask -- faucet_dfx_integration
+cargo run -p xtask -- faucet_local_integration
 cargo run -p xtask -- faucet_pocketic_integration
 cargo run -p xtask -- faucet_all
 ```

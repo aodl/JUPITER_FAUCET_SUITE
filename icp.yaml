@@ -1,0 +1,157 @@
+canisters:
+  - name: jupiter_disburser
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-disburser
+            - cp release-artifacts/jupiter_disburser.wasm "$ICP_WASM_OUTPUT_PATH"
+    init_args:
+      path: jupiter-disburser/mainnet-install-args.did
+      format: candid
+  - name: jupiter_lifeline
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-lifeline
+            - cp release-artifacts/jupiter_lifeline.wasm "$ICP_WASM_OUTPUT_PATH"
+  - name: jupiter_faucet
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-faucet
+            - cp release-artifacts/jupiter_faucet.wasm "$ICP_WASM_OUTPUT_PATH"
+    init_args:
+      path: jupiter-faucet/mainnet-install-args.did
+      format: candid
+  - name: jupiter_sns_rewards
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-sns-rewards
+            - cp release-artifacts/jupiter_sns_rewards.wasm "$ICP_WASM_OUTPUT_PATH"
+  - name: jupiter_faucet_frontend
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-faucet-frontend
+            - cp release-artifacts/jupiter_faucet_frontend.wasm "$ICP_WASM_OUTPUT_PATH"
+  - name: jupiter_historian
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-historian
+            - cp release-artifacts/jupiter_historian.wasm "$ICP_WASM_OUTPUT_PATH"
+    init_args:
+      path: jupiter-historian/mainnet-install-args.did
+      format: candid
+  - name: mock_icrc_ledger
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_icrc_ledger.wasm
+  - name: mock_nns_governance
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_nns_governance.wasm
+  - name: mock_icp_index
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_icp_index.wasm
+  - name: mock_cmc
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_cmc.wasm
+  - name: mock_xrc
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_xrc.wasm
+  - name: mock_blackhole
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_blackhole.wasm
+  - name: mock_sns_wasm
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_sns_wasm.wasm
+  - name: mock_sns_root
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_sns_root.wasm
+  - name: jupiter_disburser_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_disburser.wasm
+  - name: jupiter_faucet_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_faucet.wasm
+  - name: jupiter_historian_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_historian.wasm
+  - name: jupiter_disburser_args_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_disburser.wasm
+  - name: jupiter_faucet_args_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_faucet.wasm
+  - name: jupiter_historian_args_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_historian.wasm
+
+networks:
+  - name: local
+    mode: managed
+    gateway:
+      bind: 127.0.0.1
+      port: 4943
+
+environments:
+  - name: local
+    network: local
+    canisters:
+      - mock_icrc_ledger
+      - mock_nns_governance
+      - mock_icp_index
+      - mock_cmc
+      - mock_xrc
+      - mock_blackhole
+      - mock_sns_wasm
+      - mock_sns_root
+      - jupiter_disburser_dbg
+      - jupiter_faucet_dbg
+      - jupiter_historian_dbg
+      - jupiter_disburser_args_dbg
+      - jupiter_faucet_args_dbg
+      - jupiter_historian_args_dbg
+  - name: ic
+    network: ic
+    canisters:
+      - jupiter_disburser
+      - jupiter_lifeline
+      - jupiter_faucet
+      - jupiter_sns_rewards
+      - jupiter_faucet_frontend
+      - jupiter_historian

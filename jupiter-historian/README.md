@@ -261,7 +261,7 @@ Run specific historian-focused suites with:
 
 ```bash
 cargo run -p xtask -- historian_unit
-cargo run -p xtask -- historian_dfx_integration
+cargo run -p xtask -- historian_local_integration
 cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
@@ -308,20 +308,20 @@ It produces the canonical release artifacts under `../release-artifacts/`, inclu
 Fresh install:
 
 ```bash
-dfx canister install jupiter_historian \
+icp canister install jupiter_historian \
   --network ic \
   --wasm release-artifacts/jupiter_historian.wasm.gz \
-  --argument-file jupiter-historian/mainnet-install-args.did
+  --args-file jupiter-historian/mainnet-install-args.did
 ```
 
 Upgrade:
 
 ```bash
-dfx canister install jupiter_historian \
+icp canister install jupiter_historian \
   --network ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_historian.wasm.gz \
-  --argument-file jupiter-historian/mainnet-install-args.did
+  --args-file jupiter-historian/mainnet-install-args.did
 ```
 
 ## Debug interface
