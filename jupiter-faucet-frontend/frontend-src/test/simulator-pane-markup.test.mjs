@@ -47,6 +47,42 @@ test('top navbar exposes Simulator and no longer exposes Partners', () => {
   assert.doesNotMatch(indexHtml, />Partners<\/a>/i);
 });
 
+test('orbit scene includes hoverable infographic callouts', () => {
+  const orbitCss = readFileSync(resolve(__dirname, '../../assets/background-orbit/background-orbit.css'), 'utf8');
+  const orbitJs = readFileSync(resolve(__dirname, '../../assets/background-orbit/background-orbit.js'), 'utf8');
+
+  assert.match(indexHtml, /class="orbit-infographic"/);
+  assert.match(indexHtml, /id="orbit-infographic-copy"/);
+  assert.match(indexHtml, /id="orbit-infographic-line"/);
+  assert.match(indexHtml, /id="orbit-infographic-marker"/);
+  assert.match(indexHtml, /id="orbit-infographic-hotspots"/);
+  assert.match(orbitCss, /\.orbit-infographic-copy/);
+  assert.match(orbitCss, /#orbit-infographic-line/);
+  assert.match(orbitCss, /#orbit-infographic-marker/);
+  assert.match(orbitCss, /\.orbit-infographic-hotspot/);
+  assert.match(orbitCss, /\.orbit-infographic-particle-hotspot/);
+  assert.match(orbitCss, /#visor, #visor_glow, \.neon \{/);
+  assert.match(orbitJs, /Automated disbursals keep flowing, minting new ICP from voting rewards, powering downstream smart contracts\./);
+  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\./);
+  assert.match(orbitJs, /The ICP is automatically converted into cycles, forming a giant, unstoppable faucet\./);
+  assert.match(orbitJs, /Cycles are permanently routed to canisters that were declared by Jupiter Faucet users, removing or reducing economic dependency on developers, and the risk of service disruption\/deletion\./);
+  assert.match(orbitJs, /animatedSvgPosition/);
+  assert.match(orbitJs, /TOUCH_ACTIVE_MS = 5000/);
+  assert.match(orbitJs, /clearClickActivation/);
+  assert.match(orbitJs, /orbit-infographic-swirl-1/);
+  assert.match(orbitJs, /addEventListener\("click"/);
+  assert.match(orbitJs, /PARTICLE_DURATIONS_SECONDS = \[600, 400, 1200\]/);
+  assert.match(orbitJs, /mouseenter/);
+  assert.match(orbitJs, /textWidthVw/);
+  assert.match(orbitJs, /fontSizeVw/);
+  assert.match(orbitJs, /fontSizeMaxRem/);
+  assert.match(orbitCss, /font-size: min\(1\.65rem, 1\.55dvw\)/);
+  assert.doesNotMatch(orbitJs, /Copy config/);
+  assert.doesNotMatch(orbitJs, /orbit-tuning/);
+  assert.doesNotMatch(orbitCss, /orbit-tuning/);
+  assert.doesNotMatch(orbitCss, /transform: scale\(0\.72\)/);
+});
+
 test('partners pane content has been removed', () => {
   assert.doesNotMatch(indexHtml, /id="nav-panel-partners"/);
   assert.doesNotMatch(indexHtml, /Life On Ledger/);

@@ -58,10 +58,96 @@
   left: 57dvw;
 }
 
+/* Infographic callout */
+
+.orbit-infographic {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 150dvw;
+  z-index: 12000;
+  pointer-events: none;
+}
+
+.orbit-infographic-copy {
+  position: absolute;
+  top: 54dvw;
+  left: 8dvw;
+  width: 28dvw;
+  min-height: 9.5dvw;
+  color: #fff;
+  font-size: min(1.65rem, 1.55dvw);
+  line-height: 1.35;
+  font-weight: 650;
+  text-shadow:
+    0 0 0.6dvw rgba(255, 199, 71, 0.55),
+    0 0 1.6dvw rgba(0, 0, 0, 0.95),
+    0 0.18dvw 0.5dvw rgba(0, 0, 0, 0.9);
+  opacity: 0;
+  transform: translateY(0.9dvw);
+  transition:
+    opacity 520ms ease,
+    transform 520ms ease;
+}
+
+.orbit-infographic-copy.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.orbit-infographic-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+#orbit-infographic-line {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 9px rgba(255, 255, 255, 0.75));
+}
+
+#orbit-infographic-marker {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.96);
+  stroke-width: 1.4;
+  opacity: 0;
+  filter: drop-shadow(0 0 11px rgba(255, 255, 255, 0.82));
+}
+
+.orbit-infographic-hotspot,
+.orbit-infographic-particle-hotspot {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1;
+  cursor: crosshair;
+  pointer-events: all;
+}
+
+.orbit-infographic-hotspot:hover,
+.orbit-infographic-hotspot:focus,
+.orbit-infographic-particle-hotspot:hover,
+.orbit-infographic-particle-hotspot:focus {
+  fill: transparent;
+  stroke: transparent;
+  outline: none;
+}
+
 @media (max-width: 1024px) {
   /* Hide certain elements on mobile */
   #visor, #visor_glow, .neon {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-infographic-copy {
+    transition: none;
   }
 }
 
