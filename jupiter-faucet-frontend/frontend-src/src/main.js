@@ -1111,8 +1111,8 @@ function renderTrackerRangeControls() {
     </div>`;
 }
 
-function trackerBucketDescription(range = trackerState.range) {
-  return range === 'month' ? 'daily buckets' : 'monthly buckets';
+function trackerBucketDescription() {
+  return 'daily buckets';
 }
 
 function trackerRangeCutoffMs(range, anchorMs = Date.now()) {
@@ -1174,29 +1174,18 @@ function filterTrackerDataByRange(data, range) {
 function trackerPeriod(date, range) {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
-  if (range === 'month') {
-    const day = date.getUTCDate();
-    return {
-      key: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-      label: date.toLocaleString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
-      startMs: Date.UTC(year, month, day),
-      endMs: Date.UTC(year, month, day + 1),
-    };
-  }
+  const day = date.getUTCDate();
   return {
-    key: `${year}-${String(month + 1).padStart(2, '0')}`,
-    label: date.toLocaleString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }),
-    startMs: Date.UTC(year, month, 1),
-    endMs: Date.UTC(year, month + 1, 1),
+    key: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    label: date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: range === 'month' ? undefined : '2-digit', timeZone: 'UTC' }),
+    startMs: Date.UTC(year, month, day),
+    endMs: Date.UTC(year, month, day + 1),
   };
 }
 
 function nextTrackerPeriod(period, range) {
   const date = new Date(period.startMs);
-  if (range === 'month') {
-    return trackerPeriod(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1)), range);
-  }
-  return trackerPeriod(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)), range);
+  return trackerPeriod(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1)), range);
 }
 
 function trackerTimelineBounds(data, range) {
@@ -1396,6 +1385,7 @@ function renderTrackerAmountBarChart({ buckets, amountKey, countKey, emptyMessag
     xAxis: 'time',
     minBarWidth: 2,
     maxBarWidth: 28,
+    allowMinBarOverflow: true,
   });
 }
 

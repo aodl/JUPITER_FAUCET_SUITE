@@ -224,6 +224,25 @@ test('time-scaled bar chart can use sub-slot bar widths for dense timelines', ()
   assert.ok(rectWidths(html).every((width) => width <= 28), 'tracker bars should honor the narrower cap');
 });
 
+test('time-scaled bar chart can preserve minimum bar width on dense timelines', () => {
+  const html = renderAmountBarChart({
+    buckets: [
+      { label: 'D1', startMs: Date.UTC(2026, 0, 1), endMs: Date.UTC(2026, 0, 2), amount: 10n },
+      { label: 'D365', startMs: Date.UTC(2026, 11, 31), endMs: Date.UTC(2027, 0, 1), amount: 20n },
+    ],
+    amountKey: 'amount',
+    countKey: 'count',
+    emptyMessage: 'empty',
+    ariaLabel: 'dense time bars',
+    xAxis: 'time',
+    minBarWidth: 2,
+    maxBarWidth: 28,
+    allowMinBarOverflow: true,
+  });
+
+  assert.ok(rectWidths(html).every((width) => width >= 2), 'dense tracker bars should remain visible');
+});
+
 
 test('scaleBigInt maps signed ranges into chart ratios and clamps out-of-range values', () => {
   assert.equal(scaleBigInt(-10n, -10n, 10n), 0);

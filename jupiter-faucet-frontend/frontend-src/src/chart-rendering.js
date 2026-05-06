@@ -123,6 +123,7 @@ export function renderAmountBarChart({
   minBarWidth = 8,
   maxBarWidth = 44,
   barWidthRatio = 0.58,
+  allowMinBarOverflow = false,
 }) {
   const rows = Array.isArray(buckets) ? buckets : [];
   const maxAmount = rows.reduce((max, bucket) => {
@@ -144,7 +145,8 @@ export function renderAmountBarChart({
     const barHeight = Math.max(amount > 0n ? 2 : 0, ratio * usableBarHeight);
     const timeGeometry = domain ? bucketTimeGeometry(bucket, { domain, padLeft, chartWidth }) : null;
     const bucketWidth = timeGeometry?.width || slot;
-    const barWidth = clampNumber(bucketWidth * barWidthRatio, minBarWidth, Math.min(maxBarWidth, bucketWidth));
+    const barMaxWidth = allowMinBarOverflow ? maxBarWidth : Math.min(maxBarWidth, bucketWidth);
+    const barWidth = clampNumber(bucketWidth * barWidthRatio, minBarWidth, barMaxWidth);
     const x = timeGeometry
       ? timeGeometry.x + (bucketWidth - barWidth) / 2
       : padLeft + (index * slot) + (slot - barWidth) / 2;
