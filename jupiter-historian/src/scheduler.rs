@@ -412,12 +412,26 @@ fn should_probe_memo_registered_canister(st: &crate::state::State, canister_id: 
     if logic::should_skip_blackhole_for_sources(sources) {
         return false;
     }
-    sources.contains(&CanisterSource::MemoCommitment)
-        && st
-            .commitment_history
-            .get(&canister_id)
-            .map(|history| history.iter().any(|item| item.counts_toward_faucet))
-            .unwrap_or(false)
+    crate::memo_source_is_registered(st, &canister_id, sources)
+}
+
+fn build_cycles_sweep_canisters(
+    st: &crate::state::State,
+    self_id: candid::Principal,
+) -> Vec<candid::Principal> {
+    let mut canisters = vec![self_id];
+    for canister_id in st.distinct_canisters.iter().copied() {
+        let sources = st.canister_sources.get(&canister_id).cloned().unwrap_or_default();
+        let memo_registered = crate::memo_source_is_registered(st, &canister_id, &sources);
+        if !memo_registered && !sources.contains(&CanisterSource::SnsDiscovery) {
+            continue;
+        }
+        if logic::should_skip_blackhole_for_sources(&sources) {
+            continue;
+        }
+        canisters.push(canister_id);
+    }
+    canisters
 }
 
 fn apply_verified_qualifying_commitment(
@@ -1306,23 +1320,7 @@ async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs
     let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
         if st.active_cycles_sweep.is_none() {
             let self_id = ic_cdk::api::canister_self();
-            let mut canisters = vec![self_id];
-            for canister_id in st.distinct_canisters.iter().copied() {
-                let sources = st.canister_sources.get(&canister_id).cloned().unwrap_or_default();
-                let memo_registered = sources.contains(&CanisterSource::MemoCommitment)
-                    && st
-                        .commitment_history
-                        .get(&canister_id)
-                        .map(|history| history.iter().any(|item| item.counts_toward_faucet))
-                        .unwrap_or(false);
-                if !memo_registered && !sources.contains(&CanisterSource::SnsDiscovery) {
-                    continue;
-                }
-                if logic::should_skip_blackhole_for_sources(&sources) {
-                    continue;
-                }
-                canisters.push(canister_id);
-            }
+            let canisters = build_cycles_sweep_canisters(st, self_id);
             st.active_cycles_sweep = Some(ActiveCyclesSweep {
                 started_at_ts_nanos: timestamp_nanos,
                 canisters,
@@ -1926,6 +1924,37 @@ mod tests {
                     .map(|sample| sample.cycles),
                 Some(777)
             );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_targets_memo_canisters_with_lazy_stable_commitment_history() {
+        let _staking_id = configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let beneficiary = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        state::with_state_mut(|st| {
+            st.distinct_canisters.insert(beneficiary);
+            st.canister_sources.insert(
+                beneficiary,
+                crate::logic::merge_sources(None, CanisterSource::MemoCommitment),
+            );
+            st.commitment_history.insert(
+                beneficiary,
+                vec![crate::state::CommitmentSample {
+                    tx_id: 91,
+                    timestamp_nanos: Some(910_000_000_000),
+                    amount_e8s: 100_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+        });
+
+        let restored = state::restore_state_from_stable().expect("expected stable root state");
+        assert!(restored.commitment_history.is_empty());
+        state::set_state_root_only(restored);
+
+        state::with_state(|st| {
+            assert_eq!(build_cycles_sweep_canisters(st, self_id), vec![self_id, beneficiary]);
         });
     }
 

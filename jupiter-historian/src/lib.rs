@@ -126,7 +126,7 @@ fn normalize_recent_invalid_commitments(items: &mut Vec<InvalidCommitment>) {
     items.truncate(MAX_RECENT_INVALID_COMMITMENTS);
 }
 
-fn memo_source_is_registered(st: &State, canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
+pub(crate) fn memo_source_is_registered(st: &State, canister_id: &Principal, sources: &BTreeSet<CanisterSource>) -> bool {
     sources.contains(&CanisterSource::MemoCommitment)
         && commitment_history_snapshot(st, *canister_id)
             .into_iter()
@@ -1083,16 +1083,8 @@ fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
             .into_iter()
             .collect();
         let meta = st.per_canister_meta.get(&canister_id).cloned().unwrap_or_default();
-        let cycles_points = st
-            .cycles_history
-            .get(&canister_id)
-            .map(|v| v.len() as u32)
-            .unwrap_or(0);
-        let commitment_points = st
-            .commitment_history
-            .get(&canister_id)
-            .map(|v| v.len() as u32)
-            .unwrap_or(0);
+        let cycles_points = cycles_history_snapshot(st, canister_id).len() as u32;
+        let commitment_points = commitment_history_snapshot(st, canister_id).len() as u32;
         Some(CanisterOverview {
             canister_id,
             sources,
@@ -2055,6 +2047,50 @@ mod tests {
         state::set_state(st);
 
         assert!(get_canister_overview(canister).is_none());
+    }
+
+    #[test]
+    fn get_canister_overview_counts_lazy_stable_history_points_after_restore() {
+        let canister = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        let mut st = base_state();
+        st.distinct_canisters.insert(canister);
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.commitment_history.insert(
+            canister,
+            vec![
+                CommitmentSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1_000_000_000),
+                    amount_e8s: 100_000_000,
+                    counts_toward_faucet: true,
+                },
+                CommitmentSample {
+                    tx_id: 2,
+                    timestamp_nanos: Some(2_000_000_000),
+                    amount_e8s: 200_000_000,
+                    counts_toward_faucet: true,
+                },
+            ],
+        );
+        st.cycles_history.insert(
+            canister,
+            vec![CyclesSample {
+                timestamp_nanos: 3_000_000_000,
+                cycles: 123,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+        state::set_state(st);
+
+        let restored = state::restore_state_from_stable().expect("expected stable root state");
+        assert!(restored.commitment_history.is_empty());
+        assert!(restored.cycles_history.is_empty());
+        state::set_state_root_only(restored);
+
+        let overview = get_canister_overview(canister).expect("registered canister should be visible");
+        assert_eq!(overview.commitment_points, 2);
+        assert_eq!(overview.cycles_points, 1);
     }
 
 
