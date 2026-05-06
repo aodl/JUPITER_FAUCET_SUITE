@@ -106,7 +106,7 @@ test('renderAmountBarChart can show all x-axis labels when explicitly requested'
   assert.equal(countLabels(html, 'W'), 12);
 });
 
-test('weekly default ticks are evenly distributed without crowding the final labels', () => {
+test('default ticks use a regular nth-label cadence', () => {
   const buckets = Array.from({ length: 52 }, (_, index) => ({
     label: `W${index + 1}`,
     projectedBalanceCycles: BigInt(index + 1),
@@ -121,8 +121,23 @@ test('weekly default ticks are evenly distributed without crowding the final lab
 
   const rendered = labels(html, 'W');
   assert.equal(rendered.length, 8);
-  assert.equal(rendered.at(-1), 'W52');
-  assert.ok(!rendered.includes('W50'), `unexpected crowded penultimate tick: ${rendered.join(', ')}`);
+  assert.deepEqual(rendered, ['W1', 'W8', 'W15', 'W22', 'W29', 'W36', 'W43', 'W50']);
+});
+
+test('monthly default ticks prefer every other label when all labels would crowd', () => {
+  const buckets = Array.from({ length: 12 }, (_, index) => ({
+    label: `M${index + 1}`,
+    projectedBalanceCycles: BigInt(index + 1),
+  }));
+
+  const html = renderLineChart({
+    buckets,
+    valueKey: 'projectedBalanceCycles',
+    emptyMessage: 'empty',
+    ariaLabel: 'monthly ticks',
+  });
+
+  assert.deepEqual(labels(html, 'M'), ['M1', 'M3', 'M5', 'M7', 'M9', 'M11']);
 });
 
 test('amount bar chart reserves headroom so max bars do not overlap the y-axis label', () => {

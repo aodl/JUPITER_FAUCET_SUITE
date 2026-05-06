@@ -21,7 +21,7 @@
     },
     {
       label: "Black hole",
-      text: "Disbursals are orchestrated by immutable (unmodifiable) smart contracts, aka 'blackholed'.",
+      text: "Disbursals are orchestrated by immutable (unmodifiable) smart contracts, aka 'blackholed'.\nCOMING SOON ...",
       target: "point",
       targetX: 408,
       targetY: 451,
@@ -37,7 +37,7 @@
     },
     {
       label: "Jupiter",
-      text: "The ICP is automatically converted into cycles, forming a giant, unstoppable faucet.",
+      text: "Disbursed ICP is automatically converted into cycles, forming a giant, unstoppable faucet.",
       target: "point",
       targetX: 687,
       targetY: 646,
@@ -58,8 +58,8 @@
       targetX: 648,
       targetY: 841,
       markerRadius: 58,
-      lineStartX: 347,
-      lineStartY: 696,
+      lineStartX: 370,
+      lineStartY: 725,
       textLeftVw: 5.5,
       textTopVw: 54.5,
       textWidthVw: 42,

@@ -1807,6 +1807,7 @@ async function submitTrackerPrincipal() {
     return;
   }
 
+  replaceTrackerLocationHash(principal.toText());
   setTrackerLoading(true);
   setTrackerStatus('Loading tracker data…', 'loading');
   if (result) {

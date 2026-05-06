@@ -80,6 +80,7 @@
   font-size: min(1.65rem, 1.55dvw);
   line-height: 1.35;
   font-weight: 650;
+  white-space: pre-line;
   text-shadow:
     0 0 0.6dvw rgba(255, 199, 71, 0.55),
     0 0 1.6dvw rgba(0, 0, 0, 0.95),

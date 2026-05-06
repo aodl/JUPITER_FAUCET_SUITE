@@ -62,10 +62,10 @@ function visibleTickIndexes(length, showAllTicks = false) {
   }
 
   const targetTicks = 8;
-  const lastIndex = length - 1;
-  const indexes = new Set([0, lastIndex]);
-  for (let tick = 1; tick < targetTicks - 1; tick += 1) {
-    indexes.add(Math.round((lastIndex * tick) / (targetTicks - 1)));
+  const step = Math.max(2, Math.ceil(length / targetTicks));
+  const indexes = new Set();
+  for (let index = 0; index < length; index += step) {
+    indexes.add(index);
   }
   return indexes;
 }

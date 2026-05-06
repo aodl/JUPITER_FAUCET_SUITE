@@ -63,8 +63,11 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.match(orbitCss, /\.orbit-infographic-particle-hotspot/);
   assert.match(orbitCss, /#visor, #visor_glow, \.neon \{/);
   assert.match(orbitJs, /Automated disbursals keep flowing, minting new ICP from voting rewards, powering downstream smart contracts\./);
-  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\./);
-  assert.match(orbitJs, /The ICP is automatically converted into cycles, forming a giant, unstoppable faucet\./);
+  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\.\\nCOMING SOON \.\.\./);
+  assert.match(orbitJs, /Disbursed ICP is automatically converted into cycles, forming a giant, unstoppable faucet\./);
+  assert.match(orbitJs, /lineStartX: 370/);
+  assert.match(orbitJs, /lineStartY: 725/);
+  assert.match(orbitCss, /white-space: pre-line/);
   assert.match(orbitJs, /Cycles are permanently routed to canisters that were declared by Jupiter Faucet users, removing or reducing economic dependency on developers, and the risk of service disruption\/deletion\./);
   assert.match(orbitJs, /animatedSvgPosition/);
   assert.match(orbitJs, /TOUCH_ACTIVE_MS = 5000/);
@@ -409,6 +412,7 @@ test('metric tracker hash deep links submit once on cold load and panel open', (
   assert.match(mainJs, /hydrateTrackerFromLocationHash\(\{ submit: true \}\);/);
   assert.match(mainJs, /submit && lastTrackerHashSubmitPrincipal !== principalText/);
   assert.match(mainJs, /lastTrackerHashSubmitPrincipal = principalText/);
+  assert.match(mainJs, /replaceTrackerLocationHash\(principal\.toText\(\)\);/);
   assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*hydrateTrackerFromLocationHash\(\{ submit: true \}\)/);
 });
 
