@@ -18,6 +18,16 @@ function firstRectY(html) {
   return Number(match[1]);
 }
 
+function rectWidths(html) {
+  return Array.from(html.matchAll(/<rect[^>]+ width="([0-9.]+)"/g)).map((match) => Number(match[1]));
+}
+
+function polylineXs(html) {
+  const match = html.match(/<polyline[^>]+ points="([^"]+)"/);
+  assert.ok(match, 'missing polyline points');
+  return match[1].split(' ').map((point) => Number(point.split(',')[0]));
+}
+
 
 test('renderAmountBarChart uses caller-provided formatting and escapes labels', () => {
   const html = renderAmountBarChart({
@@ -150,6 +160,68 @@ test('amount bar chart reserves headroom so max bars do not overlap the y-axis l
   });
 
   assert.ok(firstRectY(html) >= 36, `expected y-axis label headroom, got y=${firstRectY(html)}`);
+});
+
+test('time-scaled line chart spaces points by elapsed bucket time', () => {
+  const html = renderLineChart({
+    buckets: [
+      { label: 'D1', startMs: Date.UTC(2026, 0, 1), endMs: Date.UTC(2026, 0, 2), cycles: 10n },
+      { label: 'D2', startMs: Date.UTC(2026, 0, 2), endMs: Date.UTC(2026, 0, 3), cycles: 20n },
+      { label: 'D11', startMs: Date.UTC(2026, 0, 11), endMs: Date.UTC(2026, 0, 12), cycles: 30n },
+    ],
+    valueKey: 'cycles',
+    emptyMessage: 'empty',
+    ariaLabel: 'time line',
+    xAxis: 'time',
+  });
+
+  const [firstX, secondX, thirdX] = polylineXs(html);
+  assert.ok(secondX - firstX < thirdX - secondX, 'later gap should occupy more x-axis space');
+  assert.ok(thirdX - secondX > (secondX - firstX) * 5, 'nine empty days should be visible on the x-axis');
+});
+
+test('time-scaled line chart can use an explicit x-domain and tick buckets', () => {
+  const html = renderLineChart({
+    buckets: [
+      { label: 'Probe', startMs: Date.UTC(2026, 0, 10), endMs: Date.UTC(2026, 0, 10) + 1, cycles: 10n },
+    ],
+    valueKey: 'cycles',
+    emptyMessage: 'empty',
+    ariaLabel: 'aligned time line',
+    xAxis: 'time',
+    xDomainBuckets: [
+      { label: 'D1', startMs: Date.UTC(2026, 0, 1), endMs: Date.UTC(2026, 0, 2) },
+      { label: 'D31', startMs: Date.UTC(2026, 0, 31), endMs: Date.UTC(2026, 1, 1) },
+    ],
+    xTickBuckets: [
+      { label: 'D1', startMs: Date.UTC(2026, 0, 1), endMs: Date.UTC(2026, 0, 2) },
+      { label: 'D31', startMs: Date.UTC(2026, 0, 31), endMs: Date.UTC(2026, 1, 1) },
+    ],
+  });
+
+  const [pointX] = polylineXs(html);
+  assert.ok(pointX > 44, 'point should be positioned inside the explicit domain');
+  assert.ok(pointX < 640 - 18, 'point should not stretch to the chart edge as a one-point domain');
+  assert.match(html, />D1<\/text>/);
+  assert.match(html, />D31<\/text>/);
+});
+
+test('time-scaled bar chart can use sub-slot bar widths for dense timelines', () => {
+  const html = renderAmountBarChart({
+    buckets: [
+      { label: 'Jan', startMs: Date.UTC(2026, 0, 1), endMs: Date.UTC(2026, 1, 1), amount: 10n },
+      { label: 'Dec', startMs: Date.UTC(2026, 11, 1), endMs: Date.UTC(2027, 0, 1), amount: 20n },
+    ],
+    amountKey: 'amount',
+    countKey: 'count',
+    emptyMessage: 'empty',
+    ariaLabel: 'time bars',
+    xAxis: 'time',
+    minBarWidth: 2,
+    maxBarWidth: 28,
+  });
+
+  assert.ok(rectWidths(html).every((width) => width <= 28), 'tracker bars should honor the narrower cap');
 });
 
 

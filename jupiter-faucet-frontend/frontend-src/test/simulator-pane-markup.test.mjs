@@ -418,6 +418,17 @@ test('metric tracker hash deep links submit once on cold load and panel open', (
 
 test('canister tracker displays cycles as T cycles and estimates burn per day', () => {
   assert.match(mainJs, /function formatCycles\(value\) \{\n  return formatTrillionCycles\(value\);/);
+  assert.match(mainJs, /function trackerCyclesChartPoints\(data\)/);
+  assert.match(mainJs, /return sortedCycleSamples\(data\)\.map/);
+  assert.match(mainJs, /function trackerCyclesPointLabel\(point\)/);
+  assert.match(mainJs, /formatTimestampNanos\(point\.timestampNanos\)/);
+  assert.match(mainJs, /pointLabelBuilder: trackerCyclesPointLabel/);
+  assert.match(mainJs, /xDomainBuckets: timelineBuckets/);
+  assert.match(mainJs, /xTickBuckets: timelineBuckets/);
+  assert.doesNotMatch(mainJs, /Line shows each loaded cycles probe/);
+  assert.match(mainJs, /cyclesProbeIssueNote/);
+  assert.match(mainJs, /cyclesStatus\.kind === 'error'/);
+  assert.match(mainJs, /cyclesStatus\.kind === 'notAvailable'/);
   assert.match(mainJs, /Estimated observed cycles burned\/day/);
   assert.match(mainJs, /downward balance changes between all loaded cycle probes/);
   assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(data\);/);

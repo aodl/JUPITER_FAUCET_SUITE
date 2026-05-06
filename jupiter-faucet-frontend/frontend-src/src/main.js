@@ -682,6 +682,7 @@ function cyclesProbeStatusInfo(data) {
     const errorText = typeof probeResult.Error === 'string' ? probeResult.Error : 'unknown error';
     const when = formatTimestampSeconds(probeTs);
     return {
+      kind: 'error',
       label: 'probe failed',
       chartMessage: 'Cycles probe failed.',
       note: `Cycles data is unavailable because the last historian cycles probe failed${when !== DASH ? ` at ${when}` : ''}: ${errorText}`,
@@ -691,6 +692,7 @@ function cyclesProbeStatusInfo(data) {
   if (resultName === 'NotAvailable') {
     const when = formatTimestampSeconds(probeTs);
     return {
+      kind: 'notAvailable',
       label: 'not available',
       chartMessage: 'Cycles data not available.',
       note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Ordinary canisters must expose public status through the blackhole controller for cycles observability.`,
@@ -699,6 +701,7 @@ function cyclesProbeStatusInfo(data) {
 
   const when = formatTimestampSeconds(probeTs);
   return {
+    kind: resultName === 'Ok' ? 'ok' : 'pending',
     label: 'pending update',
     chartMessage: 'Cycles data pending update.',
     note: `Cycles data has not been recorded for this tracker view yet${when !== DASH ? `; the last probe was at ${when}` : ''}.`,
@@ -1177,12 +1180,42 @@ function trackerPeriod(date, range) {
       key: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
       label: date.toLocaleString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
       startMs: Date.UTC(year, month, day),
+      endMs: Date.UTC(year, month, day + 1),
     };
   }
   return {
     key: `${year}-${String(month + 1).padStart(2, '0')}`,
     label: date.toLocaleString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }),
     startMs: Date.UTC(year, month, 1),
+    endMs: Date.UTC(year, month + 1, 1),
+  };
+}
+
+function nextTrackerPeriod(period, range) {
+  const date = new Date(period.startMs);
+  if (range === 'month') {
+    return trackerPeriod(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1)), range);
+  }
+  return trackerPeriod(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)), range);
+}
+
+function trackerTimelineBounds(data, range) {
+  const timestampMs = [
+    ...(data?.commitments?.items || []),
+    ...(data?.cycles?.items || []),
+    ...(data?.cmcTransfers?.items || []),
+  ]
+    .map(trackerItemTimestampMs)
+    .filter((value) => value !== null);
+  if (timestampMs.length === 0) return null;
+  const maxMs = timestampMs.reduce((max, value) => value > max ? value : max, timestampMs[0]);
+  const minMs = range === 'all'
+    ? timestampMs.reduce((min, value) => value < min ? value : min, timestampMs[0])
+    : trackerRangeCutoffMs(range, maxMs);
+  if (minMs === null) return null;
+  return {
+    start: trackerPeriod(new Date(minMs), range),
+    end: trackerPeriod(new Date(maxMs), range),
   };
 }
 
@@ -1245,6 +1278,13 @@ function aggregateTrackerData(data, range) {
     if (bucket.cyclesTs === null || timestamp >= bucket.cyclesTs) {
       bucket.cycles = typeof item.cycles === 'bigint' ? item.cycles : BigInt(item.cycles);
       bucket.cyclesTs = timestamp;
+    }
+  }
+
+  const bounds = trackerTimelineBounds(data, range);
+  if (bounds) {
+    for (let period = bounds.start; period.startMs <= bounds.end.startMs; period = nextTrackerPeriod(period, range)) {
+      ensureBucket(period);
     }
   }
 
@@ -1353,6 +1393,9 @@ function renderTrackerAmountBarChart({ buckets, amountKey, countKey, emptyMessag
     barClass,
     labelBuilder,
     valueFormatter: formatIcpE8s,
+    xAxis: 'time',
+    minBarWidth: 2,
+    maxBarWidth: 28,
   });
 }
 
@@ -1388,9 +1431,27 @@ function renderTrackerObservedCmcChart(buckets, fullData = null) {
   });
 }
 
-function renderTrackerCyclesChart(buckets, data, fullData = data) {
-  const cycleBuckets = buckets.filter((bucket) => bucket.cycles !== null && bucket.cycles !== undefined);
-  if (cycleBuckets.length === 0) {
+function trackerCyclesChartPoints(data) {
+  return sortedCycleSamples(data).map((sample) => {
+    const millis = Number(sample.timestampNanos / 1_000_000n);
+    const date = new Date(millis);
+    return {
+      label: date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }),
+      timestampNanos: sample.timestampNanos,
+      startMs: millis,
+      endMs: millis + 1,
+      cycles: sample.cycles,
+    };
+  });
+}
+
+function trackerCyclesPointLabel(point) {
+  return `${formatTimestampNanos(point.timestampNanos)}: ${formatCycles(point.cycles)}`;
+}
+
+function renderTrackerCyclesChart(data, timelineBuckets, fullData = data) {
+  const points = trackerCyclesChartPoints(data);
+  if (points.length === 0) {
     if ((fullData?.cycles?.items || []).length > 0) {
       return renderTrackerEmptyChart(`No cycles samples are available in ${trackerRangeLabel()}.`);
     }
@@ -1399,12 +1460,15 @@ function renderTrackerCyclesChart(buckets, data, fullData = data) {
   }
 
   return renderLineChart({
-    buckets,
+    buckets: points,
     valueKey: 'cycles',
     emptyMessage: `No cycles samples are available in ${trackerRangeLabel()}.`,
     ariaLabel: `Cycles balance in ${trackerRangeLabel()}`,
     valueFormatter: formatCycles,
-    pointLabelBuilder: (bucket) => `${bucket.label}: ${formatCycles(bucket.cycles)}`,
+    pointLabelBuilder: trackerCyclesPointLabel,
+    xAxis: 'time',
+    xDomainBuckets: timelineBuckets,
+    xTickBuckets: timelineBuckets,
   });
 }
 
@@ -1439,9 +1503,8 @@ function renderTrackerCharts(data, fullData = data) {
     <div class="tracker-chart-card">
       <div class="tracker-chart-header">
         <h3>Cycles balance</h3>
-        <span>Line uses a separate cycles scale.</span>
       </div>
-      ${renderTrackerCyclesChart(buckets, data, fullData)}
+      ${renderTrackerCyclesChart(data, buckets, fullData)}
     </div>`;
 }
 
@@ -1721,6 +1784,9 @@ function renderTrackerData(data, principalText) {
   const cyclesStatusNote = summary.latestCycles === null || summary.latestCycles === undefined
     ? `<p class="pane-status-note tracker-status-note">${escapeHtml(hasCyclesOutsideRange ? `No cycles samples are available in ${rangeLabel}.` : cyclesStatus.note)}</p>`
     : '';
+  const cyclesProbeIssueNote = summary.latestCycles !== null && summary.latestCycles !== undefined && (cyclesStatus.kind === 'error' || cyclesStatus.kind === 'notAvailable')
+    ? `<p class="pane-status-note tracker-status-note">${escapeHtml(cyclesStatus.note)}</p>`
+    : '';
   const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
   result.innerHTML = `
     ${renderTrackerRangeControls()}
@@ -1744,6 +1810,7 @@ function renderTrackerData(data, principalText) {
     ${renderTrackerCadenceNote(data)}
     ${commitmentError}
     ${cyclesStatusNote}
+    ${cyclesProbeIssueNote}
     ${cyclesError}
     ${cmcError}`;
   renderTrackerCharts(visibleData, data);

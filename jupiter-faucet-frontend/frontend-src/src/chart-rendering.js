@@ -70,11 +70,41 @@ function visibleTickIndexes(length, showAllTicks = false) {
   return indexes;
 }
 
-function renderBucketTicks({ buckets, slot, padLeft, height, showAllTicks = false }) {
+function clampNumber(value, min, max) {
+  if (max < min) return max;
+  return Math.max(min, Math.min(max, value));
+}
+
+function bucketTimeRange(bucket) {
+  const startMs = Number(bucket?.startMs);
+  const endMs = Number(bucket?.endMs);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
+function timeDomain(rows, explicitRows = null) {
+  const ranges = (Array.isArray(explicitRows) ? explicitRows : rows).map(bucketTimeRange).filter(Boolean);
+  if (ranges.length === 0) return null;
+  const startMs = Math.min(...ranges.map((range) => range.startMs));
+  const endMs = Math.max(...ranges.map((range) => range.endMs));
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return { startMs, endMs, durationMs: endMs - startMs };
+}
+
+function bucketTimeGeometry(bucket, { domain, padLeft, chartWidth }) {
+  const range = bucketTimeRange(bucket);
+  if (!range || !domain) return null;
+  const x = padLeft + ((range.startMs - domain.startMs) / domain.durationMs) * chartWidth;
+  const width = ((range.endMs - range.startMs) / domain.durationMs) * chartWidth;
+  const center = x + width / 2;
+  return { x, width, center };
+}
+
+function renderBucketTicks({ buckets, slot, padLeft, height, showAllTicks = false, xForBucket = null }) {
   const visible = visibleTickIndexes(buckets.length, showAllTicks);
   return buckets.map((bucket, index) => {
     if (!visible.has(index)) return '';
-    const x = padLeft + (index * slot) + slot / 2;
+    const x = xForBucket ? xForBucket(bucket, index) : padLeft + (index * slot) + slot / 2;
     return `<text class="tracker-chart-axis-label" x="${x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeChartHtml(bucket.label)}</text>`;
   }).join('');
 }
@@ -89,6 +119,10 @@ export function renderAmountBarChart({
   labelBuilder,
   valueFormatter,
   showAllTicks = false,
+  xAxis = 'category',
+  minBarWidth = 8,
+  maxBarWidth = 44,
+  barWidthRatio = 0.58,
 }) {
   const rows = Array.isArray(buckets) ? buckets : [];
   const maxAmount = rows.reduce((max, bucket) => {
@@ -101,21 +135,33 @@ export function renderAmountBarChart({
 
   const { width, height, padLeft, padRight, padTop, chartWidth, chartHeight } = chartGeometry();
   const slot = chartWidth / Math.max(1, rows.length);
-  const barWidth = Math.max(8, Math.min(44, slot * 0.58));
+  const domain = xAxis === 'time' ? timeDomain(rows) : null;
   const className = `tracker-chart-bar${barClass ? ` ${barClass}` : ''}`;
   const bars = rows.map((bucket, index) => {
     const amount = toBigIntValue(bucket?.[amountKey], 0n);
     const ratio = ratioBigInt(amount, maxAmount);
     const usableBarHeight = Math.max(1, chartHeight - BAR_TOP_LABEL_HEADROOM);
     const barHeight = Math.max(amount > 0n ? 2 : 0, ratio * usableBarHeight);
-    const x = padLeft + (index * slot) + (slot - barWidth) / 2;
+    const timeGeometry = domain ? bucketTimeGeometry(bucket, { domain, padLeft, chartWidth }) : null;
+    const bucketWidth = timeGeometry?.width || slot;
+    const barWidth = clampNumber(bucketWidth * barWidthRatio, minBarWidth, Math.min(maxBarWidth, bucketWidth));
+    const x = timeGeometry
+      ? timeGeometry.x + (bucketWidth - barWidth) / 2
+      : padLeft + (index * slot) + (slot - barWidth) / 2;
     const y = padTop + BAR_TOP_LABEL_HEADROOM + usableBarHeight - barHeight;
     const label = labelBuilder
       ? labelBuilder(bucket)
       : `${bucket.label}: ${valueFormatter ? valueFormatter(amount) : amount.toString()} across ${bucket?.[countKey] || 0} items`;
     return `<rect class="${escapeChartHtml(className)}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="4"><title>${escapeChartHtml(label)}</title></rect>`;
   }).join('');
-  const ticks = renderBucketTicks({ buckets: rows, slot, padLeft, height, showAllTicks });
+  const ticks = renderBucketTicks({
+    buckets: rows,
+    slot,
+    padLeft,
+    height,
+    showAllTicks,
+    xForBucket: domain ? (bucket, index) => bucketTimeGeometry(bucket, { domain, padLeft, chartWidth })?.center ?? (padLeft + (index * slot) + slot / 2) : null,
+  });
   const axisLabel = valueFormatter ? valueFormatter(maxAmount) : maxAmount.toString();
   return `
     <svg class="tracker-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeChartHtml(ariaLabel)}">
@@ -134,6 +180,9 @@ export function renderLineChart({
   valueFormatter,
   pointLabelBuilder,
   showAllTicks = false,
+  xAxis = 'category',
+  xDomainBuckets = null,
+  xTickBuckets = null,
 }) {
   const rows = Array.isArray(buckets) ? buckets : [];
   const valueBuckets = rows.filter((bucket) => bucket?.[valueKey] !== null && bucket?.[valueKey] !== undefined);
@@ -164,8 +213,11 @@ export function renderLineChart({
 
   const { width, height, padLeft, padRight, padTop, chartWidth, chartHeight } = chartGeometry();
   const slot = chartWidth / Math.max(1, rows.length);
+  const domain = xAxis === 'time' ? timeDomain(rows, xDomainBuckets) : null;
   const pointFor = (bucket, index) => {
-    const x = padLeft + (index * slot) + slot / 2;
+    const x = domain
+      ? bucketTimeGeometry(bucket, { domain, padLeft, chartWidth })?.center ?? (padLeft + (index * slot) + slot / 2)
+      : padLeft + (index * slot) + slot / 2;
     const ratio = scaleBigInt(bucket[valueKey], minValue, maxValue);
     const y = padTop + chartHeight - ratio * chartHeight;
     return { x, y };
@@ -182,7 +234,16 @@ export function renderLineChart({
       : `${bucket.label}: ${valueFormatter ? valueFormatter(bucket[valueKey]) : String(bucket[valueKey])}`;
     return `<circle class="tracker-chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4"><title>${escapeChartHtml(label)}</title></circle>`;
   }).join('');
-  const ticks = renderBucketTicks({ buckets: rows, slot, padLeft, height, showAllTicks });
+  const tickRows = Array.isArray(xTickBuckets) ? xTickBuckets : rows;
+  const tickSlot = chartWidth / Math.max(1, tickRows.length);
+  const ticks = renderBucketTicks({
+    buckets: tickRows,
+    slot: tickSlot,
+    padLeft,
+    height,
+    showAllTicks,
+    xForBucket: domain ? (bucket, index) => bucketTimeGeometry(bucket, { domain, padLeft, chartWidth })?.center ?? (padLeft + (index * tickSlot) + tickSlot / 2) : null,
+  });
   const baselineY = padTop + chartHeight;
   const zeroAxis = minValue < 0n && maxValue > 0n
     ? (() => {

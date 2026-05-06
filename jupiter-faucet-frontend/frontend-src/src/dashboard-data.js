@@ -329,6 +329,18 @@ function buildGetCyclesHistoryArgs({ canisterId, startAfter = null, limit = TRAC
   };
 }
 
+async function loadTrackerCycles(historian, args) {
+  const page = await historian.get_cycles_history(args);
+  return {
+    ...page,
+    items: [...(page?.items || [])].sort((left, right) => {
+      const leftTs = typeof left.timestamp_nanos === 'bigint' ? left.timestamp_nanos : BigInt(left.timestamp_nanos);
+      const rightTs = typeof right.timestamp_nanos === 'bigint' ? right.timestamp_nanos : BigInt(right.timestamp_nanos);
+      return leftTs < rightTs ? -1 : leftTs > rightTs ? 1 : 0;
+    }),
+  };
+}
+
 function buildGetCommitmentHistoryArgs({ canisterId, startAfter = null, limit = TRACKER_HISTORY_PAGE_SIZE, descending = false } = {}) {
   return {
     canister_id: canisterId,
@@ -520,10 +532,10 @@ export async function loadTrackerData({
     limit: historyLimit,
     descending: false,
   }));
-  const cyclesPromise = historian.get_cycles_history(buildGetCyclesHistoryArgs({
+  const cyclesPromise = loadTrackerCycles(historian, buildGetCyclesHistoryArgs({
     canisterId,
     limit: historyLimit,
-    descending: false,
+    descending: true,
   }));
   const statusPromise = historian.get_public_status();
   const cmcTransfersPromise = statusPromise.then((status) => loadTrackerCmcTransfers({

@@ -847,11 +847,18 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
       async get_cycles_history(args) {
         calls.push(['cycles', args]);
         return {
-          items: [{
-            timestamp_nanos: 1_710_010_000_000_000_000n,
-            cycles: 1_000_000_000_000n,
-            source: { BlackholeStatus: null },
-          }],
+          items: [
+            {
+              timestamp_nanos: 1_710_020_000_000_000_000n,
+              cycles: 900_000_000_000n,
+              source: { BlackholeStatus: null },
+            },
+            {
+              timestamp_nanos: 1_710_010_000_000_000_000n,
+              cycles: 1_000_000_000_000n,
+              source: { BlackholeStatus: null },
+            },
+          ],
           next_start_after_ts: [],
         };
       },
@@ -888,7 +895,9 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(data.isRecognized, true);
   assert.equal(data.isCommitmentBeneficiary, true);
   assert.equal(data.commitments.items.length, 1);
-  assert.equal(data.cycles.items.length, 1);
+  assert.equal(data.cycles.items.length, 2);
+  assert.equal(data.cycles.items[0].timestamp_nanos, 1_710_010_000_000_000_000n);
+  assert.equal(data.cycles.items[1].timestamp_nanos, 1_710_020_000_000_000_000n);
   assert.equal(data.cmcTransfers.items.length, 1);
   assert.equal(data.cmcTransfers.items[0].amount_e8s, 123_000_000n);
   assert.deepEqual(calls[0], ['overview', target.toText()]);
@@ -896,7 +905,7 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(calls[1][1].descending[0], false);
   assert.equal(calls[1][1].canister_id.toText(), target.toText());
   assert.equal(calls[2][1].limit[0], 12);
-  assert.equal(calls[2][1].descending[0], false);
+  assert.equal(calls[2][1].descending[0], true);
   assert.equal(calls[2][1].canister_id.toText(), target.toText());
 });
 
