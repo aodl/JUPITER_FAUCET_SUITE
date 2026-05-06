@@ -6,6 +6,8 @@ It serves the landing page as certified assets from a Rust asset canister. The b
 
 See the suite overview in [`../README.md`](../README.md).
 
+Unless otherwise noted, command examples in this README are run from the repository root.
+
 ## Current mainnet canister recorded in this repo
 
 - canister ID: `jufzc-caaaa-aaaar-qb5da-cai`
@@ -188,7 +190,7 @@ The local-replica variant is fixture-driven: it compares the live loader result 
 
 ```bash
 icp canister install jupiter_faucet_frontend \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_faucet_frontend.wasm.gz
 ```

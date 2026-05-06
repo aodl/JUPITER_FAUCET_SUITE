@@ -12,6 +12,8 @@ This canister is intentionally narrow in scope. It does not top up cycles direct
 
 See the suite overview in [`../README.md`](../README.md).
 
+Unless otherwise noted, command examples in this README are run from the repository root.
+
 ## Role in the suite
 
 `jupiter-disburser` owns four things:
@@ -308,15 +310,15 @@ For the broader test matrix, see [`../xtask/README.md`](../xtask/README.md).
 ### Canonical release build
 
 ```bash
-chmod +x ../scripts/docker-build ../scripts/build-canister
-../scripts/docker-build
+chmod +x scripts/docker-build scripts/build-canister
+./scripts/docker-build
 ```
 
 ### Install release artifact
 
 ```bash
 icp canister install jupiter_disburser \
-  --network ic \
+  --environment ic \
   --wasm release-artifacts/jupiter_disburser.wasm.gz \
   --args-file jupiter-disburser/mainnet-install-args.did
 ```
@@ -327,7 +329,7 @@ Upgrades preserve existing state and do not require args unless you are intentio
 
 ```bash
 icp canister install jupiter_disburser \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
@@ -338,7 +340,7 @@ Arm:
 
 ```bash
 icp canister install jupiter_disburser \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --args '(opt record { blackhole_armed = opt true; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
@@ -348,7 +350,7 @@ Disarm:
 
 ```bash
 icp canister install jupiter_disburser \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --args '(opt record { blackhole_armed = opt false; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
@@ -358,7 +360,7 @@ Clear a latched forced-rescue reason:
 
 ```bash
 icp canister install jupiter_disburser \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --args '(opt record { clear_forced_rescue = opt true; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
@@ -371,15 +373,15 @@ Before handing the canister off to self-management, the DAO-governed deployment 
 Example:
 
 ```bash
-icp canister settings update jupiter_disburser --network ic --log-visibility public
-icp canister settings update jupiter_disburser --network ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
+icp canister settings update jupiter_disburser --environment ic --log-visibility public
+icp canister settings update jupiter_disburser --environment ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
 After blackhole mode is armed and at least one successful payout transfer has been recorded, the DAO-governed deployment flow can hand the canister off to the healthy `self + blackhole` controller set:
 
 ```bash
 icp canister settings update jupiter_disburser \
-  --network ic \
+  --environment ic \
   --set-controller uccpi-cqaaa-aaaar-qby3q-cai \
   --add-controller e3mmv-5qaaa-aaaah-aadma-cai
 ```

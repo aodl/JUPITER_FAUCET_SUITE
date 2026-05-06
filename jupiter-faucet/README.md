@@ -8,6 +8,8 @@ This is the canister that turns â€œsomeone deposited ICP into the reward neuronâ
 
 See the suite overview in [`../README.md`](../README.md).
 
+Unless otherwise noted, command examples in this README are run from the repository root.
+
 ## Role in the suite
 
 `jupiter-faucet` owns five things:

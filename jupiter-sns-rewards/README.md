@@ -4,6 +4,8 @@
 
 See the suite overview in [`../README.md`](../README.md).
 
+Unless otherwise noted, command examples in this README are run from the repository root.
+
 ## Current mainnet canister recorded in this repo
 
 - canister ID: `alk7f-5aaaa-aaaar-qb4ra-cai`
@@ -45,7 +47,7 @@ Upgrade:
 
 ```bash
 icp canister install jupiter_sns_rewards \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
 ```

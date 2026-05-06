@@ -6,6 +6,8 @@ Its current job is deliberately minimal: exist as the configured rescue controll
 
 See the suite overview in [`../README.md`](../README.md).
 
+Unless otherwise noted, command examples in this README are run from the repository root.
+
 ## Current mainnet canister recorded in this repo
 
 - canister ID: `afisn-gqaaa-aaaar-qb4qa-cai`
@@ -36,7 +38,7 @@ Fresh install:
 
 ```bash
 icp canister install jupiter_lifeline \
-  --network ic \
+  --environment ic \
   --wasm release-artifacts/jupiter_lifeline.wasm.gz
 ```
 
@@ -44,7 +46,7 @@ Upgrade:
 
 ```bash
 icp canister install jupiter_lifeline \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_lifeline.wasm.gz
 ```

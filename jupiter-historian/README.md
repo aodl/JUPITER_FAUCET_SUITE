@@ -6,6 +6,8 @@ It keeps a durable set of declared canisters discovered from faucet staking-acco
 
 See the suite overview in [`../README.md`](../README.md).
 
+Unless otherwise noted, command examples in this README are run from the repository root.
+
 ## Role in the suite
 
 `jupiter-historian` owns five things:
@@ -291,13 +293,13 @@ For the broader test matrix, see [`../xtask/README.md`](../xtask/README.md).
 For production artifacts, use the pinned Docker-based workflow from the repo root:
 
 ```bash
-chmod +x ../scripts/docker-build ../scripts/build-canister
-../scripts/docker-build
+chmod +x scripts/docker-build scripts/build-canister
+./scripts/docker-build
 ```
 
-This uses `../Dockerfile.repro`, which pins the base image digest, Rust toolchain, and `ic-wasm` version, then runs `../scripts/build-canister` inside that controlled environment.
+This uses `Dockerfile.repro`, which pins the base image digest, Rust toolchain, and `ic-wasm` version, then runs `scripts/build-canister` inside that controlled environment.
 
-It produces the canonical release artifacts under `../release-artifacts/`, including:
+It produces the canonical release artifacts under `release-artifacts/`, including:
 
 - `release-artifacts/jupiter_historian.wasm`
 - `release-artifacts/jupiter_historian.wasm.gz`
@@ -309,7 +311,7 @@ Fresh install:
 
 ```bash
 icp canister install jupiter_historian \
-  --network ic \
+  --environment ic \
   --wasm release-artifacts/jupiter_historian.wasm.gz \
   --args-file jupiter-historian/mainnet-install-args.did
 ```
@@ -318,7 +320,7 @@ Upgrade:
 
 ```bash
 icp canister install jupiter_historian \
-  --network ic \
+  --environment ic \
   --mode upgrade \
   --wasm release-artifacts/jupiter_historian.wasm.gz \
   --args-file jupiter-historian/mainnet-install-args.did
