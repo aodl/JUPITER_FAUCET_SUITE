@@ -62,6 +62,10 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.match(orbitCss, /\.orbit-infographic-hotspot/);
   assert.match(orbitCss, /\.orbit-infographic-particle-hotspot/);
   assert.match(orbitCss, /#visor, #visor_glow, \.neon \{/);
+  assert.match(orbitCss, /\.neon-top\{\s*top: 75dvw;\s*left: 54dvw;\s*\}/);
+  assert.match(orbitCss, /\.neon-ups\{\s*top: 78dvw;\s*left: 57dvw;\s*\}/);
+  assert.doesNotMatch(orbitCss, /\.neon-top\{[\s\S]*?padding-top:/);
+  assert.doesNotMatch(orbitCss, /\.neon-ups\{[\s\S]*?padding-top:/);
   assert.match(orbitJs, /Automated disbursals keep flowing, minting new ICP from voting rewards, powering downstream smart contracts\./);
   assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\.\\nCOMING SOON \.\.\./);
   assert.match(orbitJs, /Disbursed ICP is automatically converted into cycles, forming a giant, unstoppable faucet\./);
@@ -282,6 +286,8 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   const stake = sectionMarkup('metric-stake');
   const rail = indexHtml.slice(indexHtml.indexOf('<aside class="metric-rail"'), indexHtml.indexOf('</aside>') + '</aside>'.length);
 
+  assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
+  assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
   assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Declared Canisters[\s\S]*Track Canisters/);
   assert.doesNotMatch(rail, /Target Canisters/);
   assert.doesNotMatch(rail, />Commitments<\/span>/);

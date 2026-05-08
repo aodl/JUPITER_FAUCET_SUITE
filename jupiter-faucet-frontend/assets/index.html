@@ -64,6 +64,15 @@
       max-width: min(42vw, 520px);
     }
 
+    .metric-rail-subtitle {
+      max-width: min(42vw, 520px);
+      margin: 0 12px 4px 0;
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: right;
+    }
+
     .metric-rail-link-label {
       opacity: 0.92;
     }
@@ -102,6 +111,12 @@
         align-items: center !important;
         max-width: min(78vw, 360px);
         white-space: normal !important;
+      }
+
+      .metric-rail-subtitle {
+        max-width: min(78vw, 360px);
+        margin-bottom: 6px;
+        font-size: 11px;
       }
     }
 
@@ -285,6 +300,7 @@
 
   <aside class="metric-rail" id="landing-live-summary" aria-label="Live metrics summary">
     <div class="metric-rail-list">
+      <p class="metric-rail-subtitle" id="landing-next-run">Loading next historian run…</p>
       <a href="#metric-stake" class="metric-rail-link nav-item" data-panel="metric-stake">
         <span class="metric-rail-link-label">Jupiter Stake</span>
         <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>

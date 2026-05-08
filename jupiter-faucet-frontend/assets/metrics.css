@@ -40,6 +40,15 @@
   text-decoration: none;
 }
 
+.metric-rail-subtitle {
+  max-width: min(42vw, 520px);
+  margin: 0 12px 4px 0;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .metric-rail-link.nav-item {
   padding: 6px 12px;
 }
@@ -168,6 +177,12 @@
     align-items: center;
     gap: 8px;
     max-width: min(56vw, 340px);
+  }
+
+  .metric-rail-subtitle {
+    max-width: min(56vw, 340px);
+    margin-bottom: 6px;
+    font-size: 11px;
   }
 
   .metric-rail-link-label {
@@ -692,6 +707,10 @@
   .metric-rail-link {
     max-width: min(78vw, 360px);
     white-space: normal;
+  }
+
+  .metric-rail-subtitle {
+    max-width: min(78vw, 360px);
   }
 
   .nav-panel {

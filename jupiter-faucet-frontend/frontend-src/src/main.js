@@ -503,6 +503,7 @@ function renderStakeNeuronStatus({ loading = false, error = null } = {}) {
 
 function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
+  setText('landing-next-run', subtitle);
   setText('registered-pane-subtitle', subtitle);
   setText('commitments-pane-subtitle', subtitle);
   setText('output-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
