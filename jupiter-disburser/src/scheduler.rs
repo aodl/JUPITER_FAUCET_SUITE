@@ -775,7 +775,7 @@ mod tests {
             ledger_canister_id: Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap(),
             governance_canister_id: Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
             rescue_controller: Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap(),
-            blackhole_controller: Some(Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()),
+            blackhole_controller: Some(Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()),
             blackhole_armed: Some(false),
             main_interval_seconds: 60,
             rescue_interval_seconds: 60,

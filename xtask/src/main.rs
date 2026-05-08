@@ -908,7 +908,7 @@ fn mainnet_cmc_principal() -> Principal {
 }
 
 fn mainnet_blackhole_principal() -> Principal {
-    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("valid blackhole principal")
+    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("valid blackhole principal")
 }
 
 fn mainnet_sns_wasm_principal() -> Principal {

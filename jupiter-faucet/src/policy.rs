@@ -56,7 +56,7 @@ mod tests {
     }
 
     fn blackhole_id() -> Principal {
-        Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()
+        Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()
     }
 
     #[test]

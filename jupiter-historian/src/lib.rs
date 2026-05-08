@@ -470,7 +470,7 @@ fn mainnet_index_id() -> Principal {
 }
 
 fn mainnet_blackhole_id() -> Principal {
-    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
+    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("invalid hardcoded blackhole principal")
 }
 
 pub(crate) fn mainnet_disburser_id() -> Principal {
@@ -1525,7 +1525,7 @@ mod tests {
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
-                blackhole_canister_id: principal("e3mmv-5qaaa-aaaah-aadma-cai"),
+                blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
                 xrc_canister_id: mainnet_xrc_id(),
                 enable_sns_tracking: false,

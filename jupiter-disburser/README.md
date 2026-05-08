@@ -34,7 +34,7 @@ By default the canister talks to:
 
 - ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
-- canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`) when blackhole mode is configured / armed
+- canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`) when blackhole mode is configured / armed
 
 All three can be overridden at install time except the blackhole default itself, which is only used when no explicit controller is provided.
 
@@ -239,7 +239,7 @@ The committed mainnet install args currently wire:
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
 - age bonus recipient 2: D-QUORUM staking account `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68` (NNS Governance owner with the committed subaccount bytes)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
-- blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)
+- blackhole controller: canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
 - `blackhole_armed = false`
@@ -383,7 +383,7 @@ After blackhole mode is armed and at least one successful payout transfer has be
 icp canister settings update jupiter_disburser \
   --environment ic \
   --set-controller uccpi-cqaaa-aaaar-qby3q-cai \
-  --add-controller e3mmv-5qaaa-aaaah-aadma-cai
+  --add-controller 77deu-baaaa-aaaar-qb6za-cai
 ```
 
 ## Related docs

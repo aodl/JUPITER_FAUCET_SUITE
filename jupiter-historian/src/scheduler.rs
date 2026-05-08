@@ -1,7 +1,5 @@
-use candid::Nat;
-
-#[cfg(feature = "debug_api")]
-use candid::Principal;
+use async_trait::async_trait;
+use candid::{Nat, Principal};
 use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;
@@ -10,7 +8,10 @@ use crate::clients::index::{account_identifier_text, IcpIndexCanister};
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::xrc::XrcCanister;
-use crate::clients::{BlackholeClient, ExchangeRateClient, GovernanceClient, IndexClient, SnsRootClient, SnsWasmClient};
+use crate::clients::{
+    BlackholeClient, ClientError, ExchangeRateClient, GovernanceClient, IndexClient,
+    SnsRootClient, SnsWasmClient,
+};
 use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,
     MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
@@ -22,6 +23,51 @@ const MAX_INITIAL_CYCLES_PROBE_QUEUE: usize = 256;
 const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
 const ICP_XDR_RATE_CACHE_TTL_SECONDS: u64 = 24 * 60 * 60;
 
+fn original_blackhole_id() -> Principal {
+    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai")
+        .expect("invalid hardcoded original blackhole principal")
+}
+
+fn secure_mainnet_blackhole_id() -> Principal {
+    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai")
+        .expect("invalid hardcoded secure mainnet blackhole principal")
+}
+
+fn should_try_original_blackhole_first(configured_blackhole_id: Principal) -> bool {
+    configured_blackhole_id == secure_mainnet_blackhole_id()
+}
+
+struct FallbackBlackholeClient<'a, P: BlackholeClient, F: BlackholeClient> {
+    primary: &'a P,
+    fallback: &'a F,
+}
+
+impl<'a, P: BlackholeClient, F: BlackholeClient> FallbackBlackholeClient<'a, P, F> {
+    fn new(primary: &'a P, fallback: &'a F) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+#[async_trait]
+impl<P: BlackholeClient, F: BlackholeClient> BlackholeClient for FallbackBlackholeClient<'_, P, F> {
+    async fn canister_status(
+        &self,
+        canister_id: Principal,
+    ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, ClientError> {
+        match self.primary.canister_status(canister_id).await {
+            Ok(status) => Ok(status),
+            Err(primary_err) => self
+                .fallback
+                .canister_status(canister_id)
+                .await
+                .map_err(|fallback_err| {
+                    ClientError::Call(format!(
+                        "primary blackhole failed: {primary_err}; fallback blackhole failed: {fallback_err}"
+                    ))
+                }),
+        }
+    }
+}
 
 fn indexed_route_kinds() -> [IndexedRouteKind; 2] {
     [IndexedRouteKind::Output, IndexedRouteKind::Rewards]
@@ -277,12 +323,51 @@ pub async fn main_tick(force: bool) {
         st.config.xrc_canister_id,
     ));
     let index = IcpIndexCanister::new(index_id);
-    let blackhole = BlackholeCanister::new(blackhole_id);
+    let original_blackhole = BlackholeCanister::new(original_blackhole_id());
+    let configured_blackhole = BlackholeCanister::new(blackhole_id);
     let sns_wasm = SnsWasmCanister::new(sns_wasm_id);
     let sns_root = SnsRootCanister;
     let governance = NnsGovernanceCanister::new(governance_id);
     let xrc = XrcCanister::with_canister_id(xrc_id);
-    if let Err(err) = run_main_tick_with_clients(now_nanos, now_secs, &index, &blackhole, &sns_wasm, &sns_root, &governance, &xrc).await {
+    let result = if should_try_original_blackhole_first(blackhole_id) {
+        let blackhole = FallbackBlackholeClient::new(&original_blackhole, &configured_blackhole);
+        run_main_tick_with_clients(
+            now_nanos,
+            now_secs,
+            &index,
+            &blackhole,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+        )
+        .await
+    } else if blackhole_id == original_blackhole_id() {
+        run_main_tick_with_clients(
+            now_nanos,
+            now_secs,
+            &index,
+            &original_blackhole,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+        )
+        .await
+    } else {
+        run_main_tick_with_clients(
+            now_nanos,
+            now_secs,
+            &index,
+            &configured_blackhole,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+        )
+        .await
+    };
+    if let Err(err) = result {
         log_error(&format!("historian main tick failed: {err}"));
     }
     guard.finish(now_secs);
@@ -1387,7 +1472,7 @@ mod tests {
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
-                blackhole_canister_id: principal("e3mmv-5qaaa-aaaah-aadma-cai"),
+                blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
                 xrc_canister_id: principal("uf6dk-hyaaa-aaaaq-qaaaq-cai"),
                 enable_sns_tracking: false,
@@ -1625,6 +1710,31 @@ mod tests {
                 cycles: Nat::from(self.cycles),
                 settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
             })
+        }
+    }
+
+    struct FailingBlackholeClient {
+        calls: Mutex<Vec<Principal>>,
+    }
+
+    impl FailingBlackholeClient {
+        fn new() -> Self {
+            Self { calls: Mutex::new(Vec::new()) }
+        }
+
+        fn calls(&self) -> Vec<Principal> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl BlackholeClient for FailingBlackholeClient {
+        async fn canister_status(
+            &self,
+            canister_id: Principal,
+        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError> {
+            self.calls.lock().unwrap().push(canister_id);
+            Err(crate::clients::ClientError::Call("blackhole status unavailable".into()))
         }
     }
 
@@ -1925,6 +2035,55 @@ mod tests {
                 Some(777)
             );
         });
+    }
+
+    #[test]
+    fn cycles_probe_falls_back_from_original_to_configured_blackhole() {
+        configure_state(10);
+        let canister_id = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let original = FailingBlackholeClient::new();
+        let configured = RecordingBlackholeClient::new(888);
+        let blackhole = FallbackBlackholeClient::new(&original, &configured);
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            canister_id,
+            100,
+            None,
+            &blackhole,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(original.calls(), vec![canister_id]);
+            assert_eq!(configured.calls(), vec![canister_id]);
+            assert_eq!(
+                st.cycles_history
+                    .get(&canister_id)
+                    .and_then(|history| history.last())
+                    .map(|sample| sample.cycles),
+                Some(888)
+            );
+            let meta = st.per_canister_meta.get(&canister_id).expect("probe metadata should be recorded");
+            assert_eq!(
+                meta.last_cycles_probe_result,
+                Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus))
+            );
+        });
+    }
+
+    #[test]
+    fn original_blackhole_fallback_is_only_for_secure_mainnet_blackhole() {
+        assert!(should_try_original_blackhole_first(principal(
+            "77deu-baaaa-aaaar-qb6za-cai"
+        )));
+        assert!(!should_try_original_blackhole_first(principal(
+            "e3mmv-5qaaa-aaaah-aadma-cai"
+        )));
+        assert!(!should_try_original_blackhole_first(principal(
+            "ryjl3-tyaaa-aaaaa-aaaba-cai"
+        )));
     }
 
     #[test]

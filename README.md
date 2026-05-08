@@ -171,7 +171,7 @@ The suite relies on the following external canisters and protocols:
 - ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai` by default)
 - NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai` by default)
 - Cycles Minting Canister / CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai` by default)
-- canonical blackhole canister (`e3mmv-5qaaa-aaaah-aadma-cai` by default)
+- canonical blackhole canister (`77deu-baaaa-aaaar-qb6za-cai` by default)
 - SNS-WASM (`qaa6y-5yaaa-aaaaa-aaafa-cai` by default, for historian SNS discovery)
 
 The frontend also depends on generated JS declarations for the historian and a ledger actor surface.

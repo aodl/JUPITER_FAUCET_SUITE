@@ -1833,7 +1833,7 @@ mod tests {
             index_canister_id: Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").unwrap(),
             cmc_canister_id: Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap(),
             rescue_controller: Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
-            blackhole_controller: Some(Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()),
+            blackhole_controller: Some(Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds,
@@ -3024,7 +3024,7 @@ mod tests {
     #[test]
     fn desired_rescue_controllers_widens_controllers_when_skip_range_fault_is_latched() {
         let rescue_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
-        let blackhole_controller = Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap();
+        let blackhole_controller = Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap();
         let self_id = Principal::anonymous();
 
         let desired = desired_rescue_controllers(

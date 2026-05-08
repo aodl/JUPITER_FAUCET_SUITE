@@ -54,7 +54,7 @@ fn mainnet_cmc_id() -> Principal {
 }
 
 fn mainnet_blackhole_id() -> Principal {
-    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
+    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("invalid hardcoded blackhole principal")
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -516,7 +516,7 @@ mod tests {
             index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
-            blackhole_controller: Some(principal("e3mmv-5qaaa-aaaah-aadma-cai")),
+            blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: 60,

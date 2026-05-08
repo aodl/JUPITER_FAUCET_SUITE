@@ -43,7 +43,7 @@ const TRACKER_RANGE_LABELS = {
   year: 'last year',
   all: 'all currently loaded history',
 };
-const BLACKHOLE_CANISTER_ID = 'e3mmv-5qaaa-aaaah-aadma-cai';
+const BLACKHOLE_CANISTER_ID = '77deu-baaaa-aaaar-qb6za-cai';
 const SIMULATOR_DEFAULTS = {
   dailyBurnTrillionCycles: '0.001',
   assumedIcpPrice: '10.0',

@@ -34,6 +34,10 @@ We may introduce more functionalities with each new version, and once deployed i
 
 Black hole Canister ID: [`e3mmv-5qaaa-aaaah-aadma-cai`](https://ic.rocks/principal/e3mmv-5qaaa-aaaah-aadma-cai)
 
+An equivalent instance is also deployed to a 30-node fiduciary subnet:
+[`77deu-baaaa-aaaar-qb6za-cai`](https://dashboard.internetcomputer.org/canister/77deu-baaaa-aaaar-qb6za-cai).
+It was deployed from the same Wasm and blackholed in the same way.
+
 This version gives one interface `canister_status` that is identical to the IC management canister.
 
 ```

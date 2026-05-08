@@ -29,7 +29,7 @@ By default the canister talks to:
 - ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - Cycles Minting Canister / CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
-- canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`) when blackhole mode is configured / armed
+- canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`) when blackhole mode is configured / armed
 
 ## High-level payout model
 
@@ -375,7 +375,7 @@ The committed mainnet install args wire the current production constants used by
   intended to be an oldest-transaction **ID** anchor (`opt nat64`), not a hash / string; verify the committed `mainnet-install-args.did` value before using it
 - payout account: the faucet canister default account (`acjuz-liaaa-aaaar-qb4qq-cai`, with `payout_subaccount = null`)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
-- blackhole controller: canonical blackhole (`e3mmv-5qaaa-aaaah-aadma-cai`)
+- blackhole controller: canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - index canister: ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)

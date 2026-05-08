@@ -250,7 +250,7 @@ fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: Trans
 }
 
 fn test_blackhole_controller() -> Principal {
-    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()
+    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()
 }
 
 fn account_identifier_text(account: &Account) -> String {

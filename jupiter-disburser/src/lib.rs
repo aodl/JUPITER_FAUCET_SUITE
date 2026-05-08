@@ -52,7 +52,7 @@ fn mainnet_governance_id() -> Principal {
 }
 
 fn mainnet_blackhole_id() -> Principal {
-    Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").expect("invalid hardcoded blackhole principal")
+    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("invalid hardcoded blackhole principal")
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -397,7 +397,7 @@ mod tests {
             ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             rescue_controller: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
-            blackhole_controller: Some(principal("e3mmv-5qaaa-aaaah-aadma-cai")),
+            blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
             blackhole_armed: Some(false),
             main_interval_seconds: 60,
             rescue_interval_seconds: 60,
