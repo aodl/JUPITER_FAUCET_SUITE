@@ -295,6 +295,20 @@ function formatTimestampSeconds(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  });
+}
+
+function formatLocalTimestampSeconds(value) {
+  if (!value) return DASH;
+  return new Date(Number(value) * 1000).toLocaleString('en-GB', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
   });
 }
 
@@ -307,6 +321,8 @@ function formatTimestampNanos(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
   });
 }
 
@@ -398,7 +414,7 @@ function nextRunLabel(status) {
   const base = status.last_index_run_ts?.[0] ?? null;
   if (!base) return `Refreshes every ${formatInteger(status.index_interval_seconds)} seconds.`;
   const next = BigInt(base) + BigInt(status.index_interval_seconds);
-  return `Next historian run approx. ${formatTimestampSeconds(next)}.`;
+  return `Next historian run approx. ${formatLocalTimestampSeconds(next)}.`;
 }
 
 function renderLandingSummary(data) {
@@ -1198,7 +1214,7 @@ function trackerPeriod(date, range) {
   const day = date.getUTCDate();
   return {
     key: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-    label: date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: range === 'month' ? undefined : '2-digit', timeZone: 'UTC' }),
+    label: `${date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: range === 'month' ? undefined : '2-digit', timeZone: 'UTC' })} UTC`,
     startMs: Date.UTC(year, month, day),
     endMs: Date.UTC(year, month, day + 1),
   };
@@ -1507,7 +1523,7 @@ function trackerCyclesChartPoints(data) {
     const millis = Number(sample.timestampNanos / 1_000_000n);
     const date = new Date(millis);
     return {
-      label: date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }),
+      label: `${date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })} UTC`,
       timestampNanos: sample.timestampNanos,
       startMs: millis,
       endMs: millis + 1,
