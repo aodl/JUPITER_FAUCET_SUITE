@@ -195,8 +195,17 @@ mod tests {
     fn parses_target_canister_memo() {
         let p = target_canister();
         assert_eq!(parse_target_canister_from_memo(p.to_text().as_bytes()), Some(p));
+        assert_eq!(parse_target_canister_from_memo(p.to_text().replace('-', "").as_bytes()), Some(p));
         assert_eq!(parse_target_canister_from_memo(format!("  {}\n", p.to_text()).as_bytes()), Some(p));
         assert_eq!(parse_target_canister_from_memo(b"bad"), None);
+    }
+
+    #[test]
+    fn parses_declared_target_from_raw_icp_memo_directive() {
+        let p = target_canister();
+        let compact = p.to_text().replace('-', "");
+        assert_eq!(parse_target_canister_from_memo(format!("{compact}.vault42").as_bytes()), Some(p));
+        assert_eq!(parse_target_canister_from_memo(format!("{compact}.").as_bytes()), Some(p));
     }
 
     #[test]

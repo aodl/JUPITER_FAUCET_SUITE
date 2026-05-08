@@ -88,7 +88,18 @@ pub fn runtime_config_log_line(cfg: &Config) -> String {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum TransferKind {
     Beneficiary,
+    RawIcp,
     RemainderToSelf,
+}
+
+impl TransferKind {
+    pub fn is_beneficiary_payout(&self) -> bool {
+        matches!(self, Self::Beneficiary | Self::RawIcp)
+    }
+
+    pub fn requires_cmc_notify(&self) -> bool {
+        matches!(self, Self::Beneficiary | Self::RemainderToSelf)
+    }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -99,6 +110,8 @@ pub struct PendingNotification {
     pub amount_e8s: u64,
     pub block_index: u64,
     pub next_start: Option<u64>,
+    #[serde(default)]
+    pub transfer_memo: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -713,6 +726,39 @@ mod tests {
         assert_eq!(restored.main_lock_state_ts, Some(33));
         assert_eq!(restored.payout_nonce, st.payout_nonce);
         assert_eq!(restored.config.min_tx_e8s, st.config.min_tx_e8s);
+    }
+
+    #[test]
+    fn pending_notification_decodes_legacy_state_without_transfer_memo() {
+        #[derive(CandidType, Deserialize)]
+        enum LegacyTransferKind {
+            Beneficiary,
+            RemainderToSelf,
+        }
+
+        #[derive(CandidType, Deserialize)]
+        struct LegacyPendingNotification {
+            kind: LegacyTransferKind,
+            beneficiary: Principal,
+            gross_share_e8s: u64,
+            amount_e8s: u64,
+            block_index: u64,
+            next_start: Option<u64>,
+        }
+
+        let legacy = LegacyPendingNotification {
+            kind: LegacyTransferKind::Beneficiary,
+            beneficiary: principal(&[8]),
+            gross_share_e8s: 50,
+            amount_e8s: 40,
+            block_index: 9,
+            next_start: Some(10),
+        };
+        let bytes = candid::encode_one(legacy).expect("encode legacy pending notification");
+        let decoded: PendingNotification = candid::decode_one(&bytes).expect("decode legacy pending notification");
+        assert_eq!(decoded.kind, TransferKind::Beneficiary);
+        assert_eq!(decoded.beneficiary, principal(&[8]));
+        assert_eq!(decoded.transfer_memo, None);
     }
 
     #[test]

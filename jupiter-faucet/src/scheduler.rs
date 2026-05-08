@@ -294,7 +294,7 @@ fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
     })
 }
 fn increment_cmc_attempts(pending: &PendingNotification) {
-    if pending.kind != TransferKind::Beneficiary {
+    if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
         return;
     }
     state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
@@ -303,7 +303,7 @@ fn increment_cmc_attempts(pending: &PendingNotification) {
 }
 
 fn note_attempted_beneficiary(pending: &PendingNotification) {
-    if pending.kind != TransferKind::Beneficiary {
+    if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
         return;
     }
     state::with_state_mut(|st| {
@@ -317,7 +317,7 @@ fn note_attempted_beneficiary(pending: &PendingNotification) {
 }
 
 fn increment_cmc_successes(pending: &PendingNotification) {
-    if pending.kind != TransferKind::Beneficiary {
+    if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
         return;
     }
     state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
@@ -362,7 +362,7 @@ enum PendingTransferTerminalStatus {
 fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
-            if matches!(job.pending_transfer.as_ref().map(|pending| &pending.notification.kind), Some(TransferKind::Beneficiary)) {
+            if job.pending_transfer.as_ref().map(|pending| pending.notification.kind.is_beneficiary_payout()).unwrap_or(false) {
                 match status {
                     PendingTransferTerminalStatus::Failed => {
                         job.failed_topups = job.failed_topups.saturating_add(1);
@@ -590,8 +590,7 @@ fn flush_scan_progress(
     *ignored_bad_memo_delta = 0;
 }
 
-fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64) -> TransferArg {
-    let memo_bytes = logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec();
+fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64, memo_bytes: Vec<u8>) -> TransferArg {
     TransferArg {
         from_subaccount: state::with_state(|st| st.config.payout_subaccount),
         to,
@@ -603,7 +602,17 @@ fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nano
 }
 
 fn deposit_account_for_pending(cmc_id: candid::Principal, pending: &PendingNotification) -> Account {
-    logic::cmc_deposit_account(cmc_id, pending.beneficiary)
+    match pending.kind {
+        TransferKind::RawIcp => Account { owner: pending.beneficiary, subaccount: None },
+        TransferKind::Beneficiary | TransferKind::RemainderToSelf => logic::cmc_deposit_account(cmc_id, pending.beneficiary),
+    }
+}
+
+fn transfer_memo_for_pending(pending: &PendingNotification) -> Vec<u8> {
+    pending
+        .transfer_memo
+        .clone()
+        .unwrap_or_else(|| logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec())
 }
 
 async fn drive_pending_transfer(
@@ -626,17 +635,20 @@ async fn drive_pending_transfer(
             }
 
             let to = deposit_account_for_pending(cmc_id, &staged.notification);
+            let memo_bytes = transfer_memo_for_pending(&staged.notification);
             let first_arg = transfer_arg(
                 to.clone(),
                 staged.notification.amount_e8s,
                 fee_e8s,
                 staged.created_at_time_nanos,
+                memo_bytes.clone(),
             );
             let second_arg = transfer_arg(
                 to,
                 staged.notification.amount_e8s,
                 fee_e8s,
                 staged.created_at_time_nanos,
+                memo_bytes,
             );
 
             let block_index = match transfer_once(ledger, first_arg).await {
@@ -669,6 +681,11 @@ async fn drive_pending_transfer(
         }
         PendingTransferPhase::TransferAccepted => staged.notification,
     };
+
+    if !accepted.kind.requires_cmc_notify() {
+        record_successful_notification(now_secs, &accepted);
+        return true;
+    }
 
     let first_notify = notify_once(cmc, &accepted).await;
     match first_notify {
@@ -1176,7 +1193,7 @@ async fn process_payout(
             let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
             if remainder_gross_e8s > job.fee_e8s && job.remainder_to_self_e8s == 0 {
                 let self_id = self_canister_principal();
-                let pending = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: remainder_gross_e8s, amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s), block_index: 0, next_start: None };
+                let pending = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: remainder_gross_e8s, amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s), block_index: 0, next_start: None, transfer_memo: None };
                 if !send_and_notify(ledger, cmc, pending, job.fee_e8s, now_nanos, now_secs, cfg.cmc_canister_id).await {
                     return true;
                 }
@@ -1290,7 +1307,7 @@ async fn process_payout(
                     skip_candidate.note_skippable(tx.id);
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
                 }
-                logic::CommitmentValidity::Valid { beneficiary } => {
+                logic::CommitmentValidity::Valid { target } => {
                     let amount_for_round_e8s = logic::commitment_amount_for_round_e8s(
                         &commitment,
                         tx.id,
@@ -1318,7 +1335,11 @@ async fn process_payout(
                         latch_skip_range_invariant_rescue();
                         return true;
                     }
-                    let pending = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(snapshot.2), block_index: 0, next_start: Some(tx.id) };
+                    let (kind, beneficiary, transfer_memo) = match target {
+                        logic::PayoutTarget::CyclesTopUp { canister_id } => (TransferKind::Beneficiary, canister_id, None),
+                        logic::PayoutTarget::RawIcp { canister_id, memo } => (TransferKind::RawIcp, canister_id, Some(memo)),
+                    };
+                    let pending = PendingNotification { kind, beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(snapshot.2), block_index: 0, next_start: Some(tx.id), transfer_memo };
                     if !send_and_notify(ledger, cmc, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
                     }
@@ -1519,6 +1540,8 @@ mod tests {
         steps: Arc<Mutex<VecDeque<LedgerStep>>>,
         transfer_calls: Arc<AtomicUsize>,
         created_at_times: Arc<Mutex<Vec<Option<u64>>>>,
+        destinations: Arc<Mutex<Vec<Account>>>,
+        memos: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
     }
 
     impl ScriptedLedger {
@@ -1527,6 +1550,8 @@ mod tests {
                 steps: Arc::new(Mutex::new(steps.into())),
                 transfer_calls: Arc::new(AtomicUsize::new(0)),
                 created_at_times: Arc::new(Mutex::new(Vec::new())),
+                destinations: Arc::new(Mutex::new(Vec::new())),
+                memos: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -1537,6 +1562,14 @@ mod tests {
         fn created_at_times(&self) -> Vec<Option<u64>> {
             self.created_at_times.lock().unwrap().clone()
         }
+
+        fn destinations(&self) -> Vec<Account> {
+            self.destinations.lock().unwrap().clone()
+        }
+
+        fn memos(&self) -> Vec<Option<Vec<u8>>> {
+            self.memos.lock().unwrap().clone()
+        }
     }
 
     #[async_trait]
@@ -1546,6 +1579,8 @@ mod tests {
         async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
             self.transfer_calls.fetch_add(1, Ordering::SeqCst);
             self.created_at_times.lock().unwrap().push(arg.created_at_time);
+            self.destinations.lock().unwrap().push(arg.to);
+            self.memos.lock().unwrap().push(arg.memo.map(|memo| memo.0.to_vec()));
             match self.steps.lock().unwrap().pop_front().expect("missing ledger step") {
                 LedgerStep::Ok(block) => Ok(Ok(BlockIndex::from(block))),
                 LedgerStep::Duplicate(block) => Ok(Err(TransferError::Duplicate { duplicate_of: BlockIndex::from(block) })),
@@ -1978,6 +2013,7 @@ mod tests {
             123_456_789,
             10_000,
             42,
+            logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec(),
         );
         let memo = arg.memo.expect("memo should be present");
         assert_eq!(memo.0, logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec());
@@ -2041,6 +2077,188 @@ mod tests {
         assert_eq!(summary.topped_up_count, 1);
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.remainder_to_self_e8s, 74_990_000);
+    }
+
+    #[test]
+    fn raw_icp_directive_sends_to_default_account_with_declared_memo_without_cmc_notify() {
+        let now_secs = 1_300_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(21, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let compact = beneficiary.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 100_000_000, Some(format!("{compact}.vault42").into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91), LedgerStep::Ok(92)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 2, "raw ICP payout plus remainder should each transfer once");
+        assert_eq!(cmc.call_count(), 1, "raw ICP payout should not call notify_top_up; only the remainder is notified");
+        let destinations = ledger.destinations();
+        assert_eq!(destinations[0], Account { owner: beneficiary, subaccount: None });
+        assert_eq!(destinations[1], logic::cmc_deposit_account(cfg.cmc_canister_id, Principal::anonymous()));
+        let memos = ledger.memos();
+        assert_eq!(memos[0], Some(b"vault42".to_vec()));
+        assert_eq!(memos[1], Some(logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec()));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 49_990_000);
+        assert_eq!(summary.remainder_to_self_e8s, 49_990_000);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
+    }
+
+    #[test]
+    fn raw_icp_directive_allows_empty_transfer_memo_after_dot() {
+        let now_secs = 1_350_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(22, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let compact = beneficiary.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 100_000_000, Some(format!("{compact}.").into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91)]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert_eq!(cmc.call_count(), 0);
+        assert_eq!(ledger.destinations(), vec![Account { owner: beneficiary, subaccount: None }]);
+        assert_eq!(ledger.memos(), vec![Some(Vec::new())]);
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 99_990_000);
+        assert_eq!(summary.remainder_to_self_e8s, 0);
+    }
+
+    #[test]
+    fn raw_icp_transfer_retry_reuses_identity_destination_and_declared_memo() {
+        let now_secs = 1_375_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(23, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let compact = beneficiary.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 100_000_000, Some(format!("{compact}.retry42").into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![
+            LedgerStep::TemporarilyUnavailable,
+            LedgerStep::Ok(91),
+            LedgerStep::Ok(92),
+        ]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 3, "raw ICP retry plus remainder should produce three transfer calls");
+        assert_eq!(cmc.call_count(), 1, "raw ICP retry must not notify CMC; only the remainder does");
+        let created_at_times = ledger.created_at_times();
+        assert_eq!(created_at_times[0], created_at_times[1], "raw ICP immediate retry must reuse created_at_time");
+        assert_ne!(created_at_times[1], created_at_times[2], "remainder should allocate its own transfer identity");
+        let destinations = ledger.destinations();
+        assert_eq!(destinations[0], Account { owner: beneficiary, subaccount: None });
+        assert_eq!(destinations[1], Account { owner: beneficiary, subaccount: None });
+        assert_eq!(destinations[2], logic::cmc_deposit_account(cfg.cmc_canister_id, Principal::anonymous()));
+        let memos = ledger.memos();
+        assert_eq!(memos[0], Some(b"retry42".to_vec()));
+        assert_eq!(memos[1], Some(b"retry42".to_vec()));
+        assert_eq!(memos[2], Some(logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec()));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 49_990_000);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 49_990_000);
+    }
+
+    #[test]
+    fn raw_icp_deterministic_ledger_failure_counts_failed_without_cmc_health_attempt() {
+        let now_secs = 1_400_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(24, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
+        state::with_state_mut(|st| st.consecutive_cmc_zero_success_runs = Some(1));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let compact = beneficiary.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 80_000_000, Some(format!("{compact}.raw").into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![
+            LedgerStep::PermanentErr,
+            LedgerStep::Ok(91),
+        ]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 2, "deterministic raw ICP rejection should not retry before sending remainder");
+        assert_eq!(cmc.call_count(), 1, "only the remainder should call CMC");
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 0);
+        assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
+        assert_eq!(state::with_state(|st| st.consecutive_cmc_zero_success_runs), Some(1));
+    }
+
+    #[test]
+    fn raw_icp_retry_exhaustion_counts_ambiguous_without_cmc_health_attempt() {
+        let now_secs = 1_425_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(25, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
+        state::with_state_mut(|st| st.consecutive_cmc_zero_success_runs = Some(1));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let compact = beneficiary.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 80_000_000, Some(format!("{compact}.raw").into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![
+            LedgerStep::CallErr,
+            LedgerStep::CallErr,
+            LedgerStep::Ok(91),
+        ]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 3, "ambiguous raw ICP transfer should still allow remainder cleanup");
+        assert_eq!(cmc.call_count(), 1, "only the remainder should call CMC");
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 0);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 1);
+        assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
+        assert_eq!(state::with_state(|st| st.consecutive_cmc_zero_success_runs), Some(1));
+    }
+
+    #[test]
+    fn mixed_raw_icp_and_cycles_top_up_job_routes_each_transfer_correctly() {
+        let now_secs = 1_450_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(26, 10_000, 200_000_000, 200_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text(&cfg.staking_account);
+        let raw_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let topup_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
+        let compact_raw = raw_target.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 100_000_000, Some(format!("{compact_raw}.route1").into_bytes())),
+            commitment_tx(11, &staking_id, 100_000_000, Some(topup_target.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91), LedgerStep::Ok(92)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 2);
+        assert_eq!(cmc.call_count(), 1);
+        let destinations = ledger.destinations();
+        assert_eq!(destinations[0], Account { owner: raw_target, subaccount: None });
+        assert_eq!(destinations[1], logic::cmc_deposit_account(cfg.cmc_canister_id, topup_target));
+        let memos = ledger.memos();
+        assert_eq!(memos[0], Some(b"route1".to_vec()));
+        assert_eq!(memos[1], Some(logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec()));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 2);
+        assert_eq!(summary.topped_up_sum_e8s, 199_980_000);
+        assert_eq!(summary.remainder_to_self_e8s, 0);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
     }
 
     #[test]
@@ -2233,6 +2451,7 @@ mod tests {
                 amount_e8s: 0,
                 block_index: 99,
                 next_start: Some(99),
+                transfer_memo: None,
             },
             created_at_time_nanos: now_secs * 1_000_000_000,
             phase: PendingTransferPhase::TransferAccepted,
@@ -2345,6 +2564,7 @@ mod tests {
                 amount_e8s: 39_990_000,
                 block_index: 0,
                 next_start: Some(7),
+                transfer_memo: None,
             },
             created_at_time_nanos: stale_created_at_nanos,
             phase: PendingTransferPhase::AwaitingTransfer,
@@ -2417,6 +2637,7 @@ mod tests {
                     amount_e8s: 24_980_000,
                     block_index: 0,
                     next_start: Some(10),
+                    transfer_memo: None,
                 },
                 created_at_time_nanos: now_secs * 1_000_000_000,
                 phase: PendingTransferPhase::AwaitingTransfer,
@@ -2454,6 +2675,7 @@ mod tests {
                     amount_e8s: 24_980_000,
                     block_index: 701,
                     next_start: Some(10),
+                    transfer_memo: None,
                 },
                 created_at_time_nanos: now_secs * 1_000_000_000,
                 phase: PendingTransferPhase::TransferAccepted,
@@ -2467,6 +2689,83 @@ mod tests {
         assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
         assert_eq!(ledger.transfer_calls(), 0, "accepted transfers should resume at notify without another ledger transfer");
         assert_eq!(cmc.call_count(), 1);
+        assert!(state::with_state(|st| st.active_payout_job.is_none()));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 24_980_000);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn resumes_raw_icp_pending_transfer_after_upgrade_boundary_with_declared_memo() {
+        let now_secs = 3_750_u64;
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        set_active_job(now_secs, {
+            let mut job = ActivePayoutJob::new(81, 10_000, 24_990_000, 1, now_secs * 1_000_000_000);
+            job.scan_complete = true;
+            job.pending_transfer = Some(PendingTransfer {
+                notification: PendingNotification {
+                    kind: TransferKind::RawIcp,
+                    beneficiary,
+                    gross_share_e8s: 24_990_000,
+                    amount_e8s: 24_980_000,
+                    block_index: 0,
+                    next_start: Some(10),
+                    transfer_memo: Some(b"resume-raw".to_vec()),
+                },
+                created_at_time_nanos: now_secs * 1_000_000_000,
+                phase: PendingTransferPhase::AwaitingTransfer,
+            });
+            job
+        });
+
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Duplicate(700)]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert_eq!(cmc.call_count(), 0);
+        assert_eq!(ledger.destinations(), vec![Account { owner: beneficiary, subaccount: None }]);
+        assert_eq!(ledger.memos(), vec![Some(b"resume-raw".to_vec())]);
+        assert!(state::with_state(|st| st.active_payout_job.is_none()));
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 24_980_000);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.pot_remaining_e8s, 0);
+    }
+
+    #[test]
+    fn resumes_accepted_raw_icp_pending_transfer_after_upgrade_boundary_without_retransferring_or_notifying() {
+        let now_secs = 3_775_u64;
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        set_active_job(now_secs, {
+            let mut job = ActivePayoutJob::new(82, 10_000, 24_990_000, 1, now_secs * 1_000_000_000);
+            job.scan_complete = true;
+            job.gross_outflow_e8s = 24_990_000;
+            job.pending_transfer = Some(PendingTransfer {
+                notification: PendingNotification {
+                    kind: TransferKind::RawIcp,
+                    beneficiary,
+                    gross_share_e8s: 24_990_000,
+                    amount_e8s: 24_980_000,
+                    block_index: 701,
+                    next_start: Some(10),
+                    transfer_memo: Some(b"accepted-raw".to_vec()),
+                },
+                created_at_time_nanos: now_secs * 1_000_000_000,
+                phase: PendingTransferPhase::TransferAccepted,
+            });
+            job
+        });
+
+        let ledger = ScriptedLedger::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(&ledger, &UnexpectedIndex, &cmc, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(ledger.transfer_calls(), 0);
+        assert_eq!(cmc.call_count(), 0);
         assert!(state::with_state(|st| st.active_payout_job.is_none()));
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(summary.topped_up_count, 1);

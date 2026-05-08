@@ -2,19 +2,63 @@ use candid::Principal;
 
 pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
 
-pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principal> {
-    if memo.is_empty() || memo.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !memo.is_ascii() {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemoDirective {
+    TopUp { canister_id: Principal },
+    RawIcp { canister_id: Principal, memo: Vec<u8> },
+}
+
+fn principal_text_with_group_separators(text: &str) -> String {
+    if text.contains('-') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + text.len() / 5);
+    for (idx, ch) in text.chars().enumerate() {
+        if idx > 0 && idx % 5 == 0 {
+            out.push('-');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn parse_declared_principal_text(text: &str) -> Option<Principal> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
         return None;
     }
-    let memo_text = std::str::from_utf8(memo).ok()?.trim();
-    if memo_text.is_empty() || memo_text.len() > MAX_TARGET_CANISTER_MEMO_BYTES {
-        return None;
-    }
-    let principal = Principal::from_text(memo_text).ok()?;
+    let normalized = principal_text_with_group_separators(trimmed);
+    let principal = Principal::from_text(&normalized).ok()?;
     if principal == Principal::anonymous() || principal == Principal::management_canister() {
         return None;
     }
     Some(principal)
+}
+
+pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
+    if memo.is_empty() || memo.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !memo.is_ascii() {
+        return None;
+    }
+    let memo_text = std::str::from_utf8(memo).ok()?;
+    if memo_text.trim().is_empty() {
+        return None;
+    }
+    if let Some((declared_canister, raw_memo)) = memo_text.split_once('.') {
+        return Some(MemoDirective::RawIcp {
+            canister_id: parse_declared_principal_text(declared_canister)?,
+            memo: raw_memo.as_bytes().to_vec(),
+        });
+    }
+    Some(MemoDirective::TopUp {
+        canister_id: parse_declared_principal_text(memo_text)?,
+    })
+}
+
+pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principal> {
+    match parse_memo_directive(memo)? {
+        MemoDirective::TopUp { canister_id } => Some(canister_id),
+        MemoDirective::RawIcp { canister_id, .. } => Some(canister_id),
+    }
 }
 
 #[cfg(test)]
@@ -35,6 +79,8 @@ mod tests {
         assert!(oversize_self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
 
         let whitespace_padded = format!("  {}\n", target.to_text());
+        let compact_target = target.to_text().replace('-', "");
+        let compact_short = short_without_cai.to_text().replace('-', "");
         let whitespace_only = b"  \n\t".to_vec();
         let non_ascii = vec![0xff; 64];
         let truncated_target_text = target.to_text();
@@ -50,8 +96,18 @@ mod tests {
                 Some(target),
             ),
             (
+                "compact canister principal text",
+                compact_target.into_bytes(),
+                Some(target),
+            ),
+            (
                 "short valid principal text without hardcoded suffix",
                 short_without_cai.to_text().into_bytes(),
+                Some(short_without_cai),
+            ),
+            (
+                "compact short principal text",
+                compact_short.into_bytes(),
                 Some(short_without_cai),
             ),
             ("empty memo", Vec::new(), None),
@@ -79,5 +135,87 @@ mod tests {
         for (label, memo, expected) in cases {
             assert_eq!(parse_target_canister_principal_from_memo(&memo), expected, "{label}");
         }
+    }
+
+    #[test]
+    fn parser_splits_raw_icp_directive_on_first_dot() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        assert_eq!(
+            parse_memo_directive(format!("{compact}.swap.7").as_bytes()),
+            Some(MemoDirective::RawIcp {
+                canister_id: target,
+                memo: b"swap.7".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_preserves_leading_dot_in_raw_icp_memo_segment_after_first_separator() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        assert_eq!(
+            parse_memo_directive(format!("{compact}..memo").as_bytes()),
+            Some(MemoDirective::RawIcp {
+                canister_id: target,
+                memo: b".memo".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_preserves_raw_icp_memo_segment_verbatim() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        assert_eq!(
+            parse_memo_directive(format!("{compact}. abc ").as_bytes()),
+            Some(MemoDirective::RawIcp {
+                canister_id: target,
+                memo: b" abc ".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_accepts_empty_raw_icp_memo_segment() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        assert_eq!(
+            parse_memo_directive(format!("{compact}.").as_bytes()),
+            Some(MemoDirective::RawIcp {
+                canister_id: target,
+                memo: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_accepts_raw_icp_directive_at_total_memo_byte_limit() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        let memo = format!("{compact}.12345678");
+        assert_eq!(memo.len(), MAX_TARGET_CANISTER_MEMO_BYTES);
+        assert_eq!(
+            parse_memo_directive(memo.as_bytes()),
+            Some(MemoDirective::RawIcp {
+                canister_id: target,
+                memo: b"12345678".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_rejects_raw_icp_directive_over_total_memo_byte_limit() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        let memo = format!("{compact}.123456789");
+        assert_eq!(memo.len(), MAX_TARGET_CANISTER_MEMO_BYTES + 1);
+        assert_eq!(parse_memo_directive(memo.as_bytes()), None);
+    }
+
+    #[test]
+    fn parser_rejects_raw_icp_directive_with_empty_declared_canister_segment() {
+        assert_eq!(parse_memo_directive(b".memo"), None);
+        assert_eq!(parse_memo_directive(b" .memo"), None);
     }
 }

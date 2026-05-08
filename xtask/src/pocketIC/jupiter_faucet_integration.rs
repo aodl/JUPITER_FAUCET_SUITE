@@ -541,6 +541,145 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
 
 #[test]
 #[ignore]
+fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let compact_target = target.to_text().replace('-', "");
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(format!("{compact_target}.vault42").into_bytes()))?;
+    env.main_tick()?;
+
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != 1 {
+        bail!("expected exactly one raw ICP transfer and no remainder, got {}", transfers.len());
+    }
+    let transfer = &transfers[0];
+    if transfer.to != (Account { owner: target, subaccount: None }) {
+        bail!("expected raw ICP transfer to target default account, got {:?}", transfer.to);
+    }
+    if transfer.memo.as_deref() != Some(b"vault42".as_slice()) {
+        bail!("expected raw ICP transfer memo vault42, got {:?}", transfer.memo);
+    }
+    if nat_to_u64(&transfer.amount) != 99_990_000 {
+        bail!("expected raw ICP net amount 99990000 e8s, got {}", nat_to_u64(&transfer.amount));
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected raw ICP directive not to call notify_top_up");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
+        bail!("unexpected raw ICP summary: {summary:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_raw_icp_memo_directive_allows_empty_transfer_memo_after_dot() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let compact_target = target.to_text().replace('-', "");
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(format!("{compact_target}.").into_bytes()))?;
+    env.main_tick()?;
+
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != 1 {
+        bail!("expected exactly one raw ICP transfer and no remainder, got {}", transfers.len());
+    }
+    let transfer = &transfers[0];
+    if transfer.to != (Account { owner: target, subaccount: None }) {
+        bail!("expected raw ICP transfer to target default account, got {:?}", transfer.to);
+    }
+    if !transfer.memo.as_deref().unwrap_or_default().is_empty() {
+        bail!("expected raw ICP transfer to carry no non-empty memo, got {:?}", transfer.memo);
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected empty-memo raw ICP directive not to call notify_top_up");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
+        bail!("unexpected empty-memo raw ICP summary: {summary:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_raw_icp_upgrade_recovery_preserves_transfer_memo_and_skips_cmc_notify() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
+        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
+    })?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let compact_target = target.to_text().replace('-', "");
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(format!("{compact_target}.vault42").into_bytes()))?;
+
+    env.set_trap_after_successful_transfers(Some(1))?;
+    env.main_tick()?;
+
+    let st_mid = env.state()?;
+    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
+        bail!("expected interrupted raw ICP payout job without final summary before upgrade");
+    }
+    let transfers_mid = env.ledger_transfers()?;
+    if transfers_mid.len() != 1 {
+        bail!("expected exactly one raw ICP ledger transfer to land before upgrade, got {}", transfers_mid.len());
+    }
+    if transfers_mid[0].to != (Account { owner: target, subaccount: None }) {
+        bail!("expected raw ICP transfer to target default account before upgrade, got {:?}", transfers_mid[0].to);
+    }
+    if transfers_mid[0].memo.as_deref() != Some(b"vault42".as_slice()) {
+        bail!("expected raw ICP transfer memo vault42 before upgrade, got {:?}", transfers_mid[0].memo);
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected interrupted raw ICP payout not to call notify_top_up before upgrade");
+    }
+
+    env.upgrade()?;
+
+    let st_after_upgrade = env.state()?;
+    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
+        bail!("expected interrupted raw ICP payout job to remain persisted immediately after upgrade before auto-resume fires");
+    }
+
+    env.advance_time_and_tick(1, 20);
+
+    let transfers_after = env.ledger_transfers()?;
+    if transfers_after.len() != 1 {
+        bail!("expected post-upgrade raw ICP recovery to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected raw ICP recovery not to call notify_top_up after upgrade");
+    }
+    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 || summary.ambiguous_topups != 0 {
+        bail!("unexpected summary after raw ICP upgrade recovery: {summary:?}");
+    }
+
+    let st_done = env.state()?;
+    if st_done.active_payout_job_present || !st_done.last_summary_present {
+        bail!("expected post-upgrade raw ICP recovery to finalize the interrupted payout job");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;

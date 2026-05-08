@@ -536,7 +536,6 @@ struct Harness {
     index: Principal,
     blackhole: Principal,
     sns_wasm: Principal,
-    xrc: Principal,
     historian: Principal,
 }
 
@@ -547,7 +546,7 @@ impl Harness {
         let blackhole = pic.create_canister();
         let sns_wasm = pic.create_canister();
         let cmc = pic.create_canister();
-    let xrc = pic.create_canister();
+        let xrc = pic.create_canister();
         let historian = pic.create_canister();
         for canister in [index, blackhole, sns_wasm, cmc, xrc, historian] {
             pic.add_cycles(canister, 5_000_000_000_000);
@@ -556,7 +555,7 @@ impl Harness {
         pic.install_canister(blackhole, real_blackhole::real_blackhole_wasm()?, vec![], None);
         set_controllers_exact(&pic, blackhole, vec![blackhole])?;
         pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
-    pic.install_canister(xrc, xrc_wasm()?, vec![], None);
+        pic.install_canister(xrc, xrc_wasm()?, vec![], None);
 
         let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
         let init = HistorianInitArg {
@@ -581,7 +580,7 @@ impl Harness {
             max_canisters_per_cycles_tick: Some(10),
         };
         pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
-        Ok(Self { pic, index, blackhole, sns_wasm, xrc, historian })
+        Ok(Self { pic, index, blackhole, sns_wasm, historian })
     }
 
     fn staking_identifier(&self) -> Result<String> {
@@ -1034,6 +1033,40 @@ fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Re
     assert_eq!(recent.items.len(), 1);
     assert_eq!(recent.items[0].canister_id, Some(target));
     assert_eq!(recent.items[0].memo_text.as_deref(), Some(target_text.as_str()));
+    assert!(recent.items[0].counts_toward_faucet);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    let target = h.blackhole;
+    let raw_directive = format!("{}.", target.to_text().replace('-', ""));
+    let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 100_000_000u64, Some(raw_directive.clone().into_bytes())))?)?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.qualifying_commitment_count, 1);
+
+    let recent: ListRecentCommitmentsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 1);
+    assert_eq!(recent.items[0].canister_id, Some(target));
+    assert_eq!(recent.items[0].memo_text.as_deref(), Some(target.to_text().as_str()));
     assert!(recent.items[0].counts_toward_faucet);
     Ok(())
 }

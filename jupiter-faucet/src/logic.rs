@@ -1,5 +1,6 @@
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_memo_policy::MemoDirective;
 
 use crate::clients::index::{IndexOperation, IndexTimeStamp, IndexTransactionWithId};
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
@@ -18,7 +19,7 @@ pub struct Commitment {
 pub enum CommitmentValidity {
     IgnoreUnderThreshold,
     IgnoreBadMemo,
-    Valid { beneficiary: Principal },
+    Valid { target: PayoutTarget },
 }
 
 #[allow(dead_code)]
@@ -27,11 +28,34 @@ pub enum CommitmentDecision {
     IgnoreUnderThreshold,
     IgnoreBadMemo,
     NoTransfer,
-    Eligible { beneficiary: Principal, gross_share_e8s: u64, amount_e8s: u64 },
+    Eligible { target: PayoutTarget, gross_share_e8s: u64, amount_e8s: u64 },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PayoutTarget {
+    CyclesTopUp { canister_id: Principal },
+    RawIcp { canister_id: Principal, memo: Vec<u8> },
+}
+
+impl PayoutTarget {
+    #[allow(dead_code)]
+    pub fn canister_id(&self) -> Principal {
+        match self {
+            Self::CyclesTopUp { canister_id } | Self::RawIcp { canister_id, .. } => *canister_id,
+        }
+    }
+}
+
+#[allow(dead_code)]
 pub fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
     jupiter_memo_policy::parse_target_canister_principal_from_memo(memo)
+}
+
+pub fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
+    match jupiter_memo_policy::parse_memo_directive(memo)? {
+        MemoDirective::TopUp { canister_id } => Some(PayoutTarget::CyclesTopUp { canister_id }),
+        MemoDirective::RawIcp { canister_id, memo } => Some(PayoutTarget::RawIcp { canister_id, memo }),
+    }
 }
 
 pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_identifier: &str) -> Option<Commitment> {
@@ -70,8 +94,8 @@ pub fn compute_raw_share_e8s(amount_e8s: u64, pot_start_e8s: u64, denom_e8s: u64
 pub fn classify_commitment(min_tx_e8s: u64, commitment: &Commitment) -> CommitmentValidity {
     if commitment.amount_e8s < min_tx_e8s { return CommitmentValidity::IgnoreUnderThreshold; }
     let memo = match commitment.memo_bytes.as_deref() { Some(m) if !m.is_empty() => m, _ => return CommitmentValidity::IgnoreBadMemo };
-    let beneficiary = match parse_beneficiary_from_memo(memo) { Some(p) => p, None => return CommitmentValidity::IgnoreBadMemo };
-    CommitmentValidity::Valid { beneficiary }
+    let target = match parse_payout_target_from_memo(memo) { Some(p) => p, None => return CommitmentValidity::IgnoreBadMemo };
+    CommitmentValidity::Valid { target }
 }
 
 pub fn index_tx_timestamp_nanos(tx: &IndexTransactionWithId) -> Option<u64> {
@@ -144,14 +168,14 @@ pub fn commitment_amount_for_round_e8s(
 
 #[allow(dead_code)]
 pub fn evaluate_commitment(pot_start_e8s: u64, denom_e8s: u64, fee_e8s: u64, min_tx_e8s: u64, commitment: &Commitment) -> CommitmentDecision {
-    let beneficiary = match classify_commitment(min_tx_e8s, commitment) {
+    let target = match classify_commitment(min_tx_e8s, commitment) {
         CommitmentValidity::IgnoreUnderThreshold => return CommitmentDecision::IgnoreUnderThreshold,
         CommitmentValidity::IgnoreBadMemo => return CommitmentDecision::IgnoreBadMemo,
-        CommitmentValidity::Valid { beneficiary } => beneficiary,
+        CommitmentValidity::Valid { target } => target,
     };
     let gross_share_e8s = compute_raw_share_e8s(commitment.amount_e8s, pot_start_e8s, denom_e8s);
     if gross_share_e8s <= fee_e8s { return CommitmentDecision::NoTransfer; }
-    CommitmentDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(fee_e8s) }
+    CommitmentDecision::Eligible { target, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(fee_e8s) }
 }
 
 pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
@@ -160,7 +184,7 @@ pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &Pend
 
 pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
     match pending.kind {
-        TransferKind::Beneficiary => {
+        TransferKind::Beneficiary | TransferKind::RawIcp => {
             job.topped_up_count = job.topped_up_count.saturating_add(1);
             job.topped_up_sum_e8s = job.topped_up_sum_e8s.saturating_add(pending.amount_e8s);
             job.topped_up_min_e8s = Some(job.topped_up_min_e8s.map(|prev| prev.min(pending.amount_e8s)).unwrap_or(pending.amount_e8s));
@@ -196,6 +220,7 @@ mod tests {
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
     fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
+    fn top_up_target(canister_id: Principal) -> PayoutTarget { PayoutTarget::CyclesTopUp { canister_id } }
 
     #[test]
     fn classify_commitment_distinguishes_valid_threshold_and_bad_memo() {
@@ -210,7 +235,7 @@ mod tests {
         );
         assert_eq!(
             classify_commitment(100, &Commitment { amount_e8s: 100, memo_bytes: Some(beneficiary.to_text().into_bytes()) }),
-            CommitmentValidity::Valid { beneficiary }
+            CommitmentValidity::Valid { target: top_up_target(beneficiary) }
         );
     }
 
@@ -248,6 +273,39 @@ mod tests {
     fn parser_accepts_target_canister_text_memo() {
         let p = target_canister();
         assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
+    }
+
+    #[test]
+    fn parser_accepts_compacted_target_canister_text_memo() {
+        let p = target_canister();
+        let compact = p.to_text().replace('-', "");
+        assert_eq!(parse_payout_target_from_memo(compact.as_bytes()), Some(top_up_target(p)));
+    }
+
+    #[test]
+    fn parser_accepts_raw_icp_directive_with_transfer_memo() {
+        let p = target_canister();
+        let compact = p.to_text().replace('-', "");
+        assert_eq!(
+            parse_payout_target_from_memo(format!("{compact}.vault42").as_bytes()),
+            Some(PayoutTarget::RawIcp {
+                canister_id: p,
+                memo: b"vault42".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_accepts_raw_icp_directive_with_empty_transfer_memo() {
+        let p = target_canister();
+        let compact = p.to_text().replace('-', "");
+        assert_eq!(
+            parse_payout_target_from_memo(format!("{compact}.").as_bytes()),
+            Some(PayoutTarget::RawIcp {
+                canister_id: p,
+                memo: Vec::new(),
+            })
+        );
     }
 
     #[test]
@@ -374,21 +432,21 @@ mod tests {
     fn commitment_exactly_at_threshold_is_included() {
         let valid = target_canister();
         let c = Commitment { amount_e8s: 100_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), CommitmentDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+        assert_eq!(evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), CommitmentDecision::Eligible { target: top_up_target(valid), gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
 
     #[test]
     fn commitment_above_threshold_is_included() {
         let valid = target_canister();
         let c = Commitment { amount_e8s: 400_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), CommitmentDecision::Eligible { beneficiary: valid, gross_share_e8s: 200_000_000, amount_e8s: 199_990_000 });
+        assert_eq!(evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c), CommitmentDecision::Eligible { target: top_up_target(valid), gross_share_e8s: 200_000_000, amount_e8s: 199_990_000 });
     }
 
     #[test]
     fn share_calculation_uses_current_pot_and_denominator() {
         let valid = target_canister();
         let c = Commitment { amount_e8s: 250_000_000, memo_bytes: Some(valid.to_text().into_bytes()) };
-        assert_eq!(evaluate_commitment(120_000_000, 600_000_000, 10_000, 100_000_000, &c), CommitmentDecision::Eligible { beneficiary: valid, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+        assert_eq!(evaluate_commitment(120_000_000, 600_000_000, 10_000, 100_000_000, &c), CommitmentDecision::Eligible { target: top_up_target(valid), gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
 
     #[test]
@@ -406,8 +464,8 @@ mod tests {
         let second = Commitment { amount_e8s: 300_000_000, memo_bytes: Some(beneficiary.to_text().into_bytes()) };
         let first_eval = evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &first);
         let second_eval = evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &second);
-        assert_eq!(first_eval, CommitmentDecision::Eligible { beneficiary, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
-        assert_eq!(second_eval, CommitmentDecision::Eligible { beneficiary, gross_share_e8s: 150_000_000, amount_e8s: 149_990_000 });
+        assert_eq!(first_eval, CommitmentDecision::Eligible { target: top_up_target(beneficiary), gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
+        assert_eq!(second_eval, CommitmentDecision::Eligible { target: top_up_target(beneficiary), gross_share_e8s: 150_000_000, amount_e8s: 149_990_000 });
     }
 
     #[test]
@@ -417,8 +475,8 @@ mod tests {
         let amount_e8s = 200_000_000;
         let eval_a = evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &Commitment { amount_e8s, memo_bytes: Some(a.to_text().into_bytes()) });
         let eval_b = evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &Commitment { amount_e8s, memo_bytes: Some(b.to_text().into_bytes()) });
-        assert_eq!(eval_a, CommitmentDecision::Eligible { beneficiary: a, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
-        assert_eq!(eval_b, CommitmentDecision::Eligible { beneficiary: b, gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
+        assert_eq!(eval_a, CommitmentDecision::Eligible { target: top_up_target(a), gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
+        assert_eq!(eval_b, CommitmentDecision::Eligible { target: top_up_target(b), gross_share_e8s: 100_000_000, amount_e8s: 99_990_000 });
     }
 
     #[test]
@@ -465,9 +523,9 @@ mod tests {
         let a = target_canister();
         let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut job = ActivePayoutJob::new(1, 10_000, 40_0000_0000, 10_0000_0000, 123);
-        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10) };
-        let p2 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 12_0000_0000, amount_e8s: 11_9999_0000, block_index: 2, next_start: Some(11) };
-        let p3 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: 24_0000_0000, amount_e8s: 23_9999_0000, block_index: 3, next_start: None };
+        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10), transfer_memo: None };
+        let p2 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 12_0000_0000, amount_e8s: 11_9999_0000, block_index: 2, next_start: Some(11), transfer_memo: None };
+        let p3 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: 24_0000_0000, amount_e8s: 23_9999_0000, block_index: 3, next_start: None, transfer_memo: None };
         record_ledger_accepted_transfer(&mut job, &p1);
         apply_notified_transfer(&mut job, &p1);
         record_ledger_accepted_transfer(&mut job, &p2);
@@ -484,8 +542,8 @@ mod tests {
     fn summary_accounting_reconciles_pot_fees_and_remainder() {
         let beneficiary = target_canister();
         let mut job = ActivePayoutJob::new(9, 10_000, 100_000_000, 500_000_000, 77);
-        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s: 40_000_000, amount_e8s: 39_990_000, block_index: 1, next_start: Some(1) };
-        let p2 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary, gross_share_e8s: 60_000_000, amount_e8s: 59_990_000, block_index: 2, next_start: None };
+        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s: 40_000_000, amount_e8s: 39_990_000, block_index: 1, next_start: Some(1), transfer_memo: None };
+        let p2 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary, gross_share_e8s: 60_000_000, amount_e8s: 59_990_000, block_index: 2, next_start: None, transfer_memo: None };
         record_ledger_accepted_transfer(&mut job, &p1);
         apply_notified_transfer(&mut job, &p1);
         record_ledger_accepted_transfer(&mut job, &p2);
@@ -505,8 +563,8 @@ mod tests {
         let second = Commitment { amount_e8s: 125_000_000, memo_bytes: memo };
         let first_eval = evaluate_commitment(200_000_000, 500_000_000, 10_000, 100_000_000, &first);
         let second_eval = evaluate_commitment(200_000_000, 500_000_000, 10_000, 100_000_000, &second);
-        assert_eq!(first_eval, CommitmentDecision::Eligible { beneficiary, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
-        assert_eq!(second_eval, CommitmentDecision::Eligible { beneficiary, gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+        assert_eq!(first_eval, CommitmentDecision::Eligible { target: top_up_target(beneficiary), gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
+        assert_eq!(second_eval, CommitmentDecision::Eligible { target: top_up_target(beneficiary), gross_share_e8s: 50_000_000, amount_e8s: 49_990_000 });
     }
 
     #[test]
@@ -529,6 +587,7 @@ mod tests {
             amount_e8s: 29_990_000,
             block_index: 77,
             next_start: Some(5),
+            transfer_memo: None,
         };
         record_ledger_accepted_transfer(&mut job, &pending);
         let summary = summary_from_job(&job);
@@ -569,9 +628,10 @@ mod tests {
                     amount_e8s: 1 + (lcg(&mut seed) % 500_000_000),
                     memo_bytes: Some(beneficiary.to_text().into_bytes()),
                 };
-                if let CommitmentDecision::Eligible { beneficiary, gross_share_e8s, amount_e8s } =
+                if let CommitmentDecision::Eligible { target, gross_share_e8s, amount_e8s } =
                     evaluate_commitment(pot_start_e8s, denom_staking_balance_e8s, fee_e8s, 1, &commitment)
                 {
+                    let beneficiary = target.canister_id();
                     if job.gross_outflow_e8s.saturating_add(gross_share_e8s) > job.pot_start_e8s {
                         job.failed_topups = job.failed_topups.saturating_add(1);
                         continue;
@@ -583,6 +643,7 @@ mod tests {
                         amount_e8s,
                         block_index: i as u64,
                         next_start: Some(i as u64),
+                        transfer_memo: None,
                     };
                     record_ledger_accepted_transfer(&mut job, &pending);
                     if lcg(&mut seed) & 1 == 0 {
@@ -602,6 +663,7 @@ mod tests {
                     amount_e8s: remainder_gross_e8s.saturating_sub(fee_e8s),
                     block_index: 10_000 + case,
                     next_start: None,
+                    transfer_memo: None,
                 };
                 record_ledger_accepted_transfer(&mut job, &remainder);
                 apply_notified_transfer(&mut job, &remainder);
