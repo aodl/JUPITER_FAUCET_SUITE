@@ -124,7 +124,7 @@ export function normaliseSimulatorInputs(raw = {}) {
   try {
     dailyBurnCycles = parseDecimalToScaledBigInt(raw.dailyBurnTrillionCycles ?? raw.dailyBurnCycles, TRILLION_CYCLES, {
       allowZero: true,
-      maxFractionDigits: 3,
+      maxFractionDigits: 4,
       fieldName: 'Daily burn in T cycles',
     });
   } catch (error) {

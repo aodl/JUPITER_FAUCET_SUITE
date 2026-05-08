@@ -1,4 +1,5 @@
-import { HttpAgent } from '@icp-sdk/core/agent';
+import { HttpAgent, MANAGEMENT_CANISTER_ID } from '@icp-sdk/core/agent';
+import { IDL } from '@icp-sdk/core/candid';
 import { Principal } from '@icp-sdk/core/principal';
 import { sha224 } from '@noble/hashes/sha2.js';
 import { createActor as createHistorianActor } from '../declarations/jupiter_historian/index.js';
@@ -15,6 +16,19 @@ export const TRACKER_HISTORY_PAGE_SIZE = 100;
 export const MAINNET_CMC_CANISTER_ID = 'rkp4c-7iaaa-aaaaa-aaaca-cai';
 export const MAINNET_GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 export const DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX = '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f';
+
+const FetchCanisterLogsArgs = IDL.Record({
+  canister_id: IDL.Principal,
+});
+const CanisterLogRecord = IDL.Record({
+  idx: IDL.Nat64,
+  timestamp_nanos: IDL.Nat64,
+  content: IDL.Vec(IDL.Nat8),
+});
+const FetchCanisterLogsResult = IDL.Record({
+  canister_log_records: IDL.Vec(CanisterLogRecord),
+});
+const LOG_TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
 
 const agentPromises = new Map();
 
@@ -484,6 +498,48 @@ async function loadTrackerCmcTransfers({ historian, status = null, agent, indexA
   });
 }
 
+function queryReplyArg(response) {
+  return response?.reply?.arg || response?.arg || response?.certificate?.reply?.arg || null;
+}
+
+function normalizeCanisterLogRecord(record) {
+  const content = Uint8Array.from(record?.content || []);
+  return {
+    idx: record?.idx,
+    timestamp_nanos: record?.timestamp_nanos,
+    content,
+    text: LOG_TEXT_DECODER.decode(content),
+  };
+}
+
+export async function loadCanisterLogs({ agent, canisterId } = {}) {
+  if (!agent || typeof agent.query !== 'function') {
+    throw new Error('HTTP agent is unavailable');
+  }
+  if (!canisterId) {
+    throw new Error('A principal ID is required');
+  }
+
+  const arg = IDL.encode([FetchCanisterLogsArgs], [{ canister_id: canisterId }]);
+  const response = await agent.query(MANAGEMENT_CANISTER_ID, {
+    methodName: 'fetch_canister_logs',
+    arg,
+    effectiveCanisterId: canisterId,
+  });
+
+  if (response?.status === 'rejected') {
+    throw new Error(response.reject_message || response.reject_code || 'Canister logs query was rejected');
+  }
+  const replyArg = queryReplyArg(response);
+  if (!replyArg) {
+    throw new Error('Canister logs query returned an unexpected response');
+  }
+  const [result] = IDL.decode([FetchCanisterLogsResult], replyArg);
+  return {
+    items: (result?.canister_log_records || []).map(normalizeCanisterLogRecord),
+  };
+}
+
 
 export async function loadTrackerData({
   historianCanisterId,
@@ -493,6 +549,7 @@ export async function loadTrackerData({
   historianActor = null,
   historianActorFactory = createHistorianActor,
   indexActorFactory = createIndexActor,
+  canisterLogsLoader = loadCanisterLogs,
   canisterId,
   cmcCanisterId = null,
   historyLimit = TRACKER_HISTORY_PAGE_SIZE,
@@ -522,8 +579,9 @@ export async function loadTrackerData({
       isCommitmentBeneficiary,
       commitments: { items: [] },
       cycles: { items: [] },
+      logs: { items: [] },
       cmcTransfers: { items: [] },
-      errors: { commitments: null, cycles: null, cmcTransfers: null },
+      errors: { commitments: null, cycles: null, logs: null, cmcTransfers: null },
     };
   }
 
@@ -538,6 +596,10 @@ export async function loadTrackerData({
     descending: true,
   }));
   const statusPromise = historian.get_public_status();
+  const logsPromise = canisterLogsLoader({
+    agent: resolvedAgent,
+    canisterId,
+  });
   const cmcTransfersPromise = statusPromise.then((status) => loadTrackerCmcTransfers({
     historian,
     status,
@@ -548,10 +610,11 @@ export async function loadTrackerData({
     historyLimit,
   }));
 
-  const [commitmentsResult, cyclesResult, statusResult, cmcTransfersResult] = await Promise.allSettled([
+  const [commitmentsResult, cyclesResult, statusResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
     commitmentsPromise,
     cyclesPromise,
     statusPromise,
+    logsPromise,
     cmcTransfersPromise,
   ]);
 
@@ -563,10 +626,12 @@ export async function loadTrackerData({
     isCommitmentBeneficiary: true,
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
     cycles: fulfilledOrNull(cyclesResult) || { items: [] },
+    logs: fulfilledOrNull(logsResult) || { items: [] },
     cmcTransfers: fulfilledOrNull(cmcTransfersResult) || { items: [] },
     errors: {
       commitments: commitmentsResult.status === 'rejected' ? normalizeError(commitmentsResult.reason) : null,
       cycles: cyclesResult.status === 'rejected' ? normalizeError(cyclesResult.reason) : null,
+      logs: logsResult.status === 'rejected' ? normalizeError(logsResult.reason) : null,
       cmcTransfers: cmcTransfersResult.status === 'rejected' ? normalizeError(cmcTransfersResult.reason) : null,
     },
   };

@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Principal } from '@icp-sdk/core/principal';
-import { HttpAgent } from '@icp-sdk/core/agent';
+import { HttpAgent, MANAGEMENT_CANISTER_ID } from '@icp-sdk/core/agent';
+import { IDL } from '@icp-sdk/core/candid';
 
 import {
   accountIdentifierHex,
   loadDashboardData,
   loadRecentRouteTransfersFromIndex,
   loadRegisteredCanisterSummaryPage,
+  loadCanisterLogs,
   loadTrackerData,
   loadCmcTopUpTransfersFromIndex,
   cmcDepositAccount,
@@ -19,6 +21,16 @@ import {
   RECENT_COMMITMENT_LIMIT,
   RECENT_ROUTE_TRANSFER_LIMIT,
 } from '../src/dashboard-data.js';
+
+const FetchCanisterLogsArgs = IDL.Record({ canister_id: IDL.Principal });
+const CanisterLogRecord = IDL.Record({
+  idx: IDL.Nat64,
+  timestamp_nanos: IDL.Nat64,
+  content: IDL.Vec(IDL.Nat8),
+});
+const FetchCanisterLogsResult = IDL.Record({
+  canister_log_records: IDL.Vec(CanisterLogRecord),
+});
 
 function principal(text) {
   return Principal.fromText(text);
@@ -777,6 +789,35 @@ test('hasCanisterSource detects candid variant-style source values', () => {
   assert.equal(hasCanisterSource([], 'MemoCommitment'), false);
 });
 
+test('loadCanisterLogs queries management canister using target as effective canister id', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const encodedResult = IDL.encode([FetchCanisterLogsResult], [{
+    canister_log_records: [{
+      idx: 1394n,
+      timestamp_nanos: 1_717_209_222_370_973_756n,
+      content: Array.from(new TextEncoder().encode('Cycles: 2821409555036, Proposals: 41 live')),
+    }],
+  }]);
+  const data = await loadCanisterLogs({
+    canisterId: target,
+    agent: {
+      async query(canisterId, fields) {
+        assert.equal(String(canisterId), String(MANAGEMENT_CANISTER_ID));
+        assert.equal(fields.methodName, 'fetch_canister_logs');
+        assert.equal(fields.effectiveCanisterId.toText(), target.toText());
+        const [args] = IDL.decode([FetchCanisterLogsArgs], fields.arg);
+        assert.equal(args.canister_id.toText(), target.toText());
+        return { status: 'replied', reply: { arg: encodedResult } };
+      },
+    },
+  });
+
+  assert.equal(data.items.length, 1);
+  assert.equal(data.items[0].idx, 1394n);
+  assert.equal(data.items[0].timestamp_nanos, 1_717_209_222_370_973_756n);
+  assert.equal(data.items[0].text, 'Cycles: 2821409555036, Proposals: 41 live');
+});
+
 test('loadTrackerData returns unrecognised state without history queries', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   let commitmentHistoryCalled = false;
@@ -869,6 +910,17 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
         });
       },
     },
+    canisterLogsLoader: async ({ canisterId }) => {
+      calls.push(['logs', canisterId.toText()]);
+      return {
+        items: [{
+          idx: 1394n,
+          timestamp_nanos: 1_710_025_000_000_000_000n,
+          content: new Uint8Array(),
+          text: 'Cycles: 899000000000',
+        }],
+      };
+    },
     indexActorFactory: (canisterId, options) => {
       assert.equal(canisterId, 'qhbym-qaaaa-aaaaa-aaafq-cai');
       assert.deepEqual(options, { agent: { test: true } });
@@ -898,6 +950,8 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(data.cycles.items.length, 2);
   assert.equal(data.cycles.items[0].timestamp_nanos, 1_710_010_000_000_000_000n);
   assert.equal(data.cycles.items[1].timestamp_nanos, 1_710_020_000_000_000_000n);
+  assert.equal(data.logs.items.length, 1);
+  assert.equal(data.logs.items[0].text, 'Cycles: 899000000000');
   assert.equal(data.cmcTransfers.items.length, 1);
   assert.equal(data.cmcTransfers.items[0].amount_e8s, 123_000_000n);
   assert.deepEqual(calls[0], ['overview', target.toText()]);
@@ -907,6 +961,8 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(calls[2][1].limit[0], 12);
   assert.equal(calls[2][1].descending[0], true);
   assert.equal(calls[2][1].canister_id.toText(), target.toText());
+  assert.deepEqual(calls[3], ['status']);
+  assert.deepEqual(calls[4], ['logs', target.toText()]);
 });
 
 test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries', async () => {

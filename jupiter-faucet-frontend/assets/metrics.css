@@ -574,6 +574,11 @@
   opacity: 0.82;
 }
 
+.tracker-status-note--info {
+  opacity: 0.78;
+  cursor: help;
+}
+
 .tracker-summary-grid {
   margin: 0 0 14px;
 }
@@ -656,6 +661,36 @@
   fill: rgba(255, 255, 255, 0.92);
   stroke: rgba(8, 12, 18, 0.88);
   stroke-width: 2;
+}
+
+.tracker-log-details {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: 12px;
+  margin: 12px 0 14px;
+  padding: 10px 12px;
+}
+
+.tracker-log-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tracker-log-output {
+  max-height: 260px;
+  margin: 10px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tracker-log-empty {
+  margin: 10px 0 0;
+  opacity: 0.74;
 }
 
 @media (max-width: 720px) {

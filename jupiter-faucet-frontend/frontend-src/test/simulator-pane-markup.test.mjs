@@ -216,8 +216,8 @@ test('simulator inputs are ordered by user control priority and use compact nume
   assert.equal(attrValue(commitment, 'min'), '1');
   assert.equal(attrValue(commitment, 'step'), '0.1');
   assert.equal(attrValue(commitment, 'value'), null);
-  assert.equal(attrValue(burn, 'step'), '0.001');
-  assert.equal(attrValue(burn, 'value'), '0.001');
+  assert.equal(attrValue(burn, 'step'), '0.0001');
+  assert.equal(attrValue(burn, 'value'), '0.0001');
   assert.equal(attrValue(price, 'step'), '0.1');
   assert.equal(attrValue(price, 'value'), null);
   assert.equal(attrValue(price, 'placeholder'), 'Loading');
@@ -231,7 +231,7 @@ test('simulator inputs are ordered by user control priority and use compact nume
 test('simulator input binding sanitizes invalid values without blocking native controls', () => {
   assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS/);
   assert.match(mainJs, /'simulator-icp-commitment': \{ min: 1, fractionDigits: 1 \}/);
-  assert.match(mainJs, /'simulator-daily-burn': \{ min: 0, fractionDigits: 3 \}/);
+  assert.match(mainJs, /'simulator-daily-burn': \{ min: 0, fractionDigits: 4 \}/);
   assert.match(mainJs, /'simulator-icp-price': \{ min: 0\.1, fractionDigits: 1 \}/);
   assert.match(mainJs, /'simulator-apy': \{ min: 0, fractionDigits: 1 \}/);
   assert.doesNotMatch(mainJs, /beforeinput/);
@@ -318,11 +318,16 @@ test('Patron Commitments table omits redundant category column', () => {
 test('Tracker results render chart controls and graphs before explanatory text', () => {
   const rangeControlsIndex = mainJs.indexOf('${renderTrackerRangeControls()}');
   const chartWrapperIndex = mainJs.indexOf('<div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>');
+  const logsIndex = mainJs.indexOf('${renderTrackerLogs(data)}');
+  const cyclesProbeIssueIndex = mainJs.indexOf('${cyclesProbeIssueNote}');
   const summaryGridIndex = mainJs.indexOf('<dl class="pane-detail-grid tracker-summary-grid">');
   const showingNoteIndex = mainJs.indexOf('Showing ${escapeHtml(rangeLabel)} using');
 
   assert.ok(rangeControlsIndex >= 0, 'missing tracker range controls render');
   assert.ok(chartWrapperIndex > rangeControlsIndex, 'chart wrapper should render after range controls');
+  assert.ok(cyclesProbeIssueIndex > chartWrapperIndex, 'cycles probe info should render below charts');
+  assert.ok(logsIndex > cyclesProbeIssueIndex, 'logs should render below related cycle probe info');
+  assert.ok(summaryGridIndex > logsIndex, 'summary text should render below logs');
   assert.ok(summaryGridIndex > chartWrapperIndex, 'summary text should render below charts');
   assert.ok(showingNoteIndex > summaryGridIndex, 'explanatory text should render below summary');
   assert.match(metricsCss, /\.tracker-chart-wrapper \{[\s\S]*margin: 16px 0 20px;/);
@@ -352,9 +357,9 @@ test('maturity route pages clarify staging account routing and D-QUORUM account 
   assert.match(indexHtml, /a well-known ecosystem participant/);
 });
 
-test('simulator displays T-cycle values with three decimal places and uses weekly headline copy', () => {
-  assert.match(mainJs, /const thousandths = \(absolute \* 1000n\) \/ 1_000_000_000_000n;/);
-  assert.match(mainJs, /padStart\(3, '0'\)/);
+test('simulator displays T-cycle values with four decimal places and uses weekly headline copy', () => {
+  assert.match(mainJs, /const tenThousandths = \(absolute \* 10_000n\) \/ 1_000_000_000_000n;/);
+  assert.match(mainJs, /padStart\(4, '0'\)/);
   assert.match(mainJs, /formatCompactTrillionCycles/);
   assert.match(mainJs, /Per weekly CMC top-up, based on the configured APY/);
   assert.match(mainJs, /Line samples the weekly cadence/);
@@ -413,6 +418,18 @@ test('canister tracker links use shareable metric-tracker fragments', () => {
   assert.match(indexHtml, /href="#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai"/);
 });
 
+test('simulator prefill links use shareable simulator fragments', () => {
+  assert.match(mainJs, /const SIMULATOR_HASH_PREFIX = '#simulator-'/);
+  assert.match(mainJs, /simulatorHashForPrefill/);
+  assert.match(mainJs, /simulatorPrefillFromHash/);
+  assert.match(mainJs, /hydrateSimulatorFromLocationHash/);
+  assert.match(mainJs, /new URLSearchParams/);
+  assert.match(mainJs, /params\.set\('burn'/);
+  assert.match(mainJs, /params\.set\('commitment'/);
+  assert.match(mainJs, /href="\$\{escapeHtml\(simulatorHashForPrefill/);
+  assert.match(navbarJs, /key\.startsWith\("simulator-"\)/);
+});
+
 test('metric tracker hash deep links submit once on cold load and panel open', () => {
   assert.match(mainJs, /let lastTrackerHashSubmitPrincipal = ''/);
   assert.match(mainJs, /hydrateTrackerFromLocationHash\(\{ submit: true \}\);/);
@@ -426,6 +443,8 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /function formatCycles\(value\) \{\n  return formatTrillionCycles\(value\);/);
   assert.match(mainJs, /function trackerCyclesChartPoints\(data\)/);
   assert.match(mainJs, /return sortedCycleSamples\(data\)\.map/);
+  assert.match(mainJs, /function sortedLogCycleSamples\(data\)/);
+  assert.match(mainJs, /Cycles:\\s\*\(\[0-9\]\[0-9_,\]\*\)/);
   assert.match(mainJs, /function trackerCyclesPointLabel\(point\)/);
   assert.match(mainJs, /formatTimestampNanos\(point\.timestampNanos\)/);
   assert.match(mainJs, /pointLabelBuilder: trackerCyclesPointLabel/);
@@ -433,13 +452,18 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /xTickBuckets: timelineBuckets/);
   assert.doesNotMatch(mainJs, /Line shows each loaded cycles probe/);
   assert.match(mainJs, /cyclesProbeIssueNote/);
-  assert.match(mainJs, /cyclesStatus\.kind === 'error'/);
-  assert.match(mainJs, /cyclesStatus\.kind === 'notAvailable'/);
+  assert.match(mainJs, /cyclesStatus\.kind !== 'error'/);
+  assert.match(mainJs, /cyclesStatus\.kind !== 'notAvailable'/);
   assert.match(mainJs, /Estimated observed cycles burned\/day/);
-  assert.match(mainJs, /downward balance changes between all loaded cycle probes/);
+  assert.match(mainJs, /oldest and newest loaded/);
+  assert.match(mainJs, /renderCyclesProbeInfoNote/);
+  assert.match(mainJs, /using canister log cycles/);
   assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(data\);/);
   assert.match(mainJs, /estimateCyclesBurnedPerDay/);
   assert.match(mainJs, /formatTrillionCyclesPerDay/);
+  assert.match(mainJs, /renderTrackerLogs\(data\)/);
+  assert.match(mainJs, /data-simulator-prefill="true"/);
+  assert.match(metricsCss, /\.tracker-log-details\s*\{/);
 });
 
 test('simulator prepopulates commitment from calculated break-even minimum', () => {

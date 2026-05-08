@@ -302,6 +302,7 @@
     function panelTargetFromHash(hash) {
       const key = hash ? hash.replace(/^#/, "") : "";
       if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0 };
+      if (key.startsWith("simulator-")) return { key: "simulator", page: 0 };
       if (key === "metric-output") return { key: "metric-stake", page: 1 };
       if (key === "metric-rewards") return { key: "metric-stake", page: 2 };
       return { key, page: 0 };

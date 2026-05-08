@@ -36,6 +36,7 @@ const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
 const JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX = 'ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
 const TRACKER_HASH_PREFIX = '#metric-tracker-';
+const SIMULATOR_HASH_PREFIX = '#simulator-';
 const NANOS_PER_DAY = 86_400_000_000_000n;
 const ICP_TENTH_E8S = 10_000_000n;
 const TRACKER_RANGE_LABELS = {
@@ -45,13 +46,13 @@ const TRACKER_RANGE_LABELS = {
 };
 const BLACKHOLE_CANISTER_ID = '77deu-baaaa-aaaar-qb6za-cai';
 const SIMULATOR_DEFAULTS = {
-  dailyBurnTrillionCycles: '0.001',
+  dailyBurnTrillionCycles: '0.0001',
   assumedIcpPrice: '10.0',
   annualApyPercent: '7.0',
 };
 const SIMULATOR_INPUT_CONSTRAINTS = {
   'simulator-icp-commitment': { min: 1, fractionDigits: 1 },
-  'simulator-daily-burn': { min: 0, fractionDigits: 3 },
+  'simulator-daily-burn': { min: 0, fractionDigits: 4 },
   'simulator-icp-price': { min: 0.1, fractionDigits: 1 },
   'simulator-apy': { min: 0, fractionDigits: 1 },
 };
@@ -141,6 +142,24 @@ function trackerPrincipalFromHash(hash = window.location.hash) {
   }
 }
 
+function simulatorHashForPrefill({ dailyBurn = '', icpCommitment = '' } = {}) {
+  const params = new URLSearchParams();
+  if (dailyBurn) params.set('burn', String(dailyBurn));
+  if (icpCommitment) params.set('commitment', String(icpCommitment));
+  const encoded = params.toString();
+  return encoded ? `${SIMULATOR_HASH_PREFIX}${encoded}` : '#simulator';
+}
+
+function simulatorPrefillFromHash(hash = window.location.hash) {
+  const fragment = String(hash || '');
+  if (!fragment.startsWith(SIMULATOR_HASH_PREFIX)) return null;
+  const params = new URLSearchParams(fragment.slice(SIMULATOR_HASH_PREFIX.length));
+  return {
+    dailyBurn: params.get('burn') || '',
+    icpCommitment: params.get('commitment') || '',
+  };
+}
+
 function renderCanisterTrackerLink(value, { label = null, className = 'pane-canister-tracker-link pane-external-link mono' } = {}) {
   const principalText = formatPrincipal(value).trim();
   if (!principalText) return DASH;
@@ -187,15 +206,15 @@ function formatTrillionCycles(value) {
   const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
   const sign = asBigInt < 0n ? '-' : '';
   const absolute = asBigInt < 0n ? -asBigInt : asBigInt;
-  const thousandths = (absolute * 1000n) / 1_000_000_000_000n;
-  const whole = thousandths / 1000n;
-  const fraction = thousandths % 1000n;
-  return `${sign}${whole}.${fraction.toString().padStart(3, '0')}T cycles`;
+  const tenThousandths = (absolute * 10_000n) / 1_000_000_000_000n;
+  const whole = tenThousandths / 10_000n;
+  const fraction = tenThousandths % 10_000n;
+  return `${sign}${whole}.${fraction.toString().padStart(4, '0')}T cycles`;
 }
 
 function formatCompactTrillionCycles(value) {
   return formatTrillionCycles(value)
-    .replace(/\.000T cycles$/, 'T cycles')
+    .replace(/\.0000T cycles$/, 'T cycles')
     .replace(/(\.\d*?[1-9])0+T cycles$/, '$1T cycles');
 }
 
@@ -1128,24 +1147,24 @@ function trackerItemTimestampMs(item) {
   return date ? date.getTime() : null;
 }
 
-function latestTrackerTimestampMs(data) {
-  const allItems = [
+function trackerAllDatedItems(data) {
+  return [
     ...(data?.commitments?.items || []),
     ...(data?.cycles?.items || []),
     ...(data?.cmcTransfers?.items || []),
+    ...(data?.logs?.items || []),
   ];
-  return allItems.reduce((latest, item) => {
+}
+
+function latestTrackerTimestampMs(data) {
+  return trackerAllDatedItems(data).reduce((latest, item) => {
     const timestampMs = trackerItemTimestampMs(item);
     return timestampMs !== null && timestampMs > latest ? timestampMs : latest;
   }, 0);
 }
 
 function trackerHasAnyDatedItems(data) {
-  return [
-    ...(data?.commitments?.items || []),
-    ...(data?.cycles?.items || []),
-    ...(data?.cmcTransfers?.items || []),
-  ].some((item) => trackerItemTimestampMs(item) !== null);
+  return trackerAllDatedItems(data).some((item) => trackerItemTimestampMs(item) !== null);
 }
 
 function filterTrackerPageAfterCutoff(page, cutoffMs) {
@@ -1168,6 +1187,7 @@ function filterTrackerDataByRange(data, range) {
     ...data,
     commitments: filterTrackerPageAfterCutoff(data.commitments, cutoffMs),
     cycles: filterTrackerPageAfterCutoff(data.cycles, cutoffMs),
+    logs: filterTrackerPageAfterCutoff(data.logs, cutoffMs),
     cmcTransfers: filterTrackerPageAfterCutoff(data.cmcTransfers, cutoffMs),
   };
 }
@@ -1190,11 +1210,7 @@ function nextTrackerPeriod(period, range) {
 }
 
 function trackerTimelineBounds(data, range) {
-  const timestampMs = [
-    ...(data?.commitments?.items || []),
-    ...(data?.cycles?.items || []),
-    ...(data?.cmcTransfers?.items || []),
-  ]
+  const timestampMs = trackerAllDatedItems(data)
     .map(trackerItemTimestampMs)
     .filter((value) => value !== null);
   if (timestampMs.length === 0) return null;
@@ -1282,40 +1298,69 @@ function aggregateTrackerData(data, range) {
 }
 
 
-function sortedCycleSamples(data) {
+function sortedHistorianCycleSamples(data) {
   return (data?.cycles?.items || [])
     .filter((item) => item?.timestamp_nanos !== undefined && item?.timestamp_nanos !== null && item?.cycles !== undefined && item?.cycles !== null)
     .map((item) => ({
       timestampNanos: typeof item.timestamp_nanos === 'bigint' ? item.timestamp_nanos : BigInt(item.timestamp_nanos),
       cycles: typeof item.cycles === 'bigint' ? item.cycles : BigInt(item.cycles),
+      source: 'probe',
     }))
     .sort((left, right) => left.timestampNanos < right.timestampNanos ? -1 : left.timestampNanos > right.timestampNanos ? 1 : 0);
+}
+
+function cyclesFromLogText(text) {
+  const match = String(text || '').match(/\bCycles:\s*([0-9][0-9_,]*)\b/);
+  if (!match) return null;
+  return BigInt(match[1].replace(/[,_]/g, ''));
+}
+
+function sortedLogCycleSamples(data) {
+  return (data?.logs?.items || [])
+    .map((item) => {
+      const cycles = cyclesFromLogText(item?.text);
+      if (cycles === null || item?.timestamp_nanos === undefined || item?.timestamp_nanos === null) return null;
+      return {
+        timestampNanos: typeof item.timestamp_nanos === 'bigint' ? item.timestamp_nanos : BigInt(item.timestamp_nanos),
+        cycles,
+        source: 'log',
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.timestampNanos < right.timestampNanos ? -1 : left.timestampNanos > right.timestampNanos ? 1 : 0);
+}
+
+function sortedCycleSamples(data) {
+  const probeSamples = sortedHistorianCycleSamples(data);
+  return probeSamples.length > 0 ? probeSamples : sortedLogCycleSamples(data);
+}
+
+function cycleSampleSourceLabel(samples) {
+  return samples[0]?.source === 'log' ? 'canister logs' : 'historian cycle probes';
 }
 
 function estimateCyclesBurnedPerDay(data) {
   const samples = sortedCycleSamples(data);
   if (samples.length < 2) return null;
 
-  let observedBurnCycles = 0n;
-  let observedBurnNanos = 0n;
-  for (let index = 1; index < samples.length; index += 1) {
-    const previous = samples[index - 1];
-    const current = samples[index];
-    const elapsed = current.timestampNanos - previous.timestampNanos;
-    if (elapsed <= 0n) continue;
-    if (previous.cycles > current.cycles) {
-      observedBurnCycles += previous.cycles - current.cycles;
-      observedBurnNanos += elapsed;
-    }
-  }
-
-  if (observedBurnNanos === 0n) return 0n;
-  return (observedBurnCycles * NANOS_PER_DAY) / observedBurnNanos;
+  const oldest = samples[0];
+  const newest = samples[samples.length - 1];
+  const elapsed = newest.timestampNanos - oldest.timestampNanos;
+  if (elapsed <= 0n) return null;
+  const burned = oldest.cycles > newest.cycles ? oldest.cycles - newest.cycles : 0n;
+  return (burned * NANOS_PER_DAY) / elapsed;
 }
 
 function formatTrillionCyclesPerDay(value) {
   if (value === null || value === undefined) return DASH;
   return `${formatTrillionCycles(value).replace(' cycles', '')} cycles/day`;
+}
+
+function formatDailyBurnInputFromCyclesPerDay(value) {
+  if (value === null || value === undefined) return null;
+  const cycles = typeof value === 'bigint' ? value : BigInt(value);
+  const tenThousandths = (cycles * 10_000n + 500_000_000_000n) / 1_000_000_000_000n;
+  return `${tenThousandths / 10_000n}.${(tenThousandths % 10_000n).toString().padStart(4, '0')}`;
 }
 
 function sumE8s(items) {
@@ -1326,8 +1371,8 @@ function trackerMetricSummary(data) {
   const commitmentItems = data?.commitments?.items || [];
   const qualifyingCommitments = commitmentItems.filter((item) => item.counts_toward_faucet);
   const transferItems = data?.cmcTransfers?.items || [];
-  const cyclesItems = data?.cycles?.items || [];
-  const latestCycles = cyclesItems.length ? cyclesItems[cyclesItems.length - 1]?.cycles : null;
+  const cyclesSamples = sortedCycleSamples(data);
+  const latestCycles = cyclesSamples.length ? cyclesSamples[cyclesSamples.length - 1]?.cycles : null;
   return {
     commitmentCount: commitmentItems.length,
     qualifyingCommitmentCount: qualifyingCommitments.length,
@@ -1358,6 +1403,41 @@ function renderTrackerCadenceNote(data) {
     : `Cycles balances are sampled by historian cycles sweeps about every ${cyclesCadence}${lastSweep !== DASH ? `; last completed sweep ${lastSweep}` : ''}${lastCanisterProbe !== DASH ? `; this canister was last probed ${lastCanisterProbe}` : ''}.`;
   return `<p class="pane-status-note tracker-status-note">${escapeHtml(`${indexText} Observed CMC top-ups are queried from the ICP index when this pane loads. ${cyclesText}`)}</p>`;
 }
+
+function renderTrackerLogs(data) {
+  const logs = data?.logs?.items || [];
+  const logsError = data?.errors?.logs;
+  const body = logs.length === 0
+    ? `<p class="tracker-log-empty">${escapeHtml(logsError ? `Canister logs unavailable: ${logsError}` : 'No canister logs are currently available for this principal.')}</p>`
+    : `<pre class="tracker-log-output">${escapeHtml(logs.map((item) => {
+        const idx = item?.idx === undefined || item?.idx === null ? '?' : item.idx.toString();
+        const timestamp = formatTimestampNanos(item?.timestamp_nanos);
+        return `[${idx}. ${timestamp}]: ${String(item?.text || '').trim()}`;
+      }).join('\n'))}</pre>`;
+  return `
+    <details class="tracker-log-details">
+      <summary>Canister logs</summary>
+      ${body}
+    </details>`;
+}
+
+function renderSimulatorPrefillLink({ dailyBurnCycles, commitmentE8s }) {
+  const dailyBurnInput = formatDailyBurnInputFromCyclesPerDay(dailyBurnCycles);
+  const commitmentInput = formatIcpCommitmentInputRoundedUp(commitmentE8s);
+  if (!dailyBurnInput || !commitmentInput) return DASH;
+  return `<a href="${escapeHtml(simulatorHashForPrefill({ dailyBurn: dailyBurnInput, icpCommitment: commitmentInput }))}" class="pane-external-link" data-simulator-prefill="true">Open simulator</a>`;
+}
+
+function renderCyclesProbeInfoNote(cyclesStatus, usingLogCycles) {
+  if (cyclesStatus.kind !== 'error' && cyclesStatus.kind !== 'notAvailable') return '';
+  const label = usingLogCycles
+    ? 'Historian cycle probe unavailable; using canister log cycles.'
+    : cyclesStatus.kind === 'error'
+      ? 'Historian cycle probe failed.'
+      : 'Historian cycle probe unavailable.';
+  return `<p class="pane-status-note tracker-status-note tracker-status-note--info" title="${escapeHtml(cyclesStatus.note)}">${escapeHtml(label)}</p>`;
+}
+
 function pluralize(count, singular, plural = `${singular}s`) {
   return `${formatInteger(count)} ${count === 1 ? singular : plural}`;
 }
@@ -1732,6 +1812,45 @@ function bindCommitmentSimulator() {
   renderCommitmentSimulator();
 }
 
+function openSimulatorPanel() {
+  const simulatorSection = document.querySelector('.nav-panel-section[data-panel="simulator"]');
+  const simulatorAlreadyOpen = document.body.classList.contains('nav-panel-open')
+    && simulatorSection?.classList.contains('nav-panel-section--active');
+  if (simulatorAlreadyOpen) return;
+
+  const trigger = document.querySelector('a[data-panel="simulator"]');
+  if (trigger) {
+    const currentHash = window.location.hash;
+    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    if (currentHash.startsWith(SIMULATOR_HASH_PREFIX)) {
+      history.replaceState(null, '', currentHash);
+    }
+    return;
+  }
+  window.location.hash = '#simulator';
+}
+
+function applySimulatorPrefill({ dailyBurn, icpCommitment }) {
+  openSimulatorPanel();
+  window.setTimeout(() => {
+    const burnInput = document.getElementById('simulator-daily-burn');
+    if (burnInput && dailyBurn) burnInput.value = clampSimulatorInputValue(dailyBurn, SIMULATOR_INPUT_CONSTRAINTS['simulator-daily-burn']);
+    const commitmentInput = document.getElementById('simulator-icp-commitment');
+    if (commitmentInput && icpCommitment) {
+      commitmentInput.value = clampSimulatorInputValue(icpCommitment, SIMULATOR_INPUT_CONSTRAINTS['simulator-icp-commitment']);
+      simulatorState.icpCommitmentUserEdited = true;
+    }
+    renderCommitmentSimulator();
+  }, 0);
+}
+
+function hydrateSimulatorFromLocationHash() {
+  const prefill = simulatorPrefillFromHash();
+  if (!prefill) return false;
+  applySimulatorPrefill(prefill);
+  return true;
+}
+
 function renderTrackerRecognitionMessage(data, principalText) {
   const result = document.getElementById('tracker-result');
   if (!result) return;
@@ -1757,11 +1876,14 @@ function renderTrackerData(data, principalText) {
 
   const visibleData = filterTrackerDataByRange(data, trackerState.range);
   const summary = trackerMetricSummary(visibleData);
+  const fullSummary = trackerMetricSummary(data);
+  const cycleSamples = sortedCycleSamples(data);
   const rangeLabel = trackerRangeLabel();
   const sources = sourceNames(data.overview?.sources).join(', ') || DASH;
   const firstSeen = formatTimestampSeconds(optValue(data.overview?.meta?.first_seen_ts));
   const lastCommitment = formatTimestampSeconds(optValue(data.overview?.meta?.last_commitment_ts));
   const cyclesStatus = cyclesProbeStatusInfo(data);
+  const usingLogCycles = cycleSamples[0]?.source === 'log';
   const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
     ? escapeHtml(formatCycles(summary.latestCycles))
     : renderCyclesStatusCell(cyclesStatus.label);
@@ -1769,19 +1891,26 @@ function renderTrackerData(data, principalText) {
   const estimatedCyclesBurnHtml = estimatedObservedCyclesBurnedPerDay === null
     ? null
     : escapeHtml(formatTrillionCyclesPerDay(estimatedObservedCyclesBurnedPerDay));
+  const simulatorPrefillHtml = renderSimulatorPrefillLink({
+    dailyBurnCycles: estimatedObservedCyclesBurnedPerDay,
+    commitmentE8s: fullSummary.qualifyingCommittedE8s || fullSummary.totalCommittedE8s,
+  });
+  const cycleSourceLabel = cycleSamples.length > 0 ? cycleSampleSourceLabel(cycleSamples) : 'available cycle data';
   const commitmentError = data.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(data.errors.commitments)}</p>` : '';
   const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
   const hasCyclesOutsideRange = (data?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
   const cyclesStatusNote = summary.latestCycles === null || summary.latestCycles === undefined
     ? `<p class="pane-status-note tracker-status-note">${escapeHtml(hasCyclesOutsideRange ? `No cycles samples are available in ${rangeLabel}.` : cyclesStatus.note)}</p>`
     : '';
-  const cyclesProbeIssueNote = summary.latestCycles !== null && summary.latestCycles !== undefined && (cyclesStatus.kind === 'error' || cyclesStatus.kind === 'notAvailable')
-    ? `<p class="pane-status-note tracker-status-note">${escapeHtml(cyclesStatus.note)}</p>`
+  const cyclesProbeIssueNote = summary.latestCycles !== null && summary.latestCycles !== undefined
+    ? renderCyclesProbeInfoNote(cyclesStatus, usingLogCycles)
     : '';
   const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
   result.innerHTML = `
     ${renderTrackerRangeControls()}
     <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>
+    ${cyclesProbeIssueNote}
+    ${renderTrackerLogs(data)}
     <dl class="pane-detail-grid tracker-summary-grid">
       <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
       <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
@@ -1795,13 +1924,13 @@ function renderTrackerData(data, principalText) {
       <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.observedCmcE8s))}</dd></div>
       <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
       ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
+      ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Simulator prefill</dt><dd class="pane-detail-value">${simulatorPrefillHtml}</dd></div>`}
     </dl>
     <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
-    ${estimatedCyclesBurnHtml === null ? '' : '<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from downward balance changes between all loaded cycle probes. Top-ups between probes can affect the estimate.</p>'}
+    ${estimatedCyclesBurnHtml === null ? '' : `<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from the oldest and newest loaded ${escapeHtml(cycleSourceLabel)} samples. Top-ups between samples can affect the estimate.</p>`}
     ${renderTrackerCadenceNote(data)}
     ${commitmentError}
     ${cyclesStatusNote}
-    ${cyclesProbeIssueNote}
     ${cyclesError}
     ${cmcError}`;
   renderTrackerCharts(visibleData, data);
@@ -1977,6 +2106,16 @@ function bindTrackerPane() {
   if (result && result.dataset.rangeBound !== 'true') {
     result.dataset.rangeBound = 'true';
     result.addEventListener('click', (event) => {
+      const simulatorLink = event.target instanceof Element ? event.target.closest('[data-simulator-prefill]') : null;
+      if (simulatorLink && result.contains(simulatorLink)) {
+        event.preventDefault();
+        const href = simulatorLink.getAttribute('href') || '#simulator';
+        if (window.location.hash !== href) {
+          history.pushState(null, '', href);
+        }
+        hydrateSimulatorFromLocationHash();
+        return;
+      }
       const button = event.target instanceof Element ? event.target.closest('[data-tracker-range]') : null;
       if (!button || !result.contains(button)) return;
       event.preventDefault();
@@ -2125,7 +2264,7 @@ function bindNeuronDetailsLoader(data) {
     void ensureNeuronDetailsLoaded(data);
   };
   const maybeLoadFromLocation = () => {
-    if (window.location.hash === '#metric-stake' || window.location.hash === '#simulator') {
+    if (window.location.hash === '#metric-stake' || window.location.hash === '#simulator' || window.location.hash.startsWith(SIMULATOR_HASH_PREFIX)) {
       load();
     }
   };
@@ -2170,8 +2309,10 @@ bindTrackerPane();
 bindCommitmentSimulator();
 bindTrackerLinks();
 hydrateTrackerFromLocationHash({ submit: true });
+hydrateSimulatorFromLocationHash();
 window.addEventListener('hashchange', () => {
   hydrateTrackerFromLocationHash({ submit: true });
+  hydrateSimulatorFromLocationHash();
 });
 document.addEventListener('navpanel:open', (event) => {
   if (event?.detail?.key === 'source') {
@@ -2179,6 +2320,7 @@ document.addEventListener('navpanel:open', (event) => {
   }
   if (event?.detail?.key === 'simulator') {
     void ensureNeuronDetailsLoaded(window.__JUPITER_LANDING_DATA__ || null);
+    hydrateSimulatorFromLocationHash();
   }
   if (event?.detail?.key === 'metric-tracker') {
     const hydrated = hydrateTrackerFromLocationHash({ submit: true });

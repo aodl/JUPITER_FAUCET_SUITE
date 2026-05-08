@@ -48,10 +48,10 @@ function sumBuckets(projection, key) {
   return projection.buckets.reduce((sum, bucket) => sum + bucket[key], 0n);
 }
 
-test('default projection uses 7.0% configured APY, 0.001T daily burn, and the 1 ICP commitment floor', () => {
+test('default projection uses 7.0% configured APY, 0.0001T daily burn, and the 1 ICP commitment floor', () => {
   const projection = okProjection({
     assumedIcpPrice: '10.0',
-    dailyBurnTrillionCycles: '0.001',
+    dailyBurnTrillionCycles: '0.0001',
     icpCommitment: '100.0',
     annualApyPercent: '7.0',
     ageBonusBasisPoints: 0n,
@@ -63,14 +63,14 @@ test('default projection uses 7.0% configured APY, 0.001T daily burn, and the 1 
   assert.equal(projection.inputs.effectiveApyBasisPoints, 700n);
   assert.equal(projection.inputs.ageBonusBasisPoints, 0n);
   assert.equal(projection.inputs.ageBonusMaturityShareBasisPoints, 0n);
-  assert.equal(projection.inputs.dailyBurnCycles, TRILLION_CYCLES / 1000n);
+  assert.equal(projection.inputs.dailyBurnCycles, TRILLION_CYCLES / 10_000n);
   assert.equal(projection.summary.cyclesPerIcp, 10n * CYCLES_PER_PRICE_UNIT);
   assert.equal(projection.summary.annualTopupE8s, 7n * E8S_PER_ICP);
   assert.equal(projection.summary.annualTopupCycles, 70n * TRILLION_CYCLES);
-  assert.equal(projection.summary.annualBurnCycles, 365_000_000_000n);
+  assert.equal(projection.summary.annualBurnCycles, 36_500_000_000n);
   assert.equal(PROJECTION_WEEKS, 52);
   assert.equal(projection.summary.initialPayoutCycles, 1_346_153_846_153n);
-  assert.equal(projection.summary.yearEndBalanceCycles, 70_981_153_846_153n);
+  assert.equal(projection.summary.yearEndBalanceCycles, 71_309_653_846_153n);
   assert.equal('requiredStartingBufferCycles' in projection.summary, false);
   assert.equal(projection.summary.requiredCommitmentE8s, E8S_PER_ICP);
   assert.equal(projection.summary.isSustainableAtCurrentBurn, true);
@@ -203,11 +203,11 @@ test('zero burn and a valid minimum commitment produce an overfunded projection 
   assert.equal(projection.summary.isSustainableAtCurrentBurn, true);
 });
 
-test('user-facing simulator inputs allow one decimal except daily burn which allows three decimals', () => {
-  const projection = okProjection({ assumedIcpPrice: '10.1', dailyBurnTrillionCycles: '1.123', icpCommitment: '2.3', annualApyPercent: '7.4', ageBonusBasisPoints: 500n });
+test('user-facing simulator inputs allow one decimal except daily burn which allows four decimals', () => {
+  const projection = okProjection({ assumedIcpPrice: '10.1', dailyBurnTrillionCycles: '1.1234', icpCommitment: '2.3', annualApyPercent: '7.4', ageBonusBasisPoints: 500n });
 
   assert.equal(projection.inputs.assumedIcpPriceUnits, 101_000n);
-  assert.equal(projection.inputs.dailyBurnCycles, 1_123n * TRILLION_CYCLES / 1000n);
+  assert.equal(projection.inputs.dailyBurnCycles, 11_234n * TRILLION_CYCLES / 10_000n);
   assert.equal(projection.inputs.icpCommitmentE8s, 230_000_000n);
   assert.equal(projection.inputs.annualApyBasisPoints, 740n);
   assert.equal(projection.inputs.ageBonusBasisPoints, 500n);
@@ -225,7 +225,7 @@ test('decimal parser accepts separators but rejects invalid precision, negative 
 test('normalisation reports all invalid user-facing simulator inputs together', () => {
   const projection = buildSimulatorProjection({
     assumedIcpPrice: '0',
-    dailyBurnTrillionCycles: '1.1111',
+    dailyBurnTrillionCycles: '1.11111',
     icpCommitment: '0.5',
     annualApyPercent: '7.11',
     ageBonusBasisPoints: -1n,
@@ -233,7 +233,7 @@ test('normalisation reports all invalid user-facing simulator inputs together', 
 
   assert.equal(projection.ok, false);
   assert.match(projection.errors.join(' '), /Assumed ICP\/XDR price must be greater than zero/);
-  assert.match(projection.errors.join(' '), /Daily burn in T cycles supports at most 3 decimal places/);
+  assert.match(projection.errors.join(' '), /Daily burn in T cycles supports at most 4 decimal places/);
   assert.match(projection.errors.join(' '), /ICP commitment must be at least 1 ICP/);
   assert.match(projection.errors.join(' '), /APY supports at most 1 decimal place/);
   assert.match(projection.errors.join(' '), /Age bonus must be non-negative/);
