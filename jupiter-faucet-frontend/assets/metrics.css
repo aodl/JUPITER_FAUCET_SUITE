@@ -872,6 +872,11 @@
   width: 78px;
 }
 
+.simulator-copy-url {
+  height: 32px;
+  white-space: nowrap;
+}
+
 .simulator-scroll-region {
   flex: 1;
   min-height: 0;

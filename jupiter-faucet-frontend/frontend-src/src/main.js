@@ -142,10 +142,17 @@ function trackerPrincipalFromHash(hash = window.location.hash) {
   }
 }
 
-function simulatorHashForPrefill({ dailyBurn = '', icpCommitment = '' } = {}) {
+function simulatorHashForPrefill({
+  dailyBurn = '',
+  icpCommitment = '',
+  assumedIcpPrice = '',
+  annualApyPercent = '',
+} = {}) {
   const params = new URLSearchParams();
   if (dailyBurn) params.set('burn', String(dailyBurn));
   if (icpCommitment) params.set('commitment', String(icpCommitment));
+  if (assumedIcpPrice) params.set('price', String(assumedIcpPrice));
+  if (annualApyPercent) params.set('apy', String(annualApyPercent));
   const encoded = params.toString();
   return encoded ? `${SIMULATOR_HASH_PREFIX}${encoded}` : '#simulator';
 }
@@ -157,6 +164,8 @@ function simulatorPrefillFromHash(hash = window.location.hash) {
   return {
     dailyBurn: params.get('burn') || '',
     icpCommitment: params.get('commitment') || '',
+    assumedIcpPrice: params.get('price') || '',
+    annualApyPercent: params.get('apy') || '',
   };
 }
 
@@ -561,6 +570,25 @@ function paneEmptyMessage(data, key, defaultText) {
   return data?.errors?.[key] ? `${defaultText} (${data.errors[key]})` : defaultText;
 }
 
+async function copyTextToClipboard(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    if (!document.execCommand('copy')) throw new Error('copy command failed');
+  } finally {
+    textarea.remove();
+  }
+}
+
 function setCopyButton(id, valueProvider) {
   const button = document.getElementById(id);
   if (!button || button.dataset.bound === 'true') return;
@@ -569,7 +597,7 @@ function setCopyButton(id, valueProvider) {
     const value = valueProvider();
     if (!value || value === DASH) return;
     try {
-      await navigator.clipboard.writeText(value);
+      await copyTextToClipboard(value);
       button.textContent = 'Copied';
       window.setTimeout(() => {
         button.textContent = 'Copy';
@@ -1719,6 +1747,46 @@ function readSimulatorInputs() {
   };
 }
 
+function simulatorShareHashFromInputs() {
+  return simulatorHashForPrefill({
+    dailyBurn: simulatorProjectionInputValue('simulator-daily-burn', SIMULATOR_DEFAULTS.dailyBurnTrillionCycles),
+    icpCommitment: simulatorProjectionInputValue('simulator-icp-commitment', '1.0'),
+    assumedIcpPrice: simulatorProjectionInputValue('simulator-icp-price', SIMULATOR_DEFAULTS.assumedIcpPrice),
+    annualApyPercent: simulatorProjectionInputValue('simulator-apy', SIMULATOR_DEFAULTS.annualApyPercent),
+  });
+}
+
+function simulatorShareUrlFromInputs() {
+  const hash = simulatorShareHashFromInputs();
+  const url = new URL(window.location.href);
+  url.hash = hash;
+  return url.toString();
+}
+
+function bindSimulatorShareUrlButton() {
+  const button = document.getElementById('simulator-copy-url');
+  if (!button || button.dataset.bound === 'true') return;
+  button.dataset.bound = 'true';
+  const defaultText = button.textContent || 'Copy to URL';
+  button.addEventListener('click', async () => {
+    const hash = simulatorShareHashFromInputs();
+    const url = simulatorShareUrlFromInputs();
+    history.replaceState(null, '', hash);
+    try {
+      await copyTextToClipboard(url);
+      button.textContent = 'Copied to URL';
+      window.setTimeout(() => {
+        button.textContent = defaultText;
+      }, 1200);
+    } catch {
+      button.textContent = 'Copy failed';
+      window.setTimeout(() => {
+        button.textContent = defaultText;
+      }, 1500);
+    }
+  });
+}
+
 function renderSimulatorCharts(projection) {
   const wrapper = document.getElementById('simulator-chart-wrapper');
   if (!wrapper) return;
@@ -1803,6 +1871,7 @@ function bindCommitmentSimulator() {
   const form = document.getElementById('commitment-simulator-form');
   if (!form || simulatorState.initialised) return;
   simulatorState.initialised = true;
+  bindSimulatorShareUrlButton();
   [
     ['simulator-daily-burn', SIMULATOR_DEFAULTS.dailyBurnTrillionCycles],
     ['simulator-apy', SIMULATOR_DEFAULTS.annualApyPercent],
@@ -1846,7 +1915,12 @@ function openSimulatorPanel() {
   window.location.hash = '#simulator';
 }
 
-function applySimulatorPrefill({ dailyBurn, icpCommitment }) {
+function applySimulatorPrefill({
+  dailyBurn,
+  icpCommitment,
+  assumedIcpPrice,
+  annualApyPercent,
+}) {
   openSimulatorPanel();
   window.setTimeout(() => {
     const burnInput = document.getElementById('simulator-daily-burn');
@@ -1856,6 +1930,13 @@ function applySimulatorPrefill({ dailyBurn, icpCommitment }) {
       commitmentInput.value = clampSimulatorInputValue(icpCommitment, SIMULATOR_INPUT_CONSTRAINTS['simulator-icp-commitment']);
       simulatorState.icpCommitmentUserEdited = true;
     }
+    const priceInput = document.getElementById('simulator-icp-price');
+    if (priceInput && assumedIcpPrice) {
+      priceInput.value = clampSimulatorInputValue(assumedIcpPrice, SIMULATOR_INPUT_CONSTRAINTS['simulator-icp-price']);
+      simulatorState.icpPriceUserEdited = true;
+    }
+    const apyInput = document.getElementById('simulator-apy');
+    if (apyInput && annualApyPercent) apyInput.value = clampSimulatorInputValue(annualApyPercent, SIMULATOR_INPUT_CONSTRAINTS['simulator-apy']);
     renderCommitmentSimulator();
   }, 0);
 }

@@ -419,15 +419,31 @@ test('canister tracker links use shareable metric-tracker fragments', () => {
 });
 
 test('simulator prefill links use shareable simulator fragments', () => {
+  const simulator = sectionMarkup('simulator');
+  assert.match(simulator, /id="simulator-copy-url"[^>]*type="button"[^>]*>Copy to URL<\/button>/);
   assert.match(mainJs, /const SIMULATOR_HASH_PREFIX = '#simulator-'/);
   assert.match(mainJs, /simulatorHashForPrefill/);
   assert.match(mainJs, /simulatorPrefillFromHash/);
   assert.match(mainJs, /hydrateSimulatorFromLocationHash/);
+  assert.match(mainJs, /simulatorShareHashFromInputs/);
+  assert.match(mainJs, /simulatorShareUrlFromInputs/);
+  assert.match(mainJs, /bindSimulatorShareUrlButton/);
+  assert.match(mainJs, /history\.replaceState\(null, '', hash\)/);
+  assert.match(mainJs, /copyTextToClipboard\(url\)/);
+  assert.match(mainJs, /Copied to URL/);
   assert.match(mainJs, /new URLSearchParams/);
   assert.match(mainJs, /params\.set\('burn'/);
   assert.match(mainJs, /params\.set\('commitment'/);
+  assert.match(mainJs, /params\.set\('price'/);
+  assert.match(mainJs, /params\.set\('apy'/);
+  assert.match(mainJs, /assumedIcpPrice: params\.get\('price'\)/);
+  assert.match(mainJs, /annualApyPercent: params\.get\('apy'\)/);
+  assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS\['simulator-icp-price'\]/);
+  assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS\['simulator-apy'\]/);
+  assert.match(mainJs, /simulatorState\.icpPriceUserEdited = true;/);
   assert.match(mainJs, /href="\$\{escapeHtml\(simulatorHashForPrefill/);
   assert.match(navbarJs, /key\.startsWith\("simulator-"\)/);
+  assert.match(metricsCss, /\.simulator-copy-url\s*\{[\s\S]*height: 32px;[\s\S]*white-space: nowrap;/);
 });
 
 test('metric tracker hash deep links submit once on cold load and panel open', () => {
