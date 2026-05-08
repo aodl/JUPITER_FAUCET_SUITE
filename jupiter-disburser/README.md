@@ -49,6 +49,10 @@ Default timers are:
 
 Each timer interval is clamped to at least 60 seconds by the runtime code.
 
+### Runtime config verification
+
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The disburser emits a single `CONFIG ...` line when a main tick reaches the payout / maturity-disbursement path. Daily timer ticks that only observe an in-flight NNS maturity disbursement still emit the regular `Cycles: ...` health line, but skip the config line; in normal operation this makes config logging follow the slower payout cadence. The line is comma-separated `key=value` text and includes the neuron ID, payout recipient accounts, ledger/governance canister IDs, rescue/blackhole controller settings, blackhole armed state, and timer intervals.
+
 ### Main tick sequence
 
 On each successful main tick, the canister does the following:
@@ -63,7 +67,7 @@ On each successful main tick, the canister does the following:
    - best-effort calls `RefreshVotingPower`
 5. if a maturity disbursement **is** already in flight, the canister intentionally skips payout processing and does not initiate another disbursement
 6. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
-7. logs only errors plus a single `Cycles: ...` line per run
+7. logs only errors plus a single `Cycles: ...` line per run, and logs `CONFIG ...` only when the tick reaches the payout / maturity-disbursement path
 
 The skip while in flight is intentional. The current implementation stores exactly one captured age snapshot (`prev_age_seconds`) and later uses that snapshot when staged ICP is split. By refusing to overlap payout work with an already in-flight maturity disbursement, the canister avoids applying the wrong captured age to staged ICP from a different disbursement cycle.
 

@@ -7,6 +7,7 @@ use ic_stable_structures::{
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -25,6 +26,56 @@ pub struct Config {
 
     pub main_interval_seconds: u64,
     pub rescue_interval_seconds: u64,
+}
+
+fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
+    let Some(bytes) = subaccount else {
+        return "none".to_string();
+    };
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
+fn account_text(account: &Account) -> String {
+    format!(
+        "{}:{}",
+        account.owner.to_text(),
+        subaccount_text(&account.subaccount)
+    )
+}
+
+fn opt_principal_text(principal: Option<Principal>) -> String {
+    principal
+        .map(|p| p.to_text())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn opt_bool_text(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "none",
+    }
+}
+
+pub fn runtime_config_log_line(cfg: &Config) -> String {
+    format!(
+        "CONFIG neuron_id={}, normal_recipient={}, age_bonus_recipient_1={}, age_bonus_recipient_2={}, ledger_canister_id={}, governance_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, main_interval_seconds={}, rescue_interval_seconds={}",
+        cfg.neuron_id,
+        account_text(&cfg.normal_recipient),
+        account_text(&cfg.age_bonus_recipient_1),
+        account_text(&cfg.age_bonus_recipient_2),
+        cfg.ledger_canister_id.to_text(),
+        cfg.governance_canister_id.to_text(),
+        cfg.rescue_controller.to_text(),
+        opt_principal_text(cfg.blackhole_controller),
+        opt_bool_text(cfg.blackhole_armed),
+        cfg.main_interval_seconds,
+        cfg.rescue_interval_seconds
+    )
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -294,6 +345,23 @@ mod tests {
             main_interval_seconds: 60,
             rescue_interval_seconds: 120,
         }
+    }
+
+    #[test]
+    fn runtime_config_log_line_includes_all_config_fields() {
+        let line = runtime_config_log_line(&sample_config());
+        assert!(line.starts_with("CONFIG "));
+        assert!(line.contains("neuron_id=42"));
+        assert!(line.contains("normal_recipient="));
+        assert!(line.contains("age_bonus_recipient_1="));
+        assert!(line.contains("age_bonus_recipient_2="));
+        assert!(line.contains("ledger_canister_id="));
+        assert!(line.contains("governance_canister_id="));
+        assert!(line.contains("rescue_controller="));
+        assert!(line.contains("blackhole_controller="));
+        assert!(line.contains("blackhole_armed=false"));
+        assert!(line.contains("main_interval_seconds=60"));
+        assert!(line.contains("rescue_interval_seconds=120"));
     }
 
     #[test]

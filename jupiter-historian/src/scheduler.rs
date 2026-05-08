@@ -214,6 +214,16 @@ fn log_cycles_once_per_week(cycles: u128) {
     }
 }
 
+fn log_current_config() {
+    #[cfg(test)]
+    {}
+    #[cfg(not(test))]
+    {
+        let line = state::with_state(|st| state::runtime_config_log_line(&st.config));
+        ic_cdk::println!("{}", line);
+    }
+}
+
 fn log_error(message: &str) {
     #[cfg(test)]
     {
@@ -1261,6 +1271,7 @@ async fn probe_and_record_cycles<B: BlackholeClient>(
     if self_canister_id.map(|self_id| canister_id == self_id).unwrap_or(false) {
         let cycles = ic_cdk::api::canister_cycle_balance();
         log_cycles_once_per_week(cycles);
+        log_current_config();
         state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
             crate::state::ensure_cycles_history_loaded(st, canister_id);
             let history = st.cycles_history.entry(canister_id).or_default();

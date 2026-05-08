@@ -144,6 +144,11 @@ fn log_summary(summary: &state::Summary) {
     ));
 }
 
+fn log_current_config() {
+    let line = state::with_state(|st| state::runtime_config_log_line(&st.config));
+    emit_log_line(line);
+}
+
 struct MainGuard {
     active: bool,
     lease_expires_at_ts: u64,
@@ -186,6 +191,7 @@ impl MainGuard {
         self.active = false;
         if let Some(code) = err { log_error(code); }
         log_cycles();
+        log_current_config();
     }
 }
 

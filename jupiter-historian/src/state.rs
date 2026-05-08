@@ -8,6 +8,7 @@ use icrc_ledger_types::icrc1::account::Account;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -32,6 +33,56 @@ pub struct Config {
     pub max_commitment_entries_per_canister: u32,
     pub max_index_pages_per_tick: u32,
     pub max_canisters_per_cycles_tick: u32,
+}
+
+fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
+    let Some(bytes) = subaccount else {
+        return "none".to_string();
+    };
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
+fn account_text(account: &Account) -> String {
+    format!(
+        "{}:{}",
+        account.owner.to_text(),
+        subaccount_text(&account.subaccount)
+    )
+}
+
+fn opt_principal_text(principal: Option<Principal>) -> String {
+    principal
+        .map(|p| p.to_text())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+pub fn runtime_config_log_line(cfg: &Config) -> String {
+    format!(
+        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, blackhole_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}",
+        account_text(&cfg.staking_account),
+        account_text(&cfg.output_source_account),
+        account_text(&cfg.output_account),
+        account_text(&cfg.rewards_account),
+        cfg.ledger_canister_id.to_text(),
+        cfg.index_canister_id.to_text(),
+        opt_principal_text(cfg.cmc_canister_id),
+        opt_principal_text(cfg.faucet_canister_id),
+        cfg.blackhole_canister_id.to_text(),
+        cfg.sns_wasm_canister_id.to_text(),
+        cfg.xrc_canister_id.to_text(),
+        cfg.enable_sns_tracking,
+        cfg.scan_interval_seconds,
+        cfg.cycles_interval_seconds,
+        cfg.min_tx_e8s,
+        cfg.max_cycles_entries_per_canister,
+        cfg.max_commitment_entries_per_canister,
+        cfg.max_index_pages_per_tick,
+        cfg.max_canisters_per_cycles_tick
+    )
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1521,6 +1572,31 @@ mod tests {
             max_index_pages_per_tick: 10,
             max_canisters_per_cycles_tick: 10,
         }
+    }
+
+    #[test]
+    fn runtime_config_log_line_includes_all_config_fields() {
+        let line = runtime_config_log_line(&sample_config());
+        assert!(line.starts_with("CONFIG "));
+        assert!(line.contains("staking_account="));
+        assert!(line.contains("output_source_account="));
+        assert!(line.contains("output_account="));
+        assert!(line.contains("rewards_account="));
+        assert!(line.contains("ledger_canister_id="));
+        assert!(line.contains("index_canister_id="));
+        assert!(line.contains("cmc_canister_id="));
+        assert!(line.contains("faucet_canister_id="));
+        assert!(line.contains("blackhole_canister_id="));
+        assert!(line.contains("sns_wasm_canister_id="));
+        assert!(line.contains("xrc_canister_id="));
+        assert!(line.contains("enable_sns_tracking=true"));
+        assert!(line.contains("scan_interval_seconds=60"));
+        assert!(line.contains("cycles_interval_seconds=120"));
+        assert!(line.contains("min_tx_e8s=100000000"));
+        assert!(line.contains("max_cycles_entries_per_canister=100"));
+        assert!(line.contains("max_commitment_entries_per_canister=100"));
+        assert!(line.contains("max_index_pages_per_tick=10"));
+        assert!(line.contains("max_canisters_per_cycles_tick=10"));
     }
 
     fn snapshot_sources_map() -> BTreeMap<Principal, BTreeSet<CanisterSource>> {

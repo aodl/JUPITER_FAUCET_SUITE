@@ -121,6 +121,11 @@ fn log_cycles() {
     }
 }
 
+fn log_current_config() {
+    let line = state::with_state(|st| state::runtime_config_log_line(&st.config));
+    ic_cdk::println!("{}", line);
+}
+
 fn self_canister_principal() -> Principal {
     #[cfg(test)]
     {
@@ -183,7 +188,7 @@ impl MainGuard {
         self.active = false;
     }
 
-    fn finish(mut self, now_secs: u64, err: Option<u32>) {
+    fn finish(mut self, now_secs: u64, err: Option<u32>, log_config: bool) {
         let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs;
@@ -197,8 +202,11 @@ impl MainGuard {
             log_error(code);
         }
 
-        // Always print cycles line (the only non-error informational log).
+        // Always print the cycles health line; config logging is limited to payout-cadence ticks.
         log_cycles();
+        if log_config {
+            log_current_config();
+        }
     }
 }
 
@@ -243,6 +251,7 @@ pub fn schedule_immediate_rescue_reconcile() {
 /// MAIN TICK:
 /// Logging:
 /// - always logs "Cycles: <amount>" once per run
+/// - logs "CONFIG ..." only when the tick reaches the payout / maturity-disbursement path
 /// - logs only errors otherwise
 async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
@@ -270,7 +279,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
         let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
-            guard.finish(now_secs, None);
+            guard.finish(now_secs, None, false);
             return;
         }
     }
@@ -281,7 +290,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
     if debug_simulate_low_cycles() {
         // Debug-only: simulate low cycles by refusing to perform any external calls.
         err = Some(1004);
-        guard.finish(now_secs, err);
+        guard.finish(now_secs, err, false);
         return;
     }
 
@@ -291,7 +300,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         // payout plan, then stop before transfers, maturity initiation, or unrelated
         // governance maintenance. Production builds never take this branch.
         let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
-        guard.finish(now_secs, if payout_ok { None } else { Some(1002) });
+        guard.finish(now_secs, if payout_ok { None } else { Some(1002) }, true);
         return;
     }
 
@@ -313,7 +322,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         Ok(n) => n,
         Err(_) => {
             err = Some(1001);
-            guard.finish(now_secs, err);
+            guard.finish(now_secs, err, false);
             return;
         }
     };
@@ -324,6 +333,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
+    let log_config = !in_flight;
     if !in_flight {
         // 1) payout stage
         let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
@@ -362,7 +372,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
         }
     }
 
-    guard.finish(now_secs, err);
+    guard.finish(now_secs, err, log_config);
 }
 
 /// PAYOUT:
@@ -1443,4 +1453,3 @@ pub async fn debug_build_payout_plan_impl() -> bool {
 
     true
 }
-

@@ -7,6 +7,7 @@ use ic_stable_structures::{
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -24,6 +25,64 @@ pub struct Config {
     pub min_tx_e8s: u64,
     #[serde(default)]
     pub stake_recognition_delay_seconds: Option<u64>,
+}
+
+fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
+    let Some(bytes) = subaccount else {
+        return "none".to_string();
+    };
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
+fn account_text(account: &Account) -> String {
+    format!(
+        "{}:{}",
+        account.owner.to_text(),
+        subaccount_text(&account.subaccount)
+    )
+}
+
+fn opt_principal_text(principal: Option<Principal>) -> String {
+    principal
+        .map(|p| p.to_text())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn opt_bool_text(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "none",
+    }
+}
+
+fn opt_u64_text(value: Option<u64>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+pub fn runtime_config_log_line(cfg: &Config) -> String {
+    format!(
+        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
+        account_text(&cfg.staking_account),
+        subaccount_text(&cfg.payout_subaccount),
+        cfg.ledger_canister_id.to_text(),
+        cfg.index_canister_id.to_text(),
+        cfg.cmc_canister_id.to_text(),
+        cfg.rescue_controller.to_text(),
+        opt_principal_text(cfg.blackhole_controller),
+        opt_bool_text(cfg.blackhole_armed),
+        opt_u64_text(cfg.expected_first_staking_tx_id),
+        cfg.main_interval_seconds,
+        cfg.rescue_interval_seconds,
+        cfg.min_tx_e8s,
+        opt_u64_text(cfg.stake_recognition_delay_seconds)
+    )
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -614,6 +673,25 @@ mod tests {
             min_tx_e8s: 100_000_000,
             stake_recognition_delay_seconds: Some(24 * 60 * 60),
         }
+    }
+
+    #[test]
+    fn runtime_config_log_line_includes_all_config_fields() {
+        let line = runtime_config_log_line(&sample_config());
+        assert!(line.starts_with("CONFIG "));
+        assert!(line.contains("staking_account="));
+        assert!(line.contains("payout_subaccount=0707070707070707070707070707070707070707070707070707070707070707"));
+        assert!(line.contains("ledger_canister_id="));
+        assert!(line.contains("index_canister_id="));
+        assert!(line.contains("cmc_canister_id="));
+        assert!(line.contains("rescue_controller="));
+        assert!(line.contains("blackhole_controller="));
+        assert!(line.contains("blackhole_armed=false"));
+        assert!(line.contains("expected_first_staking_tx_id=11"));
+        assert!(line.contains("main_interval_seconds=60"));
+        assert!(line.contains("rescue_interval_seconds=120"));
+        assert!(line.contains("min_tx_e8s=100000000"));
+        assert!(line.contains("stake_recognition_delay_seconds=86400"));
     }
 
     #[test]
