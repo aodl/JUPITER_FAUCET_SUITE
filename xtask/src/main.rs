@@ -455,6 +455,7 @@ struct FaucetDebugConfig {
     ledger_canister_id: Principal,
     index_canister_id: Principal,
     cmc_canister_id: Principal,
+    governance_canister_id: Principal,
     rescue_controller: Principal,
     blackhole_controller: Option<Principal>,
     blackhole_armed: Option<bool>,
@@ -635,6 +636,9 @@ struct ListRegisteredCanisterSummariesResponse {
 #[derive(Debug, CandidType, Deserialize)]
 struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
+    neuron_id: Option<u64>,
+    raw_icp_memo_text: Option<String>,
+    neuron_memo_text: Option<String>,
     memo_text: Option<String>,
     tx_id: u64,
     amount_e8s: u64,
@@ -732,6 +736,10 @@ struct IndexGetCall {
 
 fn nat_plain_string(value: &Nat) -> String {
     value.to_string().replace('_', "")
+}
+
+fn nat_to_u64(value: &Nat) -> u64 {
+    value.0.to_u64_digits().first().copied().unwrap_or(0)
 }
 
 fn bytes_to_candid_blob(bytes: &[u8]) -> String {
@@ -1001,11 +1009,13 @@ fn cmd_setup_faucet_local() -> Result<()> {
     deploy_local_canister("mock_icrc_ledger", None)?;
     deploy_local_canister("mock_icp_index", None)?;
     deploy_local_canister("mock_cmc", None)?;
+    deploy_local_canister("mock_nns_governance", None)?;
     deploy_local_canister("mock_blackhole", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let index_id = canister_id("mock_icp_index")?;
     let cmc_id = canister_id("mock_cmc")?;
+    let gov_id = canister_id("mock_nns_governance")?;
     let blackhole_id = canister_id("mock_blackhole")?;
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
@@ -1016,6 +1026,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
+            governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1031,6 +1042,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
+        gov_id = gov_id.trim(),
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
@@ -1103,6 +1115,7 @@ fn cmd_setup_historian_local() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
+            governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1118,6 +1131,7 @@ fn cmd_setup_historian_local() -> Result<()> {
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
+        gov_id = gov_id.trim(),
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
@@ -1240,6 +1254,7 @@ fn cmd_setup() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
+            governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1255,6 +1270,7 @@ fn cmd_setup() -> Result<()> {
         ledger_id = ledger_id.trim(),
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
+        gov_id = gov_id.trim(),
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
@@ -1838,6 +1854,62 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let beneficiary_notes = notes.iter().filter(|n| n.canister_id == target).count();
         if beneficiary_notes != 3 {
             bail!("expected three beneficiary notifications for the same canister, got {beneficiary_notes}");
+        }
+
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "faucet", "numeric neuron id memo routes payout to resolved neuron staking account"), || {
+        let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
+        let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
+        let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
+        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
+
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let neuron_id = 42_u64;
+        let memo_text = format!("{neuron_id}.local.memo");
+        let memo = opt_blob_to_candid(Some(memo_text.as_bytes()));
+
+        let _: () = call_raw(
+            "mock_icrc_ledger",
+            "debug_credit",
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.staking)),
+        )?;
+        let _: () = call_raw(
+            "mock_icrc_ledger",
+            "debug_credit",
+            &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
+        )?;
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
+        )?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
+
+        let mut expected_subaccount = [0u8; 32];
+        expected_subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
+        let gov_id = Principal::from_text(canister_id("mock_nns_governance")?.trim())?;
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers.len() != 1 {
+            bail!("expected exactly one neuron stake transfer, got {transfers:?}");
+        }
+        if transfers[0].to != (Account { owner: gov_id, subaccount: Some(expected_subaccount) })
+            || transfers[0].memo.as_deref() != Some(b"local.memo".as_slice())
+            || nat_to_u64(&transfers[0].amount) != 99_990_000
+        {
+            bail!("unexpected neuron stake transfer: {:?}", transfers[0]);
+        }
+        let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
+        if !notes.is_empty() {
+            bail!("neuron stake payout should not call CMC notify_top_up, got {notes:?}");
+        }
+        let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected faucet summary")?;
+        if summary.topped_up_count != 1 || summary.failed_topups != 0 || summary.topped_up_sum_e8s != 99_990_000 {
+            bail!("unexpected neuron stake summary: {summary:?}");
         }
 
         Ok(())
@@ -2491,6 +2563,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             && cfg.ledger_canister_id == mainnet_ledger_principal()
             && cfg.index_canister_id == mainnet_index_principal()
             && cfg.cmc_canister_id == mainnet_cmc_principal()
+            && cfg.governance_canister_id == mainnet_governance_principal()
             && cfg.rescue_controller == prod_lifeline_principal()
             && cfg.blackhole_controller == Some(mainnet_blackhole_principal())
             && cfg.blackhole_armed.is_none()
@@ -2897,6 +2970,67 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         )?;
         if history2.items.len() != 1 {
             bail!("expected historian not to duplicate commitments, got {}", history2.items.len());
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "historian", "indexes raw ICP and neuron declarations in recent commitments"), || {
+        reset_historian_local_replica_state()?;
+        let staking = faucet_staking_account();
+        let staking_id = account_identifier_text(&staking);
+        let raw_memo = format!("{}.vault42", target.to_text().replace('-', ""));
+        let neuron_id = 42_u64;
+        let raw_blob = opt_blob_to_candid(Some(raw_memo.as_bytes()));
+        let neuron_memo = format!("{neuron_id}.local.memo");
+        let neuron_blob = opt_blob_to_candid(Some(neuron_memo.as_bytes()));
+
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, raw_blob),
+        )?;
+        let _: u64 = call_raw(
+            "mock_icp_index",
+            "debug_append_transfer",
+            &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, neuron_blob),
+        )?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
+
+        let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
+        if counts.registered_canister_count != 0 || counts.qualifying_commitment_count != 2 {
+            bail!(
+                "unexpected raw/neuron commitment counts: registered={} qualifying={}",
+                counts.registered_canister_count,
+                counts.qualifying_commitment_count,
+            );
+        }
+
+        let recent: ListRecentCommitmentsResponse = call_raw(
+            "jupiter_historian_dbg",
+            "list_recent_commitments",
+            "(record { limit = opt (10:nat32); qualifying_only = opt false })",
+        )?;
+        let raw = recent
+            .items
+            .iter()
+            .find(|item| item.raw_icp_memo_text.as_deref() == Some("vault42"))
+            .context("expected raw ICP recent commitment")?;
+        if raw.canister_id != Some(target) || raw.neuron_id.is_some() || !raw.counts_toward_faucet {
+            bail!("unexpected raw ICP recent commitment: {:?}", raw);
+        }
+        let neuron = recent
+            .items
+            .iter()
+            .find(|item| item.neuron_id == Some(neuron_id))
+            .context("expected neuron recent commitment")?;
+        if neuron.canister_id.is_some()
+            || neuron.raw_icp_memo_text.is_some()
+            || neuron.neuron_memo_text.as_deref() != Some("local.memo")
+            || neuron.memo_text.as_deref() != Some("42")
+            || !neuron.counts_toward_faucet
+        {
+            bail!("unexpected neuron recent commitment: {:?}", neuron);
         }
         Ok(())
     });

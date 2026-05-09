@@ -82,6 +82,8 @@ const tableState = {
     pages: new Map(),
   },
   commitments: { page: 0, items: [] },
+  'commitments-raw': { page: 0, items: [] },
+  'commitments-neurons': { page: 0, items: [] },
   output: { page: 0, items: [] },
   rewards: { page: 0, items: [] },
   dquorum: { page: 0, items: [] },
@@ -773,9 +775,24 @@ function cyclesProbeStatusInfo(data) {
 }
 
 function formatCommitmentTarget(item) {
+  const neuronId = Array.isArray(item?.neuron_id) ? item.neuron_id[0] : item?.neuron_id;
+  if (neuronId !== undefined && neuronId !== null) {
+    const label = escapeHtml(String(neuronId));
+    return `<a class="pane-external-link mono" href="https://dashboard.internetcomputer.org/neuron/${encodeURIComponent(String(neuronId))}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  }
   const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
   if (canister) return renderCanisterTrackerLink(canister);
-  return 'invalid declared canister memo';
+  return 'invalid declared memo';
+}
+
+function rawIcpMemoText(item) {
+  const text = Array.isArray(item?.raw_icp_memo_text) ? item.raw_icp_memo_text[0] : item?.raw_icp_memo_text;
+  return text === undefined || text === null || text === '' ? DASH : String(text);
+}
+
+function neuronMemoText(item) {
+  const text = Array.isArray(item?.neuron_memo_text) ? item.neuron_memo_text[0] : item?.neuron_memo_text;
+  return text === undefined || text === null || text === '' ? DASH : String(text);
 }
 
 function transactionHref(item) {
@@ -1037,17 +1054,57 @@ function renderRegisteredPane(data) {
 
 function renderCommitmentsPane(data) {
   const items = data?.recent?.items || [];
+  const topUpItems = items.filter((item) => {
+    const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
+    const rawMemo = Array.isArray(item?.raw_icp_memo_text) ? item.raw_icp_memo_text[0] : item?.raw_icp_memo_text;
+    const neuronId = Array.isArray(item?.neuron_id) ? item.neuron_id[0] : item?.neuron_id;
+    return canister && (rawMemo === undefined || rawMemo === null) && (neuronId === undefined || neuronId === null);
+  });
+  const rawItems = items.filter((item) => {
+    const rawMemo = Array.isArray(item?.raw_icp_memo_text) ? item.raw_icp_memo_text[0] : item?.raw_icp_memo_text;
+    return rawMemo !== undefined && rawMemo !== null;
+  });
+  const neuronItems = items.filter((item) => {
+    const neuronId = Array.isArray(item?.neuron_id) ? item.neuron_id[0] : item?.neuron_id;
+    return neuronId !== undefined && neuronId !== null;
+  });
   paginate(
     'commitments',
-    items,
+    topUpItems,
     (item) => `
       <tr>
         <td>${renderCommitmentTimestampCell(item)}</td>
         <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
         <td>${formatCommitmentTarget(item)}</td>
       </tr>`,
-    paneEmptyMessage(data, 'recent', 'No commitments indexed yet.'),
+    paneEmptyMessage(data, 'recent', 'No declared canister commitments indexed yet.'),
     3,
+  );
+  paginate(
+    'commitments-raw',
+    rawItems,
+    (item) => `
+      <tr>
+        <td>${renderCommitmentTimestampCell(item)}</td>
+        <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
+        <td>${formatCommitmentTarget(item)}</td>
+        <td>${escapeHtml(rawIcpMemoText(item))}</td>
+      </tr>`,
+    paneEmptyMessage(data, 'recent', 'No raw ICP commitments indexed yet.'),
+    4,
+  );
+  paginate(
+    'commitments-neurons',
+    neuronItems,
+    (item) => `
+      <tr>
+        <td>${renderCommitmentTimestampCell(item)}</td>
+        <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
+        <td>${formatCommitmentTarget(item)}</td>
+        <td>${escapeHtml(neuronMemoText(item))}</td>
+      </tr>`,
+    paneEmptyMessage(data, 'recent', 'No declared neuron commitments indexed yet.'),
+    4,
   );
 }
 
@@ -2243,6 +2300,8 @@ function bindPaginationButtons() {
 
   [
     ['commitments', renderCommitmentsPane],
+    ['commitments-raw', renderCommitmentsPane],
+    ['commitments-neurons', renderCommitmentsPane],
     ['output', renderOutputPane],
     ['rewards', renderRewardsPane],
     ['dquorum', renderDquorumPane],
@@ -2287,7 +2346,7 @@ function applyResponsiveTablePageSize() {
   if (nextPageSize === previousPageSize) return;
 
   tablePageSize = nextPageSize;
-  ['commitments', 'output', 'rewards', 'dquorum'].forEach((kind) => {
+  ['commitments', 'commitments-raw', 'commitments-neurons', 'output', 'rewards', 'dquorum'].forEach((kind) => {
     const state = tableState[kind];
     const firstVisibleItem = state.page * previousPageSize;
     state.page = Math.max(0, Math.floor(firstVisibleItem / nextPageSize));

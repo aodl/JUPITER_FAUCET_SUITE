@@ -22,6 +22,7 @@ pub struct InitArgs {
     pub ledger_canister_id: Option<Principal>,
     pub index_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
+    pub governance_canister_id: Option<Principal>,
 
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
@@ -51,6 +52,10 @@ fn mainnet_index_id() -> Principal {
 
 fn mainnet_cmc_id() -> Principal {
     Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").expect("invalid hardcoded cmc principal")
+}
+
+fn mainnet_governance_id() -> Principal {
+    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("invalid hardcoded governance principal")
 }
 
 fn mainnet_blackhole_id() -> Principal {
@@ -96,6 +101,7 @@ fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
     assert_non_anonymous_principal("cmc_canister_id", cfg.cmc_canister_id);
+    assert_non_anonymous_principal("governance_canister_id", cfg.governance_canister_id.expect("governance_canister_id must be configured"));
     let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
     assert!(cfg.rescue_controller != self_id, "rescue_controller must not equal the faucet canister principal");
@@ -142,6 +148,7 @@ fn init(args: InitArgs) {
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
+        governance_canister_id: Some(args.governance_canister_id.unwrap_or_else(mainnet_governance_id)),
         rescue_controller: args.rescue_controller,
         blackhole_controller: Some(args.blackhole_controller.unwrap_or_else(mainnet_blackhole_id)),
         blackhole_armed: args.blackhole_armed,
@@ -161,6 +168,9 @@ fn init(args: InitArgs) {
 
 pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) -> PostUpgradeActions {
     let mut actions = PostUpgradeActions::default();
+    if st.config.governance_canister_id.is_none() {
+        st.config.governance_canister_id = Some(mainnet_governance_id());
+    }
     if let Some(args) = args {
         if let Some(blackhole_controller) = args.blackhole_controller {
             st.config.blackhole_controller = Some(blackhole_controller);
@@ -250,6 +260,7 @@ pub struct DebugConfig {
     pub ledger_canister_id: Principal,
     pub index_canister_id: Principal,
     pub cmc_canister_id: Principal,
+    pub governance_canister_id: Principal,
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
@@ -322,6 +333,7 @@ fn debug_config() -> DebugConfig {
         ledger_canister_id: st.config.ledger_canister_id,
         index_canister_id: st.config.index_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
+        governance_canister_id: st.config.governance_canister_id.expect("governance_canister_id configured"),
         rescue_controller: st.config.rescue_controller,
         blackhole_controller: st.config.blackhole_controller,
         blackhole_armed: st.config.blackhole_armed,
@@ -515,6 +527,7 @@ mod tests {
             ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
             index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            governance_canister_id: Some(principal("rrkah-fqaaa-aaaaa-aaaaq-cai")),
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
             blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
             blackhole_armed: Some(false),
@@ -632,6 +645,18 @@ mod tests {
             }),
             now_secs,
         );
+        assert_eq!(actions, PostUpgradeActions::default());
+    }
+
+    #[test]
+    fn apply_upgrade_args_backfills_governance_canister_for_legacy_state() {
+        let now_secs = 567;
+        let mut st = State::new(sample_config(), now_secs);
+        st.config.governance_canister_id = None;
+
+        let actions = apply_upgrade_args_to_state(&mut st, None, now_secs);
+
+        assert_eq!(st.config.governance_canister_id, Some(mainnet_governance_id()));
         assert_eq!(actions, PostUpgradeActions::default());
     }
 

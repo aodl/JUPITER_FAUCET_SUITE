@@ -436,6 +436,9 @@ struct ListRecentCommitmentsArgs {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
+    neuron_id: Option<u64>,
+    raw_icp_memo_text: Option<String>,
+    neuron_memo_text: Option<String>,
     memo_text: Option<String>,
     tx_id: u64,
     timestamp_nanos: Option<u64>,
@@ -900,7 +903,7 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
 fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = h.blackhole;
+    let target = Principal::from_slice(&[1]);
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(
         &h.pic,
@@ -1043,7 +1046,7 @@ fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> 
     require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
-    let target = h.blackhole;
+    let target = Principal::from_slice(&[1]);
     let raw_directive = format!("{}.", target.to_text().replace('-', ""));
     let _: u64 = update_bytes(&h.pic, h.index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 100_000_000u64, Some(raw_directive.clone().into_bytes())))?)?;
 
@@ -1051,7 +1054,7 @@ fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> 
     let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
 
     let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
-    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.registered_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 1);
 
     let recent: ListRecentCommitmentsResponse = query_one(
@@ -1066,7 +1069,92 @@ fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> 
     )?;
     assert_eq!(recent.items.len(), 1);
     assert_eq!(recent.items[0].canister_id, Some(target));
+    assert_eq!(recent.items[0].raw_icp_memo_text.as_deref(), Some(""));
     assert_eq!(recent.items[0].memo_text.as_deref(), Some(target.to_text().as_str()));
+    assert!(recent.items[0].counts_toward_faucet);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_indexes_numeric_neuron_id_commitment_without_registering_canister() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    let neuron_id = 11_614_578_985_374_291_210_u64;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id, 100_000_000u64, Some(neuron_id.to_string().into_bytes())))?,
+    )?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.qualifying_commitment_count, 1);
+
+    let recent: ListRecentCommitmentsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 1);
+    assert_eq!(recent.items[0].canister_id, None);
+    assert_eq!(recent.items[0].neuron_id, Some(neuron_id));
+    assert_eq!(recent.items[0].raw_icp_memo_text, None);
+    assert_eq!(recent.items[0].neuron_memo_text, None);
+    assert_eq!(recent.items[0].memo_text.as_deref(), Some("11614578985374291210"));
+    assert!(recent.items[0].counts_toward_faucet);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_indexes_dotted_neuron_id_commitment_with_right_memo_segment() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new(false)?;
+    let staking_id = h.staking_identifier()?;
+    let neuron_id = 42_u64;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((staking_id, 100_000_000u64, Some(b"42.vault.memo".to_vec())))?,
+    )?;
+
+    h.tick();
+    let _: () = update_noargs(&h.pic, h.historian, Principal::anonymous(), "debug_driver_tick")?;
+
+    let counts: PublicCounts = query_one(&h.pic, h.historian, Principal::anonymous(), "get_public_counts", ())?;
+    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.qualifying_commitment_count, 1);
+
+    let recent: ListRecentCommitmentsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        },
+    )?;
+    assert_eq!(recent.items.len(), 1);
+    assert_eq!(recent.items[0].canister_id, None);
+    assert_eq!(recent.items[0].neuron_id, Some(neuron_id));
+    assert_eq!(recent.items[0].raw_icp_memo_text, None);
+    assert_eq!(recent.items[0].neuron_memo_text.as_deref(), Some("vault.memo"));
+    assert_eq!(recent.items[0].memo_text.as_deref(), Some("42"));
     assert!(recent.items[0].counts_toward_faucet);
     Ok(())
 }
@@ -1175,7 +1263,7 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
     assert!(recent
         .items
         .iter()
-        .all(|item| item.memo_text.as_deref() == Some("invalid target canister memo")));
+        .all(|item| item.memo_text.as_deref() == Some("invalid declared memo")));
 
     Ok(())
 }

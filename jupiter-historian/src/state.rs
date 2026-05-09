@@ -124,6 +124,19 @@ pub struct InvalidCommitment {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct RecentCommitment {
     pub canister_id: Principal,
+    #[serde(default)]
+    pub raw_icp_memo_text: Option<String>,
+    pub tx_id: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub amount_e8s: u64,
+    pub counts_toward_faucet: bool,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RecentNeuronCommitment {
+    pub neuron_id: u64,
+    #[serde(default)]
+    pub memo_text: Option<String>,
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
@@ -295,6 +308,10 @@ pub struct StableRootState {
     pub recent_commitments: Option<Vec<RecentCommitment>>,
     #[serde(default)]
     pub recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
+    #[serde(default)]
+    pub recent_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
+    #[serde(default)]
+    pub recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
     #[serde(default)]
     pub recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
     #[serde(default)]
@@ -551,6 +568,10 @@ pub struct State {
     pub icp_burned_e8s: Option<u64>,
     pub recent_commitments: Option<Vec<RecentCommitment>>,
     pub recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
+    #[serde(default)]
+    pub recent_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
+    #[serde(default)]
+    pub recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
     pub recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
     pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
@@ -598,6 +619,8 @@ impl State {
             icp_burned_e8s: Some(0),
             recent_commitments: Some(Vec::new()),
             recent_under_threshold_commitments: Some(Vec::new()),
+            recent_neuron_commitments: Some(Vec::new()),
+            recent_under_threshold_neuron_commitments: Some(Vec::new()),
             recent_invalid_commitments: Some(Vec::new()),
             recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
@@ -1102,6 +1125,8 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         icp_burned_e8s: st.icp_burned_e8s,
         recent_commitments: st.recent_commitments.clone(),
         recent_under_threshold_commitments: st.recent_under_threshold_commitments.clone(),
+        recent_neuron_commitments: st.recent_neuron_commitments.clone(),
+        recent_under_threshold_neuron_commitments: st.recent_under_threshold_neuron_commitments.clone(),
         recent_invalid_commitments: st.recent_invalid_commitments.clone(),
         recent_burns: st.recent_burns.clone(),
         last_index_run_ts: st.last_index_run_ts,
@@ -1214,6 +1239,8 @@ fn restore_state_current(root: StableRootState) -> State {
         icp_burned_e8s: root.icp_burned_e8s,
         recent_commitments: root.recent_commitments,
         recent_under_threshold_commitments: root.recent_under_threshold_commitments,
+        recent_neuron_commitments: root.recent_neuron_commitments,
+        recent_under_threshold_neuron_commitments: root.recent_under_threshold_neuron_commitments,
         recent_invalid_commitments: root.recent_invalid_commitments,
         recent_burns: root.recent_burns,
         last_index_run_ts: root.last_index_run_ts,

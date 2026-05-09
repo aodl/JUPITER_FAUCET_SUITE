@@ -176,11 +176,8 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
     let total_debit: u128 = (amount as u128).saturating_add(fee as u128);
 
     // Memo in icrc-ledger-types is Memo(ByteBuf) => convert to Vec<u8>
-    let memo_bytes: Vec<u8> = arg
-        .memo
-        .as_ref()
-        .map(|m| m.0.to_vec())
-        .unwrap_or_default();
+    let memo_opt: Option<Vec<u8>> = arg.memo.as_ref().map(|m| m.0.to_vec());
+    let memo_bytes: Vec<u8> = memo_opt.clone().unwrap_or_default();
 
     let created_at = arg.created_at_time.unwrap_or(0);
 
@@ -246,7 +243,7 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
             to: arg.to.clone(),
             amount: Nat::from(amount),
             fee: Nat::from(fee),
-            memo: if memo_bytes.is_empty() { None } else { Some(memo_bytes.clone()) },
+            memo: memo_opt.clone(),
             created_at_time: arg.created_at_time,
             result: "Ok".to_string(),
         });

@@ -178,6 +178,7 @@ fn normalize_runtime_state(st: &mut State) {
             } else {
                 removed.push(RecentCommitment {
                     canister_id: *canister_id,
+                    raw_icp_memo_text: None,
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
@@ -441,6 +442,9 @@ pub enum RecentCommitmentOutcomeCategory {
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct RecentCommitmentListItem {
     pub canister_id: Option<Principal>,
+    pub neuron_id: Option<u64>,
+    pub raw_icp_memo_text: Option<String>,
+    pub neuron_memo_text: Option<String>,
     pub memo_text: Option<String>,
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
@@ -634,6 +638,7 @@ fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<RecentCommitm
                 .filter(|item| item.counts_toward_faucet)
                 .map(move |item| RecentCommitment {
                     canister_id,
+                    raw_icp_memo_text: None,
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
@@ -654,6 +659,7 @@ fn fallback_recent_under_threshold_commitments_state(st: &State) -> Vec<RecentCo
                 .filter(|item| !item.counts_toward_faucet)
                 .map(move |item| RecentCommitment {
                     canister_id,
+                    raw_icp_memo_text: None,
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
@@ -670,6 +676,9 @@ fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
         .into_iter()
         .map(|item| RecentCommitmentListItem {
             canister_id: Some(item.canister_id),
+            neuron_id: None,
+            raw_icp_memo_text: item.raw_icp_memo_text.clone(),
+            neuron_memo_text: None,
             memo_text: Some(item.canister_id.to_text()),
             tx_id: item.tx_id,
             timestamp_nanos: item.timestamp_nanos,
@@ -683,6 +692,9 @@ fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
             .into_iter()
             .map(|item| RecentCommitmentListItem {
                 canister_id: Some(item.canister_id),
+                neuron_id: None,
+                raw_icp_memo_text: item.raw_icp_memo_text.clone(),
+                neuron_memo_text: None,
                 memo_text: Some(item.canister_id.to_text()),
                 tx_id: item.tx_id,
                 timestamp_nanos: item.timestamp_nanos,
@@ -694,6 +706,9 @@ fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
     if let Some(invalid) = &st.recent_invalid_commitments {
         items.extend(invalid.iter().cloned().map(|item| RecentCommitmentListItem {
             canister_id: None,
+            neuron_id: None,
+            raw_icp_memo_text: None,
+            neuron_memo_text: None,
             memo_text: Some(item.memo_text),
             tx_id: item.tx_id,
             timestamp_nanos: item.timestamp_nanos,
@@ -738,6 +753,12 @@ fn initialize_derived_state_if_missing(st: &mut State) {
     }
     if st.recent_under_threshold_commitments.is_none() {
         st.recent_under_threshold_commitments = Some(fallback_recent_under_threshold_commitments_state(st));
+    }
+    if st.recent_neuron_commitments.is_none() {
+        st.recent_neuron_commitments = Some(Vec::new());
+    }
+    if st.recent_under_threshold_neuron_commitments.is_none() {
+        st.recent_under_threshold_neuron_commitments = Some(Vec::new());
     }
     if st.recent_invalid_commitments.is_none() {
         st.recent_invalid_commitments = Some(Vec::new());
@@ -1222,6 +1243,9 @@ fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRecentCommitm
                 .cloned()
                 .map(|item| RecentCommitmentListItem {
                     canister_id: Some(item.canister_id),
+                    neuron_id: None,
+                    raw_icp_memo_text: item.raw_icp_memo_text.clone(),
+                    neuron_memo_text: None,
                     memo_text: Some(item.canister_id.to_text()),
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
@@ -1233,7 +1257,38 @@ fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRecentCommitm
             if let Some(low_value) = &st.recent_under_threshold_commitments {
                 merged.extend(low_value.iter().cloned().map(|item| RecentCommitmentListItem {
                     canister_id: Some(item.canister_id),
+                    neuron_id: None,
+                    raw_icp_memo_text: item.raw_icp_memo_text.clone(),
+                    neuron_memo_text: None,
                     memo_text: Some(item.canister_id.to_text()),
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: false,
+                    outcome_category: RecentCommitmentOutcomeCategory::UnderThresholdCommitment,
+                }));
+            }
+            if let Some(neurons) = &st.recent_neuron_commitments {
+                merged.extend(neurons.iter().cloned().map(|item| RecentCommitmentListItem {
+                    canister_id: None,
+                    neuron_id: Some(item.neuron_id),
+                    raw_icp_memo_text: None,
+                    neuron_memo_text: item.memo_text.clone(),
+                    memo_text: Some(item.neuron_id.to_string()),
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: true,
+                    outcome_category: RecentCommitmentOutcomeCategory::QualifyingCommitment,
+                }));
+            }
+            if let Some(neurons) = &st.recent_under_threshold_neuron_commitments {
+                merged.extend(neurons.iter().cloned().map(|item| RecentCommitmentListItem {
+                    canister_id: None,
+                    neuron_id: Some(item.neuron_id),
+                    raw_icp_memo_text: None,
+                    neuron_memo_text: item.memo_text.clone(),
+                    memo_text: Some(item.neuron_id.to_string()),
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,
@@ -1244,6 +1299,9 @@ fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRecentCommitm
             if let Some(invalid) = &st.recent_invalid_commitments {
                 merged.extend(invalid.iter().cloned().map(|item| RecentCommitmentListItem {
                     canister_id: None,
+                    neuron_id: None,
+                    raw_icp_memo_text: None,
+                    neuron_memo_text: None,
                     memo_text: Some(item.memo_text),
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
@@ -1467,6 +1525,8 @@ fn debug_reset_derived_state() {
         st.total_rewards_e8s = Some(0);
         st.recent_commitments = Some(Vec::new());
         st.recent_under_threshold_commitments = Some(Vec::new());
+        st.recent_neuron_commitments = Some(Vec::new());
+        st.recent_under_threshold_neuron_commitments = Some(Vec::new());
         st.recent_invalid_commitments = Some(Vec::new());
         st.last_index_run_ts = Some(0);
         st.commitment_index_fault = None;
@@ -1493,7 +1553,7 @@ fn debug_set_icp_xdr_rate_fetched_at_ts(ts: Option<u64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{CanisterMeta, CyclesSampleSource, InvalidCommitment};
+    use crate::state::{CanisterMeta, CyclesSampleSource, InvalidCommitment, RecentNeuronCommitment};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn principal(text: &str) -> Principal {
@@ -1571,6 +1631,8 @@ mod tests {
             icp_burned_e8s: None,
             recent_commitments: None,
             recent_under_threshold_commitments: None,
+            recent_neuron_commitments: None,
+            recent_under_threshold_neuron_commitments: None,
             recent_invalid_commitments: None,
             recent_burns: None,
             last_index_run_ts: None,
@@ -2169,6 +2231,7 @@ mod tests {
         st.recent_commitments = Some(vec![
             RecentCommitment {
                 canister_id: qualifying,
+                raw_icp_memo_text: None,
                 tx_id: 11,
                 timestamp_nanos: Some(11),
                 amount_e8s: 20_000_000,
@@ -2178,6 +2241,7 @@ mod tests {
         st.recent_under_threshold_commitments = Some(vec![
             RecentCommitment {
                 canister_id: low_amount,
+                raw_icp_memo_text: None,
                 tx_id: 10,
                 timestamp_nanos: Some(10),
                 amount_e8s: 5_000_000,
@@ -2219,6 +2283,45 @@ mod tests {
         assert_eq!(qualifying_only.items[0].tx_id, 11);
         assert!(qualifying_only.items[0].counts_toward_faucet);
         assert_eq!(qualifying_only.items[0].outcome_category, RecentCommitmentOutcomeCategory::QualifyingCommitment);
+    }
+
+    #[test]
+    fn list_recent_commitments_returns_raw_icp_and_neuron_metadata() {
+        let raw_canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.recent_commitments = Some(vec![RecentCommitment {
+            canister_id: raw_canister,
+            raw_icp_memo_text: Some("vault42".to_string()),
+            tx_id: 21,
+            timestamp_nanos: Some(21),
+            amount_e8s: 100_000_000,
+            counts_toward_faucet: true,
+        }]);
+        st.recent_neuron_commitments = Some(vec![RecentNeuronCommitment {
+            neuron_id: 11_614_578_985_374_291_210,
+            memo_text: Some("vault.memo".to_string()),
+            tx_id: 22,
+            timestamp_nanos: Some(22),
+            amount_e8s: 200_000_000,
+            counts_toward_faucet: true,
+        }]);
+        state::set_state(st);
+
+        let response = list_recent_commitments(ListRecentCommitmentsArgs {
+            limit: Some(10),
+            qualifying_only: Some(false),
+        });
+
+        let neuron = response.items.iter().find(|item| item.neuron_id.is_some()).expect("neuron item");
+        assert_eq!(neuron.neuron_id, Some(11_614_578_985_374_291_210));
+        assert_eq!(neuron.canister_id, None);
+        assert_eq!(neuron.memo_text.as_deref(), Some("11614578985374291210"));
+        assert_eq!(neuron.neuron_memo_text.as_deref(), Some("vault.memo"));
+
+        let raw = response.items.iter().find(|item| item.raw_icp_memo_text.is_some()).expect("raw item");
+        assert_eq!(raw.canister_id, Some(raw_canister));
+        assert_eq!(raw.raw_icp_memo_text.as_deref(), Some("vault42"));
+        assert_eq!(raw.neuron_id, None);
     }
 
     #[test]
@@ -2281,6 +2384,7 @@ mod tests {
         );
         st.recent_commitments = Some(vec![RecentCommitment {
             canister_id: canister,
+            raw_icp_memo_text: None,
             tx_id: 1,
             timestamp_nanos: Some(1_000_000_000),
             amount_e8s: 5_000_000,

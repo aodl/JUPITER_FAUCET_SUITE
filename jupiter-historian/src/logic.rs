@@ -1,6 +1,6 @@
 use candid::Principal;
 
-pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid target canister memo";
+pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid declared memo";
 #[cfg(test)]
 const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 use std::collections::BTreeSet;
@@ -9,9 +9,16 @@ use crate::clients::index::{IndexOperation, IndexTransactionWithId};
 use crate::state::{CanisterMeta, CanisterSource, CommitmentSample, CyclesProbeResult, CyclesSample, CyclesSampleSource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexedCommitmentTarget {
+    CyclesTopUp { canister_id: Principal },
+    RawIcp { canister_id: Principal, memo_text: String },
+    NeuronStake { neuron_id: u64, memo_text: Option<String> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexedCommitment {
     pub tx_id: u64,
-    pub beneficiary: Principal,
+    pub target: IndexedCommitmentTarget,
     pub amount_e8s: u64,
     pub timestamp_nanos: Option<u64>,
     pub counts_toward_faucet: bool,
@@ -33,7 +40,8 @@ pub enum IndexedCommitmentEntry {
 
 
 
-pub fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
+#[cfg(test)]
+fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
     jupiter_memo_policy::parse_target_canister_principal_from_memo(bytes)
 }
 
@@ -56,10 +64,24 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id:
 pub fn indexed_commitment_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedCommitmentEntry> {
     let (tx_id, memo_opt, amount_e8s, timestamp_nanos) = memo_bytes_from_index_tx(tx, staking_account_id)?;
     let memo = memo_opt?;
-    if let Some(beneficiary) = parse_target_canister_from_memo(&memo) {
+    let target = match jupiter_memo_policy::parse_memo_directive(&memo) {
+        Some(jupiter_memo_policy::MemoDirective::TopUp { canister_id }) => {
+            Some(IndexedCommitmentTarget::CyclesTopUp { canister_id })
+        }
+        Some(jupiter_memo_policy::MemoDirective::RawIcp { canister_id, memo }) => {
+            let memo_text = String::from_utf8_lossy(&memo).to_string();
+            Some(IndexedCommitmentTarget::RawIcp { canister_id, memo_text })
+        }
+        Some(jupiter_memo_policy::MemoDirective::NeuronStake { neuron_id, memo }) => {
+            let memo_text = memo.map(|memo| String::from_utf8_lossy(&memo).to_string());
+            Some(IndexedCommitmentTarget::NeuronStake { neuron_id, memo_text })
+        }
+        None => None,
+    };
+    if let Some(target) = target {
         Some(IndexedCommitmentEntry::Valid(IndexedCommitment {
             tx_id,
-            beneficiary,
+            target,
             amount_e8s,
             timestamp_nanos,
             counts_toward_faucet: amount_e8s >= min_tx_e8s,
@@ -188,6 +210,7 @@ mod tests {
                 Principal::management_canister().to_text().into_bytes(),
                 None,
             ),
+            ("numeric neuron id memo", b"11614578985374291210".to_vec(), None),
         ]
     }
 
@@ -206,6 +229,11 @@ mod tests {
         let compact = p.to_text().replace('-', "");
         assert_eq!(parse_target_canister_from_memo(format!("{compact}.vault42").as_bytes()), Some(p));
         assert_eq!(parse_target_canister_from_memo(format!("{compact}.").as_bytes()), Some(p));
+    }
+
+    #[test]
+    fn numeric_neuron_id_memos_are_not_indexed_as_canisters() {
+        assert_eq!(parse_target_canister_from_memo(b"11614578985374291210"), None);
     }
 
     #[test]
@@ -255,7 +283,7 @@ mod tests {
         let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
             IndexedCommitmentEntry::Valid(c) => {
-                assert_eq!(c.beneficiary, beneficiary);
+                assert_eq!(c.target, IndexedCommitmentTarget::CyclesTopUp { canister_id: beneficiary });
                 assert!(!c.counts_toward_faucet);
                 assert_eq!(c.timestamp_nanos, Some(99));
             }
@@ -337,7 +365,107 @@ mod tests {
         let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
         match c {
             IndexedCommitmentEntry::Valid(c) => {
-                assert_eq!(c.beneficiary, Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap());
+                assert_eq!(c.target, IndexedCommitmentTarget::CyclesTopUp {
+                    canister_id: Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap(),
+                });
+                assert!(c.counts_toward_faucet);
+            }
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
+        }
+    }
+
+    #[test]
+    fn raw_icp_directive_is_indexed_with_declared_canister_and_right_memo_segment() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let canister = target_canister();
+        let compact = canister.to_text().replace('-', "");
+        let tx = IndexTransactionWithId {
+            id: 4,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(format!("{compact}.vault42").into_bytes()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
+                    amount: Tokens::new(100_000_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 125 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedCommitmentEntry::Valid(c) => {
+                assert_eq!(c.target, IndexedCommitmentTarget::RawIcp {
+                    canister_id: canister,
+                    memo_text: "vault42".to_string(),
+                });
+                assert!(c.counts_toward_faucet);
+            }
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
+        }
+    }
+
+    #[test]
+    fn neuron_id_directive_is_indexed_as_neuron_commitment() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 5,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"11614578985374291210".to_vec()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
+                    amount: Tokens::new(100_000_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 126 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedCommitmentEntry::Valid(c) => {
+                assert_eq!(c.target, IndexedCommitmentTarget::NeuronStake {
+                    neuron_id: 11_614_578_985_374_291_210,
+                    memo_text: None,
+                });
+                assert!(c.counts_toward_faucet);
+            }
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
+        }
+    }
+
+    #[test]
+    fn dotted_neuron_id_directive_is_indexed_with_right_memo_segment() {
+        let staking = "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 6,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"42.vault.memo".to_vec()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3".into(),
+                    amount: Tokens::new(100_000_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp { timestamp_nanos: 127 }),
+                timestamp: None,
+            },
+        };
+        let c = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
+        match c {
+            IndexedCommitmentEntry::Valid(c) => {
+                assert_eq!(c.target, IndexedCommitmentTarget::NeuronStake {
+                    neuron_id: 42,
+                    memo_text: Some("vault.memo".to_string()),
+                });
                 assert!(c.counts_toward_faucet);
             }
             IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),

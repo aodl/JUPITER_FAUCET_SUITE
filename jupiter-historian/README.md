@@ -39,15 +39,15 @@ For each eligible incoming `Transfer` **to** the staking account (`TransferFrom`
 Memo handling mirrors the faucet’s input rules:
 
 - only consider non-empty `icrc1_memo` bytes
-- ignore legacy numeric memos entirely
+- ignore legacy numeric memos entirely; neuron IDs must be ASCII digits in `icrc1_memo`
 - treat an empty `icrc1_memo` as missing / invalid
-- trim ASCII text before trying to parse principal text (the supported UX is to enter the declared canister ID)
+- trim ASCII text before trying to parse a supported declaration
 
-If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the principal as a beneficiary derived from memo text. The supported UX is still to enter the declared canister ID in the memo. Below-threshold memo commitments are kept only in a separate capped recent feed and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying memo-derived targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
+If the memo decodes to ASCII principal text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the principal as a normal canister top-up beneficiary derived from memo text. The primary UX is still to enter the declared canister ID in the memo. Historian also indexes `canister.memo` raw ICP directives into the recent commitments feed with the declared canister and right-hand memo segment separated, and indexes ASCII decimal NNS neuron IDs into the recent commitments feed as neuron commitments. Below-threshold memo commitments are kept only in separate capped recent feeds and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying normal canister top-up targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
 
-Operationally, this means historian only treats **non-empty ASCII `icrc1_memo` text that parses as principal text, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal** as a candidate beneficiary memo. Legacy numeric memos are ignored, and below-threshold commitments never create durable tracking.
+Operationally, this means historian treats **non-empty ASCII `icrc1_memo` text that parses as principal text, `canister.memo`, or a non-zero decimal `u64` neuron ID, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal when a principal is present** as a candidate declaration. Legacy numeric memos are ignored, and below-threshold commitments never create durable tracking.
 
-Memo encoding uses `icrc1_memo` principal text only. Historian intentionally ignores the legacy numeric memo path because the supported UX is a text target-canister memo, and the 64-bit numeric memo field is not a reliable way to carry a canister ID. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic. This mirrors the faucet’s policy-only memo validation: accepted short principal text is not itself a proof that the target is an installed canister.
+Memo encoding uses `icrc1_memo` text only. Historian intentionally ignores the legacy numeric memo path because the supported declarations require text, and the 64-bit numeric memo field is not a reliable way to carry those declarations. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic. This mirrors the faucet’s policy-only memo validation: accepted short principal text is not itself a proof that the target is an installed canister.
 
 If the memo is valid text but does **not** parse as principal text under that policy, the historian keeps a capped recent-invalid-commitment marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
@@ -97,7 +97,7 @@ The historian intentionally keeps a bounded read model for **history**. It is no
 
 Durable bounded state currently uses these caps:
 
-- the tracked target-canister registry is **not pruned**
+- the tracked target-canister registry for normal canister top-up beneficiaries is **not pruned**
 - `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
 - `max_commitment_entries_per_canister` default `100`, hard-clamped to `250`
 - recent qualifying commitments: `500`

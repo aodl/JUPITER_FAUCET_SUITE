@@ -14,6 +14,8 @@ pub struct MaturityDisbursement {
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
 pub struct Neuron {
+    pub id: Option<NeuronId>,
+    pub account: Vec<u8>,
     pub aging_since_timestamp_seconds: u64,
     pub maturity_disbursements_in_progress: Option<Vec<MaturityDisbursement>>,
 }
@@ -27,6 +29,27 @@ pub enum NeuronResult {
 #[derive(CandidType, Deserialize, Clone, Debug)]
 pub struct NeuronId {
     pub id: u64,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct NeuronSubaccount {
+    pub subaccount: Vec<u8>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct ListNeurons {
+    pub neuron_ids: Vec<u64>,
+    pub include_neurons_readable_by_caller: bool,
+    pub include_empty_neurons_readable_by_caller: Option<bool>,
+    pub include_public_neurons_in_full_neurons: Option<bool>,
+    pub page_number: Option<u64>,
+    pub page_size: Option<u64>,
+    pub neuron_subaccounts: Option<Vec<NeuronSubaccount>>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct ListNeuronsResponse {
+    pub full_neurons: Vec<Neuron>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
@@ -119,7 +142,7 @@ thread_local! {
 fn init() {}
 
 #[ic_cdk::update]
-fn get_full_neuron(_neuron_id: u64) -> NeuronResult {
+fn get_full_neuron(neuron_id: u64) -> NeuronResult {
     let (in_flight, aging_since) = ST.with(|s| {
         let st = s.borrow();
         (st.in_flight, st.aging_since)
@@ -131,10 +154,38 @@ fn get_full_neuron(_neuron_id: u64) -> NeuronResult {
         Some(vec![])
     };
 
+    let mut account = vec![0u8; 32];
+    account[24..].copy_from_slice(&neuron_id.to_be_bytes());
+
     NeuronResult::Ok(Neuron {
+        id: Some(NeuronId { id: neuron_id }),
+        account,
         aging_since_timestamp_seconds: aging_since,
         maturity_disbursements_in_progress: disb,
     })
+}
+
+#[ic_cdk::update]
+fn list_neurons(req: ListNeurons) -> ListNeuronsResponse {
+    let full_neurons = if req.include_public_neurons_in_full_neurons == Some(true) {
+        req.neuron_ids
+            .into_iter()
+            .filter(|id| *id != 0)
+            .map(|id| {
+                let mut account = vec![0u8; 32];
+                account[24..].copy_from_slice(&id.to_be_bytes());
+                Neuron {
+                    id: Some(NeuronId { id }),
+                    account,
+                    aging_since_timestamp_seconds: 0,
+                    maturity_disbursements_in_progress: Some(vec![]),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    ListNeuronsResponse { full_neurons }
 }
 
 #[ic_cdk::update]
@@ -215,5 +266,3 @@ fn debug_get_claim_or_refresh_calls() -> u64 {
 }
 
 ic_cdk::export_candid!();
-
-

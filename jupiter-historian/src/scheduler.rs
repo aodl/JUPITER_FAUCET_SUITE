@@ -16,7 +16,7 @@ use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,
     MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
 };
-use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidCommitment, RecentCommitment};
+use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidCommitment, RecentCommitment, RecentNeuronCommitment};
 
 const PAGE_SIZE: u64 = 500;
 const MAX_INITIAL_CYCLES_PROBE_QUEUE: usize = 256;
@@ -176,15 +176,28 @@ fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
-fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: RecentCommitment, max_entries: usize) {
+fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: RecentCommitment, max_entries: usize) -> bool {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
-        return;
+        return false;
     }
     recent.push(item);
     recent.sort_by(|a, b| commitment_sort_key(b).cmp(&commitment_sort_key(a)));
     if recent.len() > max_entries {
         recent.truncate(max_entries);
     }
+    true
+}
+
+fn push_recent_neuron_commitment(recent: &mut Vec<RecentNeuronCommitment>, item: RecentNeuronCommitment, max_entries: usize) -> bool {
+    if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
+        return false;
+    }
+    recent.push(item);
+    recent.sort_by(|a, b| (b.timestamp_nanos.unwrap_or(0), b.tx_id).cmp(&(a.timestamp_nanos.unwrap_or(0), a.tx_id)));
+    if recent.len() > max_entries {
+        recent.truncate(max_entries);
+    }
+    true
 }
 
 fn push_recent_invalid_commitment(recent: &mut Vec<InvalidCommitment>, item: InvalidCommitment) {
@@ -534,20 +547,24 @@ fn apply_verified_qualifying_commitment(
     commitment: crate::logic::IndexedCommitment,
     now_secs: u64,
 ) {
-    st.distinct_canisters.insert(commitment.beneficiary);
+    let crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } = commitment.target else {
+        return;
+    };
+    st.distinct_canisters.insert(canister_id);
     st.canister_sources.insert(
-        commitment.beneficiary,
-        logic::merge_sources(st.canister_sources.get(&commitment.beneficiary), CanisterSource::MemoCommitment),
+        canister_id,
+        logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::MemoCommitment),
     );
     let recent_item = RecentCommitment {
-        canister_id: commitment.beneficiary,
+        canister_id,
+        raw_icp_memo_text: None,
         tx_id: commitment.tx_id,
         timestamp_nanos: commitment.timestamp_nanos,
         amount_e8s: commitment.amount_e8s,
         counts_toward_faucet: true,
     };
-    crate::state::ensure_commitment_history_loaded(st, commitment.beneficiary);
-    let history = st.commitment_history.entry(commitment.beneficiary).or_default();
+    crate::state::ensure_commitment_history_loaded(st, canister_id);
+    let history = st.commitment_history.entry(canister_id).or_default();
     let inserted = logic::push_commitment(
         history,
         crate::state::CommitmentSample {
@@ -559,7 +576,7 @@ fn apply_verified_qualifying_commitment(
         st.config.max_commitment_entries_per_canister,
     );
     if inserted {
-        let meta = st.per_canister_meta.entry(commitment.beneficiary).or_insert_with(CanisterMeta::default);
+        let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
         let needs_initial_cycles_probe = meta.last_cycles_probe_ts.is_none();
         logic::apply_commitment_seen(meta, commitment.timestamp_nanos, now_secs);
         let recent = st.recent_commitments.get_or_insert_with(Vec::new);
@@ -570,11 +587,67 @@ fn apply_verified_qualifying_commitment(
         // Newly registered memo beneficiaries should get an early targeted
         // cycles probe without resetting or starving the normal full sweep.
         if needs_initial_cycles_probe {
-            enqueue_initial_cycles_probe(st, commitment.beneficiary);
+            enqueue_initial_cycles_probe(st, canister_id);
         }
     }
-    if inserted || st.canister_sources.contains_key(&commitment.beneficiary) {
-        crate::refresh_registered_canister_summary(st, commitment.beneficiary);
+    if inserted || st.canister_sources.contains_key(&canister_id) {
+        crate::refresh_registered_canister_summary(st, canister_id);
+    }
+}
+
+fn apply_recent_raw_or_neuron_commitment(
+    st: &mut crate::state::State,
+    commitment: crate::logic::IndexedCommitment,
+    max_entries: usize,
+) {
+    match commitment.target {
+        crate::logic::IndexedCommitmentTarget::RawIcp { canister_id, memo_text } => {
+            let recent = if commitment.counts_toward_faucet {
+                st.recent_commitments.get_or_insert_with(Vec::new)
+            } else {
+                st.recent_under_threshold_commitments.get_or_insert_with(Vec::new)
+            };
+            let inserted = push_recent_commitment(
+                recent,
+                RecentCommitment {
+                    canister_id,
+                    raw_icp_memo_text: Some(memo_text),
+                    tx_id: commitment.tx_id,
+                    timestamp_nanos: commitment.timestamp_nanos,
+                    amount_e8s: commitment.amount_e8s,
+                    counts_toward_faucet: commitment.counts_toward_faucet,
+                },
+                max_entries,
+            );
+            if inserted && commitment.counts_toward_faucet {
+                let count = st.qualifying_commitment_count.get_or_insert(0);
+                *count = count.saturating_add(1);
+            }
+        }
+        crate::logic::IndexedCommitmentTarget::NeuronStake { neuron_id, memo_text } => {
+            let recent = if commitment.counts_toward_faucet {
+                st.recent_neuron_commitments.get_or_insert_with(Vec::new)
+            } else {
+                st.recent_under_threshold_neuron_commitments.get_or_insert_with(Vec::new)
+            };
+            let inserted = push_recent_neuron_commitment(
+                recent,
+                RecentNeuronCommitment {
+                    neuron_id,
+                    memo_text,
+                    tx_id: commitment.tx_id,
+                    timestamp_nanos: commitment.timestamp_nanos,
+                    amount_e8s: commitment.amount_e8s,
+                    counts_toward_faucet: commitment.counts_toward_faucet,
+                },
+                max_entries,
+            );
+            if inserted && commitment.counts_toward_faucet {
+                let count = st.qualifying_commitment_count.get_or_insert(0);
+                *count = count.saturating_add(1);
+            }
+        }
+        crate::logic::IndexedCommitmentTarget::CyclesTopUp { .. } => {}
     }
 }
 
@@ -629,26 +702,39 @@ fn apply_indexed_commitment_tx(
     if let Some(commitment) = logic::indexed_commitment_from_tx(tx, staking_id, min_tx_e8s) {
         match commitment {
             logic::IndexedCommitmentEntry::Valid(commitment) => {
-                if commitment.counts_toward_faucet {
-                    let dirty_beneficiary = commitment.beneficiary;
-                    state::with_root_registry_and_commitments_canister_state_mut(dirty_beneficiary, |st| {
-                        apply_verified_qualifying_commitment(st, commitment, now_secs);
-                    });
-                } else {
-                    state::with_root_state_mut(|st| {
-                        let recent = st.recent_under_threshold_commitments.get_or_insert_with(Vec::new);
-                        push_recent_commitment(
-                            recent,
-                            RecentCommitment {
-                                canister_id: commitment.beneficiary,
-                                tx_id: commitment.tx_id,
-                                timestamp_nanos: commitment.timestamp_nanos,
-                                amount_e8s: commitment.amount_e8s,
-                                counts_toward_faucet: false,
-                            },
-                            MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
-                        );
-                    });
+                match commitment.target {
+                    crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } if commitment.counts_toward_faucet => {
+                        state::with_root_registry_and_commitments_canister_state_mut(canister_id, |st| {
+                            apply_verified_qualifying_commitment(st, commitment, now_secs);
+                        });
+                    }
+                    crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } => {
+                        state::with_root_state_mut(|st| {
+                            let recent = st.recent_under_threshold_commitments.get_or_insert_with(Vec::new);
+                            push_recent_commitment(
+                                recent,
+                                RecentCommitment {
+                                    canister_id,
+                                    raw_icp_memo_text: None,
+                                    tx_id: commitment.tx_id,
+                                    timestamp_nanos: commitment.timestamp_nanos,
+                                    amount_e8s: commitment.amount_e8s,
+                                    counts_toward_faucet: false,
+                                },
+                                MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
+                            );
+                        });
+                    }
+                    crate::logic::IndexedCommitmentTarget::RawIcp { .. } | crate::logic::IndexedCommitmentTarget::NeuronStake { .. } => {
+                        state::with_root_state_mut(|st| {
+                            let max_entries = if commitment.counts_toward_faucet {
+                                MAX_RECENT_QUALIFYING_COMMITMENTS
+                            } else {
+                                MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS
+                            };
+                            apply_recent_raw_or_neuron_commitment(st, commitment, max_entries);
+                        });
+                    }
                 }
             }
             logic::IndexedCommitmentEntry::Invalid(commitment) => {
@@ -2152,6 +2238,26 @@ mod tests {
         state::with_state(|st| {
             assert_eq!(st.qualifying_commitment_count, Some(1));
             assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
+        });
+    }
+
+    #[test]
+    fn indexing_duplicate_raw_icp_and_neuron_txs_do_not_double_count() {
+        let staking_id = configure_state(10);
+        let raw_canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let raw_memo = format!("{}.vault42", raw_canister.to_text().replace('-', ""));
+        let raw_tx = transfer_to_staking_memo_tx(42, &staking_id, raw_memo.into_bytes(), 150, 123_000_000_000);
+        let neuron_tx = transfer_to_staking_memo_tx(43, &staking_id, b"42.local.memo".to_vec(), 160, 124_000_000_000);
+
+        apply_indexed_commitment_tx(&raw_tx, &staking_id, 100, 200);
+        apply_indexed_commitment_tx(&neuron_tx, &staking_id, 100, 200);
+        apply_indexed_commitment_tx(&raw_tx, &staking_id, 100, 201);
+        apply_indexed_commitment_tx(&neuron_tx, &staking_id, 100, 201);
+
+        state::with_state(|st| {
+            assert_eq!(st.qualifying_commitment_count, Some(2));
+            assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
+            assert_eq!(st.recent_neuron_commitments.as_ref().unwrap().len(), 1);
         });
     }
 

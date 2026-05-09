@@ -16,6 +16,8 @@ pub struct Config {
     pub ledger_canister_id: Principal,
     pub index_canister_id: Principal,
     pub cmc_canister_id: Principal,
+    #[serde(default)]
+    pub governance_canister_id: Option<Principal>,
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
@@ -68,12 +70,13 @@ fn opt_u64_text(value: Option<u64>) -> String {
 
 pub fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
+        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
         account_text(&cfg.staking_account),
         subaccount_text(&cfg.payout_subaccount),
         cfg.ledger_canister_id.to_text(),
         cfg.index_canister_id.to_text(),
         cfg.cmc_canister_id.to_text(),
+        opt_principal_text(cfg.governance_canister_id),
         cfg.rescue_controller.to_text(),
         opt_principal_text(cfg.blackhole_controller),
         opt_bool_text(cfg.blackhole_armed),
@@ -89,12 +92,13 @@ pub fn runtime_config_log_line(cfg: &Config) -> String {
 pub enum TransferKind {
     Beneficiary,
     RawIcp,
+    NeuronStake,
     RemainderToSelf,
 }
 
 impl TransferKind {
     pub fn is_beneficiary_payout(&self) -> bool {
-        matches!(self, Self::Beneficiary | Self::RawIcp)
+        matches!(self, Self::Beneficiary | Self::RawIcp | Self::NeuronStake)
     }
 
     pub fn requires_cmc_notify(&self) -> bool {
@@ -112,6 +116,10 @@ pub struct PendingNotification {
     pub next_start: Option<u64>,
     #[serde(default)]
     pub transfer_memo: Option<Vec<u8>>,
+    #[serde(default)]
+    pub destination_subaccount: Option<[u8; 32]>,
+    #[serde(default)]
+    pub neuron_id: Option<u64>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -677,6 +685,7 @@ mod tests {
             ledger_canister_id: principal(&[2]),
             index_canister_id: principal(&[3]),
             cmc_canister_id: principal(&[4]),
+            governance_canister_id: Some(principal(&[9])),
             rescue_controller: principal(&[5]),
             blackhole_controller: Some(principal(&[6])),
             blackhole_armed: Some(false),
@@ -697,6 +706,7 @@ mod tests {
         assert!(line.contains("ledger_canister_id="));
         assert!(line.contains("index_canister_id="));
         assert!(line.contains("cmc_canister_id="));
+        assert!(line.contains("governance_canister_id="));
         assert!(line.contains("rescue_controller="));
         assert!(line.contains("blackhole_controller="));
         assert!(line.contains("blackhole_armed=false"));

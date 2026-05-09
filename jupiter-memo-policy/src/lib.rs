@@ -1,11 +1,13 @@
 use candid::Principal;
 
 pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
+pub const MAX_NEURON_ID_MEMO_BYTES: usize = 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoDirective {
     TopUp { canister_id: Principal },
     RawIcp { canister_id: Principal, memo: Vec<u8> },
+    NeuronStake { neuron_id: u64, memo: Option<Vec<u8>> },
 }
 
 fn principal_text_with_group_separators(text: &str) -> String {
@@ -35,19 +37,40 @@ fn parse_declared_principal_text(text: &str) -> Option<Principal> {
     Some(principal)
 }
 
+fn parse_neuron_id_text(text: &str) -> Option<u64> {
+    if text.is_empty() || text.len() > MAX_NEURON_ID_MEMO_BYTES {
+        return None;
+    }
+    if !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let neuron_id = text.parse::<u64>().ok()?;
+    (neuron_id != 0).then_some(neuron_id)
+}
+
 pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
     if memo.is_empty() || memo.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !memo.is_ascii() {
         return None;
     }
     let memo_text = std::str::from_utf8(memo).ok()?;
-    if memo_text.trim().is_empty() {
+    let trimmed = memo_text.trim();
+    if trimmed.is_empty() {
         return None;
     }
     if let Some((declared_canister, raw_memo)) = memo_text.split_once('.') {
+        if let Some(neuron_id) = parse_neuron_id_text(declared_canister.trim()) {
+            return Some(MemoDirective::NeuronStake {
+                neuron_id,
+                memo: Some(raw_memo.as_bytes().to_vec()),
+            });
+        }
         return Some(MemoDirective::RawIcp {
             canister_id: parse_declared_principal_text(declared_canister)?,
             memo: raw_memo.as_bytes().to_vec(),
         });
+    }
+    if let Some(neuron_id) = parse_neuron_id_text(trimmed) {
+        return Some(MemoDirective::NeuronStake { neuron_id, memo: None });
     }
     Some(MemoDirective::TopUp {
         canister_id: parse_declared_principal_text(memo_text)?,
@@ -58,6 +81,7 @@ pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principa
     match parse_memo_directive(memo)? {
         MemoDirective::TopUp { canister_id } => Some(canister_id),
         MemoDirective::RawIcp { canister_id, .. } => Some(canister_id),
+        MemoDirective::NeuronStake { .. } => None,
     }
 }
 
@@ -130,6 +154,7 @@ mod tests {
                 Principal::management_canister().to_text().into_bytes(),
                 None,
             ),
+            ("numeric neuron id memo", b"123456789".to_vec(), None),
         ];
 
         for (label, memo, expected) in cases {
@@ -217,5 +242,53 @@ mod tests {
     fn parser_rejects_raw_icp_directive_with_empty_declared_canister_segment() {
         assert_eq!(parse_memo_directive(b".memo"), None);
         assert_eq!(parse_memo_directive(b" .memo"), None);
+    }
+
+    #[test]
+    fn parser_accepts_numeric_neuron_id_directive() {
+        assert_eq!(
+            parse_memo_directive(b"11614578985374291210"),
+            Some(MemoDirective::NeuronStake {
+                neuron_id: 11_614_578_985_374_291_210,
+                memo: None,
+            })
+        );
+        assert_eq!(
+            parse_memo_directive(b" 42\n"),
+            Some(MemoDirective::NeuronStake { neuron_id: 42, memo: None })
+        );
+    }
+
+    #[test]
+    fn parser_accepts_neuron_id_directive_with_transfer_memo() {
+        assert_eq!(
+            parse_memo_directive(b"42.vault.memo"),
+            Some(MemoDirective::NeuronStake {
+                neuron_id: 42,
+                memo: Some(b"vault.memo".to_vec()),
+            })
+        );
+        assert_eq!(
+            parse_memo_directive(b"42."),
+            Some(MemoDirective::NeuronStake {
+                neuron_id: 42,
+                memo: Some(Vec::new()),
+            })
+        );
+        assert_eq!(
+            parse_memo_directive(b"42..memo"),
+            Some(MemoDirective::NeuronStake {
+                neuron_id: 42,
+                memo: Some(b".memo".to_vec()),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_rejects_zero_or_oversize_numeric_neuron_id_directive() {
+        assert_eq!(parse_memo_directive(b"0"), None);
+        assert_eq!(parse_memo_directive(b"0000"), None);
+        assert_eq!(parse_memo_directive(b"18446744073709551616"), None);
+        assert_eq!(parse_memo_directive(b"123456789012345678901"), None);
     }
 }

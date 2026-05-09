@@ -168,13 +168,14 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(navbarJs, /data-page-target/);
 });
 
-test('How it works pane no longer contains the simulator slide', () => {
+test('How it works pane includes an advanced usage placeholder without restoring simulator controls', () => {
   const howItWorks = sectionMarkup('how-it-works');
   assert.doesNotMatch(howItWorks, /commitment-simulator-form/);
   assert.doesNotMatch(howItWorks, /Commitment simulator/);
   assert.match(howItWorks, /data-page="0"/);
   assert.match(howItWorks, /data-page="1"/);
-  assert.doesNotMatch(howItWorks, /data-page="2"/);
+  assert.match(howItWorks, /data-page="2"/);
+  assert.match(howItWorks, /More information coming soon\.\.\./);
 });
 
 test('simulator pane keeps controls outside the scroll region and places intro directly above charts', () => {
@@ -307,12 +308,19 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
-  assert.match(commitments, /<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared canister<\/th>/);
+  assert.match(commitments, /<h3 class="pane-section-title">Declared Canisters<\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
+  assert.match(commitments, /private neurons cannot be refreshed by the faucet top-up process/);
   assert.doesNotMatch(commitments, /<th>Category<\/th>/);
   assert.match(commitments, /<td colspan="3" class="empty-cell">Loading…<\/td>/);
+  assert.match(commitments, /<td colspan="4" class="empty-cell">Loading…<\/td>/);
   assert.doesNotMatch(mainJs, /formatCommitmentOutcome/);
   assert.doesNotMatch(mainJs, /commitmentOutcomeCategory/);
-  assert.match(mainJs, /renderCommitmentsPane\(data\)[\s\S]*<td>\$\{formatCommitmentTarget\(item\)\}<\/td>[\s\S]*paneEmptyMessage\(data, 'recent', 'No commitments indexed yet\.'\),\s*3,/);
+  assert.match(mainJs, /renderCommitmentsPane\(data\)[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*rawIcpMemoText\(item\)[\s\S]*commitments-neurons[\s\S]*neuronMemoText\(item\)/);
+  assert.match(mainJs, /'commitments-raw', renderCommitmentsPane/);
+  assert.match(mainJs, /'commitments-neurons', renderCommitmentsPane/);
 });
 
 test('Tracker results render chart controls and graphs before explanatory text', () => {

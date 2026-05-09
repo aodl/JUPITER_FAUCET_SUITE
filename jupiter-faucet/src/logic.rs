@@ -35,13 +35,15 @@ pub enum CommitmentDecision {
 pub enum PayoutTarget {
     CyclesTopUp { canister_id: Principal },
     RawIcp { canister_id: Principal, memo: Vec<u8> },
+    NeuronStake { neuron_id: u64, memo: Option<Vec<u8>> },
 }
 
 impl PayoutTarget {
     #[allow(dead_code)]
-    pub fn canister_id(&self) -> Principal {
+    pub fn canister_id(&self) -> Option<Principal> {
         match self {
-            Self::CyclesTopUp { canister_id } | Self::RawIcp { canister_id, .. } => *canister_id,
+            Self::CyclesTopUp { canister_id } | Self::RawIcp { canister_id, .. } => Some(*canister_id),
+            Self::NeuronStake { .. } => None,
         }
     }
 }
@@ -55,6 +57,7 @@ pub fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
     match jupiter_memo_policy::parse_memo_directive(memo)? {
         MemoDirective::TopUp { canister_id } => Some(PayoutTarget::CyclesTopUp { canister_id }),
         MemoDirective::RawIcp { canister_id, memo } => Some(PayoutTarget::RawIcp { canister_id, memo }),
+        MemoDirective::NeuronStake { neuron_id, memo } => Some(PayoutTarget::NeuronStake { neuron_id, memo }),
     }
 }
 
@@ -184,7 +187,7 @@ pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &Pend
 
 pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
     match pending.kind {
-        TransferKind::Beneficiary | TransferKind::RawIcp => {
+        TransferKind::Beneficiary | TransferKind::RawIcp | TransferKind::NeuronStake => {
             job.topped_up_count = job.topped_up_count.saturating_add(1);
             job.topped_up_sum_e8s = job.topped_up_sum_e8s.saturating_add(pending.amount_e8s);
             job.topped_up_min_e8s = Some(job.topped_up_min_e8s.map(|prev| prev.min(pending.amount_e8s)).unwrap_or(pending.amount_e8s));
@@ -304,6 +307,42 @@ mod tests {
             Some(PayoutTarget::RawIcp {
                 canister_id: p,
                 memo: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn parser_accepts_numeric_neuron_id_memo() {
+        assert_eq!(
+            parse_payout_target_from_memo(b"11614578985374291210"),
+            Some(PayoutTarget::NeuronStake {
+                neuron_id: 11_614_578_985_374_291_210,
+                memo: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parser_accepts_neuron_id_memo_with_transfer_memo() {
+        assert_eq!(
+            parse_payout_target_from_memo(b"42.vault.memo"),
+            Some(PayoutTarget::NeuronStake {
+                neuron_id: 42,
+                memo: Some(b"vault.memo".to_vec()),
+            })
+        );
+        assert_eq!(
+            parse_payout_target_from_memo(b"42."),
+            Some(PayoutTarget::NeuronStake {
+                neuron_id: 42,
+                memo: Some(Vec::new()),
+            })
+        );
+        assert_eq!(
+            parse_payout_target_from_memo(b"42..memo"),
+            Some(PayoutTarget::NeuronStake {
+                neuron_id: 42,
+                memo: Some(b".memo".to_vec()),
             })
         );
     }
@@ -523,9 +562,9 @@ mod tests {
         let a = target_canister();
         let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut job = ActivePayoutJob::new(1, 10_000, 40_0000_0000, 10_0000_0000, 123);
-        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10), transfer_memo: None };
-        let p2 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 12_0000_0000, amount_e8s: 11_9999_0000, block_index: 2, next_start: Some(11), transfer_memo: None };
-        let p3 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: 24_0000_0000, amount_e8s: 23_9999_0000, block_index: 3, next_start: None, transfer_memo: None };
+        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 4_0000_0000, amount_e8s: 3_9999_0000, block_index: 1, next_start: Some(10), transfer_memo: None, destination_subaccount: None, neuron_id: None };
+        let p2 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary: a, gross_share_e8s: 12_0000_0000, amount_e8s: 11_9999_0000, block_index: 2, next_start: Some(11), transfer_memo: None, destination_subaccount: None, neuron_id: None };
+        let p3 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: 24_0000_0000, amount_e8s: 23_9999_0000, block_index: 3, next_start: None, transfer_memo: None, destination_subaccount: None, neuron_id: None };
         record_ledger_accepted_transfer(&mut job, &p1);
         apply_notified_transfer(&mut job, &p1);
         record_ledger_accepted_transfer(&mut job, &p2);
@@ -542,8 +581,8 @@ mod tests {
     fn summary_accounting_reconciles_pot_fees_and_remainder() {
         let beneficiary = target_canister();
         let mut job = ActivePayoutJob::new(9, 10_000, 100_000_000, 500_000_000, 77);
-        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s: 40_000_000, amount_e8s: 39_990_000, block_index: 1, next_start: Some(1), transfer_memo: None };
-        let p2 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary, gross_share_e8s: 60_000_000, amount_e8s: 59_990_000, block_index: 2, next_start: None, transfer_memo: None };
+        let p1 = PendingNotification { kind: TransferKind::Beneficiary, beneficiary, gross_share_e8s: 40_000_000, amount_e8s: 39_990_000, block_index: 1, next_start: Some(1), transfer_memo: None, destination_subaccount: None, neuron_id: None };
+        let p2 = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary, gross_share_e8s: 60_000_000, amount_e8s: 59_990_000, block_index: 2, next_start: None, transfer_memo: None, destination_subaccount: None, neuron_id: None };
         record_ledger_accepted_transfer(&mut job, &p1);
         apply_notified_transfer(&mut job, &p1);
         record_ledger_accepted_transfer(&mut job, &p2);
@@ -588,6 +627,8 @@ mod tests {
             block_index: 77,
             next_start: Some(5),
             transfer_memo: None,
+            destination_subaccount: None,
+            neuron_id: None,
         };
         record_ledger_accepted_transfer(&mut job, &pending);
         let summary = summary_from_job(&job);
@@ -631,7 +672,9 @@ mod tests {
                 if let CommitmentDecision::Eligible { target, gross_share_e8s, amount_e8s } =
                     evaluate_commitment(pot_start_e8s, denom_staking_balance_e8s, fee_e8s, 1, &commitment)
                 {
-                    let beneficiary = target.canister_id();
+                    let Some(beneficiary) = target.canister_id() else {
+                        continue;
+                    };
                     if job.gross_outflow_e8s.saturating_add(gross_share_e8s) > job.pot_start_e8s {
                         job.failed_topups = job.failed_topups.saturating_add(1);
                         continue;
@@ -644,6 +687,8 @@ mod tests {
                         block_index: i as u64,
                         next_start: Some(i as u64),
                         transfer_memo: None,
+                        destination_subaccount: None,
+                        neuron_id: None,
                     };
                     record_ledger_accepted_transfer(&mut job, &pending);
                     if lcg(&mut seed) & 1 == 0 {
@@ -664,6 +709,8 @@ mod tests {
                     block_index: 10_000 + case,
                     next_start: None,
                     transfer_memo: None,
+                    destination_subaccount: None,
+                    neuron_id: None,
                 };
                 record_ledger_accepted_transfer(&mut job, &remainder);
                 apply_notified_transfer(&mut job, &remainder);

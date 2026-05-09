@@ -74,22 +74,24 @@ For the exact split math, memo formats, retry semantics, and rescue logic, the c
 - [`jupiter-disburser/README.md`](jupiter-disburser/README.md)
 - [`jupiter-faucet/README.md`](jupiter-faucet/README.md)
 
-## How a canister opts into the faucet flow
+## How a target opts into the faucet flow
 
 At a high level, a participant:
 
 1. transfers ICP into the faucet neuron’s configured ICRC-1 staking account address `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
-2. puts the **declared canister ID** in the transfer memo as ASCII text
+2. puts a supported declaration in the transfer memo as ASCII text
 
-The committer does **not** need to own the declared canister. The faucet accepts short ASCII principal text in the memo; the supported UX is to enter the beneficiary declared canister ID there.
+The primary flow is still canister cycle top-up: put the **declared canister ID** in `icrc1_memo`. The committer does **not** need to own the declared canister. The faucet accepts short ASCII principal text in the memo; the supported UX is to enter the beneficiary declared canister ID there.
 
-The supported memo path is ASCII principal text carried in `icrc1_memo`, intended to be the declared canister ID; use the ICRC-1 account address above in the [NNS dapp](https://nns.ic0.app/wallet/?u=) so that text memo path is available. The old 64-bit numeric memo field is intentionally ignored, which keeps the policy aligned with “enter the canister ID as text” rather than trying to reinterpret numeric values as UTF-8.
+Advanced memo forms are also supported in `icrc1_memo`: `canister.memo` routes raw ICP to the declared canister principal with the right-hand memo segment as the outgoing ledger memo, and a decimal NNS neuron ID routes ICP to that neuron's staking account. Neuron commitments require the neuron to be public, because the faucet must read the neuron through NNS Governance to resolve its staking subaccount before sending the transfer.
+
+The supported memo path is ASCII text carried in `icrc1_memo`; use the ICRC-1 account address above in the [NNS dapp](https://nns.ic0.app/wallet/?u=) so that text memo path is available. The old 64-bit legacy memo field is intentionally ignored; numeric neuron IDs are supported only when supplied as ASCII text in `icrc1_memo`.
 
 The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Principal text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up.
 
 That means the project deliberately accepts a bounded griefing surface: a committer can supply syntactically valid short principal text that does not correspond to a useful installed canister, and the faucet may still spend ledger fee / CMC work attempting the top-up. The production answer to that trade-off is economic rather than heuristic. The memo path is kept simple and non-probing, while the production `min_tx_e8s` remains high enough that repeatedly funding such attempts is materially costly to the attacker and simultaneously adds real protocol funding into the staking path.
 
-This distinction matters because the ICP/Cycles ecosystem now has two different concepts: principals can hold cycles directly through the cycles ledger, but the faucet's `notify_top_up` path is still a **canister top-up** path rather than a general “mint cycles to arbitrary principal” path. Operationally, the supported UX remains: put the **declared canister ID** in `icrc1_memo`.
+This distinction matters because the ICP/Cycles ecosystem now has two different concepts: principals can hold cycles directly through the cycles ledger, but the faucet's normal `notify_top_up` path is still a **canister top-up** path rather than a general “mint cycles to arbitrary principal” path. Operationally, the primary UX remains: put the **declared canister ID** in `icrc1_memo`.
 
 ### [NNS dapp](https://nns.ic0.app/wallet/?u=) memo tip
 
@@ -98,9 +100,9 @@ In the [NNS dapp](https://nns.ic0.app/wallet/?u=), the transaction memo field ma
 1. press **Ctrl + K**
 2. type **memo**
 3. select **Show transaction memo**
-4. send ICP to the long-form **ICRC-1** staking account address above (not the short-form legacy account identifier), then put your **declared canister ID** into the memo field as plain ASCII text
+4. send ICP to the long-form **ICRC-1** staking account address above (not the short-form legacy account identifier), then put your supported declaration into the memo field as plain ASCII text
 
-The long-form ICRC-1 destination address is important: the [NNS dapp](https://nns.ic0.app/wallet/?u=) only enables larger text-based memos on that path, so that is the format required for the destination account in order for the memo to be capable of holding the declared canister ID.
+The long-form ICRC-1 destination address is important: the [NNS dapp](https://nns.ic0.app/wallet/?u=) only enables larger text-based memos on that path, so that is the format required for the destination account in order for the memo to be capable of holding a declared canister ID, `canister.memo` raw-ICP directive, or decimal neuron ID.
 
 [![NNS dapp memo search](jupiter-faucet-frontend/assets/how-it-works-memo-search.png)](https://nns.ic0.app/wallet/?u=)
 
@@ -109,10 +111,10 @@ The long-form ICRC-1 destination address is important: the [NNS dapp](https://nn
 Important details that matter in practice:
 
 - the faucet only considers non-empty `icrc1_memo` bytes as a beneficiary memo
-- legacy numeric memos are ignored entirely
+- legacy numeric memos are ignored entirely; neuron IDs must be ASCII digits in `icrc1_memo`
 - an empty `icrc1_memo` is treated as missing / invalid
 - only incoming `Transfer` records **to** the staking account are treated as commitments; `TransferFrom` records are ignored
-- whitespace around the canister ID text is tolerated because the parser trims before decoding
+- whitespace around the declaration text is tolerated because the parser trims before decoding
 - the trimmed memo must be ASCII and at most 32 bytes
 - empty, malformed, or oversize memos are ignored
 - commitments below `min_tx_e8s` are ignored for durable beneficiary registration and faucet eligibility; historian only keeps a capped recent feed for the below-threshold attempts and does not retain those canisters in its tracked registry

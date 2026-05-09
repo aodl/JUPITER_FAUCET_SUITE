@@ -1,5 +1,6 @@
 pub mod canister_info;
 pub mod cmc;
+pub mod governance;
 pub mod index;
 pub mod ledger;
 
@@ -50,4 +51,10 @@ pub trait CmcClient: Send + Sync {
 #[async_trait]
 pub trait CanisterStatusClient: Send + Sync {
     async fn canister_exists(&self, canister_id: Principal) -> Result<bool, ClientError>;
+}
+
+#[async_trait]
+pub trait GovernanceClient: Send + Sync {
+    async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], ClientError>;
+    async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), ClientError>;
 }

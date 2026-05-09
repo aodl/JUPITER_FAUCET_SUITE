@@ -1,11 +1,18 @@
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
+use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
+use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha224};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
+
+const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
+const ICP_LEDGER_FEE_E8S: u64 = 10_000;
 
 fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
@@ -56,6 +63,7 @@ fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -68,6 +76,9 @@ fn index_wasm() -> Result<Vec<u8>> {
 }
 fn cmc_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&CMC_WASM, "mock-cmc", None)
+}
+fn governance_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(&GOVERNANCE_WASM, "mock-nns-governance", None)
 }
 fn blackhole_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&BLACKHOLE_WASM, "mock-blackhole", None)
@@ -135,6 +146,26 @@ fn nat_to_u64(n: &Nat) -> u64 {
     n.0.to_u64_digits().get(0).copied().unwrap_or(0)
 }
 
+fn top_up_transfer_memo() -> Vec<u8> {
+    1_347_768_404_u64.to_le_bytes().to_vec()
+}
+
+fn real_nns_pic() -> PocketIc {
+    let icp_features = IcpFeatures {
+        registry: Some(IcpFeaturesConfig::DefaultConfig),
+        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
+        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
+        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
+        ..Default::default()
+    };
+
+    PocketIcBuilder::new()
+        .with_nns_subnet()
+        .with_application_subnet()
+        .with_icp_features(icp_features)
+        .build()
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct FaucetInitArg {
     staking_account: Account,
@@ -142,6 +173,7 @@ struct FaucetInitArg {
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
+    governance_canister_id: Option<Principal>,
     rescue_controller: Principal,
     blackhole_controller: Option<Principal>,
     blackhole_armed: Option<bool>,
@@ -247,6 +279,110 @@ struct TransferRecord {
     result: String,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct NeuronId {
+    id: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GovernanceError {
+    error_type: i32,
+    error_message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct NeuronMinimal {
+    id: Option<NeuronId>,
+    account: ByteBuf,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct NeuronSubaccount {
+    subaccount: ByteBuf,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListNeurons {
+    neuron_ids: Vec<u64>,
+    include_neurons_readable_by_caller: bool,
+    include_empty_neurons_readable_by_caller: Option<bool>,
+    include_public_neurons_in_full_neurons: Option<bool>,
+    page_number: Option<u64>,
+    page_size: Option<u64>,
+    neuron_subaccounts: Option<Vec<NeuronSubaccount>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListNeuronsResponse {
+    full_neurons: Vec<NeuronMinimal>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum NeuronIdOrSubaccount {
+    NeuronId(NeuronId),
+}
+
+#[derive(Clone, Debug, Default, CandidType, Deserialize)]
+struct Empty {}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ClaimOrRefresh {
+    by: Option<By>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum By {
+    NeuronIdOrSubaccount(Empty),
+    Memo(u64),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ClaimOrRefreshResponse {
+    refreshed_neuron_id: Option<NeuronId>,
+}
+
+const NNS_NEURON_VISIBILITY_PUBLIC: i32 = 2;
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct SetVisibility {
+    visibility: Option<i32>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Operation {
+    SetVisibility(SetVisibility),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Configure {
+    operation: Option<Operation>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum ManageNeuronCommandRequest {
+    ClaimOrRefresh(ClaimOrRefresh),
+    Configure(Configure),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ManageNeuronRequest {
+    id: Option<NeuronId>,
+    neuron_id_or_subaccount: Option<NeuronIdOrSubaccount>,
+    command: Option<ManageNeuronCommandRequest>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum ManageNeuronCommandResponse {
+    ClaimOrRefresh(ClaimOrRefreshResponse),
+    Configure(Empty),
+    Error(GovernanceError),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ManageNeuronResponse {
+    command: Option<ManageNeuronCommandResponse>,
+}
+
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
     let mut hasher = Sha224::new();
@@ -259,6 +395,153 @@ fn account_identifier_text(account: &Account) -> String {
     bytes[..4].copy_from_slice(&checksum);
     bytes[4..].copy_from_slice(&hash);
     hex::encode(bytes)
+}
+
+fn icrc1_balance(pic: &PocketIc, ledger: Principal, account: &Account) -> Result<u64> {
+    let balance: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_balance_of", account.clone())?;
+    Ok(nat_to_u64(&balance))
+}
+
+fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, to: Account, amount_e8s: u64) -> Result<()> {
+    let result: std::result::Result<Nat, TransferError> = update_one(
+        pic,
+        ledger,
+        from,
+        "icrc1_transfer",
+        TransferArg {
+            from_subaccount: None,
+            to,
+            fee: Some(Nat::from(ICP_LEDGER_FEE_E8S)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(amount_e8s),
+        },
+    )?;
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => bail!("icrc1_transfer failed: {err:?}"),
+    }
+}
+
+fn list_public_neuron(pic: &PocketIc, governance: Principal, sender: Principal, neuron_id: u64) -> Result<NeuronMinimal> {
+    let result: ListNeuronsResponse = query_one(
+        pic,
+        governance,
+        sender,
+        "list_neurons",
+        ListNeurons {
+            neuron_ids: vec![neuron_id],
+            include_neurons_readable_by_caller: false,
+            include_empty_neurons_readable_by_caller: Some(false),
+            include_public_neurons_in_full_neurons: Some(true),
+            page_number: None,
+            page_size: None,
+            neuron_subaccounts: None,
+        },
+    )?;
+    result
+        .full_neurons
+        .into_iter()
+        .find(|neuron| neuron.id.as_ref().map(|id| id.id) == Some(neuron_id))
+        .with_context(|| format!("list_neurons returned no public full neuron for {neuron_id}"))
+}
+
+fn neuron_staking_subaccount_from_neuron(neuron: &NeuronMinimal) -> Result<[u8; 32]> {
+    let bytes = neuron.account.as_ref();
+    if bytes.len() != 32 {
+        bail!("expected 32-byte neuron staking subaccount, got {}", bytes.len());
+    }
+    let mut subaccount = [0u8; 32];
+    subaccount.copy_from_slice(bytes);
+    Ok(subaccount)
+}
+
+fn stake_and_claim_neuron(
+    pic: &PocketIc,
+    ledger: Principal,
+    governance: Principal,
+    controller: Principal,
+    memo: u64,
+    stake_e8s: u64,
+) -> Result<u64> {
+    let subaccount = {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(b"\x0cneuron-stake");
+        hasher.update(controller.as_slice());
+        hasher.update(memo.to_be_bytes());
+        let digest = hasher.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&digest);
+        out
+    };
+    icrc1_transfer(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        Account {
+            owner: governance,
+            subaccount: Some(subaccount),
+        },
+        stake_e8s,
+    )?;
+
+    let response: ManageNeuronResponse = update_one(
+        pic,
+        governance,
+        controller,
+        "manage_neuron",
+        ManageNeuronRequest {
+            id: None,
+            neuron_id_or_subaccount: None,
+            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(ClaimOrRefresh {
+                by: Some(By::Memo(memo)),
+            })),
+        },
+    )?;
+    match response.command {
+        Some(ManageNeuronCommandResponse::ClaimOrRefresh(response)) => response
+            .refreshed_neuron_id
+            .map(|id| id.id)
+            .ok_or_else(|| anyhow!("claim_or_refresh returned no refreshed_neuron_id")),
+        Some(ManageNeuronCommandResponse::Error(err)) => bail!(
+            "claim_or_refresh failed: type={} message={}",
+            err.error_type,
+            err.error_message
+        ),
+        other => bail!("unexpected claim_or_refresh response: {other:?}"),
+    }
+}
+
+fn set_neuron_visibility_public(
+    pic: &PocketIc,
+    governance: Principal,
+    controller: Principal,
+    neuron_id: u64,
+) -> Result<()> {
+    let response: ManageNeuronResponse = update_one(
+        pic,
+        governance,
+        controller,
+        "manage_neuron",
+        ManageNeuronRequest {
+            id: None,
+            neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+            command: Some(ManageNeuronCommandRequest::Configure(Configure {
+                operation: Some(Operation::SetVisibility(SetVisibility {
+                    visibility: Some(NNS_NEURON_VISIBILITY_PUBLIC),
+                })),
+            })),
+        },
+    )?;
+    match response.command {
+        Some(ManageNeuronCommandResponse::Configure(_)) => Ok(()),
+        Some(ManageNeuronCommandResponse::Error(err)) => bail!(
+            "set_visibility public failed: type={} message={}",
+            err.error_type,
+            err.error_message
+        ),
+        other => bail!("unexpected set_visibility public response: {other:?}"),
+    }
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -291,6 +574,7 @@ struct FaucetEnv {
     ledger: Principal,
     index: Principal,
     cmc: Principal,
+    governance: Principal,
     blackhole: Principal,
     lifeline: Principal,
     faucet: Principal,
@@ -313,17 +597,19 @@ impl FaucetEnv {
         let ledger = pic.create_canister();
         let index = pic.create_canister();
         let cmc = pic.create_canister();
+        let governance = pic.create_canister();
         let blackhole = pic.create_canister();
         let lifeline = pic.create_canister();
         let faucet = pic.create_canister();
 
-        for c in [ledger, index, cmc, blackhole, lifeline, faucet] {
+        for c in [ledger, index, cmc, governance, blackhole, lifeline, faucet] {
             pic.add_cycles(c, 5_000_000_000_000);
         }
 
         pic.install_canister(ledger, ledger_wasm()?, vec![], None);
         pic.install_canister(index, index_wasm()?, vec![], None);
         pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(governance, governance_wasm()?, vec![], None);
         pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
         pic.install_canister(lifeline, lifeline_wasm()?, vec![], None);
 
@@ -339,6 +625,7 @@ impl FaucetEnv {
             ledger_canister_id: Some(ledger),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
+            governance_canister_id: Some(governance),
             rescue_controller: lifeline,
             blackhole_controller: Some(blackhole_controller),
             blackhole_armed: Some(false),
@@ -358,6 +645,7 @@ impl FaucetEnv {
             ledger,
             index,
             cmc,
+            governance,
             blackhole,
             lifeline,
             faucet,
@@ -511,6 +799,110 @@ impl FaucetEnv {
     }
 }
 
+struct RealNnsFaucetEnv {
+    pic: PocketIc,
+    ledger: Principal,
+    index: Principal,
+    cmc: Principal,
+    governance: Principal,
+    faucet: Principal,
+    staking_account: Account,
+    accounts: DebugAccounts,
+    staking_id: String,
+}
+
+impl RealNnsFaucetEnv {
+    fn new() -> Result<Self> {
+        let pic = real_nns_pic();
+        let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+        let governance = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+        let index = pic.create_canister();
+        let cmc = pic.create_canister();
+        let blackhole = pic.create_canister();
+        let lifeline = pic.create_canister();
+        let faucet = pic.create_canister();
+
+        for canister in [index, cmc, blackhole, lifeline, faucet] {
+            pic.add_cycles(canister, 5_000_000_000_000);
+        }
+
+        pic.install_canister(index, index_wasm()?, vec![], None);
+        pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
+        pic.install_canister(lifeline, lifeline_wasm()?, vec![], None);
+
+        let staking_account = Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([9u8; 32]),
+        };
+        let init = FaucetInitArg {
+            staking_account: staking_account.clone(),
+            payout_subaccount: None,
+            ledger_canister_id: Some(ledger),
+            index_canister_id: Some(index),
+            cmc_canister_id: Some(cmc),
+            governance_canister_id: Some(governance),
+            rescue_controller: lifeline,
+            blackhole_controller: Some(blackhole),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: Some(60),
+            rescue_interval_seconds: Some(60),
+            min_tx_e8s: Some(100_000_000),
+        };
+        pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
+
+        let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+        let staking_id = account_identifier_text(&staking_account);
+
+        Ok(Self {
+            pic,
+            ledger,
+            index,
+            cmc,
+            governance,
+            faucet,
+            staking_account,
+            accounts,
+            staking_id,
+        })
+    }
+
+    fn credit_payout(&self, amount_e8s: u64) -> Result<()> {
+        icrc1_transfer(&self.pic, self.ledger, Principal::anonymous(), self.accounts.payout.clone(), amount_e8s)
+    }
+
+    fn credit_staking(&self, amount_e8s: u64) -> Result<()> {
+        icrc1_transfer(&self.pic, self.ledger, Principal::anonymous(), self.staking_account.clone(), amount_e8s)
+    }
+
+    fn append_transfer(&self, amount_e8s: u64, memo: Option<Vec<u8>>) -> Result<u64> {
+        update_bytes(
+            &self.pic,
+            self.index,
+            Principal::anonymous(),
+            "debug_append_transfer",
+            encode_args((self.staking_id.clone(), amount_e8s, memo))?,
+        )
+    }
+
+    fn main_tick(&self) -> Result<()> {
+        update_noargs::<()>(&self.pic, self.faucet, Principal::anonymous(), "debug_main_tick")?;
+        tick_n(&self.pic, 20);
+        Ok(())
+    }
+
+    fn summary(&self) -> Result<FaucetSummary> {
+        let summary: Option<FaucetSummary> = query_one(&self.pic, self.faucet, Principal::anonymous(), "debug_last_summary", ())?;
+        summary.ok_or_else(|| anyhow!("expected faucet summary"))
+    }
+
+    fn notifications(&self) -> Result<Vec<NotifyRecord>> {
+        query_one(&self.pic, self.cmc, Principal::anonymous(), "debug_notifications", ())
+    }
+}
+
 #[test]
 #[ignore]
 fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
@@ -572,6 +964,149 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
     let summary = env.summary()?;
     if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
         bail!("unexpected raw ICP summary: {summary:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_numeric_neuron_id_memo_routes_to_resolved_staking_account_without_cmc_notify() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let neuron_id = 42_u64;
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(neuron_id.to_string().into_bytes()))?;
+    env.main_tick()?;
+
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != 1 {
+        bail!("expected exactly one neuron stake transfer and no remainder, got {}", transfers.len());
+    }
+    let mut expected_subaccount = [0u8; 32];
+    expected_subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
+    let transfer = &transfers[0];
+    if transfer.to != (Account { owner: env.governance, subaccount: Some(expected_subaccount) }) {
+        bail!("expected neuron stake transfer to governance staking account, got {:?}", transfer.to);
+    }
+    if transfer.memo.as_deref() != Some(top_up_transfer_memo().as_slice()) {
+        bail!("expected neuron stake transfer to use top-up transfer memo, got {:?}", transfer.memo);
+    }
+    if nat_to_u64(&transfer.amount) != 99_990_000 {
+        bail!("expected neuron stake net amount 99990000 e8s, got {}", nat_to_u64(&transfer.amount));
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected neuron stake payout not to call notify_top_up");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
+        bail!("unexpected neuron stake summary: {summary:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_dotted_neuron_id_memos_route_to_staking_account_with_right_segment_as_transfer_memo() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let cases = [
+        (42_u64, "42.vault.memo", b"vault.memo".to_vec()),
+        (43_u64, "43.", Vec::new()),
+        (44_u64, "44..memo", b".memo".to_vec()),
+    ];
+
+    env.credit_payout(300_000_000)?;
+    env.credit_staking(300_000_000)?;
+    for (_, memo_text, _) in cases.iter() {
+        env.append_transfer(100_000_000, Some(memo_text.as_bytes().to_vec()))?;
+    }
+    env.main_tick()?;
+
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != cases.len() {
+        bail!("expected exactly {} neuron stake transfers and no remainder, got {}", cases.len(), transfers.len());
+    }
+    for (neuron_id, _, expected_memo) in cases {
+        let mut expected_subaccount = [0u8; 32];
+        expected_subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
+        let transfer = transfers
+            .iter()
+            .find(|transfer| transfer.to == (Account { owner: env.governance, subaccount: Some(expected_subaccount) }))
+            .with_context(|| format!("expected neuron {neuron_id} staking transfer"))?;
+        if transfer.memo.as_deref() != Some(expected_memo.as_slice()) {
+            bail!("expected neuron {neuron_id} transfer memo {:?}, got {:?}", expected_memo, transfer.memo);
+        }
+        if nat_to_u64(&transfer.amount) != 99_990_000 {
+            bail!("expected neuron {neuron_id} net amount 99990000 e8s, got {}", nat_to_u64(&transfer.amount));
+        }
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected dotted neuron stake payouts not to call notify_top_up");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 3 || summary.topped_up_sum_e8s != 299_970_000 || summary.failed_topups != 0 {
+        bail!("unexpected dotted neuron stake summary: {summary:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RealNnsFaucetEnv::new()?;
+    let controller = Principal::anonymous();
+    let neuron_id = stake_and_claim_neuron(
+        &env.pic,
+        env.ledger,
+        env.governance,
+        controller,
+        42_4242,
+        1_000_000_000,
+    )?;
+    set_neuron_visibility_public(&env.pic, env.governance, controller, neuron_id)?;
+
+    let before = list_public_neuron(&env.pic, env.governance, env.faucet, neuron_id)?;
+    let public_view = list_public_neuron(&env.pic, env.governance, Principal::anonymous(), neuron_id)?;
+    let staking_subaccount = neuron_staking_subaccount_from_neuron(&before)?;
+    let staking_account = Account {
+        owner: env.governance,
+        subaccount: Some(staking_subaccount),
+    };
+    let staking_account_balance_before = icrc1_balance(&env.pic, env.ledger, &staking_account)?;
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(neuron_id.to_string().into_bytes()))?;
+    env.main_tick()?;
+
+    let staking_account_balance_after = icrc1_balance(&env.pic, env.ledger, &staking_account)?;
+    let expected_net_top_up = 100_000_000 - ICP_LEDGER_FEE_E8S;
+    if staking_account_balance_after < staking_account_balance_before.saturating_add(expected_net_top_up) {
+        bail!(
+            "expected faucet transfer to land in real NNS staking account: before={} after={} expected_add={}",
+            staking_account_balance_before,
+            staking_account_balance_after,
+            expected_net_top_up,
+        );
+    }
+    if public_view.id.as_ref().map(|id| id.id) != Some(neuron_id) {
+        bail!("expected anonymous caller to read public neuron {neuron_id}, got {:?}", public_view.id);
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("real NNS neuron top-up should not call CMC notify_top_up");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != expected_net_top_up
+        || summary.failed_topups != 0
+        || summary.remainder_to_self_e8s != 0
+    {
+        bail!("unexpected real NNS neuron top-up summary: {summary:?}");
     }
 
     Ok(())

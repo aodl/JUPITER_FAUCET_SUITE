@@ -13,6 +13,9 @@ type RecentCommitmentOutcomeCategory = variant {
 };
 type RecentCommitmentListItem = record {
   canister_id : opt principal;
+  neuron_id : opt nat64;
+  raw_icp_memo_text : opt text;
+  neuron_memo_text : opt text;
   memo_text : opt text;
   tx_id : nat64;
   timestamp_nanos : opt nat64;

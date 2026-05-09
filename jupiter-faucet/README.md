@@ -16,7 +16,7 @@ Unless otherwise noted, command examples in this README are run from the reposit
 
 1. identifying the **staking account** whose incoming transfers define commitment history
 2. scanning that account through the ICP index canister
-3. interpreting eligible transfer memos as beneficiary canister principals
+3. interpreting eligible transfer memos as supported payout targets
 4. converting a payout pot of ICP into proportional per-commitment top-ups
 5. managing its own blackhole / recovery policy once armed
 
@@ -57,20 +57,20 @@ A staking-account transaction is only included in attribution if all of the foll
 
 1. it is an incoming `Transfer` **to** the configured `staking_account` (`TransferFrom` records are ignored)
 2. the transferred amount is at least `min_tx_e8s`
-3. the memo can be decoded as short ASCII principal text for the beneficiary (the supported UX is to enter the declared canister ID)
+3. the memo can be decoded as a supported ASCII target declaration
 
 ### Memo parsing rules
 
 Memo handling is intentionally simple and code-driven:
 
 - only non-empty `icrc1_memo` bytes are considered
-- legacy numeric memos are ignored entirely
+- legacy numeric memos are ignored entirely; neuron IDs must be ASCII digits in `icrc1_memo`
 - an empty `icrc1_memo` is treated as empty / invalid
 - empty memo = invalid
 - malformed memo = invalid
-- memo that does not decode to principal text within the ICP memo limit = invalid
+- memo that does not decode to a supported declaration within the ICP memo limit = invalid
 - the trimmed memo must be ASCII and at most 32 bytes
-- whitespace around canister text is tolerated because the parser trims before decoding
+- whitespace around declaration text is tolerated because the parser trims before decoding
 
 Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not block later transfers.
 
@@ -82,7 +82,9 @@ The default minimum tracked commitment is:
 
 Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. They also do **not** create durable historian tracking for the memo target. The production minimum is intentionally high because historian only keeps a durable beneficiary registry for memo-derived targets that actually qualify; a much lower threshold would make registry spam far cheaper.
 
-Memo encoding uses `icrc1_memo` principal text only. The faucet intentionally ignores the legacy 64-bit numeric memo path so the accepted input is one unambiguous thing: non-empty ASCII bytes that decode to principal text within the ICP memo size limit. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID in the memo; that is the supported UX and the wording elsewhere in the suite assumes that path.
+Memo encoding uses `icrc1_memo` text only. The primary form is principal text for a declared canister ID. The faucet also accepts `canister.memo` for raw ICP routing and ASCII decimal NNS neuron IDs for neuron staking-account top-ups. The legacy 64-bit numeric memo path is still ignored. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID for the normal cycles top-up path; that is the primary supported UX.
+
+Neuron staking-account top-ups require the target neuron to be public. The faucet calls NNS Governance to read the neuron and resolve its staking subaccount before it can send ICP there; a private or unreadable neuron cannot be resolved and the commitment is counted as a failed top-up attempt for that payout job.
 
 The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
@@ -183,7 +185,7 @@ The current suite wiring from `jupiter-disburser` targets the faucet’s default
 
 ### Deposit account used for top-ups
 
-For a beneficiary canister principal `P`, the faucet transfers ICP to the CMC deposit account:
+For a normal cycles top-up target canister principal `P`, the faucet transfers ICP to the CMC deposit account:
 
 - owner = CMC canister principal
 - subaccount = 32-byte encoding derived from `P`
@@ -196,6 +198,10 @@ The subaccount layout is:
 
 That matches the standard top-up pattern used before calling `notify_top_up`.
 For ICRC-1 transfers, the faucet encodes the CMC top-up memo as an 8-byte **little-endian** blob so it matches how the CMC interprets ICRC memo bytes.
+
+For `canister.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister principal's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
+
+For neuron ID directives, the faucet reads the public NNS neuron, transfers ICP to NNS Governance with the neuron's staking subaccount, and then best-effort refreshes the neuron. It does not call CMC `notify_top_up`.
 
 ### Outgoing ledger transfer memo
 
@@ -216,7 +222,7 @@ The PocketIC integration suite includes an end-to-end upgrade test that interrup
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits a single `CONFIG ...` line on the main-tick cadence, alongside its regular `Cycles: ...` health line. If a payout job is being recovered, forced resume ticks can emit additional config lines outside the regular cadence. The line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC canister IDs, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits a single `CONFIG ...` line on the main-tick cadence, alongside its regular `Cycles: ...` health line. If a payout job is being recovered, forced resume ticks can emit additional config lines outside the regular cadence. The line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay.
 
 ### Main tick sequence
 
@@ -337,6 +343,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `ledger_canister_id` (optional; defaults to ICP Ledger)
 - `index_canister_id` (optional; defaults to ICP Index)
 - `cmc_canister_id` (optional; defaults to the Cycles Minting Canister)
+- `governance_canister_id` (optional; defaults to NNS Governance)
 - `rescue_controller`
 - `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the faucet canister principal or `rescue_controller`)
 - `blackhole_armed` (optional)
@@ -459,6 +466,8 @@ The most important thing to remember is that the faucet is **job-snapshot based*
 Treat the memo requirement as canonical:
 
 - beneficiary is identified by short ASCII principal text in `icrc1_memo` (the supported usage is to put the declared canister ID there)
+- raw ICP routing is identified by `declared_canister.memo` in `icrc1_memo`
+- neuron top-ups are identified by an ASCII decimal NNS neuron ID in `icrc1_memo`, and the neuron must be public
 - malformed or missing memos are ignored
 - ownership of the beneficiary canister is not checked by the faucet
 

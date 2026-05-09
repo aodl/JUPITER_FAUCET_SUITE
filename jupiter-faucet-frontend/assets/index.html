@@ -564,10 +564,14 @@
                 (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
               </p>
             </div>
+            <div class="nav-panel-page" data-page="2">
+              <p class="nav-panel-content">More information coming soon...</p>
+            </div>
               
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
               <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Advanced Usage" aria-selected="false"></button>
             </div>
 
         </article>
@@ -719,26 +723,80 @@
           <h2 class="nav-panel-title">Patron Commitments</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-            <p class="nav-panel-content">A patron commitment qualifies when the memo names a declared canister ID as ASCII principal text in `icrc1_memo` (max <strong>32 bytes</strong>) and the commitment is at least <strong>1 ICP</strong>. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+            <p class="nav-panel-content">A patron commitment qualifies when the `icrc1_memo` declares a supported target and the commitment is at least <strong>1 ICP</strong>. Canister cycle top-ups use a declared canister ID. Raw ICP routing uses <code>canister.memo</code>. Neuron stake top-ups use a public NNS neuron ID; private neurons cannot be refreshed by the faucet top-up process. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
             <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
-            <div class="pane-table-wrap">
-              <table class="pane-table">
-                <thead>
-                  <tr>
-                    <th>Timestamp</th>
-                    <th>Amount</th>
-                    <th>Declared canister</th>
-                  </tr>
-                </thead>
-                <tbody id="commitments-pane-body">
-                  <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
-                </tbody>
-              </table>
+            <div class="nav-panel-page is-active" data-page="0">
+              <h3 class="pane-section-title">Declared Canisters</h3>
+              <div class="pane-table-wrap">
+                <table class="pane-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Amount</th>
+                      <th>Declared</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commitments-pane-body">
+                    <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pane-pagination">
+                <button class="pane-page-button" id="commitments-prev-page" type="button">Previous</button>
+                <span id="commitments-page-info">Page 1</span>
+                <button class="pane-page-button" id="commitments-next-page" type="button">Next</button>
+              </div>
             </div>
-            <div class="pane-pagination">
-              <button class="pane-page-button" id="commitments-prev-page" type="button">Previous</button>
-              <span id="commitments-page-info">Page 1</span>
-              <button class="pane-page-button" id="commitments-next-page" type="button">Next</button>
+            <div class="nav-panel-page" data-page="1">
+              <h3 class="pane-section-title">Declared Raw ICP Canisters</h3>
+              <div class="pane-table-wrap">
+                <table class="pane-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Amount</th>
+                      <th>Declared</th>
+                      <th>Memo</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commitments-raw-pane-body">
+                    <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pane-pagination">
+                <button class="pane-page-button" id="commitments-raw-prev-page" type="button">Previous</button>
+                <span id="commitments-raw-page-info">Page 1</span>
+                <button class="pane-page-button" id="commitments-raw-next-page" type="button">Next</button>
+              </div>
+            </div>
+            <div class="nav-panel-page" data-page="2">
+              <h3 class="pane-section-title">Declared Neurons</h3>
+              <div class="pane-table-wrap">
+                <table class="pane-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Amount</th>
+                      <th>Declared</th>
+                      <th>Memo</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commitments-neurons-pane-body">
+                    <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pane-pagination">
+                <button class="pane-page-button" id="commitments-neurons-prev-page" type="button">Previous</button>
+                <span id="commitments-neurons-page-info">Page 1</span>
+                <button class="pane-page-button" id="commitments-neurons-next-page" type="button">Next</button>
+              </div>
+            </div>
+            <div class="nav-panel-dots" role="tablist" aria-label="Patron Commitment pages">
+              <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Declared Canisters" aria-selected="true"></button>
+              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Raw ICP Canisters" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Declared Neurons" aria-selected="false"></button>
             </div>
           </div>
         </article>

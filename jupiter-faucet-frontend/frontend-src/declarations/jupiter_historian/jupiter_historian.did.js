@@ -143,6 +143,9 @@ export const idlFactory = ({ IDL }) => {
   });
   const RecentCommitmentListItem = IDL.Record({
     canister_id: IDL.Opt(IDL.Principal),
+    neuron_id: IDL.Opt(IDL.Nat64),
+    raw_icp_memo_text: IDL.Opt(IDL.Text),
+    neuron_memo_text: IDL.Opt(IDL.Text),
     memo_text: IDL.Opt(IDL.Text),
     tx_id: IDL.Nat64,
     timestamp_nanos: IDL.Opt(IDL.Nat64),
