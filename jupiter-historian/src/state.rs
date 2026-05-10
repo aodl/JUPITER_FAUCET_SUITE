@@ -443,6 +443,45 @@ impl Storable for CommitmentEntryKey {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct NeuronCommitmentEntryKey {
+    neuron_id: u64,
+    tx_id: u64,
+}
+
+impl NeuronCommitmentEntryKey {
+    fn new(neuron_id: u64, tx_id: u64) -> Self {
+        Self { neuron_id, tx_id }
+    }
+}
+
+impl Storable for NeuronCommitmentEntryKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let mut out = Vec::with_capacity(16);
+        out.extend_from_slice(&self.neuron_id.to_be_bytes());
+        out.extend_from_slice(&self.tx_id.to_be_bytes());
+        Cow::Owned(out)
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let bytes = bytes.as_ref();
+        assert!(bytes.len() == 16, "invalid historian neuron commitment entry key length");
+        let mut neuron_id = [0u8; 8];
+        neuron_id.copy_from_slice(&bytes[..8]);
+        let mut tx_id = [0u8; 8];
+        tx_id.copy_from_slice(&bytes[8..]);
+        Self {
+            neuron_id: u64::from_be_bytes(neuron_id),
+            tx_id: u64::from_be_bytes(tx_id),
+        }
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 16,
+        is_fixed_size: true,
+    };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CyclesEntryKey {
     canister: PrincipalKey,
     timestamp_nanos: u64,
@@ -662,6 +701,18 @@ impl Storable for VersionedStableState {
 
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
+// Historian stable memory IDs:
+// 0: root state
+// 10: canister source registry
+// 11: per-canister metadata
+// 14: commitment history index
+// 15: cycles history index
+// 16: commitment history entries
+// 17: cycles history entries
+// 18: raw ICP commitment history index
+// 19: raw ICP commitment entries
+// 20: neuron commitment history index
+// 21: neuron commitment entries
 thread_local! {
     static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -679,19 +730,36 @@ thread_local! {
         std::cell::RefCell::new(None);
     static STABLE_CYCLES_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CyclesEntryKey, CyclesSample, Memory>>> =
         std::cell::RefCell::new(None);
+    static STABLE_RAW_ICP_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
+        std::cell::RefCell::new(None);
+    static STABLE_RAW_ICP_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>>> =
+        std::cell::RefCell::new(None);
+    static STABLE_NEURON_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<u64, StableU64List, Memory>>> =
+        std::cell::RefCell::new(None);
+    static STABLE_NEURON_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>>> =
+        std::cell::RefCell::new(None);
     static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static PERSISTENCE_DIRTY_SECTIONS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     static DIRTY_REGISTRY_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
     static DIRTY_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
     static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    static DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = std::cell::RefCell::new(BTreeSet::new());
 }
 
 pub const DIRTY_ROOT: u8 = 1 << 0;
 pub const DIRTY_REGISTRY: u8 = 1 << 1;
 pub const DIRTY_COMMITMENTS: u8 = 1 << 2;
 pub const DIRTY_CYCLES: u8 = 1 << 3;
-pub const DIRTY_ALL: u8 = DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_COMMITMENTS | DIRTY_CYCLES;
+pub const DIRTY_RAW_ICP_COMMITMENTS: u8 = 1 << 4;
+pub const DIRTY_NEURON_COMMITMENTS: u8 = 1 << 5;
+pub const DIRTY_ALL: u8 = DIRTY_ROOT
+    | DIRTY_REGISTRY
+    | DIRTY_COMMITMENTS
+    | DIRTY_CYCLES
+    | DIRTY_RAW_ICP_COMMITMENTS
+    | DIRTY_NEURON_COMMITMENTS;
 
 fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
     STABLE_ROOT_STATE.with(|cell| {
@@ -810,6 +878,70 @@ fn with_cycles_entry_map<R>(
     })
 }
 
+fn with_raw_icp_commitment_history_index_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
+) -> R {
+    STABLE_RAW_ICP_COMMITMENT_HISTORY_INDEX_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(18));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow.as_mut().expect("historian raw ICP commitment-history index map not initialized"))
+    })
+}
+
+fn with_raw_icp_commitment_entry_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>) -> R,
+) -> R {
+    STABLE_RAW_ICP_COMMITMENT_ENTRY_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(19));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow.as_mut().expect("historian raw ICP commitment entry map not initialized"))
+    })
+}
+
+fn with_neuron_commitment_history_index_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<u64, StableU64List, Memory>) -> R,
+) -> R {
+    STABLE_NEURON_COMMITMENT_HISTORY_INDEX_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(20));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow.as_mut().expect("historian neuron commitment-history index map not initialized"))
+    })
+}
+
+fn with_neuron_commitment_entry_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>) -> R,
+) -> R {
+    STABLE_NEURON_COMMITMENT_ENTRY_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(21));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow.as_mut().expect("historian neuron commitment entry map not initialized"))
+    })
+}
+
 fn mark_registry_principal_dirty(canister_id: Principal) {
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| {
         dirty.borrow_mut().insert(canister_id);
@@ -828,6 +960,18 @@ fn mark_cycles_principal_dirty(canister_id: Principal) {
     });
 }
 
+fn mark_raw_icp_commitment_principal_dirty(canister_id: Principal) {
+    DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS.with(|dirty| {
+        dirty.borrow_mut().insert(canister_id);
+    });
+}
+
+fn mark_neuron_commitment_id_dirty(neuron_id: u64) {
+    DIRTY_NEURON_COMMITMENT_IDS.with(|dirty| {
+        dirty.borrow_mut().insert(neuron_id);
+    });
+}
+
 fn dirty_registry_principals() -> BTreeSet<Principal> {
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| dirty.borrow().clone())
 }
@@ -840,12 +984,28 @@ fn dirty_cycles_principals() -> BTreeSet<Principal> {
     DIRTY_CYCLES_PRINCIPALS.with(|dirty| dirty.borrow().clone())
 }
 
+fn dirty_raw_icp_commitment_principals() -> BTreeSet<Principal> {
+    DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow().clone())
+}
+
+fn dirty_neuron_commitment_ids() -> BTreeSet<u64> {
+    DIRTY_NEURON_COMMITMENT_IDS.with(|dirty| dirty.borrow().clone())
+}
+
 fn stable_commitment_history_keys_internal() -> BTreeSet<Principal> {
     with_commitment_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
 }
 
 fn stable_cycles_history_keys_internal() -> BTreeSet<Principal> {
     with_cycles_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
+}
+
+fn stable_raw_icp_commitment_history_keys_internal() -> BTreeSet<Principal> {
+    with_raw_icp_commitment_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
+}
+
+fn stable_neuron_commitment_history_keys_internal() -> BTreeSet<u64> {
+    with_neuron_commitment_history_index_map(|map| map.iter().map(|(key, _)| key).collect())
 }
 
 fn load_stable_commitment_history_internal(canister_id: Principal) -> Vec<CommitmentSample> {
@@ -858,6 +1018,42 @@ fn load_stable_commitment_history_internal(canister_id: Principal) -> Vec<Commit
                     .filter_map(|tx_id| {
                         with_commitment_entry_map(|entry_map| {
                             entry_map.get(&CommitmentEntryKey::new(canister_id, tx_id))
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn load_stable_raw_icp_commitment_history_internal(canister_id: Principal) -> Vec<CommitmentSample> {
+    with_raw_icp_commitment_history_index_map(|index_map| {
+        index_map
+            .get(&PrincipalKey::from(canister_id))
+            .map(|ids| {
+                ids.0
+                    .into_iter()
+                    .filter_map(|tx_id| {
+                        with_raw_icp_commitment_entry_map(|entry_map| {
+                            entry_map.get(&CommitmentEntryKey::new(canister_id, tx_id))
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn load_stable_neuron_commitment_history_internal(neuron_id: u64) -> Vec<CommitmentSample> {
+    with_neuron_commitment_history_index_map(|index_map| {
+        index_map
+            .get(&neuron_id)
+            .map(|ids| {
+                ids.0
+                    .into_iter()
+                    .filter_map(|tx_id| {
+                        with_neuron_commitment_entry_map(|entry_map| {
+                            entry_map.get(&NeuronCommitmentEntryKey::new(neuron_id, tx_id))
                         })
                     })
                     .collect()
@@ -1104,6 +1300,129 @@ fn sync_cycles_history_principals(
     }
 }
 
+fn sync_all_raw_icp_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
+    with_raw_icp_commitment_history_index_map(|map| map.clear_new());
+    with_raw_icp_commitment_entry_map(|map| map.clear_new());
+    for (principal, samples) in current {
+        let ids: Vec<u64> = samples.iter().map(|sample| sample.tx_id).collect();
+        if !ids.is_empty() {
+            with_raw_icp_commitment_history_index_map(|map| {
+                map.insert(PrincipalKey::from(principal), StableU64List(ids));
+            });
+            with_raw_icp_commitment_entry_map(|map| {
+                for sample in samples {
+                    map.insert(CommitmentEntryKey::new(principal, sample.tx_id), sample.clone());
+                }
+            });
+        }
+    }
+}
+
+fn sync_raw_icp_commitment_history_principals(
+    current: &BTreeMap<Principal, Vec<CommitmentSample>>,
+    principals: &BTreeSet<Principal>,
+) {
+    for principal in principals {
+        let principal_key = PrincipalKey::from(principal);
+        let existing_ids = with_raw_icp_commitment_history_index_map(|map| {
+            map.get(&principal_key)
+                .map(|ids| ids.0.clone())
+                .unwrap_or_default()
+        });
+        let current_samples = current.get(principal).cloned().unwrap_or_default();
+        let current_ids: Vec<u64> = current_samples.iter().map(|sample| sample.tx_id).collect();
+        let current_id_set: BTreeSet<u64> = current_ids.iter().copied().collect();
+
+        with_raw_icp_commitment_entry_map(|map| {
+            for tx_id in &existing_ids {
+                if !current_id_set.contains(tx_id) {
+                    map.remove(&CommitmentEntryKey::new(principal, *tx_id));
+                }
+            }
+            for sample in &current_samples {
+                let key = CommitmentEntryKey::new(principal, sample.tx_id);
+                let needs_update = map.get(&key).map(|existing| existing != *sample).unwrap_or(true);
+                if needs_update {
+                    map.insert(key, sample.clone());
+                }
+            }
+        });
+
+        with_raw_icp_commitment_history_index_map(|map| {
+            if current_ids.is_empty() {
+                map.remove(&principal_key);
+            } else {
+                let desired = StableU64List(current_ids);
+                let needs_update = map.get(&principal_key).map(|existing| existing != desired).unwrap_or(true);
+                if needs_update {
+                    map.insert(principal_key, desired);
+                }
+            }
+        });
+    }
+}
+
+fn sync_all_neuron_commitment_history_maps(current: &BTreeMap<u64, Vec<CommitmentSample>>) {
+    with_neuron_commitment_history_index_map(|map| map.clear_new());
+    with_neuron_commitment_entry_map(|map| map.clear_new());
+    for (neuron_id, samples) in current {
+        let ids: Vec<u64> = samples.iter().map(|sample| sample.tx_id).collect();
+        if !ids.is_empty() {
+            with_neuron_commitment_history_index_map(|map| {
+                map.insert(*neuron_id, StableU64List(ids));
+            });
+            with_neuron_commitment_entry_map(|map| {
+                for sample in samples {
+                    map.insert(NeuronCommitmentEntryKey::new(*neuron_id, sample.tx_id), sample.clone());
+                }
+            });
+        }
+    }
+}
+
+fn sync_neuron_commitment_history_ids(
+    current: &BTreeMap<u64, Vec<CommitmentSample>>,
+    neuron_ids: &BTreeSet<u64>,
+) {
+    for neuron_id in neuron_ids {
+        let existing_ids = with_neuron_commitment_history_index_map(|map| {
+            map.get(neuron_id)
+                .map(|ids| ids.0.clone())
+                .unwrap_or_default()
+        });
+        let current_samples = current.get(neuron_id).cloned().unwrap_or_default();
+        let current_ids: Vec<u64> = current_samples.iter().map(|sample| sample.tx_id).collect();
+        let current_id_set: BTreeSet<u64> = current_ids.iter().copied().collect();
+
+        with_neuron_commitment_entry_map(|map| {
+            for tx_id in &existing_ids {
+                if !current_id_set.contains(tx_id) {
+                    map.remove(&NeuronCommitmentEntryKey::new(*neuron_id, *tx_id));
+                }
+            }
+            for sample in &current_samples {
+                let key = NeuronCommitmentEntryKey::new(*neuron_id, sample.tx_id);
+                let needs_update = map.get(&key).map(|existing| existing != *sample).unwrap_or(true);
+                if needs_update {
+                    map.insert(key, sample.clone());
+                }
+            }
+        });
+
+        with_neuron_commitment_history_index_map(|map| {
+            if current_ids.is_empty() {
+                map.remove(neuron_id);
+            } else {
+                let desired = StableU64List(current_ids);
+                let needs_update = map.get(neuron_id).map(|existing| existing != desired).unwrap_or(true);
+                if needs_update {
+                    map.insert(*neuron_id, desired);
+                }
+            }
+        });
+    }
+}
+
 
 fn build_root_snapshot(st: &State) -> StableRootState {
     StableRootState {
@@ -1130,8 +1449,8 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         main_lock_state_ts: st.main_lock_state_ts,
         last_main_run_ts: st.last_main_run_ts,
         qualifying_commitment_count: st.qualifying_commitment_count,
-        raw_icp_commitment_history: st.raw_icp_commitment_history.clone(),
-        neuron_commitment_history: st.neuron_commitment_history.clone(),
+        raw_icp_commitment_history: BTreeMap::new(),
+        neuron_commitment_history: BTreeMap::new(),
         total_output_e8s: st.total_output_e8s,
         total_rewards_e8s: st.total_rewards_e8s,
         icp_burned_e8s: st.icp_burned_e8s,
@@ -1155,6 +1474,8 @@ fn persist_snapshot_sections_scoped(
     registry_scope: Option<&BTreeSet<Principal>>,
     commitment_scope: Option<&BTreeSet<Principal>>,
     cycles_scope: Option<&BTreeSet<Principal>>,
+    raw_icp_commitment_scope: Option<&BTreeSet<Principal>>,
+    neuron_commitment_scope: Option<&BTreeSet<u64>>,
 ) {
     if dirty_sections & DIRTY_REGISTRY != 0 {
         sync_canister_sources_map(&st.canister_sources, registry_scope);
@@ -1174,6 +1495,20 @@ fn persist_snapshot_sections_scoped(
             sync_all_cycles_history_maps(&st.cycles_history);
         }
     }
+    if dirty_sections & DIRTY_RAW_ICP_COMMITMENTS != 0 {
+        if let Some(scope) = raw_icp_commitment_scope {
+            sync_raw_icp_commitment_history_principals(&st.raw_icp_commitment_history, scope);
+        } else {
+            sync_all_raw_icp_commitment_history_maps(&st.raw_icp_commitment_history);
+        }
+    }
+    if dirty_sections & DIRTY_NEURON_COMMITMENTS != 0 {
+        if let Some(scope) = neuron_commitment_scope {
+            sync_neuron_commitment_history_ids(&st.neuron_commitment_history, scope);
+        } else {
+            sync_all_neuron_commitment_history_maps(&st.neuron_commitment_history);
+        }
+    }
     if dirty_sections & DIRTY_ROOT != 0 {
         // Commit the root section last so the durable root always points at fully written
         // bulk sections. This keeps the root as the final commit marker if a trap occurs before
@@ -1186,7 +1521,7 @@ fn persist_snapshot_sections_scoped(
 }
 
 fn persist_snapshot_sections(st: &State, dirty_sections: u8) {
-    persist_snapshot_sections_scoped(st, dirty_sections, None, None, None);
+    persist_snapshot_sections_scoped(st, dirty_sections, None, None, None, None, None);
 }
 
 fn persist_snapshot(st: &State) {
@@ -1198,6 +1533,14 @@ pub fn init_stable_storage() {
 }
 
 fn restore_state_current(root: StableRootState) -> State {
+    let legacy_raw_icp_commitment_history = root.raw_icp_commitment_history.clone();
+    if !legacy_raw_icp_commitment_history.is_empty() {
+        sync_all_raw_icp_commitment_history_maps(&legacy_raw_icp_commitment_history);
+    }
+    let legacy_neuron_commitment_history = root.neuron_commitment_history.clone();
+    if !legacy_neuron_commitment_history.is_empty() {
+        sync_all_neuron_commitment_history_maps(&legacy_neuron_commitment_history);
+    }
     let canister_sources = with_canister_sources_map(|map| {
         let mut out = BTreeMap::new();
         for (key, value) in map.iter() {
@@ -1246,8 +1589,8 @@ fn restore_state_current(root: StableRootState) -> State {
         main_lock_state_ts: root.main_lock_state_ts,
         last_main_run_ts: root.last_main_run_ts,
         qualifying_commitment_count: root.qualifying_commitment_count,
-        raw_icp_commitment_history: root.raw_icp_commitment_history,
-        neuron_commitment_history: root.neuron_commitment_history,
+        raw_icp_commitment_history: BTreeMap::new(),
+        neuron_commitment_history: BTreeMap::new(),
         total_output_e8s: root.total_output_e8s.or(Some(0)),
         total_rewards_e8s: root.total_rewards_e8s.or(Some(0)),
         icp_burned_e8s: root.icp_burned_e8s,
@@ -1308,6 +1651,8 @@ fn clear_persistence_dirty() {
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
     DIRTY_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
     DIRTY_CYCLES_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
+    DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
+    DIRTY_NEURON_COMMITMENT_IDS.with(|dirty| dirty.borrow_mut().clear());
 }
 
 pub fn persist_dirty_state() {
@@ -1318,6 +1663,8 @@ pub fn persist_dirty_state() {
     let registry_scope = dirty_registry_principals();
     let commitment_scope = dirty_commitment_principals();
     let cycles_scope = dirty_cycles_principals();
+    let raw_icp_commitment_scope = dirty_raw_icp_commitment_principals();
+    let neuron_commitment_scope = dirty_neuron_commitment_ids();
     let snapshot = get_state();
     persist_snapshot_sections_scoped(
         &snapshot,
@@ -1325,6 +1672,8 @@ pub fn persist_dirty_state() {
         (!registry_scope.is_empty()).then_some(&registry_scope),
         (!commitment_scope.is_empty()).then_some(&commitment_scope),
         (!cycles_scope.is_empty()).then_some(&cycles_scope),
+        (!raw_icp_commitment_scope.is_empty()).then_some(&raw_icp_commitment_scope),
+        (!neuron_commitment_scope.is_empty()).then_some(&neuron_commitment_scope),
     );
     clear_persistence_dirty();
 }
@@ -1367,6 +1716,8 @@ fn with_state_mut_sections_scoped<R>(
     registry_principal: Option<Principal>,
     commitment_principal: Option<Principal>,
     cycles_principal: Option<Principal>,
+    raw_icp_commitment_principal: Option<Principal>,
+    neuron_commitment_id: Option<u64>,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
     STATE.with(|s| {
@@ -1380,12 +1731,16 @@ fn with_state_mut_sections_scoped<R>(
             let registry_scope = registry_principal.into_iter().collect::<BTreeSet<_>>();
             let commitment_scope = commitment_principal.into_iter().collect::<BTreeSet<_>>();
             let cycles_scope = cycles_principal.into_iter().collect::<BTreeSet<_>>();
+            let raw_icp_commitment_scope = raw_icp_commitment_principal.into_iter().collect::<BTreeSet<_>>();
+            let neuron_commitment_scope = neuron_commitment_id.into_iter().collect::<BTreeSet<_>>();
             persist_snapshot_sections_scoped(
                 &snapshot,
                 dirty_sections,
                 (!registry_scope.is_empty()).then_some(&registry_scope),
                 (!commitment_scope.is_empty()).then_some(&commitment_scope),
                 (!cycles_scope.is_empty()).then_some(&cycles_scope),
+                (!raw_icp_commitment_scope.is_empty()).then_some(&raw_icp_commitment_scope),
+                (!neuron_commitment_scope.is_empty()).then_some(&neuron_commitment_scope),
             );
             return out;
         }
@@ -1398,6 +1753,12 @@ fn with_state_mut_sections_scoped<R>(
         if let Some(canister_id) = cycles_principal {
             mark_cycles_principal_dirty(canister_id);
         }
+        if let Some(canister_id) = raw_icp_commitment_principal {
+            mark_raw_icp_commitment_principal_dirty(canister_id);
+        }
+        if let Some(neuron_id) = neuron_commitment_id {
+            mark_neuron_commitment_id_dirty(neuron_id);
+        }
         mark_persistence_dirty(dirty_sections);
         drop(borrow);
         out
@@ -1405,7 +1766,7 @@ fn with_state_mut_sections_scoped<R>(
 }
 
 pub fn with_state_mut_sections<R>(dirty_sections: u8, f: impl FnOnce(&mut State) -> R) -> R {
-    with_state_mut_sections_scoped(dirty_sections, None, None, None, f)
+    with_state_mut_sections_scoped(dirty_sections, None, None, None, None, None, f)
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -1425,12 +1786,28 @@ pub fn stable_cycles_history_keys() -> BTreeSet<Principal> {
     stable_cycles_history_keys_internal()
 }
 
+pub fn stable_raw_icp_commitment_history_keys() -> BTreeSet<Principal> {
+    stable_raw_icp_commitment_history_keys_internal()
+}
+
+pub fn stable_neuron_commitment_history_keys() -> BTreeSet<u64> {
+    stable_neuron_commitment_history_keys_internal()
+}
+
 pub fn stable_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
     load_stable_commitment_history_internal(canister_id)
 }
 
 pub fn stable_cycles_history_for(canister_id: Principal) -> Vec<CyclesSample> {
     load_stable_cycles_history_internal(canister_id)
+}
+
+pub fn stable_raw_icp_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
+    load_stable_raw_icp_commitment_history_internal(canister_id)
+}
+
+pub fn stable_neuron_commitment_history_for(neuron_id: u64) -> Vec<CommitmentSample> {
+    load_stable_neuron_commitment_history_internal(neuron_id)
 }
 
 pub fn ensure_commitment_history_loaded(st: &mut State, canister_id: Principal) {
@@ -1440,6 +1817,26 @@ pub fn ensure_commitment_history_loaded(st: &mut State, canister_id: Principal) 
     let history = load_stable_commitment_history_internal(canister_id);
     if !history.is_empty() {
         st.commitment_history.insert(canister_id, history);
+    }
+}
+
+pub fn ensure_raw_icp_commitment_history_loaded(st: &mut State, canister_id: Principal) {
+    if st.raw_icp_commitment_history.contains_key(&canister_id) {
+        return;
+    }
+    let history = load_stable_raw_icp_commitment_history_internal(canister_id);
+    if !history.is_empty() {
+        st.raw_icp_commitment_history.insert(canister_id, history);
+    }
+}
+
+pub fn ensure_neuron_commitment_history_loaded(st: &mut State, neuron_id: u64) {
+    if st.neuron_commitment_history.contains_key(&neuron_id) {
+        return;
+    }
+    let history = load_stable_neuron_commitment_history_internal(neuron_id);
+    if !history.is_empty() {
+        st.neuron_commitment_history.insert(neuron_id, history);
     }
 }
 
@@ -1454,7 +1851,37 @@ pub fn ensure_cycles_history_loaded(st: &mut State, canister_id: Principal) {
 }
 
 pub fn with_root_and_registry_canister_state_mut<R>(canister_id: Principal, f: impl FnOnce(&mut State) -> R) -> R {
-    with_state_mut_sections_scoped(DIRTY_ROOT | DIRTY_REGISTRY, Some(canister_id), None, None, f)
+    with_state_mut_sections_scoped(DIRTY_ROOT | DIRTY_REGISTRY, Some(canister_id), None, None, None, None, f)
+}
+
+pub fn with_root_and_raw_icp_commitments_state_mut<R>(
+    canister_id: Principal,
+    f: impl FnOnce(&mut State) -> R,
+) -> R {
+    with_state_mut_sections_scoped(
+        DIRTY_ROOT | DIRTY_RAW_ICP_COMMITMENTS,
+        None,
+        None,
+        None,
+        Some(canister_id),
+        None,
+        f,
+    )
+}
+
+pub fn with_root_and_neuron_commitments_state_mut<R>(
+    neuron_id: u64,
+    f: impl FnOnce(&mut State) -> R,
+) -> R {
+    with_state_mut_sections_scoped(
+        DIRTY_ROOT | DIRTY_NEURON_COMMITMENTS,
+        None,
+        None,
+        None,
+        None,
+        Some(neuron_id),
+        f,
+    )
 }
 
 pub fn with_root_registry_and_commitments_canister_state_mut<R>(
@@ -1465,6 +1892,8 @@ pub fn with_root_registry_and_commitments_canister_state_mut<R>(
         DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_COMMITMENTS,
         Some(canister_id),
         Some(canister_id),
+        None,
+        None,
         None,
         f,
     )
@@ -1479,6 +1908,8 @@ pub fn with_root_registry_and_cycles_canister_state_mut<R>(
         Some(canister_id),
         None,
         Some(canister_id),
+        None,
+        None,
         f,
     )
 }
@@ -1582,6 +2013,10 @@ mod tests {
         with_commitment_entry_map(|map| map.clear_new());
         with_cycles_history_index_map(|map| map.clear_new());
         with_cycles_entry_map(|map| map.clear_new());
+        with_raw_icp_commitment_history_index_map(|map| map.clear_new());
+        with_raw_icp_commitment_entry_map(|map| map.clear_new());
+        with_neuron_commitment_history_index_map(|map| map.clear_new());
+        with_neuron_commitment_entry_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
         clear_persistence_dirty();
         STATE.with(|s| *s.borrow_mut() = None);
@@ -1702,6 +2137,47 @@ mod tests {
         })
     }
 
+    fn snapshot_raw_icp_commitment_history_map() -> BTreeMap<Principal, Vec<CommitmentSample>> {
+        with_raw_icp_commitment_history_index_map(|index_map| {
+            let mut out = BTreeMap::new();
+            for (key, ids) in index_map.iter() {
+                let canister_id = key.to_principal();
+                let mut samples = Vec::new();
+                for tx_id in ids.0 {
+                    if let Some(sample) = with_raw_icp_commitment_entry_map(|entry_map| {
+                        entry_map.get(&CommitmentEntryKey::new(canister_id, tx_id))
+                    }) {
+                        samples.push(sample);
+                    }
+                }
+                if !samples.is_empty() {
+                    out.insert(canister_id, samples);
+                }
+            }
+            out
+        })
+    }
+
+    fn snapshot_neuron_commitment_history_map() -> BTreeMap<u64, Vec<CommitmentSample>> {
+        with_neuron_commitment_history_index_map(|index_map| {
+            let mut out = BTreeMap::new();
+            for (neuron_id, ids) in index_map.iter() {
+                let mut samples = Vec::new();
+                for tx_id in ids.0 {
+                    if let Some(sample) = with_neuron_commitment_entry_map(|entry_map| {
+                        entry_map.get(&NeuronCommitmentEntryKey::new(neuron_id, tx_id))
+                    }) {
+                        samples.push(sample);
+                    }
+                }
+                if !samples.is_empty() {
+                    out.insert(neuron_id, samples);
+                }
+            }
+            out
+        })
+    }
+
     #[test]
     fn stable_restore_is_none_before_first_persist() {
         reset_test_storage();
@@ -1766,13 +2242,23 @@ mod tests {
         st.registered_canister_summaries_total_desc_index = Some(vec![canister_id]);
         set_state(st);
 
+        let root_snapshot = with_root_stable_cell(|cell| cell.get().clone());
+        match root_snapshot {
+            VersionedStableState::Current(root) => {
+                assert!(root.raw_icp_commitment_history.is_empty());
+                assert!(root.neuron_commitment_history.is_empty());
+            }
+            VersionedStableState::Uninitialized => panic!("expected persisted historian root state"),
+        }
         let restored = restore_state_from_stable().expect("expected persisted historian state");
         assert_eq!(restored.distinct_canisters.len(), 1);
         assert!(restored.commitment_history.get(&canister_id).is_none());
         assert!(restored.cycles_history.get(&canister_id).is_none());
-        assert_eq!(restored.raw_icp_commitment_history.get(&canister_id).unwrap()[0].tx_id, 8);
-        assert_eq!(restored.neuron_commitment_history.get(&42).unwrap()[0].tx_id, 9);
+        assert!(restored.raw_icp_commitment_history.get(&canister_id).is_none());
+        assert!(restored.neuron_commitment_history.get(&42).is_none());
         assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 7);
+        assert_eq!(stable_raw_icp_commitment_history_for(canister_id)[0].tx_id, 8);
+        assert_eq!(stable_neuron_commitment_history_for(42)[0].tx_id, 9);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 123_456);
         assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);
         assert!(restored.registered_canister_summaries_cache.is_none());
@@ -1845,6 +2331,18 @@ mod tests {
             amount_e8s: 500,
             counts_toward_faucet: true,
         }]);
+        st.raw_icp_commitment_history.insert(canister_id, vec![CommitmentSample {
+            tx_id: 32,
+            timestamp_nanos: Some(315),
+            amount_e8s: 550,
+            counts_toward_faucet: true,
+        }]);
+        st.neuron_commitment_history.insert(77, vec![CommitmentSample {
+            tx_id: 33,
+            timestamp_nanos: Some(318),
+            amount_e8s: 575,
+            counts_toward_faucet: true,
+        }]);
         st.cycles_history.insert(canister_id, vec![CyclesSample {
             timestamp_nanos: 320,
             cycles: 600,
@@ -1861,21 +2359,30 @@ mod tests {
         });
         set_state(st);
 
+        let restored = restore_state_from_stable().expect("expected restored historian state before root-only mutation");
+        assert!(restored.raw_icp_commitment_history.is_empty());
+        assert!(restored.neuron_commitment_history.is_empty());
+        set_state_root_only(restored);
+
         let sources_before = snapshot_sources_map();
         let meta_before = snapshot_meta_map();
         let commitments_before = snapshot_commitment_history_map();
         let cycles_before = snapshot_cycles_history_map();
+        let raw_icp_commitments_before = snapshot_raw_icp_commitment_history_map();
+        let neuron_commitments_before = snapshot_neuron_commitment_history_map();
 
         with_root_state_mut(|st| {
             st.main_lock_state_ts = Some(1234);
         });
 
-        let restored = restore_state_from_stable().expect("expected restored historian state after root-only mutation");
-        assert_eq!(restored.main_lock_state_ts, Some(1234));
+        let restored_after = restore_state_from_stable().expect("expected restored historian state after root-only mutation");
+        assert_eq!(restored_after.main_lock_state_ts, Some(1234));
         assert_eq!(snapshot_sources_map(), sources_before);
         assert_eq!(snapshot_meta_map(), meta_before);
         assert_eq!(snapshot_commitment_history_map(), commitments_before);
         assert_eq!(snapshot_cycles_history_map(), cycles_before);
+        assert_eq!(snapshot_raw_icp_commitment_history_map(), raw_icp_commitments_before);
+        assert_eq!(snapshot_neuron_commitment_history_map(), neuron_commitments_before);
     }
 
     #[test]
@@ -1902,6 +2409,35 @@ mod tests {
         assert!(restored.cycles_history.is_empty());
         assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 91);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 222);
+    }
+
+    #[test]
+    fn restore_migrates_legacy_root_raw_and_neuron_histories_to_stable_maps() {
+        reset_test_storage();
+        let canister_id = principal(&[41]);
+        let mut root = build_root_snapshot(&State::new(sample_config(), 10_500));
+        root.raw_icp_commitment_history.insert(canister_id, vec![CommitmentSample {
+            tx_id: 101,
+            timestamp_nanos: Some(1_010),
+            amount_e8s: 333,
+            counts_toward_faucet: true,
+        }]);
+        root.neuron_commitment_history.insert(7, vec![CommitmentSample {
+            tx_id: 102,
+            timestamp_nanos: Some(1_020),
+            amount_e8s: 444,
+            counts_toward_faucet: true,
+        }]);
+        with_root_stable_cell(|cell| {
+            cell.set(VersionedStableState::Current(root))
+                .expect("failed to seed legacy historian root state");
+        });
+
+        let restored = restore_state_from_stable().expect("expected restored historian state");
+        assert!(restored.raw_icp_commitment_history.is_empty());
+        assert!(restored.neuron_commitment_history.is_empty());
+        assert_eq!(stable_raw_icp_commitment_history_for(canister_id)[0].tx_id, 101);
+        assert_eq!(stable_neuron_commitment_history_for(7)[0].tx_id, 102);
     }
 
     #[test]

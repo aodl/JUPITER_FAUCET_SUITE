@@ -637,6 +637,20 @@ fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec<CyclesSamp
         .unwrap_or_else(|| state::stable_cycles_history_for(canister_id))
 }
 
+fn raw_icp_commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
+    st.raw_icp_commitment_history
+        .get(&canister_id)
+        .cloned()
+        .unwrap_or_else(|| state::stable_raw_icp_commitment_history_for(canister_id))
+}
+
+fn neuron_commitment_history_snapshot(st: &State, neuron_id: u64) -> Vec<CommitmentSample> {
+    st.neuron_commitment_history
+        .get(&neuron_id)
+        .cloned()
+        .unwrap_or_else(|| state::stable_neuron_commitment_history_for(neuron_id))
+}
+
 fn fallback_qualifying_commitment_count(st: &State) -> u64 {
     let cycles_top_up_count = commitment_history_canister_ids(st)
         .into_iter()
@@ -645,14 +659,22 @@ fn fallback_qualifying_commitment_count(st: &State) -> u64 {
         .count() as u64;
     let raw_icp_count = st
         .raw_icp_commitment_history
-        .values()
-        .flat_map(|history| history.iter())
+        .keys()
+        .copied()
+        .chain(state::stable_raw_icp_commitment_history_keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .flat_map(|canister_id| raw_icp_commitment_history_snapshot(st, canister_id).into_iter())
         .filter(|item| item.counts_toward_faucet)
         .count() as u64;
     let neuron_count = st
         .neuron_commitment_history
-        .values()
-        .flat_map(|history| history.iter())
+        .keys()
+        .copied()
+        .chain(state::stable_neuron_commitment_history_keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .flat_map(|neuron_id| neuron_commitment_history_snapshot(st, neuron_id).into_iter())
         .filter(|item| item.counts_toward_faucet)
         .count() as u64;
     cycles_top_up_count

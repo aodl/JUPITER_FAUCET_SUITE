@@ -603,6 +603,7 @@ fn apply_recent_raw_or_neuron_commitment(
     match commitment.target {
         crate::logic::IndexedCommitmentTarget::RawIcp { canister_id, memo_text } => {
             if commitment.counts_toward_faucet {
+                crate::state::ensure_raw_icp_commitment_history_loaded(st, canister_id);
                 let history = st.raw_icp_commitment_history.entry(canister_id).or_default();
                 let inserted = logic::push_commitment(
                     history,
@@ -649,6 +650,7 @@ fn apply_recent_raw_or_neuron_commitment(
         }
         crate::logic::IndexedCommitmentTarget::NeuronStake { neuron_id, memo_text } => {
             if commitment.counts_toward_faucet {
+                crate::state::ensure_neuron_commitment_history_loaded(st, neuron_id);
                 let history = st.neuron_commitment_history.entry(neuron_id).or_default();
                 let inserted = logic::push_commitment(
                     history,
@@ -771,14 +773,19 @@ fn apply_indexed_commitment_tx(
                             );
                         });
                     }
+                    crate::logic::IndexedCommitmentTarget::RawIcp { canister_id, .. } if commitment.counts_toward_faucet => {
+                        state::with_root_and_raw_icp_commitments_state_mut(canister_id, |st| {
+                            apply_recent_raw_or_neuron_commitment(st, commitment, MAX_RECENT_QUALIFYING_COMMITMENTS);
+                        });
+                    }
+                    crate::logic::IndexedCommitmentTarget::NeuronStake { neuron_id, .. } if commitment.counts_toward_faucet => {
+                        state::with_root_and_neuron_commitments_state_mut(neuron_id, |st| {
+                            apply_recent_raw_or_neuron_commitment(st, commitment, MAX_RECENT_QUALIFYING_COMMITMENTS);
+                        });
+                    }
                     crate::logic::IndexedCommitmentTarget::RawIcp { .. } | crate::logic::IndexedCommitmentTarget::NeuronStake { .. } => {
                         state::with_root_state_mut(|st| {
-                            let max_entries = if commitment.counts_toward_faucet {
-                                MAX_RECENT_QUALIFYING_COMMITMENTS
-                            } else {
-                                MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS
-                            };
-                            apply_recent_raw_or_neuron_commitment(st, commitment, max_entries);
+                            apply_recent_raw_or_neuron_commitment(st, commitment, MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS);
                         });
                     }
                 }
@@ -2304,6 +2311,20 @@ mod tests {
             assert_eq!(st.qualifying_commitment_count, Some(2));
             assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
             assert_eq!(st.recent_neuron_commitments.as_ref().unwrap().len(), 1);
+            assert_eq!(st.raw_icp_commitment_history.get(&raw_canister).unwrap().len(), 1);
+            assert_eq!(st.neuron_commitment_history.get(&42).unwrap().len(), 1);
+        });
+
+        let restored = state::restore_state_from_stable().expect("expected stable root state");
+        assert!(restored.raw_icp_commitment_history.is_empty());
+        assert!(restored.neuron_commitment_history.is_empty());
+        state::set_state_root_only(restored);
+
+        apply_indexed_commitment_tx(&raw_tx, &staking_id, 100, 202);
+        apply_indexed_commitment_tx(&neuron_tx, &staking_id, 100, 202);
+
+        state::with_state(|st| {
+            assert_eq!(st.qualifying_commitment_count, Some(2));
             assert_eq!(st.raw_icp_commitment_history.get(&raw_canister).unwrap().len(), 1);
             assert_eq!(st.neuron_commitment_history.get(&42).unwrap().len(), 1);
         });
