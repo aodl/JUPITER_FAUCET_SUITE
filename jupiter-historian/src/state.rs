@@ -299,6 +299,10 @@ pub struct StableRootState {
     #[serde(default)]
     pub qualifying_commitment_count: Option<u64>,
     #[serde(default)]
+    pub raw_icp_commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
+    #[serde(default)]
+    pub neuron_commitment_history: BTreeMap<u64, Vec<CommitmentSample>>,
+    #[serde(default)]
     pub total_output_e8s: Option<u64>,
     #[serde(default)]
     pub total_rewards_e8s: Option<u64>,
@@ -563,6 +567,10 @@ pub struct State {
     pub main_lock_state_ts: Option<u64>,
     pub last_main_run_ts: u64,
     pub qualifying_commitment_count: Option<u64>,
+    #[serde(default)]
+    pub raw_icp_commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
+    #[serde(default)]
+    pub neuron_commitment_history: BTreeMap<u64, Vec<CommitmentSample>>,
     pub total_output_e8s: Option<u64>,
     pub total_rewards_e8s: Option<u64>,
     pub icp_burned_e8s: Option<u64>,
@@ -614,6 +622,8 @@ impl State {
             main_lock_state_ts: Some(0),
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
             qualifying_commitment_count: Some(0),
+            raw_icp_commitment_history: BTreeMap::new(),
+            neuron_commitment_history: BTreeMap::new(),
             total_output_e8s: Some(0),
             total_rewards_e8s: Some(0),
             icp_burned_e8s: Some(0),
@@ -1120,6 +1130,8 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         main_lock_state_ts: st.main_lock_state_ts,
         last_main_run_ts: st.last_main_run_ts,
         qualifying_commitment_count: st.qualifying_commitment_count,
+        raw_icp_commitment_history: st.raw_icp_commitment_history.clone(),
+        neuron_commitment_history: st.neuron_commitment_history.clone(),
         total_output_e8s: st.total_output_e8s,
         total_rewards_e8s: st.total_rewards_e8s,
         icp_burned_e8s: st.icp_burned_e8s,
@@ -1234,6 +1246,8 @@ fn restore_state_current(root: StableRootState) -> State {
         main_lock_state_ts: root.main_lock_state_ts,
         last_main_run_ts: root.last_main_run_ts,
         qualifying_commitment_count: root.qualifying_commitment_count,
+        raw_icp_commitment_history: root.raw_icp_commitment_history,
+        neuron_commitment_history: root.neuron_commitment_history,
         total_output_e8s: root.total_output_e8s.or(Some(0)),
         total_rewards_e8s: root.total_rewards_e8s.or(Some(0)),
         icp_burned_e8s: root.icp_burned_e8s,
@@ -1709,6 +1723,18 @@ mod tests {
             amount_e8s: 100_000_000,
             counts_toward_faucet: true,
         }]);
+        st.raw_icp_commitment_history.insert(canister_id, vec![CommitmentSample {
+            tx_id: 8,
+            timestamp_nanos: Some(78),
+            amount_e8s: 200_000_000,
+            counts_toward_faucet: true,
+        }]);
+        st.neuron_commitment_history.insert(42, vec![CommitmentSample {
+            tx_id: 9,
+            timestamp_nanos: Some(79),
+            amount_e8s: 300_000_000,
+            counts_toward_faucet: true,
+        }]);
         st.cycles_history.insert(canister_id, vec![CyclesSample {
             timestamp_nanos: 88,
             cycles: 123_456,
@@ -1744,6 +1770,8 @@ mod tests {
         assert_eq!(restored.distinct_canisters.len(), 1);
         assert!(restored.commitment_history.get(&canister_id).is_none());
         assert!(restored.cycles_history.get(&canister_id).is_none());
+        assert_eq!(restored.raw_icp_commitment_history.get(&canister_id).unwrap()[0].tx_id, 8);
+        assert_eq!(restored.neuron_commitment_history.get(&42).unwrap()[0].tx_id, 9);
         assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 7);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 123_456);
         assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);

@@ -201,7 +201,7 @@ For ICRC-1 transfers, the faucet encodes the CMC top-up memo as an 8-byte **litt
 
 For `canister.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister principal's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
 
-For neuron ID directives, the faucet reads the public NNS neuron, transfers ICP to NNS Governance with the neuron's staking subaccount, and then best-effort refreshes the neuron. It does not call CMC `notify_top_up`.
+For neuron ID directives, the faucet reads the public NNS neuron, transfers ICP to NNS Governance with the neuron's staking subaccount, and then best-effort refreshes the neuron. It does not call CMC `notify_top_up`. A refresh failure does not roll back an accepted ledger transfer, so operators may need to manually refresh the declared neuron if the NNS refresh path is temporarily unavailable during payout processing.
 
 ### Outgoing ledger transfer memo
 
@@ -310,6 +310,8 @@ When blackhole mode is armed, time-based controller reconciliation follows the s
 - healthy: `<= 7 days` since last successful top-up notification → blackhole + self
 - middle window: `> 7 days` and `<= 14 days` → no controller change
 - broken: `> 14 days` → blackhole + rescue controller + self
+
+Only successful CMC `notify_top_up` completions update this health timestamp. Raw ICP routes and neuron staking-account transfers are successful value transfers, but they do not prove the cycles top-up notification path is healthy.
 
 There is also a bootstrap rescue condition:
 

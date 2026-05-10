@@ -435,15 +435,19 @@ async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> Not
         | Err(crate::clients::ClientError::Convert(_)) => NotifyAttemptOutcome::Retryable,
     }
 }
-fn record_successful_notification(now_secs: u64, pending: &PendingNotification) {
+fn record_completed_transfer(now_secs: u64, pending: &PendingNotification) {
     state::with_state_mut(|st| {
-        st.last_successful_transfer_ts = Some(now_secs);
+        if pending.kind.requires_cmc_notify() {
+            st.last_successful_transfer_ts = Some(now_secs);
+        }
         if let Some(job) = st.active_payout_job.as_mut() {
             logic::apply_notified_transfer(job, pending);
             job.pending_transfer = None;
         }
     });
-    increment_cmc_successes(pending);
+    if pending.kind.requires_cmc_notify() {
+        increment_cmc_successes(pending);
+    }
 }
 async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
     let Some(job) = state::with_state_mut(|st| st.active_payout_job.take()) else { return; };
@@ -696,14 +700,14 @@ async fn drive_pending_transfer(
                 let _ = governance.claim_or_refresh_neuron(neuron_id).await;
             }
         }
-        record_successful_notification(now_secs, &accepted);
+        record_completed_transfer(now_secs, &accepted);
         return true;
     }
 
     let first_notify = notify_once(cmc, &accepted).await;
     match first_notify {
         NotifyAttemptOutcome::Succeeded => {
-            record_successful_notification(now_secs, &accepted);
+            record_completed_transfer(now_secs, &accepted);
             true
         }
         NotifyAttemptOutcome::Retryable | NotifyAttemptOutcome::Terminal => {
@@ -713,7 +717,7 @@ async fn drive_pending_transfer(
             // after the single inline retry is surfaced as ambiguous.
             match notify_once(cmc, &accepted).await {
                 NotifyAttemptOutcome::Succeeded => {
-                    record_successful_notification(now_secs, &accepted);
+                    record_completed_transfer(now_secs, &accepted);
                     true
                 }
                 NotifyAttemptOutcome::Terminal if matches!(first_notify, NotifyAttemptOutcome::Terminal) => {
@@ -2218,6 +2222,11 @@ mod tests {
         assert_eq!(summary.topped_up_count, 1);
         assert_eq!(summary.topped_up_sum_e8s, 99_990_000);
         assert_eq!(summary.remainder_to_self_e8s, 0);
+        assert_eq!(
+            state::with_state(|st| st.last_successful_transfer_ts),
+            None,
+            "raw ICP transfers do not prove the CMC notify health path"
+        );
     }
 
     #[test]

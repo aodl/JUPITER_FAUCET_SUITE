@@ -199,6 +199,22 @@ fn normalize_runtime_state(st: &mut State) {
     for canister_id in empty_histories {
         st.commitment_history.remove(&canister_id);
     }
+    for history in st.raw_icp_commitment_history.values_mut() {
+        history.retain(|item| item.counts_toward_faucet);
+        if history.len() > st.config.max_commitment_entries_per_canister as usize {
+            let excess = history.len() - st.config.max_commitment_entries_per_canister as usize;
+            history.drain(0..excess);
+        }
+    }
+    st.raw_icp_commitment_history.retain(|_, history| !history.is_empty());
+    for history in st.neuron_commitment_history.values_mut() {
+        history.retain(|item| item.counts_toward_faucet);
+        if history.len() > st.config.max_commitment_entries_per_canister as usize {
+            let excess = history.len() - st.config.max_commitment_entries_per_canister as usize;
+            history.drain(0..excess);
+        }
+    }
+    st.neuron_commitment_history.retain(|_, history| !history.is_empty());
 
     let stale_memo_only_canisters: Vec<_> = st
         .canister_sources
@@ -622,11 +638,26 @@ fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec<CyclesSamp
 }
 
 fn fallback_qualifying_commitment_count(st: &State) -> u64 {
-    commitment_history_canister_ids(st)
+    let cycles_top_up_count = commitment_history_canister_ids(st)
         .into_iter()
         .flat_map(|canister_id| commitment_history_snapshot(st, canister_id).into_iter())
         .filter(|item| item.counts_toward_faucet)
-        .count() as u64
+        .count() as u64;
+    let raw_icp_count = st
+        .raw_icp_commitment_history
+        .values()
+        .flat_map(|history| history.iter())
+        .filter(|item| item.counts_toward_faucet)
+        .count() as u64;
+    let neuron_count = st
+        .neuron_commitment_history
+        .values()
+        .flat_map(|history| history.iter())
+        .filter(|item| item.counts_toward_faucet)
+        .count() as u64;
+    cycles_top_up_count
+        .saturating_add(raw_icp_count)
+        .saturating_add(neuron_count)
 }
 
 fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<RecentCommitment> {
@@ -1521,6 +1552,8 @@ fn debug_reset_derived_state() {
         st.main_lock_state_ts = Some(0);
         st.last_main_run_ts = 0;
         st.qualifying_commitment_count = Some(0);
+        st.raw_icp_commitment_history.clear();
+        st.neuron_commitment_history.clear();
         st.total_output_e8s = Some(0);
         st.total_rewards_e8s = Some(0);
         st.recent_commitments = Some(Vec::new());
@@ -1626,6 +1659,8 @@ mod tests {
             main_lock_state_ts: Some(0),
             last_main_run_ts: 1,
             qualifying_commitment_count: None,
+            raw_icp_commitment_history: BTreeMap::new(),
+            neuron_commitment_history: BTreeMap::new(),
             total_output_e8s: None,
             total_rewards_e8s: None,
             icp_burned_e8s: None,
@@ -2354,6 +2389,51 @@ mod tests {
         initialize_derived_state_if_missing(&mut st);
         assert_eq!(st.qualifying_commitment_count, Some(2));
         assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 3);
+    }
+
+    #[test]
+    fn derived_aggregates_fallback_includes_raw_icp_and_neuron_histories() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.commitment_history.insert(
+            canister,
+            vec![CommitmentSample {
+                tx_id: 1,
+                timestamp_nanos: Some(10),
+                amount_e8s: 100,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            canister,
+            vec![CommitmentSample {
+                tx_id: 2,
+                timestamp_nanos: Some(20),
+                amount_e8s: 200,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            42,
+            vec![
+                CommitmentSample {
+                    tx_id: 3,
+                    timestamp_nanos: Some(30),
+                    amount_e8s: 300,
+                    counts_toward_faucet: true,
+                },
+                CommitmentSample {
+                    tx_id: 4,
+                    timestamp_nanos: Some(40),
+                    amount_e8s: 400,
+                    counts_toward_faucet: false,
+                },
+            ],
+        );
+
+        initialize_derived_state_if_missing(&mut st);
+
+        assert_eq!(st.qualifying_commitment_count, Some(3));
     }
 
 
