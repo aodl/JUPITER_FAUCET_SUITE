@@ -25,8 +25,9 @@ The operational canisters are intentionally small and specialized. The normal pa
 - `jupiter-faucet`
   - receives the base ICP flow from `jupiter-disburser`
   - scans a configured staking account through the ICP index canister
-  - treats eligible memos as beneficiary canister principals
-  - transfers ICP to CMC deposit subaccounts and calls `notify_top_up`
+  - evaluates each qualifying incoming transfer independently
+  - interprets the transfer's `icrc1_memo` as a payout directive
+  - routes payouts as canister cycle top-ups, raw ICP transfers, or NNS neuron stake transfers
 
 ### Observability path
 
@@ -63,11 +64,17 @@ The live value-moving path is:
 5. `jupiter-faucet` periodically snapshots:
    - its own payout-account ICP balance
    - the configured staking-account ICP balance
-6. It scans the staking-account transaction history from the beginning, evaluates each eligible incoming transfer independently, and derives the beneficiary from the memo.
-7. For each eligible commitment whose computed share is larger than the ledger fee, the faucet sends ICP to the beneficiary’s CMC deposit subaccount and then calls `notify_top_up`.
-8. The CMC converts those deposits into cycles top-ups.
+6. It scans the staking-account transaction history from the beginning and evaluates each eligible incoming transfer independently.
+7. For each qualifying commitment, the faucet parses the transfer's `icrc1_memo` as a payout directive:
+   - plain principal text declares a canister cycle top-up target
+   - `principal.memo` declares a raw ICP transfer target and outgoing ledger memo
+   - decimal neuron ID text declares an NNS neuron stake transfer target; `neuron_id.memo` also sets the outgoing ledger memo
+8. If the computed payout share is larger than the ledger fee, the faucet routes the payout:
+   - canister top-up directives send ICP to the target canister's CMC deposit subaccount and call `notify_top_up`
+   - raw ICP directives send ICP directly to the declared principal's default account
+   - neuron directives resolve the public neuron's staking subaccount, send ICP to that account, and then best-effort call `claim_or_refresh_neuron`
 
-The faucet top-up path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. Deterministic failures, including typed terminal CMC `notify_top_up` rejections, are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
+The faucet payout path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. CMC `notify_top_up` is used only for canister top-up directives; raw ICP and neuron-stake directives are plain ledger transfers, with neuron transfers followed by a best-effort NNS `claim_or_refresh_neuron` call. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
 For the exact split math, memo formats, retry semantics, and rescue logic, the component READMEs are the canonical source:
 
