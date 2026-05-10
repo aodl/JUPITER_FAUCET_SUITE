@@ -168,9 +168,6 @@ fn init(args: InitArgs) {
 
 pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) -> PostUpgradeActions {
     let mut actions = PostUpgradeActions::default();
-    if st.config.governance_canister_id.is_none() {
-        st.config.governance_canister_id = Some(mainnet_governance_id());
-    }
     if let Some(args) = args {
         if let Some(blackhole_controller) = args.blackhole_controller {
             st.config.blackhole_controller = Some(blackhole_controller);
@@ -645,18 +642,6 @@ mod tests {
             }),
             now_secs,
         );
-        assert_eq!(actions, PostUpgradeActions::default());
-    }
-
-    #[test]
-    fn apply_upgrade_args_backfills_governance_canister_for_legacy_state() {
-        let now_secs = 567;
-        let mut st = State::new(sample_config(), now_secs);
-        st.config.governance_canister_id = None;
-
-        let actions = apply_upgrade_args_to_state(&mut st, None, now_secs);
-
-        assert_eq!(st.config.governance_canister_id, Some(mainnet_governance_id()));
         assert_eq!(actions, PostUpgradeActions::default());
     }
 

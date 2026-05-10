@@ -299,10 +299,6 @@ pub struct StableRootState {
     #[serde(default)]
     pub qualifying_commitment_count: Option<u64>,
     #[serde(default)]
-    pub raw_icp_commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
-    #[serde(default)]
-    pub neuron_commitment_history: BTreeMap<u64, Vec<CommitmentSample>>,
-    #[serde(default)]
     pub total_output_e8s: Option<u64>,
     #[serde(default)]
     pub total_rewards_e8s: Option<u64>,
@@ -1449,8 +1445,6 @@ fn build_root_snapshot(st: &State) -> StableRootState {
         main_lock_state_ts: st.main_lock_state_ts,
         last_main_run_ts: st.last_main_run_ts,
         qualifying_commitment_count: st.qualifying_commitment_count,
-        raw_icp_commitment_history: BTreeMap::new(),
-        neuron_commitment_history: BTreeMap::new(),
         total_output_e8s: st.total_output_e8s,
         total_rewards_e8s: st.total_rewards_e8s,
         icp_burned_e8s: st.icp_burned_e8s,
@@ -1533,14 +1527,6 @@ pub fn init_stable_storage() {
 }
 
 fn restore_state_current(root: StableRootState) -> State {
-    let legacy_raw_icp_commitment_history = root.raw_icp_commitment_history.clone();
-    if !legacy_raw_icp_commitment_history.is_empty() {
-        sync_all_raw_icp_commitment_history_maps(&legacy_raw_icp_commitment_history);
-    }
-    let legacy_neuron_commitment_history = root.neuron_commitment_history.clone();
-    if !legacy_neuron_commitment_history.is_empty() {
-        sync_all_neuron_commitment_history_maps(&legacy_neuron_commitment_history);
-    }
     let canister_sources = with_canister_sources_map(|map| {
         let mut out = BTreeMap::new();
         for (key, value) in map.iter() {
@@ -2199,6 +2185,135 @@ mod tests {
     }
 
     #[test]
+    fn cleaned_historian_root_decodes_current_root_with_removed_legacy_fields() {
+        #[derive(CandidType)]
+        struct RootWithRemovedLegacyHistoryFields {
+            config: StableConfig,
+            last_indexed_staking_tx_id: Option<u64>,
+            oldest_indexed_staking_tx_id: Option<u64>,
+            staking_index_descending: Option<bool>,
+            staking_backfill_complete: Option<bool>,
+            last_indexed_output_tx_id: Option<u64>,
+            oldest_indexed_output_tx_id: Option<u64>,
+            output_route_index_descending: Option<bool>,
+            output_route_backfill_complete: Option<bool>,
+            last_indexed_rewards_tx_id: Option<u64>,
+            oldest_indexed_rewards_tx_id: Option<u64>,
+            rewards_route_index_descending: Option<bool>,
+            rewards_route_backfill_complete: Option<bool>,
+            last_sns_discovery_ts: u64,
+            last_completed_cycles_sweep_ts: u64,
+            last_completed_route_sweep_ts: Option<u64>,
+            active_cycles_sweep: Option<ActiveCyclesSweep>,
+            initial_cycles_probe_queue: Vec<Principal>,
+            active_route_sweep: Option<ActiveRouteSweep>,
+            active_sns_discovery: Option<ActiveSnsDiscovery>,
+            main_lock_state_ts: Option<u64>,
+            last_main_run_ts: u64,
+            qualifying_commitment_count: Option<u64>,
+            raw_icp_commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
+            neuron_commitment_history: BTreeMap<u64, Vec<CommitmentSample>>,
+            total_output_e8s: Option<u64>,
+            total_rewards_e8s: Option<u64>,
+            icp_burned_e8s: Option<u64>,
+            recent_commitments: Option<Vec<RecentCommitment>>,
+            recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
+            recent_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
+            recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
+            recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
+            recent_burns: Option<Vec<RecentBurn>>,
+            last_index_run_ts: Option<u64>,
+            commitment_index_fault: Option<CommitmentIndexFault>,
+            icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+            last_icp_xdr_rate_attempt_ts: Option<u64>,
+            last_icp_xdr_rate_error: Option<String>,
+        }
+
+        #[derive(CandidType)]
+        enum VersionedRootWithRemovedLegacyHistoryFields {
+            Current(RootWithRemovedLegacyHistoryFields),
+        }
+
+        let mut st = State::new(sample_config(), 12_345);
+        st.last_indexed_staking_tx_id = Some(99);
+        st.last_sns_discovery_ts = 88;
+        st.last_main_run_ts = 12_345;
+        st.qualifying_commitment_count = Some(77);
+        let root = build_root_snapshot(&st);
+        let old_root = RootWithRemovedLegacyHistoryFields {
+            config: root.config,
+            last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
+            oldest_indexed_staking_tx_id: root.oldest_indexed_staking_tx_id,
+            staking_index_descending: root.staking_index_descending,
+            staking_backfill_complete: root.staking_backfill_complete,
+            last_indexed_output_tx_id: root.last_indexed_output_tx_id,
+            oldest_indexed_output_tx_id: root.oldest_indexed_output_tx_id,
+            output_route_index_descending: root.output_route_index_descending,
+            output_route_backfill_complete: root.output_route_backfill_complete,
+            last_indexed_rewards_tx_id: root.last_indexed_rewards_tx_id,
+            oldest_indexed_rewards_tx_id: root.oldest_indexed_rewards_tx_id,
+            rewards_route_index_descending: root.rewards_route_index_descending,
+            rewards_route_backfill_complete: root.rewards_route_backfill_complete,
+            last_sns_discovery_ts: root.last_sns_discovery_ts,
+            last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
+            last_completed_route_sweep_ts: root.last_completed_route_sweep_ts,
+            active_cycles_sweep: root.active_cycles_sweep,
+            initial_cycles_probe_queue: root.initial_cycles_probe_queue,
+            active_route_sweep: root.active_route_sweep,
+            active_sns_discovery: root.active_sns_discovery,
+            main_lock_state_ts: root.main_lock_state_ts,
+            last_main_run_ts: root.last_main_run_ts,
+            qualifying_commitment_count: root.qualifying_commitment_count,
+            raw_icp_commitment_history: BTreeMap::from([(
+                principal(&[90]),
+                vec![CommitmentSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(10),
+                    amount_e8s: 100,
+                    counts_toward_faucet: true,
+                }],
+            )]),
+            neuron_commitment_history: BTreeMap::from([(
+                123,
+                vec![CommitmentSample {
+                    tx_id: 2,
+                    timestamp_nanos: Some(20),
+                    amount_e8s: 200,
+                    counts_toward_faucet: true,
+                }],
+            )]),
+            total_output_e8s: root.total_output_e8s,
+            total_rewards_e8s: root.total_rewards_e8s,
+            icp_burned_e8s: root.icp_burned_e8s,
+            recent_commitments: root.recent_commitments,
+            recent_under_threshold_commitments: root.recent_under_threshold_commitments,
+            recent_neuron_commitments: root.recent_neuron_commitments,
+            recent_under_threshold_neuron_commitments: root.recent_under_threshold_neuron_commitments,
+            recent_invalid_commitments: root.recent_invalid_commitments,
+            recent_burns: root.recent_burns,
+            last_index_run_ts: root.last_index_run_ts,
+            commitment_index_fault: root.commitment_index_fault,
+            icp_xdr_rate: root.icp_xdr_rate,
+            last_icp_xdr_rate_attempt_ts: root.last_icp_xdr_rate_attempt_ts,
+            last_icp_xdr_rate_error: root.last_icp_xdr_rate_error,
+        };
+        let bytes = candid::encode_one(VersionedRootWithRemovedLegacyHistoryFields::Current(old_root))
+            .expect("failed to encode root with removed legacy fields");
+        let decoded: VersionedStableState =
+            candid::decode_one(&bytes).expect("cleaned historian root should decode extra legacy fields");
+
+        match decoded {
+            VersionedStableState::Current(root) => {
+                assert_eq!(root.last_indexed_staking_tx_id, Some(99));
+                assert_eq!(root.last_sns_discovery_ts, 88);
+                assert_eq!(root.last_main_run_ts, 12_345);
+                assert_eq!(root.qualifying_commitment_count, Some(77));
+            }
+            VersionedStableState::Uninitialized => panic!("expected decoded current root"),
+        }
+    }
+
+    #[test]
     fn stable_restore_is_none_before_first_persist() {
         reset_test_storage();
         assert!(restore_state_from_stable().is_none());
@@ -2264,10 +2379,7 @@ mod tests {
 
         let root_snapshot = with_root_stable_cell(|cell| cell.get().clone());
         match root_snapshot {
-            VersionedStableState::Current(root) => {
-                assert!(root.raw_icp_commitment_history.is_empty());
-                assert!(root.neuron_commitment_history.is_empty());
-            }
+            VersionedStableState::Current(_) => {}
             VersionedStableState::Uninitialized => panic!("expected persisted historian root state"),
         }
         let restored = restore_state_from_stable().expect("expected persisted historian state");
@@ -2628,35 +2740,6 @@ mod tests {
         assert!(restored.cycles_history.is_empty());
         assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 91);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 222);
-    }
-
-    #[test]
-    fn restore_migrates_legacy_root_raw_and_neuron_histories_to_stable_maps() {
-        reset_test_storage();
-        let canister_id = principal(&[41]);
-        let mut root = build_root_snapshot(&State::new(sample_config(), 10_500));
-        root.raw_icp_commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 101,
-            timestamp_nanos: Some(1_010),
-            amount_e8s: 333,
-            counts_toward_faucet: true,
-        }]);
-        root.neuron_commitment_history.insert(7, vec![CommitmentSample {
-            tx_id: 102,
-            timestamp_nanos: Some(1_020),
-            amount_e8s: 444,
-            counts_toward_faucet: true,
-        }]);
-        with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::Current(root))
-                .expect("failed to seed legacy historian root state");
-        });
-
-        let restored = restore_state_from_stable().expect("expected restored historian state");
-        assert!(restored.raw_icp_commitment_history.is_empty());
-        assert!(restored.neuron_commitment_history.is_empty());
-        assert_eq!(stable_raw_icp_commitment_history_for(canister_id)[0].tx_id, 101);
-        assert_eq!(stable_neuron_commitment_history_for(7)[0].tx_id, 102);
     }
 
     #[test]
