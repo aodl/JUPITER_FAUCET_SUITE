@@ -392,8 +392,12 @@ pub async fn main_tick(force: bool) {
     };
     if let Err(err) = result {
         log_error(&format!("historian main tick failed: {err}"));
+        guard.finish(now_secs);
+        return;
     }
     guard.finish(now_secs);
+    state::persist_dirty_state();
+    state::clear_loaded_history_caches_after_flush();
 }
 
 async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {

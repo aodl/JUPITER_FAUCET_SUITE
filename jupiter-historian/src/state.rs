@@ -1778,6 +1778,26 @@ pub fn with_root_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections(DIRTY_ROOT, f)
 }
 
+pub fn clear_loaded_history_caches_after_flush() {
+    let batch_depth = PERSISTENCE_BATCH_DEPTH.with(|depth| depth.get());
+    assert_eq!(
+        batch_depth, 0,
+        "cannot clear loaded history caches during persistence batch"
+    );
+    let dirty_sections = PERSISTENCE_DIRTY_SECTIONS.with(|dirty| dirty.get());
+    assert_eq!(
+        dirty_sections, 0,
+        "cannot clear loaded history caches while persistence sections are dirty"
+    );
+
+    with_state_mut_sections(DIRTY_ROOT, |st| {
+        st.commitment_history.clear();
+        st.cycles_history.clear();
+        st.raw_icp_commitment_history.clear();
+        st.neuron_commitment_history.clear();
+    });
+}
+
 pub fn stable_commitment_history_keys() -> BTreeSet<Principal> {
     stable_commitment_history_keys_internal()
 }
@@ -2383,6 +2403,205 @@ mod tests {
         assert_eq!(snapshot_cycles_history_map(), cycles_before);
         assert_eq!(snapshot_raw_icp_commitment_history_map(), raw_icp_commitments_before);
         assert_eq!(snapshot_neuron_commitment_history_map(), neuron_commitments_before);
+    }
+
+    #[test]
+    fn clear_loaded_history_caches_after_flush_preserves_stable_histories() {
+        reset_test_storage();
+        let canister_id = principal(&[13]);
+        let raw_canister_id = principal(&[14]);
+        let neuron_id = 91;
+        let mut st = State::new(sample_config(), 9_100);
+        st.commitment_history.insert(canister_id, vec![CommitmentSample {
+            tx_id: 41,
+            timestamp_nanos: Some(410),
+            amount_e8s: 1_000,
+            counts_toward_faucet: true,
+        }]);
+        st.cycles_history.insert(canister_id, vec![CyclesSample {
+            timestamp_nanos: 420,
+            cycles: 2_000,
+            source: CyclesSampleSource::BlackholeStatus,
+        }]);
+        st.raw_icp_commitment_history.insert(raw_canister_id, vec![CommitmentSample {
+            tx_id: 43,
+            timestamp_nanos: Some(430),
+            amount_e8s: 3_000,
+            counts_toward_faucet: true,
+        }]);
+        st.neuron_commitment_history.insert(neuron_id, vec![CommitmentSample {
+            tx_id: 44,
+            timestamp_nanos: Some(440),
+            amount_e8s: 4_000,
+            counts_toward_faucet: false,
+        }]);
+        set_state(st);
+
+        clear_loaded_history_caches_after_flush();
+
+        with_state(|st| {
+            assert!(st.commitment_history.is_empty());
+            assert!(st.cycles_history.is_empty());
+            assert!(st.raw_icp_commitment_history.is_empty());
+            assert!(st.neuron_commitment_history.is_empty());
+        });
+        assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 41);
+        assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 2_000);
+        assert_eq!(stable_raw_icp_commitment_history_for(raw_canister_id)[0].tx_id, 43);
+        assert_eq!(stable_neuron_commitment_history_for(neuron_id)[0].tx_id, 44);
+    }
+
+    #[test]
+    fn clear_loaded_history_caches_then_append_preserves_existing_stable_entries() {
+        reset_test_storage();
+        let canister_id = principal(&[15]);
+        let raw_canister_id = principal(&[16]);
+        let neuron_id = 92;
+        let mut st = State::new(sample_config(), 9_200);
+        st.commitment_history.insert(canister_id, vec![CommitmentSample {
+            tx_id: 51,
+            timestamp_nanos: Some(510),
+            amount_e8s: 1_100,
+            counts_toward_faucet: true,
+        }]);
+        st.cycles_history.insert(canister_id, vec![CyclesSample {
+            timestamp_nanos: 520,
+            cycles: 2_100,
+            source: CyclesSampleSource::SelfCanister,
+        }]);
+        st.raw_icp_commitment_history.insert(raw_canister_id, vec![CommitmentSample {
+            tx_id: 53,
+            timestamp_nanos: Some(530),
+            amount_e8s: 3_100,
+            counts_toward_faucet: true,
+        }]);
+        st.neuron_commitment_history.insert(neuron_id, vec![CommitmentSample {
+            tx_id: 54,
+            timestamp_nanos: Some(540),
+            amount_e8s: 4_100,
+            counts_toward_faucet: false,
+        }]);
+        set_state(st);
+        clear_loaded_history_caches_after_flush();
+
+        with_root_registry_and_commitments_canister_state_mut(canister_id, |st| {
+            ensure_commitment_history_loaded(st, canister_id);
+            st.commitment_history.entry(canister_id).or_default().push(CommitmentSample {
+                tx_id: 55,
+                timestamp_nanos: Some(550),
+                amount_e8s: 1_200,
+                counts_toward_faucet: true,
+            });
+        });
+        with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+            ensure_cycles_history_loaded(st, canister_id);
+            st.cycles_history.entry(canister_id).or_default().push(CyclesSample {
+                timestamp_nanos: 560,
+                cycles: 2_200,
+                source: CyclesSampleSource::BlackholeStatus,
+            });
+        });
+        with_root_and_raw_icp_commitments_state_mut(raw_canister_id, |st| {
+            ensure_raw_icp_commitment_history_loaded(st, raw_canister_id);
+            st.raw_icp_commitment_history.entry(raw_canister_id).or_default().push(CommitmentSample {
+                tx_id: 57,
+                timestamp_nanos: Some(570),
+                amount_e8s: 3_200,
+                counts_toward_faucet: true,
+            });
+        });
+        with_root_and_neuron_commitments_state_mut(neuron_id, |st| {
+            ensure_neuron_commitment_history_loaded(st, neuron_id);
+            st.neuron_commitment_history.entry(neuron_id).or_default().push(CommitmentSample {
+                tx_id: 58,
+                timestamp_nanos: Some(580),
+                amount_e8s: 4_200,
+                counts_toward_faucet: true,
+            });
+        });
+
+        assert_eq!(
+            stable_commitment_history_for(canister_id).iter().map(|sample| sample.tx_id).collect::<Vec<_>>(),
+            vec![51, 55]
+        );
+        assert_eq!(
+            stable_cycles_history_for(canister_id)
+                .iter()
+                .map(|sample| sample.timestamp_nanos)
+                .collect::<Vec<_>>(),
+            vec![520, 560]
+        );
+        assert_eq!(
+            stable_raw_icp_commitment_history_for(raw_canister_id)
+                .iter()
+                .map(|sample| sample.tx_id)
+                .collect::<Vec<_>>(),
+            vec![53, 57]
+        );
+        assert_eq!(
+            stable_neuron_commitment_history_for(neuron_id)
+                .iter()
+                .map(|sample| sample.tx_id)
+                .collect::<Vec<_>>(),
+            vec![54, 58]
+        );
+    }
+
+    #[test]
+    fn root_only_cache_clear_does_not_rewrite_stable_history_maps() {
+        reset_test_storage();
+        let canister_id = principal(&[17]);
+        let raw_canister_id = principal(&[18]);
+        let neuron_id = 93;
+        let mut st = State::new(sample_config(), 9_300);
+        st.commitment_history.insert(canister_id, vec![CommitmentSample {
+            tx_id: 61,
+            timestamp_nanos: Some(610),
+            amount_e8s: 1_300,
+            counts_toward_faucet: true,
+        }]);
+        st.cycles_history.insert(canister_id, vec![CyclesSample {
+            timestamp_nanos: 620,
+            cycles: 2_300,
+            source: CyclesSampleSource::BlackholeStatus,
+        }]);
+        st.raw_icp_commitment_history.insert(raw_canister_id, vec![CommitmentSample {
+            tx_id: 63,
+            timestamp_nanos: Some(630),
+            amount_e8s: 3_300,
+            counts_toward_faucet: true,
+        }]);
+        st.neuron_commitment_history.insert(neuron_id, vec![CommitmentSample {
+            tx_id: 64,
+            timestamp_nanos: Some(640),
+            amount_e8s: 4_300,
+            counts_toward_faucet: false,
+        }]);
+        set_state(st);
+
+        let commitments_before = snapshot_commitment_history_map();
+        let cycles_before = snapshot_cycles_history_map();
+        let raw_icp_commitments_before = snapshot_raw_icp_commitment_history_map();
+        let neuron_commitments_before = snapshot_neuron_commitment_history_map();
+
+        clear_loaded_history_caches_after_flush();
+
+        assert_eq!(snapshot_commitment_history_map(), commitments_before);
+        assert_eq!(snapshot_cycles_history_map(), cycles_before);
+        assert_eq!(snapshot_raw_icp_commitment_history_map(), raw_icp_commitments_before);
+        assert_eq!(snapshot_neuron_commitment_history_map(), neuron_commitments_before);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "cannot clear loaded history caches while persistence sections are dirty"
+    )]
+    fn clear_loaded_history_caches_rejects_dirty_persistence_sections() {
+        reset_test_storage();
+        set_state(State::new(sample_config(), 9_400));
+        PERSISTENCE_DIRTY_SECTIONS.with(|dirty| dirty.set(DIRTY_ROOT));
+
+        clear_loaded_history_caches_after_flush();
     }
 
     #[test]
