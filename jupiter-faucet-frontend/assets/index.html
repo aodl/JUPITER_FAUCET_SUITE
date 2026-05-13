@@ -366,7 +366,8 @@
               helping projects get the most out of ICP→cycles conversion over the long run.
             </p>
 
-            <p class="nav-panel-content">
+            <p class="nav-panel-content memo-builder-safety-notice">
+              <strong>Due diligence:</strong>
               Jupiter Faucet is <a href="#source" data-panel="source" class="pane-external-link">open source</a>, reproducibly buildable, and designed to
               <a href="#governance" data-panel="governance" class="pane-external-link">decentralize control</a> over time.
               The core components will be blackholed. A worst-case scenario
@@ -550,28 +551,128 @@
                 neuron to help fund decentralized due diligence of NNS proposals, because a pre-requisite for truly unstoppable canisters is a secure and decentralized network.
               </p>
 
-              <p class="nav-panel-content">
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Rewards:</strong>
                 JUP SNS tokens will be minted to patrons who have
                 <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
                 to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
                 of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
-                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a valid canister principal).
-              </p>
-
-              <p class="nav-panel-content">
+                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a valid canister principal or neuron ID).
                 While the Jupiter Faucet SNS rewards components are still being finalised, the ICP will accumulate in the
                 <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
                 (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
               </p>
             </div>
             <div class="nav-panel-page" data-page="2">
-              <p class="nav-panel-content">More information coming soon...</p>
+              <h3 class="pane-section-title">Advanced Usage</h3>
+
+              <p class="nav-panel-content">
+                Jupiter Faucet supports three memo-directed flows. A plain canister principal keeps
+                the default perpetual cycles top-up behavior. Advanced users can instead route ICP
+                minted from maturity directly to either the default account of a declared canister or
+                the staking account of a declared public NNS neuron.
+              </p>
+
+              <p class="nav-panel-content">
+                To enable raw ICP transfer mode for a canister, add a full stop character
+                (<code>.</code>) after the declared canister principal in the ICP commitment memo.
+                To target a neuron instead, use the neuron ID in the memo. In either mode, the
+                full stop may be followed by optional text; Jupiter Faucet uses that optional text
+                as the outgoing memo on the perpetual ICP transfer.
+              </p>
+
+              <p class="nav-panel-content">
+                The full ICP commitment memo must be ASCII and at most <strong>32 characters</strong>.
+                For canister targets, hyphens in the principal may be omitted to save space. Use the
+                memo builder on the next slide to build a valid memo.
+              </p>
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Developer tip:</strong> You can adjust the <code>canister</code>/<code>neuron</code>
+                and <code>label</code> parameters in the following URL to customise the memo helper
+                form on the next slide for a smoother user experience -
+                <a class="memo-builder-tip-url pane-external-link mono" href="/#how-it-works:3?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/#how-it-works:3?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></a>
+              </p>
+            </div>
+
+            <div class="nav-panel-page" data-page="3">
+              <h3 class="pane-section-title" id="memo-builder-title">Memo Builder</h3>
+              <p class="nav-panel-content" id="memo-builder-prefill-note" hidden>
+                This memo helper simplifies constructing a memo from your chosen ID and a protocol
+                canister that facilitates a specialised top-up flow.
+              </p>
+              <p class="nav-panel-content memo-builder-safety-notice" id="memo-builder-safety-notice" hidden>
+                <strong>Health &amp; Safety Notice:</strong> Please make sure that you have identified
+                the controller of the <span id="memo-builder-safety-target-kind">protocol canister</span>
+                <a class="pane-external-link mono" id="memo-builder-canister-dashboard-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+                and that it belongs to a DAO or reputable pre-DAO dev team who prescribe this
+                <span id="memo-builder-safety-prescription-kind">canister</span>. Jupiter Faucet
+                is not responsible for lost funds resulting from user indiscretion.
+                <span id="memo-builder-url-context"></span>
+              </p>
+              <section class="memo-builder" id="advanced-memo-builder" aria-label="Jupiter Faucet memo builder">
+                <fieldset class="memo-builder-fieldset" id="memo-builder-mode-fieldset">
+                  <legend class="memo-builder-label">Target mode</legend>
+                  <label class="memo-builder-radio">
+                    <input type="radio" name="memo-builder-mode" value="rawIcp" checked />
+                    <span>Canister default account</span>
+                  </label>
+                  <label class="memo-builder-radio">
+                    <input type="radio" name="memo-builder-mode" value="neuron" />
+                    <span>Public neuron staking account</span>
+                  </label>
+                  <label class="memo-builder-radio">
+                    <input type="radio" name="memo-builder-mode" value="cycles" />
+                    <span>Cycles top-up canister</span>
+                  </label>
+                </fieldset>
+
+                <div class="memo-builder-grid">
+                  <div class="memo-builder-field" id="memo-builder-canister-fields">
+                    <label class="memo-builder-label" for="memo-builder-canister">Declared canister principal</label>
+                    <input class="memo-builder-input mono" id="memo-builder-canister" type="text" autocomplete="off" spellcheck="false" inputmode="latin" pattern="[A-Za-z2-7-]*" />
+                  </div>
+
+                  <div class="memo-builder-field" id="memo-builder-neuron-fields" hidden>
+                    <label class="memo-builder-label" for="memo-builder-neuron">Declared public neuron ID</label>
+                    <input class="memo-builder-input mono" id="memo-builder-neuron" type="text" autocomplete="off" spellcheck="false" inputmode="numeric" pattern="[0-9]*" />
+                  </div>
+
+                  <div class="memo-builder-field" id="memo-builder-optional-fields" hidden>
+                    <label class="memo-builder-label" id="memo-builder-optional-label" for="memo-builder-optional">Optional outgoing transfer memo</label>
+                    <div class="memo-builder-output-row">
+                      <div class="memo-builder-input memo-builder-editable mono" id="memo-builder-optional" contenteditable="plaintext-only" role="textbox" tabindex="0" spellcheck="false" inputmode="latin" aria-labelledby="memo-builder-optional-label"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="memo-builder-help" id="memo-builder-messages" aria-live="polite"></div>
+
+                <div class="memo-builder-field">
+                  <label class="memo-builder-label" for="memo-builder-output">Generated ICP commitment memo</label>
+                  <div class="memo-builder-output-row">
+                    <input class="memo-builder-input mono" id="memo-builder-output" type="text" readonly />
+                    <button class="pane-page-button" id="memo-builder-copy" type="button" disabled>Copy memo</button>
+                  </div>
+                </div>
+              </section>
+
+              <p class="nav-panel-content">
+                Use the generated memo as described in the
+                <a href="#how-it-works" data-page-target="0" class="pane-external-link">basic instructions</a>
+                (in place of the "declared canister ID") to make your ICP commitment and initiate
+                perpetual top-ups.
+              </p>
+              <p class="nav-panel-content">
+                For more information about this memo builder see
+                <a href="#how-it-works:2" data-page-target="2" class="pane-external-link">Advanced Usage</a>.
+              </p>
             </div>
               
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
               <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
               <button class="nav-panel-dot" type="button" data-page="2" aria-label="Advanced Usage" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="3" aria-label="Memo Builder" aria-selected="false"></button>
             </div>
 
         </article>

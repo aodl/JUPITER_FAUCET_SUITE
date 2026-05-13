@@ -480,6 +480,132 @@
   cursor: default;
 }
 
+.memo-builder {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0 8px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.memo-builder [hidden] {
+  display: none !important;
+}
+
+.memo-builder-fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.memo-builder-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.memo-builder-field {
+  display: grid;
+  gap: 6px;
+}
+
+.memo-builder-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.memo-builder-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.memo-builder-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 18px;
+  outline: none;
+}
+
+.memo-builder-input:focus {
+  border-color: rgba(255, 255, 255, 0.38);
+}
+
+.memo-builder-editable {
+  min-height: 38px;
+  overflow: hidden;
+  white-space: pre;
+  cursor: text;
+}
+
+.memo-builder-muted {
+  opacity: 0.38;
+}
+
+.memo-builder-input[readonly] {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.memo-builder-output-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.memo-builder-output-row .pane-page-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.memo-builder-help,
+.memo-builder-warning,
+.memo-builder-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.memo-builder-help {
+  opacity: 0.78;
+}
+
+.memo-builder-warning {
+  color: #ffe2a8;
+}
+
+.memo-builder-safety-notice {
+  border-left: 2px solid rgba(255, 226, 168, 0.62);
+  padding-left: 12px;
+}
+
+.memo-builder-tip-url {
+  overflow-wrap: anywhere;
+}
+
+.memo-builder-placeholder {
+  color: rgba(255, 226, 168, 0.78);
+}
+
+.memo-builder-error {
+  color: #ffd3d3;
+}
+
 
 .metric-rail-link--action {
   align-self: flex-end;

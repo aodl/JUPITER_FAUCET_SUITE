@@ -50,11 +50,10 @@
     function focusControlsForSection(sectionEl) {
       if (!sectionEl) return;
 
-      const dot =
-        sectionEl.querySelector(".nav-panel-dot.is-active") ||
-        sectionEl.querySelector(".nav-panel-dot");
-
       requestAnimationFrame(() => {
+        const dot =
+          sectionEl.querySelector(".nav-panel-dot.is-active") ||
+          sectionEl.querySelector(".nav-panel-dot");
         (dot || closeBtn)?.focus?.();
       });
     }
@@ -107,7 +106,25 @@
       });
     }
 
-    function activatePage(sectionEl, pageIndex) {
+    function activePageIndex(sectionEl) {
+      const pages = Array.from(sectionEl?.querySelectorAll?.(".nav-panel-page") || []);
+      const activeIndex = pages.findIndex((page) => page.classList.contains("is-active"));
+      return activeIndex >= 0 ? activeIndex : 0;
+    }
+
+    function panelHashFor(key, pageIndex = 0) {
+      return pageIndex > 0 ? `#${key}:${pageIndex}` : `#${key}`;
+    }
+
+    function isTextEditingTarget(target) {
+      if (!target?.closest) return false;
+      return Boolean(
+        target.closest("input, textarea, select, [contenteditable]") ||
+          target.isContentEditable
+      );
+    }
+
+    function activatePage(sectionEl, pageIndex, { syncHash = false } = {}) {
       if (!sectionEl) return;
 
       const pages = Array.from(sectionEl.querySelectorAll(".nav-panel-page"));
@@ -123,6 +140,13 @@
         d.classList.toggle("is-active", isActive);
         d.setAttribute("aria-selected", isActive ? "true" : "false");
       });
+      if (syncHash) {
+        const key = sectionEl.getAttribute("data-panel");
+        if (key) {
+          const nextHash = panelHashFor(key, clamped);
+          if (window.location.hash !== nextHash) history.pushState(null, "", nextHash);
+        }
+      }
     }
 
     backdrop.addEventListener("click", (evt) => {
@@ -134,7 +158,7 @@
         const page = Number(pageLink.getAttribute("data-page-target"));
         if (sectionEl && Number.isFinite(page)) {
           evt.preventDefault();
-          activatePage(sectionEl, page);
+          activatePage(sectionEl, page, { syncHash: true });
         }
         return;
       }
@@ -146,7 +170,7 @@
       const page = Number(dot.getAttribute("data-page"));
       if (!Number.isFinite(page)) return;
 
-      activatePage(sectionEl, page);
+      activatePage(sectionEl, page, { syncHash: true });
     });
 
     backdrop.addEventListener("focusin", (evt) => {
@@ -160,9 +184,10 @@
       activatePage(sectionEl, page);
     });
 
-    backdrop.addEventListener("keydown", (evt) => {
+    function handlePanelArrowKeydown(evt) {
       if (!backdrop.classList.contains("is-open")) return;
       if (evt.key !== "ArrowLeft" && evt.key !== "ArrowRight") return;
+      if (isTextEditingTarget(evt.target) || isTextEditingTarget(document.activeElement)) return;
 
       const focusedDot = document.activeElement?.closest?.(".nav-panel-dot");
       const sectionEl =
@@ -184,10 +209,10 @@
       const dir = evt.key === "ArrowRight" ? 1 : -1;
       const nextIndex = (activeIndex + dir + dots.length) % dots.length;
 
-      activatePage(sectionEl, nextIndex);
+      activatePage(sectionEl, nextIndex, { syncHash: true });
       dots[nextIndex].focus();
       evt.preventDefault();
-    });
+    }
 
     function clearPanelHash() {
       if (!window.location.hash) return;
@@ -209,7 +234,7 @@
       syncMetricsUi();
 
       const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
-      activatePage(sectionEl, 0);
+      activatePage(sectionEl, activePageIndex(sectionEl));
       focusControlsForSection(sectionEl);
       document.dispatchEvent(new CustomEvent("navpanel:open", {
         detail: { key },
@@ -263,8 +288,8 @@
       btn.addEventListener("click", (evt) => {
         evt.preventDefault();
         const key = btn.getAttribute("data-panel");
-        if (key && window.location.hash !== `#${key}`) {
-          history.pushState(null, "", `#${key}`);
+        if (key && window.location.hash !== panelHashFor(key, 0)) {
+          history.pushState(null, "", panelHashFor(key, 0));
         }
         handleTriggerClick(btn);
       });
@@ -298,14 +323,19 @@
     document.addEventListener("keydown", (evt) => {
       if (evt.key === "Escape" && backdrop.classList.contains("is-open")) closePanel();
     });
+    document.addEventListener("keydown", handlePanelArrowKeydown);
 
     function panelTargetFromHash(hash) {
-      const key = hash ? hash.replace(/^#/, "") : "";
+      const fragment = hash ? hash.replace(/^#/, "") : "";
+      const route = fragment.split("?")[0];
+      const pageMatch = route.match(/^([^:]+):(\d+)$/);
+      const key = pageMatch ? pageMatch[1] : route;
+      const page = pageMatch ? Number(pageMatch[2]) : 0;
       if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0 };
       if (key.startsWith("simulator-")) return { key: "simulator", page: 0 };
       if (key === "metric-output") return { key: "metric-stake", page: 1 };
       if (key === "metric-rewards") return { key: "metric-stake", page: 2 };
-      return { key, page: 0 };
+      return { key, page: Number.isFinite(page) ? page : 0 };
     }
 
     function applyHash(hash) {
@@ -349,10 +379,10 @@
 
       if (touchStartX - touchEndX > SWIPE_THRESHOLD) {
         const nextIndex = (activeIndex + 1) % dots.length;
-        activatePage(activeSection, nextIndex);
+        activatePage(activeSection, nextIndex, { syncHash: true });
       } else if (touchEndX - touchStartX > SWIPE_THRESHOLD) {
         const prevIndex = (activeIndex - 1 + dots.length) % dots.length;
-        activatePage(activeSection, prevIndex);
+        activatePage(activeSection, prevIndex, { syncHash: true });
       }
     }
 
