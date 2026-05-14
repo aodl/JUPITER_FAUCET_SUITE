@@ -2,7 +2,7 @@ use ic_asset_certification::{
     Asset, AssetConfig, AssetEncoding, AssetFallbackConfig, AssetMap, AssetRouter,
 };
 use ic_cdk::{
-    api::{canister_cycle_balance, certified_data_set, data_certificate},
+    api::data_certificate,
     init, post_upgrade, query,
 };
 use ic_http_certification::{
@@ -14,7 +14,9 @@ use ic_http_certification::{
 };
 use include_dir::{include_dir, Dir};
 use serde::Serialize;
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc};
+#[cfg(not(test))]
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Metrics {
@@ -30,6 +32,7 @@ struct CertifiedMetricsSnapshot {
     cel_expr: DefaultResponseOnlyCelExpression<'static>,
 }
 
+#[cfg(not(test))]
 const METRICS_REFRESH_INTERVAL_SECS: u64 = 60;
 
 fn initialize_runtime_state() {
@@ -115,6 +118,26 @@ fn metrics_tree_path() -> HttpCertificationPath<'static> {
     HttpCertificationPath::exact("/metrics")
 }
 
+#[cfg(not(test))]
+fn update_certified_data(root_hash: &[u8]) {
+    ic_cdk::api::certified_data_set(root_hash);
+}
+
+#[cfg(test)]
+fn update_certified_data(root_hash: &[u8]) {
+    let _ = root_hash;
+}
+
+#[cfg(not(test))]
+fn current_cycle_balance() -> u128 {
+    ic_cdk::api::canister_cycle_balance()
+}
+
+#[cfg(test)]
+fn current_cycle_balance() -> u128 {
+    0
+}
+
 fn metrics_cel_expression() -> DefaultResponseOnlyCelExpression<'static> {
     DefaultCelBuilder::response_only_certification()
         .with_response_certification(DefaultResponseCertification::response_header_exclusions(vec![]))
@@ -125,7 +148,7 @@ fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> Cert
     let metrics = Metrics {
         num_assets: asset_router.get_assets().len(),
         num_fallback_assets: asset_router.get_fallback_assets().len(),
-        cycle_balance: canister_cycle_balance(),
+        cycle_balance: current_cycle_balance(),
     };
     let body = serde_json::to_vec(&metrics).expect("failed to serialize metrics");
     let cel_expr = metrics_cel_expression();
@@ -137,11 +160,15 @@ fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> Cert
     CertifiedMetricsSnapshot { body, headers, cel_expr }
 }
 
+#[cfg(not(test))]
 fn install_metrics_refresh_timer() {
     ic_cdk_timers::set_timer_interval(Duration::from_secs(METRICS_REFRESH_INTERVAL_SECS), || async {
         refresh_certified_metrics_snapshot();
     });
 }
+
+#[cfg(test)]
+fn install_metrics_refresh_timer() {}
 
 fn refresh_certified_metrics_snapshot() {
     ASSET_ROUTER.with_borrow(|asset_router| {
@@ -160,7 +187,7 @@ fn refresh_certified_metrics_snapshot() {
             let mut tree = tree.borrow_mut();
             tree.delete_by_path(&metrics_tree_path);
             tree.insert(&metrics_tree_entry);
-            certified_data_set(&tree.root_hash());
+            update_certified_data(&tree.root_hash());
         });
 
         CERTIFIED_METRICS_SNAPSHOT.with(|stored| *stored.borrow_mut() = Some(snapshot));
@@ -216,8 +243,17 @@ fn certify_all_assets() {
             encodings: vec![],
         },
         AssetConfig::Pattern {
-            pattern: "**/*.{png,jpg,jpeg}".to_string(),
-            content_type: None,
+            pattern: "**/*.png".to_string(),
+            content_type: Some("image/png".to_string()),
+            headers: get_asset_headers(vec![(
+                "cache-control".to_string(),
+                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+            )]),
+            encodings: vec![],
+        },
+        AssetConfig::Pattern {
+            pattern: "**/*.{jpg,jpeg}".to_string(),
+            content_type: Some("image/jpeg".to_string()),
             headers: get_asset_headers(vec![(
                 "cache-control".to_string(),
                 IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
@@ -263,7 +299,7 @@ fn certify_all_assets() {
             ic_cdk::trap(&format!("failed to certify frontend assets: {err}"));
         }
 
-        certified_data_set(&asset_router.root_hash());
+        update_certified_data(&asset_router.root_hash());
     });
 }
 
@@ -414,7 +450,7 @@ mod tests {
     #[test]
     fn metrics_cel_expression_is_response_only_not_skip_certification() {
         let cel_expr = metrics_cel_expression();
-        assert_ne!(cel_expr, DefaultCelBuilder::skip_certification().to_string());
+        assert_ne!(cel_expr.to_string(), DefaultCelBuilder::skip_certification().to_string());
     }
 
     #[test]
@@ -441,6 +477,7 @@ mod tests {
         certify_all_assets();
         ASSET_ROUTER.with_borrow(|asset_router| {
             let snapshot = build_certified_metrics_snapshot(asset_router);
+            let expected_cel_expr = snapshot.cel_expr.to_string();
             assert_eq!(
                 snapshot
                     .headers
@@ -455,9 +492,8 @@ mod tests {
                     .iter()
                     .find(|(name, _)| name == CERTIFICATE_EXPRESSION_HEADER_NAME)
                     .map(|(_, value)| value.as_str()),
-                Some(snapshot.cel_expr.as_str())
+                Some(expected_cel_expr.as_str())
             );
         });
     }
 }
-
