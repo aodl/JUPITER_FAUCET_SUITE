@@ -92,8 +92,8 @@ export function advancedMemoValidationMessages(result, { lockedTargetText = '', 
   const warnings = result?.warnings || [];
   const mappedErrors = lockedTargetType === 'canister' && lockedTargetText
     ? errors.map((error) => (
-      error === 'Enter a valid non-anonymous canister principal.'
-        ? `'${lockedTargetText}' is not a valid canister principal.`
+      error === 'Enter a valid non-anonymous declared canister ID.'
+        ? `'${lockedTargetText}' is not a valid declared canister ID.`
         : error
     ))
     : errors;
@@ -165,21 +165,21 @@ export function buildAdvancedMemo({
   if (principal.includes('.')) {
     return emptyResult({
       truncatedOptionalMemo: optional,
-      errors: ['Canister principal text cannot contain a dot.'],
+      errors: ['Declared canister ID text cannot contain a dot.'],
     });
   }
 
   if (mode === 'cycles' && principal.length > JUPITER_MEMO_MAX_BYTES) {
     return emptyResult({
       truncatedOptionalMemo: optional,
-      errors: ['Declared canister principal exceeds the 32-byte ICP memo limit.'],
+      errors: ['Declared canister ID exceeds the 32-byte ICP memo limit.'],
     });
   }
 
   if (!parseDeclaredPrincipalText(principal)) {
     return emptyResult({
       truncatedOptionalMemo: optional,
-      errors: ['Enter a valid non-anonymous canister principal.'],
+      errors: ['Enter a valid non-anonymous declared canister ID.'],
     });
   }
 
@@ -202,7 +202,7 @@ export function buildAdvancedMemo({
   if (available < 0) {
     return emptyResult({
       truncatedOptionalMemo: optional,
-      errors: ['Declared canister principal plus dot exceeds the 32-byte ICP memo limit.'],
+      errors: ['Declared canister ID plus dot exceeds the 32-byte ICP memo limit.'],
     });
   }
 

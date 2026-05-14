@@ -113,19 +113,19 @@ mod tests {
             .to_vec();
 
         let cases: Vec<(&str, Vec<u8>, Option<Principal>)> = vec![
-            ("valid target principal text", target.to_text().into_bytes(), Some(target)),
+            ("valid declared canister ID text", target.to_text().into_bytes(), Some(target)),
             (
                 "whitespace padded principal text",
                 whitespace_padded.into_bytes(),
                 Some(target),
             ),
             (
-                "compact canister principal text",
+                "compact declared canister ID text",
                 compact_target.into_bytes(),
                 Some(target),
             ),
             (
-                "short valid principal text without hardcoded suffix",
+                "short valid principal text accepted by parser policy",
                 short_without_cai.to_text().into_bytes(),
                 Some(short_without_cai),
             ),

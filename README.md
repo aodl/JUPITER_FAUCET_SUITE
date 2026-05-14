@@ -66,12 +66,12 @@ The live value-moving path is:
    - the configured staking-account ICP balance
 6. It scans the staking-account transaction history from the beginning and evaluates each eligible incoming transfer independently.
 7. For each qualifying commitment, the faucet parses the transfer's `icrc1_memo` as a payout directive:
-   - plain principal text declares a canister cycle top-up target
-   - `principal.memo` declares a raw ICP transfer target and outgoing ledger memo
+   - plain declared canister ID text declares a canister cycle top-up target
+   - `canister_id.memo` declares a raw ICP transfer target and outgoing ledger memo
    - decimal neuron ID text declares an NNS neuron stake transfer target; `neuron_id.memo` also sets the outgoing ledger memo
 8. If the computed payout share is larger than the ledger fee, the faucet routes the payout:
    - canister top-up directives send ICP to the target canister's CMC deposit subaccount and call `notify_top_up`
-   - raw ICP directives send ICP directly to the declared principal's default account
+   - raw ICP directives send ICP directly to the declared canister's default account
    - neuron directives resolve the public neuron's staking subaccount, send ICP to that account, and then best-effort call `claim_or_refresh_neuron`
 
 The faucet payout path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. CMC `notify_top_up` is used only for canister top-up directives; raw ICP and neuron-stake directives are plain ledger transfers, with neuron transfers followed by a best-effort NNS `claim_or_refresh_neuron` call. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
@@ -88,15 +88,15 @@ At a high level, a participant:
 1. transfers ICP into the faucet neuron’s configured ICRC-1 staking account address `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 2. puts a supported declaration in the transfer memo as ASCII text
 
-The primary flow is still canister cycle top-up: put the **declared canister ID** in `icrc1_memo`. The committer does **not** need to own the declared canister. The faucet accepts short ASCII principal text in the memo; the supported UX is to enter the beneficiary declared canister ID there.
+The primary flow is still canister cycle top-up: put the **declared canister ID** in `icrc1_memo`. The committer does **not** need to own the declared canister. The parser accepts short ASCII principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit.
 
-Advanced memo forms are also supported in `icrc1_memo`: `canister.memo` routes raw ICP to the declared canister principal with the right-hand memo segment as the outgoing ledger memo, and a decimal NNS neuron ID routes ICP to that neuron's staking account. Neuron commitments require the neuron to be public, because the faucet must read the neuron through NNS Governance to resolve its staking subaccount before sending the transfer.
+Advanced memo forms are also supported in `icrc1_memo`: `canister_id.memo` routes raw ICP to the declared canister's default account with the right-hand memo segment as the outgoing ledger memo, and a decimal NNS neuron ID routes ICP to that neuron's staking account. Neuron commitments require the neuron to be public, because the faucet must read the neuron through NNS Governance to resolve its staking subaccount before sending the transfer.
 
 The supported memo path is ASCII text carried in `icrc1_memo`; use the ICRC-1 account address above in the [NNS dapp](https://nns.ic0.app/wallet/?u=) so that text memo path is available. The old 64-bit legacy memo field is intentionally ignored; numeric neuron IDs are supported only when supplied as ASCII text in `icrc1_memo`.
 
-The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Principal text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up.
+The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Declared canister ID text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up.
 
-That means the project deliberately accepts a bounded griefing surface: a committer can supply syntactically valid short principal text that does not correspond to a useful installed canister, and the faucet may still spend ledger fee / CMC work attempting the top-up. The production answer to that trade-off is economic rather than heuristic. The memo path is kept simple and non-probing, while the production `min_tx_e8s` remains high enough that repeatedly funding such attempts is materially costly to the attacker and simultaneously adds real protocol funding into the staking path.
+That means the project deliberately accepts a bounded griefing surface: a committer can supply syntactically valid short principal text that does not correspond to a useful installed canister, and the faucet may still spend ledger fee / CMC work attempting the top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The production answer to that trade-off is economic rather than heuristic. The memo path is kept simple and non-probing, while the production `min_tx_e8s` remains high enough that repeatedly funding such attempts is materially costly to the attacker and simultaneously adds real protocol funding into the staking path.
 
 This distinction matters because the ICP/Cycles ecosystem now has two different concepts: principals can hold cycles directly through the cycles ledger, but the faucet's normal `notify_top_up` path is still a **canister top-up** path rather than a general “mint cycles to arbitrary principal” path. Operationally, the primary UX remains: put the **declared canister ID** in `icrc1_memo`.
 
@@ -109,7 +109,7 @@ In the [NNS dapp](https://nns.ic0.app/wallet/?u=), the transaction memo field ma
 3. select **Show transaction memo**
 4. send ICP to the long-form **ICRC-1** staking account address above (not the short-form legacy account identifier), then put your supported declaration into the memo field as plain ASCII text
 
-The long-form ICRC-1 destination address is important: the [NNS dapp](https://nns.ic0.app/wallet/?u=) only enables larger text-based memos on that path, so that is the format required for the destination account in order for the memo to be capable of holding a declared canister ID, `canister.memo` raw-ICP directive, or decimal neuron ID.
+The long-form ICRC-1 destination address is important: the [NNS dapp](https://nns.ic0.app/wallet/?u=) only enables larger text-based memos on that path, so that is the format required for the destination account in order for the memo to be capable of holding a declared canister ID, `canister_id.memo` raw-ICP directive, or decimal neuron ID.
 
 [![NNS dapp memo search](jupiter-faucet-frontend/assets/how-it-works-memo-search.png)](https://nns.ic0.app/wallet/?u=)
 

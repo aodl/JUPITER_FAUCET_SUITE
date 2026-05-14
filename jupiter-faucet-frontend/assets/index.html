@@ -557,7 +557,7 @@
                 <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
                 to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
                 of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
-                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a valid canister principal or neuron ID).
+                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
                 While the Jupiter Faucet SNS rewards components are still being finalised, the ICP will accumulate in the
                 <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
                 (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
@@ -567,7 +567,7 @@
               <h3 class="pane-section-title">Advanced Usage</h3>
 
               <p class="nav-panel-content">
-                Jupiter Faucet supports three memo-directed flows. A plain canister principal keeps
+                Jupiter Faucet supports three memo-directed flows. A plain declared canister ID keeps
                 the default perpetual cycles top-up behavior. Advanced users can instead route ICP
                 minted from maturity directly to either the default account of a declared canister or
                 the staking account of a declared public NNS neuron.
@@ -575,7 +575,7 @@
 
               <p class="nav-panel-content">
                 To enable raw ICP transfer mode for a canister, add a full stop character
-                (<code>.</code>) after the declared canister principal in the ICP commitment memo.
+                (<code>.</code>) after the declared canister ID in the ICP commitment memo.
                 To target a neuron instead, use the neuron ID in the memo. In either mode, the
                 full stop may be followed by optional text; Jupiter Faucet uses that optional text
                 as the outgoing memo on the perpetual ICP transfer.
@@ -628,7 +628,7 @@
 
                 <div class="memo-builder-grid">
                   <div class="memo-builder-field" id="memo-builder-canister-fields">
-                    <label class="memo-builder-label" for="memo-builder-canister">Declared canister principal</label>
+                    <label class="memo-builder-label" for="memo-builder-canister">Declared canister ID</label>
                     <input class="memo-builder-input mono" id="memo-builder-canister" type="text" autocomplete="off" spellcheck="false" inputmode="latin" pattern="[A-Za-z2-7-]*" />
                   </div>
 
@@ -824,7 +824,7 @@
           <h2 class="nav-panel-title">Patron Commitments</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-            <p class="nav-panel-content">A patron commitment qualifies when the `icrc1_memo` declares a supported target and the commitment is at least <strong>1 ICP</strong>. Canister cycle top-ups use a declared canister ID. Raw ICP routing uses <code>canister.memo</code>. Neuron stake top-ups use a public NNS neuron ID; private neurons cannot be refreshed by the faucet top-up process. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+            <p class="nav-panel-content">A patron commitment qualifies when the `icrc1_memo` declares a supported target and the commitment is at least <strong>1 ICP</strong>. Canister cycle top-ups use a declared canister ID. Raw ICP routing uses <code>canister_id.memo</code>. Neuron stake top-ups use a public NNS neuron ID; private neurons cannot be refreshed by the faucet top-up process. The table below is a bounded recent view: newest <strong>500</strong> qualifying items, newest <strong>100</strong> below-threshold memo items, and newest <strong>100</strong> invalid-memo items. Invalid memo text is not echoed back here. Full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
             <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
             <div class="nav-panel-page is-active" data-page="0">
               <h3 class="pane-section-title">Declared Canisters</h3>
@@ -906,9 +906,9 @@
           <h2 class="nav-panel-title">Tracker</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle">Inspect a commitment beneficiary’s ICP commitments, observed CMC top-ups, and cycles observations.</p>
-            <p class="nav-panel-content">Paste a declared canister principal. If historian recognises it as a memo-registered commitment beneficiary, this pane shows memo-registered commitments, observed transfers into that canister’s CMC top-up account, and cycles observations as separate charts so the scales and meanings stay clear.</p>
+            <p class="nav-panel-content">Paste a declared canister ID. If historian recognises it as a memo-registered commitment beneficiary, this pane shows memo-registered commitments, observed transfers into that canister’s CMC top-up account, and cycles observations as separate charts so the scales and meanings stay clear.</p>
             <form class="tracker-form" id="tracker-form">
-              <label class="tracker-label" for="tracker-principal-input">Principal ID</label>
+              <label class="tracker-label" for="tracker-principal-input">Declared canister ID</label>
               <div class="tracker-input-row">
                 <input
                   class="tracker-input mono"
@@ -917,7 +917,7 @@
                   autocomplete="off"
                   autocapitalize="none"
                   spellcheck="false"
-                  placeholder="aaaaa-aa"
+                  placeholder="jufzc-caaaa-aaaar-qb5da-cai"
                 />
                 <button class="pane-page-button tracker-submit" id="tracker-submit" type="submit">Track</button>
               </div>

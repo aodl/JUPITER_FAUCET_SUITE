@@ -2337,7 +2337,7 @@ function renderTrackerPrompt() {
   if (!result || result.innerHTML.trim()) return;
   result.innerHTML = `
     <div class="tracker-empty-state">
-      <p>Paste a principal ID, usually a declared canister ID, to inspect its memo-derived commitments and cycles tracking history.</p>
+      <p>Paste a declared canister ID to inspect its memo-derived commitments and cycles tracking history.</p>
     </div>`;
 }
 
@@ -2361,7 +2361,7 @@ async function submitTrackerPrincipal() {
   trackerState.error = null;
 
   if (!raw) {
-    setTrackerStatus('Paste a principal ID first.', 'error');
+    setTrackerStatus('Paste a declared canister ID first.', 'error');
     input?.focus?.();
     return;
   }
@@ -2370,7 +2370,7 @@ async function submitTrackerPrincipal() {
   try {
     principal = Principal.fromText(raw);
   } catch {
-    setTrackerStatus('Enter a valid principal ID.', 'error');
+    setTrackerStatus('Enter a valid declared canister ID.', 'error');
     input?.focus?.();
     return;
   }

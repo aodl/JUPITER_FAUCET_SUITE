@@ -165,7 +165,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);
   assert.match(howItWorks, /data-page-target="0"[^>]*>rules described<\/a>/);
   assert.match(howItWorks, /Contributions must meet the requirements in order to be counted/);
-  assert.match(howItWorks, /transactions of at least 1 ICP featuring a memo that declares a valid canister principal or neuron ID/);
+  assert.match(howItWorks, /transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f[^>]*>rewards account<\/a>/);
   assert.match(howItWorks, /data-panel="governance"[^>]*>Governance<\/a>/);
   assert.match(navbarJs, /data-page-target/);
@@ -181,7 +181,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /data-page="3"/);
   assert.match(howItWorks, /Advanced Usage/);
   assert.match(howItWorks, /three memo-directed flows/);
-  assert.match(howItWorks, /plain canister principal/);
+  assert.match(howItWorks, /plain declared canister ID/);
   assert.match(howItWorks, /memo builder on the next slide/);
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> You can adjust the <code>canister<\/code>\/<code>neuron<\/code>\s*and <code>label<\/code> parameters/);
   assert.match(howItWorks, /customise the memo helper\s*form on the next slide for a smoother user experience/);

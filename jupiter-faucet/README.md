@@ -82,13 +82,13 @@ The default minimum tracked commitment is:
 
 Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. They also do **not** create durable historian tracking for the memo target. The production minimum is intentionally high because historian only keeps a durable beneficiary registry for memo-derived targets that actually qualify; a much lower threshold would make registry spam far cheaper.
 
-Memo encoding uses `icrc1_memo` text only. The primary form is principal text for a declared canister ID. The faucet also accepts `canister.memo` for raw ICP routing and ASCII decimal NNS neuron IDs for neuron staking-account top-ups. The legacy 64-bit numeric memo path is still ignored. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID for the normal cycles top-up path; that is the primary supported UX.
+Memo encoding uses `icrc1_memo` text only. The primary form is declared canister ID text. The parser accepts short valid principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit. The faucet also accepts `canister_id.memo` for raw ICP routing and ASCII decimal NNS neuron IDs for neuron staking-account top-ups. The legacy 64-bit numeric memo path is still ignored. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID for the normal cycles top-up path; that is the primary supported UX.
 
 Neuron staking-account top-ups require the target neuron to be public. The faucet calls NNS Governance to read the neuron and resolve its staking subaccount before it can send ICP there; a private or unreadable neuron cannot be resolved and the commitment is counted as a failed top-up attempt for that payout job.
 
-The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Principal text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
+The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Declared canister ID text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
-This is an explicit economic trade-off, not an oversight. A committer can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. The design accepts that bounded griefing surface because the alternative — probing canister existence on the hot path — would permanently add more complexity, cost, and failure surface to the blackholed value-moving path. The mitigation is the commitment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
+This is an explicit economic trade-off, not an oversight. A committer can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the blackholed value-moving path. The mitigation is the commitment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
 
 ## Important payout semantics
 
@@ -199,7 +199,7 @@ The subaccount layout is:
 That matches the standard top-up pattern used before calling `notify_top_up`.
 For ICRC-1 transfers, the faucet encodes the CMC top-up memo as an 8-byte **little-endian** blob so it matches how the CMC interprets ICRC memo bytes.
 
-For `canister.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister principal's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
+For `canister_id.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
 
 For neuron ID directives, the faucet reads the public NNS neuron, transfers ICP to NNS Governance with the neuron's staking subaccount, and then best-effort refreshes the neuron. It does not call CMC `notify_top_up`. A refresh failure does not roll back an accepted ledger transfer, so operators may need to manually refresh the declared neuron if the NNS refresh path is temporarily unavailable during payout processing.
 
@@ -467,8 +467,8 @@ The most important thing to remember is that the faucet is **job-snapshot based*
 
 Treat the memo requirement as canonical:
 
-- beneficiary is identified by short ASCII principal text in `icrc1_memo` (the supported usage is to put the declared canister ID there)
-- raw ICP routing is identified by `declared_canister.memo` in `icrc1_memo`
+- beneficiary is identified by a declared canister ID in `icrc1_memo`
+- raw ICP routing is identified by `declared_canister_id.memo` in `icrc1_memo`
 - neuron top-ups are identified by an ASCII decimal NNS neuron ID in `icrc1_memo`, and the neuron must be public
 - malformed or missing memos are ignored
 - ownership of the beneficiary canister is not checked by the faucet

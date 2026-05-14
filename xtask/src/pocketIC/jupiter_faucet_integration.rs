@@ -1370,7 +1370,7 @@ fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoni
 
 #[test]
 #[ignore]
-fn faucet_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Result<()> {
+fn faucet_characterizes_short_valid_principal_text_without_hardcoded_suffix() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
@@ -1384,15 +1384,15 @@ fn faucet_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Resul
 
     let summary = env.summary()?;
     if summary.topped_up_count != 1 {
-        bail!("expected short valid principal text to produce one top-up, got {}", summary.topped_up_count);
+        bail!("expected parser-accepted short principal text to produce one top-up in this CMC path, got {}", summary.topped_up_count);
     }
     if summary.ignored_bad_memo != 0 {
-        bail!("expected short valid principal text not to count as ignored_bad_memo, got {}", summary.ignored_bad_memo);
+        bail!("expected parser-accepted short principal text not to count as ignored_bad_memo, got {}", summary.ignored_bad_memo);
     }
     let notifies = env.notifications()?;
     let matching: Vec<_> = notifies.iter().filter(|n| n.canister_id == target).collect();
     if matching.len() != 1 {
-        bail!("expected exactly one CMC notification for short valid principal text target {target}, got {notifies:?}");
+        bail!("expected exactly one CMC notification for parser-accepted short principal text target {target}, got {notifies:?}");
     }
 
     Ok(())
@@ -2689,7 +2689,7 @@ fn faucet_reserved_principal_target_is_accepted_by_current_cmc_path() -> Result<
     // Use a reserved principal (last byte 0x7f) that is valid principal text, passes the
     // memo policy, but should not be treated as a textual canister-id convention check.
     // This is a characterization test for the current local/PocketIC CMC path rather than
-    // a protocol guarantee about all environments.
+    // a protocol guarantee or a supported user-facing target class.
     let target = Principal::from_slice(&[0x7f]);
 
     env.credit_payout(100_000_000)?;
@@ -2721,7 +2721,7 @@ fn faucet_opaque_principal_target_is_accepted_by_current_cmc_path() -> Result<()
     let env = FaucetEnv::new()?;
     // Use a short opaque principal (last byte 0x01) that passes memo parsing.
     // This is a characterization test for the current local/PocketIC CMC path rather
-    // than a protocol guarantee about all environments.
+    // than a protocol guarantee or a supported user-facing target class.
     let target = Principal::from_slice(&[0x01]);
 
     env.credit_payout(100_000_000)?;

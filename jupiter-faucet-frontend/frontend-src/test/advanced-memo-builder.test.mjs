@@ -35,7 +35,7 @@ test('empty target fields do not show semantic validation errors', () => {
   assert.deepEqual(neuron.errors, []);
 });
 
-test('cycles top-up memo uses the plain declared canister principal', () => {
+test('cycles top-up memo uses the plain declared canister ID', () => {
   const result = buildAdvancedMemo({
     mode: 'cycles',
     canisterText: COMPACT_CANISTER,
@@ -71,10 +71,10 @@ test('malformed canister text is invalid and not copyable', () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.output, '');
-  assert.match(result.errors.join(' '), /valid non-anonymous canister principal/);
+  assert.match(result.errors.join(' '), /valid non-anonymous declared canister ID/);
 });
 
-test('cycles top-up memo rejects canister principal text over the 32-byte limit', () => {
+test('cycles top-up memo rejects declared canister ID text over the 32-byte limit', () => {
   const result = buildAdvancedMemo({
     mode: 'cycles',
     canisterText: 'abcdefghijklmnopqrstuvwxyzabcdefg',
@@ -129,14 +129,14 @@ test('validation messages name invalid locked URL canister targets', () => {
       lockedTargetText: 'abc',
       lockedTargetType: 'canister',
     }),
-    ["'abc' is not a valid canister principal."],
+    ["'abc' is not a valid declared canister ID."],
   );
   assert.deepEqual(
     advancedMemoValidationMessages(result, {
       lockedTargetText: '',
       lockedTargetType: '',
     }),
-    ['Enter a valid non-anonymous canister principal.'],
+    ['Enter a valid non-anonymous declared canister ID.'],
   );
 });
 
@@ -275,22 +275,22 @@ test('neuron ID validation matches non-zero u64 parser bounds', () => {
 test('frontend memo builder mirrors jupiter-memo-policy parser corpus', () => {
   const validCases = [
     {
-      label: 'canonical valid canister principal',
+      label: 'canonical valid canister ID',
       args: { mode: 'cycles', canisterText: CANONICAL_CANISTER },
       output: CANONICAL_CANISTER,
     },
     {
-      label: 'compact valid canister principal',
+      label: 'compact valid canister ID',
       args: { mode: 'cycles', canisterText: COMPACT_CANISTER },
       output: COMPACT_CANISTER,
     },
     {
-      label: 'short valid principal',
+      label: 'short parser-accepted principal',
       args: { mode: 'cycles', canisterText: SHORT_CANISTER },
       output: SHORT_CANISTER,
     },
     {
-      label: 'compact short valid principal',
+      label: 'compact short parser-accepted principal',
       args: { mode: 'cycles', canisterText: COMPACT_SHORT_CANISTER },
       output: COMPACT_SHORT_CANISTER,
     },
@@ -335,7 +335,7 @@ test('frontend memo builder mirrors jupiter-memo-policy parser corpus', () => {
   }
 
   const invalidCases = [
-    { label: 'malformed canister principal', args: { mode: 'cycles', canisterText: 'abc' } },
+    { label: 'malformed declared canister ID', args: { mode: 'cycles', canisterText: 'abc' } },
     { label: 'anonymous principal', args: { mode: 'cycles', canisterText: '2vxsx-fae' } },
     { label: 'management canister', args: { mode: 'cycles', canisterText: 'aaaaa-aa' } },
     { label: 'cycles memo over 32 bytes', args: { mode: 'cycles', canisterText: '33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae' } },

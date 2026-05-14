@@ -397,7 +397,7 @@ export function cmcDepositSubaccount(canisterId) {
 }
 
 export function cmcDepositAccount({ canisterId, cmcCanisterId = MAINNET_CMC_CANISTER_ID } = {}) {
-  if (!canisterId) throw new Error('A declared canister principal is required');
+  if (!canisterId) throw new Error('A declared canister ID is required');
   const owner = typeof cmcCanisterId === 'string' ? Principal.fromText(cmcCanisterId) : cmcCanisterId;
   return {
     owner,
@@ -517,7 +517,7 @@ export async function loadCanisterLogs({ agent, canisterId } = {}) {
     throw new Error('HTTP agent is unavailable');
   }
   if (!canisterId) {
-    throw new Error('A principal ID is required');
+    throw new Error('A canister ID is required');
   }
 
   const arg = IDL.encode([FetchCanisterLogsArgs], [{ canister_id: canisterId }]);
@@ -555,7 +555,7 @@ export async function loadTrackerData({
   historyLimit = TRACKER_HISTORY_PAGE_SIZE,
 } = {}) {
   if (!canisterId) {
-    throw new Error('A principal ID is required');
+    throw new Error('A canister ID is required');
   }
 
   const { agent: resolvedAgent, historian } = await createHistorianClient({
