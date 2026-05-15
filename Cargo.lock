@@ -3130,6 +3130,7 @@ dependencies = [
  "ic-cdk-timers",
  "ic-stable-structures",
  "icrc-ledger-types 0.1.12",
+ "jupiter-ic-clients",
  "jupiter-nns-types",
  "num-traits",
  "pocket-ic",
@@ -3154,6 +3155,7 @@ dependencies = [
  "ic-cdk-timers",
  "ic-stable-structures",
  "icrc-ledger-types 0.1.12",
+ "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
  "num-traits",
@@ -3194,6 +3196,7 @@ dependencies = [
  "ic-cdk-timers",
  "ic-stable-structures",
  "icrc-ledger-types 0.1.12",
+ "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
  "num-traits",
@@ -3203,6 +3206,20 @@ dependencies = [
  "serde_json",
  "sha2",
  "slog",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "jupiter-ic-clients"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "crc32fast",
+ "hex",
+ "ic-cdk",
+ "icrc-ledger-types 0.1.12",
+ "serde",
+ "sha2",
  "thiserror 1.0.69",
 ]
 
@@ -3506,12 +3523,11 @@ name = "mock-icrc-ledger"
 version = "0.1.0"
 dependencies = [
  "candid",
- "crc32fast",
  "ic-cdk",
  "icrc-ledger-types 0.1.12",
+ "jupiter-ic-clients",
  "num-traits",
  "serde",
- "sha2",
 ]
 
 [[package]]
@@ -6285,6 +6301,7 @@ dependencies = [
  "crc32fast",
  "hex",
  "icrc-ledger-types 0.1.12",
+ "jupiter-ic-clients",
  "jupiter-nns-types",
  "num-traits",
  "pocket-ic",

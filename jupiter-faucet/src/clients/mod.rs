@@ -23,6 +23,15 @@ pub enum ClientError {
     TerminalNotify(String),
 }
 
+impl From<jupiter_ic_clients::ClientError> for ClientError {
+    fn from(value: jupiter_ic_clients::ClientError) -> Self {
+        match value {
+            jupiter_ic_clients::ClientError::Call(message) => Self::Call(message),
+            jupiter_ic_clients::ClientError::Convert(message) => Self::Convert(message),
+        }
+    }
+}
+
 #[async_trait]
 pub trait LedgerClient: Send + Sync {
     async fn fee_e8s(&self) -> Result<u64, ClientError>;

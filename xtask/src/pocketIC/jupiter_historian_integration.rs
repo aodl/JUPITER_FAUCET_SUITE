@@ -2,9 +2,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::index::{
+    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
+    GetAccountIdentifierTransactionsResult,
+};
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
-use sha2::{Digest, Sha224};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
@@ -229,91 +233,6 @@ struct GetCyclesHistoryArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct GetAccountIdentifierTransactionsArgs {
-    max_results: u64,
-    start: Option<u64>,
-    account_identifier: String,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct GetAccountIdentifierTransactionsError {
-    message: String,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct IndexTimeStamp {
-    timestamp_nanos: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Tokens {
-    e8s: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum IndexOperation {
-    Approve {
-        fee: Tokens,
-        from: String,
-        allowance: Tokens,
-        expires_at: Option<IndexTimeStamp>,
-        spender: String,
-        expected_allowance: Option<Tokens>,
-    },
-    Burn {
-        from: String,
-        amount: Tokens,
-        spender: Option<String>,
-    },
-    Mint {
-        to: String,
-        amount: Tokens,
-    },
-    Transfer {
-        to: String,
-        fee: Tokens,
-        from: String,
-        amount: Tokens,
-        spender: Option<String>,
-    },
-    TransferFrom {
-        to: String,
-        fee: Tokens,
-        from: String,
-        amount: Tokens,
-        spender: String,
-    },
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct IndexTransaction {
-    memo: u64,
-    icrc1_memo: Option<Vec<u8>>,
-    operation: IndexOperation,
-    created_at_time: Option<IndexTimeStamp>,
-    timestamp: Option<IndexTimeStamp>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct IndexTransactionWithId {
-    id: u64,
-    transaction: IndexTransaction,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct GetAccountIdentifierTransactionsResponse {
-    balance: u64,
-    transactions: Vec<IndexTransactionWithId>,
-    oldest_tx_id: Option<u64>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum GetAccountIdentifierTransactionsResult {
-    Ok(GetAccountIdentifierTransactionsResponse),
-    Err(GetAccountIdentifierTransactionsError),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     distinct_canister_count: u32,
     last_indexed_staking_tx_id: Option<u64>,
@@ -520,20 +439,6 @@ fn wait_for_index_transactions(
     bail!("real ICP index did not expose {expected_min} transactions for account {} after waiting; last page: {:?}", account_identifier, last.map(|page| page.transactions.iter().map(|tx| tx.id).collect::<Vec<_>>()));
 }
 
-fn account_identifier_text(account: &Account) -> String {
-    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
-    let mut hasher = Sha224::new();
-    hasher.update(b"\x0Aaccount-id");
-    hasher.update(account.owner.as_slice());
-    hasher.update(subaccount);
-    let hash = hasher.finalize();
-    let checksum = crc32fast::hash(&hash).to_be_bytes();
-    let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&checksum);
-    bytes[4..].copy_from_slice(&hash);
-    hex::encode(bytes)
-}
-
 struct Harness {
     pic: PocketIc,
     index: Principal,
@@ -588,7 +493,7 @@ impl Harness {
 
     fn staking_identifier(&self) -> Result<String> {
         let account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
-        Ok(account_identifier_text(&account))
+        Ok(account_identifier_text(account.owner, account.subaccount))
     }
 
     fn tick(&self) {
@@ -605,7 +510,7 @@ fn real_icp_index_returns_newest_first_for_account_history() -> Result<()> {
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
     let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([9u8; 32]) };
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let fee_e8s = icrc1_fee(&pic, ledger)?;
 
     for ordinal in 0..3u64 {
@@ -642,7 +547,7 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
     let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([7u8; 32]) };
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let fee_e8s = icrc1_fee(&pic, ledger)?;
 
     for ordinal in 0..4u64 {
@@ -698,7 +603,7 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
     pic.install_canister(xrc, xrc_wasm()?, vec![], None);
 
     let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([6u8; 32]) };
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let init = HistorianInitArg {
         staking_account,
         output_source_account: None,
@@ -798,8 +703,8 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
     let output_source_account = Account { owner: source_owner, subaccount: Some(source_subaccount) };
     let output_account = Account { owner: Principal::management_canister(), subaccount: Some(output_subaccount) };
     let rewards_account = Account { owner: Principal::management_canister(), subaccount: Some(rewards_subaccount) };
-    let output_id = account_identifier_text(&output_account);
-    let rewards_id = account_identifier_text(&rewards_account);
+    let output_id = account_identifier_text(output_account.owner, output_account.subaccount);
+    let rewards_id = account_identifier_text(rewards_account.owner, rewards_account.subaccount);
     let fee_e8s = icrc1_fee(&pic, ledger)?;
 
     icrc1_transfer(

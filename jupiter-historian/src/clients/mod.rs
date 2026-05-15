@@ -26,6 +26,15 @@ pub enum ClientError {
     Call(String),
 }
 
+impl From<jupiter_ic_clients::ClientError> for ClientError {
+    fn from(value: jupiter_ic_clients::ClientError) -> Self {
+        match value {
+            jupiter_ic_clients::ClientError::Call(message) => Self::Call(message),
+            jupiter_ic_clients::ClientError::Convert(message) => Self::Call(message),
+        }
+    }
+}
+
 #[async_trait]
 pub trait IndexClient: Send + Sync {
     async fn get_account_identifier_transactions(

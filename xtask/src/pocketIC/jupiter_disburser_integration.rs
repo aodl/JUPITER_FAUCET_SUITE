@@ -7,10 +7,11 @@ use jupiter_nns_types::{
     MakeProposalRequest, ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse,
     Motion, Neuron, NeuronId, PrincipalId, ProposalActionRequest, ProposalId,
 };
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use slog::Level;
 use pocket_ic::{PocketIc, PocketIcBuilder};
-use sha2::{Digest, Sha224, Sha256};
+use sha2::{Digest, Sha256};
 use std::process::Command;
 use std::time::Duration;
 use std::sync::OnceLock;
@@ -92,20 +93,6 @@ fn nns_root() -> Principal {
 
 fn fixture_principal() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
-}
-
-fn account_identifier_text(account: &Account) -> String {
-    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
-    let mut hasher = Sha224::new();
-    hasher.update(b"\x0Aaccount-id");
-    hasher.update(account.owner.as_slice());
-    hasher.update(subaccount);
-    let hash = hasher.finalize();
-    let checksum = crc32fast::hash(&hash).to_be_bytes();
-    let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&checksum);
-    bytes[4..].copy_from_slice(&hash);
-    hex::encode(bytes)
 }
 
 fn stop_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> Result<()> {
@@ -5410,7 +5397,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         let extra_top_up_e8s = 5_000 * E8S_PER_ICP;
         let existing_memo = existing_target.to_text().into_bytes();
         let late_memo = late_target.to_text().into_bytes();
-        let staking_id = account_identifier_text(&staking_account);
+        let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
 
         apply_top_up(
             &pic,
@@ -5850,7 +5837,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         let extra_top_up_e8s = 5_000 * E8S_PER_ICP;
         let existing_memo = existing_target.to_text().into_bytes();
         let invalid_memo = b"not-a-valid-principal".to_vec();
-        let staking_id = account_identifier_text(&staking_account);
+        let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
 
         apply_top_up(
             &pic,
@@ -6269,7 +6256,7 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
     pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
     set_blackholed_controllers(&pic, disburser)?;
 
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let valid_amount_e8s = 4_000 * 100_000_000u64;
     let valid_memo = target.to_text().into_bytes();
     transfer_to_neuron_staking_subaccount_with_memo(&pic, ledger, gov, controller, neuron_id, valid_amount_e8s, Some(valid_memo.clone()))?;

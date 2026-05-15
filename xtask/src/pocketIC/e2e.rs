@@ -2,9 +2,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
-use sha2::{Digest, Sha224};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
@@ -253,21 +253,6 @@ fn test_blackhole_controller() -> Principal {
     Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()
 }
 
-fn account_identifier_text(account: &Account) -> String {
-    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
-    let mut hasher = Sha224::new();
-    hasher.update(b"\x0Aaccount-id");
-    hasher.update(account.owner.as_slice());
-    hasher.update(subaccount);
-    let hash = hasher.finalize();
-    let checksum = crc32fast::hash(&hash).to_be_bytes();
-    let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&checksum);
-    bytes[4..].copy_from_slice(&hash);
-    hex::encode(bytes)
-}
-
-
 fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     let bytes = principal.as_slice();
     let mut out = [0u8; 32];
@@ -350,7 +335,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
     let target = faucet;
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let denom_e8s = 250_000_000u64;
     let pot_e8s = 100_000_000u64;
 
@@ -480,7 +465,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
     let target = faucet;
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let denom_e8s = 300_000_000u64;
 
     let _: () = update_bytes(
@@ -608,7 +593,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
     let target = faucet;
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let _: () = update_bytes(
         &pic,
         ledger,
@@ -732,7 +717,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
     let target = faucet;
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let _: () = update_bytes(
         &pic,
         ledger,
@@ -995,7 +980,7 @@ fn describe_account(account: &Account) -> String {
         "owner={} subaccount_hex={} account_id={}",
         account.owner,
         sub_hex,
-        account_identifier_text(account)
+        account_identifier_text(account.owner, account.subaccount)
     )
 }
 
@@ -1163,7 +1148,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
     let target = blackhole;
-    let staking_id = account_identifier_text(&staking_account);
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((staking_account.clone(), 100_000_000u64))?)?;
     let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?)?;
 

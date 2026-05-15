@@ -9,7 +9,10 @@ const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;
 use crate::clients::canister_info::ManagementCanisterInfoClient;
 use crate::clients::cmc::CyclesMintingCanister;
 use crate::clients::governance::NnsGovernanceCanister;
-use crate::clients::index::{account_identifier_text, GetAccountIdentifierTransactionsResponse, IcpIndexCanister, IndexTransactionWithId};
+use crate::clients::index::{
+    account_identifier_text_for_account, GetAccountIdentifierTransactionsResponse,
+    IcpIndexCanister, IndexTransactionWithId,
+};
 use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CanisterStatusClient, CmcClient, GovernanceClient, IndexClient, LedgerClient};
 use crate::state::{
@@ -1081,7 +1084,7 @@ async fn process_payout(
     now_secs: u64,
 ) -> bool {
     let cfg = state::with_state(|st| st.config.clone());
-    let staking_id = account_identifier_text(&cfg.staking_account);
+    let staking_id = account_identifier_text_for_account(&cfg.staking_account);
 
     if state::with_state(|st| st.active_payout_job.is_none()) {
         let fee_e8s = match ledger.fee_e8s().await { Ok(v) => v, Err(_) => return false };
@@ -1515,7 +1518,10 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use candid::Principal;
-    use crate::clients::index::{GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens, account_identifier_text};
+    use crate::clients::index::{
+        account_identifier_text_for_account, GetAccountIdentifierTransactionsResponse,
+        IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens,
+    };
     use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
     use std::collections::VecDeque;
     use std::future::{pending, Future};
@@ -2114,7 +2120,7 @@ mod tests {
     fn immediate_transfer_retry_reuses_created_at_time_and_succeeds_inline() {
         let now_secs = 1_000_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(1, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -2145,7 +2151,7 @@ mod tests {
     fn immediate_transfer_retry_duplicate_is_treated_as_success() {
         let now_secs = 1_250_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(2, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -2174,7 +2180,7 @@ mod tests {
     fn raw_icp_directive_sends_to_default_account_with_declared_memo_without_cmc_notify() {
         let now_secs = 1_300_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(21, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let compact = beneficiary.to_text().replace('-', "");
         let index = ExclusiveIndex::new(vec![
@@ -2204,7 +2210,7 @@ mod tests {
     fn raw_icp_directive_allows_empty_transfer_memo_after_dot() {
         let now_secs = 1_350_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(22, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let compact = beneficiary.to_text().replace('-', "");
         let index = ExclusiveIndex::new(vec![
@@ -2233,7 +2239,7 @@ mod tests {
     fn raw_icp_transfer_retry_reuses_identity_destination_and_declared_memo() {
         let now_secs = 1_375_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(23, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let compact = beneficiary.to_text().replace('-', "");
         let index = ExclusiveIndex::new(vec![
@@ -2273,7 +2279,7 @@ mod tests {
         let now_secs = 1_400_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(24, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         state::with_state_mut(|st| st.consecutive_cmc_zero_success_runs = Some(1));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let compact = beneficiary.to_text().replace('-', "");
         let index = ExclusiveIndex::new(vec![
@@ -2301,7 +2307,7 @@ mod tests {
         let now_secs = 1_425_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(25, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         state::with_state_mut(|st| st.consecutive_cmc_zero_success_runs = Some(1));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let compact = beneficiary.to_text().replace('-', "");
         let index = ExclusiveIndex::new(vec![
@@ -2329,7 +2335,7 @@ mod tests {
     fn mixed_raw_icp_and_cycles_top_up_job_routes_each_transfer_correctly() {
         let now_secs = 1_450_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(26, 10_000, 200_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let raw_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let topup_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let compact_raw = raw_target.to_text().replace('-', "");
@@ -2361,7 +2367,7 @@ mod tests {
     fn numeric_neuron_id_memo_resolves_staking_subaccount_and_transfers_without_cmc_notify() {
         let now_secs = 1_475_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(27, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let neuron_id = 11_614_578_985_374_291_210_u64;
         let neuron_subaccount = [7u8; 32];
         let index = ExclusiveIndex::new(vec![
@@ -2402,7 +2408,7 @@ mod tests {
         for (input_memo, expected_transfer_memo) in cases {
             let now_secs = 1_480_u64;
             let cfg = set_active_job(now_secs, ActivePayoutJob::new(29, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000));
-            let staking_id = account_identifier_text(&cfg.staking_account);
+            let staking_id = account_identifier_text_for_account(&cfg.staking_account);
             let neuron_subaccount = [9u8; 32];
             let index = ExclusiveIndex::new(vec![
                 commitment_tx(10, &staking_id, 100_000_000, Some(input_memo.clone())),
@@ -2433,7 +2439,7 @@ mod tests {
     fn numeric_neuron_id_governance_lookup_failure_counts_failed_and_preserves_remainder() {
         let now_secs = 1_485_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(28, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 80_000_000, Some(b"42".to_vec())),
         ]);
@@ -2457,7 +2463,7 @@ mod tests {
     fn immediate_transfer_retry_failure_counts_once_and_moves_on() {
         let now_secs = 1_500_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(5, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
@@ -2488,7 +2494,7 @@ mod tests {
     fn transport_failure_retry_exhaustion_counts_once_and_sends_remainder() {
         let now_secs = 1_600_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(6, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -2515,7 +2521,7 @@ mod tests {
     fn retryable_then_deterministic_transfer_failure_is_still_counted_as_ambiguous() {
         let now_secs = 1_650_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(61, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -2539,7 +2545,7 @@ mod tests {
     fn deterministic_ledger_failure_does_not_retry_and_sends_remainder() {
         let now_secs = 1_700_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(7, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -2588,7 +2594,7 @@ mod tests {
         let now_secs = 4_000_u64;
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(4, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -2611,7 +2617,7 @@ mod tests {
         let now_secs = 4_025_u64;
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(4025, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 80_000_000, Some(beneficiary.to_text().into_bytes())),
         ]);
@@ -2788,7 +2794,7 @@ mod tests {
     fn summary_logging_emits_one_compact_line_without_per_transfer_noise() {
         let now_secs = 4_100_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(8, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
@@ -3032,7 +3038,7 @@ mod tests {
     fn debug_runtime_reset_and_inline_retry_leave_no_persisted_retry_footprint() {
         let now_secs = 4_200_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(9, 10_000, 100_000_000, 200_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -3054,7 +3060,7 @@ mod tests {
     #[test]
     fn scan_latest_tx_id_accepts_real_index_descending_order() {
         let cfg = test_config();
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
             commitment_tx(3, &staking_id, 50_000_000, None),
             commitment_tx(2, &staking_id, 50_000_000, None),
@@ -3072,7 +3078,7 @@ mod tests {
         job.next_start = Some(3);
         job.configure_round_accounting(None, None, None, now_secs * 1_000_000_000, None, 100_000_000, true);
         let cfg = set_active_job(now_secs, job);
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(3, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -3097,7 +3103,7 @@ mod tests {
         let mut job = ActivePayoutJob::new(11, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000);
         job.configure_round_accounting(None, None, None, now_secs * 1_000_000_000, Some(3), 100_000_000, true);
         let cfg = set_active_job(now_secs, job);
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(5, &staking_id, 50_000_000, Some(beneficiary.to_text().into_bytes())),
@@ -3115,7 +3121,7 @@ mod tests {
     fn overlapping_index_pages_do_not_double_count_the_last_seen_tx() {
         let now_secs = 4_300_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(10, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
 
@@ -3183,7 +3189,7 @@ mod tests {
             let job = st.active_payout_job.as_mut().expect("active job");
             job.next_start = Some(10);
         });
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let repeated_page: Vec<_> = (11..=(10 + PAGE_SIZE)).map(|id| commitment_tx(id, &staking_id, 1, None)).collect();
         let index = ScriptedIndex::new(vec![
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
@@ -3224,7 +3230,7 @@ mod tests {
     fn process_payout_yields_after_bounded_number_of_barren_pages() {
         let now_secs = 4_700_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(13, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000));
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = BarrenPagedIndex::new(MAX_INDEX_PAGES_PER_PAYOUT_TICK + 1, staking_id);
         let ledger = ScriptedLedger::new(vec![]);
         let cmc = ScriptedCmc::new(vec![]);
@@ -3239,7 +3245,7 @@ mod tests {
     #[test]
     fn scan_latest_tx_id_uses_exclusive_start_cursor_contract() {
         let cfg = test_config();
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
             commitment_tx(10, &staking_id, 1, None),
             commitment_tx(11, &staking_id, 1, None),
@@ -3307,7 +3313,7 @@ mod tests {
     fn first_page_unreadable_also_requires_two_consecutive_observations() {
         let now_secs = 5_150_u64;
         let cfg = test_config();
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ScriptedIndex::new(vec![
             IndexResponseStep::Err,
             IndexResponseStep::Err,
@@ -3336,7 +3342,7 @@ mod tests {
     fn unreadable_latest_does_not_latch_if_next_observation_confirms_advancement() {
         let now_secs = 5_200_u64;
         let cfg = test_config();
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ScriptedIndex::new(vec![
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 200,
@@ -3409,7 +3415,7 @@ mod tests {
         let job = ActivePayoutJob::new(100, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
         let _cfg = set_active_job(now_secs, job);
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
             .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
@@ -3445,7 +3451,7 @@ mod tests {
         let job = ActivePayoutJob::new(101, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
         let _cfg = set_active_job(now_secs, job);
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
             .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
@@ -3473,7 +3479,7 @@ mod tests {
             let now_secs = 10_150 + round;
             let job = ActivePayoutJob::new(150 + round, 10_000, 100_000_000, 1_000_000_000, now_secs * 1_000_000_000);
             let cfg = set_active_job(now_secs, job);
-            let staking_id = account_identifier_text(&cfg.staking_account);
+            let staking_id = account_identifier_text_for_account(&cfg.staking_account);
             let txs: Vec<_> = (1..MIN_SKIP_RANGE_TX_COUNT)
                 .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
                 .chain(std::iter::once(commitment_tx(
@@ -3516,7 +3522,7 @@ mod tests {
         })
         .expect("preexisting skip range should persist");
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let txs = vec![commitment_tx(
             MIN_SKIP_RANGE_TX_COUNT + 1,
@@ -3554,7 +3560,7 @@ mod tests {
         })
         .expect("conflicting persisted skip range should be installed for the test");
 
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
             .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
@@ -3628,7 +3634,7 @@ mod tests {
         job.next_start = None;
         let _cfg = set_active_job(now_secs, job);
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
             .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
             .collect();
@@ -3686,7 +3692,7 @@ mod tests {
         job.next_start = None;
         let _cfg = set_active_job(now_secs, job);
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let mut txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
             .map(|id| commitment_tx(id, &staking_id, crate::MIN_MIN_TX_E8S.saturating_sub(1), None))
@@ -3749,7 +3755,7 @@ mod tests {
         let _cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
         let beneficiary_c = Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap();
@@ -3798,7 +3804,7 @@ mod tests {
         let _cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
 
-        let staking_id = account_identifier_text(&state::with_state(|st| st.config.staking_account.clone()));
+        let staking_id = { let account = state::with_state(|st| st.config.staking_account.clone()); account_identifier_text_for_account(&account) };
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = RecordingIndex::new(vec![
             commitment_tx_at(1, &staking_id, 400_000_000, Some(beneficiary.to_text().into_bytes()), 0),
@@ -3831,7 +3837,7 @@ mod tests {
         state::clear_skip_ranges();
         state::set_state(st);
 
-        let staking_id = account_identifier_text(&cfg.staking_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = RecordingIndex::new(vec![
             commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), now_secs * 1_000_000_000),

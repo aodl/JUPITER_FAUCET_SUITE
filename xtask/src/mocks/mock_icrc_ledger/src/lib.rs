@@ -1,7 +1,7 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
-use sha2::{Digest, Sha224};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use num_traits::ToPrimitive;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -80,16 +80,13 @@ pub struct Tokens {
 }
 
 fn account_identifier_bytes(a: &Account) -> [u8; 32] {
-    let subaccount = a.subaccount.unwrap_or([0u8; 32]);
-    let mut hasher = Sha224::new();
-    hasher.update(b"\x0Aaccount-id");
-    hasher.update(a.owner.as_slice());
-    hasher.update(subaccount);
-    let hash = hasher.finalize();
-    let checksum = crc32fast::hash(&hash).to_be_bytes();
+    let text = account_identifier_text(a.owner, a.subaccount);
     let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&checksum);
-    bytes[4..].copy_from_slice(&hash);
+    for (idx, byte) in bytes.iter_mut().enumerate() {
+        let start = idx * 2;
+        *byte = u8::from_str_radix(&text[start..start + 2], 16)
+            .expect("account identifier should be hex");
+    }
     bytes
 }
 

@@ -6,9 +6,10 @@ use jupiter_nns_types::{
     list_neurons, manage_neuron, manage_neuron_response, ListNeurons, ListNeuronsResponse,
     ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
 };
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
-use sha2::{Digest, Sha224};
+use sha2::Digest;
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -286,20 +287,6 @@ type NeuronMinimal = Neuron;
 
 const NNS_NEURON_VISIBILITY_PUBLIC: i32 = 2;
 
-fn account_identifier_text(account: &Account) -> String {
-    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
-    let mut hasher = Sha224::new();
-    hasher.update(b"\x0Aaccount-id");
-    hasher.update(account.owner.as_slice());
-    hasher.update(subaccount);
-    let hash = hasher.finalize();
-    let checksum = crc32fast::hash(&hash).to_be_bytes();
-    let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&checksum);
-    bytes[4..].copy_from_slice(&hash);
-    hex::encode(bytes)
-}
-
 fn icrc1_balance(pic: &PocketIc, ledger: Principal, account: &Account) -> Result<u64> {
     let balance: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_balance_of", account.clone())?;
     Ok(nat_to_u64(&balance))
@@ -541,7 +528,7 @@ impl FaucetEnv {
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
 
         let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
-        let staking_id = account_identifier_text(&staking_account);
+        let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
 
         Ok(Self {
             pic,
@@ -757,7 +744,7 @@ impl RealNnsFaucetEnv {
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
 
         let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
-        let staking_id = account_identifier_text(&staking_account);
+        let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
 
         Ok(Self {
             pic,

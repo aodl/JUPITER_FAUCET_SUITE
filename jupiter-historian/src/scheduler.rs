@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::clients::blackhole::BlackholeCanister;
 use crate::clients::governance::NnsGovernanceCanister;
-use crate::clients::index::{account_identifier_text, IcpIndexCanister};
+use crate::clients::index::{account_identifier_text_for_account, IcpIndexCanister};
 use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 use crate::clients::sns_wasm::SnsWasmCanister;
 use crate::clients::xrc::XrcCanister;
@@ -1018,7 +1018,7 @@ async fn process_commitment_indexing<I: IndexClient>(index: &I, now_secs: u64) -
             st.staking_backfill_complete.unwrap_or(false),
         )
     });
-    let staking_id = account_identifier_text(&cfg.staking_account);
+    let staking_id = account_identifier_text_for_account(&cfg.staking_account);
 
     match order_descending {
         Some(false) => {
@@ -1089,8 +1089,8 @@ async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_se
     }
 
     let kind = &routes[active.next_index as usize];
-    let source_id = account_identifier_text(&cfg.output_source_account);
-    let route_id = account_identifier_text(&indexed_route_account(&cfg, kind));
+    let source_id = account_identifier_text_for_account(&cfg.output_source_account);
+    let route_id = { let account = indexed_route_account(&cfg, kind); account_identifier_text_for_account(&account) };
     let (mut latest_cursor, mut oldest_cursor, order_descending, mut backfill_complete) = state::with_state(|st| {
         (
             indexed_route_cursor(st, kind),
@@ -1615,7 +1615,7 @@ mod tests {
 
     fn configure_state(max_index_pages_per_tick: u32) -> String {
         let account = sample_account();
-        let staking_id = account_identifier_text(&account);
+        let staking_id = account_identifier_text_for_account(&account);
         state::set_state(State::new(
             Config {
                 staking_account: account,
@@ -2381,9 +2381,9 @@ mod tests {
             st.config.output_account.clone(),
             st.config.rewards_account.clone(),
         ));
-        let source_id = account_identifier_text(&source);
-        let output_id = account_identifier_text(&output);
-        let rewards_id = account_identifier_text(&rewards);
+        let source_id = account_identifier_text_for_account(&source);
+        let output_id = account_identifier_text_for_account(&output);
+        let rewards_id = account_identifier_text_for_account(&rewards);
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
@@ -2437,9 +2437,9 @@ mod tests {
             st.config.output_account.clone(),
             st.config.rewards_account.clone(),
         ));
-        let source_id = account_identifier_text(&source);
-        let output_id = account_identifier_text(&output);
-        let rewards_id = account_identifier_text(&rewards);
+        let source_id = account_identifier_text_for_account(&source);
+        let output_id = account_identifier_text_for_account(&output);
+        let rewards_id = account_identifier_text_for_account(&rewards);
         let filler: Vec<_> = (11..(10 + PAGE_SIZE))
             .map(|id| transfer_between_accounts_tx(id, "third-party", &output_id, 1_000, id))
             .collect();

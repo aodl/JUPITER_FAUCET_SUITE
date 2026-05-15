@@ -1,8 +1,8 @@
 use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use num_traits::ToPrimitive;
-use sha2::{Digest, Sha224};
 use std::env;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader};
@@ -744,20 +744,6 @@ fn nat_to_u64(value: &Nat) -> u64 {
 
 fn bytes_to_candid_blob(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!(r"\{:02x}", b)).collect()
-}
-
-fn account_identifier_text(account: &Account) -> String {
-    let subaccount = account.subaccount.unwrap_or([0u8; 32]);
-    let mut hasher = Sha224::new();
-    hasher.update(b"\x0Aaccount-id");
-    hasher.update(account.owner.as_slice());
-    hasher.update(subaccount);
-    let hash = hasher.finalize();
-    let checksum = crc32fast::hash(&hash).to_be_bytes();
-    let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&checksum);
-    bytes[4..].copy_from_slice(&hash);
-    hex::encode(bytes)
 }
 
 fn account_to_candid(account: &Account) -> String {
@@ -1822,7 +1808,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1866,7 +1852,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let neuron_id = 42_u64;
         let memo_text = format!("{neuron_id}.local.memo");
         let memo = opt_blob_to_candid(Some(memo_text.as_bytes()));
@@ -1922,7 +1908,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -1973,7 +1959,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let good_memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2044,7 +2030,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2093,7 +2079,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let beneficiary_a = Principal::from_text(canister_id("mock_cmc")?.trim())?;
         let beneficiary_b = short_test_principal();
         let memo_a = opt_blob_to_candid(Some(beneficiary_a.to_text().as_bytes()));
@@ -2183,7 +2169,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2219,7 +2205,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2255,7 +2241,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
 
         let _: () = call_raw(
             "mock_icrc_ledger",
@@ -2298,7 +2284,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2343,7 +2329,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2393,7 +2379,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let target = short_test_principal();
         let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2457,7 +2443,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
             let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-            let staking_id = account_identifier_text(&accounts.staking);
+            let staking_id = account_identifier_text(accounts.staking.owner, accounts.staking.subaccount);
             let target = short_test_principal();
             let memo = opt_blob_to_candid(Some(target.to_text().as_bytes()));
 
@@ -2508,7 +2494,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
 
             let accounts: FaucetDebugAccounts = call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-            let staking_id = account_identifier_text(&accounts.staking);
+            let staking_id = account_identifier_text(accounts.staking.owner, accounts.staking.subaccount);
             let memo = opt_blob_to_candid(Some(short_test_principal().to_text().as_bytes()));
 
             let _: () = call_raw(
@@ -2680,7 +2666,7 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let sub_vec = staking
             .subaccount
             .unwrap()
@@ -2782,7 +2768,7 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
                 ledgerCanisterId: ledger_id.trim().to_string(),
                 indexIntervalSeconds: status.index_interval_seconds.to_string(),
                 cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
-                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                stakingAccountIdentifier: account_identifier_text(status.staking_account.owner, status.staking_account.subaccount),
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
             },
@@ -2922,7 +2908,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             owner: short_test_principal(),
             subaccount: Some([9u8; 32]),
         };
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let memo = format!(
             "opt vec {{ {} }}",
             target
@@ -2977,7 +2963,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
     run_scenario(outcomes, label("icp", "historian", "indexes raw ICP and neuron declarations in recent commitments"), || {
         reset_historian_local_replica_state()?;
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let raw_memo = format!("{}.vault42", target.to_text().replace('-', ""));
         let neuron_id = 42_u64;
         let raw_blob = opt_blob_to_candid(Some(raw_memo.as_bytes()));
@@ -3038,7 +3024,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
     run_scenario(outcomes, label("icp", "historian", "weekly sweep records blackhole cycles"), || {
         reset_historian_local_replica_state()?;
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let memo = format!(
             "opt vec {{ {} }}",
             target
@@ -3115,7 +3101,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let sub_vec = staking
             .subaccount
             .unwrap()
@@ -3217,7 +3203,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 ledgerCanisterId: ledger_id.trim().to_string(),
                 indexIntervalSeconds: status.index_interval_seconds.to_string(),
                 cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
-                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                stakingAccountIdentifier: account_identifier_text(status.staking_account.owner, status.staking_account.subaccount),
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
             },
@@ -3264,7 +3250,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let sub_vec = staking
             .subaccount
             .unwrap()
@@ -3343,7 +3329,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 ledgerCanisterId: ledger_id.trim().to_string(),
                 indexIntervalSeconds: status.index_interval_seconds.to_string(),
                 cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
-                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                stakingAccountIdentifier: account_identifier_text(status.staking_account.owner, status.staking_account.subaccount),
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
             },
@@ -3390,7 +3376,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         reset_historian_local_replica_state()?;
 
         let staking = faucet_staking_account();
-        let staking_id = account_identifier_text(&staking);
+        let staking_id = account_identifier_text(staking.owner, staking.subaccount);
         let sub_vec = staking
             .subaccount
             .unwrap()
@@ -3487,7 +3473,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 ledgerCanisterId: ledger_id.trim().to_string(),
                 indexIntervalSeconds: status.index_interval_seconds.to_string(),
                 cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
-                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                stakingAccountIdentifier: account_identifier_text(status.staking_account.owner, status.staking_account.subaccount),
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
             },
@@ -3595,7 +3581,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 ledgerCanisterId: ledger_id.trim().to_string(),
                 indexIntervalSeconds: status.index_interval_seconds.to_string(),
                 cyclesIntervalSeconds: status.cycles_interval_seconds.to_string(),
-                stakingAccountIdentifier: account_identifier_text(&status.staking_account),
+                stakingAccountIdentifier: account_identifier_text(status.staking_account.owner, status.staking_account.subaccount),
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
             },
