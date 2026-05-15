@@ -22,6 +22,7 @@ import { buildCommitmentIndexFaultBannerText } from './historian-fault.js';
 import { renderAmountBarChart, renderEmptyChart, renderLineChart } from './chart-rendering.js';
 import { buildSimulatorProjection, calculateAgeBonusBasisPointsFromAgingSince, calculateAgeBonusMaturityShareBasisPoints } from './projection-simulator.js';
 import { advancedMemoUrlPrefillState, advancedMemoValidationMessages, buildAdvancedMemo, sanitizeCanisterPrincipalText, sanitizeNeuronIdText, shouldApplyAdvancedMemoUrlTargetValue } from './advanced-memo-builder.js';
+import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from './tracker-cycles.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -39,7 +40,6 @@ const JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX = 'ff0c0b36afefffd0c7a4d85c0bcea366
 const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
 const TRACKER_HASH_PREFIX = '#metric-tracker-';
 const SIMULATOR_HASH_PREFIX = '#simulator-';
-const NANOS_PER_DAY = 86_400_000_000_000n;
 const ICP_TENTH_E8S = 10_000_000n;
 const TRACKER_RANGE_LABELS = {
   month: 'last month',
@@ -1634,57 +1634,8 @@ function aggregateTrackerData(data, range) {
 }
 
 
-function sortedHistorianCycleSamples(data) {
-  return (data?.cycles?.items || [])
-    .filter((item) => item?.timestamp_nanos !== undefined && item?.timestamp_nanos !== null && item?.cycles !== undefined && item?.cycles !== null)
-    .map((item) => ({
-      timestampNanos: typeof item.timestamp_nanos === 'bigint' ? item.timestamp_nanos : BigInt(item.timestamp_nanos),
-      cycles: typeof item.cycles === 'bigint' ? item.cycles : BigInt(item.cycles),
-      source: 'probe',
-    }))
-    .sort((left, right) => left.timestampNanos < right.timestampNanos ? -1 : left.timestampNanos > right.timestampNanos ? 1 : 0);
-}
-
-function cyclesFromLogText(text) {
-  const match = String(text || '').match(/\bCycles:\s*([0-9][0-9_,]*)\b/);
-  if (!match) return null;
-  return BigInt(match[1].replace(/[,_]/g, ''));
-}
-
-function sortedLogCycleSamples(data) {
-  return (data?.logs?.items || [])
-    .map((item) => {
-      const cycles = cyclesFromLogText(item?.text);
-      if (cycles === null || item?.timestamp_nanos === undefined || item?.timestamp_nanos === null) return null;
-      return {
-        timestampNanos: typeof item.timestamp_nanos === 'bigint' ? item.timestamp_nanos : BigInt(item.timestamp_nanos),
-        cycles,
-        source: 'log',
-      };
-    })
-    .filter(Boolean)
-    .sort((left, right) => left.timestampNanos < right.timestampNanos ? -1 : left.timestampNanos > right.timestampNanos ? 1 : 0);
-}
-
-function sortedCycleSamples(data) {
-  const probeSamples = sortedHistorianCycleSamples(data);
-  return probeSamples.length > 0 ? probeSamples : sortedLogCycleSamples(data);
-}
-
 function cycleSampleSourceLabel(samples) {
   return samples[0]?.source === 'log' ? 'canister logs' : 'historian cycle probes';
-}
-
-function estimateCyclesBurnedPerDay(data) {
-  const samples = sortedCycleSamples(data);
-  if (samples.length < 2) return null;
-
-  const oldest = samples[0];
-  const newest = samples[samples.length - 1];
-  const elapsed = newest.timestampNanos - oldest.timestampNanos;
-  if (elapsed <= 0n) return null;
-  const burned = oldest.cycles > newest.cycles ? oldest.cycles - newest.cycles : 0n;
-  return (burned * NANOS_PER_DAY) / elapsed;
 }
 
 function formatTrillionCyclesPerDay(value) {
@@ -2284,7 +2235,8 @@ function renderTrackerData(data, principalText) {
     dailyBurnCycles: estimatedObservedCyclesBurnedPerDay,
     commitmentE8s: fullSummary.qualifyingCommittedE8s || fullSummary.totalCommittedE8s,
   });
-  const cycleSourceLabel = cycleSamples.length > 0 ? cycleSampleSourceLabel(cycleSamples) : 'available cycle data';
+  const burnEstimateSamples = cycleSamplesForBurnEstimate(data);
+  const cycleSourceLabel = burnEstimateSamples.length > 0 ? cycleSampleSourceLabel(burnEstimateSamples) : 'available cycle data';
   const commitmentError = data.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(data.errors.commitments)}</p>` : '';
   const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
   const hasCyclesOutsideRange = (data?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;

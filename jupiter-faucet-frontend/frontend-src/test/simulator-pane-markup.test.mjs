@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'utf8');
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
 const mainJs = readFileSync(resolve(__dirname, '../src/main.js'), 'utf8');
+const trackerCyclesJs = readFileSync(resolve(__dirname, '../src/tracker-cycles.js'), 'utf8');
 const navbarJs = readFileSync(resolve(__dirname, '../../assets/navbar.js'), 'utf8');
 const navbarCss = readFileSync(resolve(__dirname, '../../assets/navbar.css'), 'utf8');
 
@@ -639,8 +640,8 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /function formatCycles\(value\) \{\n  return formatTrillionCycles\(value\);/);
   assert.match(mainJs, /function trackerCyclesChartPoints\(data\)/);
   assert.match(mainJs, /return sortedCycleSamples\(data\)\.map/);
-  assert.match(mainJs, /function sortedLogCycleSamples\(data\)/);
-  assert.match(mainJs, /Cycles:\\s\*\(\[0-9\]\[0-9_,\]\*\)/);
+  assert.match(trackerCyclesJs, /function sortedLogCycleSamples\(data\)/);
+  assert.match(trackerCyclesJs, /Cycles:\\s\*\(\[0-9\]\[0-9_,\]\*\)/);
   assert.match(mainJs, /function trackerCyclesPointLabel\(point\)/);
   assert.match(mainJs, /formatTimestampNanos\(point\.timestampNanos\)/);
   assert.match(mainJs, /pointLabelBuilder: trackerCyclesPointLabel/);
@@ -655,7 +656,7 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /renderCyclesProbeInfoNote/);
   assert.match(mainJs, /using canister log cycles/);
   assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(data\);/);
-  assert.match(mainJs, /estimateCyclesBurnedPerDay/);
+  assert.match(trackerCyclesJs, /estimateCyclesBurnedPerDay/);
   assert.match(mainJs, /formatTrillionCyclesPerDay/);
   assert.match(mainJs, /renderTrackerLogs\(data\)/);
   assert.match(mainJs, /data-simulator-prefill="true"/);
