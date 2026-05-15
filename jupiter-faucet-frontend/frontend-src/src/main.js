@@ -1125,23 +1125,30 @@ function sourcePaneControllerNodes() {
   return Array.from(document.querySelectorAll('[data-source-controllers]'));
 }
 
+function sourcePaneMemoryNodes() {
+  return Array.from(document.querySelectorAll('[data-source-heap-memory], [data-source-stable-memory], [data-source-total-memory]'));
+}
+
 function sourcePaneCanisterInfoNodes() {
-  return [...sourcePaneModuleHashNodes(), ...sourcePaneControllerNodes()];
+  return [...sourcePaneModuleHashNodes(), ...sourcePaneControllerNodes(), ...sourcePaneMemoryNodes()];
 }
 
 function sourcePaneModuleHashCacheKey() {
   if (!FRONTEND_CONFIG?.historianCanisterId) return null;
-  return `jupiter-faucet:source-pane-canister-info:v3:${FRONTEND_CONFIG.historianCanisterId}`;
+  return `jupiter-faucet:source-pane-canister-info:v4:${FRONTEND_CONFIG.historianCanisterId}`;
 }
 
 function normalizeSourcePaneInfo(infoByCanisterId, canisterId) {
   const entry = infoByCanisterId?.[canisterId];
-  if (!entry) return { moduleHash: null, controllers: null };
-  if (typeof entry === 'string') return { moduleHash: entry || null, controllers: null };
-  if (typeof entry !== 'object' || Array.isArray(entry)) return { moduleHash: null, controllers: null };
+  if (!entry) return { moduleHash: null, controllers: null, heapMemoryBytes: null, stableMemoryBytes: null, totalMemoryBytes: null };
+  if (typeof entry === 'string') return { moduleHash: entry || null, controllers: null, heapMemoryBytes: null, stableMemoryBytes: null, totalMemoryBytes: null };
+  if (typeof entry !== 'object' || Array.isArray(entry)) return { moduleHash: null, controllers: null, heapMemoryBytes: null, stableMemoryBytes: null, totalMemoryBytes: null };
   return {
     moduleHash: entry.moduleHash || entry.module_hash_hex || null,
     controllers: Array.isArray(entry.controllers) ? entry.controllers : null,
+    heapMemoryBytes: entry.heapMemoryBytes ?? entry.heap_memory_bytes ?? null,
+    stableMemoryBytes: entry.stableMemoryBytes ?? entry.stable_memory_bytes ?? null,
+    totalMemoryBytes: entry.totalMemoryBytes ?? entry.total_memory_bytes ?? null,
   };
 }
 
@@ -1153,7 +1160,14 @@ function renderSourceControllers(controllers) {
 
 function sourcePaneExpectedCanisterIds() {
   return Array.from(new Set(sourcePaneCanisterInfoNodes()
-    .map((node) => node.getAttribute('data-source-module-hash') || node.getAttribute('data-source-controllers') || '')
+    .map((node) => (
+      node.getAttribute('data-source-module-hash')
+      || node.getAttribute('data-source-controllers')
+      || node.getAttribute('data-source-heap-memory')
+      || node.getAttribute('data-source-stable-memory')
+      || node.getAttribute('data-source-total-memory')
+      || ''
+    ))
     .filter(Boolean)));
 }
 
@@ -1177,6 +1191,23 @@ function applySourcePaneModuleHashes(infoByCanisterId, { fallbackTitle = '' } = 
     const { controllers } = normalizeSourcePaneInfo(infoByCanisterId, canisterId);
     node.innerHTML = renderSourceControllers(controllers);
     if (controllers === null && fallbackTitle) node.setAttribute('title', fallbackTitle);
+    else node.removeAttribute('title');
+  });
+  sourcePaneMemoryNodes().forEach((node) => {
+    const canisterId = (
+      node.getAttribute('data-source-heap-memory')
+      || node.getAttribute('data-source-stable-memory')
+      || node.getAttribute('data-source-total-memory')
+      || ''
+    );
+    const { heapMemoryBytes, stableMemoryBytes, totalMemoryBytes } = normalizeSourcePaneInfo(infoByCanisterId, canisterId);
+    const value = node.hasAttribute('data-source-heap-memory')
+      ? heapMemoryBytes
+      : node.hasAttribute('data-source-stable-memory')
+        ? stableMemoryBytes
+        : totalMemoryBytes;
+    node.textContent = value === null || value === undefined ? 'Unavailable' : formatBytes(value);
+    if ((value === null || value === undefined) && fallbackTitle) node.setAttribute('title', fallbackTitle);
     else node.removeAttribute('title');
   });
 }
@@ -1230,6 +1261,9 @@ async function ensureSourcePaneModuleHashesLoaded() {
         infos.map((item) => [formatPrincipal(item.canister_id), {
           moduleHash: readOpt(item.module_hash_hex) || null,
           controllers: readOpt(item.controllers)?.map(formatPrincipal) || null,
+          heapMemoryBytes: readOpt(item.heap_memory_bytes),
+          stableMemoryBytes: readOpt(item.stable_memory_bytes),
+          totalMemoryBytes: readOpt(item.total_memory_bytes),
         }]),
       );
       applySourcePaneModuleHashes(infoByCanisterId);

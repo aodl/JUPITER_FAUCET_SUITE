@@ -181,6 +181,9 @@ test('Source and Governance panes expose subnet context', () => {
   const governance = sectionMarkup('governance');
   assert.match(source, /source-pane-subnet-link pane-external-link[^>]*>Subnet pzp6e<\/a>/);
   assert.match(source, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae/);
+  assert.match(source, /data-source-total-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
+  assert.match(source, /data-source-heap-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
+  assert.match(source, /data-source-stable-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
   assert.match(navbarCss, /\.source-pane-canister \{[\s\S]*position: relative;[\s\S]*\}/);
   assert.match(navbarCss, /\.source-pane-subnet-link \{[\s\S]*position: absolute;[\s\S]*right: 16px;[\s\S]*\}/);
   assert.match(governance, /All Jupiter Faucet suite canisters reside on either the/);

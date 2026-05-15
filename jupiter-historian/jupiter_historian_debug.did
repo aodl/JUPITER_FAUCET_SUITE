@@ -163,6 +163,14 @@ type ListRecentCommitmentsArgs = record {
 type ListRecentCommitmentsResponse = record {
   items : vec RecentCommitmentListItem;
 };
+type CanisterModuleHash = record {
+  canister_id : principal;
+  module_hash_hex : opt text;
+  controllers : opt vec principal;
+  heap_memory_bytes : opt nat64;
+  stable_memory_bytes : opt nat64;
+  total_memory_bytes : opt nat64;
+};
 type DebugState = record {
   distinct_canister_count : nat32;
   last_indexed_staking_tx_id : opt nat64;
@@ -200,6 +208,7 @@ type DebugConfig = record {
   max_canisters_per_cycles_tick : nat32;
 };
 service : (InitArgs) -> {
+  get_canister_module_hashes : () -> (vec CanisterModuleHash);
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
   get_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;

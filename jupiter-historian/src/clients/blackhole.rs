@@ -16,9 +16,17 @@ pub struct BlackholeSettings {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct BlackholeMemoryMetrics {
+    pub wasm_memory_size: Nat,
+    pub stable_memory_size: Nat,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct BlackholeCanisterStatus {
     pub cycles: Nat,
     pub settings: BlackholeSettings,
+    pub memory_size: Option<Nat>,
+    pub memory_metrics: Option<BlackholeMemoryMetrics>,
 }
 
 pub struct BlackholeCanister {

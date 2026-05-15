@@ -160,6 +160,9 @@ export const idlFactory = ({ IDL }) => {
     canister_id: IDL.Principal,
     module_hash_hex: IDL.Opt(IDL.Text),
     controllers: IDL.Opt(IDL.Vec(IDL.Principal)),
+    heap_memory_bytes: IDL.Opt(IDL.Nat64),
+    stable_memory_bytes: IDL.Opt(IDL.Nat64),
+    total_memory_bytes: IDL.Opt(IDL.Nat64),
   });
   return IDL.Service({
     get_canister_module_hashes: IDL.Func([], [IDL.Vec(CanisterModuleHash)], []),

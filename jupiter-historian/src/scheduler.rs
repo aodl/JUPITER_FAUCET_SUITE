@@ -1837,6 +1837,8 @@ mod tests {
             Ok(crate::clients::blackhole::BlackholeCanisterStatus {
                 cycles: Nat::from(0u64),
                 settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
+                memory_size: None,
+                memory_metrics: None,
             })
         }
     }
@@ -1863,6 +1865,8 @@ mod tests {
             Ok(crate::clients::blackhole::BlackholeCanisterStatus {
                 cycles: Nat::from(self.cycles),
                 settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
+                memory_size: None,
+                memory_metrics: None,
             })
         }
     }

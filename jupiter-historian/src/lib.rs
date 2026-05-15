@@ -3,8 +3,9 @@ mod logic;
 mod scheduler;
 mod state;
 
-use candid::{CandidType, Deserialize, Principal};
+use candid::{CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use num_traits::ToPrimitive;
 use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
@@ -89,6 +90,10 @@ fn clamp_canisters_per_cycles_tick(value: u32) -> u32 {
 
 fn format_module_hash_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+fn nat_to_u64(n: &Nat) -> Option<u64> {
+    n.0.to_u64()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -479,6 +484,9 @@ pub struct CanisterModuleHash {
     pub canister_id: Principal,
     pub module_hash_hex: Option<String>,
     pub controllers: Option<Vec<Principal>>,
+    pub heap_memory_bytes: Option<u64>,
+    pub stable_memory_bytes: Option<u64>,
+    pub total_memory_bytes: Option<u64>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -1229,6 +1237,7 @@ fn source_module_hash_canister_ids() -> Vec<Principal> {
 #[ic_cdk::update]
 async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let canister_ids = source_module_hash_canister_ids();
+    let blackhole = clients::blackhole::BlackholeCanister::new(mainnet_blackhole_id());
     let mut hashes = Vec::with_capacity(canister_ids.len());
     for canister_id in canister_ids {
         let request = ic_cdk::management_canister::CanisterInfoArgs {
@@ -1247,10 +1256,30 @@ async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
                 (None, None)
             }
         };
+        let (heap_memory_bytes, stable_memory_bytes, total_memory_bytes) =
+            match clients::BlackholeClient::canister_status(&blackhole, canister_id).await {
+                Ok(status) => {
+                    let heap = status.memory_metrics.as_ref().and_then(|metrics| nat_to_u64(&metrics.wasm_memory_size));
+                    let stable = status.memory_metrics.as_ref().and_then(|metrics| nat_to_u64(&metrics.stable_memory_size));
+                    let total = status
+                        .memory_size
+                        .as_ref()
+                        .and_then(nat_to_u64)
+                        .or_else(|| heap.zip(stable).map(|(heap, stable)| heap.saturating_add(stable)));
+                    (heap, stable, total)
+                }
+                Err(err) => {
+                    ic_cdk::println!("get_canister_module_hashes status failed for {}: {}", canister_id, err);
+                    (None, None, None)
+                }
+            };
         hashes.push(CanisterModuleHash {
             canister_id,
             module_hash_hex,
             controllers,
+            heap_memory_bytes,
+            stable_memory_bytes,
+            total_memory_bytes,
         });
     }
     hashes

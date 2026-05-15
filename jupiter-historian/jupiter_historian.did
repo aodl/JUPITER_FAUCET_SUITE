@@ -189,6 +189,9 @@ type CanisterModuleHash = record {
   canister_id : principal;
   module_hash_hex : opt text;
   controllers : opt vec principal;
+  heap_memory_bytes : opt nat64;
+  stable_memory_bytes : opt nat64;
+  total_memory_bytes : opt nat64;
 };
 service : (InitArgs) -> {
   get_canister_module_hashes : () -> (vec CanisterModuleHash);
