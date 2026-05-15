@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 candid = "0.10"
 serde = { version = "1", features = ["derive"] }
 ic-cdk = "0.19"
+jupiter-nns-types = { path = "../../../../jupiter-nns-types" }

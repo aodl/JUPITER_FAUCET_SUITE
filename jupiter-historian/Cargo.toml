@@ -27,6 +27,7 @@ icrc-ledger-types = "0.1.12"
 ic-stable-structures = "0.6"
 crc32fast = "1"
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
+jupiter-nns-types = { path = "../jupiter-nns-types" }
 
 [features]
 debug_api = []

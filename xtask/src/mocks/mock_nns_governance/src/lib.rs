@@ -1,129 +1,11 @@
-use candid::{CandidType, Deserialize, Principal};
+use jupiter_nns_types::{
+    manage_neuron, manage_neuron_response, GovernanceError, ListNeurons, ListNeuronsResponse,
+    ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, MaturityDisbursement,
+    Neuron, NeuronId,
+};
 use std::cell::RefCell;
 
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct GovernanceError {
-    pub error_message: String,
-    pub error_type: i32,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct MaturityDisbursement {
-    pub amount_e8s: Option<u64>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct Neuron {
-    pub id: Option<NeuronId>,
-    pub account: Vec<u8>,
-    pub aging_since_timestamp_seconds: u64,
-    pub maturity_disbursements_in_progress: Option<Vec<MaturityDisbursement>>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub enum NeuronResult {
-    Ok(Neuron),
-    Err(GovernanceError),
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct NeuronId {
-    pub id: u64,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct NeuronSubaccount {
-    pub subaccount: Vec<u8>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct ListNeurons {
-    pub neuron_ids: Vec<u64>,
-    pub include_neurons_readable_by_caller: bool,
-    pub include_empty_neurons_readable_by_caller: Option<bool>,
-    pub include_public_neurons_in_full_neurons: Option<bool>,
-    pub page_number: Option<u64>,
-    pub page_size: Option<u64>,
-    pub neuron_subaccounts: Option<Vec<NeuronSubaccount>>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct ListNeuronsResponse {
-    pub full_neurons: Vec<Neuron>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct Account {
-    pub owner: Option<Principal>,
-    pub subaccount: Option<Vec<u8>>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct AccountIdentifier {
-    pub hash: Vec<u8>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct DisburseMaturity {
-    pub percentage_to_disburse: u32,
-    pub to_account: Option<Account>,
-    pub to_account_identifier: Option<AccountIdentifier>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct DisburseMaturityResponse {
-    pub amount_disbursed_e8s: Option<u64>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct ClaimOrRefresh {
-    pub by: Option<By>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub enum By {
-    NeuronIdOrSubaccount(Empty),
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct ClaimOrRefreshResponse {
-    pub refreshed_neuron_id: Option<NeuronId>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub enum ManageNeuronCommandRequest {
-    DisburseMaturity(DisburseMaturity),
-    RefreshVotingPower(Empty),
-    ClaimOrRefresh(ClaimOrRefresh),
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct Empty {}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub enum NeuronIdOrSubaccount {
-    NeuronId(NeuronId),
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct ManageNeuronRequest {
-    pub neuron_id_or_subaccount: Option<NeuronIdOrSubaccount>,
-    pub command: Option<ManageNeuronCommandRequest>,
-    pub id: Option<NeuronId>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub enum Command1 {
-    Error(GovernanceError),
-    DisburseMaturity(DisburseMaturityResponse),
-    RefreshVotingPower(Empty),
-    ClaimOrRefresh(ClaimOrRefreshResponse),
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug)]
-pub struct ManageNeuronResponse {
-    pub command: Option<Command1>,
-}
+type NeuronResult = Result<Neuron, GovernanceError>;
 
 #[derive(Default)]
 struct GovState {
@@ -149,7 +31,10 @@ fn get_full_neuron(neuron_id: u64) -> NeuronResult {
     });
 
     let disb = if in_flight {
-        Some(vec![MaturityDisbursement { amount_e8s: Some(1) }])
+        Some(vec![MaturityDisbursement {
+            amount_e8s: Some(1),
+            ..Default::default()
+        }])
     } else {
         Some(vec![])
     };
@@ -162,6 +47,7 @@ fn get_full_neuron(neuron_id: u64) -> NeuronResult {
         account,
         aging_since_timestamp_seconds: aging_since,
         maturity_disbursements_in_progress: disb,
+        ..Default::default()
     })
 }
 
@@ -179,13 +65,17 @@ fn list_neurons(req: ListNeurons) -> ListNeuronsResponse {
                     account,
                     aging_since_timestamp_seconds: 0,
                     maturity_disbursements_in_progress: Some(vec![]),
+                    ..Default::default()
                 }
             })
             .collect()
     } else {
         Vec::new()
     };
-    ListNeuronsResponse { full_neurons }
+    ListNeuronsResponse {
+        full_neurons,
+        ..Default::default()
+    }
 }
 
 #[ic_cdk::update]
@@ -197,21 +87,32 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
     } = req;
 
     let refreshed_neuron_id = id.or_else(|| match neuron_id_or_subaccount {
-        Some(NeuronIdOrSubaccount::NeuronId(id)) => Some(id),
+        Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(id)) => Some(id),
+        Some(manage_neuron::NeuronIdOrSubaccount::Subaccount(_)) => None,
         None => None,
     });
 
     let cmd = match command {
-        Some(ManageNeuronCommandRequest::DisburseMaturity(_d)) => Some(Command1::DisburseMaturity(
-            DisburseMaturityResponse { amount_disbursed_e8s: None },
-        )),
+        Some(ManageNeuronCommandRequest::DisburseMaturity(_d)) => {
+            Some(manage_neuron_response::Command::DisburseMaturity(
+                manage_neuron_response::DisburseMaturityResponse {
+                    amount_disbursed_e8s: None,
+                },
+            ))
+        }
         Some(ManageNeuronCommandRequest::RefreshVotingPower(_)) => {
-            Some(Command1::RefreshVotingPower(Empty {}))
+            Some(manage_neuron_response::Command::RefreshVotingPower(
+                manage_neuron_response::RefreshVotingPowerResponse {},
+            ))
         }
         Some(ManageNeuronCommandRequest::ClaimOrRefresh(_)) => {
-            Some(Command1::ClaimOrRefresh(ClaimOrRefreshResponse { refreshed_neuron_id }))
+            Some(manage_neuron_response::Command::ClaimOrRefresh(
+                manage_neuron_response::ClaimOrRefreshResponse {
+                    refreshed_neuron_id,
+                },
+            ))
         }
-        _ => Some(Command1::Error(GovernanceError {
+        _ => Some(manage_neuron_response::Command::Error(GovernanceError {
             error_message: "unsupported".to_string(),
             error_type: -1,
         })),
@@ -221,13 +122,22 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
         let mut st = s.borrow_mut();
         st.manage_calls += 1;
         // Any successful DisburseMaturity marks in-flight in this mock.
-        if matches!(cmd, Some(Command1::DisburseMaturity(_))) {
+        if matches!(
+            cmd,
+            Some(manage_neuron_response::Command::DisburseMaturity(_))
+        ) {
             st.in_flight = true;
         }
-        if matches!(cmd, Some(Command1::RefreshVotingPower(_))) {
+        if matches!(
+            cmd,
+            Some(manage_neuron_response::Command::RefreshVotingPower(_))
+        ) {
             st.refresh_calls += 1;
         }
-        if matches!(cmd, Some(Command1::ClaimOrRefresh(_))) {
+        if matches!(
+            cmd,
+            Some(manage_neuron_response::Command::ClaimOrRefresh(_))
+        ) {
             st.claim_or_refresh_calls += 1;
         }
     });

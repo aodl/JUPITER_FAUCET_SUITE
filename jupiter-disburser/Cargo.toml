@@ -22,6 +22,7 @@ ic-cdk = "0.19"
 ic-cdk-timers = "1.0.0"
 icrc-ledger-types = "0.1.12"
 ic-stable-structures = "0.6"
+jupiter-nns-types = { path = "../jupiter-nns-types" }
 
 [features]
 debug_api = []

@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use candid::Principal;
 use ic_cdk::call::Call;
+use jupiter_nns_types::{
+    manage_neuron, manage_neuron_response, Account, Empty, GovernanceError,
+    ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
+    PrincipalId,
+};
 
 use crate::clients::GovernanceClient;
-use crate::nns_types::{
-    By, ClaimOrRefresh, Command1, DisburseMaturity, Empty, GovernanceAccount,
-    GovernanceError, ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse,
-    Neuron, NeuronId, NeuronIdOrSubaccount, NeuronResult,
-};
 
 pub struct NnsGovernanceCanister {
     gov_id: Principal,
@@ -31,15 +31,12 @@ impl GovernanceClient for NnsGovernanceCanister {
                 error_type: -1,
             })?;
 
-        let res: NeuronResult = resp.candid().map_err(|e| GovernanceError {
+        let res: Result<Neuron, GovernanceError> = resp.candid().map_err(|e| GovernanceError {
             error_message: format!("decode failed: {e:?}"),
             error_type: -1,
         })?;
 
-        match res {
-            NeuronResult::Ok(n) => Ok(n),
-            NeuronResult::Err(e) => Err(e),
-        }
+        res
     }
 
     async fn disburse_maturity_to_account(
@@ -50,15 +47,19 @@ impl GovernanceClient for NnsGovernanceCanister {
         to_subaccount: Option<Vec<u8>>,
     ) -> Result<Option<u64>, GovernanceError> {
         let req = ManageNeuronRequest {
-            neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-            command: Some(ManageNeuronCommandRequest::DisburseMaturity(DisburseMaturity {
-                percentage_to_disburse: percentage,
-                to_account: Some(GovernanceAccount {
-                    owner: Some(to_owner),
-                    subaccount: to_subaccount,
-                }),
-                to_account_identifier: None,
-            })),
+            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(
+                NeuronId { id: neuron_id },
+            )),
+            command: Some(ManageNeuronCommandRequest::DisburseMaturity(
+                manage_neuron::DisburseMaturity {
+                    percentage_to_disburse: percentage,
+                    to_account: Some(Account {
+                        owner: Some(PrincipalId::from(to_owner)),
+                        subaccount: to_subaccount,
+                    }),
+                    to_account_identifier: None,
+                },
+            )),
             id: None,
         };
 
@@ -77,8 +78,10 @@ impl GovernanceClient for NnsGovernanceCanister {
         })?;
 
         match decoded.command {
-            Some(Command1::DisburseMaturity(r)) => Ok(r.amount_disbursed_e8s),
-            Some(Command1::Error(e)) => Err(e),
+            Some(manage_neuron_response::Command::DisburseMaturity(r)) => {
+                Ok(r.amount_disbursed_e8s)
+            }
+            Some(manage_neuron_response::Command::Error(e)) => Err(e),
             other => Err(GovernanceError {
                 error_message: format!("unexpected manage_neuron response: {other:?}"),
                 error_type: -2,
@@ -88,8 +91,12 @@ impl GovernanceClient for NnsGovernanceCanister {
 
     async fn refresh_voting_power(&self, neuron_id: u64) -> Result<(), GovernanceError> {
         let req = ManageNeuronRequest {
-            neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-            command: Some(ManageNeuronCommandRequest::RefreshVotingPower(Empty {})),
+            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(
+                NeuronId { id: neuron_id },
+            )),
+            command: Some(ManageNeuronCommandRequest::RefreshVotingPower(
+                manage_neuron::RefreshVotingPower {},
+            )),
             id: None,
         };
 
@@ -108,8 +115,8 @@ impl GovernanceClient for NnsGovernanceCanister {
         })?;
 
         match decoded.command {
-            Some(Command1::RefreshVotingPower(_)) => Ok(()),
-            Some(Command1::Error(e)) => Err(e),
+            Some(manage_neuron_response::Command::RefreshVotingPower(_)) => Ok(()),
+            Some(manage_neuron_response::Command::Error(e)) => Err(e),
             other => Err(GovernanceError {
                 error_message: format!("unexpected manage_neuron response: {other:?}"),
                 error_type: -2,
@@ -119,10 +126,16 @@ impl GovernanceClient for NnsGovernanceCanister {
 
     async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), GovernanceError> {
         let req = ManageNeuronRequest {
-            neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(ClaimOrRefresh {
-                by: Some(By::NeuronIdOrSubaccount(Empty {})),
-            })),
+            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(
+                NeuronId { id: neuron_id },
+            )),
+            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(
+                manage_neuron::ClaimOrRefresh {
+                    by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount(
+                        Empty {},
+                    )),
+                },
+            )),
             id: None,
         };
 
@@ -141,8 +154,8 @@ impl GovernanceClient for NnsGovernanceCanister {
         })?;
 
         match decoded.command {
-            Some(Command1::ClaimOrRefresh(_)) => Ok(()),
-            Some(Command1::Error(e)) => Err(e),
+            Some(manage_neuron_response::Command::ClaimOrRefresh(_)) => Ok(()),
+            Some(manage_neuron_response::Command::Error(e)) => Err(e),
             other => Err(GovernanceError {
                 error_message: format!("unexpected manage_neuron response: {other:?}"),
                 error_type: -2,
@@ -150,4 +163,3 @@ impl GovernanceClient for NnsGovernanceCanister {
         }
     }
 }
-

@@ -611,8 +611,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use candid::{Nat, Principal};
-    use crate::nns_types::{GovernanceError, Neuron};
     use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
+    use jupiter_nns_types::{GovernanceError, MaturityDisbursement, Neuron};
     use std::collections::VecDeque;
     use std::future::{pending, Future};
     use std::pin::Pin;
@@ -892,7 +892,11 @@ mod tests {
         let gov = ScriptedGovernance::new(
             vec![Ok(Neuron {
                 aging_since_timestamp_seconds: 0,
-                maturity_disbursements_in_progress: Some(vec![crate::nns_types::MaturityDisbursement { amount_e8s: Some(1) }]),
+                maturity_disbursements_in_progress: Some(vec![MaturityDisbursement {
+                    amount_e8s: Some(1),
+                    ..Default::default()
+                }]),
+                ..Default::default()
             })],
             vec![],
         );
@@ -917,7 +921,11 @@ mod tests {
         let gov = ScriptedGovernance::new(
             vec![Ok(Neuron {
                 aging_since_timestamp_seconds: 100,
-                maturity_disbursements_in_progress: Some(vec![crate::nns_types::MaturityDisbursement { amount_e8s: Some(50) }]),
+                maturity_disbursements_in_progress: Some(vec![MaturityDisbursement {
+                    amount_e8s: Some(50),
+                    ..Default::default()
+                }]),
+                ..Default::default()
             })],
             vec![],
         );
@@ -1118,6 +1126,7 @@ mod tests {
                 vec![Ok(Neuron {
                     aging_since_timestamp_seconds: 100,
                     maturity_disbursements_in_progress: None,
+                    ..Default::default()
                 })],
                 vec![],
             );
@@ -1141,6 +1150,7 @@ mod tests {
             vec![Ok(Neuron {
                 aging_since_timestamp_seconds: 100,
                 maturity_disbursements_in_progress: None,
+                ..Default::default()
             })],
             vec![],
         );
@@ -1167,6 +1177,7 @@ mod tests {
                 vec![Ok(Neuron {
                     aging_since_timestamp_seconds: 100,
                     maturity_disbursements_in_progress: None,
+                    ..Default::default()
                 })],
                 vec![],
             );
@@ -1233,6 +1244,7 @@ mod tests {
             vec![Ok(Neuron {
                 aging_since_timestamp_seconds: 321,
                 maturity_disbursements_in_progress: None,
+                ..Default::default()
             })],
             vec![Ok(None)],
         );
@@ -1292,10 +1304,12 @@ mod tests {
                 Ok(Neuron {
                     aging_since_timestamp_seconds: 100,
                     maturity_disbursements_in_progress: None,
+                    ..Default::default()
                 }),
                 Ok(Neuron {
                     aging_since_timestamp_seconds: 100,
                     maturity_disbursements_in_progress: None,
+                    ..Default::default()
                 }),
             ],
             vec![],
@@ -1335,10 +1349,15 @@ mod tests {
                 Ok(Neuron {
                     aging_since_timestamp_seconds: 100,
                     maturity_disbursements_in_progress: None,
+                    ..Default::default()
                 }),
                 Ok(Neuron {
                     aging_since_timestamp_seconds: 100,
-                    maturity_disbursements_in_progress: Some(vec![crate::nns_types::MaturityDisbursement { amount_e8s: Some(50) }]),
+                    maturity_disbursements_in_progress: Some(vec![MaturityDisbursement {
+                        amount_e8s: Some(50),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
                 }),
             ],
             vec![Err(GovernanceError {

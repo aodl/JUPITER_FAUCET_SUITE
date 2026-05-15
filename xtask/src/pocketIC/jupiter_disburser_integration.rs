@@ -2,10 +2,14 @@ use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
+use jupiter_nns_types::{
+    manage_neuron, manage_neuron_response, neuron, Account as GovAccount, GovernanceError,
+    MakeProposalRequest, ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse,
+    Motion, Neuron, NeuronId, PrincipalId, ProposalActionRequest, ProposalId,
+};
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use slog::Level;
 use pocket_ic::{PocketIc, PocketIcBuilder};
-use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha224, Sha256};
 use std::process::Command;
 use std::time::Duration;
@@ -136,197 +140,9 @@ fn effective_denom_e8s(summary: &FaucetSummary) -> u64 {
         .unwrap_or(summary.denom_staking_balance_e8s)
 }
 
-// ------------------------- Minimal candid types -------------------------
-//
-// We intentionally define only what we *need*.
-// For decoding responses, extra fields from the canister are ignored.
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct NeuronId {
-    id: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct GovernanceError {
-    error_type: i32,
-    error_message: String,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum NeuronResult {
-    Ok(NeuronMinimal),
-    Err(GovernanceError),
-}
-
-// governance.did: DissolveState = variant { DissolveDelaySeconds : nat64; WhenDissolvedTimestampSeconds : nat64 }
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum DissolveState {
-    DissolveDelaySeconds(u64),
-    WhenDissolvedTimestampSeconds(u64),
-}
-
-// governance.did: type Account = record { owner: principal; subaccount: opt blob; }
-// We decode permissively: owner is optional here so we can decode both `principal` and `opt principal`.
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct GovAccount {
-    owner: Option<Principal>,
-    subaccount: Option<ByteBuf>,
-}
-
-// governance.did: type MaturityDisbursement = record { ... }
-// We only decode a few fields; the rest can be ignored.
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct MaturityDisbursement {
-    timestamp_of_disbursement_seconds: Option<u64>,
-    finalize_disbursement_timestamp_seconds: Option<u64>,
-    amount_e8s: Option<u64>,
-    account_to_disburse_to: Option<GovAccount>,
-    // account_identifier_to_disburse_to is a blob; we treat it as opaque bytes if present.
-    account_identifier_to_disburse_to: Option<ByteBuf>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct NeuronMinimal {
-    id: Option<NeuronId>,
-    account: ByteBuf, // 32-byte staking subaccount
-    controller: Option<Principal>,
-    dissolve_state: Option<DissolveState>,
-    maturity_e8s_equivalent: u64,
-    cached_neuron_stake_e8s: u64,
-    aging_since_timestamp_seconds: u64,
-    maturity_disbursements_in_progress: Option<Vec<MaturityDisbursement>>,
-    voting_power_refreshed_timestamp_seconds: Option<u64>,
-    deciding_voting_power: Option<u64>,
-    potential_voting_power: Option<u64>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum NeuronIdOrSubaccount {
-    NeuronId(NeuronId),
-    Subaccount(ByteBuf),
-}
-
-#[derive(Clone, Debug, Default, CandidType, Deserialize)]
-struct Empty {}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ManageNeuronRequest {
-    // Deprecated but still present in candid; keep optional.
-    id: Option<NeuronId>,
-    neuron_id_or_subaccount: Option<NeuronIdOrSubaccount>,
-    command: Option<ManageNeuronCommandRequest>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ManageNeuronResponse {
-    command: Option<ManageNeuronCommandResponse>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum ManageNeuronCommandRequest {
-    Configure(Configure),
-    ClaimOrRefresh(ClaimOrRefresh),
-    MakeProposal(MakeProposal),
-    RegisterVote(RegisterVote),
-    DisburseMaturity(DisburseMaturity),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum ManageNeuronCommandResponse {
-    Configure(Empty),
-    ClaimOrRefresh(ClaimOrRefreshResponse),
-    MakeProposal(MakeProposalResponse),
-    RegisterVote(Empty),
-    DisburseMaturity(DisburseMaturityResponse),
-    Error(GovernanceError),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Configure {
-    operation: Option<Operation>,
-}
-
-// Keep only what we need.
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum Operation {
-    AddHotKey(AddHotKey),
-    IncreaseDissolveDelay(IncreaseDissolveDelay),
-    StartDissolving(Empty),
-    StopDissolving(Empty),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct AddHotKey {
-    new_hot_key: Option<Principal>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct IncreaseDissolveDelay {
-    additional_dissolve_delay_seconds: u32,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ClaimOrRefresh {
-    by: Option<By>,
-}
-
-// governance.did: By = variant { NeuronIdOrSubaccount : record {}; Memo : nat64; MemoAndController : record {...} }
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum By {
-    NeuronIdOrSubaccount(Empty),
-    Memo(u64),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ClaimOrRefreshResponse {
-    refreshed_neuron_id: Option<NeuronId>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct MakeProposal {
-    url: String,
-    title: Option<String>,
-    summary: String,
-    action: Option<ProposalActionRequest>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum ProposalActionRequest {
-    Motion(Motion),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Motion {
-    motion_text: String,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ProposalId {
-    id: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct MakeProposalResponse {
-    proposal_id: Option<ProposalId>,
-    message: Option<String>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct RegisterVote {
-    proposal: Option<ProposalId>,
-    vote: i32, // 1 = yes
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct DisburseMaturity {
-    percentage_to_disburse: u32,
-    to_account: Option<GovAccount>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct DisburseMaturityResponse {
-    amount_disbursed_e8s: Option<u64>,
-}
+type NeuronMinimal = Neuron;
+type NeuronResult = Result<Neuron, GovernanceError>;
+type DissolveState = neuron::DissolveState;
 
 // ------------------------- Jupiter-disburser init arg -------------------------
 
@@ -893,14 +709,14 @@ fn stake_and_claim_neuron(
     let req = ManageNeuronRequest {
         id: None,
         neuron_id_or_subaccount: None,
-        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(ClaimOrRefresh {
-            by: Some(By::Memo(memo)),
+        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
+            by: Some(manage_neuron::claim_or_refresh::By::Memo(memo)),
         })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
     match resp.command {
-        Some(ManageNeuronCommandResponse::ClaimOrRefresh(r)) => {
+        Some(manage_neuron_response::Command::ClaimOrRefresh(r)) => {
             let nid = r
                 .refreshed_neuron_id
                 .ok_or_else(|| anyhow!("claim_or_refresh returned no refreshed_neuron_id"))?
@@ -908,7 +724,7 @@ fn stake_and_claim_neuron(
             e2e_log!("created neuron_id={nid} controller={controller}");
             Ok(nid)
         }
-        Some(ManageNeuronCommandResponse::Error(e)) => bail!("claim_or_refresh failed: {:?}", e),
+        Some(manage_neuron_response::Command::Error(e)) => bail!("claim_or_refresh failed: {:?}", e),
         other => bail!("unexpected claim_or_refresh response: {:?}", other),
     }
 }
@@ -922,16 +738,16 @@ fn add_hotkey(
 ) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::Configure(Configure {
-            operation: Some(Operation::AddHotKey(AddHotKey {
-                new_hot_key: Some(hotkey),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::Configure(manage_neuron::Configure {
+            operation: Some(manage_neuron::configure::Operation::AddHotKey(manage_neuron::AddHotKey {
+                new_hot_key: Some(PrincipalId::from(hotkey)),
             })),
         })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
-    if let Some(ManageNeuronCommandResponse::Error(e)) = resp.command {
+    if let Some(manage_neuron_response::Command::Error(e)) = resp.command {
         bail!("add_hotkey failed: {:?}", e);
     }
     Ok(())
@@ -948,16 +764,16 @@ fn increase_dissolve_delay(
 ) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::Configure(Configure {
-            operation: Some(Operation::IncreaseDissolveDelay(IncreaseDissolveDelay {
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::Configure(manage_neuron::Configure {
+            operation: Some(manage_neuron::configure::Operation::IncreaseDissolveDelay(manage_neuron::IncreaseDissolveDelay {
                 additional_dissolve_delay_seconds: additional_seconds,
             })),
         })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
-    if let Some(ManageNeuronCommandResponse::Error(e)) = resp.command {
+    if let Some(manage_neuron_response::Command::Error(e)) = resp.command {
         bail!("increase_dissolve_delay failed: {:?}", e);
     }
     Ok(())
@@ -1012,14 +828,14 @@ fn refresh_neuron_stake(
 ) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(ClaimOrRefresh {
-            by: Some(By::NeuronIdOrSubaccount(Empty::default())),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
+            by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount(jupiter_nns_types::Empty::default())),
         })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
-    if let Some(ManageNeuronCommandResponse::Error(e)) = resp.command {
+    if let Some(manage_neuron_response::Command::Error(e)) = resp.command {
         bail!("claim_or_refresh (refresh) failed: {:?}", e);
     }
     Ok(())
@@ -1121,23 +937,23 @@ fn make_and_settle_motion_proposal(
 
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::MakeProposal(MakeProposal {
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::MakeProposal(Box::new(MakeProposalRequest {
             url,
             title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
             summary: "Trigger reward distribution in PocketIC".to_string(),
             action: Some(ProposalActionRequest::Motion(Motion {
                 motion_text: motion_text.to_string(),
             })),
-        })),
+        }))),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
     let pid = match resp.command {
-        Some(ManageNeuronCommandResponse::MakeProposal(r)) => {
+        Some(manage_neuron_response::Command::MakeProposal(r)) => {
             r.proposal_id.ok_or_else(|| anyhow!("no proposal_id"))?
         }
-        Some(ManageNeuronCommandResponse::Error(e)) => bail!("make_proposal failed: {:?}", e),
+        Some(manage_neuron_response::Command::Error(e)) => bail!("make_proposal failed: {:?}", e),
         other => bail!("unexpected make_proposal response: {:?}", other),
     };
 
@@ -1146,15 +962,15 @@ fn make_and_settle_motion_proposal(
     // Try to vote YES. Some NNS versions auto-cast a vote for the proposer; tolerate "already voted".
     let vote_req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::RegisterVote(RegisterVote {
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::RegisterVote(manage_neuron::RegisterVote {
             proposal: Some(pid.clone()),
             vote: 1,
         })),
     };
 
     let vote_resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", vote_req)?;
-    if let Some(ManageNeuronCommandResponse::Error(e)) = vote_resp.command {
+    if let Some(manage_neuron_response::Command::Error(e)) = vote_resp.command {
         // Observed: error_type=19, "Neuron already voted on proposal."
         if e.error_type != 19 {
             bail!("register_vote failed: {:?}", e);
@@ -1181,23 +997,23 @@ fn make_motion_proposal(
 
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::MakeProposal(MakeProposal {
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::MakeProposal(Box::new(MakeProposalRequest {
             url,
             title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
             summary: "Trigger reward distribution in PocketIC".to_string(),
             action: Some(ProposalActionRequest::Motion(Motion {
                 motion_text: motion_text.to_string(),
             })),
-        })),
+        }))),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
     let pid = match resp.command {
-        Some(ManageNeuronCommandResponse::MakeProposal(r)) => {
+        Some(manage_neuron_response::Command::MakeProposal(r)) => {
             r.proposal_id.ok_or_else(|| anyhow!("no proposal_id"))?
         }
-        Some(ManageNeuronCommandResponse::Error(e)) => bail!("make_proposal failed: {:?}", e),
+        Some(manage_neuron_response::Command::Error(e)) => bail!("make_proposal failed: {:?}", e),
         other => bail!("unexpected make_proposal response: {:?}", other),
     };
 
@@ -1213,15 +1029,15 @@ fn register_vote_yes(
 ) -> Result<()> {
     let vote_req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::RegisterVote(RegisterVote {
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::RegisterVote(manage_neuron::RegisterVote {
             proposal: Some(pid.clone()),
             vote: 1,
         })),
     };
 
     let vote_resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", vote_req)?;
-    if let Some(ManageNeuronCommandResponse::Error(e)) = vote_resp.command {
+    if let Some(manage_neuron_response::Command::Error(e)) = vote_resp.command {
         // Observed: error_type=19, "Neuron already voted on proposal."
         if e.error_type != 19 {
             bail!("register_vote failed: {:?}", e);
@@ -1337,23 +1153,24 @@ fn disburse_maturity_to_account(
     to: &Account,
 ) -> Result<()> {
     let to_acc = GovAccount {
-        owner: Some(to.owner),
-        subaccount: to.subaccount.map(|sa| ByteBuf::from(sa.to_vec())),
+        owner: Some(PrincipalId::from(to.owner)),
+        subaccount: to.subaccount.map(|sa| sa.to_vec()),
     };
 
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::DisburseMaturity(DisburseMaturity {
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+        command: Some(ManageNeuronCommandRequest::DisburseMaturity(manage_neuron::DisburseMaturity {
             percentage_to_disburse: 100,
             to_account: Some(to_acc),
+            to_account_identifier: None,
         })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
     match resp.command {
-        Some(ManageNeuronCommandResponse::DisburseMaturity(_)) => Ok(()),
-        Some(ManageNeuronCommandResponse::Error(e)) => bail!("disburse_maturity failed: {:?}", e),
+        Some(manage_neuron_response::Command::DisburseMaturity(_)) => Ok(()),
+        Some(manage_neuron_response::Command::Error(e)) => bail!("disburse_maturity failed: {:?}", e),
         other => bail!("unexpected disburse_maturity response: {:?}", other),
     }
 }

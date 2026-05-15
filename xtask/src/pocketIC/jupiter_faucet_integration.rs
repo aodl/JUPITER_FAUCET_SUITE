@@ -2,9 +2,12 @@ use anyhow::{anyhow, bail, Context, Result};
 use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
+use jupiter_nns_types::{
+    list_neurons, manage_neuron, manage_neuron_response, ListNeurons, ListNeuronsResponse,
+    ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
+};
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
-use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha224};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -279,109 +282,9 @@ struct TransferRecord {
     result: String,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct NeuronId {
-    id: u64,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct GovernanceError {
-    error_type: i32,
-    error_message: String,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct NeuronMinimal {
-    id: Option<NeuronId>,
-    account: ByteBuf,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct NeuronSubaccount {
-    subaccount: ByteBuf,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ListNeurons {
-    neuron_ids: Vec<u64>,
-    include_neurons_readable_by_caller: bool,
-    include_empty_neurons_readable_by_caller: Option<bool>,
-    include_public_neurons_in_full_neurons: Option<bool>,
-    page_number: Option<u64>,
-    page_size: Option<u64>,
-    neuron_subaccounts: Option<Vec<NeuronSubaccount>>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ListNeuronsResponse {
-    full_neurons: Vec<NeuronMinimal>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum NeuronIdOrSubaccount {
-    NeuronId(NeuronId),
-}
-
-#[derive(Clone, Debug, Default, CandidType, Deserialize)]
-struct Empty {}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ClaimOrRefresh {
-    by: Option<By>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum By {
-    NeuronIdOrSubaccount(Empty),
-    Memo(u64),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ClaimOrRefreshResponse {
-    refreshed_neuron_id: Option<NeuronId>,
-}
+type NeuronMinimal = Neuron;
 
 const NNS_NEURON_VISIBILITY_PUBLIC: i32 = 2;
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct SetVisibility {
-    visibility: Option<i32>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum Operation {
-    SetVisibility(SetVisibility),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Configure {
-    operation: Option<Operation>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum ManageNeuronCommandRequest {
-    ClaimOrRefresh(ClaimOrRefresh),
-    Configure(Configure),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ManageNeuronRequest {
-    id: Option<NeuronId>,
-    neuron_id_or_subaccount: Option<NeuronIdOrSubaccount>,
-    command: Option<ManageNeuronCommandRequest>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum ManageNeuronCommandResponse {
-    ClaimOrRefresh(ClaimOrRefreshResponse),
-    Configure(Empty),
-    Error(GovernanceError),
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ManageNeuronResponse {
-    command: Option<ManageNeuronCommandResponse>,
-}
 
 fn account_identifier_text(account: &Account) -> String {
     let subaccount = account.subaccount.unwrap_or([0u8; 32]);
@@ -436,7 +339,7 @@ fn list_public_neuron(pic: &PocketIc, governance: Principal, sender: Principal, 
             include_public_neurons_in_full_neurons: Some(true),
             page_number: None,
             page_size: None,
-            neuron_subaccounts: None,
+            neuron_subaccounts: None::<Vec<list_neurons::NeuronSubaccount>>,
         },
     )?;
     result
@@ -447,7 +350,7 @@ fn list_public_neuron(pic: &PocketIc, governance: Principal, sender: Principal, 
 }
 
 fn neuron_staking_subaccount_from_neuron(neuron: &NeuronMinimal) -> Result<[u8; 32]> {
-    let bytes = neuron.account.as_ref();
+    let bytes: &[u8] = neuron.account.as_ref();
     if bytes.len() != 32 {
         bail!("expected 32-byte neuron staking subaccount, got {}", bytes.len());
     }
@@ -493,17 +396,17 @@ fn stake_and_claim_neuron(
         ManageNeuronRequest {
             id: None,
             neuron_id_or_subaccount: None,
-            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(ClaimOrRefresh {
-                by: Some(By::Memo(memo)),
+            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
+                by: Some(manage_neuron::claim_or_refresh::By::Memo(memo)),
             })),
         },
     )?;
     match response.command {
-        Some(ManageNeuronCommandResponse::ClaimOrRefresh(response)) => response
+        Some(manage_neuron_response::Command::ClaimOrRefresh(response)) => response
             .refreshed_neuron_id
             .map(|id| id.id)
             .ok_or_else(|| anyhow!("claim_or_refresh returned no refreshed_neuron_id")),
-        Some(ManageNeuronCommandResponse::Error(err)) => bail!(
+        Some(manage_neuron_response::Command::Error(err)) => bail!(
             "claim_or_refresh failed: type={} message={}",
             err.error_type,
             err.error_message
@@ -525,17 +428,17 @@ fn set_neuron_visibility_public(
         "manage_neuron",
         ManageNeuronRequest {
             id: None,
-            neuron_id_or_subaccount: Some(NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-            command: Some(ManageNeuronCommandRequest::Configure(Configure {
-                operation: Some(Operation::SetVisibility(SetVisibility {
+            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
+            command: Some(ManageNeuronCommandRequest::Configure(manage_neuron::Configure {
+                operation: Some(manage_neuron::configure::Operation::SetVisibility(manage_neuron::SetVisibility {
                     visibility: Some(NNS_NEURON_VISIBILITY_PUBLIC),
                 })),
             })),
         },
     )?;
     match response.command {
-        Some(ManageNeuronCommandResponse::Configure(_)) => Ok(()),
-        Some(ManageNeuronCommandResponse::Error(err)) => bail!(
+        Some(manage_neuron_response::Command::Configure(_)) => Ok(()),
+        Some(manage_neuron_response::Command::Error(err)) => bail!(
             "set_visibility public failed: type={} message={}",
             err.error_type,
             err.error_message

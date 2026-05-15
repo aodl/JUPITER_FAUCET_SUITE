@@ -17,4 +17,10 @@ members = [
   "xtask/src/mocks/mock_blackhole",
   "xtask/src/mocks/mock_sns_wasm",
   "xtask/src/mocks/mock_sns_root",
+  "jupiter-nns-types",
 ]
+
+[workspace.dependencies]
+ic-base-types = { git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }
+ic-nns-common = { git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }
+ic-nns-governance-api = { git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }

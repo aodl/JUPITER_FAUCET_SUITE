@@ -5,8 +5,7 @@ use async_trait::async_trait;
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
-
-use crate::nns_types::{GovernanceError, Neuron};
+use jupiter_nns_types::{GovernanceError, Neuron};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
@@ -40,4 +39,3 @@ pub trait GovernanceClient: Send + Sync {
     async fn refresh_voting_power(&self, neuron_id: u64) -> Result<(), GovernanceError>;
     async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), GovernanceError>;
 }
-

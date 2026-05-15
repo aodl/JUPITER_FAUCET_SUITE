@@ -1,6 +1,5 @@
 mod clients;
 mod logic;
-mod nns_types;
 mod policy;
 mod scheduler;
 mod state;
