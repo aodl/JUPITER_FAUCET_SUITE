@@ -493,7 +493,11 @@ test('paged nav panel content keeps a stable panel height while preserving overf
   assert.match(navbarCss, /\.nav-panel-page\.is-active > \.nav-panel-scroll-region \{[\s\S]*padding-right: 0;[\s\S]*\}/);
   assert.doesNotMatch(navbarCss, /\.nav-panel-page\.is-active \{[\s\S]*max-height: 40vh;[\s\S]*\}/);
   assert.match(navbarCss, /\.nav-panel-scroll-region \{[\s\S]*overflow: auto;[\s\S]*\}/);
+  assert.match(navbarCss, /\.nav-panel-dots \{[\s\S]*flex-shrink: 0;[\s\S]*margin-top: auto;[\s\S]*\}/);
   assert.doesNotMatch(navbarCss, /\.nav-panel-scroll-region \{[\s\S]*max-height: min\(46vh, calc\(100dvh - 220px\)\);[\s\S]*\}/);
+  const commitments = sectionMarkup('metric-commitments');
+  const scrollRegionEnd = commitments.indexOf('</div>\n          <div class="nav-panel-dots"');
+  assert.ok(scrollRegionEnd > 0, 'commitment pane dots should sit outside the scroll region');
   assert.match(navbarJs, /pointerDownOnBackdrop = evt\.target === backdrop/);
   assert.match(navbarJs, /const shouldClose = evt\.target === backdrop && pointerDownOnBackdrop/);
 });
