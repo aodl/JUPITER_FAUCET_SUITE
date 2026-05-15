@@ -7,9 +7,9 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-candid = "0.10"
-serde = { version = "1", features = ["derive"] }
-ic-cdk = "0.19"
-icrc-ledger-types = "0.1.12"
-num-traits = "0.2"
+candid = { workspace = true }
+serde = { workspace = true }
+ic-cdk = { workspace = true }
+icrc-ledger-types = { workspace = true }
+num-traits = { workspace = true }
 jupiter-ic-clients = { path = "../../../../jupiter-ic-clients" }

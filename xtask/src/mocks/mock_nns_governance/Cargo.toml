@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-candid = "0.10"
-serde = { version = "1", features = ["derive"] }
-ic-cdk = "0.19"
+candid = { workspace = true }
+serde = { workspace = true }
+ic-cdk = { workspace = true }
 jupiter-nns-types = { path = "../../../../jupiter-nns-types" }

@@ -7,6 +7,6 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-candid = "0.10"
-ic-cdk = "0.19"
-serde = { version = "1", features = ["derive"] }
+candid = { workspace = true }
+ic-cdk = { workspace = true }
+serde = { workspace = true }

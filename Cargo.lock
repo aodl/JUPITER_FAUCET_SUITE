@@ -3132,7 +3132,6 @@ dependencies = [
  "icrc-ledger-types 0.1.12",
  "jupiter-ic-clients",
  "jupiter-nns-types",
- "num-traits",
  "pocket-ic",
  "serde",
  "serde_bytes",
@@ -3158,13 +3157,11 @@ dependencies = [
  "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
- "num-traits",
  "pocket-ic",
  "serde",
  "serde_bytes",
  "serde_json",
  "sha2",
- "slog",
  "thiserror 1.0.69",
 ]
 
@@ -3202,10 +3199,8 @@ dependencies = [
  "num-traits",
  "pocket-ic",
  "serde",
- "serde_bytes",
  "serde_json",
  "sha2",
- "slog",
  "thiserror 1.0.69",
 ]
 
@@ -3496,7 +3491,6 @@ version = "0.1.0"
 dependencies = [
  "candid",
  "ic-cdk",
- "num-traits",
  "serde",
 ]
 
@@ -3546,7 +3540,6 @@ version = "0.1.0"
 dependencies = [
  "candid",
  "ic-cdk",
- "num-traits",
  "serde",
 ]
 

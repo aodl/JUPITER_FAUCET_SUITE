@@ -13,20 +13,19 @@ path = "../xtask/src/pocketIC/jupiter_faucet_integration.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-candid = "0.10"
-serde = { version = "1", features = ["derive"] }
-serde_bytes = "0.11"
-thiserror = "1"
-async-trait = "0.1"
-num-traits = "0.2"
-sha2 = "0.10"
-hex = "0.4"
+candid = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
-ic-cdk = "0.19"
-ic-cdk-timers = "1.0.0"
-icrc-ledger-types = "0.1.12"
-ic-stable-structures = "0.6"
-crc32fast = "1"
+ic-cdk = { workspace = true }
+ic-cdk-timers = { workspace = true }
+icrc-ledger-types = { workspace = true }
+ic-stable-structures = { workspace = true }
+crc32fast = { workspace = true }
 jupiter-ic-clients = { path = "../jupiter-ic-clients" }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 jupiter-nns-types = { path = "../jupiter-nns-types" }
@@ -35,17 +34,16 @@ jupiter-nns-types = { path = "../jupiter-nns-types" }
 debug_api = []
 
 [dev-dependencies]
-anyhow = "1"
-candid = "0.10"
-hex = "0.4"
-pocket-ic = "12"
-slog = "2"
-serde = { version = "1", features = ["derive"] }
-serde_bytes = "0.11"
-icrc-ledger-types = "0.1.12"
-ic-stable-structures = "0.6"
-crc32fast = "1"
+anyhow = { workspace = true }
+candid = { workspace = true }
+hex = { workspace = true }
+pocket-ic = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+icrc-ledger-types = { workspace = true }
+ic-stable-structures = { workspace = true }
+crc32fast = { workspace = true }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 
 [build-dependencies]
-serde_json = "1"
+serde_json = { workspace = true }
