@@ -31,6 +31,7 @@ const TABLE_MIN_PAGE_SIZE = 6;
 const TABLE_MAX_PAGE_SIZE = 18;
 const TABLE_ROW_ESTIMATE_PX = 48;
 const TABLE_VERTICAL_RESERVE_PX = 460;
+const COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT = -1;
 const JUPITER_STAKING_ACCOUNT_ADDRESS = 'rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
@@ -124,6 +125,13 @@ function calculateResponsiveTablePageSize(viewportHeight = window.innerHeight) {
 
 function currentTablePageSize() {
   return tablePageSize;
+}
+
+function currentPageSizeForTable(kind) {
+  const adjustment = kind === 'commitments' || kind === 'commitments-raw' || kind === 'commitments-neurons'
+    ? COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT
+    : 0;
+  return Math.max(1, currentTablePageSize() + adjustment);
 }
 
 function formatPrincipal(value) {
@@ -842,7 +850,7 @@ function initAdvancedMemoBuilder() {
 
 function paginate(kind, items, renderRow, emptyMessage, colspan) {
   const state = tableState[kind];
-  const pageSize = currentTablePageSize();
+  const pageSize = currentPageSizeForTable(kind);
   state.items = items || [];
   const totalPages = Math.max(1, Math.ceil(state.items.length / pageSize));
   if (state.page >= totalPages) state.page = totalPages - 1;
@@ -2575,8 +2583,12 @@ function applyResponsiveTablePageSize() {
   tablePageSize = nextPageSize;
   ['commitments', 'commitments-raw', 'commitments-neurons', 'output', 'rewards', 'dquorum'].forEach((kind) => {
     const state = tableState[kind];
-    const firstVisibleItem = state.page * previousPageSize;
-    state.page = Math.max(0, Math.floor(firstVisibleItem / nextPageSize));
+    const previousKindPageSize = kind === 'commitments' || kind === 'commitments-raw' || kind === 'commitments-neurons'
+      ? Math.max(1, previousPageSize + COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT)
+      : previousPageSize;
+    const nextKindPageSize = currentPageSizeForTable(kind);
+    const firstVisibleItem = state.page * previousKindPageSize;
+    state.page = Math.max(0, Math.floor(firstVisibleItem / nextKindPageSize));
   });
 
   const data = window.__JUPITER_LANDING_DATA__ || null;

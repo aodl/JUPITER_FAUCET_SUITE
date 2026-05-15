@@ -98,9 +98,11 @@ test('partners pane content has been removed', () => {
 
 test('transaction table pagination uses a responsive page size', () => {
   assert.match(mainJs, /const TABLE_MIN_PAGE_SIZE = 6;/);
+  assert.match(mainJs, /const COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT = -1;/);
   assert.match(mainJs, /function calculateResponsiveTablePageSize\(viewportHeight = window\.innerHeight\)/);
   assert.match(mainJs, /Math\.min\(TABLE_MAX_PAGE_SIZE, Math\.max\(TABLE_MIN_PAGE_SIZE, estimatedRows\)\)/);
-  assert.match(mainJs, /const pageSize = currentTablePageSize\(\);[\s\S]*state\.items\.slice\(start, start \+ pageSize\)/);
+  assert.match(mainJs, /function currentPageSizeForTable\(kind\)[\s\S]*kind === 'commitments'[\s\S]*kind === 'commitments-raw'[\s\S]*kind === 'commitments-neurons'[\s\S]*currentTablePageSize\(\) \+ adjustment/);
+  assert.match(mainJs, /const pageSize = currentPageSizeForTable\(kind\);[\s\S]*state\.items\.slice\(start, start \+ pageSize\)/);
   assert.match(mainJs, /registeredPageSize: currentTablePageSize\(\)/);
   assert.match(mainJs, /window\.addEventListener\('resize'/);
   assert.doesNotMatch(mainJs, /const TABLE_PAGE_SIZE = 6;/);
@@ -456,7 +458,8 @@ test('Patron Commitments table omits redundant category column', () => {
   assert.match(commitments, /<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
   assert.match(commitments, /<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
-  assert.match(commitments, /private neurons cannot be refreshed by the faucet top-up process/);
+  assert.match(commitments, /href="\/#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules/);
+  assert.doesNotMatch(commitments, /private neurons cannot be refreshed by the faucet top-up process/);
   assert.doesNotMatch(commitments, /<th>Category<\/th>/);
   assert.match(commitments, /<td colspan="3" class="empty-cell">Loading…<\/td>/);
   assert.match(commitments, /<td colspan="4" class="empty-cell">Loading…<\/td>/);
