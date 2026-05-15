@@ -23,6 +23,7 @@ import { renderAmountBarChart, renderEmptyChart, renderLineChart } from './chart
 import { buildSimulatorProjection, calculateAgeBonusBasisPointsFromAgingSince, calculateAgeBonusMaturityShareBasisPoints } from './projection-simulator.js';
 import { advancedMemoUrlPrefillState, advancedMemoValidationMessages, buildAdvancedMemo, sanitizeCanisterPrincipalText, sanitizeNeuronIdText, shouldApplyAdvancedMemoUrlTargetValue } from './advanced-memo-builder.js';
 import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from './tracker-cycles.js';
+import { formatMaturityDisbursementLandingText, formatMaturityDisbursementStatus } from './maturity-disbursement.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const DASH = '—';
@@ -499,6 +500,23 @@ function renderHowItWorksAccount() {
   }
 }
 
+function updateLandingDisbursementStatus(text) {
+  const node = document.getElementById('orbit-disbursement-status');
+  if (!node) return;
+  node.replaceChildren();
+  if (!text) {
+    node.hidden = true;
+    return;
+  }
+  node.hidden = false;
+  node.appendChild(document.createTextNode(`${text} `));
+  const link = document.createElement('a');
+  link.href = '#metric-stake';
+  link.className = 'orbit-infographic-copy-link pane-external-link';
+  link.textContent = 'More info';
+  node.appendChild(link);
+}
+
 function renderStakePane(data, neuron, { neuronLoading = false, neuronError = null, dataLoading = false } = {}) {
   const stakingAccount = data?.status?.staking_account;
   const stakingAddress = stakingAccountDisplayAddress(stakingAccount);
@@ -529,6 +547,15 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
     setPaneValueText('stake-neuron-public', { value: 'Yes' });
     setPaneValueText('stake-neuron-created', { value: formatTimestampSeconds(neuron.created_timestamp_seconds) });
     setPaneValueText('stake-neuron-refresh', { value: formatTimestampSeconds(neuron.voting_power_refreshed_timestamp_seconds?.[0]) });
+    setPaneValueText('stake-neuron-disbursement', {
+      value: formatMaturityDisbursementStatus(neuron, {
+        formatIcpE8s,
+        formatTimestampSeconds,
+      }),
+    });
+    updateLandingDisbursementStatus(formatMaturityDisbursementLandingText(neuron, {
+      formatTimestampSeconds,
+    }));
     setPaneValueTrustedHtml('stake-neuron-followees', { value: formatFolloweeLinks(neuron) });
     maybePrepopulateSimulatorMinimumCommitment();
     renderCommitmentSimulator();
@@ -545,6 +572,8 @@ function renderStakePane(data, neuron, { neuronLoading = false, neuronError = nu
   setPaneValueText('stake-neuron-public', fallback);
   setPaneValueText('stake-neuron-created', fallback);
   setPaneValueText('stake-neuron-refresh', fallback);
+  setPaneValueText('stake-neuron-disbursement', fallback);
+  if (!neuronLoading && !dataLoading) updateLandingDisbursementStatus(null);
   setPaneValueText('stake-neuron-followees', fallback);
 }
 
@@ -2643,6 +2672,7 @@ async function initLandingPage() {
     renderLandingSummary(data);
     renderLandingPanes(data, null);
     bindNeuronDetailsLoader(data);
+    void ensureNeuronDetailsLoaded(data);
   } catch (error) {
     console.warn('Landing metrics failed', error);
     renderLandingUnavailable(normalizeError?.(error) || 'Live metrics unavailable');

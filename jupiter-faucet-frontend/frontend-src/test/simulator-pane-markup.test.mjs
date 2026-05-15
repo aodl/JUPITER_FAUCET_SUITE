@@ -9,6 +9,7 @@ const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'u
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
 const mainJs = readFileSync(resolve(__dirname, '../src/main.js'), 'utf8');
 const trackerCyclesJs = readFileSync(resolve(__dirname, '../src/tracker-cycles.js'), 'utf8');
+const nnsGovernanceDidJs = readFileSync(resolve(__dirname, '../declarations/nns_governance/nns_governance.did.js'), 'utf8');
 const navbarJs = readFileSync(resolve(__dirname, '../../assets/navbar.js'), 'utf8');
 const navbarCss = readFileSync(resolve(__dirname, '../../assets/navbar.css'), 'utf8');
 
@@ -68,6 +69,19 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.doesNotMatch(orbitCss, /\.neon-top\{[\s\S]*?padding-top:/);
   assert.doesNotMatch(orbitCss, /\.neon-ups\{[\s\S]*?padding-top:/);
   assert.match(orbitJs, /Automated disbursals keep flowing, minting new ICP from voting rewards, powering downstream smart contracts\./);
+  assert.doesNotMatch(orbitJs, /statusSlot: "orbit-disbursement-status"/);
+  assert.doesNotMatch(orbitJs, /__JUPITER_ORBIT_DISBURSEMENT_TEXT__/);
+  assert.match(indexHtml, /class="orbit-disbursement-status" id="orbit-disbursement-status" hidden aria-live="polite"/);
+  assert.match(orbitCss, /\.metric-rail:not\(\.metric-rail--visible\) ~ \.orbit-disbursement-status \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status \{[\s\S]*top: 22dvw;[\s\S]*left: 6\.5dvw;[\s\S]*width: min\(23dvw, 16rem\);[\s\S]*color: rgba\(255, 255, 255, 0\.56\);[\s\S]*font-size: 11px;[\s\S]*line-height: 1\.35;[\s\S]*font-weight: 400;[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*width: min\(8dvw, 7rem\);[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*float: right;[\s\S]*shape-outside: polygon\(100% 0, 100% 100%, 0 100%\);[\s\S]*\}/);
+  assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*background:/);
+  assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*border:/);
+  assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*padding:/);
+  assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*text-shadow:/);
+  assert.match(orbitCss, /\.orbit-disbursement-status \.orbit-infographic-copy-link \{[\s\S]*color: inherit;[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status \.orbit-infographic-copy-link:hover,[\s\S]*\.orbit-disbursement-status \.orbit-infographic-copy-link:focus \{[\s\S]*color: #fff;[\s\S]*\}/);
   assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\."/);
   assert.doesNotMatch(orbitJs, /COMING SOON/);
   assert.match(orbitJs, /ctaLabel: "MORE INFO"/);
@@ -440,6 +454,15 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   assert.match(simulator, /id="simulator-icp-xdr-source"/);
   assert.match(stake, /Age bonus diverted/);
   assert.match(stake, /id="stake-neuron-age-bonus"/);
+  assert.match(stake, /Maturity disbursal/);
+  assert.match(stake, /id="stake-neuron-disbursement"/);
+  assert.match(mainJs, /formatMaturityDisbursementStatus/);
+  assert.match(mainJs, /formatMaturityDisbursementLandingText/);
+  assert.match(mainJs, /updateLandingDisbursementStatus/);
+  assert.match(mainJs, /void ensureNeuronDetailsLoaded\(data\);/);
+  assert.match(mainJs, /link\.href = '#metric-stake'/);
+  assert.match(mainJs, /link\.textContent = 'More info'/);
+  assert.match(nnsGovernanceDidJs, /maturity_disbursements_in_progress/);
   assert.match(mainJs, /calculateAgeBonusBasisPointsFromAgingSince/);
   assert.match(mainJs, /simulatorState\.ageBonusBasisPoints/);
 });

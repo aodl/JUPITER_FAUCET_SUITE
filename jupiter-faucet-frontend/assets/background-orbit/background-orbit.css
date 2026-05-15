@@ -103,6 +103,48 @@
   pointer-events: auto;
 }
 
+.orbit-disbursement-status[hidden] {
+  display: none;
+}
+
+.metric-rail:not(.metric-rail--visible) ~ .orbit-disbursement-status {
+  display: none;
+}
+
+.orbit-disbursement-status {
+  position: absolute;
+  top: 22dvw;
+  left: 6.5dvw;
+  z-index: 12100;
+  width: min(23dvw, 16rem);
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 11px;
+  line-height: 1.35;
+  font-weight: 400;
+  text-wrap: pretty;
+  pointer-events: auto;
+}
+
+.orbit-disbursement-status::before {
+  content: "";
+  float: right;
+  width: min(8dvw, 7rem);
+  height: 8.2em;
+  shape-outside: polygon(100% 0, 100% 100%, 0 100%);
+  -webkit-shape-outside: polygon(100% 0, 100% 100%, 0 100%);
+  shape-margin: 0.35rem;
+}
+
+.orbit-disbursement-status .orbit-infographic-copy-link {
+  margin-top: 0.2em;
+  color: inherit;
+}
+
+.orbit-disbursement-status .orbit-infographic-copy-link:hover,
+.orbit-disbursement-status .orbit-infographic-copy-link:focus {
+  color: #fff;
+}
+
 .orbit-infographic-lines {
   position: absolute;
   inset: 0;

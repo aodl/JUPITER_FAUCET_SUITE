@@ -1,6 +1,11 @@
 export const idlFactory = ({ IDL }) => {
   const NeuronId = IDL.Record({ id: IDL.Nat64 });
   const Followees = IDL.Record({ followees: IDL.Vec(NeuronId) });
+  const MaturityDisbursement = IDL.Record({
+    timestamp_of_disbursement_seconds: IDL.Opt(IDL.Nat64),
+    finalize_disbursement_timestamp_seconds: IDL.Opt(IDL.Nat64),
+    amount_e8s: IDL.Opt(IDL.Nat64),
+  });
   const Neuron = IDL.Record({
     id: IDL.Opt(NeuronId),
     created_timestamp_seconds: IDL.Nat64,
@@ -8,6 +13,7 @@ export const idlFactory = ({ IDL }) => {
     followees: IDL.Vec(IDL.Tuple(IDL.Int32, Followees)),
     visibility: IDL.Opt(IDL.Int32),
     voting_power_refreshed_timestamp_seconds: IDL.Opt(IDL.Nat64),
+    maturity_disbursements_in_progress: IDL.Opt(IDL.Vec(MaturityDisbursement)),
   });
   const ListNeurons = IDL.Record({
     neuron_ids: IDL.Vec(IDL.Nat64),
