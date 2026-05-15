@@ -128,11 +128,18 @@ test('transaction table pagination uses a responsive page size', () => {
   assert.doesNotMatch(mainJs, /const TABLE_PAGE_SIZE = 6;/);
 });
 
-test('About pane uses a single consolidated page', () => {
+test('About pane includes social links and projects slide', () => {
   const about = sectionMarkup('about');
   assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol/);
   assert.match(about, /href="https:\/\/internetcomputer\.org\/"[^>]*>Internet Computer<\/a>/);
   assert.match(about, /href="https:\/\/learn\.internetcomputer\.org\/hc\/en-us\/articles\/34573913497108-Cycles"[^>]*>Internet Computer cycles guide<\/a>/);
+  assert.match(about, /class="about-social-links"[^>]*aria-label="Jupiter Faucet social links"/);
+  assert.match(about, /href="https:\/\/oc\.app\/community\/xfokc-3yaaa-aaaac-be5ia-cai\/channel\/3626918149"[^>]*>[\s\S]*Open Chat Community[\s\S]*Onchain Q&amp;A/);
+  assert.match(about, /href="https:\/\/taggr\.link\/#\/realm\/JUPITER_FAUCET"[^>]*>[\s\S]*TAGGR Realm[\s\S]*Decentralized social network/);
+  assert.match(about, /href="https:\/\/x\.com\/JupiterFaucet"[^>]*>[\s\S]*@JupiterFaucet/);
+  assert.match(about, /src="\/social-icons\/openchat-favicon\.png"/);
+  assert.match(about, /src="\/social-icons\/taggr-favicon\.ico"/);
+  assert.match(about, /src="\/social-icons\/x-favicon\.png"/);
   assert.match(about, /one-off operation/);
   assert.match(about, /data-panel="how-it-works"[^>]*>How It Works<\/a>/);
   assert.match(about, /memo-builder-safety-notice[\s\S]*<strong>Due diligence:<\/strong>/);
@@ -144,8 +151,29 @@ test('About pane uses a single consolidated page', () => {
   assert.doesNotMatch(about, /fixed\s*corner links at the bottom of the page/);
   assert.doesNotMatch(about, /Status:/);
   assert.doesNotMatch(about, /planned launch within/);
-  assert.doesNotMatch(about, /nav-panel-dots/);
-  assert.doesNotMatch(about, /data-page="1"/);
+  assert.match(about, /class="nav-panel-page is-active" data-page="0"/);
+  assert.match(about, /class="nav-panel-page" data-page="1"[\s\S]*<h2 class="about-projects-title">Projects Powered by Jupiter Faucet<\/h2>[\s\S]*More coming soon!/);
+  assert.match(about, /data-page-target="0"[^>]*>social channels<\/a>[\s\S]*class="about-project-grid"/);
+  assert.match(about, /class="about-project-preview" href="https:\/\/jupiter-faucet\.com\/"/);
+  assert.match(about, /src="\/social-preview\.jpg"[\s\S]*<strong>Jupiter Faucet<\/strong>/);
+  assert.match(about, /Yes, Jupiter Faucet powers itself!/);
+  assert.match(about, /<p class="about-project-canisters-title">Canisters<\/p>/);
+  assert.match(about, /data-tracker-principal="uccpi-cqaaa-aaaar-qby3q-cai"[\s\S]*>Disburser<\/a>/);
+  assert.match(about, /data-tracker-principal="acjuz-liaaa-aaaar-qb4qq-cai"[\s\S]*>Faucet<\/a>/);
+  assert.match(about, /data-tracker-principal="j5gs6-uiaaa-aaaar-qb5cq-cai"[\s\S]*>Historian<\/a>/);
+  assert.match(about, /data-tracker-principal="afisn-gqaaa-aaaar-qb4qa-cai"[\s\S]*>Lifeline<\/a>/);
+  assert.match(about, /data-tracker-principal="alk7f-5aaaa-aaaar-qb4ra-cai"[\s\S]*>SNS Rewards<\/a>/);
+  assert.match(about, /data-tracker-principal="jufzc-caaaa-aaaar-qb5da-cai"[\s\S]*>Frontend<\/a>/);
+  assert.match(about, /class="about-project-card about-project-card--soon"[\s\S]*More coming soon!/);
+  assert.match(about, /href="https:\/\/github\.com\/aodl\/JUPITER_FAUCET_SUITE\/pulls"[^>]*>raise a pull request<\/a>/);
+  assert.match(about, /<div class="nav-panel-dots" role="tablist" aria-label="About pages">/);
+  assert.match(about, /data-page="1" aria-label="Projects Powered by Jupiter Faucet"/);
+  assert.match(metricsCss, /\.about-projects-slide \{[\s\S]*overflow: visible;[\s\S]*\}/);
+  assert.doesNotMatch(metricsCss, /\.about-projects-slide \{[\s\S]*min-height: 100%;[\s\S]*\}/);
+  assert.match(metricsCss, /\.about-project-grid \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, calc\(\(100% - 12px\) \/ 2\)\)\);[\s\S]*\}/);
+  assert.match(metricsCss, /\.about-project-card \{[\s\S]*container-type: inline-size;[\s\S]*\}/);
+  assert.doesNotMatch(metricsCss, /\.about-project-card \{[\s\S]*aspect-ratio: 1 \/ 1;[\s\S]*\}/);
+  assert.match(metricsCss, /\.about-project-preview img \{[\s\S]*height: clamp\(128px, 38cqw, 160px\);[\s\S]*object-fit: cover;[\s\S]*\}/);
 });
 
 test('Source and Governance panes expose subnet context', () => {
