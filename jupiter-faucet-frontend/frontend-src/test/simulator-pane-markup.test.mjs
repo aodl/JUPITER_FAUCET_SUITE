@@ -68,7 +68,12 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.doesNotMatch(orbitCss, /\.neon-top\{[\s\S]*?padding-top:/);
   assert.doesNotMatch(orbitCss, /\.neon-ups\{[\s\S]*?padding-top:/);
   assert.match(orbitJs, /Automated disbursals keep flowing, minting new ICP from voting rewards, powering downstream smart contracts\./);
-  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\.\\nCOMING SOON \.\.\./);
+  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\."/);
+  assert.doesNotMatch(orbitJs, /COMING SOON/);
+  assert.match(orbitJs, /ctaLabel: "MORE INFO"/);
+  assert.match(orbitJs, /ctaPanel: "governance"/);
+  assert.match(orbitJs, /link\.dataset\.panel = item\.ctaPanel/);
+  assert.match(orbitCss, /\.orbit-infographic-copy\.is-visible \{[\s\S]*pointer-events: auto;[\s\S]*\}/);
   assert.match(orbitJs, /Disbursed ICP is automatically converted into cycles, forming a giant, unstoppable faucet\./);
   assert.match(orbitJs, /lineStartX: 370/);
   assert.match(orbitJs, /lineStartY: 725/);
@@ -140,6 +145,15 @@ test('Source and Governance panes expose subnet context', () => {
   assert.match(governance, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae[^>]*>Fiduciary<\/a>/);
   assert.match(governance, /network\/subnets\/x33ed-h457x-bsgyx-oqxqf-6pzwv-wkhzr-rm2j3-npodi-purzm-n66cg-gae[^>]*>SNS subnet<\/a>/);
   assert.match(governance, /both composed of over 30 nodes/);
+  assert.match(governance, /moving toward SNS DAO control/);
+  assert.match(governance, /data-panel="source"[^>]*>open source<\/a>/);
+  assert.match(governance, /data-panel="source"[^>]*>reproducible builds<\/a>/);
+  assert.match(governance, /memo-builder-safety-notice[\s\S]*<strong>Blackholing:<\/strong>/);
+  assert.match(governance, /core value-moving canisters/);
+  assert.match(governance, /underlying Internet Computer system API\s*\n\s*\(<a href="https:\/\/nns\.ic0\.app\/"[^>]*>NNS-managed code<\/a>\)/);
+  assert.match(governance, /lifeline canister, which is controlled by the SNS DAO/);
+  assert.match(governance, /at least six months/);
+  assert.match(governance, /built-in trigger that causes both canisters to blackhole themselves/);
 });
 
 test('How it works copy is concise and links tracker, simulator, and rewards references', () => {

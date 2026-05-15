@@ -21,7 +21,9 @@
     },
     {
       label: "Black hole",
-      text: "Disbursals are orchestrated by immutable (unmodifiable) smart contracts, aka 'blackholed'.\nCOMING SOON ...",
+      text: "Disbursals are orchestrated by immutable (unmodifiable) smart contracts, aka 'blackholed'.",
+      ctaLabel: "MORE INFO",
+      ctaPanel: "governance",
       target: "point",
       targetX: 408,
       targetY: 451,
@@ -276,6 +278,22 @@
       state.clickedUntilMs = 0;
     }
 
+    function setCopyContent(item) {
+      copy.replaceChildren(document.createTextNode(item.text));
+
+      if (!item.ctaLabel || !item.ctaPanel) {
+        return;
+      }
+
+      copy.appendChild(document.createElement("br"));
+      const link = document.createElement("a");
+      link.href = `#${item.ctaPanel}`;
+      link.className = "orbit-infographic-copy-link pane-external-link";
+      link.dataset.panel = item.ctaPanel;
+      link.textContent = item.ctaLabel;
+      copy.appendChild(link);
+    }
+
     config.forEach((item, index) => {
       if (item.target === "particle") {
         return;
@@ -381,8 +399,10 @@
           : { x: item.targetX, y: item.targetY };
         const start = { x: item.lineStartX, y: item.lineStartY };
 
+        if (state.displayIndex !== currentActiveIndex) {
+          setCopyContent(item);
+        }
         state.displayIndex = currentActiveIndex;
-        copy.textContent = item.text;
         copy.style.left = `${item.textLeftVw}dvw`;
         copy.style.top = `${item.textTopVw}dvw`;
         copy.style.width = `${item.textWidthVw}dvw`;

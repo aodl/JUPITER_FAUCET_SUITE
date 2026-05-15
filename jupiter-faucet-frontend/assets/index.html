@@ -473,9 +473,30 @@
 <article class="nav-panel-section" data-panel="governance" id="nav-panel-governance">
           <h2 class="nav-panel-title">Governance</h2>
           <div class="nav-panel-scroll-region">
-            <p class="nav-panel-content">SNS launch coming soon...</p>
-            <p class="nav-panel-content">All Jupiter Faucet suite canisters reside on either the <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="pane-external-link">Fiduciary</a> or <a href="https://dashboard.internetcomputer.org/network/subnets/x33ed-h457x-bsgyx-oqxqf-6pzwv-wkhzr-rm2j3-npodi-purzm-n66cg-gae" target="_blank" rel="noopener noreferrer" class="pane-external-link">SNS subnet</a> (both composed of over 30 nodes) for superior deterministic decentralization, resilience and security.</p>
-            <p class="nav-panel-content">Prior to the SNS DAO launch this system is being developed by <a href="https://forum.dfinity.org/u/lorimer/summary" target="_blank" rel="noopener noreferrer" class="pane-external-link">Alex Lorimer</a>, the controller of the <a href="https://dashboard.internetcomputer.org/neuron/16459595263909468577" target="_blank" rel="noopener noreferrer" class="pane-external-link">LORIMER ♾️ 🐶 known neuron</a>, a well-known ecosystem participant.</p>
+            <p class="nav-panel-content">
+              Jupiter Faucet is moving toward SNS DAO control. Until the SNS launches, the suite
+              is being developed by <a href="https://forum.dfinity.org/u/lorimer/summary" target="_blank" rel="noopener noreferrer" class="pane-external-link">Alex Lorimer</a>,
+              the controller of the <a href="https://dashboard.internetcomputer.org/neuron/16459595263909468577" target="_blank" rel="noopener noreferrer" class="pane-external-link">LORIMER ♾️ 🐶 known neuron</a>,
+              a well-known ecosystem participant, so the remaining launch work can be completed, reviewed, and upgraded quickly.
+            </p>
+            <p class="nav-panel-content">
+              The system is <a href="#source" data-panel="source" class="pane-external-link">open source</a>,
+              and its canister Wasm modules are intended to be verified through
+              <a href="#source" data-panel="source" class="pane-external-link">reproducible builds</a>
+              against the module hashes shown in the Source Code pane. All Jupiter Faucet suite canisters reside on either the <a href="https://dashboard.internetcomputer.org/network/subnets/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae" target="_blank" rel="noopener noreferrer" class="pane-external-link">Fiduciary</a> or <a href="https://dashboard.internetcomputer.org/network/subnets/x33ed-h457x-bsgyx-oqxqf-6pzwv-wkhzr-rm2j3-npodi-purzm-n66cg-gae" target="_blank" rel="noopener noreferrer" class="pane-external-link">SNS subnet</a> (both composed of over 30 nodes) for superior deterministic decentralization, resilience and security.
+            </p>
+            <p class="nav-panel-content memo-builder-safety-notice">
+              <strong>Blackholing:</strong>
+              The core value-moving canisters, <a href="#source" data-panel="source" class="pane-external-link">Jupiter Disburser and Jupiter Faucet</a>,
+              are intended to become blackholed, meaning their behavior will be locked in and no party will be able to alter them.
+              A narrow recovery path remains for a breaking change in an underlying Internet Computer system API
+              (<a href="https://nns.ic0.app/" target="_blank" rel="noopener noreferrer" class="pane-external-link">NNS-managed code</a>):
+              the affected canister can hand
+              control to the lifeline canister, which is controlled by the SNS DAO, so the DAO can restore service and then
+              return the canister to a blackholed state. After the Jupiter Faucet SNS has launched and the system has run for
+              at least six months without signs of weak points or a need for patching, a DAO proposal will be submitted to arm
+              the built-in trigger that causes both canisters to blackhole themselves.
+            </p>
           </div>
         </article>
 
