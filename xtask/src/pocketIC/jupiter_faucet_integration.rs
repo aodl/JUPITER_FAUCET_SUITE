@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
+use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
 use jupiter_nns_types::{
@@ -10,7 +10,6 @@ use jupiter_ic_clients::account_identifier::account_identifier_text;
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
 use sha2::Digest;
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -19,7 +18,7 @@ mod support;
 
 const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
 const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
-const ICP_LEDGER_FEE_E8S: u64 = 10_000;
+const ICP_LEDGER_FEE_E8S: u64 = support::ledger::ICP_LEDGER_FEE_E8S;
 
 fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
@@ -28,43 +27,9 @@ fn require_ignored_flag() -> Result<()> {
     support::assertions::require_ignored_flag()
 }
 
-fn repo_root() -> &'static str {
-    env!("CARGO_MANIFEST_DIR")
-}
-
 fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<&str>) -> Result<Vec<u8>> {
-    if let Some(bytes) = cache.get() {
-        return Ok(bytes.clone());
-    }
-
-    let mut cmd = Command::new("cargo");
-    cmd.args([
-        "build",
-        "--target",
-        "wasm32-unknown-unknown",
-        "--release",
-        "-p",
-        package,
-        "--locked",
-    ])
-    .current_dir(format!("{}/..", repo_root()));
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
-    }
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to build {package}"))?;
-    if !status.success() {
-        bail!("cargo build failed for {package}");
-    }
-    let raw_name = package.replace('-', "_");
-    let path = format!(
-        "{}/../target/wasm32-unknown-unknown/release/{raw_name}.wasm",
-        repo_root()
-    );
-    let bytes = std::fs::read(path).with_context(|| format!("failed to read wasm for {package}"))?;
-    let _ = cache.set(bytes.clone());
-    Ok(bytes)
+    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    support::wasm::build_wasm_cached(&workspace_root, cache, package, features, None, false)
 }
 
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -97,57 +62,7 @@ fn lifeline_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&LIFELINE_WASM, "jupiter-lifeline", None)
 }
 
-fn tick_n(pic: &PocketIc, n: usize) {
-    for _ in 0..n {
-        pic.tick();
-    }
-}
-
-fn update_bytes<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    bytes: Vec<u8>,
-) -> Result<R> {
-    let reply = pic
-        .update_call(canister, sender, method, bytes)
-        .map_err(|e| anyhow!("update_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
-}
-
-fn update_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    arg: A,
-) -> Result<R> {
-    update_bytes(pic, canister, sender, method, encode_one(arg)?)
-}
-
-fn update_noargs<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-) -> Result<R> {
-    update_one(pic, canister, sender, method, ())
-}
-
-fn query_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    arg: A,
-) -> Result<R> {
-    let bytes = encode_one(arg)?;
-    let reply = pic
-        .query_call(canister, sender, method, bytes)
-        .map_err(|e| anyhow!("query_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
-}
+use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 
 fn nat_to_u64(n: &Nat) -> u64 {
     n.0.to_u64_digits().get(0).copied().unwrap_or(0)

@@ -20,34 +20,50 @@ import { escapeHtml, formatFolloweeLinks } from '../followee-links.js';
 import { readOpt } from '../candid-opt.js';
 import { buildCommitmentIndexFaultBannerText } from '../historian-fault.js';
 import { renderAmountBarChart, renderEmptyChart, renderLineChart } from '../chart-rendering.js';
-import { buildSimulatorProjection, calculateAgeBonusBasisPointsFromAgingSince, calculateAgeBonusMaturityShareBasisPoints } from '../projection-simulator.js';
+import { buildSimulatorProjection, calculateAgeBonusBasisPointsFromAgingSince } from '../projection-simulator.js';
 import { advancedMemoUrlPrefillState, advancedMemoValidationMessages, buildAdvancedMemo, sanitizeCanisterPrincipalText, sanitizeNeuronIdText, shouldApplyAdvancedMemoUrlTargetValue } from '../advanced-memo-builder.js';
 import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from '../tracker-cycles.js';
 import { formatMaturityDisbursementLandingText, formatMaturityDisbursementStatus } from '../maturity-disbursement.js';
+import { SIMULATOR_HASH_PREFIX, simulatorHashForPrefill, simulatorPrefillFromHash, trackerHashForPrincipal, trackerPrincipalFromHash } from './hash-routes.js';
+import { COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT, calculateResponsiveTablePageSize } from './responsive-tables.js';
+import {
+  DASH,
+  formatAgeBonusDisplay,
+  formatAgeFromSeconds,
+  formatBasisPointsAsPercent,
+  formatBytes,
+  formatCompactTrillionCycles,
+  formatCycles,
+  formatDurationSeconds,
+  formatIcpE8s,
+  formatIcpXdrRateDisplay,
+  formatIcpXdrRateInput,
+  formatIcpXdrRateSource,
+  formatInteger,
+  formatLocalTimestampSeconds,
+  formatPrincipal,
+  formatSourceController,
+  formatTimestampNanos,
+  formatTimestampSeconds,
+  formatTrillionCycles,
+  renderCanisterDashboardLink,
+  renderCanisterTrackerLink,
+} from './view-formatters.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
-const DASH = '—';
 const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
 const JUPITER_NEURON_ID = 11614578985374291210n;
-const TABLE_MIN_PAGE_SIZE = 6;
-const TABLE_MAX_PAGE_SIZE = 18;
-const TABLE_ROW_ESTIMATE_PX = 48;
-const TABLE_VERTICAL_RESERVE_PX = 460;
-const COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT = -1;
 const JUPITER_STAKING_ACCOUNT_ADDRESS = 'rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
 const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
 const JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX = 'ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
 const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
-const TRACKER_HASH_PREFIX = '#metric-tracker-';
-const SIMULATOR_HASH_PREFIX = '#simulator-';
 const ICP_TENTH_E8S = 10_000_000n;
 const TRACKER_RANGE_LABELS = {
   month: 'last month',
   year: 'last year',
   all: 'all currently loaded history',
 };
-const BLACKHOLE_CANISTER_ID = '77deu-baaaa-aaaar-qb6za-cai';
 const SIMULATOR_DEFAULTS = {
   dailyBurnTrillionCycles: '0.0001',
   assumedIcpPrice: '10.0',
@@ -116,14 +132,6 @@ function isLocalHost() {
   return host === '127.0.0.1' || host === 'localhost';
 }
 
-function calculateResponsiveTablePageSize(viewportHeight = window.innerHeight) {
-  const height = Number(viewportHeight);
-  if (!Number.isFinite(height) || height <= 0) return TABLE_MIN_PAGE_SIZE;
-  const available = Math.max(0, height - TABLE_VERTICAL_RESERVE_PX);
-  const estimatedRows = Math.floor(available / TABLE_ROW_ESTIMATE_PX);
-  return Math.min(TABLE_MAX_PAGE_SIZE, Math.max(TABLE_MIN_PAGE_SIZE, estimatedRows));
-}
-
 function currentTablePageSize() {
   return tablePageSize;
 }
@@ -135,253 +143,6 @@ function currentPageSizeForTable(kind) {
   return Math.max(1, currentTablePageSize() + adjustment);
 }
 
-function formatPrincipal(value) {
-  return value?.toText ? value.toText() : String(value || '');
-}
-
-function trackerHashForPrincipal(principalText) {
-  const text = String(principalText || '').trim();
-  return text ? `${TRACKER_HASH_PREFIX}${encodeURIComponent(text)}` : '#metric-tracker';
-}
-
-function trackerPrincipalFromHash(hash = window.location.hash) {
-  const fragment = String(hash || '');
-  if (!fragment.startsWith(TRACKER_HASH_PREFIX)) return '';
-  try {
-    return decodeURIComponent(fragment.slice(TRACKER_HASH_PREFIX.length)).trim();
-  } catch {
-    return fragment.slice(TRACKER_HASH_PREFIX.length).trim();
-  }
-}
-
-function simulatorHashForPrefill({
-  dailyBurn = '',
-  icpCommitment = '',
-  assumedIcpPrice = '',
-  annualApyPercent = '',
-} = {}) {
-  const params = new URLSearchParams();
-  if (dailyBurn) params.set('burn', String(dailyBurn));
-  if (icpCommitment) params.set('commitment', String(icpCommitment));
-  if (assumedIcpPrice) params.set('price', String(assumedIcpPrice));
-  if (annualApyPercent) params.set('apy', String(annualApyPercent));
-  const encoded = params.toString();
-  return encoded ? `${SIMULATOR_HASH_PREFIX}${encoded}` : '#simulator';
-}
-
-function simulatorPrefillFromHash(hash = window.location.hash) {
-  const fragment = String(hash || '');
-  if (!fragment.startsWith(SIMULATOR_HASH_PREFIX)) return null;
-  const params = new URLSearchParams(fragment.slice(SIMULATOR_HASH_PREFIX.length));
-  return {
-    dailyBurn: params.get('burn') || '',
-    icpCommitment: params.get('commitment') || '',
-    assumedIcpPrice: params.get('price') || '',
-    annualApyPercent: params.get('apy') || '',
-  };
-}
-
-function renderCanisterTrackerLink(value, { label = null, className = 'pane-canister-tracker-link pane-external-link mono' } = {}) {
-  const principalText = formatPrincipal(value).trim();
-  if (!principalText) return DASH;
-  const display = label === null || label === undefined ? principalText : String(label);
-  return `<a href="${escapeHtml(trackerHashForPrincipal(principalText))}" data-tracker-principal="${escapeHtml(principalText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
-}
-
-function renderCanisterDashboardLink(value, label = 'Open dashboard') {
-  const principalText = formatPrincipal(value).trim();
-  if (!principalText) return DASH;
-  return `<a href="https://dashboard.internetcomputer.org/canister/${escapeHtml(principalText)}" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">${escapeHtml(label)}</a>`;
-}
-
-function formatSourceController(value) {
-  const principalText = formatPrincipal(value).trim();
-  if (!principalText) return '';
-  if (principalText === BLACKHOLE_CANISTER_ID) return renderCanisterTrackerLink(principalText, { label: 'blackhole' });
-  return renderCanisterTrackerLink(principalText);
-}
-
-function formatIcpE8s(value) {
-  if (value === null || value === undefined) return DASH;
-  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
-  const sign = asBigInt < 0n ? '-' : '';
-  const absolute = asBigInt < 0n ? -asBigInt : asBigInt;
-  const whole = absolute / 100_000_000n;
-  const fraction = (absolute % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
-  return fraction ? `${sign}${whole.toString()}.${fraction} ICP` : `${sign}${whole.toString()} ICP`;
-}
-
-function formatGroupedBigInt(value) {
-  const text = value.toString();
-  const sign = text.startsWith('-') ? '-' : '';
-  const digits = sign ? text.slice(1) : text;
-  return `${sign}${digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
-}
-
-function formatCycles(value) {
-  return formatTrillionCycles(value);
-}
-
-function formatTrillionCycles(value) {
-  if (value === null || value === undefined) return DASH;
-  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
-  const sign = asBigInt < 0n ? '-' : '';
-  const absolute = asBigInt < 0n ? -asBigInt : asBigInt;
-  const tenThousandths = (absolute * 10_000n) / 1_000_000_000_000n;
-  const whole = tenThousandths / 10_000n;
-  const fraction = tenThousandths % 10_000n;
-  return `${sign}${whole}.${fraction.toString().padStart(4, '0')}T cycles`;
-}
-
-function formatCompactTrillionCycles(value) {
-  return formatTrillionCycles(value)
-    .replace(/\.0000T cycles$/, 'T cycles')
-    .replace(/(\.\d*?[1-9])0+T cycles$/, '$1T cycles');
-}
-
-function formatScaledRateForOneDecimal(rate, decimals) {
-  if (rate === null || rate === undefined || decimals === null || decimals === undefined) return null;
-  const numerator = typeof rate === 'bigint' ? rate : BigInt(rate);
-  const scale = 10n ** BigInt(decimals);
-  if (scale <= 0n) return null;
-  const tenths = (numerator * 10n + scale / 2n) / scale;
-  return `${tenths / 10n}.${(tenths % 10n).toString()}`;
-}
-
-function formatIcpXdrRateInput(snapshot) {
-  if (!snapshot) return null;
-  return formatScaledRateForOneDecimal(snapshot.rate, snapshot.decimals);
-}
-
-function formatIcpXdrRateDisplay(snapshot) {
-  const input = formatIcpXdrRateInput(snapshot);
-  return input ? `${input} XDR/ICP` : DASH;
-}
-
-function formatIcpXdrRateSource(snapshot, manualOverride = false) {
-  if (!snapshot) return 'Manual input';
-  const fetchedAt = Number(snapshot.fetched_at_ts || 0);
-  const ageSeconds = fetchedAt > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - fetchedAt) : null;
-  const ageText = ageSeconds === null ? 'freshness unknown' : `${formatDurationSeconds(ageSeconds)} old`;
-  const cacheText = `historian XRC cache: ${formatIcpXdrRateDisplay(snapshot)} (${ageText})`;
-
-  return manualOverride
-    ? `Manual override; ${cacheText}`
-    : `Historian XRC cache: ${formatIcpXdrRateDisplay(snapshot)} (${ageText})`;
-}
-
-function formatBasisPointsAsPercent(value, decimals = 1) {
-  if (value === null || value === undefined) return DASH;
-  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
-  const sign = asBigInt < 0n ? '-' : '';
-  const absolute = asBigInt < 0n ? -asBigInt : asBigInt;
-  const scale = 10n ** BigInt(Math.max(0, decimals));
-  const scaled = (absolute * scale) / 100n;
-  const whole = scaled / scale;
-  const fraction = scaled % scale;
-  if (decimals <= 0) return `${sign}${whole}%`;
-  return `${sign}${whole}.${fraction.toString().padStart(decimals, '0')}%`;
-}
-
-function formatAgeBonusDisplay(ageBonusBasisPoints) {
-  const maturityShare = calculateAgeBonusMaturityShareBasisPoints(ageBonusBasisPoints);
-  return `${formatBasisPointsAsPercent(maturityShare)} of maturity diverted (${formatBasisPointsAsPercent(ageBonusBasisPoints)} age bonus)`;
-}
-
-function formatInteger(value) {
-  if (value === null || value === undefined) return DASH;
-  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
-  return formatGroupedBigInt(asBigInt);
-}
-
-function formatBytes(value) {
-  if (value === null || value === undefined) return DASH;
-  const asBigInt = typeof value === 'bigint' ? value : BigInt(value);
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let scaled = Number(asBigInt);
-  let unitIndex = 0;
-  while (scaled >= 1024 && unitIndex < units.length - 1) {
-    scaled /= 1024;
-    unitIndex += 1;
-  }
-  const digits = scaled >= 100 || unitIndex === 0 ? 0 : scaled >= 10 ? 1 : 2;
-  return `${scaled.toFixed(digits)} ${units[unitIndex]}`;
-}
-
-function formatTimestampSeconds(value) {
-  if (!value) return DASH;
-  return new Date(Number(value) * 1000).toLocaleString('en-GB', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  });
-}
-
-function formatLocalTimestampSeconds(value) {
-  if (!value) return DASH;
-  return new Date(Number(value) * 1000).toLocaleString('en-GB', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
-function formatTimestampNanos(value) {
-  if (!value) return DASH;
-  const millis = (typeof value === 'bigint' ? value : BigInt(value)) / 1_000_000n;
-  return new Date(Number(millis)).toLocaleString('en-GB', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  });
-}
-
-function formatAgeFromSeconds(value) {
-  if (!value) return DASH;
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const diff = Math.max(0, nowSeconds - Number(value));
-  const day = 24 * 60 * 60;
-  const year = 365 * day;
-  if (diff >= year) {
-    const years = Math.floor(diff / year);
-    const months = Math.floor((diff % year) / (30 * day));
-    return months > 0 ? `${years}y ${months}mo` : `${years}y`;
-  }
-  if (diff >= 30 * day) return `${Math.floor(diff / (30 * day))}mo`;
-  if (diff >= day) return `${Math.floor(diff / day)}d`;
-  if (diff >= 60 * 60) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 60)}m`;
-}
-
-function formatDurationSeconds(value) {
-  if (value === null || value === undefined) return DASH;
-  const seconds = Number(typeof value === 'bigint' ? value : BigInt(value));
-  if (!Number.isFinite(seconds) || seconds <= 0) return DASH;
-  const units = [
-    ['week', 7 * 24 * 60 * 60],
-    ['day', 24 * 60 * 60],
-    ['hour', 60 * 60],
-    ['minute', 60],
-  ];
-  for (const [label, size] of units) {
-    if (seconds >= size && seconds % size === 0) {
-      const count = seconds / size;
-      return `${formatInteger(count)} ${count === 1 ? label : `${label}s`}`;
-    }
-  }
-  return `${formatInteger(seconds)} seconds`;
-}
 function numericValue(value, fallback = 0) {
   if (value === null || value === undefined) return fallback;
   return Number(value);

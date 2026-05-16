@@ -1,14 +1,15 @@
-#[cfg(feature = "debug_api")]
+#![cfg(feature = "debug_api")]
+
+use super::*;
+
 pub async fn debug_main_tick_impl() {
     main_tick(true).await;
 }
 
-#[cfg(feature = "debug_api")]
 pub async fn debug_rescue_tick_impl() {
     rescue_tick().await;
 }
 
-#[cfg(feature = "debug_api")]
 pub async fn debug_execute_payout_plan_impl() -> bool {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
@@ -17,7 +18,6 @@ pub async fn debug_execute_payout_plan_impl() -> bool {
     process_payout(&ledger, &cfg, now_nanos, now_secs).await
 }
 
-#[cfg(feature = "debug_api")]
 pub async fn debug_build_payout_plan_impl() -> bool {
     let now_nanos = ic_cdk::api::time() as u64;
     let cfg = state::with_state(|st| st.config.clone());

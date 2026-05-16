@@ -5,4 +5,7 @@ include!("tick.rs");
 include!("payout_plan.rs");
 include!("rescue.rs");
 include!("tests.rs");
-include!("debug_entrypoints.rs");
+#[cfg(feature = "debug_api")]
+mod debug_entrypoints;
+#[cfg(feature = "debug_api")]
+pub use debug_entrypoints::*;

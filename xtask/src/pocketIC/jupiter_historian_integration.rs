@@ -1,5 +1,5 @@
-use anyhow::{anyhow, bail, Context, Result};
-use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
+use anyhow::{anyhow, bail, Result};
+use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
@@ -7,14 +7,12 @@ use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
     GetAccountIdentifierTransactionsResult,
 };
-use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
 #[path = "support/mod.rs"]
 mod support;
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -24,45 +22,16 @@ fn require_ignored_flag() -> Result<()> {
     // invoke them explicitly with `--ignored`.
     support::assertions::require_ignored_flag()
 }
-fn repo_root() -> &'static str { env!("CARGO_MANIFEST_DIR") }
-
 const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
 const ICP_INDEX_ID: &str = "qhbym-qaaaa-aaaaa-aaafq-cai";
 
 fn build_pic_with_real_icp() -> PocketIc {
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    PocketIcBuilder::new()
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build()
+    support::ledger::build_pic_with_real_icp()
 }
 
 fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<&str>) -> Result<Vec<u8>> {
-    if let Some(bytes) = cache.get() {
-        return Ok(bytes.clone());
-    }
-    let mut cmd = Command::new("cargo");
-    cmd.args(["build", "--target", "wasm32-unknown-unknown", "--release", "-p", package, "--locked"])
-        .current_dir(format!("{}/..", repo_root()));
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
-    }
-    let status = cmd.status().with_context(|| format!("failed to build {package}"))?;
-    if !status.success() {
-        bail!("cargo build failed for {package}");
-    }
-    let raw_name = package.replace('-', "_");
-    let path = format!("{}/../target/wasm32-unknown-unknown/release/{raw_name}.wasm", repo_root());
-    let bytes = std::fs::read(path).with_context(|| format!("failed to read wasm for {package}"))?;
-    let _ = cache.set(bytes.clone());
-    Ok(bytes)
+    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    support::wasm::build_wasm_cached(&workspace_root, cache, package, features, None, false)
 }
 
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -77,47 +46,8 @@ fn sns_root_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_ROOT_WASM, "mock-
 fn xrc_wasm() -> Result<Vec<u8>> { build_wasm_cached(&XRC_WASM, "mock-xrc", None) }
 fn historian_wasm() -> Result<Vec<u8>> { build_wasm_cached(&HISTORIAN_WASM, "jupiter-historian", Some("debug_api")) }
 
-fn tick_n(pic: &PocketIc, n: usize) {
-    for _ in 0..n { pic.tick(); }
-}
-
-fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
-    let sender = pic
-        .get_controllers(canister)
-        .first()
-        .copied()
-        .unwrap_or(Principal::anonymous());
-    pic.set_controllers(canister, Some(sender), controllers)
-        .map_err(|e| anyhow!("set_controllers reject: {e:?}"))?;
-    Ok(())
-}
-
-fn update_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(pic: &PocketIc, canister: Principal, sender: Principal, method: &str, arg: A) -> Result<R> {
-    let reply = pic.update_call(canister, sender, method, encode_one(arg)?).map_err(|e| anyhow!("update_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
-}
-
-fn update_bytes<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    payload: Vec<u8>,
-) -> Result<R> {
-    let reply = pic
-        .update_call(canister, sender, method, payload)
-        .map_err(|e| anyhow!("update_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
-}
-
-fn update_noargs<R: for<'de> Deserialize<'de> + CandidType>(pic: &PocketIc, canister: Principal, sender: Principal, method: &str) -> Result<R> {
-    update_one(pic, canister, sender, method, ())
-}
-
-fn query_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(pic: &PocketIc, canister: Principal, sender: Principal, method: &str, arg: A) -> Result<R> {
-    let reply = pic.query_call(canister, sender, method, encode_one(arg)?).map_err(|e| anyhow!("query_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
-}
+use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
+use support::governance::set_controllers_exact;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianInitArg {
