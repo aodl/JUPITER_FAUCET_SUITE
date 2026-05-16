@@ -586,7 +586,7 @@ pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
 }
 
 fn persistence_batch_active() -> bool {
-    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.get() > 0)
+    PERSISTENCE_BATCH_DEPTH.with(|depth| jupiter_persistence_batch::is_active(depth.get()))
 }
 
 fn mark_persistence_dirty() {
@@ -622,10 +622,10 @@ impl Drop for PersistenceBatch {
             return;
         }
         let should_flush = PERSISTENCE_BATCH_DEPTH.with(|depth| {
-            let current = depth.get();
-            assert!(current > 0, "persistence batch depth underflow");
-            depth.set(current - 1);
-            current == 1
+            let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
+            let (next_depth, should_flush) = jupiter_persistence_batch::finish_depth(depth.get(), dirty);
+            depth.set(next_depth);
+            should_flush
         });
         if should_flush {
             persist_dirty_state();
@@ -636,7 +636,7 @@ impl Drop for PersistenceBatch {
 
 #[must_use]
 pub fn begin_persistence_batch() -> PersistenceBatch {
-    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch { active: true }
 }
 

@@ -27,6 +27,7 @@ icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
 crc32fast = { workspace = true }
 jupiter-ic-clients = { path = "../jupiter-ic-clients" }
+jupiter-persistence-batch = { path = "../jupiter-persistence-batch" }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 jupiter-nns-types = { path = "../jupiter-nns-types" }
 

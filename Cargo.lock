@@ -3140,6 +3140,7 @@ dependencies = [
  "jupiter-build-support",
  "jupiter-ic-clients",
  "jupiter-nns-types",
+ "jupiter-persistence-batch",
  "pocket-ic",
  "serde",
  "serde_bytes",
@@ -3165,6 +3166,7 @@ dependencies = [
  "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
+ "jupiter-persistence-batch",
  "pocket-ic",
  "serde",
  "serde_bytes",
@@ -3204,6 +3206,7 @@ dependencies = [
  "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
+ "jupiter-persistence-batch",
  "num-traits",
  "pocket-ic",
  "serde",
@@ -3250,6 +3253,10 @@ dependencies = [
  "ic-nns-common",
  "ic-nns-governance-api",
 ]
+
+[[package]]
+name = "jupiter-persistence-batch"
+version = "0.1.0"
 
 [[package]]
 name = "jupiter-sns-rewards"

@@ -22,6 +22,7 @@ ic-cdk-timers = { workspace = true }
 icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
 jupiter-ic-clients = { path = "../jupiter-ic-clients" }
+jupiter-persistence-batch = { path = "../jupiter-persistence-batch" }
 jupiter-nns-types = { path = "../jupiter-nns-types" }
 
 [features]

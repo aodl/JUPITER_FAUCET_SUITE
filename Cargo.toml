@@ -7,6 +7,7 @@ members = [
   "jupiter-build-support",
   "jupiter-historian",
   "jupiter-ic-clients",
+  "jupiter-persistence-batch",
   "jupiter-memo-policy",
   "jupiter-sns-rewards",
   "jupiter-faucet-frontend",
