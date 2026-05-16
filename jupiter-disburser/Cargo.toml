@@ -40,4 +40,4 @@ serde = { workspace = true }
 serde_bytes = { workspace = true }
 
 [build-dependencies]
-serde_json = { workspace = true }
+jupiter-build-support = { path = "../jupiter-build-support" }

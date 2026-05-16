@@ -4,6 +4,7 @@ members = [
   "jupiter-disburser",
   "jupiter-lifeline",
   "jupiter-faucet",
+  "jupiter-build-support",
   "jupiter-historian",
   "jupiter-ic-clients",
   "jupiter-memo-policy",

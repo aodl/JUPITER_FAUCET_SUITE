@@ -45,4 +45,4 @@ crc32fast = { workspace = true }
 futures = "0.3"
 
 [build-dependencies]
-serde_json = { workspace = true }
+jupiter-build-support = { path = "../jupiter-build-support" }

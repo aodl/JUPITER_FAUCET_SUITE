@@ -46,4 +46,4 @@ crc32fast = { workspace = true }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 
 [build-dependencies]
-serde_json = { workspace = true }
+jupiter-build-support = { path = "../jupiter-build-support" }
