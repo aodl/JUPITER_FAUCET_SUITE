@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Principal};
+use candid::{encode_args, encode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
 use jupiter_nns_types::{
@@ -8,16 +8,17 @@ use jupiter_nns_types::{
     Motion, Neuron, NeuronId, PrincipalId, ProposalActionRequest, ProposalId,
 };
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use slog::Level;
-use pocket_ic::{PocketIc, PocketIcBuilder};
+use pocket_ic::PocketIc;
 use sha2::{Digest, Sha256};
-use std::process::Command;
 use std::time::Duration;
 use std::sync::OnceLock;
 
 #[path = "support/mod.rs"]
 mod support;
+
+use support::calls::{query_one as query_call, tick_n, update_bytes, update_noargs, update_one as update_call};
+use support::governance::{set_controllers_exact, start_canister_as, stop_canister_as};
 
 // ----- Mainnet IDs (PocketIC bootstraps system canisters at mainnet IDs) -----
 const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
@@ -96,16 +97,6 @@ fn nns_root() -> Principal {
 
 fn fixture_principal() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
-}
-
-fn stop_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> Result<()> {
-    pic.stop_canister(canister, Some(sender))
-        .map_err(|r| anyhow!("stop_canister({canister}) reject: {r:?}"))
-}
-
-fn start_canister_as(pic: &PocketIc, canister: Principal, sender: Principal) -> Result<()> {
-    pic.start_canister(canister, Some(sender))
-        .map_err(|r| anyhow!("start_canister({canister}) reject: {r:?}"))
 }
 
 fn run_faucet_round(pic: &PocketIc, faucet: Principal, phase: &str) -> Result<FaucetSummary> {
@@ -238,60 +229,14 @@ static FAUCET_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
-fn workspace_root() -> Result<&'static std::path::Path> {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .context("CARGO_MANIFEST_DIR has no parent")
-}
-
 fn build_wasm_cached(
     cache: &OnceLock<Vec<u8>>,
     package: &str,
     features: Option<&str>,
     env_var: Option<&str>,
 ) -> Result<Vec<u8>> {
-    if let Some(bytes) = cache.get() {
-        return Ok(bytes.clone());
-    }
-
-    if let Some(env_var) = env_var {
-        if let Ok(path) = std::env::var(env_var) {
-            let bytes = std::fs::read(path).with_context(|| format!("reading {env_var}"))?;
-            let _ = cache.set(bytes.clone());
-            return Ok(bytes);
-        }
-    }
-
-    let mut cmd = Command::new("cargo");
-    cmd.args([
-        "build",
-        "--quiet",
-        "--target",
-        "wasm32-unknown-unknown",
-        "--release",
-        "-p",
-        package,
-        "--locked",
-    ]);
-    if let Some(features) = features {
-        cmd.args(["--features", features]);
-    }
-    let status = cmd
-        .current_dir(workspace_root()?)
-        .status()
-        .with_context(|| format!("failed to run cargo build for {package}"))?;
-    if !status.success() {
-        bail!("cargo build (wasm) failed for {package}");
-    }
-
-    let raw_name = package.replace('-', "_");
-    let path = workspace_root()?.join(format!(
-        "target/wasm32-unknown-unknown/release/{raw_name}.wasm"
-    ));
-    let bytes = std::fs::read(&path)
-        .with_context(|| format!("reading wasm at {}", path.display()))?;
-    let _ = cache.set(bytes.clone());
-    Ok(bytes)
+    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    support::wasm::build_wasm_cached(&workspace_root, cache, package, features, env_var, true)
 }
 
 fn build_disburser_wasm() -> Result<Vec<u8>> {
@@ -320,12 +265,6 @@ fn build_cmc_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&CMC_WASM_CACHE, "mock-cmc", None, None)
 }
 
-fn tick_n(pic: &PocketIc, n: usize) {
-    for _ in 0..n {
-        pic.tick();
-    }
-}
-
 fn advance_and_tick(pic: &PocketIc, secs: u64, ticks: usize) {
     pic.advance_time(Duration::from_secs(secs));
     tick_n(pic, ticks);
@@ -334,61 +273,6 @@ fn advance_and_tick(pic: &PocketIc, secs: u64, ticks: usize) {
 fn nat_to_u64(n: &candid::Nat) -> u64 {
     n.0.to_u64_digits().get(0).copied().unwrap_or(0)
 }
-
-fn update_call<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    arg: A,
-) -> Result<R> {
-    let bytes = encode_one(arg)?;
-    let out = pic
-        .update_call(canister, sender, method, bytes)
-        .map_err(|r| anyhow!("reject: {:?}", r))?;
-    Ok(decode_one(&out)?)
-}
-
-fn update_noargs<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-) -> Result<R> {
-    let out = pic
-        .update_call(canister, sender, method, encode_one(())?)
-        .map_err(|r| anyhow!("reject: {:?}", r))?;
-    Ok(decode_one(&out)?)
-}
-
-fn update_bytes<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    bytes: Vec<u8>,
-) -> Result<R> {
-    let out = pic
-        .update_call(canister, sender, method, bytes)
-        .map_err(|r| anyhow!("reject: {:?}", r))?;
-    Ok(decode_one(&out)?)
-}
-
-fn query_call<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    arg: A,
-) -> Result<R> {
-    let bytes = encode_one(arg)?;
-    let out = pic
-        .query_call(canister, sender, method, bytes)
-        .map_err(|r| anyhow!("reject: {:?}", r))?;
-    Ok(decode_one(&out)?)
-}
-
-
 
 fn debug_state(pic: &PocketIc, canister: Principal) -> Result<DebugState> {
     query_call(pic, canister, Principal::anonymous(), "debug_state", ())
@@ -1412,21 +1296,7 @@ fn wait_for_cached_stake_increase(
 
 
 fn build_pic() -> PocketIc {
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        // Required for maturity disbursement finalization: governance needs maturity modulation,
-        // which depends on the cycles minting canister being present in the NNS subnet.
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build()
+    support::ledger::build_pic_with_real_icp_and_nns_governance(Some(pic_log_level()))
 }
 
 fn test_blackhole_controller() -> Principal {
@@ -1434,27 +1304,7 @@ fn test_blackhole_controller() -> Principal {
 }
 
 fn set_blackholed_controllers(pic: &PocketIc, canister: Principal) -> Result<()> {
-    let current = pic.get_controllers(canister);
-    let sender = current
-        .get(0)
-        .cloned()
-        .unwrap_or_else(Principal::anonymous);
-
-    pic.set_controllers(canister, Some(sender), vec![test_blackhole_controller(), canister])
-        .map_err(|e| anyhow!("set_controllers reject: {:?}", e))?;
-    Ok(())
-}
-
-fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
-    let current = pic.get_controllers(canister);
-    let sender = current
-        .get(0)
-        .cloned()
-        .unwrap_or_else(Principal::anonymous);
-
-    pic.set_controllers(canister, Some(sender), controllers)
-        .map_err(|e| anyhow!("set_controllers reject: {:?}", e))?;
-    Ok(())
+    set_controllers_exact(pic, canister, vec![test_blackhole_controller(), canister])
 }
 
 // ------------------------- Tests -------------------------
@@ -1464,21 +1314,7 @@ fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<P
 fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        // Required for maturity disbursement finalization: governance needs maturity modulation,
-        // which depends on the cycles minting canister being present in the NNS subnet.
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -1583,19 +1419,7 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -1665,19 +1489,7 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 fn full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -1827,19 +1639,7 @@ let st = debug_state(&pic, disburser_canister)?;
 fn inflight_idempotency_no_double_initiation() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -1912,19 +1712,7 @@ fn inflight_idempotency_no_double_initiation() -> Result<()> {
 fn upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2010,19 +1798,7 @@ fn upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
 fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2191,19 +1967,7 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
 fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2264,19 +2028,7 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
 fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2411,19 +2163,7 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
 fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2565,19 +2305,7 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
 fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -5098,19 +4826,7 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
 fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()> {
     require_ignored_flag()?;
 
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        nns_governance: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    let pic = PocketIcBuilder::new().with_log_level(pic_log_level())
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build();
+    let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
