@@ -14,6 +14,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+#[path = "support/mod.rs"]
+mod support;
+
 const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
 const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
 const ICP_LEDGER_FEE_E8S: u64 = 10_000;
@@ -22,7 +25,7 @@ fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
     // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
     // invoke them explicitly with `--ignored`.
-    Ok(())
+    support::assertions::require_ignored_flag()
 }
 
 fn repo_root() -> &'static str {

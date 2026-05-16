@@ -4,7 +4,7 @@ export const TRILLION_CYCLES = 1_000_000_000_000n;
 export const PROJECTION_WEEKS = 52;
 export const PROJECTION_BUCKETS = PROJECTION_WEEKS;
 export const DEFAULT_ANNUAL_APY_BASIS_POINTS = 700n;
-export const SECONDS_PER_DAY = 24n * 60n * 60n;
+const SECONDS_PER_DAY = 24n * 60n * 60n;
 export const AGE_BONUS_FULL_AGE_SECONDS = 4n * 365n * SECONDS_PER_DAY;
 export const MAX_AGE_BONUS_BASIS_POINTS = 2_500n;
 
@@ -31,7 +31,7 @@ export function parseDecimalToScaledBigInt(value, scale, { allowZero = true, max
   return parsed;
 }
 
-export function ceilDiv(numerator, denominator) {
+function ceilDiv(numerator, denominator) {
   if (denominator <= 0n) throw new Error('denominator must be positive');
   if (numerator <= 0n) return 0n;
   return (numerator + denominator - 1n) / denominator;
@@ -103,7 +103,7 @@ export function calculateEffectiveApyBasisPoints(annualApyBasisPoints, ageBonusB
   return (apy * 10_000n) / (10_000n + ageBonus);
 }
 
-export function normaliseSimulatorInputs(raw = {}) {
+function normaliseSimulatorInputs(raw = {}) {
   const errors = [];
   let assumedIcpPriceUnits = 0n;
   let dailyBurnCycles = 0n;

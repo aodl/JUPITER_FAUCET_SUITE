@@ -1,10 +1,10 @@
 import { Principal } from '@icp-sdk/core/principal';
 
 export const JUPITER_MEMO_MAX_BYTES = 32;
-export const JUPITER_NEURON_ID_MAX_DIGITS = 20;
-export const U64_MAX = 18446744073709551615n;
+const JUPITER_NEURON_ID_MAX_DIGITS = 20;
+const U64_MAX = 18446744073709551615n;
 
-export function isAscii(text) {
+function isAscii(text) {
   return /^[\x00-\x7F]*$/.test(String(text ?? ''));
 }
 

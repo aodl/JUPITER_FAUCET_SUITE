@@ -3242,6 +3242,9 @@ name = "jupiter-memo-policy"
 version = "0.1.0"
 dependencies = [
  "candid",
+ "hex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

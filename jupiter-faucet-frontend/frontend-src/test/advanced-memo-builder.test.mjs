@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   JUPITER_MEMO_MAX_BYTES,
@@ -17,6 +18,29 @@ const COMPACT_CANISTER = '22255zqaaaaaaasqf6uqcai';
 const CANONICAL_CANISTER = '22255-zqaaa-aaaas-qf6uq-cai';
 const SHORT_CANISTER = '2ibo7-dia';
 const COMPACT_SHORT_CANISTER = '2ibo7dia';
+const MEMO_POLICY_CASES = JSON.parse(readFileSync(
+  new URL('../../../jupiter-memo-policy/fixtures/memo-policy-cases.json', import.meta.url),
+  'utf8',
+));
+
+test('advanced memo builder matches canonical memo policy fixture corpus', () => {
+  for (const fixture of MEMO_POLICY_CASES) {
+    if (!fixture.builder) continue;
+
+    const result = buildAdvancedMemo({
+      mode: fixture.builder.mode,
+      canisterText: fixture.builder.canister_text || '',
+      neuronIdText: fixture.builder.neuron_id_text || '',
+      optionalMemoText: fixture.builder.optional_memo_text || '',
+    });
+
+    assert.equal(result.ok, fixture.builder.ok, fixture.name);
+    assert.equal(result.output, fixture.builder.output, fixture.name);
+    if (fixture.builder.truncated_optional_memo !== undefined) {
+      assert.equal(result.truncatedOptionalMemo, fixture.builder.truncated_optional_memo, fixture.name);
+    }
+  }
+});
 
 test('target input sanitizers trim without rewriting target identity', () => {
   assert.equal(sanitizeCanisterPrincipalText(' 22255-ZQAAA.aaaa_asqf6-uqcai-1089 '), '22255-zqaaa.aaaa_asqf6-uqcai-1089');

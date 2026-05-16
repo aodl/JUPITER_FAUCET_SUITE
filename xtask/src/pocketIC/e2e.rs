@@ -1,13 +1,18 @@
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
+use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::{PocketIc, PocketIcBuilder};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
+#[path = "support/mod.rs"]
+mod support;
+use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
+use support::governance::set_controllers_exact;
+use support::ledger::build_pic_with_real_icp;
+use support::principals::fixture_principal;
 use std::process::Command;
 use std::time::Duration;
 
@@ -19,7 +24,7 @@ fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
     // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
     // invoke them explicitly with `--ignored`.
-    Ok(())
+    support::assertions::require_ignored_flag()
 }
 fn repo_root() -> &'static str { env!("CARGO_MANIFEST_DIR") }
 
@@ -37,88 +42,6 @@ fn build_wasm(package: &str, features: Option<&str>) -> Result<Vec<u8>> {
     let raw_name = package.replace('-', "_");
     let path = format!("{}/../target/wasm32-unknown-unknown/release/{raw_name}.wasm", repo_root());
     std::fs::read(path).with_context(|| format!("failed to read wasm for {package}"))
-}
-
-fn tick_n(pic: &PocketIc, n: usize) {
-    for _ in 0..n {
-        pic.tick();
-    }
-}
-
-fn build_pic_with_real_icp() -> PocketIc {
-    let icp_features = IcpFeatures {
-        registry: Some(IcpFeaturesConfig::DefaultConfig),
-        cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
-        icp_token: Some(IcpFeaturesConfig::DefaultConfig),
-        ..Default::default()
-    };
-
-    PocketIcBuilder::new()
-        .with_nns_subnet()
-        .with_application_subnet()
-        .with_icp_features(icp_features)
-        .build()
-}
-
-fn fixture_principal() -> Principal {
-    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
-}
-
-fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
-    let sender = pic
-        .get_controllers(canister)
-        .first()
-        .copied()
-        .unwrap_or(Principal::anonymous());
-    pic.set_controllers(canister, Some(sender), controllers)
-        .map_err(|e| anyhow!("set_controllers reject: {e:?}"))?;
-    Ok(())
-}
-
-fn update_bytes<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    bytes: Vec<u8>,
-) -> Result<R> {
-    let reply = pic
-        .update_call(canister, sender, method, bytes)
-        .map_err(|e| anyhow!("update_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
-}
-
-fn update_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    arg: A,
-) -> Result<R> {
-    update_bytes(pic, canister, sender, method, encode_one(arg)?)
-}
-
-fn update_noargs<R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-) -> Result<R> {
-    update_one(pic, canister, sender, method, ())
-}
-
-fn query_one<A: CandidType, R: for<'de> Deserialize<'de> + CandidType>(
-    pic: &PocketIc,
-    canister: Principal,
-    sender: Principal,
-    method: &str,
-    arg: A,
-) -> Result<R> {
-    let bytes = encode_one(arg)?;
-    let reply = pic
-        .query_call(canister, sender, method, bytes)
-        .map_err(|e| anyhow!("query_call {method} rejected: {e:?}"))?;
-    decode_one(&reply).map_err(Into::into)
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

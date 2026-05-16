@@ -8,3 +8,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 candid = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

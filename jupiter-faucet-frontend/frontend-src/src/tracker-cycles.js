@@ -6,7 +6,7 @@ export function cyclesFromLogText(text) {
   return BigInt(match[1].replace(/[,_]/g, ''));
 }
 
-export function sortedHistorianCycleSamples(data) {
+function sortedHistorianCycleSamples(data) {
   return (data?.cycles?.items || [])
     .filter((item) => item?.timestamp_nanos !== undefined && item?.timestamp_nanos !== null && item?.cycles !== undefined && item?.cycles !== null)
     .map((item) => ({

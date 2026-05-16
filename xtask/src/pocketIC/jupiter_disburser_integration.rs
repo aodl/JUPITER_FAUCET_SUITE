@@ -16,6 +16,9 @@ use std::process::Command;
 use std::time::Duration;
 use std::sync::OnceLock;
 
+#[path = "support/mod.rs"]
+mod support;
+
 // ----- Mainnet IDs (PocketIC bootstraps system canisters at mainnet IDs) -----
 const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
 const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
@@ -25,7 +28,7 @@ const NNS_ROOT_ID: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 // Repository entry points such as `cargo run -p xtask -- test_all` invoke them explicitly.
 fn require_ignored_flag() -> Result<()> {
     // Running with: cargo test -p jupiter-disburser --test jupiter_disburser_integration -- --ignored --nocapture
-    Ok(())
+    support::assertions::require_ignored_flag()
 }
 
 // ------------------------- Test harness helpers -------------------------

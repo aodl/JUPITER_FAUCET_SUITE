@@ -1,0 +1,161 @@
+[
+  {
+    "name": "valid compact cycles canister memo",
+    "memo_text": "22255zqaaaaaaasqf6uqcai",
+    "expected_directive": { "kind": "top_up", "canister_id": "22255-zqaaa-aaaas-qf6uq-cai" },
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "22255zqaaaaaaasqf6uqcai",
+      "optional_memo_text": "ignored",
+      "ok": true,
+      "output": "22255zqaaaaaaasqf6uqcai"
+    }
+  },
+  {
+    "name": "valid hyphenated cycles canister memo",
+    "memo_text": "22255-zqaaa-aaaas-qf6uq-cai",
+    "expected_directive": { "kind": "top_up", "canister_id": "22255-zqaaa-aaaas-qf6uq-cai" },
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "22255-zqaaa-aaaas-qf6uq-cai",
+      "optional_memo_text": "ignored",
+      "ok": true,
+      "output": "22255-zqaaa-aaaas-qf6uq-cai"
+    }
+  },
+  {
+    "name": "valid raw ICP memo at byte limit",
+    "memo_text": "22255zqaaaaaaasqf6uqcai.12345678",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "12345678"
+    },
+    "builder": {
+      "mode": "rawIcp",
+      "canister_text": "22255zqaaaaaaasqf6uqcai",
+      "optional_memo_text": "123456789",
+      "ok": true,
+      "output": "22255zqaaaaaaasqf6uqcai.12345678",
+      "truncated_optional_memo": "9"
+    }
+  },
+  {
+    "name": "raw ICP preserves memo text after first dot",
+    "memo_text": "22255zqaaaaaaasqf6uqcai.swap.7",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "swap.7"
+    },
+    "builder": null
+  },
+  {
+    "name": "valid bare neuron id memo",
+    "memo_text": "42",
+    "expected_directive": { "kind": "neuron_stake", "neuron_id": 42, "memo_text": null },
+    "builder": {
+      "mode": "neuron",
+      "neuron_id_text": "42",
+      "optional_memo_text": "",
+      "ok": true,
+      "output": "42"
+    }
+  },
+  {
+    "name": "valid neuron id memo with outgoing memo",
+    "memo_text": "42.vault.memo",
+    "expected_directive": { "kind": "neuron_stake", "neuron_id": 42, "memo_text": "vault.memo" },
+    "builder": {
+      "mode": "neuron",
+      "neuron_id_text": "42",
+      "optional_memo_text": "vault.memo",
+      "ok": true,
+      "output": "42.vault.memo"
+    }
+  },
+  {
+    "name": "empty memo",
+    "memo_text": "",
+    "expected_directive": null,
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "",
+      "optional_memo_text": "",
+      "ok": false,
+      "output": ""
+    }
+  },
+  {
+    "name": "malformed ASCII principal text",
+    "memo_text": "not-a-principal",
+    "expected_directive": null,
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "not-a-principal",
+      "optional_memo_text": "",
+      "ok": false,
+      "output": ""
+    }
+  },
+  {
+    "name": "anonymous principal text",
+    "memo_text": "2vxsx-fae",
+    "expected_directive": null,
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "2vxsx-fae",
+      "optional_memo_text": "",
+      "ok": false,
+      "output": ""
+    }
+  },
+  {
+    "name": "management principal text",
+    "memo_text": "aaaaa-aa",
+    "expected_directive": null,
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "aaaaa-aa",
+      "optional_memo_text": "",
+      "ok": false,
+      "output": ""
+    }
+  },
+  {
+    "name": "zero neuron id rejected",
+    "memo_text": "0",
+    "expected_directive": null,
+    "builder": {
+      "mode": "neuron",
+      "neuron_id_text": "0",
+      "optional_memo_text": "",
+      "ok": false,
+      "output": ""
+    }
+  },
+  {
+    "name": "u64 overflow neuron id rejected",
+    "memo_text": "18446744073709551616",
+    "expected_directive": null,
+    "builder": {
+      "mode": "neuron",
+      "neuron_id_text": "18446744073709551616",
+      "optional_memo_text": "",
+      "ok": false,
+      "output": ""
+    }
+  },
+  {
+    "name": "non ASCII memo bytes rejected",
+    "memo_hex": "ff",
+    "expected_directive": null,
+    "builder": {
+      "mode": "cycles",
+      "canister_text": "22255-zqaaa-aaaas-qf6uq-cai",
+      "optional_memo_text": "ÿ",
+      "ok": false,
+      "output": ""
+    }
+  }
+]

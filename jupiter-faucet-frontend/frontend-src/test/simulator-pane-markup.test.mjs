@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'utf8');
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
-const mainJs = readFileSync(resolve(__dirname, '../src/main.js'), 'utf8');
+const mainJs = readFileSync(resolve(__dirname, '../src/app/bootstrap.js'), 'utf8');
 const trackerCyclesJs = readFileSync(resolve(__dirname, '../src/tracker-cycles.js'), 'utf8');
 const nnsGovernanceDidJs = readFileSync(resolve(__dirname, '../declarations/nns_governance/nns_governance.did.js'), 'utf8');
 const navbarJs = readFileSync(resolve(__dirname, '../../assets/navbar.js'), 'utf8');

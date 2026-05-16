@@ -9,6 +9,7 @@
     "test:frontend-neuron": "node --test jupiter-faucet-frontend/frontend-src/test/neuron-details-controller.test.mjs",
     "test:frontend-unit": "node --test jupiter-faucet-frontend/frontend-src/test/*.test.mjs",
     "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs",
+    "lint:frontend-exports": "node scripts/check-frontend-exports.mjs",
     "verify:reproducible-artifacts": "bash ./scripts/verify-reproducible-artifacts"
   },
   "dependencies": {

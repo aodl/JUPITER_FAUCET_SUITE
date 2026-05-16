@@ -88,9 +88,64 @@ pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
     fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
+
+    #[derive(Debug, Deserialize)]
+    struct FixtureCase {
+        name: String,
+        memo_text: Option<String>,
+        memo_hex: Option<String>,
+        expected_directive: Option<ExpectedDirective>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum ExpectedDirective {
+        TopUp { canister_id: String },
+        RawIcp { canister_id: String, memo_text: String },
+        NeuronStake { neuron_id: u64, memo_text: Option<String> },
+    }
+
+    fn fixture_memo(case: &FixtureCase) -> Vec<u8> {
+        if let Some(hex) = &case.memo_hex {
+            return hex::decode(hex).expect("valid memo_hex fixture");
+        }
+        case.memo_text.as_deref().unwrap_or_default().as_bytes().to_vec()
+    }
+
+    fn expected_directive(directive: &Option<ExpectedDirective>) -> Option<MemoDirective> {
+        match directive {
+            Some(ExpectedDirective::TopUp { canister_id }) => Some(MemoDirective::TopUp {
+                canister_id: principal(canister_id),
+            }),
+            Some(ExpectedDirective::RawIcp { canister_id, memo_text }) => Some(MemoDirective::RawIcp {
+                canister_id: principal(canister_id),
+                memo: memo_text.as_bytes().to_vec(),
+            }),
+            Some(ExpectedDirective::NeuronStake { neuron_id, memo_text }) => Some(MemoDirective::NeuronStake {
+                neuron_id: *neuron_id,
+                memo: memo_text.as_ref().map(|text| text.as_bytes().to_vec()),
+            }),
+            None => None,
+        }
+    }
+
+    #[test]
+    fn parser_matches_canonical_fixture_corpus() {
+        let cases: Vec<FixtureCase> = serde_json::from_str(include_str!("../fixtures/memo-policy-cases.json"))
+            .expect("valid memo policy fixture corpus");
+        for case in cases {
+            assert_eq!(
+                parse_memo_directive(&fixture_memo(&case)),
+                expected_directive(&case.expected_directive),
+                "{}",
+                case.name
+            );
+        }
+    }
 
     #[test]
     fn parser_policy_corpus() {

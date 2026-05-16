@@ -15,12 +15,12 @@ function escapeChartHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-export function toBigIntValue(value, fallback = 0n) {
+function toBigIntValue(value, fallback = 0n) {
   if (value === null || value === undefined) return fallback;
   return typeof value === 'bigint' ? value : BigInt(value);
 }
 
-export function ratioBigInt(value, max) {
+function ratioBigInt(value, max) {
   const denominator = toBigIntValue(max, 0n);
   if (denominator <= 0n || value === null || value === undefined) return 0;
   const numerator = toBigIntValue(value) * 1_000_000n;

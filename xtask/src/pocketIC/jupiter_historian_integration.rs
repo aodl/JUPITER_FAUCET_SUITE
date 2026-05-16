@@ -12,6 +12,8 @@ use pocket_ic::{PocketIc, PocketIcBuilder};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
+#[path = "support/mod.rs"]
+mod support;
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -20,7 +22,7 @@ fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
     // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
     // invoke them explicitly with `--ignored`.
-    Ok(())
+    support::assertions::require_ignored_flag()
 }
 fn repo_root() -> &'static str { env!("CARGO_MANIFEST_DIR") }
 
