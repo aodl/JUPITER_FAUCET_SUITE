@@ -3127,7 +3127,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "candid",
- "crc32fast",
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
@@ -3139,7 +3138,6 @@ dependencies = [
  "jupiter-persistence-batch",
  "pocket-ic",
  "serde",
- "serde_bytes",
  "sha2",
  "slog",
  "thiserror 1.0.69",
@@ -3152,7 +3150,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "candid",
- "crc32fast",
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
@@ -3165,8 +3162,8 @@ dependencies = [
  "jupiter-persistence-batch",
  "pocket-ic",
  "serde",
- "serde_bytes",
  "sha2",
+ "slog",
  "thiserror 1.0.69",
 ]
 
@@ -3191,7 +3188,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "candid",
- "crc32fast",
  "futures",
  "hex",
  "ic-cdk",
@@ -3207,6 +3203,7 @@ dependencies = [
  "pocket-ic",
  "serde",
  "sha2",
+ "slog",
  "thiserror 1.0.69",
 ]
 
@@ -6304,7 +6301,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "candid",
- "crc32fast",
  "hex",
  "icrc-ledger-types 0.1.12",
  "jupiter-ic-clients",
@@ -6312,7 +6308,6 @@ dependencies = [
  "num-traits",
  "pocket-ic",
  "serde",
- "serde_bytes",
  "serde_json",
  "sha2",
  "slog",

@@ -15,7 +15,6 @@ crate-type = ["cdylib"]
 [dependencies]
 candid = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 sha2 = { workspace = true }
@@ -25,7 +24,6 @@ ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
 icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
-crc32fast = { workspace = true }
 jupiter-ic-clients = { path = "../jupiter-ic-clients" }
 jupiter-persistence-batch = { path = "../jupiter-persistence-batch" }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
@@ -40,11 +38,10 @@ candid = { workspace = true }
 hex = { workspace = true }
 pocket-ic = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
 icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
-crc32fast = { workspace = true }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
+slog = { workspace = true }
 
 [build-dependencies]
 jupiter-build-support = { path = "../jupiter-build-support" }

@@ -11,14 +11,12 @@ num-traits = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 icrc-ledger-types = { workspace = true }
-crc32fast = { workspace = true }
 sha2 = { workspace = true }
 jupiter-ic-clients = { path = "../jupiter-ic-clients" }
 jupiter-nns-types = { path = "../jupiter-nns-types" }
 
 [dev-dependencies]
 pocket-ic = { workspace = true }
-serde_bytes = { workspace = true }
 slog = { workspace = true }
 
 [[test]]
