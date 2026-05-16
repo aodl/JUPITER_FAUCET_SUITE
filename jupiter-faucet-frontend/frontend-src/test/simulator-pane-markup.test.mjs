@@ -8,10 +8,27 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'utf8');
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
 const bootstrapJs = readFileSync(resolve(__dirname, '../src/app/bootstrap.js'), 'utf8');
+const advancedMemoControllerJs = readFileSync(resolve(__dirname, '../src/app/advanced-memo-controller.js'), 'utf8');
 const hashRoutesJs = readFileSync(resolve(__dirname, '../src/app/hash-routes.js'), 'utf8');
+const landingTablesControllerJs = readFileSync(resolve(__dirname, '../src/app/landing-tables-controller.js'), 'utf8');
 const responsiveTablesJs = readFileSync(resolve(__dirname, '../src/app/responsive-tables.js'), 'utf8');
+const simulatorControllerJs = readFileSync(resolve(__dirname, '../src/app/simulator-controller.js'), 'utf8');
+const sourcePaneControllerJs = readFileSync(resolve(__dirname, '../src/app/source-pane-controller.js'), 'utf8');
+const stakePaneControllerJs = readFileSync(resolve(__dirname, '../src/app/stake-pane-controller.js'), 'utf8');
+const trackerControllerJs = readFileSync(resolve(__dirname, '../src/app/tracker-controller.js'), 'utf8');
 const viewFormattersJs = readFileSync(resolve(__dirname, '../src/app/view-formatters.js'), 'utf8');
-const mainJs = [bootstrapJs, hashRoutesJs, responsiveTablesJs, viewFormattersJs].join('\n');
+const mainJs = [
+  bootstrapJs,
+  advancedMemoControllerJs,
+  hashRoutesJs,
+  landingTablesControllerJs,
+  responsiveTablesJs,
+  simulatorControllerJs,
+  sourcePaneControllerJs,
+  stakePaneControllerJs,
+  trackerControllerJs,
+  viewFormattersJs,
+].join('\n');
 const trackerCyclesJs = readFileSync(resolve(__dirname, '../src/tracker-cycles.js'), 'utf8');
 const nnsGovernanceDidJs = readFileSync(resolve(__dirname, '../declarations/nns_governance/nns_governance.did.js'), 'utf8');
 const navbarJs = readFileSync(resolve(__dirname, '../../assets/navbar.js'), 'utf8');
@@ -125,9 +142,9 @@ test('transaction table pagination uses a responsive page size', () => {
   assert.match(mainJs, /const COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT = -1;/);
   assert.match(mainJs, /function calculateResponsiveTablePageSize\(viewportHeight = window\.innerHeight\)/);
   assert.match(mainJs, /Math\.min\(TABLE_MAX_PAGE_SIZE, Math\.max\(TABLE_MIN_PAGE_SIZE, estimatedRows\)\)/);
-  assert.match(mainJs, /function currentPageSizeForTable\(kind\)[\s\S]*kind === 'commitments'[\s\S]*kind === 'commitments-raw'[\s\S]*kind === 'commitments-neurons'[\s\S]*currentTablePageSize\(\) \+ adjustment/);
+  assert.match(mainJs, /const currentPageSizeForTable = \(kind\) => \{[\s\S]*kind === 'commitments'[\s\S]*kind === 'commitments-raw'[\s\S]*kind === 'commitments-neurons'[\s\S]*currentTablePageSize\(\) \+ adjustment/);
   assert.match(mainJs, /const pageSize = currentPageSizeForTable\(kind\);[\s\S]*state\.items\.slice\(start, start \+ pageSize\)/);
-  assert.match(mainJs, /registeredPageSize: currentTablePageSize\(\)/);
+  assert.match(mainJs, /registeredPageSize: landingTablesController\.currentTablePageSize\(\)/);
   assert.match(mainJs, /window\.addEventListener\('resize'/);
   assert.doesNotMatch(mainJs, /const TABLE_PAGE_SIZE = 6;/);
 });
@@ -465,7 +482,7 @@ test('simulator renders the cycles balance chart before a weekly top-ups headlin
   assert.ok(topupsIndex >= 0, 'missing top-ups headline');
   assert.ok(balanceIndex < topupsIndex, 'balance chart should render before top-ups headline');
   assert.match(mainJs, /Projection uses the configured APY\. Exact APY depends on numerous factors/);
-  assert.match(mainJs, /dashboard\.internetcomputer\.org\/neuron\/\$\{JUPITER_NEURON_ID\.toString\(\)\}/);
+  assert.match(mainJs, /dashboard\.internetcomputer\.org\/neuron\/\$\{neuronId\.toString\(\)\}/);
   assert.match(mainJs, /effective top-up APY discounts the current age-bonus component/);
   assert.match(mainJs, /first projected payout happens on day one/);
   assert.match(mainJs, /weekly-cadence one-year projection/);
@@ -499,7 +516,7 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   assert.match(mainJs, /link\.textContent = 'More info'/);
   assert.match(nnsGovernanceDidJs, /maturity_disbursements_in_progress/);
   assert.match(mainJs, /calculateAgeBonusBasisPointsFromAgingSince/);
-  assert.match(mainJs, /simulatorState\.ageBonusBasisPoints/);
+  assert.match(mainJs, /state\.ageBonusBasisPoints/);
 });
 
 test('Total Output and Total Rewards are pages of Jupiter Stake rather than metric rail buttons', () => {
@@ -538,7 +555,7 @@ test('Patron Commitments table omits redundant category column', () => {
   assert.match(commitments, /<td colspan="4" class="empty-cell">Loading…<\/td>/);
   assert.doesNotMatch(mainJs, /formatCommitmentOutcome/);
   assert.doesNotMatch(mainJs, /commitmentOutcomeCategory/);
-  assert.match(mainJs, /renderCommitmentsPane\(data\)[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*rawIcpMemoText\(item\)[\s\S]*commitments-neurons[\s\S]*neuronMemoText\(item\)/);
+  assert.match(mainJs, /const renderCommitmentsPane = \(data\) => \{[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*rawIcpMemoText\(item\)[\s\S]*commitments-neurons[\s\S]*neuronMemoText\(item\)/);
   assert.match(mainJs, /'commitments-raw', renderCommitmentsPane/);
   assert.match(mainJs, /'commitments-neurons', renderCommitmentsPane/);
 });
@@ -633,7 +650,7 @@ test('pane focus does not strip deep-link query parameters', () => {
 });
 
 test('canister tracker defaults to all loaded history', () => {
-  assert.match(mainJs, /const trackerState = \{[\s\S]*?range: 'all'/);
+  assert.match(mainJs, /const state = \{[\s\S]*?range: 'all'/);
 });
 
 test('simulator header and scroll region have dedicated compact layout CSS', () => {
@@ -648,10 +665,10 @@ test('simulator header and scroll region have dedicated compact layout CSS', () 
 });
 
 test('simulator prepopulates ICP/XDR price from historian XRC cache without overwriting user edits', () => {
-  assert.match(mainJs, /applySimulatorIcpXdrRateFromStatus/);
+  assert.match(mainJs, /const applyIcpXdrRateFromStatus = \(status\) =>/);
   assert.match(mainJs, /readOpt\(status\?\.icp_xdr_rate\)/);
   assert.match(mainJs, /formatIcpXdrRateInput/);
-  assert.match(mainJs, /simulatorState\.icpPriceUserEdited/);
+  assert.match(mainJs, /state\.icpPriceUserEdited/);
   assert.match(mainJs, /historian’s daily XRC cache/);
   assert.match(mainJs, /No cached XRC ICP\/XDR rate is available yet/);
   assert.match(mainJs, /formatIcpXdrRateSource/);
@@ -659,7 +676,7 @@ test('simulator prepopulates ICP/XDR price from historian XRC cache without over
   assert.match(mainJs, /Fetched \$\{formatTimestampSeconds/);
   assert.match(mainJs, /formatIcpXdrRateSource\(snapshot, manualOverride = false\)/);
   assert.match(mainJs, /Manual override; \$\{cacheText\}/);
-  assert.match(mainJs, /formatIcpXdrRateSource\(\s*simulatorState\.icpXdrRateSnapshot,\s*simulatorState\.icpPriceUserEdited,\s*\)/);
+  assert.match(mainJs, /formatIcpXdrRateSource\(\s*state\.icpXdrRateSnapshot,\s*state\.icpPriceUserEdited,\s*\)/);
 });
 
 
@@ -677,7 +694,7 @@ test('simulator prefill links use shareable simulator fragments', () => {
   assert.match(mainJs, /const SIMULATOR_HASH_PREFIX = '#simulator-'/);
   assert.match(mainJs, /simulatorHashForPrefill/);
   assert.match(mainJs, /simulatorPrefillFromHash/);
-  assert.match(mainJs, /hydrateSimulatorFromLocationHash/);
+  assert.match(mainJs, /hydrateFromLocationHash/);
   assert.match(mainJs, /simulatorShareHashFromInputs/);
   assert.match(mainJs, /simulatorShareUrlFromInputs/);
   assert.match(mainJs, /bindSimulatorShareUrlButton/);
@@ -693,28 +710,28 @@ test('simulator prefill links use shareable simulator fragments', () => {
   assert.match(mainJs, /annualApyPercent: params\.get\('apy'\)/);
   assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS\['simulator-icp-price'\]/);
   assert.match(mainJs, /SIMULATOR_INPUT_CONSTRAINTS\['simulator-apy'\]/);
-  assert.match(mainJs, /simulatorState\.icpPriceUserEdited = true;/);
+  assert.match(mainJs, /state\.icpPriceUserEdited = true;/);
   assert.match(mainJs, /href="\$\{escapeHtml\(simulatorHashForPrefill/);
   assert.match(navbarJs, /key\.startsWith\("simulator-"\)/);
   assert.match(metricsCss, /\.simulator-copy-url\s*\{[\s\S]*height: 32px;[\s\S]*white-space: nowrap;/);
 });
 
 test('metric tracker hash deep links submit once on cold load and panel open', () => {
-  assert.match(mainJs, /let lastTrackerHashSubmitPrincipal = ''/);
-  assert.match(mainJs, /hydrateTrackerFromLocationHash\(\{ submit: true \}\);/);
-  assert.match(mainJs, /submit && lastTrackerHashSubmitPrincipal !== principalText/);
-  assert.match(mainJs, /lastTrackerHashSubmitPrincipal = principalText/);
-  assert.match(mainJs, /replaceTrackerLocationHash\(principal\.toText\(\)\);/);
-  assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*hydrateTrackerFromLocationHash\(\{ submit: true \}\)/);
+  assert.match(mainJs, /let lastHashSubmitPrincipal = ''/);
+  assert.match(mainJs, /trackerController\.hydrateFromLocationHash\(\{ submit: true \}\);/);
+  assert.match(mainJs, /submit && lastHashSubmitPrincipal !== principalText/);
+  assert.match(mainJs, /lastHashSubmitPrincipal = principalText/);
+  assert.match(mainJs, /replaceLocationHash\(principal\.toText\(\)\);/);
+  assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*trackerController\.hydrateFromLocationHash\(\{ submit: true \}\)/);
 });
 
 test('canister tracker displays cycles as T cycles and estimates burn per day', () => {
   assert.match(mainJs, /function formatCycles\(value\) \{\n  return formatTrillionCycles\(value\);/);
-  assert.match(mainJs, /function trackerCyclesChartPoints\(data\)/);
-  assert.match(mainJs, /return sortedCycleSamples\(data\)\.map/);
+  assert.match(mainJs, /const trackerCyclesChartPoints = \(data\) =>/);
+  assert.match(mainJs, /trackerCyclesChartPoints = \(data\) => sortedCycleSamples\(data\)\.map/);
   assert.match(trackerCyclesJs, /function sortedLogCycleSamples\(data\)/);
   assert.match(trackerCyclesJs, /Cycles:\\s\*\(\[0-9\]\[0-9_,\]\*\)/);
-  assert.match(mainJs, /function trackerCyclesPointLabel\(point\)/);
+  assert.match(mainJs, /const trackerCyclesPointLabel = \(point\) =>/);
   assert.match(mainJs, /formatTimestampNanos\(point\.timestampNanos\)/);
   assert.match(mainJs, /pointLabelBuilder: trackerCyclesPointLabel/);
   assert.match(mainJs, /xDomainBuckets: timelineBuckets/);
@@ -736,9 +753,9 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
 });
 
 test('simulator prepopulates commitment from calculated break-even minimum', () => {
-  assert.match(mainJs, /maybePrepopulateSimulatorMinimumCommitment/);
+  assert.match(mainJs, /maybePrepopulateMinimumCommitment/);
   assert.match(mainJs, /calculateSimulatorMinimumCommitmentInput/);
   assert.match(mainJs, /formatIcpCommitmentInputRoundedUp/);
-  assert.match(mainJs, /simulatorState\.icpCommitmentUserEdited/);
-  assert.match(mainJs, /maybePrepopulateSimulatorMinimumCommitment\(\);\n  renderCommitmentSimulator\(\);/);
+  assert.match(mainJs, /state\.icpCommitmentUserEdited/);
+  assert.match(mainJs, /maybePrepopulateMinimumCommitment\(\);\n    render\(\);/);
 });
