@@ -1660,11 +1660,13 @@ dependencies = [
 
 [[package]]
 name = "ic-asset-certification"
-version = "3.0.3"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7103d40be94c91d33021066b9fc589c01ffdb171e76cf8789ab1abcc0acecd8c"
 dependencies = [
  "globset",
  "http",
- "ic-certification 3.0.3",
+ "ic-certification",
  "ic-http-certification",
  "thiserror 1.0.69",
 ]
@@ -1788,19 +1790,9 @@ dependencies = [
 
 [[package]]
 name = "ic-certification"
-version = "3.0.3"
-dependencies = [
- "hex",
- "serde",
- "serde_bytes",
- "sha2",
-]
-
-[[package]]
-name = "ic-certification"
-version = "3.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c11273a40f8d67926ee423b0bd21381ae8419db809b42f33c5cb3319549b40f"
+checksum = "754e3037360152de7e5f2bd0ccf51db8864b6a03c5a2b4ffc6a65286c0e2ffa7"
 dependencies = [
  "hex",
  "serde",
@@ -1901,12 +1893,14 @@ dependencies = [
 
 [[package]]
 name = "ic-http-certification"
-version = "3.0.3"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "689c75307307b577220b7bade846123d62ef0a8fe536540267571c8e94825cf5"
 dependencies = [
  "base64 0.22.1",
  "candid",
  "http",
- "ic-certification 3.0.3",
+ "ic-certification",
  "ic-representation-independent-hash",
  "serde",
  "serde_cbor",
@@ -1959,7 +1953,7 @@ dependencies = [
  "ic-canister-log",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-certification 3.1.0",
+ "ic-certification",
  "ic-http-types",
  "ic-icrc1",
  "ic-icrc1-tokens-u64",
@@ -2427,7 +2421,9 @@ dependencies = [
 
 [[package]]
 name = "ic-representation-independent-hash"
-version = "3.0.3"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c80c46e399bcce51c531237e1111ced114dec295cff22b0996099a6168814b03"
 dependencies = [
  "leb128",
  "sha2",
@@ -2640,7 +2636,7 @@ checksum = "a2e7706e55836e8104c98149ec0796d20d5213fef972ac01b544657d410f1883"
 dependencies = [
  "candid",
  "hex",
- "ic-certification 3.1.0",
+ "ic-certification",
  "leb128",
  "serde",
  "serde_bytes",
@@ -3928,7 +3924,7 @@ dependencies = [
  "candid",
  "flate2",
  "hex",
- "ic-certification 3.1.0",
+ "ic-certification",
  "ic-management-canister-types",
  "ic-transport-types",
  "reqwest",
@@ -4651,7 +4647,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5939,7 +5935,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

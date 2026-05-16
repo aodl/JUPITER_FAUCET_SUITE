@@ -10,8 +10,8 @@ crate-type = ["cdylib", "rlib"]
 candid = { workspace = true }
 ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
-ic-asset-certification = { path = "../third_party/response-verification/ic-asset-certification" }
-ic-http-certification = { path = "../third_party/response-verification/ic-http-certification" }
+ic-asset-certification = "3.2.0"
+ic-http-certification = "3.2.0"
 include_dir = { version = "0.7", features = ["glob"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
