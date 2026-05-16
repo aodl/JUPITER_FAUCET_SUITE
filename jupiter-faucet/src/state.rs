@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct Config {
+pub(crate) struct Config {
     pub staking_account: Account,
     pub payout_subaccount: Option<[u8; 32]>,
     pub ledger_canister_id: Principal,
@@ -68,7 +68,7 @@ fn opt_u64_text(value: Option<u64>) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
-pub fn runtime_config_log_line(cfg: &Config) -> String {
+pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
         "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
         account_text(&cfg.staking_account),
@@ -89,7 +89,7 @@ pub fn runtime_config_log_line(cfg: &Config) -> String {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub enum TransferKind {
+pub(crate) enum TransferKind {
     Beneficiary,
     RawIcp,
     NeuronStake,
@@ -97,17 +97,17 @@ pub enum TransferKind {
 }
 
 impl TransferKind {
-    pub fn is_beneficiary_payout(&self) -> bool {
+    pub(crate) fn is_beneficiary_payout(&self) -> bool {
         matches!(self, Self::Beneficiary | Self::RawIcp | Self::NeuronStake)
     }
 
-    pub fn requires_cmc_notify(&self) -> bool {
+    pub(crate) fn requires_cmc_notify(&self) -> bool {
         matches!(self, Self::Beneficiary | Self::RemainderToSelf)
     }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct PendingNotification {
+pub(crate) struct PendingNotification {
     pub kind: TransferKind,
     pub beneficiary: Principal,
     pub gross_share_e8s: u64,
@@ -123,20 +123,20 @@ pub struct PendingNotification {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub enum PendingTransferPhase {
+pub(crate) enum PendingTransferPhase {
     AwaitingTransfer,
     TransferAccepted,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct PendingTransfer {
+pub(crate) struct PendingTransfer {
     pub notification: PendingNotification,
     pub created_at_time_nanos: u64,
     pub phase: PendingTransferPhase,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SkipRange {
+pub(crate) struct SkipRange {
     pub start_tx_id: u64,
     pub end_tx_id: u64,
 }
@@ -219,7 +219,7 @@ pub enum ForcedRescueReason {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SkipRangeInsertError {
+pub(crate) enum SkipRangeInsertError {
     InvalidRange,
     DuplicateStart,
     OverlapsOrAbutsPredecessor,
@@ -227,7 +227,7 @@ pub enum SkipRangeInsertError {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub struct Summary {
+pub(crate) struct Summary {
     pub pot_start_e8s: u64,
     pub pot_remaining_e8s: u64,
     pub denom_staking_balance_e8s: u64,
@@ -246,7 +246,7 @@ pub struct Summary {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
-pub struct ActivePayoutJob {
+pub(crate) struct ActivePayoutJob {
     pub id: u64,
     pub fee_e8s: u64,
     pub pot_start_e8s: u64,
@@ -296,7 +296,7 @@ pub struct ActivePayoutJob {
 }
 
 impl ActivePayoutJob {
-    pub fn new(id: u64, fee_e8s: u64, pot_start_e8s: u64, denom_staking_balance_e8s: u64, created_at_time_nanos: u64) -> Self {
+    pub(crate) fn new(id: u64, fee_e8s: u64, pot_start_e8s: u64, denom_staking_balance_e8s: u64, created_at_time_nanos: u64) -> Self {
         Self {
             id,
             fee_e8s,
@@ -334,7 +334,7 @@ impl ActivePayoutJob {
         }
     }
 
-    pub fn configure_round_accounting(
+    pub(crate) fn configure_round_accounting(
         &mut self,
         round_start_time_nanos: Option<u64>,
         round_start_staking_balance_e8s: Option<u64>,
@@ -355,7 +355,7 @@ impl ActivePayoutJob {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct State {
+pub(crate) struct State {
     pub config: Config,
     pub last_summary: Option<Summary>,
     pub last_successful_transfer_ts: Option<u64>,
@@ -385,7 +385,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(config: Config, now_secs: u64) -> Self {
+    pub(crate) fn new(config: Config, now_secs: u64) -> Self {
         let blackhole_armed_since_ts = config.blackhole_armed.unwrap_or(false).then_some(now_secs);
         Self {
             config,
@@ -414,7 +414,7 @@ impl State {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub enum VersionedStableState {
+pub(crate) enum VersionedStableState {
     Uninitialized,
     V1(State),
 }
@@ -485,7 +485,7 @@ fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, M
 // irrelevant under the current faucet attribution policy. Rescue upgrades conservatively
 // clear the cache before the faucet resumes, and any future maintenance that bypasses that
 // default must still clear the cache whenever commitment-validity rules change.
-pub fn list_skip_ranges() -> Vec<SkipRange> {
+pub(crate) fn list_skip_ranges() -> Vec<SkipRange> {
     with_skip_range_map(|map| {
         map.iter()
             .map(|(start, end)| SkipRange {
@@ -523,7 +523,7 @@ pub(crate) fn validate_skip_range_insertion(existing: &[SkipRange], range: &Skip
     Ok(())
 }
 
-pub fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertError> {
+pub(crate) fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertError> {
     // This durable cache assumes the commitment-validity rules are unchanged since the
     // range was learned. Rescue upgrades clear the whole cache before resuming, and any
     // future maintenance path that changes commitment-validity rules must do the same
@@ -537,7 +537,7 @@ pub fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertError> {
 }
 
 #[cfg(test)]
-pub fn latch_forced_rescue_reason(reason: ForcedRescueReason) {
+pub(crate) fn latch_forced_rescue_reason(reason: ForcedRescueReason) {
     with_state_mut(|st| {
         if st.forced_rescue_reason.is_none() {
             st.forced_rescue_reason = Some(reason);
@@ -545,13 +545,13 @@ pub fn latch_forced_rescue_reason(reason: ForcedRescueReason) {
     });
 }
 
-pub fn latch_skip_range_invariant_fault() {
+pub(crate) fn latch_skip_range_invariant_fault() {
     with_state_mut(|st| {
         st.skip_range_invariant_fault = Some(true);
     });
 }
 
-pub fn clear_skip_ranges() {
+pub(crate) fn clear_skip_ranges() {
     with_skip_range_map(|map| {
         let keys: Vec<_> = map.iter().map(|(start, _)| start).collect();
         for key in keys {
@@ -560,28 +560,28 @@ pub fn clear_skip_ranges() {
     });
 }
 
-pub fn init_stable_storage() {
+pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
-pub fn restore_state_from_stable() -> Option<State> {
+pub(crate) fn restore_state_from_stable() -> Option<State> {
     with_stable_cell(|cell| match cell.get().clone() {
         VersionedStableState::Uninitialized => None,
         VersionedStableState::V1(st) => Some(st),
     })
 }
 
-pub fn set_state(st: State) {
+pub(crate) fn set_state(st: State) {
     persist_snapshot(&st);
     clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
-pub fn get_state() -> State {
+pub(crate) fn get_state() -> State {
     STATE.with(|s| s.borrow().clone()).expect("state not initialized")
 }
 
-pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
+pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
@@ -597,7 +597,7 @@ fn clear_persistence_dirty() {
     PERSISTENCE_DIRTY.with(|dirty| dirty.set(false));
 }
 
-pub fn persist_dirty_state() {
+pub(crate) fn persist_dirty_state() {
     let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
     if !dirty {
         return;
@@ -612,7 +612,7 @@ pub fn persist_dirty_state() {
 /// Do not hold this guard across an `await` point. While it is live, mutations are
 /// only marked dirty and are not durably flushed until the batch ends or an
 /// explicit `persist_dirty_state()` call occurs.
-pub struct PersistenceBatch {
+pub(crate) struct PersistenceBatch {
     active: bool,
 }
 
@@ -635,12 +635,12 @@ impl Drop for PersistenceBatch {
 }
 
 #[must_use]
-pub fn begin_persistence_batch() -> PersistenceBatch {
+pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch { active: true }
 }
 
-pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|s| {
         let mut borrow = s.borrow_mut();
         let st = borrow.as_mut().expect("state not initialized");

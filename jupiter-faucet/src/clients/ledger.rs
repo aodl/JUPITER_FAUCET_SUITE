@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
-pub use jupiter_ic_clients::ledger::IcrcLedgerCanister;
+pub(crate) use jupiter_ic_clients::ledger::IcrcLedgerCanister;
 
 use crate::clients::{ClientError, LedgerClient};
 

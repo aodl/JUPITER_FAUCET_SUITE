@@ -1,4 +1,4 @@
-pub fn init_stable_storage() {
+pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
@@ -72,7 +72,7 @@ fn restore_state_current(root: StableRootState) -> State {
     st
 }
 
-pub fn restore_state_from_stable() -> Option<State> {
+pub(crate) fn restore_state_from_stable() -> Option<State> {
     let snapshot = with_root_stable_cell(|cell| cell.get().clone());
     match snapshot {
         VersionedStableState::Uninitialized => None,

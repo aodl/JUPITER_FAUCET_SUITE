@@ -1,6 +1,6 @@
 use candid::Principal;
 
-pub const INVALID_MEMO_PLACEHOLDER: &str = "invalid declared memo";
+pub(crate) const INVALID_MEMO_PLACEHOLDER: &str = "invalid declared memo";
 #[cfg(test)]
 const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 use std::collections::BTreeSet;
@@ -9,14 +9,14 @@ use crate::clients::index::{IndexOperation, IndexTransactionWithId};
 use crate::state::{CanisterMeta, CanisterSource, CommitmentSample, CyclesProbeResult, CyclesSample, CyclesSampleSource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IndexedCommitmentTarget {
+pub(crate) enum IndexedCommitmentTarget {
     CyclesTopUp { canister_id: Principal },
     RawIcp { canister_id: Principal, memo_text: String },
     NeuronStake { neuron_id: u64, memo_text: Option<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexedCommitment {
+pub(crate) struct IndexedCommitment {
     pub tx_id: u64,
     pub target: IndexedCommitmentTarget,
     pub amount_e8s: u64,
@@ -25,7 +25,7 @@ pub struct IndexedCommitment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexedInvalidCommitment {
+pub(crate) struct IndexedInvalidCommitment {
     pub tx_id: u64,
     pub amount_e8s: u64,
     pub timestamp_nanos: Option<u64>,
@@ -33,7 +33,7 @@ pub struct IndexedInvalidCommitment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IndexedCommitmentEntry {
+pub(crate) enum IndexedCommitmentEntry {
     Valid(IndexedCommitment),
     Invalid(IndexedInvalidCommitment),
 }
@@ -45,7 +45,7 @@ fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
     jupiter_memo_policy::parse_target_canister_principal_from_memo(bytes)
 }
 
-pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
+pub(crate) fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
     match &tx.transaction.operation {
         IndexOperation::Transfer { to, amount, .. } if to == staking_account_id => {
             let memo = tx
@@ -61,7 +61,7 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id:
     }
 }
 
-pub fn indexed_commitment_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedCommitmentEntry> {
+pub(crate) fn indexed_commitment_from_tx(tx: &IndexTransactionWithId, staking_account_id: &str, min_tx_e8s: u64) -> Option<IndexedCommitmentEntry> {
     let (tx_id, memo_opt, amount_e8s, timestamp_nanos) = memo_bytes_from_index_tx(tx, staking_account_id)?;
     let memo = memo_opt?;
     let target = match jupiter_memo_policy::parse_memo_directive(&memo) {
@@ -96,13 +96,13 @@ pub fn indexed_commitment_from_tx(tx: &IndexTransactionWithId, staking_account_i
     }
 }
 
-pub fn merge_sources(existing: Option<&BTreeSet<CanisterSource>>, add: CanisterSource) -> BTreeSet<CanisterSource> {
+pub(crate) fn merge_sources(existing: Option<&BTreeSet<CanisterSource>>, add: CanisterSource) -> BTreeSet<CanisterSource> {
     let mut out = existing.cloned().unwrap_or_default();
     out.insert(add);
     out
 }
 
-pub fn push_commitment(history: &mut Vec<CommitmentSample>, sample: CommitmentSample, max_entries: u32) -> bool {
+pub(crate) fn push_commitment(history: &mut Vec<CommitmentSample>, sample: CommitmentSample, max_entries: u32) -> bool {
     if history.iter().any(|existing| existing.tx_id == sample.tx_id) {
         return false;
     }
@@ -111,7 +111,7 @@ pub fn push_commitment(history: &mut Vec<CommitmentSample>, sample: CommitmentSa
     true
 }
 
-pub fn push_cycles_sample(history: &mut Vec<CyclesSample>, sample: CyclesSample, max_entries: u32) -> bool {
+pub(crate) fn push_cycles_sample(history: &mut Vec<CyclesSample>, sample: CyclesSample, max_entries: u32) -> bool {
     if history.last().map(|existing| existing.timestamp_nanos == sample.timestamp_nanos).unwrap_or(false) {
         return false;
     }
@@ -132,23 +132,23 @@ fn prune_vec<T>(history: &mut Vec<T>, max_entries: u32) {
     }
 }
 
-pub fn apply_cycles_probe_result(meta: &mut CanisterMeta, timestamp_nanos: u64, result: CyclesProbeResult) {
+pub(crate) fn apply_cycles_probe_result(meta: &mut CanisterMeta, timestamp_nanos: u64, result: CyclesProbeResult) {
     meta.last_cycles_probe_ts = Some(timestamp_nanos / 1_000_000_000);
     meta.last_cycles_probe_result = Some(result);
 }
 
-pub fn apply_commitment_seen(meta: &mut CanisterMeta, timestamp_nanos: Option<u64>, now_secs: u64) {
+pub(crate) fn apply_commitment_seen(meta: &mut CanisterMeta, timestamp_nanos: Option<u64>, now_secs: u64) {
     if meta.first_seen_ts.is_none() {
         meta.first_seen_ts = Some(timestamp_nanos.map(|ts| ts / 1_000_000_000).unwrap_or(now_secs));
     }
     meta.last_commitment_ts = Some(timestamp_nanos.map(|ts| ts / 1_000_000_000).unwrap_or(now_secs));
 }
 
-pub fn should_skip_blackhole_for_sources(sources: &BTreeSet<CanisterSource>) -> bool {
+pub(crate) fn should_skip_blackhole_for_sources(sources: &BTreeSet<CanisterSource>) -> bool {
     sources.contains(&CanisterSource::SnsDiscovery)
 }
 
-pub fn make_cycles_sample(timestamp_nanos: u64, cycles: u128, source: CyclesSampleSource) -> CyclesSample {
+pub(crate) fn make_cycles_sample(timestamp_nanos: u64, cycles: u128, source: CyclesSampleSource) -> CyclesSample {
     CyclesSample { timestamp_nanos, cycles, source }
 }
 

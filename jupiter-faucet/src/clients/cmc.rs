@@ -52,12 +52,12 @@ fn classify_notify_top_up_result(result: NotifyTopUpResult) -> Result<(), Client
     }
 }
 
-pub struct CyclesMintingCanister {
+pub(crate) struct CyclesMintingCanister {
     cmc_id: Principal,
 }
 
 impl CyclesMintingCanister {
-    pub fn new(cmc_id: Principal) -> Self {
+    pub(crate) fn new(cmc_id: Principal) -> Self {
         Self { cmc_id }
     }
 }

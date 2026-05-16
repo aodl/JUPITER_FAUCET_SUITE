@@ -8,12 +8,12 @@ use jupiter_nns_types::{
 
 use crate::clients::{ClientError, GovernanceClient};
 
-pub struct NnsGovernanceCanister {
+pub(crate) struct NnsGovernanceCanister {
     canister_id: Principal,
 }
 
 impl NnsGovernanceCanister {
-    pub fn new(canister_id: Principal) -> Self {
+    pub(crate) fn new(canister_id: Principal) -> Self {
         Self { canister_id }
     }
 }

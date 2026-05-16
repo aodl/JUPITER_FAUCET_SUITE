@@ -4,43 +4,43 @@ use serde::Deserialize;
 
 use crate::clients::{ClientError, ExchangeRateClient, IcpXdrRate};
 
-pub const XRC_CANISTER_ID: &str = "uf6dk-hyaaa-aaaaq-qaaaq-cai";
+pub(crate) const XRC_CANISTER_ID: &str = "uf6dk-hyaaa-aaaaq-qaaaq-cai";
 const XRC_CALL_CYCLES: u128 = 1_000_000_000;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum AssetClass {
+pub(crate) enum AssetClass {
     Cryptocurrency,
     FiatCurrency,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct Asset {
+pub(crate) struct Asset {
     pub symbol: String,
     #[serde(rename = "class")]
     pub class_: AssetClass,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct GetExchangeRateRequest {
+pub(crate) struct GetExchangeRateRequest {
     pub base_asset: Asset,
     pub quote_asset: Asset,
     pub timestamp: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ExchangeRateMetadata {
+pub(crate) struct ExchangeRateMetadata {
     pub decimals: u32,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ExchangeRate {
+pub(crate) struct ExchangeRate {
     pub rate: u64,
     pub metadata: ExchangeRateMetadata,
     pub timestamp: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum ExchangeRateError {
+pub(crate) enum ExchangeRateError {
     AnonymousPrincipalNotAllowed,
     CryptoBaseAssetNotFound,
     CryptoQuoteAssetNotFound,
@@ -61,28 +61,28 @@ pub enum ExchangeRateError {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub enum GetExchangeRateResult {
+pub(crate) enum GetExchangeRateResult {
     Ok(ExchangeRate),
     Err(ExchangeRateError),
 }
 
-pub struct XrcCanister {
+pub(crate) struct XrcCanister {
     canister_id: Principal,
 }
 
 impl XrcCanister {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_canister_id(mainnet_xrc_canister_id())
     }
 
-    pub fn with_canister_id(canister_id: Principal) -> Self { Self { canister_id } }
+    pub(crate) fn with_canister_id(canister_id: Principal) -> Self { Self { canister_id } }
 }
 
 impl Default for XrcCanister {
     fn default() -> Self { Self::new() }
 }
 
-pub fn mainnet_xrc_canister_id() -> Principal {
+pub(crate) fn mainnet_xrc_canister_id() -> Principal {
     Principal::from_text(XRC_CANISTER_ID).expect("invalid hardcoded XRC principal")
 }
 

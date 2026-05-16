@@ -1,19 +1,19 @@
 use icrc_ledger_types::icrc1::account::Account;
 
-pub const SECS_PER_DAY: u64 = 86_400;
-pub const SECS_PER_YEAR: u64 = 365 * SECS_PER_DAY;
-pub const MAX_AGE_FOR_BONUS_SECS: u64 = 4 * SECS_PER_YEAR;
+const SECS_PER_DAY: u64 = 86_400;
+const SECS_PER_YEAR: u64 = 365 * SECS_PER_DAY;
+const MAX_AGE_FOR_BONUS_SECS: u64 = 4 * SECS_PER_YEAR;
 
-pub const BONUS_RECIPIENT_1_PCT: u64 = 95;
+const BONUS_RECIPIENT_1_PCT: u64 = 95;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GrossSplit {
+pub(crate) struct GrossSplit {
     pub base_e8s: u64,
     pub bonus_recipient_1_e8s: u64,
     pub bonus_recipient_2_e8s: u64,
 }
 
-pub fn age_multiplier_fraction(age_seconds: u64) -> (u128, u128) {
+fn age_multiplier_fraction(age_seconds: u64) -> (u128, u128) {
     // m = 1 + 0.25 * min(age,4y)/4y = 1 + min(age,4y) / 16y
     let den: u128 = (16 * SECS_PER_YEAR) as u128;
     let bonus_secs: u128 = age_seconds.min(MAX_AGE_FOR_BONUS_SECS) as u128;
@@ -21,7 +21,7 @@ pub fn age_multiplier_fraction(age_seconds: u64) -> (u128, u128) {
     (num, den)
 }
 
-pub fn compute_gross_split(total_e8s: u64, age_seconds: u64) -> GrossSplit {
+pub(crate) fn compute_gross_split(total_e8s: u64, age_seconds: u64) -> GrossSplit {
     if total_e8s == 0 {
         return GrossSplit {
             base_e8s: 0,
@@ -47,7 +47,7 @@ pub fn compute_gross_split(total_e8s: u64, age_seconds: u64) -> GrossSplit {
 }
 
 /// Memo layout (16 bytes): payout_id (8) + transfer_index (8)
-pub fn build_memo(payout_id: u64, transfer_index: u64) -> [u8; 16] {
+fn build_memo(payout_id: u64, transfer_index: u64) -> [u8; 16] {
     let mut memo = [0u8; 16];
     memo[0..8].copy_from_slice(&payout_id.to_be_bytes());
     memo[8..16].copy_from_slice(&transfer_index.to_be_bytes());
@@ -55,7 +55,7 @@ pub fn build_memo(payout_id: u64, transfer_index: u64) -> [u8; 16] {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Planned {
+pub(crate) struct Planned {
     pub to: Account,
     pub gross_share_e8s: u64,
     pub amount_e8s: u64, // gross - fee
@@ -68,7 +68,7 @@ pub struct Planned {
 /// - for each destination:
 ///   if gross_share > fee => plan net transfer = gross_share - fee
 ///   else skip and leave it in staging
-pub fn plan_payout_transfers(
+pub(crate) fn plan_payout_transfers(
     payout_id: u64,
     created_at_base_nanos: u64,
     staging_balance_e8s: u64,

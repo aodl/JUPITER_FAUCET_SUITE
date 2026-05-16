@@ -1,9 +1,9 @@
 use candid::Principal;
 
-pub const SECS_PER_DAY: u64 = 86_400;
-pub const HEALTHY_WINDOW_SECS: u64 = 7 * SECS_PER_DAY;
-pub const BROKEN_WINDOW_SECS: u64 = 14 * SECS_PER_DAY;
-pub const BOOTSTRAP_RESCUE_WINDOW_SECS: u64 = 14 * SECS_PER_DAY;
+const SECS_PER_DAY: u64 = 86_400;
+const HEALTHY_WINDOW_SECS: u64 = 7 * SECS_PER_DAY;
+const BROKEN_WINDOW_SECS: u64 = 14 * SECS_PER_DAY;
+const BOOTSTRAP_RESCUE_WINDOW_SECS: u64 = 14 * SECS_PER_DAY;
 
 /// Returns the controller set implied by elapsed time since the last successful transfer.
 ///
@@ -11,7 +11,7 @@ pub const BOOTSTRAP_RESCUE_WINDOW_SECS: u64 = 14 * SECS_PER_DAY;
 /// - Some([blackhole, self]) if healthy (<= 7 days)
 /// - Some([blackhole, rescue, self]) if broken (> 14 days)
 /// - None if in the middle window (7d, 14d], not armed, or the blackhole controller is not configured
-pub fn desired_controllers(
+pub(crate) fn desired_controllers(
     now_secs: u64,
     last_successful_transfer_ts: Option<u64>,
     self_id: Principal,
@@ -31,7 +31,7 @@ pub fn desired_controllers(
     }
 }
 
-pub fn bootstrap_rescue_due(
+pub(crate) fn bootstrap_rescue_due(
     now_secs: u64,
     blackhole_armed_since_ts: Option<u64>,
     last_successful_transfer_ts: Option<u64>,

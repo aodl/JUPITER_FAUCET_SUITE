@@ -1,5 +1,5 @@
-pub mod governance;
-pub mod ledger;
+pub(crate) mod governance;
+pub(crate) mod ledger;
 
 use async_trait::async_trait;
 use candid::Principal;
@@ -8,7 +8,7 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError}
 use jupiter_nns_types::{GovernanceError, Neuron};
 
 #[derive(thiserror::Error, Debug)]
-pub enum ClientError {
+pub(crate) enum ClientError {
     #[error("inter-canister call failed: {0}")]
     Call(String),
     #[error("conversion error: {0}")]
@@ -25,7 +25,7 @@ impl From<jupiter_ic_clients::ClientError> for ClientError {
 }
 
 #[async_trait]
-pub trait LedgerClient: Send + Sync {
+pub(crate) trait LedgerClient: Send + Sync {
     async fn fee_e8s(&self) -> Result<u64, ClientError>;
     async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError>;
     async fn transfer(
@@ -35,7 +35,7 @@ pub trait LedgerClient: Send + Sync {
 }
 
 #[async_trait]
-pub trait GovernanceClient: Send + Sync {
+pub(crate) trait GovernanceClient: Send + Sync {
     async fn get_full_neuron(&self, neuron_id: u64) -> Result<Neuron, GovernanceError>;
     async fn disburse_maturity_to_account(
         &self,

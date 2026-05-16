@@ -16,7 +16,7 @@ fn is_destination_invalid(rejected: &CallRejected) -> bool {
         .unwrap_or_else(|_| rejected.raw_reject_code() == RejectCode::DestinationInvalid as u32)
 }
 
-pub struct ManagementCanisterInfoClient;
+pub(crate) struct ManagementCanisterInfoClient;
 
 #[async_trait]
 impl CanisterStatusClient for ManagementCanisterInfoClient {
@@ -40,7 +40,7 @@ impl CanisterStatusClient for ManagementCanisterInfoClient {
 }
 
 #[cfg(test)]
-pub struct NoopCanisterStatusClient;
+pub(crate) struct NoopCanisterStatusClient;
 
 #[cfg(test)]
 #[async_trait]
@@ -80,4 +80,3 @@ mod tests {
         assert!(!is_destination_invalid(&rejected));
     }
 }
-

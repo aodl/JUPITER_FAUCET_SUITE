@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct Config {
+pub(crate) struct Config {
     pub staking_account: Account,
     pub output_source_account: Account,
     pub output_account: Account,
@@ -60,7 +60,7 @@ fn opt_principal_text(principal: Option<Principal>) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
-pub fn runtime_config_log_line(cfg: &Config) -> String {
+pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
         "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, blackhole_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}",
         account_text(&cfg.staking_account),
@@ -114,7 +114,7 @@ pub struct CommitmentSample {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct InvalidCommitment {
+pub(crate) struct InvalidCommitment {
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
@@ -122,7 +122,7 @@ pub struct InvalidCommitment {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct RecentCommitment {
+pub(crate) struct RecentCommitment {
     pub canister_id: Principal,
     #[serde(default)]
     pub raw_icp_memo_text: Option<String>,
@@ -133,7 +133,7 @@ pub struct RecentCommitment {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct RecentNeuronCommitment {
+pub(crate) struct RecentNeuronCommitment {
     pub neuron_id: u64,
     #[serde(default)]
     pub memo_text: Option<String>,
@@ -144,7 +144,7 @@ pub struct RecentNeuronCommitment {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct RecentBurn {
+pub(crate) struct RecentBurn {
     pub canister_id: Principal,
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
@@ -189,33 +189,33 @@ pub struct CanisterMeta {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct ActiveSnsDiscovery {
+pub(crate) struct ActiveSnsDiscovery {
     pub started_at_ts_nanos: u64,
     pub root_canister_ids: Vec<Principal>,
     pub next_index: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct ActiveCyclesSweep {
+pub(crate) struct ActiveCyclesSweep {
     pub started_at_ts_nanos: u64,
     pub canisters: Vec<Principal>,
     pub next_index: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub enum IndexedRouteKind {
+pub(crate) enum IndexedRouteKind {
     Output,
     Rewards,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct ActiveRouteSweep {
+pub(crate) struct ActiveRouteSweep {
     pub started_at_ts_nanos: u64,
     pub next_index: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct StableConfig {
+pub(crate) struct StableConfig {
     pub staking_account: Account,
     #[serde(default)]
     pub output_source_account: Option<Account>,
@@ -244,7 +244,7 @@ pub struct StableConfig {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub struct StableCanisterMeta {
+pub(crate) struct StableCanisterMeta {
     pub first_seen_ts: Option<u64>,
     pub last_commitment_ts: Option<u64>,
     pub last_cycles_probe_ts: Option<u64>,
@@ -258,7 +258,7 @@ pub struct StableCanisterMeta {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct StableRootState {
+pub(crate) struct StableRootState {
     pub config: StableConfig,
     pub last_indexed_staking_tx_id: Option<u64>,
     #[serde(default)]
@@ -557,7 +557,7 @@ impl Storable for StableCanisterMeta {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct State {
+pub(crate) struct State {
     pub config: Config,
     pub distinct_canisters: BTreeSet<Principal>,
     pub canister_sources: BTreeMap<Principal, BTreeSet<CanisterSource>>,
@@ -625,7 +625,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(config: Config, now_secs: u64) -> Self {
+    pub(crate) fn new(config: Config, now_secs: u64) -> Self {
         Self {
             config,
             distinct_canisters: BTreeSet::new(),
@@ -678,7 +678,7 @@ impl State {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub enum VersionedStableState {
+pub(crate) enum VersionedStableState {
     Uninitialized,
     Current(StableRootState),
 }

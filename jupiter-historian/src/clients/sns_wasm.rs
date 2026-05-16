@@ -6,23 +6,23 @@ use serde::Deserialize;
 use crate::clients::{ClientError, SnsWasmClient};
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-pub struct ListDeployedSnsesRequest {}
+pub(crate) struct ListDeployedSnsesRequest {}
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct DeployedSns {
+pub(crate) struct DeployedSns {
     pub root_canister_id: Option<Principal>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct ListDeployedSnsesResponse {
+pub(crate) struct ListDeployedSnsesResponse {
     pub instances: Vec<DeployedSns>,
 }
 
-pub struct SnsWasmCanister {
+pub(crate) struct SnsWasmCanister {
     canister_id: Principal,
 }
 impl SnsWasmCanister {
-    pub fn new(canister_id: Principal) -> Self { Self { canister_id } }
+    pub(crate) fn new(canister_id: Principal) -> Self { Self { canister_id } }
 }
 
 #[async_trait]

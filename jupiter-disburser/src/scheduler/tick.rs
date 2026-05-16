@@ -60,7 +60,7 @@ impl Drop for MainGuard {
 /// Install two independent interval timers:
 /// - main tick (daily by default)
 /// - rescue tick (daily by default)
-pub fn install_timers() {
+pub(crate) fn install_timers() {
     let (main_s, rescue_s) =
         state::with_state(|st| (st.config.main_interval_seconds, st.config.rescue_interval_seconds));
 
@@ -73,7 +73,7 @@ pub fn install_timers() {
     });
 }
 
-pub fn schedule_immediate_resume_if_needed() {
+pub(crate) fn schedule_immediate_resume_if_needed() {
     let has_payout_plan = state::with_state(|st| st.payout_plan.is_some());
     if !has_payout_plan {
         return;
@@ -83,7 +83,7 @@ pub fn schedule_immediate_resume_if_needed() {
     });
 }
 
-pub fn schedule_immediate_rescue_reconcile() {
+pub(crate) fn schedule_immediate_rescue_reconcile() {
     ic_cdk_timers::set_timer(Duration::from_secs(1), async {
         rescue_tick().await;
     });

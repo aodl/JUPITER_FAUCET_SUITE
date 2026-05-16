@@ -17,27 +17,27 @@ thread_local! {
 }
 
 #[cfg(feature = "debug_api")]
-pub fn debug_set_pause_after_planning(enabled: bool) {
+pub(crate) fn debug_set_pause_after_planning(enabled: bool) {
     DEBUG_PAUSE_AFTER_PLANNING.with(|v| *v.borrow_mut() = enabled);
 }
 
 #[cfg(feature = "debug_api")]
-pub fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
+pub(crate) fn debug_set_trap_after_successful_transfers(n: Option<u32>) {
     DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow_mut() = n);
 }
 
 #[cfg(feature = "debug_api")]
-pub fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
+pub(crate) fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
     DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow_mut() = n);
 }
 
 #[cfg(feature = "debug_api")]
-pub fn debug_set_simulate_low_cycles(enabled: bool) {
+pub(crate) fn debug_set_simulate_low_cycles(enabled: bool) {
     DEBUG_SIMULATE_LOW_CYCLES.with(|v| *v.borrow_mut() = enabled);
 }
 
 #[cfg(feature = "debug_api")]
-pub fn debug_set_skip_maturity_initiation(enabled: bool) {
+pub(crate) fn debug_set_skip_maturity_initiation(enabled: bool) {
     DEBUG_SKIP_MATURITY_INITIATION.with(|v| *v.borrow_mut() = enabled);
 }
 

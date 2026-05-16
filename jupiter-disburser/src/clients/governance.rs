@@ -9,12 +9,12 @@ use jupiter_nns_types::{
 
 use crate::clients::GovernanceClient;
 
-pub struct NnsGovernanceCanister {
+pub(crate) struct NnsGovernanceCanister {
     gov_id: Principal,
 }
 
 impl NnsGovernanceCanister {
-    pub fn new(gov_id: Principal) -> Self {
+    pub(crate) fn new(gov_id: Principal) -> Self {
         Self { gov_id }
     }
 }

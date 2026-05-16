@@ -6,34 +6,34 @@ use serde::Deserialize;
 use crate::clients::{BlackholeClient, ClientError};
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct BlackholeCanisterStatusArgs {
+pub(crate) struct BlackholeCanisterStatusArgs {
     pub canister_id: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct BlackholeSettings {
+pub(crate) struct BlackholeSettings {
     pub controllers: Vec<Principal>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct BlackholeMemoryMetrics {
+pub(crate) struct BlackholeMemoryMetrics {
     pub wasm_memory_size: Nat,
     pub stable_memory_size: Nat,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct BlackholeCanisterStatus {
+pub(crate) struct BlackholeCanisterStatus {
     pub cycles: Nat,
     pub settings: BlackholeSettings,
     pub memory_size: Option<Nat>,
     pub memory_metrics: Option<BlackholeMemoryMetrics>,
 }
 
-pub struct BlackholeCanister {
+pub(crate) struct BlackholeCanister {
     canister_id: Principal,
 }
 impl BlackholeCanister {
-    pub fn new(canister_id: Principal) -> Self { Self { canister_id } }
+    pub(crate) fn new(canister_id: Principal) -> Self { Self { canister_id } }
 }
 
 #[async_trait]

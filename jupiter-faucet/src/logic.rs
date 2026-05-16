@@ -5,18 +5,18 @@ use jupiter_memo_policy::MemoDirective;
 use crate::clients::index::{IndexOperation, IndexTimeStamp, IndexTransactionWithId};
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
 
-pub const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
+pub(crate) const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
 #[cfg(test)]
 const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 
 #[derive(Clone, Debug)]
-pub struct Commitment {
+pub(crate) struct Commitment {
     pub amount_e8s: u64,
     pub memo_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CommitmentValidity {
+pub(crate) enum CommitmentValidity {
     IgnoreUnderThreshold,
     IgnoreBadMemo,
     Valid { target: PayoutTarget },
@@ -24,7 +24,7 @@ pub enum CommitmentValidity {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CommitmentDecision {
+pub(crate) enum CommitmentDecision {
     IgnoreUnderThreshold,
     IgnoreBadMemo,
     NoTransfer,
@@ -32,7 +32,7 @@ pub enum CommitmentDecision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PayoutTarget {
+pub(crate) enum PayoutTarget {
     CyclesTopUp { canister_id: Principal },
     RawIcp { canister_id: Principal, memo: Vec<u8> },
     NeuronStake { neuron_id: u64, memo: Option<Vec<u8>> },
@@ -40,7 +40,7 @@ pub enum PayoutTarget {
 
 impl PayoutTarget {
     #[allow(dead_code)]
-    pub fn canister_id(&self) -> Option<Principal> {
+    fn canister_id(&self) -> Option<Principal> {
         match self {
             Self::CyclesTopUp { canister_id } | Self::RawIcp { canister_id, .. } => Some(*canister_id),
             Self::NeuronStake { .. } => None,
@@ -49,11 +49,11 @@ impl PayoutTarget {
 }
 
 #[allow(dead_code)]
-pub fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
+fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
     jupiter_memo_policy::parse_target_canister_principal_from_memo(memo)
 }
 
-pub fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
+fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
     match jupiter_memo_policy::parse_memo_directive(memo)? {
         MemoDirective::TopUp { canister_id } => Some(PayoutTarget::CyclesTopUp { canister_id }),
         MemoDirective::RawIcp { canister_id, memo } => Some(PayoutTarget::RawIcp { canister_id, memo }),
@@ -61,7 +61,7 @@ pub fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
     }
 }
 
-pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_identifier: &str) -> Option<Commitment> {
+pub(crate) fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_identifier: &str) -> Option<Commitment> {
     match &tx.transaction.operation {
         IndexOperation::Transfer { to, amount, .. } if to == staking_account_identifier => {
             let memo_bytes = tx
@@ -75,7 +75,7 @@ pub fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_ide
     }
 }
 
-pub fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
+fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     let bytes = principal.as_slice();
     let mut out = [0u8; 32];
     out[0] = bytes.len() as u8;
@@ -84,24 +84,24 @@ pub fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     out
 }
 
-pub fn cmc_deposit_account(cmc_id: Principal, canister_id: Principal) -> Account {
+pub(crate) fn cmc_deposit_account(cmc_id: Principal, canister_id: Principal) -> Account {
     Account { owner: cmc_id, subaccount: Some(principal_to_subaccount(canister_id)) }
 }
 
-pub fn compute_raw_share_e8s(amount_e8s: u64, pot_start_e8s: u64, denom_e8s: u64) -> u64 {
+pub(crate) fn compute_raw_share_e8s(amount_e8s: u64, pot_start_e8s: u64, denom_e8s: u64) -> u64 {
     if pot_start_e8s == 0 || denom_e8s == 0 { return 0; }
     let raw = (amount_e8s as u128).saturating_mul(pot_start_e8s as u128).checked_div(denom_e8s as u128).unwrap_or(0);
     raw.min(u64::MAX as u128) as u64
 }
 
-pub fn classify_commitment(min_tx_e8s: u64, commitment: &Commitment) -> CommitmentValidity {
+pub(crate) fn classify_commitment(min_tx_e8s: u64, commitment: &Commitment) -> CommitmentValidity {
     if commitment.amount_e8s < min_tx_e8s { return CommitmentValidity::IgnoreUnderThreshold; }
     let memo = match commitment.memo_bytes.as_deref() { Some(m) if !m.is_empty() => m, _ => return CommitmentValidity::IgnoreBadMemo };
     let target = match parse_payout_target_from_memo(memo) { Some(p) => p, None => return CommitmentValidity::IgnoreBadMemo };
     CommitmentValidity::Valid { target }
 }
 
-pub fn index_tx_timestamp_nanos(tx: &IndexTransactionWithId) -> Option<u64> {
+pub(crate) fn index_tx_timestamp_nanos(tx: &IndexTransactionWithId) -> Option<u64> {
     tx.transaction
         .timestamp
         .as_ref()
@@ -109,11 +109,11 @@ pub fn index_tx_timestamp_nanos(tx: &IndexTransactionWithId) -> Option<u64> {
         .map(|ts: &IndexTimeStamp| ts.timestamp_nanos)
 }
 
-pub fn conservative_effective_timestamp_nanos(tx_timestamp_nanos: u64, recognition_delay_seconds: u64) -> u64 {
+pub(crate) fn conservative_effective_timestamp_nanos(tx_timestamp_nanos: u64, recognition_delay_seconds: u64) -> u64 {
     tx_timestamp_nanos.saturating_add(recognition_delay_seconds.saturating_mul(1_000_000_000))
 }
 
-pub fn compute_weighted_amount_e8s(
+pub(crate) fn compute_weighted_amount_e8s(
     raw_amount_e8s: u64,
     round_start_time_nanos: u64,
     round_end_time_nanos: u64,
@@ -134,7 +134,7 @@ pub fn compute_weighted_amount_e8s(
     weighted.min(u64::MAX as u128) as u64
 }
 
-pub fn commitment_amount_for_round_e8s(
+pub(crate) fn commitment_amount_for_round_e8s(
     commitment: &Commitment,
     tx_id: u64,
     tx_timestamp_nanos: Option<u64>,
@@ -170,7 +170,7 @@ pub fn commitment_amount_for_round_e8s(
 }
 
 #[allow(dead_code)]
-pub fn evaluate_commitment(pot_start_e8s: u64, denom_e8s: u64, fee_e8s: u64, min_tx_e8s: u64, commitment: &Commitment) -> CommitmentDecision {
+pub(crate) fn evaluate_commitment(pot_start_e8s: u64, denom_e8s: u64, fee_e8s: u64, min_tx_e8s: u64, commitment: &Commitment) -> CommitmentDecision {
     let target = match classify_commitment(min_tx_e8s, commitment) {
         CommitmentValidity::IgnoreUnderThreshold => return CommitmentDecision::IgnoreUnderThreshold,
         CommitmentValidity::IgnoreBadMemo => return CommitmentDecision::IgnoreBadMemo,
@@ -181,11 +181,11 @@ pub fn evaluate_commitment(pot_start_e8s: u64, denom_e8s: u64, fee_e8s: u64, min
     CommitmentDecision::Eligible { target, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(fee_e8s) }
 }
 
-pub fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
+pub(crate) fn record_ledger_accepted_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
     job.gross_outflow_e8s = job.gross_outflow_e8s.saturating_add(pending.gross_share_e8s);
 }
 
-pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
+pub(crate) fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
     match pending.kind {
         TransferKind::Beneficiary | TransferKind::RawIcp | TransferKind::NeuronStake => {
             job.topped_up_count = job.topped_up_count.saturating_add(1);
@@ -197,7 +197,7 @@ pub fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotif
     }
 }
 
-pub fn summary_from_job(job: &ActivePayoutJob) -> Summary {
+pub(crate) fn summary_from_job(job: &ActivePayoutJob) -> Summary {
     Summary {
         pot_start_e8s: job.pot_start_e8s,
         pot_remaining_e8s: job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s),

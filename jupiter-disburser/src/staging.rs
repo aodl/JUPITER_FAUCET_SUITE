@@ -6,7 +6,7 @@ use icrc_ledger_types::icrc1::account::Subaccount;
 /// - bytes[0..8]  = b"MATSPLT\0"
 /// - bytes[8..24] = 0
 /// - bytes[24..32]= pending_id (big-endian)
-pub fn staging_subaccount(pending_id: u64) -> Subaccount {
+fn staging_subaccount(pending_id: u64) -> Subaccount {
     let mut s = [0u8; 32];
     s[0..8].copy_from_slice(b"MATSPLT\0");
     s[24..32].copy_from_slice(&pending_id.to_be_bytes());

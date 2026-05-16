@@ -48,7 +48,7 @@ impl Drop for MainGuard {
     fn drop(&mut self) { self.release(); }
 }
 
-pub fn install_timers() {
+pub(crate) fn install_timers() {
     let interval_s = state::with_state(|st| st.config.scan_interval_seconds);
     ic_cdk_timers::set_timer(Duration::from_secs(1), async { main_tick(true).await; });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(interval_s.max(60)), || async { main_tick(false).await; });
@@ -231,4 +231,3 @@ async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWa
 
     Ok(())
 }
-

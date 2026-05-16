@@ -1,20 +1,20 @@
-pub fn set_state(st: State) {
+pub(crate) fn set_state(st: State) {
     persist_snapshot(&st);
     clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
-pub fn set_state_root_only(st: State) {
+pub(crate) fn set_state_root_only(st: State) {
     persist_snapshot_sections(&st, DIRTY_ROOT);
     clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
-pub fn get_state() -> State {
+pub(crate) fn get_state() -> State {
     STATE.with(|s| s.borrow().clone()).expect("state not initialized")
 }
 
-pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
+pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
@@ -35,7 +35,7 @@ fn clear_persistence_dirty() {
     DIRTY_NEURON_COMMITMENT_IDS.with(|dirty| dirty.borrow_mut().clear());
 }
 
-pub fn persist_dirty_state() {
+pub(crate) fn persist_dirty_state() {
     let dirty_sections = PERSISTENCE_DIRTY_SECTIONS.with(|flag| flag.get());
     if dirty_sections == 0 {
         return;
@@ -63,7 +63,7 @@ pub fn persist_dirty_state() {
 /// Do not hold this guard across an `await` point. While it is live, mutations are
 /// only marked dirty and are not durably flushed until the batch ends or an
 /// explicit `persist_dirty_state()` call occurs.
-pub struct PersistenceBatch {
+pub(crate) struct PersistenceBatch {
     active: bool,
 }
 
@@ -87,7 +87,7 @@ impl Drop for PersistenceBatch {
 }
 
 #[must_use]
-pub fn begin_persistence_batch() -> PersistenceBatch {
+pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch { active: true }
 }
@@ -146,20 +146,20 @@ fn with_state_mut_sections_scoped<R>(
     })
 }
 
-pub fn with_state_mut_sections<R>(dirty_sections: u8, f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with_state_mut_sections<R>(dirty_sections: u8, f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections_scoped(dirty_sections, None, None, None, None, None, f)
 }
 
 #[cfg(any(test, feature = "debug_api"))]
-pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections(DIRTY_ALL, f)
 }
 
-pub fn with_root_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with_root_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections(DIRTY_ROOT, f)
 }
 
-pub fn clear_loaded_history_caches_after_flush() {
+pub(crate) fn clear_loaded_history_caches_after_flush() {
     let batch_depth = PERSISTENCE_BATCH_DEPTH.with(|depth| depth.get());
     assert_eq!(
         batch_depth, 0,
@@ -179,39 +179,39 @@ pub fn clear_loaded_history_caches_after_flush() {
     });
 }
 
-pub fn stable_commitment_history_keys() -> BTreeSet<Principal> {
+pub(crate) fn stable_commitment_history_keys() -> BTreeSet<Principal> {
     stable_commitment_history_keys_internal()
 }
 
-pub fn stable_cycles_history_keys() -> BTreeSet<Principal> {
+pub(crate) fn stable_cycles_history_keys() -> BTreeSet<Principal> {
     stable_cycles_history_keys_internal()
 }
 
-pub fn stable_raw_icp_commitment_history_keys() -> BTreeSet<Principal> {
+pub(crate) fn stable_raw_icp_commitment_history_keys() -> BTreeSet<Principal> {
     stable_raw_icp_commitment_history_keys_internal()
 }
 
-pub fn stable_neuron_commitment_history_keys() -> BTreeSet<u64> {
+pub(crate) fn stable_neuron_commitment_history_keys() -> BTreeSet<u64> {
     stable_neuron_commitment_history_keys_internal()
 }
 
-pub fn stable_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
+pub(crate) fn stable_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
     load_stable_commitment_history_internal(canister_id)
 }
 
-pub fn stable_cycles_history_for(canister_id: Principal) -> Vec<CyclesSample> {
+pub(crate) fn stable_cycles_history_for(canister_id: Principal) -> Vec<CyclesSample> {
     load_stable_cycles_history_internal(canister_id)
 }
 
-pub fn stable_raw_icp_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
+pub(crate) fn stable_raw_icp_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
     load_stable_raw_icp_commitment_history_internal(canister_id)
 }
 
-pub fn stable_neuron_commitment_history_for(neuron_id: u64) -> Vec<CommitmentSample> {
+pub(crate) fn stable_neuron_commitment_history_for(neuron_id: u64) -> Vec<CommitmentSample> {
     load_stable_neuron_commitment_history_internal(neuron_id)
 }
 
-pub fn ensure_commitment_history_loaded(st: &mut State, canister_id: Principal) {
+pub(crate) fn ensure_commitment_history_loaded(st: &mut State, canister_id: Principal) {
     if st.commitment_history.contains_key(&canister_id) {
         return;
     }
@@ -221,7 +221,7 @@ pub fn ensure_commitment_history_loaded(st: &mut State, canister_id: Principal) 
     }
 }
 
-pub fn ensure_raw_icp_commitment_history_loaded(st: &mut State, canister_id: Principal) {
+pub(crate) fn ensure_raw_icp_commitment_history_loaded(st: &mut State, canister_id: Principal) {
     if st.raw_icp_commitment_history.contains_key(&canister_id) {
         return;
     }
@@ -231,7 +231,7 @@ pub fn ensure_raw_icp_commitment_history_loaded(st: &mut State, canister_id: Pri
     }
 }
 
-pub fn ensure_neuron_commitment_history_loaded(st: &mut State, neuron_id: u64) {
+pub(crate) fn ensure_neuron_commitment_history_loaded(st: &mut State, neuron_id: u64) {
     if st.neuron_commitment_history.contains_key(&neuron_id) {
         return;
     }
@@ -241,7 +241,7 @@ pub fn ensure_neuron_commitment_history_loaded(st: &mut State, neuron_id: u64) {
     }
 }
 
-pub fn ensure_cycles_history_loaded(st: &mut State, canister_id: Principal) {
+pub(crate) fn ensure_cycles_history_loaded(st: &mut State, canister_id: Principal) {
     if st.cycles_history.contains_key(&canister_id) {
         return;
     }
@@ -251,11 +251,11 @@ pub fn ensure_cycles_history_loaded(st: &mut State, canister_id: Principal) {
     }
 }
 
-pub fn with_root_and_registry_canister_state_mut<R>(canister_id: Principal, f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with_root_and_registry_canister_state_mut<R>(canister_id: Principal, f: impl FnOnce(&mut State) -> R) -> R {
     with_state_mut_sections_scoped(DIRTY_ROOT | DIRTY_REGISTRY, Some(canister_id), None, None, None, None, f)
 }
 
-pub fn with_root_and_raw_icp_commitments_state_mut<R>(
+pub(crate) fn with_root_and_raw_icp_commitments_state_mut<R>(
     canister_id: Principal,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
@@ -270,7 +270,7 @@ pub fn with_root_and_raw_icp_commitments_state_mut<R>(
     )
 }
 
-pub fn with_root_and_neuron_commitments_state_mut<R>(
+pub(crate) fn with_root_and_neuron_commitments_state_mut<R>(
     neuron_id: u64,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
@@ -285,7 +285,7 @@ pub fn with_root_and_neuron_commitments_state_mut<R>(
     )
 }
 
-pub fn with_root_registry_and_commitments_canister_state_mut<R>(
+pub(crate) fn with_root_registry_and_commitments_canister_state_mut<R>(
     canister_id: Principal,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
@@ -300,7 +300,7 @@ pub fn with_root_registry_and_commitments_canister_state_mut<R>(
     )
 }
 
-pub fn with_root_registry_and_cycles_canister_state_mut<R>(
+pub(crate) fn with_root_registry_and_cycles_canister_state_mut<R>(
     canister_id: Principal,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {

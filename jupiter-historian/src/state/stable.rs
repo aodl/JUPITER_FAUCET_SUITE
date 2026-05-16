@@ -47,13 +47,13 @@ thread_local! {
     static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = std::cell::RefCell::new(BTreeSet::new());
 }
 
-pub const DIRTY_ROOT: u8 = 1 << 0;
-pub const DIRTY_REGISTRY: u8 = 1 << 1;
-pub const DIRTY_COMMITMENTS: u8 = 1 << 2;
-pub const DIRTY_CYCLES: u8 = 1 << 3;
-pub const DIRTY_RAW_ICP_COMMITMENTS: u8 = 1 << 4;
-pub const DIRTY_NEURON_COMMITMENTS: u8 = 1 << 5;
-pub const DIRTY_ALL: u8 = DIRTY_ROOT
+pub(crate) const DIRTY_ROOT: u8 = 1 << 0;
+pub(crate) const DIRTY_REGISTRY: u8 = 1 << 1;
+pub(crate) const DIRTY_COMMITMENTS: u8 = 1 << 2;
+pub(crate) const DIRTY_CYCLES: u8 = 1 << 3;
+pub(crate) const DIRTY_RAW_ICP_COMMITMENTS: u8 = 1 << 4;
+pub(crate) const DIRTY_NEURON_COMMITMENTS: u8 = 1 << 5;
+pub(crate) const DIRTY_ALL: u8 = DIRTY_ROOT
     | DIRTY_REGISTRY
     | DIRTY_COMMITMENTS
     | DIRTY_CYCLES
@@ -240,4 +240,3 @@ fn with_neuron_commitment_entry_map<R>(
         f(borrow.as_mut().expect("historian neuron commitment entry map not initialized"))
     })
 }
-

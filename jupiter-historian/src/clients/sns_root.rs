@@ -6,23 +6,23 @@ use serde::Deserialize;
 use crate::clients::{ClientError, SnsRootClient};
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-pub struct GetSnsCanistersSummaryRequest {
+pub(crate) struct GetSnsCanistersSummaryRequest {
     pub update_canister_list: Option<bool>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct SnsCanisterStatus {
+pub(crate) struct SnsCanisterStatus {
     pub cycles: Option<Nat>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-pub struct SnsCanisterSummary {
+pub(crate) struct SnsCanisterSummary {
     pub canister_id: Option<Principal>,
     pub status: Option<SnsCanisterStatus>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-pub struct GetSnsCanistersSummaryResponse {
+pub(crate) struct GetSnsCanistersSummaryResponse {
     pub root: Option<SnsCanisterSummary>,
     pub governance: Option<SnsCanisterSummary>,
     pub ledger: Option<SnsCanisterSummary>,
@@ -32,7 +32,7 @@ pub struct GetSnsCanistersSummaryResponse {
     pub archives: Vec<SnsCanisterSummary>,
 }
 
-pub struct SnsRootCanister;
+pub(crate) struct SnsRootCanister;
 
 #[async_trait]
 impl SnsRootClient for SnsRootCanister {

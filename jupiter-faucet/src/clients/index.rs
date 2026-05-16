@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 #[allow(unused_imports)]
-pub use jupiter_ic_clients::account_identifier::{
+pub(crate) use jupiter_ic_clients::account_identifier::{
     account_identifier_text, account_identifier_text_for_account,
 };
 #[allow(unused_imports)]
-pub use jupiter_ic_clients::index::{
+pub(crate) use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsError,
     GetAccountIdentifierTransactionsResponse, GetAccountIdentifierTransactionsResult,
     IcpIndexCanister, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId,

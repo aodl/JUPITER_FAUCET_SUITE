@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct Config {
+pub(crate) struct Config {
     pub neuron_id: u64,
 
     pub normal_recipient: Account,
@@ -61,7 +61,7 @@ fn opt_bool_text(value: Option<bool>) -> &'static str {
     }
 }
 
-pub fn runtime_config_log_line(cfg: &Config) -> String {
+pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
         "CONFIG neuron_id={}, normal_recipient={}, age_bonus_recipient_1={}, age_bonus_recipient_2={}, ledger_canister_id={}, governance_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, main_interval_seconds={}, rescue_interval_seconds={}",
         cfg.neuron_id,
@@ -79,13 +79,13 @@ pub fn runtime_config_log_line(cfg: &Config) -> String {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub enum TransferStatus {
+pub(crate) enum TransferStatus {
     Pending,
     Sent { block_index: String },
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
-pub struct PlannedTransfer {
+pub(crate) struct PlannedTransfer {
     pub to: Account,
     pub gross_share_e8s: u64,
     pub amount_e8s: u64,
@@ -95,7 +95,7 @@ pub struct PlannedTransfer {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
-pub struct PayoutPlan {
+pub(crate) struct PayoutPlan {
     pub id: u64,
     pub fee_e8s: u64,
     pub created_at_base_nanos: u64,
@@ -108,7 +108,7 @@ pub enum ForcedRescueReason {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub struct State {
+pub(crate) struct State {
     pub config: Config,
     pub prev_age_seconds: u64,
     pub last_successful_transfer_ts: Option<u64>,
@@ -123,7 +123,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(config: Config, now_secs: u64) -> Self {
+    pub(crate) fn new(config: Config, now_secs: u64) -> Self {
         let blackhole_armed_since_ts = config.blackhole_armed.unwrap_or(false).then_some(now_secs);
         Self {
             config,
@@ -142,7 +142,7 @@ impl State {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
-pub enum VersionedStableState {
+pub(crate) enum VersionedStableState {
     Uninitialized,
     V1(State),
 }
@@ -195,29 +195,29 @@ fn persist_snapshot(st: &State) {
     });
 }
 
-pub fn init_stable_storage() {
+pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
-pub fn restore_state_from_stable() -> Option<State> {
+pub(crate) fn restore_state_from_stable() -> Option<State> {
     with_stable_cell(|cell| match cell.get().clone() {
         VersionedStableState::Uninitialized => None,
         VersionedStableState::V1(st) => Some(st),
     })
 }
 
-pub fn set_state(st: State) {
+pub(crate) fn set_state(st: State) {
     persist_snapshot(&st);
     clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
 #[cfg(any(test, feature = "debug_api"))]
-pub fn get_state() -> State {
+pub(crate) fn get_state() -> State {
     STATE.with(|s| s.borrow().clone()).expect("state not initialized")
 }
 
-pub fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
+pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
@@ -248,7 +248,7 @@ fn clear_persistence_dirty() {
 fn clear_persistence_dirty() {}
 
 #[cfg(test)]
-pub fn persist_dirty_state() {
+pub(crate) fn persist_dirty_state() {
     let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
     if !dirty {
         return;
@@ -264,7 +264,7 @@ pub fn persist_dirty_state() {
 /// Do not hold this guard across an `await` point. While it is live, mutations are
 /// only marked dirty and are not durably flushed until the batch ends or an
 /// explicit `persist_dirty_state()` call occurs.
-pub struct PersistenceBatch {
+pub(crate) struct PersistenceBatch {
     active: bool,
 }
 
@@ -289,12 +289,12 @@ impl Drop for PersistenceBatch {
 
 #[cfg(test)]
 #[must_use]
-pub fn begin_persistence_batch() -> PersistenceBatch {
+pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
     PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch { active: true }
 }
 
-pub fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|s| {
         let mut borrow = s.borrow_mut();
         let st = borrow.as_mut().expect("state not initialized");
