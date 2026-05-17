@@ -9,8 +9,9 @@ const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'u
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
 const bootstrapJs = readFileSync(resolve(__dirname, '../src/app/bootstrap.js'), 'utf8');
 const advancedMemoControllerJs = readFileSync(resolve(__dirname, '../src/app/advanced-memo-controller.js'), 'utf8');
+const configJs = readFileSync(resolve(__dirname, '../src/app/config.js'), 'utf8');
 const hashRoutesJs = readFileSync(resolve(__dirname, '../src/app/hash-routes.js'), 'utf8');
-const landingTablesControllerJs = readFileSync(resolve(__dirname, '../src/app/landing-tables-controller.js'), 'utf8');
+const dashboardTablesControllerJs = readFileSync(resolve(__dirname, '../src/app/dashboard-tables-controller.js'), 'utf8');
 const responsiveTablesJs = readFileSync(resolve(__dirname, '../src/app/responsive-tables.js'), 'utf8');
 const simulatorControllerJs = readFileSync(resolve(__dirname, '../src/app/simulator-controller.js'), 'utf8');
 const sourcePaneControllerJs = readFileSync(resolve(__dirname, '../src/app/source-pane-controller.js'), 'utf8');
@@ -20,8 +21,9 @@ const viewFormattersJs = readFileSync(resolve(__dirname, '../src/app/view-format
 const mainJs = [
   bootstrapJs,
   advancedMemoControllerJs,
+  configJs,
   hashRoutesJs,
-  landingTablesControllerJs,
+  dashboardTablesControllerJs,
   responsiveTablesJs,
   simulatorControllerJs,
   sourcePaneControllerJs,
@@ -144,7 +146,7 @@ test('transaction table pagination uses a responsive page size', () => {
   assert.match(mainJs, /Math\.min\(TABLE_MAX_PAGE_SIZE, Math\.max\(TABLE_MIN_PAGE_SIZE, estimatedRows\)\)/);
   assert.match(mainJs, /const currentPageSizeForTable = \(kind\) => \{[\s\S]*kind === 'commitments'[\s\S]*kind === 'commitments-raw'[\s\S]*kind === 'commitments-neurons'[\s\S]*currentTablePageSize\(\) \+ adjustment/);
   assert.match(mainJs, /const pageSize = currentPageSizeForTable\(kind\);[\s\S]*state\.items\.slice\(start, start \+ pageSize\)/);
-  assert.match(mainJs, /registeredPageSize: landingTablesController\.currentTablePageSize\(\)/);
+  assert.match(mainJs, /registeredPageSize: dashboardTablesController\.currentTablePageSize\(\)/);
   assert.match(mainJs, /window\.addEventListener\('resize'/);
   assert.doesNotMatch(mainJs, /const TABLE_PAGE_SIZE = 6;/);
 });

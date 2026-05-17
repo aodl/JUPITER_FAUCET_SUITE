@@ -87,7 +87,11 @@ pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principa
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        parse_memo_directive, parse_target_canister_principal_from_memo, MemoDirective,
+        MAX_TARGET_CANISTER_MEMO_BYTES,
+    };
+    use candid::Principal;
     use serde::Deserialize;
 
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }

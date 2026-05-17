@@ -1,8 +1,7 @@
 import { loadCanisterModuleHashes, normalizeError } from '../dashboard-data.js';
 import { readOpt } from '../candid-opt.js';
+import { SOURCE_PANE_CACHE_TTL_MS } from './config.js';
 import { formatBytes, formatPrincipal, formatSourceController } from './view-formatters.js';
-
-const SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS = 60 * 60 * 1000;
 
 function sourcePaneModuleHashNodes() {
   return Array.from(document.querySelectorAll('[data-source-module-hash]'));
@@ -114,7 +113,7 @@ export function createSourcePaneController({
       if (!parsed || typeof parsed !== 'object') return null;
       const cachedAt = Number(parsed.cachedAt || 0);
       if (!Number.isFinite(cachedAt) || cachedAt <= 0) return null;
-      if ((Date.now() - cachedAt) > SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) return null;
+      if ((Date.now() - cachedAt) > SOURCE_PANE_CACHE_TTL_MS) return null;
       const infoByCanisterId = parsed.infoByCanisterId || parsed.hashByCanisterId;
       if (!infoByCanisterId || typeof infoByCanisterId !== 'object') return null;
       return { cachedAt, infoByCanisterId };
@@ -131,7 +130,7 @@ export function createSourcePaneController({
   const ensureLoaded = async () => {
     const infoNodes = sourcePaneCanisterInfoNodes();
     if (infoNodes.length === 0 || !frontendConfig?.historianCanisterId) return;
-    if (sourcePaneModuleHashesLoadedAt > 0 && (Date.now() - sourcePaneModuleHashesLoadedAt) <= SOURCE_PANE_MODULE_HASH_CACHE_TTL_MS) return;
+    if (sourcePaneModuleHashesLoadedAt > 0 && (Date.now() - sourcePaneModuleHashesLoadedAt) <= SOURCE_PANE_CACHE_TTL_MS) return;
     const cached = readSourcePaneModuleHashCache();
     if (cached) {
       applySourcePaneModuleHashes(cached.infoByCanisterId);

@@ -10,8 +10,9 @@ import { setText } from '../dom-helpers.js';
 import { readOpt } from '../candid-opt.js';
 import { buildCommitmentIndexFaultBannerText } from '../historian-fault.js';
 import { initAdvancedMemoBuilder } from './advanced-memo-controller.js';
+import { GOVERNANCE_CANISTER_ID, JUPITER_NEURON_ID } from './config.js';
+import { createDashboardTablesController } from './dashboard-tables-controller.js';
 import { SIMULATOR_HASH_PREFIX, simulatorHashForPrefill } from './hash-routes.js';
-import { createLandingTablesController } from './landing-tables-controller.js';
 import { createSimulatorController } from './simulator-controller.js';
 import { createSourcePaneController } from './source-pane-controller.js';
 import { createStakePaneController } from './stake-pane-controller.js';
@@ -26,8 +27,6 @@ import {
 } from './view-formatters.js';
 
 const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
-const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
-const JUPITER_NEURON_ID = 11614578985374291210n;
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
@@ -46,7 +45,7 @@ const sourcePaneController = createSourcePaneController({
   isLocalHost,
 });
 
-const landingTablesController = createLandingTablesController({
+const dashboardTablesController = createDashboardTablesController({
   frontendConfig: FRONTEND_CONFIG,
   isLocalHost,
 });
@@ -299,7 +298,7 @@ function renderLandingPanes(data, neuron = null) {
   renderHistorianFaultBanner(data);
   stakePaneController.renderStakePane(data, neuron);
   renderPaneSubtitles(data);
-  landingTablesController.renderAll(data);
+  dashboardTablesController.renderAll(data);
 }
 
 async function loadNeuronDetails({ host, local }) {
@@ -360,7 +359,7 @@ function bindNeuronDetailsLoader(data) {
 }
 
 async function initLandingPage() {
-  landingTablesController.bindPaginationButtons();
+  dashboardTablesController.bindPaginationButtons();
   setMetricLoadingStates();
   stakePaneController.renderStakePane(null, null, { dataLoading: true });
   stakePaneController.renderStakeNeuronStatus();
@@ -369,7 +368,7 @@ async function initLandingPage() {
       historianCanisterId: FRONTEND_CONFIG?.historianCanisterId,
       host: window.location.origin,
       local: isLocalHost(),
-      registeredPageSize: landingTablesController.currentTablePageSize(),
+      registeredPageSize: dashboardTablesController.currentTablePageSize(),
     });
     if (data.historianLikelyOutdated) {
       console.warn(`${FRONTEND_HINT} Redeploy jupiter_historian, then hard-refresh the frontend.`);
@@ -386,7 +385,7 @@ async function initLandingPage() {
 }
 
 bindInlineTooltipFallbacks();
-landingTablesController.bindResponsiveTablePageSize();
+dashboardTablesController.bindResponsiveTablePageSize();
 trackerController.bindPane();
 initAdvancedMemoBuilder({ copyTextToClipboard });
 simulatorController.bind();

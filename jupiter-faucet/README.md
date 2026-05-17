@@ -148,7 +148,7 @@ Operationally, the mitigation strategy is therefore:
 The repo now covers this in three layers:
 
 - `src/logic.rs` unit tests verify the weighting, boundary, and payout arithmetic used by the faucet
-- `src/scheduler.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, and falls back safely for exactly one transition payout if no prior round snapshot exists yet
+- `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, and falls back safely for exactly one transition payout if no prior round snapshot exists yet
 - the disburser/faucet PocketIC suite keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation
 
 The detailed reward-environment caveats and the rationale for the PocketIC whale background live in `xtask/README.md` and in the comments around the PocketIC reward helpers.

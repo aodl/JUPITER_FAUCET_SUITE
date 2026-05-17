@@ -7,6 +7,7 @@ import { setLink, setPaneValueText, setPaneValueTrustedHtml, setText } from '../
 import { formatFolloweeLinks } from '../followee-links.js';
 import { formatMaturityDisbursementLandingText, formatMaturityDisbursementStatus } from '../maturity-disbursement.js';
 import { calculateAgeBonusBasisPointsFromAgingSince } from '../projection-simulator.js';
+import { JUPITER_STAKING_ACCOUNT } from './config.js';
 import {
   formatAgeBonusDisplay,
   formatAgeFromSeconds,
@@ -14,26 +15,20 @@ import {
   formatTimestampSeconds,
 } from './view-formatters.js';
 
-const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
-const JUPITER_STAKING_ACCOUNT_ADDRESS = 'rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
-const JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX = '22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d';
-const JUPITER_STAKING_ACCOUNT_OWNER = GOVERNANCE_CANISTER_ID;
-const JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX = 'ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68';
-
 function isJupiterStakingAccount(account) {
   if (!account) return true;
   const owner = String(account.owner?.toText ? account.owner.toText() : account.owner);
   const subaccountHex = bytesToHex(uint8ArrayFromOptBytes(account.subaccount));
-  return owner === JUPITER_STAKING_ACCOUNT_OWNER && subaccountHex === JUPITER_STAKING_ACCOUNT_SUBACCOUNT_HEX;
+  return owner === JUPITER_STAKING_ACCOUNT.owner && subaccountHex === JUPITER_STAKING_ACCOUNT.subaccountHex;
 }
 
 function stakingAccountDisplayAddress(account) {
-  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT_ADDRESS;
+  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT.address;
   return accountIdentifierHex(account);
 }
 
 function stakingAccountExplorerAddress(account) {
-  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX;
+  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT.explorerAccountHex;
   return accountIdentifierHex(account);
 }
 
@@ -68,12 +63,12 @@ export function createStakePaneController({
   isNeuronLoaded = () => false,
 }) {
   const renderHowItWorksAccount = () => {
-    setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT_ADDRESS);
-    setText('how-staking-account-address', JUPITER_STAKING_ACCOUNT_ADDRESS);
+    setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT.address);
+    setText('how-staking-account-address', JUPITER_STAKING_ACCOUNT.address);
     const stakingAccountLink = document.getElementById('how-staking-account-link');
     if (stakingAccountLink) {
-      stakingAccountLink.href = `https://dashboard.internetcomputer.org/account/${JUPITER_STAKING_ACCOUNT_EXPLORER_ACCOUNT_HEX}`;
-      stakingAccountLink.title = JUPITER_STAKING_ACCOUNT_ADDRESS;
+      stakingAccountLink.href = `https://dashboard.internetcomputer.org/account/${JUPITER_STAKING_ACCOUNT.explorerAccountHex}`;
+      stakingAccountLink.title = JUPITER_STAKING_ACCOUNT.address;
     }
   };
 

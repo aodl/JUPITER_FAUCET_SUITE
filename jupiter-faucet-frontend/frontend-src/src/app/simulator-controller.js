@@ -1,6 +1,7 @@
 import { readOpt } from '../candid-opt.js';
 import { renderEmptyChart, renderLineChart } from '../chart-rendering.js';
 import { buildSimulatorProjection } from '../projection-simulator.js';
+import { SIMULATOR_DEFAULTS } from './config.js';
 import { SIMULATOR_HASH_PREFIX, simulatorHashForPrefill, simulatorPrefillFromHash } from './hash-routes.js';
 import {
   DASH,
@@ -17,11 +18,6 @@ import {
 } from './view-formatters.js';
 
 const ICP_TENTH_E8S = 10_000_000n;
-const SIMULATOR_DEFAULTS = {
-  dailyBurnTrillionCycles: '0.0001',
-  assumedIcpPrice: '10.0',
-  annualApyPercent: '7.0',
-};
 const SIMULATOR_INPUT_CONSTRAINTS = {
   'simulator-icp-commitment': { min: 1, fractionDigits: 1 },
   'simulator-daily-burn': { min: 0, fractionDigits: 4 },

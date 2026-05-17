@@ -111,7 +111,7 @@ function renderRouteTransferRow(item) {
     </tr>`;
 }
 
-export function createLandingTablesController({
+export function createDashboardTablesController({
   frontendConfig,
   isLocalHost,
   getLandingData = () => window.__JUPITER_LANDING_DATA__ || null,

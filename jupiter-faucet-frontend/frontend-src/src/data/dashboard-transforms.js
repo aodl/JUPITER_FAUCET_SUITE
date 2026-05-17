@@ -1,13 +1,16 @@
 import { Principal } from '@icp-sdk/core/principal';
 import { sha224 } from '@noble/hashes/sha2.js';
+import {
+  DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX,
+  GOVERNANCE_CANISTER_ID,
+  MAINNET_CMC_CANISTER_ID,
+} from '../app/config.js';
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
 export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
 export const RECENT_COMMITMENT_LIMIT = 100;
 export const RECENT_ROUTE_TRANSFER_LIMIT = 100;
-export const MAINNET_CMC_CANISTER_ID = 'rkp4c-7iaaa-aaaaa-aaaca-cai';
-export const MAINNET_GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
-export const DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX = '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f';
+export { MAINNET_CMC_CANISTER_ID };
 
 export function summaryMetricsUnavailable(data) {
   return (
@@ -73,7 +76,7 @@ export function hexToBytes(hex) {
   return bytes;
 }
 
-export function dquorumStakingAccount(governanceCanisterId = MAINNET_GOVERNANCE_CANISTER_ID) {
+export function dquorumStakingAccount(governanceCanisterId = GOVERNANCE_CANISTER_ID) {
   const owner = typeof governanceCanisterId === 'string' ? Principal.fromText(governanceCanisterId) : governanceCanisterId;
   return {
     owner,

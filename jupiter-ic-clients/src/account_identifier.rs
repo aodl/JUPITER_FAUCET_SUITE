@@ -22,7 +22,9 @@ pub fn account_identifier_text_for_account(account: &Account) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::account_identifier::{account_identifier_text, account_identifier_text_for_account};
+    use candid::Principal;
+    use icrc_ledger_types::icrc1::account::Account;
 
     #[test]
     fn renders_default_subaccount_account_identifier() {
