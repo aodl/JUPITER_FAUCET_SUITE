@@ -128,10 +128,10 @@
 .orbit-disbursement-status::before {
   content: "";
   float: right;
-  width: min(8dvw, 7rem);
+  width: min(8.7dvw, 7.35rem);
   height: 8.2em;
-  shape-outside: polygon(100% 0, 100% 100%, 0 100%);
-  -webkit-shape-outside: polygon(100% 0, 100% 100%, 0 100%);
+  shape-outside: polygon(150% 0, 100% 100%, 0 100%);
+  -webkit-shape-outside: polygon(150% 0, 100% 100%, 0 100%);
   shape-margin: 0.35rem;
 }
 

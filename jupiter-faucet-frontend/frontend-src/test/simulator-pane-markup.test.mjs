@@ -97,8 +97,8 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.match(indexHtml, /class="orbit-disbursement-status" id="orbit-disbursement-status" hidden aria-live="polite"/);
   assert.match(orbitCss, /\.metric-rail:not\(\.metric-rail--visible\) ~ \.orbit-disbursement-status \{[\s\S]*display: none;[\s\S]*\}/);
   assert.match(orbitCss, /\.orbit-disbursement-status \{[\s\S]*top: 22dvw;[\s\S]*left: 6\.5dvw;[\s\S]*width: min\(23dvw, 16rem\);[\s\S]*color: rgba\(255, 255, 255, 0\.56\);[\s\S]*font-size: 11px;[\s\S]*line-height: 1\.35;[\s\S]*font-weight: 400;[\s\S]*\}/);
-  assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*width: min\(8dvw, 7rem\);[\s\S]*\}/);
-  assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*float: right;[\s\S]*shape-outside: polygon\(100% 0, 100% 100%, 0 100%\);[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*width: min\(8\.7dvw, 7\.35rem\);[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*float: right;[\s\S]*shape-outside: polygon\(150% 0, 100% 100%, 0 100%\);[\s\S]*\}/);
   assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*background:/);
   assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*border:/);
   assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*padding:/);
@@ -167,7 +167,7 @@ test('About pane includes social links and projects slide', () => {
   assert.match(about, /data-panel="how-it-works"[^>]*>How It Works<\/a>/);
   assert.match(about, /memo-builder-safety-notice[\s\S]*<strong>Due diligence:<\/strong>/);
   assert.match(about, /The core components will be blackholed/);
-  assert.match(about, /network dependency prevents disbursals\s*or other core functionality/);
+  assert.match(about, /NNS-managed platform dependency prevents disbursals\s*or other core functionality/);
   assert.match(about, /blackhole themself again once service resumes/);
   assert.match(about, /data-panel="source"[^>]*>open source<\/a>/);
   assert.match(about, /data-panel="governance"[^>]*>decentralize control<\/a>/);
@@ -175,9 +175,9 @@ test('About pane includes social links and projects slide', () => {
   assert.doesNotMatch(about, /Status:/);
   assert.doesNotMatch(about, /planned launch within/);
   assert.match(about, /class="nav-panel-page is-active" data-page="0"/);
-  assert.match(about, /class="nav-panel-page" data-page="1"[\s\S]*<h2 class="about-projects-title">Projects Powered by Jupiter Faucet<\/h2>[\s\S]*More coming soon!/);
+  assert.match(about, /class="nav-panel-page" data-page="1"[\s\S]*<h2 class="about-projects-title">Featured Projects Powered by Jupiter Faucet<\/h2>[\s\S]*More coming soon!/);
   assert.match(about, /data-page-target="0"[^>]*>social channels<\/a>[\s\S]*class="about-project-grid"/);
-  assert.match(about, /class="about-project-preview" href="https:\/\/jupiter-faucet\.com\/"/);
+  assert.match(about, /class="about-project-preview" href="\/"/);
   assert.match(about, /src="\/social-preview\.jpg"[\s\S]*<strong>Jupiter Faucet<\/strong>/);
   assert.match(about, /Yes, Jupiter Faucet powers itself!/);
   assert.match(about, /<p class="about-project-canisters-title">Canisters<\/p>/);
@@ -188,11 +188,13 @@ test('About pane includes social links and projects slide', () => {
   assert.match(about, /data-tracker-principal="alk7f-5aaaa-aaaar-qb4ra-cai"[\s\S]*>SNS Rewards<\/a>/);
   assert.match(about, /data-tracker-principal="jufzc-caaaa-aaaar-qb5da-cai"[\s\S]*>Frontend<\/a>/);
   assert.match(about, /class="about-project-card about-project-card--soon"[\s\S]*More coming soon!/);
+  assert.match(about, /class="about-projects-see-all"[\s\S]*href="#metric-commitments"[^>]*data-panel="metric-commitments"[^>]*>See All<\/a>/);
   assert.match(about, /href="https:\/\/github\.com\/aodl\/JUPITER_FAUCET_SUITE\/pulls"[^>]*>raise a pull request<\/a>/);
   assert.match(about, /<div class="nav-panel-dots" role="tablist" aria-label="About pages">/);
-  assert.match(about, /data-page="1" aria-label="Projects Powered by Jupiter Faucet"/);
+  assert.match(about, /data-page="1" aria-label="Featured Projects Powered by Jupiter Faucet"/);
   assert.match(metricsCss, /\.about-projects-slide \{[\s\S]*overflow: visible;[\s\S]*\}/);
   assert.doesNotMatch(metricsCss, /\.about-projects-slide \{[\s\S]*min-height: 100%;[\s\S]*\}/);
+  assert.match(metricsCss, /\.about-projects-title \{[\s\S]*font-size: 20px;[\s\S]*letter-spacing: 0\.08em;[\s\S]*text-transform: uppercase;[\s\S]*\}/);
   assert.match(metricsCss, /\.about-project-grid \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, calc\(\(100% - 12px\) \/ 2\)\)\);[\s\S]*\}/);
   assert.match(metricsCss, /\.about-project-card \{[\s\S]*container-type: inline-size;[\s\S]*\}/);
   assert.doesNotMatch(metricsCss, /\.about-project-card \{[\s\S]*aspect-ratio: 1 \/ 1;[\s\S]*\}/);
@@ -527,7 +529,8 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 
   assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
   assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
-  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Declared Canisters[\s\S]*Track Canisters/);
+  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Track Canisters/);
+  assert.doesNotMatch(rail, /Declared Canisters/);
   assert.doesNotMatch(rail, /Target Canisters/);
   assert.doesNotMatch(rail, />Commitments<\/span>/);
   assert.doesNotMatch(rail, /data-panel="metric-output"/);
@@ -535,22 +538,25 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-output"/);
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-rewards"/);
   assert.match(indexHtml, /id="nav-panel-metric-commitments"[\s\S]*Patron Commitments/);
-  assert.match(indexHtml, /id="nav-panel-metric-registered"[\s\S]*Declared Canisters/);
+  assert.doesNotMatch(indexHtml, /id="nav-panel-metric-registered"/);
   assert.match(stake, /data-page="1"[\s\S]*Total Output/);
   assert.match(stake, /data-page="2"[\s\S]*Total Rewards/);
   assert.match(stake, /data-page="3"[\s\S]*D-QUORUM Route/);
   assert.match(stake, /aria-label="D-QUORUM route"/);
   assert.match(navbarJs, /key === "metric-output"[\s\S]*key: "metric-stake", page: 1/);
   assert.match(navbarJs, /key === "metric-rewards"[\s\S]*key: "metric-stake", page: 2/);
+  assert.match(navbarJs, /key === "metric-registered"[\s\S]*key: "metric-commitments", page: 0/);
 });
 
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
-  assert.match(commitments, /<h3 class="pane-section-title">Declared Canisters<\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
-  assert.match(commitments, /<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
-  assert.match(commitments, /href="\/#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules/);
+  assert.match(mainJs, /const registeredCount = data\?\.counts\?\.registered_canister_count;/);
+  assert.match(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);
+  assert.match(mainJs, /setText\('commitments-canister-count', commitmentsCanisterCount\);/);
   assert.doesNotMatch(commitments, /private neurons cannot be refreshed by the faucet top-up process/);
   assert.doesNotMatch(commitments, /<th>Category<\/th>/);
   assert.match(commitments, /<td colspan="3" class="empty-cell">Loading…<\/td>/);
@@ -751,6 +757,8 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /formatTrillionCyclesPerDay/);
   assert.match(mainJs, /renderTrackerLogs\(data\)/);
   assert.match(mainJs, /data-simulator-prefill="true"/);
+  assert.match(trackerControllerJs, /const TRACKER_REGISTRATION_URL = '#how-it-works';/);
+  assert.match(trackerControllerJs, /href="\$\{TRACKER_REGISTRATION_URL\}" data-panel="how-it-works">How it works guide<\/a>/);
   assert.match(metricsCss, /\.tracker-log-details\s*\{/);
 });
 

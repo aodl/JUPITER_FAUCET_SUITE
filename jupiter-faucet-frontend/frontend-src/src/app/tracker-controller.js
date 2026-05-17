@@ -19,7 +19,7 @@ import {
   renderCanisterTrackerLink,
 } from './view-formatters.js';
 
-const TRACKER_REGISTRATION_URL = 'https://jupiter-faucet.com/#how-it-works';
+const TRACKER_REGISTRATION_URL = '#how-it-works';
 const TRACKER_RANGE_LABELS = {
   month: 'last month',
   year: 'last year',
@@ -531,7 +531,7 @@ export function createTrackerController({
     result.innerHTML = `
       <div class="tracker-empty-state">
         <p>${escapeHtml(detail)}</p>
-        <p>Register the canister for perpetual top-ups from the <a class="pane-external-link" href="${TRACKER_REGISTRATION_URL}" target="_blank" rel="noopener noreferrer">How it works guide</a>.</p>
+        <p>Register the canister for perpetual top-ups from the <a class="pane-external-link" href="${TRACKER_REGISTRATION_URL}" data-panel="how-it-works">How it works guide</a>.</p>
         <p>${renderCanisterTrackerLink(principalText)}</p>
         <p>${renderCanisterDashboardLink(principalText)}</p>
       </div>`;

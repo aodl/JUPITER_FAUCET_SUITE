@@ -159,9 +159,17 @@ function renderHistorianFaultBanner(data) {
 
 function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
+  const registeredCount = data?.counts?.registered_canister_count;
+  const commitmentsSubtitle = registeredCount === undefined || registeredCount === null
+    ? subtitle
+    : `${subtitle} ${formatInteger(registeredCount)} declared canisters.`;
+  const commitmentsCanisterCount = registeredCount === undefined || registeredCount === null
+    ? ''
+    : `(${formatInteger(registeredCount)})`;
   setText('landing-next-run', subtitle);
   setText('registered-pane-subtitle', subtitle);
-  setText('commitments-pane-subtitle', subtitle);
+  setText('commitments-pane-subtitle', commitmentsSubtitle);
+  setText('commitments-canister-count', commitmentsCanisterCount);
   setText('output-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
   setText('rewards-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
   setText('dquorum-pane-subtitle', 'Recent rows are queried live from the ICP index canister.');

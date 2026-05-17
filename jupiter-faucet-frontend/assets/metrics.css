@@ -401,10 +401,10 @@
 }
 
 .about-projects-title {
-  margin: 0;
-  font-size: clamp(24px, 4vw, 36px);
-  line-height: 1.05;
-  font-weight: 700;
+  margin: 0 0 8px;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .about-projects-coming-soon {
@@ -512,6 +512,13 @@
 
 .about-projects-submit {
   opacity: 0.78;
+}
+
+.about-projects-see-all {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .pane-inline-tooltip-fallback {

@@ -333,6 +333,7 @@
       const page = pageMatch ? Number(pageMatch[2]) : 0;
       if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0 };
       if (key.startsWith("simulator-")) return { key: "simulator", page: 0 };
+      if (key === "metric-registered") return { key: "metric-commitments", page: 0 };
       if (key === "metric-output") return { key: "metric-stake", page: 1 };
       if (key === "metric-rewards") return { key: "metric-stake", page: 2 };
       return { key, page: Number.isFinite(page) ? page : 0 };

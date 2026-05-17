@@ -322,10 +322,6 @@
         <span class="metric-rail-link-label">Patron Commitments</span>
         <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">—</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
       </a>
-      <a href="#metric-registered" class="metric-rail-link nav-item" data-panel="metric-registered">
-        <span class="metric-rail-link-label">Declared Canisters</span>
-        <strong class="metric-rail-link-value"><span id="landing-registered-canisters">—</span><span class="metric-status" id="landing-registered-canisters-status" hidden aria-hidden="true"></span></strong>
-      </a>
       <a href="#metric-tracker" class="metric-rail-link metric-rail-link--action nav-item" data-panel="metric-tracker">
         <span class="metric-rail-link-label">Track Canisters</span>
       </a>
@@ -416,7 +412,7 @@
                 <a href="#governance" data-panel="governance" class="pane-external-link">decentralize control</a> over time.
                 The core components will be blackholed. A worst-case scenario
                 lifeline is built into the canisters so they can temporarily hand control to the
-                <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a> if a breaking change in a network dependency prevents disbursals
+                <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a> if a breaking change in a NNS-managed platform dependency prevents disbursals
                 or other core functionality, then blackhole themself again once service resumes.
               </p>
             </div>
@@ -424,7 +420,7 @@
           <div class="nav-panel-page" data-page="1">
             <div class="nav-panel-scroll-region about-projects-slide">
               <div class="about-projects-header">
-                <h2 class="about-projects-title">Projects Powered by Jupiter Faucet</h2>
+                <h2 class="about-projects-title">Featured Projects Powered by Jupiter Faucet</h2>
                 <p class="about-projects-submit">
                   If you'd like to see your project here, please start a discussion on one of Jupiter Faucet's
                   <a href="#about" data-page-target="0" class="pane-external-link">social channels</a>
@@ -436,7 +432,7 @@
 
               <div class="about-project-grid" aria-label="Projects powered by Jupiter Faucet">
                 <div class="about-project-card">
-                  <a class="about-project-preview" href="https://jupiter-faucet.com/" target="_blank" rel="noopener noreferrer">
+                  <a class="about-project-preview" href="/">
                     <img src="/social-preview.jpg" alt="" width="1200" height="630" loading="lazy" />
                     <span>
                       <strong>Jupiter Faucet</strong>
@@ -458,11 +454,14 @@
                   <p class="about-projects-coming-soon">More coming soon!</p>
                 </div>
               </div>
+              <p class="about-projects-see-all">
+                <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">See All</a>
+              </p>
             </div>
           </div>
           <div class="nav-panel-dots" role="tablist" aria-label="About pages">
             <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="About Jupiter Faucet" aria-selected="true"></button>
-            <button class="nav-panel-dot" type="button" data-page="1" aria-label="Projects Powered by Jupiter Faucet" aria-selected="false"></button>
+            <button class="nav-panel-dot" type="button" data-page="1" aria-label="Featured Projects Powered by Jupiter Faucet" aria-selected="false"></button>
           </div>
         </article>
 
@@ -908,42 +907,14 @@
           </div>
         </article>
 
-        <article class="nav-panel-section" data-panel="metric-registered" id="nav-panel-metric-registered">
-          <h2 class="nav-panel-title">Declared Canisters</h2>
-          <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle" id="registered-pane-subtitle">Loading next historian run…</p>
-            <p class="nav-panel-content">This registry is historian's durable set of declared canisters. The registry itself is not pruned, but the per-canister histories and recent feeds shown elsewhere are bounded; full transfer history remains queryable from the ICP ledger and its archive canisters.</p>
-            <div class="pane-table-wrap">
-              <table class="pane-table">
-                <thead>
-                  <tr>
-                    <th>Declared canister</th>
-                    <th>Patron commitments</th>
-                    <th>Total ICP</th>
-                    <th>Latest cycles</th>
-                  </tr>
-                </thead>
-                <tbody id="registered-pane-body">
-                  <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="pane-pagination">
-              <button class="pane-page-button" id="registered-prev-page" type="button">Previous</button>
-              <span id="registered-page-info">Page 1</span>
-              <button class="pane-page-button" id="registered-next-page" type="button">Next</button>
-            </div>
-          </div>
-        </article>
-
         <article class="nav-panel-section" data-panel="metric-commitments" id="nav-panel-metric-commitments">
           <h2 class="nav-panel-title">Patron Commitments</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle" id="commitments-pane-subtitle">Loading next historian run…</p>
-            <p class="nav-panel-content">See <a href="/#how-it-works" data-panel="how-it-works" class="pane-external-link">How It Works</a> for qualifying commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
             <p class="pane-status-note" id="commitments-pane-memory-note" hidden></p>
             <div class="nav-panel-page is-active" data-page="0">
-              <h3 class="pane-section-title">Declared Canisters</h3>
+              <p class="nav-panel-content">See <a href="#how-it-works" data-panel="how-it-works" class="pane-external-link">How It Works</a> for qualifying commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+              <h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"></span></h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">
                   <thead>
@@ -965,6 +936,7 @@
               </div>
             </div>
             <div class="nav-panel-page" data-page="1">
+              <p class="nav-panel-content">See <a href="#how-it-works:2" class="pane-external-link">Advanced Usage</a> for raw ICP commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
               <h3 class="pane-section-title">Declared Raw ICP Canisters</h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">
@@ -988,6 +960,7 @@
               </div>
             </div>
             <div class="nav-panel-page" data-page="2">
+              <p class="nav-panel-content">See <a href="#how-it-works:2" class="pane-external-link">Advanced Usage</a> for neuron commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
               <h3 class="pane-section-title">Declared Neurons</h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">

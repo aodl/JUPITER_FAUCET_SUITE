@@ -244,6 +244,29 @@ fn run_icp_with_identity(args: &[&str]) -> Result<String> {
     run_icp(&refs)
 }
 
+fn stop_local_network_best_effort(project_root: &str) -> Result<()> {
+    let output = Command::new("icp")
+        .args([
+            "--project-root-override",
+            project_root,
+            "network",
+            "stop",
+            LOCAL_ENVIRONMENT,
+        ])
+        .output()
+        .context("failed to run icp network stop local")?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let text = format!("{stdout}\n{stderr}");
+
+    if !output.status.success() && !text.contains("network 'local' is not running") {
+        bail!("failed to stop local network: {text}");
+    }
+
+    Ok(())
+}
+
 fn run_cargo_build(package: &str, features: &[&str]) -> Result<()> {
     let root = repo_root();
     let mut args = vec![
@@ -817,9 +840,10 @@ fn ensure_identity() -> Result<()> {
 fn cmd_setup_common() -> Result<()> {
     ensure_identity()?;
 
-    // Stop any running local replica (ignore errors), then start clean.
-    let _ = run_icp(&["network", "stop", LOCAL_ENVIRONMENT]);
-    let cache_dir = std::path::Path::new(&repo_root()).join(".icp").join("cache");
+    // Stop any running local replica, treating an already-stopped network as clean.
+    let project_root = repo_root();
+    stop_local_network_best_effort(&project_root)?;
+    let cache_dir = std::path::Path::new(&project_root).join(".icp").join("cache");
     if cache_dir.exists() {
         fs::remove_dir_all(&cache_dir)
             .with_context(|| format!("failed to clear {}", cache_dir.display()))?;
