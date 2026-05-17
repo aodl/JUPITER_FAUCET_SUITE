@@ -3,6 +3,8 @@ import { readOpt } from '../candid-opt.js';
 import { SOURCE_PANE_CACHE_TTL_MS } from './config.js';
 import { formatBytes, formatPrincipal, formatSourceController } from './view-formatters.js';
 
+const SOURCE_PANE_NEGATIVE_CACHE_TTL_MS = 30 * 1000;
+
 function sourcePaneModuleHashNodes() {
   return Array.from(document.querySelectorAll('[data-source-module-hash]'));
 }
@@ -44,8 +46,10 @@ export function createSourcePaneController({
   isLocalHost,
   loadCanisterInfo = loadCanisterModuleHashes,
   normalizeLoadError = normalizeError,
+  now = () => Date.now(),
 }) {
   let sourcePaneModuleHashesLoadedAt = 0;
+  let sourcePaneModuleHashesLoadedTtlMs = 0;
   let sourcePaneModuleHashesRequest = null;
 
   const sourcePaneModuleHashCacheKey = () => {
@@ -113,7 +117,7 @@ export function createSourcePaneController({
       if (!parsed || typeof parsed !== 'object') return null;
       const cachedAt = Number(parsed.cachedAt || 0);
       if (!Number.isFinite(cachedAt) || cachedAt <= 0) return null;
-      if ((Date.now() - cachedAt) > SOURCE_PANE_CACHE_TTL_MS) return null;
+      if ((now() - cachedAt) > SOURCE_PANE_CACHE_TTL_MS) return null;
       const infoByCanisterId = parsed.infoByCanisterId || parsed.hashByCanisterId;
       if (!infoByCanisterId || typeof infoByCanisterId !== 'object') return null;
       return { cachedAt, infoByCanisterId };
@@ -123,18 +127,23 @@ export function createSourcePaneController({
   const writeSourcePaneModuleHashCache = (infoByCanisterId) => {
     const cacheKey = sourcePaneModuleHashCacheKey();
     if (!cacheKey || !sourcePaneInfoHasCompleteControllerData(infoByCanisterId)) return;
-    try { window.localStorage.setItem(cacheKey, JSON.stringify({ cachedAt: Date.now(), infoByCanisterId })); }
+    try { window.localStorage.setItem(cacheKey, JSON.stringify({ cachedAt: now(), infoByCanisterId })); }
     catch { /* Ignore storage failures. */ }
   };
 
   const ensureLoaded = async () => {
     const infoNodes = sourcePaneCanisterInfoNodes();
     if (infoNodes.length === 0 || !frontendConfig?.historianCanisterId) return;
-    if (sourcePaneModuleHashesLoadedAt > 0 && (Date.now() - sourcePaneModuleHashesLoadedAt) <= SOURCE_PANE_CACHE_TTL_MS) return;
+    if (
+      sourcePaneModuleHashesLoadedAt > 0
+      && sourcePaneModuleHashesLoadedTtlMs > 0
+      && (now() - sourcePaneModuleHashesLoadedAt) <= sourcePaneModuleHashesLoadedTtlMs
+    ) return;
     const cached = readSourcePaneModuleHashCache();
     if (cached) {
       applySourcePaneModuleHashes(cached.infoByCanisterId);
       sourcePaneModuleHashesLoadedAt = cached.cachedAt;
+      sourcePaneModuleHashesLoadedTtlMs = SOURCE_PANE_CACHE_TTL_MS;
       return;
     }
     if (sourcePaneModuleHashesRequest) {
@@ -159,10 +168,15 @@ export function createSourcePaneController({
         );
         applySourcePaneModuleHashes(infoByCanisterId);
         writeSourcePaneModuleHashCache(infoByCanisterId);
-        sourcePaneModuleHashesLoadedAt = Date.now();
+        sourcePaneModuleHashesLoadedAt = now();
+        sourcePaneModuleHashesLoadedTtlMs = sourcePaneInfoHasCompleteControllerData(infoByCanisterId)
+          ? SOURCE_PANE_CACHE_TTL_MS
+          : SOURCE_PANE_NEGATIVE_CACHE_TTL_MS;
       } catch (error) {
         const reason = normalizeLoadError(error);
         applySourcePaneModuleHashes({}, { fallbackTitle: reason });
+        sourcePaneModuleHashesLoadedAt = now();
+        sourcePaneModuleHashesLoadedTtlMs = SOURCE_PANE_NEGATIVE_CACHE_TTL_MS;
       } finally {
         sourcePaneModuleHashesRequest = null;
       }

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { createSourcePaneController } from '../src/app/source-pane-controller.js';
 
@@ -157,4 +158,47 @@ test('source pane marks values unavailable with the normalized loader failure', 
   assert.equal(moduleHash.title, 'normalized:network down');
   assert.equal(controllers.innerHTML, 'Unavailable');
   assert.equal(controllers.title, 'normalized:network down');
+});
+
+test('source pane retries incomplete module hash responses with the short negative TTL', async () => {
+  const moduleHash = makeNode('data-source-module-hash', 'aaaaa-aa');
+  const controllers = makeNode('data-source-controllers', 'aaaaa-aa');
+  let calls = 0;
+  let currentNow = 1_000;
+
+  await withFakeBrowser({ nodes: [moduleHash, controllers] }, async (storage) => {
+    const controller = createSourcePaneController({
+      frontendConfig: { historianCanisterId: 'hist-aa' },
+      isLocalHost: () => false,
+      now: () => currentNow,
+      loadCanisterInfo: async () => {
+        calls += 1;
+        return [];
+      },
+    });
+
+    await controller.ensureLoaded();
+    currentNow += 29_000;
+    await controller.ensureLoaded();
+    currentNow += 2_000;
+    await controller.ensureLoaded();
+
+    assert.equal(storage.size, 0, 'incomplete responses should not be persisted to localStorage');
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(moduleHash.textContent, 'Unavailable');
+  assert.equal(controllers.innerHTML, 'Unavailable');
+});
+
+test('generated historian declaration marks get_canister_module_hashes as a query', () => {
+  const declaration = readFileSync(
+    new URL('../declarations/jupiter_historian/jupiter_historian.did.js', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    declaration,
+    /get_canister_module_hashes:\s*IDL\.Func\(\[\],\s*\[IDL\.Vec\(CanisterModuleHash\)\],\s*\['query'\]\)/,
+  );
 });

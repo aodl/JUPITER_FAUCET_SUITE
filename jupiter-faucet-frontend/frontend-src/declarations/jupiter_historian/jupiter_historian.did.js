@@ -165,7 +165,7 @@ export const idlFactory = ({ IDL }) => {
     total_memory_bytes: IDL.Opt(IDL.Nat64),
   });
   return IDL.Service({
-    get_canister_module_hashes: IDL.Func([], [IDL.Vec(CanisterModuleHash)], []),
+    get_canister_module_hashes: IDL.Func([], [IDL.Vec(CanisterModuleHash)], ['query']),
     list_canisters: IDL.Func([ListCanistersArgs], [ListCanistersResponse], ['query']),
     get_cycles_history: IDL.Func([GetCyclesHistoryArgs], [CyclesHistoryPage], ['query']),
     get_commitment_history: IDL.Func([GetCommitmentHistoryArgs], [CommitmentHistoryPage], ['query']),

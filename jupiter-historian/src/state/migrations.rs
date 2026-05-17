@@ -68,6 +68,9 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         icp_xdr_rate: root.icp_xdr_rate,
         last_icp_xdr_rate_attempt_ts: root.last_icp_xdr_rate_attempt_ts,
         last_icp_xdr_rate_error: root.last_icp_xdr_rate_error,
+        canister_module_hash_cache: Vec::new(),
+        canister_module_hash_cache_updated_ts: None,
+        canister_module_hash_refresh_lock_ts: None,
     };
     rebuild_distinct_canisters(&mut st);
     st

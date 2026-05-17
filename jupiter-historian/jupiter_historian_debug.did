@@ -208,7 +208,7 @@ type DebugConfig = record {
   max_canisters_per_cycles_tick : nat32;
 };
 service : (InitArgs) -> {
-  get_canister_module_hashes : () -> (vec CanisterModuleHash);
+  get_canister_module_hashes : () -> (vec CanisterModuleHash) query;
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
   get_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;

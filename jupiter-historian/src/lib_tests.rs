@@ -91,6 +91,9 @@ mod tests {
             icp_xdr_rate: None,
             last_icp_xdr_rate_attempt_ts: None,
             last_icp_xdr_rate_error: None,
+            canister_module_hash_cache: Vec::new(),
+            canister_module_hash_cache_updated_ts: None,
+            canister_module_hash_refresh_lock_ts: None,
         }
     }
 
@@ -410,6 +413,91 @@ mod tests {
             status.total_memory_bytes,
             Some(status.heap_memory_bytes.unwrap_or(0).saturating_add(status.stable_memory_bytes.unwrap_or(0))),
         );
+    }
+
+    #[test]
+    fn get_canister_module_hashes_returns_cached_snapshot_without_live_refresh() {
+        let mut st = base_state();
+        let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        let controller = principal("77deu-baaaa-aaaar-qb6za-cai");
+        st.canister_module_hash_cache = vec![CanisterModuleHash {
+            canister_id,
+            module_hash_hex: Some("abc123".to_string()),
+            controllers: Some(vec![controller]),
+            heap_memory_bytes: Some(1024),
+            stable_memory_bytes: Some(2048),
+            total_memory_bytes: Some(3072),
+        }];
+        st.canister_module_hash_cache_updated_ts = Some(42);
+        state::set_state(st);
+
+        let hashes = get_canister_module_hashes();
+
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes[0].canister_id, canister_id);
+        assert_eq!(hashes[0].module_hash_hex.as_deref(), Some("abc123"));
+        assert_eq!(hashes[0].controllers, Some(vec![controller]));
+        assert_eq!(hashes[0].heap_memory_bytes, Some(1024));
+        assert_eq!(hashes[0].stable_memory_bytes, Some(2048));
+        assert_eq!(hashes[0].total_memory_bytes, Some(3072));
+    }
+
+    #[test]
+    fn canister_module_hash_success_requires_some_loaded_field() {
+        let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        let failed = CanisterModuleHash {
+            canister_id,
+            module_hash_hex: None,
+            controllers: None,
+            heap_memory_bytes: None,
+            stable_memory_bytes: None,
+            total_memory_bytes: None,
+        };
+        let mut successful = failed.clone();
+        successful.controllers = Some(Vec::new());
+
+        assert!(!canister_module_hash_has_any_success(&failed));
+        assert!(canister_module_hash_has_any_success(&successful));
+    }
+
+    #[test]
+    fn finish_canister_module_hash_refresh_ignores_stale_lock_owner() {
+        let mut st = base_state();
+        let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        st.canister_module_hash_cache = vec![CanisterModuleHash {
+            canister_id,
+            module_hash_hex: Some("old".to_string()),
+            controllers: None,
+            heap_memory_bytes: None,
+            stable_memory_bytes: None,
+            total_memory_bytes: None,
+        }];
+        st.canister_module_hash_cache_updated_ts = Some(5);
+        st.canister_module_hash_refresh_lock_ts = Some(10);
+        state::set_state(st);
+
+        let replacement = vec![CanisterModuleHash {
+            canister_id,
+            module_hash_hex: Some("new".to_string()),
+            controllers: None,
+            heap_memory_bytes: None,
+            stable_memory_bytes: None,
+            total_memory_bytes: None,
+        }];
+
+        finish_canister_module_hash_refresh(9, 20, replacement.clone());
+        state::with_state(|st| {
+            assert_eq!(st.canister_module_hash_cache[0].module_hash_hex.as_deref(), Some("old"));
+            assert_eq!(st.canister_module_hash_cache_updated_ts, Some(5));
+            assert_eq!(st.canister_module_hash_refresh_lock_ts, Some(10));
+        });
+
+        finish_canister_module_hash_refresh(10, 21, replacement);
+        state::with_state(|st| {
+            assert_eq!(st.canister_module_hash_cache[0].module_hash_hex.as_deref(), Some("new"));
+            assert_eq!(st.canister_module_hash_cache_updated_ts, Some(21));
+            assert_eq!(st.canister_module_hash_refresh_lock_ts, None);
+        });
     }
 
     #[test]

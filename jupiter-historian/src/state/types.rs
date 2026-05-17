@@ -622,6 +622,12 @@ pub(crate) struct State {
     pub icp_xdr_rate: Option<IcpXdrRateSnapshot>,
     pub last_icp_xdr_rate_attempt_ts: Option<u64>,
     pub last_icp_xdr_rate_error: Option<String>,
+    #[serde(default)]
+    pub canister_module_hash_cache: Vec<crate::CanisterModuleHash>,
+    #[serde(default)]
+    pub canister_module_hash_cache_updated_ts: Option<u64>,
+    #[serde(default)]
+    pub canister_module_hash_refresh_lock_ts: Option<u64>,
 }
 
 impl State {
@@ -673,6 +679,9 @@ impl State {
             icp_xdr_rate: None,
             last_icp_xdr_rate_attempt_ts: None,
             last_icp_xdr_rate_error: None,
+            canister_module_hash_cache: Vec::new(),
+            canister_module_hash_cache_updated_ts: None,
+            canister_module_hash_refresh_lock_ts: None,
         }
     }
 }

@@ -53,6 +53,14 @@ pub(crate) fn install_timers() {
     let interval_s = state::with_state(|st| st.config.scan_interval_seconds);
     ic_cdk_timers::set_timer(Duration::from_secs(1), async { main_tick(true).await; });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(interval_s.max(60)), || async { main_tick(false).await; });
+    ic_cdk_timers::set_timer(Duration::from_secs(5), async {
+        let now_secs = (ic_cdk::api::time() as u64) / 1_000_000_000;
+        crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
+    });
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(crate::read_model::MODULE_HASH_REFRESH_INTERVAL_SECONDS), || async {
+        let now_secs = (ic_cdk::api::time() as u64) / 1_000_000_000;
+        crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
+    });
 }
 
 pub async fn main_tick(force: bool) {

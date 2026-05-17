@@ -191,7 +191,7 @@ pub struct ListRecentCommitmentsResponse {
     pub items: Vec<RecentCommitmentListItem>,
 }
 
-#[derive(CandidType, Deserialize, Clone, Serialize)]
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
 pub struct CanisterModuleHash {
     pub canister_id: Principal,
     pub module_hash_hex: Option<String>,

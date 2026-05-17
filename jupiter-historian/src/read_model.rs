@@ -174,7 +174,11 @@ pub(super) fn get_public_status() -> PublicStatus {
     })
 }
 
-pub(super) fn source_module_hash_canister_ids() -> Vec<Principal> {
+pub(crate) const MODULE_HASH_CACHE_TTL_SECONDS: u64 = 60 * 60;
+pub(crate) const MODULE_HASH_REFRESH_INTERVAL_SECONDS: u64 = 5 * 60;
+const MODULE_HASH_REFRESH_LEASE_SECONDS: u64 = 5 * 60;
+
+pub(crate) fn source_module_hash_canister_ids() -> Vec<Principal> {
     [
         "uccpi-cqaaa-aaaar-qby3q-cai",
         "acjuz-liaaa-aaaar-qb4qq-cai",
@@ -188,8 +192,7 @@ pub(super) fn source_module_hash_canister_ids() -> Vec<Principal> {
     .collect()
 }
 
-#[ic_cdk::update]
-pub(super) async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
+async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let canister_ids = source_module_hash_canister_ids();
     let blackhole = clients::blackhole::BlackholeCanister::new(mainnet_blackhole_id());
     let mut hashes = Vec::with_capacity(canister_ids.len());
@@ -237,6 +240,72 @@ pub(super) async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
         });
     }
     hashes
+}
+
+pub(crate) fn canister_module_hash_has_any_success(hash: &CanisterModuleHash) -> bool {
+    hash.module_hash_hex.is_some()
+        || hash.controllers.is_some()
+        || hash.heap_memory_bytes.is_some()
+        || hash.stable_memory_bytes.is_some()
+        || hash.total_memory_bytes.is_some()
+}
+
+fn acquire_canister_module_hash_refresh(now_secs: u64) -> bool {
+    state::with_root_state_mut(|st| {
+        let stale = st
+            .canister_module_hash_cache_updated_ts
+            .map(|updated_ts| now_secs.saturating_sub(updated_ts) >= MODULE_HASH_CACHE_TTL_SECONDS)
+            .unwrap_or(true);
+        if !stale {
+            return false;
+        }
+        if st
+            .canister_module_hash_refresh_lock_ts
+            .map(|lock_ts| now_secs.saturating_sub(lock_ts) < MODULE_HASH_REFRESH_LEASE_SECONDS)
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        st.canister_module_hash_refresh_lock_ts = Some(now_secs);
+        true
+    })
+}
+
+pub(crate) fn finish_canister_module_hash_refresh(lock_ts: u64, completed_ts: u64, hashes: Vec<CanisterModuleHash>) {
+    state::with_root_state_mut(|st| {
+        if st.canister_module_hash_refresh_lock_ts != Some(lock_ts) {
+            return;
+        }
+        st.canister_module_hash_cache = hashes;
+        st.canister_module_hash_cache_updated_ts = Some(completed_ts);
+        st.canister_module_hash_refresh_lock_ts = None;
+    });
+}
+
+fn release_canister_module_hash_refresh(now_secs: u64) {
+    state::with_root_state_mut(|st| {
+        if st.canister_module_hash_refresh_lock_ts == Some(now_secs) {
+            st.canister_module_hash_refresh_lock_ts = None;
+        }
+    });
+}
+
+pub(crate) async fn refresh_canister_module_hash_cache_if_due(now_secs: u64) {
+    if !acquire_canister_module_hash_refresh(now_secs) {
+        return;
+    }
+    let hashes = load_canister_module_hashes().await;
+    if !hashes.iter().any(canister_module_hash_has_any_success) {
+        release_canister_module_hash_refresh(now_secs);
+        return;
+    }
+    let completed_ts = (ic_cdk::api::time() as u64) / 1_000_000_000;
+    finish_canister_module_hash_refresh(now_secs, completed_ts, hashes);
+}
+
+#[ic_cdk::query]
+pub(super) fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
+    state::with_state(|st| st.canister_module_hash_cache.clone())
 }
 
 #[ic_cdk::query]
