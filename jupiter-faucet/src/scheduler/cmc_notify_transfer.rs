@@ -1,4 +1,5 @@
-fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64, memo_bytes: Vec<u8>) -> TransferArg {
+use super::*;
+pub(super) fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64, memo_bytes: Vec<u8>) -> TransferArg {
     TransferArg {
         from_subaccount: state::with_state(|st| st.config.payout_subaccount),
         to,
@@ -9,7 +10,7 @@ fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nano
     }
 }
 
-fn deposit_account_for_pending(cmc_id: candid::Principal, pending: &PendingNotification) -> Account {
+pub(super) fn deposit_account_for_pending(cmc_id: candid::Principal, pending: &PendingNotification) -> Account {
     match pending.kind {
         TransferKind::RawIcp => Account { owner: pending.beneficiary, subaccount: None },
         TransferKind::NeuronStake => Account {
@@ -20,14 +21,14 @@ fn deposit_account_for_pending(cmc_id: candid::Principal, pending: &PendingNotif
     }
 }
 
-fn transfer_memo_for_pending(pending: &PendingNotification) -> Vec<u8> {
+pub(super) fn transfer_memo_for_pending(pending: &PendingNotification) -> Vec<u8> {
     pending
         .transfer_memo
         .clone()
         .unwrap_or_else(|| logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec())
 }
 
-async fn drive_pending_transfer(
+pub(super) async fn drive_pending_transfer(
     ledger: &impl LedgerClient,
     cmc: &impl CmcClient,
     governance: &impl GovernanceClient,
@@ -134,7 +135,7 @@ async fn drive_pending_transfer(
     }
 }
 
-async fn send_and_notify(
+pub(super) async fn send_and_notify(
     ledger: &impl LedgerClient,
     cmc: &impl CmcClient,
     governance: &impl GovernanceClient,

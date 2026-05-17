@@ -1,16 +1,17 @@
-fn recognition_delay_seconds() -> u64 {
+use super::*;
+pub(super) fn recognition_delay_seconds() -> u64 {
     state::with_state(|st| st.config.stake_recognition_delay_seconds.unwrap_or(DEFAULT_STAKE_RECOGNITION_DELAY_SECONDS))
 }
 
-fn effective_denom_scan_complete(job: &ActivePayoutJob) -> bool {
+pub(super) fn effective_denom_scan_complete(job: &ActivePayoutJob) -> bool {
     job.effective_denom_scan_complete.unwrap_or(true)
 }
 
-fn effective_denom_e8s(job: &ActivePayoutJob) -> u64 {
+pub(super) fn effective_denom_e8s(job: &ActivePayoutJob) -> u64 {
     job.effective_denom_staking_balance_e8s.unwrap_or(job.denom_staking_balance_e8s)
 }
 
-fn ensure_active_job(
+pub(super) fn ensure_active_job(
     now_nanos: u64,
     fee_e8s: u64,
     pot_start_e8s: u64,

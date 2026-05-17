@@ -1,8 +1,9 @@
-fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
+use super::*;
+pub(super) fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
-fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: RecentCommitment, max_entries: usize) -> bool {
+pub(super) fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: RecentCommitment, max_entries: usize) -> bool {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
         return false;
     }
@@ -14,7 +15,7 @@ fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: RecentCommit
     true
 }
 
-fn push_recent_neuron_commitment(recent: &mut Vec<RecentNeuronCommitment>, item: RecentNeuronCommitment, max_entries: usize) -> bool {
+pub(super) fn push_recent_neuron_commitment(recent: &mut Vec<RecentNeuronCommitment>, item: RecentNeuronCommitment, max_entries: usize) -> bool {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
         return false;
     }
@@ -26,7 +27,7 @@ fn push_recent_neuron_commitment(recent: &mut Vec<RecentNeuronCommitment>, item:
     true
 }
 
-fn push_recent_invalid_commitment(recent: &mut Vec<InvalidCommitment>, item: InvalidCommitment) {
+pub(super) fn push_recent_invalid_commitment(recent: &mut Vec<InvalidCommitment>, item: InvalidCommitment) {
     if recent.iter().any(|existing| existing.tx_id == item.tx_id) {
         return;
     }

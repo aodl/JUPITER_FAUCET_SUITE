@@ -1,4 +1,5 @@
-type Memory = VirtualMemory<DefaultMemoryImpl>;
+use super::*;
+pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
 
 // Historian stable memory IDs:
 // 0: root state
@@ -13,38 +14,38 @@ type Memory = VirtualMemory<DefaultMemoryImpl>;
 // 20: neuron commitment history index
 // 21: neuron commitment entries
 thread_local! {
-    static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
+    pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
-    static STABLE_ROOT_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
+    pub(super) static STABLE_ROOT_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_CANISTER_SOURCES_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableSourceSet, Memory>>> =
+    pub(super) static STABLE_CANISTER_SOURCES_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableSourceSet, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_CANISTER_META_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableCanisterMeta, Memory>>> =
+    pub(super) static STABLE_CANISTER_META_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableCanisterMeta, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
+    pub(super) static STABLE_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_CYCLES_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
+    pub(super) static STABLE_CYCLES_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>>> =
+    pub(super) static STABLE_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_CYCLES_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CyclesEntryKey, CyclesSample, Memory>>> =
+    pub(super) static STABLE_CYCLES_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CyclesEntryKey, CyclesSample, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_RAW_ICP_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
+    pub(super) static STABLE_RAW_ICP_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_RAW_ICP_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>>> =
+    pub(super) static STABLE_RAW_ICP_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_NEURON_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<u64, StableU64List, Memory>>> =
+    pub(super) static STABLE_NEURON_COMMITMENT_HISTORY_INDEX_MAP: std::cell::RefCell<Option<StableBTreeMap<u64, StableU64List, Memory>>> =
         std::cell::RefCell::new(None);
-    static STABLE_NEURON_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>>> =
+    pub(super) static STABLE_NEURON_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>>> =
         std::cell::RefCell::new(None);
-    static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
-    static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    static PERSISTENCE_DIRTY_SECTIONS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
-    static DIRTY_REGISTRY_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
-    static DIRTY_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
-    static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
-    static DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
-    static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = std::cell::RefCell::new(BTreeSet::new());
+    pub(super) static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
+    pub(super) static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    pub(super) static PERSISTENCE_DIRTY_SECTIONS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    pub(super) static DIRTY_REGISTRY_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    pub(super) static DIRTY_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    pub(super) static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    pub(super) static DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = std::cell::RefCell::new(BTreeSet::new());
+    pub(super) static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = std::cell::RefCell::new(BTreeSet::new());
 }
 
 pub(crate) const DIRTY_ROOT: u8 = 1 << 0;
@@ -60,7 +61,7 @@ pub(crate) const DIRTY_ALL: u8 = DIRTY_ROOT
     | DIRTY_RAW_ICP_COMMITMENTS
     | DIRTY_NEURON_COMMITMENTS;
 
-fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
+pub(super) fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
     STABLE_ROOT_STATE.with(|cell| {
         if cell.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
@@ -79,7 +80,7 @@ fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState,
 
 
 
-fn with_canister_sources_map<R>(
+pub(super) fn with_canister_sources_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableSourceSet, Memory>) -> R,
 ) -> R {
     STABLE_CANISTER_SOURCES_MAP.with(|map| {
@@ -95,7 +96,7 @@ fn with_canister_sources_map<R>(
     })
 }
 
-fn with_canister_meta_map<R>(
+pub(super) fn with_canister_meta_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableCanisterMeta, Memory>) -> R,
 ) -> R {
     STABLE_CANISTER_META_MAP.with(|map| {
@@ -113,7 +114,7 @@ fn with_canister_meta_map<R>(
 
 
 
-fn with_commitment_history_index_map<R>(
+pub(super) fn with_commitment_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
 ) -> R {
     STABLE_COMMITMENT_HISTORY_INDEX_MAP.with(|map| {
@@ -129,7 +130,7 @@ fn with_commitment_history_index_map<R>(
     })
 }
 
-fn with_cycles_history_index_map<R>(
+pub(super) fn with_cycles_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
 ) -> R {
     STABLE_CYCLES_HISTORY_INDEX_MAP.with(|map| {
@@ -145,7 +146,7 @@ fn with_cycles_history_index_map<R>(
     })
 }
 
-fn with_commitment_entry_map<R>(
+pub(super) fn with_commitment_entry_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>) -> R,
 ) -> R {
     STABLE_COMMITMENT_ENTRY_MAP.with(|map| {
@@ -161,7 +162,7 @@ fn with_commitment_entry_map<R>(
     })
 }
 
-fn with_cycles_entry_map<R>(
+pub(super) fn with_cycles_entry_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<CyclesEntryKey, CyclesSample, Memory>) -> R,
 ) -> R {
     STABLE_CYCLES_ENTRY_MAP.with(|map| {
@@ -177,7 +178,7 @@ fn with_cycles_entry_map<R>(
     })
 }
 
-fn with_raw_icp_commitment_history_index_map<R>(
+pub(super) fn with_raw_icp_commitment_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
 ) -> R {
     STABLE_RAW_ICP_COMMITMENT_HISTORY_INDEX_MAP.with(|map| {
@@ -193,7 +194,7 @@ fn with_raw_icp_commitment_history_index_map<R>(
     })
 }
 
-fn with_raw_icp_commitment_entry_map<R>(
+pub(super) fn with_raw_icp_commitment_entry_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<CommitmentEntryKey, CommitmentSample, Memory>) -> R,
 ) -> R {
     STABLE_RAW_ICP_COMMITMENT_ENTRY_MAP.with(|map| {
@@ -209,7 +210,7 @@ fn with_raw_icp_commitment_entry_map<R>(
     })
 }
 
-fn with_neuron_commitment_history_index_map<R>(
+pub(super) fn with_neuron_commitment_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<u64, StableU64List, Memory>) -> R,
 ) -> R {
     STABLE_NEURON_COMMITMENT_HISTORY_INDEX_MAP.with(|map| {
@@ -225,7 +226,7 @@ fn with_neuron_commitment_history_index_map<R>(
     })
 }
 
-fn with_neuron_commitment_entry_map<R>(
+pub(super) fn with_neuron_commitment_entry_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>) -> R,
 ) -> R {
     STABLE_NEURON_COMMITMENT_ENTRY_MAP.with(|map| {

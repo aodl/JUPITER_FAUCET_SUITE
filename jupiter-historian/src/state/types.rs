@@ -1,14 +1,14 @@
-use candid::{CandidType, Principal};
-use ic_stable_structures::{
+pub(super) use candid::{CandidType, Principal};
+pub(super) use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
     DefaultMemoryImpl, StableBTreeMap, StableCell, Storable,
 };
-use icrc_ledger_types::icrc1::account::Account;
-use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write;
+pub(super) use icrc_ledger_types::icrc1::account::Account;
+pub(super) use serde::{Deserialize, Serialize};
+pub(super) use std::borrow::Cow;
+pub(super) use std::collections::{BTreeMap, BTreeSet};
+pub(super) use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) struct Config {
@@ -329,7 +329,7 @@ pub(crate) struct StableRootState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct PrincipalKey(Vec<u8>);
+pub(super) struct PrincipalKey(Vec<u8>);
 
 impl From<&Principal> for PrincipalKey {
     fn from(value: &Principal) -> Self {
@@ -344,7 +344,7 @@ impl From<Principal> for PrincipalKey {
 }
 
 impl PrincipalKey {
-    fn to_principal(&self) -> Principal {
+    pub(super) fn to_principal(&self) -> Principal {
         Principal::from_slice(&self.0)
     }
 }
@@ -365,7 +365,7 @@ impl Storable for PrincipalKey {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-struct StableSourceSet(pub BTreeSet<CanisterSource>);
+pub(super) struct StableSourceSet(pub BTreeSet<CanisterSource>);
 
 impl Storable for StableSourceSet {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
@@ -381,7 +381,7 @@ impl Storable for StableSourceSet {
 
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-struct StableU64List(pub Vec<u64>);
+pub(super) struct StableU64List(pub Vec<u64>);
 
 impl Storable for StableU64List {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
@@ -396,13 +396,13 @@ impl Storable for StableU64List {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct CommitmentEntryKey {
+pub(super) struct CommitmentEntryKey {
     canister: PrincipalKey,
     tx_id: u64,
 }
 
 impl CommitmentEntryKey {
-    fn new(canister: impl Into<PrincipalKey>, tx_id: u64) -> Self {
+    pub(super) fn new(canister: impl Into<PrincipalKey>, tx_id: u64) -> Self {
         Self {
             canister: canister.into(),
             tx_id,
@@ -439,13 +439,13 @@ impl Storable for CommitmentEntryKey {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct NeuronCommitmentEntryKey {
+pub(super) struct NeuronCommitmentEntryKey {
     neuron_id: u64,
     tx_id: u64,
 }
 
 impl NeuronCommitmentEntryKey {
-    fn new(neuron_id: u64, tx_id: u64) -> Self {
+    pub(super) fn new(neuron_id: u64, tx_id: u64) -> Self {
         Self { neuron_id, tx_id }
     }
 }
@@ -478,13 +478,13 @@ impl Storable for NeuronCommitmentEntryKey {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct CyclesEntryKey {
+pub(super) struct CyclesEntryKey {
     canister: PrincipalKey,
     timestamp_nanos: u64,
 }
 
 impl CyclesEntryKey {
-    fn new(canister: impl Into<PrincipalKey>, timestamp_nanos: u64) -> Self {
+    pub(super) fn new(canister: impl Into<PrincipalKey>, timestamp_nanos: u64) -> Self {
         Self {
             canister: canister.into(),
             timestamp_nanos,

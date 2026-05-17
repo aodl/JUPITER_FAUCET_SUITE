@@ -1,4 +1,5 @@
-async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_balance_e8s: u64) {
+use super::*;
+pub(super) async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_balance_e8s: u64) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
     let prev_latest = state::with_state(|st| st.last_observed_latest_tx_id);
     let first_page = match index
@@ -46,13 +47,13 @@ async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_ba
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LatestScan {
+pub(super) enum LatestScan {
     Read(Option<u64>),
     Unreadable,
     InvariantBroken,
 }
 
-fn record_latest_unreadable_failure(st: &mut state::State) {
+pub(super) fn record_latest_unreadable_failure(st: &mut state::State) {
     st.consecutive_index_latest_invariant_failures = Some(0);
     st.consecutive_index_latest_unreadable_failures = Some(
         st.consecutive_index_latest_unreadable_failures
@@ -64,7 +65,7 @@ fn record_latest_unreadable_failure(st: &mut state::State) {
     }
 }
 
-fn record_latest_invariant_failure(st: &mut state::State) {
+pub(super) fn record_latest_invariant_failure(st: &mut state::State) {
     st.consecutive_index_latest_unreadable_failures = Some(0);
     st.consecutive_index_latest_invariant_failures = Some(
         st.consecutive_index_latest_invariant_failures
@@ -77,11 +78,11 @@ fn record_latest_invariant_failure(st: &mut state::State) {
 }
 
 
-fn index_page_descending(txs: &[IndexTransactionWithId]) -> bool {
+pub(super) fn index_page_descending(txs: &[IndexTransactionWithId]) -> bool {
     txs.first().zip(txs.last()).map(|(first, last)| first.id > last.id).unwrap_or(false)
 }
 
-fn index_page_descending_from_cursor(txs: &[IndexTransactionWithId], cursor: Option<u64>) -> bool {
+pub(super) fn index_page_descending_from_cursor(txs: &[IndexTransactionWithId], cursor: Option<u64>) -> bool {
     if txs.len() >= 2 {
         return index_page_descending(txs);
     }
@@ -91,7 +92,7 @@ fn index_page_descending_from_cursor(txs: &[IndexTransactionWithId], cursor: Opt
     }
 }
 
-fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<u64> {
+pub(super) fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<u64> {
     if index_page_descending(txs) {
         txs.first().map(|tx| tx.id)
     } else {
@@ -99,11 +100,11 @@ fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<u64> {
     }
 }
 
-fn index_page_next_cursor(txs: &[IndexTransactionWithId]) -> Option<u64> {
+pub(super) fn index_page_next_cursor(txs: &[IndexTransactionWithId]) -> Option<u64> {
     txs.last().map(|tx| tx.id)
 }
 
-fn tx_is_after_cursor_for_page(tx_id: u64, cursor: Option<u64>, descending: bool) -> bool {
+pub(super) fn tx_is_after_cursor_for_page(tx_id: u64, cursor: Option<u64>, descending: bool) -> bool {
     match cursor {
         None => true,
         Some(last_seen) if descending => tx_id < last_seen,
@@ -111,7 +112,7 @@ fn tx_is_after_cursor_for_page(tx_id: u64, cursor: Option<u64>, descending: bool
     }
 }
 
-async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: Option<u64>) -> LatestScan {
+pub(super) async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: Option<u64>) -> LatestScan {
     let mut cursor = start;
     let mut latest = start;
     let mut pages_scanned = 0u64;
@@ -151,7 +152,7 @@ async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: 
     }
 }
 
-fn apply_anchor_observation(st: &mut state::State, observed_oldest: Option<u64>) {
+pub(super) fn apply_anchor_observation(st: &mut state::State, observed_oldest: Option<u64>) {
     let Some(expected_first) = st.config.expected_first_staking_tx_id else { return; };
     if observed_oldest == Some(expected_first) {
         st.consecutive_index_anchor_failures = Some(0);
@@ -163,7 +164,7 @@ fn apply_anchor_observation(st: &mut state::State, observed_oldest: Option<u64>)
     }
 }
 
-fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, latest_scan: LatestScan) {
+pub(super) fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, latest_scan: LatestScan) {
     match (st.last_observed_staking_balance_e8s, st.last_observed_latest_tx_id) {
         (None, _) => {
             st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
@@ -197,7 +198,7 @@ fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, lates
     }
 }
 
-fn apply_cmc_run_result(st: &mut state::State, attempts: u64, successes: u64, zero_success_run_counts: bool) {
+pub(super) fn apply_cmc_run_result(st: &mut state::State, attempts: u64, successes: u64, zero_success_run_counts: bool) {
     if attempts == 0 {
         return;
     }
@@ -214,7 +215,7 @@ fn apply_cmc_run_result(st: &mut state::State, attempts: u64, successes: u64, ze
     }
 }
 
-async fn zero_success_run_counts_toward_rescue(
+pub(super) async fn zero_success_run_counts_toward_rescue(
     status_client: &impl CanisterStatusClient,
     job: &ActivePayoutJob,
 ) -> bool {
@@ -230,7 +231,7 @@ async fn zero_success_run_counts_toward_rescue(
     false
 }
 
-fn apply_job_health_observations(st: &mut state::State, job: &ActivePayoutJob, zero_success_run_counts: bool) {
+pub(super) fn apply_job_health_observations(st: &mut state::State, job: &ActivePayoutJob, zero_success_run_counts: bool) {
     apply_anchor_observation(st, job.observed_oldest_tx_id);
     apply_latest_observation(st, job.denom_staking_balance_e8s, LatestScan::Read(job.observed_latest_tx_id));
     apply_cmc_run_result(
@@ -241,7 +242,7 @@ fn apply_job_health_observations(st: &mut state::State, job: &ActivePayoutJob, z
     );
 }
 
-fn maybe_latch_bootstrap_rescue(now_secs: u64) {
+pub(super) fn maybe_latch_bootstrap_rescue(now_secs: u64) {
     state::with_state_mut(|st| {
         if st.forced_rescue_reason.is_none()
             && policy::bootstrap_rescue_due(now_secs, st.blackhole_armed_since_ts, st.last_successful_transfer_ts)

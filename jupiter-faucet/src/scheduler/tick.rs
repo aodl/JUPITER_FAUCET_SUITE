@@ -1,4 +1,5 @@
-struct MainGuard {
+use super::*;
+pub(super) struct MainGuard {
     active: bool,
     lease_expires_at_ts: u64,
 }
@@ -72,7 +73,7 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
     });
 }
 
-async fn main_tick(force: bool) {
+pub(super) async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
@@ -84,7 +85,7 @@ async fn main_tick(force: bool) {
     run_main_tick_with_clients(force, now_nanos, now_secs, &ledger, &index, &cmc, &governance, &status_client).await;
 }
 
-async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClient, G: GovernanceClient, S: CanisterStatusClient>(
+pub(super) async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClient, G: GovernanceClient, S: CanisterStatusClient>(
     force: bool,
     now_nanos: u64,
     now_secs: u64,
@@ -111,7 +112,7 @@ async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClien
     guard.finish(now_secs, if ok { None } else { Some(3001) });
 }
 
-fn self_canister_principal() -> Principal {
+pub(super) fn self_canister_principal() -> Principal {
     #[cfg(test)]
     {
         Principal::anonymous()
@@ -122,7 +123,7 @@ fn self_canister_principal() -> Principal {
     }
 }
 
-fn payout_account() -> Account {
+pub(super) fn payout_account() -> Account {
     let payout_subaccount = state::with_state(|st| st.config.payout_subaccount);
     Account { owner: self_canister_principal(), subaccount: payout_subaccount }
 }

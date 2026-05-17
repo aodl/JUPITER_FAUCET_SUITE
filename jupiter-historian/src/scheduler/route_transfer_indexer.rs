@@ -1,4 +1,5 @@
-async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_secs: u64, index: &I) -> Result<(), String> {
+use super::*;
+pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_secs: u64, index: &I) -> Result<(), String> {
     let cfg = state::with_state(|st| st.config.clone());
     let routes = indexed_route_kinds();
     let active = state::with_root_state_mut(|st| {

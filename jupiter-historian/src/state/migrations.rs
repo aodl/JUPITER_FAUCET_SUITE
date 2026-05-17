@@ -1,8 +1,9 @@
+use super::*;
 pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
-fn restore_state_current(root: StableRootState) -> State {
+pub(super) fn restore_state_current(root: StableRootState) -> State {
     let canister_sources = with_canister_sources_map(|map| {
         let mut out = BTreeMap::new();
         for (key, value) in map.iter() {

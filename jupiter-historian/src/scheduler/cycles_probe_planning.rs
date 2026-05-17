@@ -1,4 +1,5 @@
-fn enqueue_initial_cycles_probe(st: &mut crate::state::State, canister_id: candid::Principal) {
+use super::*;
+pub(super) fn enqueue_initial_cycles_probe(st: &mut crate::state::State, canister_id: candid::Principal) {
     if st.initial_cycles_probe_queue.contains(&canister_id) {
         return;
     }
@@ -11,7 +12,7 @@ fn enqueue_initial_cycles_probe(st: &mut crate::state::State, canister_id: candi
     st.initial_cycles_probe_queue.push(canister_id);
 }
 
-fn should_probe_memo_registered_canister(st: &crate::state::State, canister_id: candid::Principal) -> bool {
+pub(super) fn should_probe_memo_registered_canister(st: &crate::state::State, canister_id: candid::Principal) -> bool {
     let Some(sources) = st.canister_sources.get(&canister_id) else {
         return false;
     };
@@ -21,7 +22,7 @@ fn should_probe_memo_registered_canister(st: &crate::state::State, canister_id: 
     crate::memo_source_is_registered(st, &canister_id, sources)
 }
 
-fn build_cycles_sweep_canisters(
+pub(super) fn build_cycles_sweep_canisters(
     st: &crate::state::State,
     self_id: candid::Principal,
 ) -> Vec<candid::Principal> {

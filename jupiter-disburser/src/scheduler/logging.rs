@@ -1,8 +1,9 @@
-fn log_error(code: u32) {
+use super::*;
+pub(super) fn log_error(code: u32) {
     ic_cdk::println!("ERR:{}", code);
 }
 
-fn log_cycles() {
+pub(super) fn log_cycles() {
     #[cfg(test)]
     {
         return;
@@ -14,12 +15,12 @@ fn log_cycles() {
     }
 }
 
-fn log_current_config() {
+pub(super) fn log_current_config() {
     let line = state::with_state(|st| state::runtime_config_log_line(&st.config));
     ic_cdk::println!("{}", line);
 }
 
-fn self_canister_principal() -> Principal {
+pub(super) fn self_canister_principal() -> Principal {
     #[cfg(test)]
     {
         Principal::anonymous()
@@ -30,7 +31,7 @@ fn self_canister_principal() -> Principal {
     }
 }
 
-fn should_clear_payout_plan_on_transfer_error(err: &TransferError) -> bool {
+pub(super) fn should_clear_payout_plan_on_transfer_error(err: &TransferError) -> bool {
     match err {
         TransferError::TemporarilyUnavailable => false,
         // Duplicate is handled as success at the match-site above, so if it ever reaches here

@@ -1,16 +1,12 @@
-mod clients;
-mod logic;
-mod scheduler;
-mod state;
+use super::*;
+pub(crate) use candid::{CandidType, Deserialize, Nat, Principal};
+pub(crate) use icrc_ledger_types::icrc1::account::Account;
+pub(crate) use num_traits::ToPrimitive;
+pub(crate) use serde::Serialize;
+pub(crate) use std::cmp::Reverse;
+pub(crate) use std::collections::{BTreeMap, BTreeSet};
 
-use candid::{CandidType, Deserialize, Nat, Principal};
-use icrc_ledger_types::icrc1::account::Account;
-use num_traits::ToPrimitive;
-use serde::Serialize;
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
-
-use crate::state::{
+pub(crate) use crate::state::{
     CanisterMeta, CanisterSource, Config, CommitmentIndexFault, CommitmentSample, CyclesSample,
     InvalidCommitment, IcpXdrRateSnapshot, RecentCommitment, State,
 };
@@ -27,15 +23,15 @@ pub(crate) const MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP: u32 = 500;
 
 pub(crate) const MIN_MIN_TX_E8S: u64 = 10_000_000;
 
-fn assert_non_anonymous_principal(name: &str, principal: Principal) {
+pub(crate) fn assert_non_anonymous_principal(name: &str, principal: Principal) {
     assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
 }
 
-fn assert_non_anonymous_account(name: &str, account: &Account) {
+pub(crate) fn assert_non_anonymous_account(name: &str, account: &Account) {
     assert_non_anonymous_principal(&format!("{name}.owner"), account.owner);
 }
 
-fn validate_config(cfg: &Config) {
+pub(crate) fn validate_config(cfg: &Config) {
     assert_non_anonymous_account("staking_account", &cfg.staking_account);
     assert_non_anonymous_account("output_source_account", &cfg.output_source_account);
     assert_non_anonymous_account("output_account", &cfg.output_account);
@@ -59,64 +55,64 @@ fn validate_config(cfg: &Config) {
     assert!(cfg.min_tx_e8s >= MIN_MIN_TX_E8S, "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)");
 }
 
-fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
+pub(crate) fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
-fn invalid_commitment_sort_key(item: &InvalidCommitment) -> (u64, u64) {
+pub(crate) fn invalid_commitment_sort_key(item: &InvalidCommitment) -> (u64, u64) {
     (item.timestamp_nanos.unwrap_or(0), item.tx_id)
 }
 
-fn clamp_public_limit(limit: Option<u32>, default: u32) -> usize {
+pub(crate) fn clamp_public_limit(limit: Option<u32>, default: u32) -> usize {
     limit.unwrap_or(default).clamp(1, MAX_PUBLIC_QUERY_LIMIT) as usize
 }
 
-fn clamp_cycles_entries_per_canister(value: u32) -> u32 {
+pub(crate) fn clamp_cycles_entries_per_canister(value: u32) -> u32 {
     value.clamp(1, MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP)
 }
 
-fn clamp_commitment_entries_per_canister(value: u32) -> u32 {
+pub(crate) fn clamp_commitment_entries_per_canister(value: u32) -> u32 {
     value.clamp(1, MAX_COMMITMENT_ENTRIES_PER_CANISTER_HARD_CAP)
 }
 
-fn clamp_index_pages_per_tick(value: u32) -> u32 {
+pub(crate) fn clamp_index_pages_per_tick(value: u32) -> u32 {
     value.clamp(1, MAX_INDEX_PAGES_PER_TICK_HARD_CAP)
 }
 
-fn clamp_canisters_per_cycles_tick(value: u32) -> u32 {
+pub(crate) fn clamp_canisters_per_cycles_tick(value: u32) -> u32 {
     value.clamp(1, MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP)
 }
 
 
-fn format_module_hash_hex(bytes: &[u8]) -> String {
+pub(crate) fn format_module_hash_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
 }
 
-fn nat_to_u64(n: &Nat) -> Option<u64> {
+pub(crate) fn nat_to_u64(n: &Nat) -> Option<u64> {
     n.0.to_u64()
 }
 
 #[cfg(target_arch = "wasm32")]
-fn allocated_heap_memory_bytes() -> u64 {
+pub(crate) fn allocated_heap_memory_bytes() -> u64 {
     (core::arch::wasm32::memory_size(0) as u64) * 65_536
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn allocated_heap_memory_bytes() -> u64 {
+pub(crate) fn allocated_heap_memory_bytes() -> u64 {
     0
 }
 
 #[cfg(target_arch = "wasm32")]
-fn allocated_stable_memory_bytes() -> u64 {
+pub(crate) fn allocated_stable_memory_bytes() -> u64 {
     ic_cdk::stable::stable_size().saturating_mul(65_536)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn allocated_stable_memory_bytes() -> u64 {
+pub(crate) fn allocated_stable_memory_bytes() -> u64 {
     0
 }
 
-fn normalize_recent_commitment_bucket(items: &mut Vec<RecentCommitment>, counts_toward_faucet: bool, max_entries: usize) {
+pub(crate) fn normalize_recent_commitment_bucket(items: &mut Vec<RecentCommitment>, counts_toward_faucet: bool, max_entries: usize) {
     items.retain(|item| item.counts_toward_faucet == counts_toward_faucet);
     items.sort_by(|a, b| commitment_sort_key(b).cmp(&commitment_sort_key(a)));
     let mut seen = BTreeSet::new();
@@ -124,7 +120,7 @@ fn normalize_recent_commitment_bucket(items: &mut Vec<RecentCommitment>, counts_
     items.truncate(max_entries);
 }
 
-fn normalize_recent_invalid_commitments(items: &mut Vec<InvalidCommitment>) {
+pub(crate) fn normalize_recent_invalid_commitments(items: &mut Vec<InvalidCommitment>) {
     items.sort_by(|a, b| invalid_commitment_sort_key(b).cmp(&invalid_commitment_sort_key(a)));
     let mut seen = BTreeSet::new();
     items.retain(|item| seen.insert(item.tx_id));
@@ -138,7 +134,7 @@ pub(crate) fn memo_source_is_registered(st: &State, canister_id: &Principal, sou
             .any(|item| item.counts_toward_faucet)
 }
 
-fn visible_sources_for_canister(st: &State, canister_id: &Principal) -> Option<BTreeSet<CanisterSource>> {
+pub(crate) fn visible_sources_for_canister(st: &State, canister_id: &Principal) -> Option<BTreeSet<CanisterSource>> {
     let mut sources = st.canister_sources.get(canister_id)?.clone();
     if !memo_source_is_registered(st, canister_id, &sources) {
         sources.remove(&CanisterSource::MemoCommitment);
@@ -151,7 +147,7 @@ fn visible_sources_for_canister(st: &State, canister_id: &Principal) -> Option<B
 
 
 
-fn clamp_config(st: &mut State) {
+pub(crate) fn clamp_config(st: &mut State) {
     st.config.max_cycles_entries_per_canister =
         clamp_cycles_entries_per_canister(st.config.max_cycles_entries_per_canister);
     st.config.max_commitment_entries_per_canister =
@@ -161,7 +157,7 @@ fn clamp_config(st: &mut State) {
         clamp_canisters_per_cycles_tick(st.config.max_canisters_per_cycles_tick);
 }
 
-fn normalize_runtime_state(st: &mut State) {
+pub(crate) fn normalize_runtime_state(st: &mut State) {
     clamp_config(st);
 
     let mut recent_commitments = st.recent_commitments.take().unwrap_or_default();

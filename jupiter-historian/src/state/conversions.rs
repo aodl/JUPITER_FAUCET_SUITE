@@ -1,3 +1,4 @@
+use super::*;
 impl From<Config> for StableConfig {
     fn from(value: Config) -> Self {
         Self {

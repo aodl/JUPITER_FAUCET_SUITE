@@ -1,3 +1,4 @@
+use super::*;
 pub(crate) fn set_state(st: State) {
     persist_snapshot(&st);
     clear_persistence_dirty();
@@ -18,15 +19,15 @@ pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
-fn persistence_batch_active() -> bool {
+pub(super) fn persistence_batch_active() -> bool {
     PERSISTENCE_BATCH_DEPTH.with(|depth| jupiter_persistence_batch::is_active(depth.get()))
 }
 
-fn mark_persistence_dirty(dirty_sections: u8) {
+pub(super) fn mark_persistence_dirty(dirty_sections: u8) {
     PERSISTENCE_DIRTY_SECTIONS.with(|dirty| dirty.set(dirty.get() | dirty_sections));
 }
 
-fn clear_persistence_dirty() {
+pub(super) fn clear_persistence_dirty() {
     PERSISTENCE_DIRTY_SECTIONS.with(|dirty| dirty.set(0));
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
     DIRTY_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
@@ -92,7 +93,7 @@ pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
     PersistenceBatch { active: true }
 }
 
-fn with_state_mut_sections_scoped<R>(
+pub(super) fn with_state_mut_sections_scoped<R>(
     dirty_sections: u8,
     registry_principal: Option<Principal>,
     commitment_principal: Option<Principal>,

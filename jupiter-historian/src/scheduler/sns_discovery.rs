@@ -1,4 +1,5 @@
-fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
+use super::*;
+pub(super) fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
     let Some(canister_id) = summary.canister_id else { return; };
     let cycles = summary.status.and_then(|status| status.cycles).and_then(|cycles| nat_to_u128(&cycles));
     let dirty_canister_id = canister_id.clone();
@@ -38,7 +39,7 @@ fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_en
     });
 }
 
-async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
+pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     sns_wasm: &W,

@@ -1,3 +1,4 @@
+use super::*;
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
 pub struct DebugState {
@@ -48,7 +49,7 @@ pub enum DebugRefreshIcpXdrRateResult {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::query]
-fn debug_state() -> DebugState {
+pub(super) fn debug_state() -> DebugState {
     guard_debug_api_not_production();
     state::with_state(|st| DebugState {
         distinct_canister_count: st.distinct_canisters.len() as u32,
@@ -68,7 +69,7 @@ fn debug_state() -> DebugState {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::query]
-fn debug_config() -> DebugConfig {
+pub(super) fn debug_config() -> DebugConfig {
     guard_debug_api_not_production();
     state::with_state(|st| DebugConfig {
         staking_account: st.config.staking_account.clone(),
@@ -95,14 +96,14 @@ fn debug_config() -> DebugConfig {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-async fn debug_driver_tick() {
+pub(super) async fn debug_driver_tick() {
     guard_debug_api_not_production();
     scheduler::main_tick(true).await;
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-async fn debug_refresh_icp_xdr_rate_cache() -> DebugRefreshIcpXdrRateResult {
+pub(super) async fn debug_refresh_icp_xdr_rate_cache() -> DebugRefreshIcpXdrRateResult {
     guard_debug_api_not_production();
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     let xrc_canister_id = state::with_state(|st| st.config.xrc_canister_id);
@@ -114,21 +115,21 @@ async fn debug_refresh_icp_xdr_rate_cache() -> DebugRefreshIcpXdrRateResult {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_last_completed_cycles_sweep_ts(ts: Option<u64>) {
+pub(super) fn debug_set_last_completed_cycles_sweep_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| st.last_completed_cycles_sweep_ts = ts.unwrap_or(0));
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_last_sns_discovery_ts(ts: Option<u64>) {
+pub(super) fn debug_set_last_sns_discovery_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| st.last_sns_discovery_ts = ts.unwrap_or(0));
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
+pub(super) fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| {
         st.last_indexed_staking_tx_id = tx_id;
@@ -145,7 +146,7 @@ fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_reset_runtime_state() {
+pub(super) fn debug_reset_runtime_state() {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| {
         st.active_cycles_sweep = None;
@@ -156,14 +157,14 @@ fn debug_reset_runtime_state() {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
+pub(super) fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
 }
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_reset_derived_state() {
+pub(super) fn debug_reset_derived_state() {
     guard_debug_api_not_production();
     state::with_state_mut(|st| {
         st.distinct_canisters.clear();
@@ -213,7 +214,7 @@ fn debug_reset_derived_state() {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_icp_xdr_rate_fetched_at_ts(ts: Option<u64>) {
+pub(super) fn debug_set_icp_xdr_rate_fetched_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| {
         st.last_icp_xdr_rate_attempt_ts = ts;

@@ -1,4 +1,5 @@
-fn desired_rescue_controllers(
+use super::*;
+pub(super) fn desired_rescue_controllers(
     now_secs: u64,
     blackhole_armed: bool,
     blackhole_controller: Option<Principal>,
@@ -27,7 +28,7 @@ fn desired_rescue_controllers(
     Ok(Some(desired))
 }
 
-async fn attempt_rescue(now_secs: u64) {
+pub(super) async fn attempt_rescue(now_secs: u64) {
     maybe_latch_bootstrap_rescue(now_secs);
     let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_reason, skip_range_fault) = state::with_state(|st| {
         (
@@ -65,14 +66,14 @@ async fn attempt_rescue(now_secs: u64) {
     state::with_state_mut(|st| { st.last_rescue_check_ts = now_secs; st.rescue_triggered = rescue_active; });
 }
 
-async fn rescue_tick() {
+pub(super) async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     rescue_tick_with_resume_at(now_secs, || async {
         main_tick(true).await;
     }).await;
 }
 
-async fn rescue_tick_with_resume_at<F, Fut>(now_secs: u64, resume_active_job: F)
+pub(super) async fn rescue_tick_with_resume_at<F, Fut>(now_secs: u64, resume_active_job: F)
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = ()>,
@@ -84,7 +85,7 @@ where
     resume_active_job_if_present(resume_active_job).await;
 }
 
-async fn resume_active_job_if_present<F, Fut>(resume_active_job: F)
+pub(super) async fn resume_active_job_if_present<F, Fut>(resume_active_job: F)
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = ()>,

@@ -1,4 +1,7 @@
 #[cfg(feature = "debug_api")]
+use std::cell::RefCell;
+
+#[cfg(feature = "debug_api")]
 thread_local! {
     // Debug-only fault injection used by PocketIC E2E tests.
     // These are intentionally *not* persisted in stable memory.
@@ -42,29 +45,37 @@ pub(crate) fn debug_set_skip_maturity_initiation(enabled: bool) {
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_pause_after_planning() -> bool {
+pub(super) fn debug_pause_after_planning() -> bool {
     DEBUG_PAUSE_AFTER_PLANNING.with(|v| *v.borrow())
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_simulate_low_cycles() -> bool {
+pub(super) fn debug_simulate_low_cycles() -> bool {
     DEBUG_SIMULATE_LOW_CYCLES.with(|v| *v.borrow())
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_skip_maturity_initiation() -> bool {
+pub(super) fn debug_skip_maturity_initiation() -> bool {
     DEBUG_SKIP_MATURITY_INITIATION.with(|v| *v.borrow())
 }
 
 #[cfg(feature = "debug_api")]
-enum DebugSuccessfulTransferInjection {
+pub(super) fn debug_reset_successful_transfer_counter() {
+    DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|v| *v.borrow_mut() = 0);
+}
+
+#[cfg(not(feature = "debug_api"))]
+pub(super) fn debug_reset_successful_transfer_counter() {}
+
+#[cfg(feature = "debug_api")]
+pub(super) enum DebugSuccessfulTransferInjection {
     None,
     Abort,
     Trap,
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+pub(super) fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
     let abort_after_n = DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
     let trap_after_n = DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
     if abort_after_n.is_none() && trap_after_n.is_none() {

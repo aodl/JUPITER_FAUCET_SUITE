@@ -1,4 +1,5 @@
-async fn process_commitment_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
+use super::*;
+pub(super) async fn process_commitment_indexing<I: IndexClient>(index: &I, now_secs: u64) -> Result<(), String> {
     let cfg = state::with_state(|st| st.config.clone());
     let (had_fault, latest_cursor, oldest_cursor, order_descending, backfill_complete) = state::with_state(|st| {
         (

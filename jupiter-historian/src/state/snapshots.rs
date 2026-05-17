@@ -1,4 +1,5 @@
-fn build_root_snapshot(st: &State) -> StableRootState {
+use super::*;
+pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
     StableRootState {
         config: st.config.clone().into(),
         last_indexed_staking_tx_id: st.last_indexed_staking_tx_id,
@@ -40,7 +41,7 @@ fn build_root_snapshot(st: &State) -> StableRootState {
     }
 }
 
-fn persist_snapshot_sections_scoped(
+pub(super) fn persist_snapshot_sections_scoped(
     st: &State,
     dirty_sections: u8,
     registry_scope: Option<&BTreeSet<Principal>>,
@@ -92,10 +93,10 @@ fn persist_snapshot_sections_scoped(
     }
 }
 
-fn persist_snapshot_sections(st: &State, dirty_sections: u8) {
+pub(super) fn persist_snapshot_sections(st: &State, dirty_sections: u8) {
     persist_snapshot_sections_scoped(st, dirty_sections, None, None, None, None, None);
 }
 
-fn persist_snapshot(st: &State) {
+pub(super) fn persist_snapshot(st: &State) {
     persist_snapshot_sections(st, DIRTY_ALL);
 }

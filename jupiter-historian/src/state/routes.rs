@@ -1,4 +1,5 @@
-fn rebuild_distinct_canisters(st: &mut State) {
+use super::*;
+pub(super) fn rebuild_distinct_canisters(st: &mut State) {
     st.distinct_canisters = st
         .canister_sources
         .keys()
@@ -11,7 +12,7 @@ fn rebuild_distinct_canisters(st: &mut State) {
         .collect();
 }
 
-fn sync_canister_sources_map(
+pub(super) fn sync_canister_sources_map(
     current: &BTreeMap<Principal, BTreeSet<CanisterSource>>,
     scope: Option<&BTreeSet<Principal>>,
 ) {
@@ -54,7 +55,7 @@ fn sync_canister_sources_map(
     });
 }
 
-fn sync_canister_meta_map(current: &BTreeMap<Principal, CanisterMeta>, scope: Option<&BTreeSet<Principal>>) {
+pub(super) fn sync_canister_meta_map(current: &BTreeMap<Principal, CanisterMeta>, scope: Option<&BTreeSet<Principal>>) {
     with_canister_meta_map(|map| {
         match scope {
             Some(principals) => {
@@ -94,7 +95,7 @@ fn sync_canister_meta_map(current: &BTreeMap<Principal, CanisterMeta>, scope: Op
     });
 }
 
-fn sync_all_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
+pub(super) fn sync_all_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
     with_commitment_history_index_map(|map| map.clear_new());
     with_commitment_entry_map(|map| map.clear_new());
     for (principal, samples) in current {
@@ -112,7 +113,7 @@ fn sync_all_commitment_history_maps(current: &BTreeMap<Principal, Vec<Commitment
     }
 }
 
-fn sync_commitment_history_principals(
+pub(super) fn sync_commitment_history_principals(
     current: &BTreeMap<Principal, Vec<CommitmentSample>>,
     principals: &BTreeSet<Principal>,
 ) {

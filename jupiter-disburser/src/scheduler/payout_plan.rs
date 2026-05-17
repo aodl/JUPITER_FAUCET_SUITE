@@ -1,15 +1,15 @@
+use super::*;
 /// PAYOUT:
 /// - uses default staging account
 /// - persists a payout plan for deterministic retries
 /// - plans up to 3 transfers; skips any share <= fee (leaves it in staging)
-async fn process_payout<L: LedgerClient>(
+pub(super) async fn process_payout<L: LedgerClient>(
     ledger: &L,
     cfg: &state::Config,
     now_nanos: u64,
     now_secs: u64,
 ) -> bool {
-    #[cfg(feature = "debug_api")]
-    DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|c| *c.borrow_mut() = 0);
+    debug_reset_successful_transfer_counter();
 
     let staging = Account {
         owner: self_canister_principal(),

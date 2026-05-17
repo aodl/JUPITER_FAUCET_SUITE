@@ -1,12 +1,13 @@
-fn mainnet_ledger_id() -> Principal {
+use super::*;
+pub(super) fn mainnet_ledger_id() -> Principal {
     Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("invalid hardcoded ledger principal")
 }
 
-fn mainnet_index_id() -> Principal {
+pub(super) fn mainnet_index_id() -> Principal {
     Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").expect("invalid hardcoded index principal")
 }
 
-fn mainnet_blackhole_id() -> Principal {
+pub(super) fn mainnet_blackhole_id() -> Principal {
     Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("invalid hardcoded blackhole principal")
 }
 
@@ -38,7 +39,7 @@ pub(crate) fn mainnet_faucet_id() -> Principal {
     Principal::from_text("acjuz-liaaa-aaaar-qb4qq-cai").expect("invalid hardcoded faucet principal")
 }
 
-fn mainnet_sns_wasm_id() -> Principal {
+pub(super) fn mainnet_sns_wasm_id() -> Principal {
     Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("invalid hardcoded sns-wasm principal")
 }
 
@@ -47,23 +48,23 @@ pub(crate) fn mainnet_xrc_id() -> Principal {
 }
 
 #[cfg(any(test, feature = "debug_api"))]
-fn production_canister_id() -> Principal {
+pub(super) fn production_canister_id() -> Principal {
     Principal::from_text(env!("JUPITER_HISTORIAN_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
 }
 
 #[cfg(any(test, feature = "debug_api"))]
-fn is_production_canister(principal: Principal) -> bool {
+pub(super) fn is_production_canister(principal: Principal) -> bool {
     principal == production_canister_id()
 }
 
 #[cfg(feature = "debug_api")]
-fn guard_debug_api_not_production() {
+pub(super) fn guard_debug_api_not_production() {
     if is_production_canister(ic_cdk::api::canister_self()) {
         ic_cdk::trap("debug_api is disabled for the production canister");
     }
 }
 
-fn config_from_init_args(args: InitArgs) -> Config {
+pub(super) fn config_from_init_args(args: InitArgs) -> Config {
     let cfg = Config {
         staking_account: args.staking_account,
         output_source_account: args.output_source_account.unwrap_or_else(mainnet_disburser_staging_account),
@@ -89,14 +90,14 @@ fn config_from_init_args(args: InitArgs) -> Config {
     cfg
 }
 
-fn count_registered_canisters(st: &State) -> u64 {
+pub(super) fn count_registered_canisters(st: &State) -> u64 {
     st.canister_sources
         .iter()
         .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
         .count() as u64
 }
 
-fn count_sns_discovered_canisters(st: &State) -> u64 {
+pub(super) fn count_sns_discovered_canisters(st: &State) -> u64 {
     st.canister_sources
         .values()
         .filter(|sources| sources.contains(&CanisterSource::SnsDiscovery))
@@ -104,11 +105,11 @@ fn count_sns_discovered_canisters(st: &State) -> u64 {
 }
 
 
-fn effective_faucet_canister_id(st: &State) -> Principal {
+pub(super) fn effective_faucet_canister_id(st: &State) -> Principal {
     st.config.faucet_canister_id.clone().unwrap_or_else(mainnet_faucet_id)
 }
 
-fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Option<u64>) {
+pub(super) fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Option<u64>) {
     let mut count = 0u64;
     let mut total = 0u64;
     let mut last_ts = None;
@@ -120,11 +121,11 @@ fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Option<u64>) {
     (count, total, last_ts)
 }
 
-fn latest_cycles(history: &[CyclesSample]) -> Option<u128> {
+pub(super) fn latest_cycles(history: &[CyclesSample]) -> Option<u128> {
     history.iter().max_by_key(|item| item.timestamp_nanos).map(|item| item.cycles)
 }
 
-fn commitment_history_canister_ids(st: &State) -> BTreeSet<Principal> {
+pub(super) fn commitment_history_canister_ids(st: &State) -> BTreeSet<Principal> {
     st.commitment_history
         .keys()
         .copied()
@@ -132,7 +133,7 @@ fn commitment_history_canister_ids(st: &State) -> BTreeSet<Principal> {
         .collect()
 }
 
-fn cycles_history_canister_ids(st: &State) -> BTreeSet<Principal> {
+pub(super) fn cycles_history_canister_ids(st: &State) -> BTreeSet<Principal> {
     st.cycles_history
         .keys()
         .copied()
@@ -140,35 +141,35 @@ fn cycles_history_canister_ids(st: &State) -> BTreeSet<Principal> {
         .collect()
 }
 
-fn commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
+pub(super) fn commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
     st.commitment_history
         .get(&canister_id)
         .cloned()
         .unwrap_or_else(|| state::stable_commitment_history_for(canister_id))
 }
 
-fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec<CyclesSample> {
+pub(super) fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec<CyclesSample> {
     st.cycles_history
         .get(&canister_id)
         .cloned()
         .unwrap_or_else(|| state::stable_cycles_history_for(canister_id))
 }
 
-fn raw_icp_commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
+pub(super) fn raw_icp_commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
     st.raw_icp_commitment_history
         .get(&canister_id)
         .cloned()
         .unwrap_or_else(|| state::stable_raw_icp_commitment_history_for(canister_id))
 }
 
-fn neuron_commitment_history_snapshot(st: &State, neuron_id: u64) -> Vec<CommitmentSample> {
+pub(super) fn neuron_commitment_history_snapshot(st: &State, neuron_id: u64) -> Vec<CommitmentSample> {
     st.neuron_commitment_history
         .get(&neuron_id)
         .cloned()
         .unwrap_or_else(|| state::stable_neuron_commitment_history_for(neuron_id))
 }
 
-fn fallback_qualifying_commitment_count(st: &State) -> u64 {
+pub(super) fn fallback_qualifying_commitment_count(st: &State) -> u64 {
     let cycles_top_up_count = commitment_history_canister_ids(st)
         .into_iter()
         .flat_map(|canister_id| commitment_history_snapshot(st, canister_id).into_iter())
@@ -199,7 +200,7 @@ fn fallback_qualifying_commitment_count(st: &State) -> u64 {
         .saturating_add(neuron_count)
 }
 
-fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<RecentCommitment> {
+pub(super) fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<RecentCommitment> {
     let mut items: Vec<_> = commitment_history_canister_ids(st)
         .into_iter()
         .flat_map(|canister_id| {
@@ -220,7 +221,7 @@ fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<RecentCommitm
     items
 }
 
-fn fallback_recent_under_threshold_commitments_state(st: &State) -> Vec<RecentCommitment> {
+pub(super) fn fallback_recent_under_threshold_commitments_state(st: &State) -> Vec<RecentCommitment> {
     let mut items: Vec<_> = commitment_history_canister_ids(st)
         .into_iter()
         .flat_map(|canister_id| {
@@ -241,7 +242,7 @@ fn fallback_recent_under_threshold_commitments_state(st: &State) -> Vec<RecentCo
     items
 }
 
-fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
+pub(super) fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
     let mut items: Vec<_> = fallback_recent_qualifying_commitments_state(st)
         .into_iter()
         .map(|item| RecentCommitmentListItem {
@@ -296,7 +297,7 @@ fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
     items
 }
 
-fn initialize_config_defaults_if_missing(st: &mut State) {
+pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.cmc_canister_id.is_none() {
         st.config.cmc_canister_id = Some(mainnet_cmc_id());
     }
@@ -314,7 +315,7 @@ fn initialize_config_defaults_if_missing(st: &mut State) {
     }
 }
 
-fn initialize_derived_state_if_missing(st: &mut State) {
+pub(super) fn initialize_derived_state_if_missing(st: &mut State) {
     if st.qualifying_commitment_count.is_none() {
         st.qualifying_commitment_count = Some(fallback_qualifying_commitment_count(st));
     }
@@ -343,7 +344,7 @@ fn initialize_derived_state_if_missing(st: &mut State) {
     }
 }
 
-fn registered_canister_summary_for(st: &State, canister_id: Principal) -> Option<RegisteredCanisterSummary> {
+pub(super) fn registered_canister_summary_for(st: &State, canister_id: Principal) -> Option<RegisteredCanisterSummary> {
     let sources = visible_sources_for_canister(st, &canister_id)?;
     let history = commitment_history_snapshot(st, canister_id);
     if history.is_empty() {
@@ -363,15 +364,15 @@ fn registered_canister_summary_for(st: &State, canister_id: Principal) -> Option
     })
 }
 
-fn registered_canister_summary_total_desc_key(item: &RegisteredCanisterSummary) -> (Reverse<u64>, Principal) {
+pub(super) fn registered_canister_summary_total_desc_key(item: &RegisteredCanisterSummary) -> (Reverse<u64>, Principal) {
     (Reverse(item.total_qualifying_committed_e8s), item.canister_id)
 }
 
-fn remove_registered_canister_from_total_desc_index(index: &mut Vec<Principal>, canister_id: Principal) {
+pub(super) fn remove_registered_canister_from_total_desc_index(index: &mut Vec<Principal>, canister_id: Principal) {
     index.retain(|existing| *existing != canister_id);
 }
 
-fn insert_registered_canister_into_total_desc_index(
+pub(super) fn insert_registered_canister_into_total_desc_index(
     cache: &BTreeMap<Principal, RegisteredCanisterSummary>,
     index: &mut Vec<Principal>,
     canister_id: Principal,
@@ -392,7 +393,7 @@ fn insert_registered_canister_into_total_desc_index(
     index.insert(insert_at, canister_id);
 }
 
-fn registered_canister_summaries_total_desc_page(
+pub(super) fn registered_canister_summaries_total_desc_page(
     st: &State,
     page: u32,
     page_size: u32,
@@ -448,7 +449,7 @@ pub(crate) fn rebuild_registered_canister_summaries_cache(st: &mut State) {
     }
 }
 
-fn registered_canister_summaries(st: &State) -> Vec<RegisteredCanisterSummary> {
+pub(super) fn registered_canister_summaries(st: &State) -> Vec<RegisteredCanisterSummary> {
     if let Some(cache) = &st.registered_canister_summaries_cache {
         return cache.values().cloned().collect();
     }
@@ -461,7 +462,7 @@ fn registered_canister_summaries(st: &State) -> Vec<RegisteredCanisterSummary> {
 }
 
 #[ic_cdk::init]
-fn init(args: InitArgs) {
+pub(super) fn init(args: InitArgs) {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     let cfg = config_from_init_args(args);
     state::init_stable_storage();
@@ -472,7 +473,7 @@ fn init(args: InitArgs) {
     scheduler::install_timers();
 }
 
-fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
+pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
         if let Some(v) = args.staking_account {
             st.config.staking_account = v;
@@ -542,7 +543,7 @@ fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
 }
 
 #[ic_cdk::post_upgrade]
-fn post_upgrade(args: Option<UpgradeArgs>) {
+pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable().expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);

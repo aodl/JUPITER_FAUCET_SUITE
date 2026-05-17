@@ -19,19 +19,19 @@ pub(crate) fn debug_set_real_trap_after_successful_transfers(n: Option<u32>) {
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_reset_successful_transfer_counter() {
+pub(super) fn debug_reset_successful_transfer_counter() {
     DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK.with(|v| *v.borrow_mut() = 0);
 }
 
 #[cfg(feature = "debug_api")]
-enum DebugSuccessfulTransferInjection {
+pub(super) enum DebugSuccessfulTransferInjection {
     None,
     Abort,
     Trap,
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+pub(super) fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
     let abort_after_n = DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
     let trap_after_n = DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS.with(|v| *v.borrow());
     if abort_after_n.is_none() && trap_after_n.is_none() {
@@ -54,14 +54,14 @@ fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
 }
 
 #[cfg(not(feature = "debug_api"))]
-fn debug_reset_successful_transfer_counter() {}
+pub(super) fn debug_reset_successful_transfer_counter() {}
 
 #[cfg(not(feature = "debug_api"))]
-enum DebugSuccessfulTransferInjection {
+pub(super) enum DebugSuccessfulTransferInjection {
     None,
 }
 
 #[cfg(not(feature = "debug_api"))]
-fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+pub(super) fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
     DebugSuccessfulTransferInjection::None
 }

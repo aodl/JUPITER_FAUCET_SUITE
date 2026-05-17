@@ -1,12 +1,13 @@
+use super::*;
 #[derive(Clone, Debug, Default)]
-struct LocalSkipCandidate {
-    start_tx_id: Option<u64>,
-    end_tx_id: Option<u64>,
-    tx_count: u64,
+pub(super) struct LocalSkipCandidate {
+    pub(super) start_tx_id: Option<u64>,
+    pub(super) end_tx_id: Option<u64>,
+    pub(super) tx_count: u64,
 }
 
 impl LocalSkipCandidate {
-    fn from_job(job: &ActivePayoutJob) -> Self {
+    pub(super) fn from_job(job: &ActivePayoutJob) -> Self {
         Self {
             start_tx_id: job.skip_candidate_start_tx_id,
             end_tx_id: job.skip_candidate_end_tx_id,
@@ -14,7 +15,7 @@ impl LocalSkipCandidate {
         }
     }
 
-    fn note_skippable(&mut self, tx_id: u64) {
+    pub(super) fn note_skippable(&mut self, tx_id: u64) {
         if self.tx_count == 0 {
             self.start_tx_id = Some(tx_id);
             self.end_tx_id = Some(tx_id);
@@ -25,7 +26,7 @@ impl LocalSkipCandidate {
         self.tx_count = self.tx_count.saturating_add(1);
     }
 
-    fn finish_span(&mut self) -> Option<SkipRange> {
+    pub(super) fn finish_span(&mut self) -> Option<SkipRange> {
         let range = if self.tx_count >= MIN_SKIP_RANGE_TX_COUNT {
             Some(SkipRange {
                 start_tx_id: self.start_tx_id.expect("skip span start missing"),
@@ -39,7 +40,7 @@ impl LocalSkipCandidate {
     }
 }
 
-fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option<u64>) -> usize {
+pub(super) fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option<u64>) -> usize {
     let Some(last_seen) = cursor else { return 0; };
     for (idx, range) in skip_ranges.iter().enumerate() {
         if range.end_tx_id > last_seen {
@@ -49,7 +50,7 @@ fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option<u64>) -> u
     skip_ranges.len()
 }
 
-fn next_skip_jump_target(cursor: Option<u64>, skip_ranges: &[SkipRange], skip_range_idx: &mut usize) -> Option<u64> {
+pub(super) fn next_skip_jump_target(cursor: Option<u64>, skip_ranges: &[SkipRange], skip_range_idx: &mut usize) -> Option<u64> {
     let Some(last_seen) = cursor else { return None; };
     while let Some(range) = skip_ranges.get(*skip_range_idx) {
         if last_seen >= range.end_tx_id {
@@ -65,7 +66,7 @@ fn next_skip_jump_target(cursor: Option<u64>, skip_ranges: &[SkipRange], skip_ra
     None
 }
 
-fn record_completed_skip_range(
+pub(super) fn record_completed_skip_range(
     skip_candidate: &mut LocalSkipCandidate,
     pending_skip_ranges: &mut Vec<SkipRange>,
 ) {
@@ -74,7 +75,7 @@ fn record_completed_skip_range(
     }
 }
 
-fn persist_new_skip_ranges(
+pub(super) fn persist_new_skip_ranges(
     skip_ranges: &mut Vec<SkipRange>,
     pending_skip_ranges: &mut Vec<SkipRange>,
 ) -> Result<(), state::SkipRangeInsertError> {
@@ -92,11 +93,11 @@ fn persist_new_skip_ranges(
     Ok(())
 }
 
-fn latch_skip_range_invariant_rescue() {
+pub(super) fn latch_skip_range_invariant_rescue() {
     log_error(3111);
     state::latch_skip_range_invariant_fault();
 }
-fn flush_scan_progress(
+pub(super) fn flush_scan_progress(
     ignored_under_threshold_delta: &mut u64,
     ignored_bad_memo_delta: &mut u64,
     next_start: Option<u64>,

@@ -1,3 +1,4 @@
+use super::*;
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
     pub staking_account: Account,

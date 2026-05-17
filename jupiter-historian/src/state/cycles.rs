@@ -1,4 +1,5 @@
-fn sync_all_cycles_history_maps(current: &BTreeMap<Principal, Vec<CyclesSample>>) {
+use super::*;
+pub(super) fn sync_all_cycles_history_maps(current: &BTreeMap<Principal, Vec<CyclesSample>>) {
     with_cycles_history_index_map(|map| map.clear_new());
     with_cycles_entry_map(|map| map.clear_new());
     for (principal, samples) in current {
@@ -16,7 +17,7 @@ fn sync_all_cycles_history_maps(current: &BTreeMap<Principal, Vec<CyclesSample>>
     }
 }
 
-fn sync_cycles_history_principals(
+pub(super) fn sync_cycles_history_principals(
     current: &BTreeMap<Principal, Vec<CyclesSample>>,
     principals: &BTreeSet<Principal>,
 ) {
@@ -60,7 +61,7 @@ fn sync_cycles_history_principals(
     }
 }
 
-fn sync_all_raw_icp_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
+pub(super) fn sync_all_raw_icp_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
     with_raw_icp_commitment_history_index_map(|map| map.clear_new());
     with_raw_icp_commitment_entry_map(|map| map.clear_new());
     for (principal, samples) in current {
@@ -78,7 +79,7 @@ fn sync_all_raw_icp_commitment_history_maps(current: &BTreeMap<Principal, Vec<Co
     }
 }
 
-fn sync_raw_icp_commitment_history_principals(
+pub(super) fn sync_raw_icp_commitment_history_principals(
     current: &BTreeMap<Principal, Vec<CommitmentSample>>,
     principals: &BTreeSet<Principal>,
 ) {
@@ -122,7 +123,7 @@ fn sync_raw_icp_commitment_history_principals(
     }
 }
 
-fn sync_all_neuron_commitment_history_maps(current: &BTreeMap<u64, Vec<CommitmentSample>>) {
+pub(super) fn sync_all_neuron_commitment_history_maps(current: &BTreeMap<u64, Vec<CommitmentSample>>) {
     with_neuron_commitment_history_index_map(|map| map.clear_new());
     with_neuron_commitment_entry_map(|map| map.clear_new());
     for (neuron_id, samples) in current {
@@ -140,7 +141,7 @@ fn sync_all_neuron_commitment_history_maps(current: &BTreeMap<u64, Vec<Commitmen
     }
 }
 
-fn sync_neuron_commitment_history_ids(
+pub(super) fn sync_neuron_commitment_history_ids(
     current: &BTreeMap<u64, Vec<CommitmentSample>>,
     neuron_ids: &BTreeSet<u64>,
 ) {

@@ -1,4 +1,5 @@
-struct MainGuard {
+use super::*;
+pub(super) struct MainGuard {
     active: bool,
     lease_expires_at_ts: u64,
 }
@@ -94,7 +95,7 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
 /// - always logs "Cycles: <amount>" once per run
 /// - logs "CONFIG ..." only when the tick reaches the payout / maturity-disbursement path
 /// - logs only errors otherwise
-async fn main_tick(force: bool) {
+pub(super) async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time() as u64;
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
@@ -103,7 +104,7 @@ async fn main_tick(force: bool) {
     run_main_tick_with_clients(force, now_nanos, now_secs, &cfg, &ledger, &gov).await;
 }
 
-async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
+pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
     force: bool,
     now_nanos: u64,
     now_secs: u64,

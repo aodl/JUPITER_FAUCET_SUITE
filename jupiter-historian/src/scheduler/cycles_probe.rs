@@ -1,4 +1,5 @@
-async fn probe_and_record_cycles<B: BlackholeClient>(
+use super::*;
+pub(super) async fn probe_and_record_cycles<B: BlackholeClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     canister_id: candid::Principal,
@@ -82,7 +83,7 @@ async fn probe_and_record_cycles<B: BlackholeClient>(
     Ok(())
 }
 
-async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: GovernanceClient>(
+pub(super) async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: GovernanceClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     blackhole: &B,
@@ -133,7 +134,7 @@ async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: GovernanceCli
     Ok(())
 }
 
-async fn refresh_staking_neuron_after_registration<G: GovernanceClient>(governance: &G) {
+pub(super) async fn refresh_staking_neuron_after_registration<G: GovernanceClient>(governance: &G) {
     let subaccount = state::with_state(|st| st.config.staking_account.subaccount);
     let Some(subaccount) = subaccount else {
         log_error("historian staking neuron refresh skipped: staking account has no subaccount");
@@ -150,7 +151,7 @@ async fn refresh_staking_neuron_after_registration<G: GovernanceClient>(governan
     }
 }
 
-async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs: u64, blackhole: &B) -> Result<(), String> {
+pub(super) async fn process_cycles_sweep<B: BlackholeClient>(timestamp_nanos: u64, now_secs: u64, blackhole: &B) -> Result<(), String> {
     let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
         if st.active_cycles_sweep.is_none() {
             let self_id = ic_cdk::api::canister_self();

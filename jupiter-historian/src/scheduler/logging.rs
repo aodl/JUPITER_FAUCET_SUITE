@@ -1,9 +1,10 @@
-fn nat_to_u128(n: &Nat) -> Option<u128> {
+use super::*;
+pub(super) fn nat_to_u128(n: &Nat) -> Option<u128> {
     use num_traits::ToPrimitive;
     n.0.to_u128()
 }
 
-fn log_cycles_once_per_week(cycles: u128) {
+pub(super) fn log_cycles_once_per_week(cycles: u128) {
     #[cfg(test)]
     {
         let _ = cycles;
@@ -14,7 +15,7 @@ fn log_cycles_once_per_week(cycles: u128) {
     }
 }
 
-fn log_current_config() {
+pub(super) fn log_current_config() {
     #[cfg(test)]
     {}
     #[cfg(not(test))]
@@ -24,7 +25,7 @@ fn log_current_config() {
     }
 }
 
-fn log_error(message: &str) {
+pub(super) fn log_error(message: &str) {
     #[cfg(test)]
     {
         let _ = message;
@@ -35,7 +36,7 @@ fn log_error(message: &str) {
     }
 }
 
-fn latch_commitment_index_fault(now_secs: u64, last_cursor_tx_id: Option<u64>, offending_tx_id: u64, message: String) -> String {
+pub(super) fn latch_commitment_index_fault(now_secs: u64, last_cursor_tx_id: Option<u64>, offending_tx_id: u64, message: String) -> String {
     state::with_root_state_mut(|st| {
         match st.commitment_index_fault.as_mut() {
             Some(existing) => {

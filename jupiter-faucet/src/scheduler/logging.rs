@@ -1,9 +1,10 @@
+use super::*;
 #[cfg(test)]
 thread_local! {
-    static TEST_LOG_LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    pub(super) static TEST_LOG_LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn emit_log_line(line: String) {
+pub(super) fn emit_log_line(line: String) {
     #[cfg(test)]
     {
         TEST_LOG_LINES.with(|logs| logs.borrow_mut().push(line));
@@ -15,10 +16,10 @@ fn emit_log_line(line: String) {
     }
 }
 
-fn log_error(code: u32) {
+pub(super) fn log_error(code: u32) {
     emit_log_line(format!("ERR:{}", code));
 }
-fn log_cycles() {
+pub(super) fn log_cycles() {
     #[cfg(test)]
     {
         return;
@@ -30,7 +31,7 @@ fn log_cycles() {
     }
 }
 
-fn log_summary(summary: &state::Summary) {
+pub(super) fn log_summary(summary: &state::Summary) {
     emit_log_line(format!(
         "SUMMARY:topped_up_count={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={} effective_denom_e8s={}",
         summary.topped_up_count,
@@ -44,7 +45,7 @@ fn log_summary(summary: &state::Summary) {
     ));
 }
 
-fn log_current_config() {
+pub(super) fn log_current_config() {
     let line = state::with_state(|st| state::runtime_config_log_line(&st.config));
     emit_log_line(line);
 }

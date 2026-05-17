@@ -1,24 +1,25 @@
-fn original_blackhole_id() -> Principal {
+use super::*;
+pub(super) fn original_blackhole_id() -> Principal {
     Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai")
         .expect("invalid hardcoded original blackhole principal")
 }
 
-fn secure_mainnet_blackhole_id() -> Principal {
+pub(super) fn secure_mainnet_blackhole_id() -> Principal {
     Principal::from_text("77deu-baaaa-aaaar-qb6za-cai")
         .expect("invalid hardcoded secure mainnet blackhole principal")
 }
 
-fn should_try_original_blackhole_first(configured_blackhole_id: Principal) -> bool {
+pub(super) fn should_try_original_blackhole_first(configured_blackhole_id: Principal) -> bool {
     configured_blackhole_id == secure_mainnet_blackhole_id()
 }
 
-struct FallbackBlackholeClient<'a, P: BlackholeClient, F: BlackholeClient> {
+pub(super) struct FallbackBlackholeClient<'a, P: BlackholeClient, F: BlackholeClient> {
     primary: &'a P,
     fallback: &'a F,
 }
 
 impl<'a, P: BlackholeClient, F: BlackholeClient> FallbackBlackholeClient<'a, P, F> {
-    fn new(primary: &'a P, fallback: &'a F) -> Self {
+    pub(super) fn new(primary: &'a P, fallback: &'a F) -> Self {
         Self { primary, fallback }
     }
 }

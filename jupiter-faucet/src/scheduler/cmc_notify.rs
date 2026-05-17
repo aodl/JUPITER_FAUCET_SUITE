@@ -1,10 +1,11 @@
-fn created_at_time_is_valid_for_ledger(created_at_time_nanos: u64, now_nanos: u64) -> bool {
+use super::*;
+pub(super) fn created_at_time_is_valid_for_ledger(created_at_time_nanos: u64, now_nanos: u64) -> bool {
     let not_too_old = now_nanos.saturating_sub(created_at_time_nanos) <= LEDGER_CREATED_AT_MAX_AGE_NANOS;
     let not_too_far_in_future = created_at_time_nanos <= now_nanos.saturating_add(LEDGER_CREATED_AT_MAX_FUTURE_SKEW_NANOS);
     not_too_old && not_too_far_in_future
 }
 
-fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
+pub(super) fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
     state::with_state_mut(|st| {
         let job = st.active_payout_job.as_mut().expect("active payout job missing");
         if !created_at_time_is_valid_for_ledger(job.next_created_at_time_nanos, now_nanos) {
@@ -15,7 +16,7 @@ fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
         created_at_time_nanos
     })
 }
-fn increment_cmc_attempts(pending: &PendingNotification) {
+pub(super) fn increment_cmc_attempts(pending: &PendingNotification) {
     if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
         return;
     }
@@ -24,7 +25,7 @@ fn increment_cmc_attempts(pending: &PendingNotification) {
     });
 }
 
-fn note_attempted_beneficiary(pending: &PendingNotification) {
+pub(super) fn note_attempted_beneficiary(pending: &PendingNotification) {
     if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
         return;
     }
@@ -38,7 +39,7 @@ fn note_attempted_beneficiary(pending: &PendingNotification) {
     });
 }
 
-fn increment_cmc_successes(pending: &PendingNotification) {
+pub(super) fn increment_cmc_successes(pending: &PendingNotification) {
     if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
         return;
     }
@@ -47,11 +48,11 @@ fn increment_cmc_successes(pending: &PendingNotification) {
     });
 }
 
-fn current_pending_transfer() -> Option<PendingTransfer> {
+pub(super) fn current_pending_transfer() -> Option<PendingTransfer> {
     state::with_state(|st| st.active_payout_job.as_ref().and_then(|job| job.pending_transfer.clone()))
 }
 
-fn stage_pending_transfer(pending: PendingNotification, created_at_time_nanos: u64) {
+pub(super) fn stage_pending_transfer(pending: PendingNotification, created_at_time_nanos: u64) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
             job.pending_transfer = Some(PendingTransfer {
@@ -63,7 +64,7 @@ fn stage_pending_transfer(pending: PendingNotification, created_at_time_nanos: u
     });
 }
 
-fn mark_pending_transfer_accepted(block_index: u64) -> Option<PendingNotification> {
+pub(super) fn mark_pending_transfer_accepted(block_index: u64) -> Option<PendingNotification> {
     state::with_state_mut(|st| {
         let job = st.active_payout_job.as_mut()?;
         let pending = job.pending_transfer.as_mut()?;
@@ -76,12 +77,12 @@ fn mark_pending_transfer_accepted(block_index: u64) -> Option<PendingNotificatio
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PendingTransferTerminalStatus {
+pub(super) enum PendingTransferTerminalStatus {
     Failed,
     Ambiguous,
 }
 
-fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
+pub(super) fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
             if job.pending_transfer.as_ref().map(|pending| pending.notification.kind.is_beneficiary_payout()).unwrap_or(false) {
@@ -100,7 +101,7 @@ fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
         }
     });
 }
-fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
+pub(super) fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
             if job.observed_oldest_tx_id.is_none() {
@@ -114,13 +115,13 @@ fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TransferAttemptOutcome {
+pub(super) enum TransferAttemptOutcome {
     Accepted(u64),
     ImmediateRetryable,
     Failed,
 }
 
-async fn transfer_once(ledger: &impl LedgerClient, arg: TransferArg) -> TransferAttemptOutcome {
+pub(super) async fn transfer_once(ledger: &impl LedgerClient, arg: TransferArg) -> TransferAttemptOutcome {
     match ledger.transfer(arg).await {
         Err(_) => TransferAttemptOutcome::ImmediateRetryable,
         Ok(Ok(block)) => match u64::try_from(block.0.clone()) {
@@ -137,13 +138,13 @@ async fn transfer_once(ledger: &impl LedgerClient, arg: TransferArg) -> Transfer
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NotifyAttemptOutcome {
+pub(super) enum NotifyAttemptOutcome {
     Succeeded,
     Retryable,
     Terminal,
 }
 
-async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> NotifyAttemptOutcome {
+pub(super) async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> NotifyAttemptOutcome {
     note_attempted_beneficiary(pending);
     increment_cmc_attempts(pending);
     match cmc.notify_top_up(pending.beneficiary, pending.block_index).await {
@@ -154,7 +155,7 @@ async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> Not
         | Err(crate::clients::ClientError::Convert(_)) => NotifyAttemptOutcome::Retryable,
     }
 }
-fn record_completed_transfer(now_secs: u64, pending: &PendingNotification) {
+pub(super) fn record_completed_transfer(now_secs: u64, pending: &PendingNotification) {
     state::with_state_mut(|st| {
         if pending.kind.requires_cmc_notify() {
             st.last_successful_transfer_ts = Some(now_secs);
@@ -168,7 +169,7 @@ fn record_completed_transfer(now_secs: u64, pending: &PendingNotification) {
         increment_cmc_successes(pending);
     }
 }
-async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
+pub(super) async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
     let Some(job) = state::with_state_mut(|st| st.active_payout_job.take()) else { return; };
     let zero_success_run_counts = zero_success_run_counts_toward_rescue(status_client, &job).await;
     let summary = state::with_state_mut(|st| {

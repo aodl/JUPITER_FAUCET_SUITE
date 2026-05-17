@@ -1,4 +1,5 @@
-async fn process_payout(
+use super::*;
+pub(super) async fn process_payout(
     ledger: &impl LedgerClient,
     index: &impl IndexClient,
     cmc: &impl CmcClient,

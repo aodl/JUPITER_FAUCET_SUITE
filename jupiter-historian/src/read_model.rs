@@ -1,5 +1,6 @@
+use super::*;
 #[ic_cdk::query]
-fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
+pub(super) fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
     state::with_state(|st| {
         let limit = clamp_public_limit(args.limit, 50);
         let mut items = Vec::new();
@@ -37,7 +38,7 @@ fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
 }
 
 #[ic_cdk::query]
-fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
+pub(super) fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
     state::with_state(|st| {
         let descending = args.descending.unwrap_or(false);
         let limit = clamp_public_limit(args.limit, 100);
@@ -71,7 +72,7 @@ fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPage {
     })
 }
 
-fn commitment_history_page(args: GetCommitmentHistoryArgs) -> CommitmentHistoryPage {
+pub(super) fn commitment_history_page(args: GetCommitmentHistoryArgs) -> CommitmentHistoryPage {
     state::with_state(|st| {
         let descending = args.descending.unwrap_or(false);
         let limit = clamp_public_limit(args.limit, 100);
@@ -106,13 +107,13 @@ fn commitment_history_page(args: GetCommitmentHistoryArgs) -> CommitmentHistoryP
 }
 
 #[ic_cdk::query]
-fn get_commitment_history(args: GetCommitmentHistoryArgs) -> CommitmentHistoryPage {
+pub(super) fn get_commitment_history(args: GetCommitmentHistoryArgs) -> CommitmentHistoryPage {
     commitment_history_page(args)
 }
 
 
 #[ic_cdk::query]
-fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
+pub(super) fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
     state::with_state(|st| {
         let sources = visible_sources_for_canister(st, &canister_id)?
             .into_iter()
@@ -131,7 +132,7 @@ fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
 }
 
 #[ic_cdk::query]
-fn get_public_counts() -> PublicCounts {
+pub(super) fn get_public_counts() -> PublicCounts {
     state::with_state(|st| PublicCounts {
         registered_canister_count: count_registered_canisters(st),
         qualifying_commitment_count: st
@@ -144,7 +145,7 @@ fn get_public_counts() -> PublicCounts {
 }
 
 #[ic_cdk::query]
-fn get_public_status() -> PublicStatus {
+pub(super) fn get_public_status() -> PublicStatus {
     let heap_memory_bytes = allocated_heap_memory_bytes();
     let stable_memory_bytes = allocated_stable_memory_bytes();
     state::with_state(|st| PublicStatus {
@@ -173,7 +174,7 @@ fn get_public_status() -> PublicStatus {
     })
 }
 
-fn source_module_hash_canister_ids() -> Vec<Principal> {
+pub(super) fn source_module_hash_canister_ids() -> Vec<Principal> {
     [
         "uccpi-cqaaa-aaaar-qby3q-cai",
         "acjuz-liaaa-aaaar-qb4qq-cai",
@@ -188,7 +189,7 @@ fn source_module_hash_canister_ids() -> Vec<Principal> {
 }
 
 #[ic_cdk::update]
-async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
+pub(super) async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let canister_ids = source_module_hash_canister_ids();
     let blackhole = clients::blackhole::BlackholeCanister::new(mainnet_blackhole_id());
     let mut hashes = Vec::with_capacity(canister_ids.len());
@@ -239,7 +240,7 @@ async fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
 }
 
 #[ic_cdk::query]
-fn list_registered_canister_summaries(
+pub(super) fn list_registered_canister_summaries(
     args: ListRegisteredCanisterSummariesArgs,
 ) -> ListRegisteredCanisterSummariesResponse {
     state::with_state(|st| {
@@ -268,7 +269,7 @@ fn list_registered_canister_summaries(
 }
 
 #[ic_cdk::query]
-fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRecentCommitmentsResponse {
+pub(super) fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRecentCommitmentsResponse {
     state::with_state(|st| {
         let limit = clamp_public_limit(args.limit, 20);
         let qualifying_only = args.qualifying_only.unwrap_or(false);

@@ -1,4 +1,5 @@
-fn apply_verified_qualifying_commitment(
+use super::*;
+pub(super) fn apply_verified_qualifying_commitment(
     st: &mut crate::state::State,
     commitment: crate::logic::IndexedCommitment,
     now_secs: u64,
@@ -51,7 +52,7 @@ fn apply_verified_qualifying_commitment(
     }
 }
 
-fn apply_recent_raw_or_neuron_commitment(
+pub(super) fn apply_recent_raw_or_neuron_commitment(
     st: &mut crate::state::State,
     commitment: crate::logic::IndexedCommitment,
     max_entries: usize,
@@ -157,12 +158,12 @@ fn apply_recent_raw_or_neuron_commitment(
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PageOrder {
+pub(super) enum PageOrder {
     Ascending,
     Descending,
 }
 
-fn detect_page_order(page: &crate::clients::index::GetAccountIdentifierTransactionsResponse) -> Option<PageOrder> {
+pub(super) fn detect_page_order(page: &crate::clients::index::GetAccountIdentifierTransactionsResponse) -> Option<PageOrder> {
     if page.transactions.len() < 2 {
         return None;
     }
@@ -177,7 +178,7 @@ fn detect_page_order(page: &crate::clients::index::GetAccountIdentifierTransacti
     }
 }
 
-fn infer_initial_page_order(
+pub(super) fn infer_initial_page_order(
     page: &crate::clients::index::GetAccountIdentifierTransactionsResponse,
     latest_cursor: Option<u64>,
     oldest_cursor: Option<u64>,
@@ -197,7 +198,7 @@ fn infer_initial_page_order(
     }
 }
 
-fn apply_indexed_commitment_tx(
+pub(super) fn apply_indexed_commitment_tx(
     tx: &crate::clients::index::IndexTransactionWithId,
     staking_id: &str,
     min_tx_e8s: u64,
@@ -264,7 +265,7 @@ fn apply_indexed_commitment_tx(
     }
 }
 
-fn apply_commitment_transactions_in_chronological_order(
+pub(super) fn apply_commitment_transactions_in_chronological_order(
     txs: &[crate::clients::index::IndexTransactionWithId],
     staking_id: &str,
     min_tx_e8s: u64,
@@ -275,7 +276,7 @@ fn apply_commitment_transactions_in_chronological_order(
     }
 }
 
-async fn process_commitment_indexing_ascending<I: IndexClient>(
+pub(super) async fn process_commitment_indexing_ascending<I: IndexClient>(
     index: &I,
     now_secs: u64,
     cfg: &state::Config,
@@ -343,7 +344,7 @@ async fn process_commitment_indexing_ascending<I: IndexClient>(
 // can pick up new arrivals from the latest page, while `oldest_cursor` is the
 // oldest tx id backfilled so older history can continue without treating normal
 // lower tx ids as non-monotonic.
-async fn process_commitment_indexing_descending_seeded<I: IndexClient>(
+pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient>(
     index: &I,
     now_secs: u64,
     cfg: &state::Config,

@@ -1,3 +1,4 @@
+use super::*;
 /// RESCUE TICK:
 /// - errors-only logs
 /// - policy-driven decision:
@@ -7,7 +8,7 @@
 /// This path is intentionally driven by persisted local state plus a management-canister
 /// controller update. It does not require fresh ledger, governance, or canister-status
 /// health checks at the point of escalation.
-async fn rescue_tick() {
+pub(super) async fn rescue_tick() {
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
 
     state::with_state_mut(|st| {
