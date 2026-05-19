@@ -3255,6 +3255,25 @@ name = "jupiter-persistence-batch"
 version = "0.1.0"
 
 [[package]]
+name = "jupiter-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candid",
+ "ic-cdk",
+ "ic-cdk-timers",
+ "ic-stable-structures",
+ "icrc-ledger-types 0.1.12",
+ "jupiter-build-support",
+ "jupiter-ic-clients",
+ "pocket-ic",
+ "serde",
+ "slog",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "jupiter-sns-rewards"
 version = "0.1.0"
 dependencies = [

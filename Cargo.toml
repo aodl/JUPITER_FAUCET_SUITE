@@ -6,6 +6,7 @@ members = [
   "jupiter-faucet",
   "jupiter-build-support",
   "jupiter-historian",
+  "jupiter-relay",
   "jupiter-ic-clients",
   "jupiter-persistence-batch",
   "jupiter-memo-policy",

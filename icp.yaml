@@ -50,6 +50,16 @@ canisters:
     init_args:
       path: jupiter-historian/mainnet-install-args.did
       format: candid
+  - name: jupiter_relay
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./scripts/build-canister jupiter-relay
+            - cp release-artifacts/jupiter_relay.wasm "$ICP_WASM_OUTPUT_PATH"
+    init_args:
+      path: jupiter-relay/mainnet-install-args.did
+      format: candid
   - name: mock_icrc_ledger
     build:
       steps:
@@ -105,6 +115,11 @@ canisters:
       steps:
         - type: pre-built
           path: target/wasm32-unknown-unknown/release/jupiter_historian.wasm
+  - name: jupiter_relay_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_relay.wasm
   - name: jupiter_disburser_args_dbg
     build:
       steps:
@@ -120,6 +135,11 @@ canisters:
       steps:
         - type: pre-built
           path: target/wasm32-unknown-unknown/release/jupiter_historian.wasm
+  - name: jupiter_relay_args_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_relay.wasm
 
 networks:
   - name: local
@@ -143,9 +163,11 @@ environments:
       - jupiter_disburser_dbg
       - jupiter_faucet_dbg
       - jupiter_historian_dbg
+      - jupiter_relay_dbg
       - jupiter_disburser_args_dbg
       - jupiter_faucet_args_dbg
       - jupiter_historian_args_dbg
+      - jupiter_relay_args_dbg
   - name: ic
     network: ic
     canisters:
@@ -155,3 +177,4 @@ environments:
       - jupiter_sns_rewards
       - jupiter_faucet_frontend
       - jupiter_historian
+      - jupiter_relay

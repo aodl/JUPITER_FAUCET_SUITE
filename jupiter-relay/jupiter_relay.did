@@ -1,0 +1,72 @@
+type Account = record { owner : principal; subaccount : opt blob };
+type RawIcpRecipient = record { account : Account; memo : opt blob };
+type RawIcpModeConfig = record {
+  min_cycles_threshold : nat;
+  recipients : vec RawIcpRecipient;
+};
+type InitArgs = record {
+  managed_canisters : vec principal;
+  ledger_canister_id : opt principal;
+  cmc_canister_id : opt principal;
+  blackhole_canister_id : opt principal;
+  main_interval_seconds : opt nat64;
+  max_transfers_per_tick : opt nat32;
+  raw_icp_mode : opt RawIcpModeConfig;
+};
+type Config = record {
+  managed_canisters : vec principal;
+  ledger_canister_id : principal;
+  cmc_canister_id : principal;
+  blackhole_canister_id : principal;
+  main_interval_seconds : nat64;
+  max_transfers_per_tick : opt nat32;
+  raw_icp_mode : opt RawIcpModeConfig;
+};
+type RelayMode = variant {
+  BaselineOnly;
+  CyclesTopUp;
+  RawIcp;
+  Degraded;
+  NoFunds;
+};
+type CanisterBurnSample = record {
+  canister_id : principal;
+  previous_cycles : opt nat;
+  current_cycles : nat;
+  burn_cycles : nat;
+  weight : nat;
+  gross_share_e8s : nat64;
+  amount_e8s : nat64;
+  skipped_reason : opt text;
+};
+type ProbeFailure = record { canister_id : principal; error : text };
+type RelaySummary = record {
+  mode : RelayMode;
+  started_at_ts_nanos : nat64;
+  completed_at_ts_nanos : opt nat64;
+  default_account_balance_start_e8s : nat64;
+  fee_e8s : nat64;
+  managed_canister_count : nat32;
+  min_cycles_balance : opt nat;
+  total_burn_cycles : nat;
+  transfer_count : nat32;
+  ledger_transfer_count : nat32;
+  ledger_sent_e8s : nat64;
+  ledger_fees_e8s : nat64;
+  cmc_notify_success_count : nat32;
+  cmc_notify_failed_count : nat32;
+  cmc_notify_ambiguous_count : nat32;
+  planned_retained_e8s : nat64;
+  known_unspent_e8s : nat64;
+  ambiguous_e8s : nat64;
+  failed_transfers : nat32;
+  ambiguous_transfers : nat32;
+  partial_tick_count : nat32;
+  probe_failures : vec ProbeFailure;
+  canisters : vec CanisterBurnSample;
+};
+service : (InitArgs) -> {
+  get_config : () -> (Config) query;
+  get_last_summary : () -> (opt RelaySummary) query;
+  get_last_cycles_samples : () -> (vec record { principal; nat; nat64 }) query;
+}

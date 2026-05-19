@@ -1,0 +1,22 @@
+(
+  record {
+    managed_canisters = vec {
+      principal "uccpi-cqaaa-aaaar-qby3q-cai"; // jupiter_disburser
+      principal "afisn-gqaaa-aaaar-qb4qa-cai"; // jupiter_lifeline
+      principal "acjuz-liaaa-aaaar-qb4qq-cai"; // jupiter_faucet
+      principal "alk7f-5aaaa-aaaar-qb4ra-cai"; // jupiter_sns_rewards
+      principal "jufzc-caaaa-aaaar-qb5da-cai"; // jupiter_faucet_frontend
+      principal "j5gs6-uiaaa-aaaar-qb5cq-cai"; // jupiter_historian
+      principal "77deu-baaaa-aaaar-qb6za-cai"; // blackhole
+    };
+
+    ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
+    cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
+    blackhole_canister_id = opt principal "77deu-baaaa-aaaar-qb6za-cai";
+
+    main_interval_seconds = opt (604800 : nat64);
+    max_transfers_per_tick = opt (10 : nat32);
+
+    raw_icp_mode = null;
+  }
+)

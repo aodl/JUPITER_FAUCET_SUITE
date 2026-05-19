@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RELAY_CANISTER_ID="cm5kl-iiaaa-aaaac-be6za-cai"
+
+echo "Querying relay config"
+icp canister call "$RELAY_CANISTER_ID" get_config '()' -n ic
+
+echo "Querying relay last summary"
+icp canister call "$RELAY_CANISTER_ID" get_last_summary '()' -n ic
+
+echo "Fetching relay logs"
+icp canister logs "$RELAY_CANISTER_ID" -n ic
+
+echo "Showing relay settings"
+icp canister settings show "$RELAY_CANISTER_ID" -n ic
+
+cat <<'EOF'
+
+Manual confirmations:
+- blackhole 77deu-baaaa-aaaar-qb6za-cai is a controller;
+- canister logs are public;
+- managed_canisters are the Jupiter production suite set plus blackhole, excluding relay self;
+- effective managed canisters include relay self cm5kl-iiaaa-aaaac-be6za-cai;
+- first successful tick is BaselineOnly;
+- no ledger transfer happened on the baseline tick.
+EOF

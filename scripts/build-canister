@@ -278,6 +278,9 @@ build_selected() {
     jupiter-historian)
       build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "jupiter-historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
       ;;
+    jupiter-relay)
+      build_one "jupiter-relay" "jupiter-relay" "jupiter_relay" "jupiter-relay/jupiter_relay.did" "jupiter_relay" "JUPITER_RELAY_PROD_CANISTER_ID" "jupiter_relay"
+      ;;
     jupiter-sns-rewards)
       build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "jupiter-sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards"
       ;;
@@ -292,12 +295,13 @@ build_selected() {
       build_selected jupiter-lifeline
       build_selected jupiter-faucet
       build_selected jupiter-historian
+      build_selected jupiter-relay
       build_selected jupiter-sns-rewards
       build_selected jupiter-faucet-frontend
       ;;
     *)
       echo "unknown build target: $1" >&2
-      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
+      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-relay, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
       exit 1
       ;;
   esac

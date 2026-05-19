@@ -19,9 +19,32 @@ CANISTER_IDS = json.loads((REPO_ROOT / ".icp" / "data" / "mappings" / "ic.ids.js
 PROD = {
     "jupiter_disburser": CANISTER_IDS["jupiter_disburser"],
     "jupiter_faucet": CANISTER_IDS["jupiter_faucet"],
+    "jupiter_faucet_frontend": CANISTER_IDS["jupiter_faucet_frontend"],
     "jupiter_historian": CANISTER_IDS["jupiter_historian"],
     "jupiter_lifeline": CANISTER_IDS["jupiter_lifeline"],
+    "jupiter_relay": CANISTER_IDS["jupiter_relay"],
     "jupiter_sns_rewards": CANISTER_IDS["jupiter_sns_rewards"],
+}
+
+EXPECTED_RELAY_ID = "cm5kl-iiaaa-aaaac-be6za-cai"
+EXPECTED_RELAY_MANAGED = {
+    PROD["jupiter_disburser"],
+    PROD["jupiter_lifeline"],
+    PROD["jupiter_faucet"],
+    PROD["jupiter_sns_rewards"],
+    PROD["jupiter_faucet_frontend"],
+    PROD["jupiter_historian"],
+    MAINNET["blackhole"],
+}
+FORBIDDEN_RELAY_MANAGED = {
+    MAINNET["ledger"],
+    MAINNET["index"],
+    MAINNET["governance"],
+    MAINNET["cmc"],
+    MAINNET["sns_wasm"],
+    EXPECTED_RELAY_ID,
+    "aaaaa-aa",
+    "2vxsx-fae",
 }
 
 EXPECTED_DQUORUM_SUBACCOUNT = (
@@ -120,10 +143,62 @@ def validate_historian() -> int:
     return historian_min_tx_e8s
 
 
+def extract_vec_principals(text: str, field: str, path: Path) -> list[str]:
+    match = re.search(rf"{re.escape(field)}\s*=\s*vec\s*\{{(?P<body>.*?)\}}\s*;", text, re.S)
+    if not match:
+        fail(f"{path} is missing `{field}`")
+    return re.findall(r'principal\s+"([^"]+)"', match.group("body"))
+
+
+def require_opt_principal(text: str, field: str, expected: str, path: Path) -> None:
+    require_contains(text, f'{field} = opt principal "{expected}";', str(path))
+
+
+def validate_relay() -> None:
+    if PROD["jupiter_relay"] != EXPECTED_RELAY_ID:
+        fail(
+            ".icp/data/mappings/ic.ids.json has wrong jupiter_relay "
+            f"{PROD['jupiter_relay']} expected {EXPECTED_RELAY_ID}"
+        )
+    path = REPO_ROOT / "jupiter-relay" / "mainnet-install-args.did"
+    if not path.exists():
+        fail(f"{path} is missing")
+    text = path.read_text()
+
+    require_opt_principal(text, "ledger_canister_id", MAINNET["ledger"], path)
+    require_opt_principal(text, "cmc_canister_id", MAINNET["cmc"], path)
+    require_opt_principal(text, "blackhole_canister_id", MAINNET["blackhole"], path)
+
+    managed = extract_vec_principals(text, "managed_canisters", path)
+    if len(managed) != len(set(managed)):
+        fail(f"{path} has duplicate managed_canisters")
+    managed_set = set(managed)
+    if managed_set != EXPECTED_RELAY_MANAGED:
+        fail(
+            f"{path} managed_canisters mismatch: got {sorted(managed_set)} "
+            f"expected {sorted(EXPECTED_RELAY_MANAGED)}"
+        )
+    forbidden = sorted(managed_set & FORBIDDEN_RELAY_MANAGED)
+    if forbidden:
+        fail(f"{path} managed_canisters contains forbidden system/self principal(s): {forbidden}")
+
+    max_match = re.search(r"max_transfers_per_tick\s*=\s*(?P<value>[^;]+);", text)
+    if max_match:
+        value = max_match.group("value").strip()
+        if value != "null":
+            number = re.search(r"(\d+)", value)
+            if not number or int(number.group(1)) <= 0:
+                fail(f"{path} max_transfers_per_tick must be absent/null or greater than zero")
+
+    if not re.search(r"raw_icp_mode\s*=\s*null\s*;", text):
+        fail(f"{path} must start production with raw_icp_mode = null")
+
+
 def main() -> None:
     validate_disburser()
     faucet_min_tx_e8s = validate_faucet()
     historian_min_tx_e8s = validate_historian()
+    validate_relay()
     if faucet_min_tx_e8s != historian_min_tx_e8s:
         fail(
             f"faucet/historian min_tx_e8s mismatch: faucet={faucet_min_tx_e8s} historian={historian_min_tx_e8s}"
@@ -132,9 +207,11 @@ def main() -> None:
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-faucet" / "jupiter_faucet.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-disburser" / "jupiter_disburser.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-historian" / "jupiter_historian.did")
+    validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-relay" / "jupiter_relay.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-faucet" / "jupiter_faucet_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-disburser" / "jupiter_disburser_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-historian" / "jupiter_historian_debug.did")
+    validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-relay" / "jupiter_relay_debug.did")
     print("mainnet install-args and DID validation OK")
 
 

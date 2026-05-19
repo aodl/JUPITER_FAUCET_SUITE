@@ -93,6 +93,7 @@ enum TestComponent {
     Disburser,
     Faucet,
     Historian,
+    Relay,
     Frontend,
     E2e,
 }
@@ -106,7 +107,7 @@ enum TestScope {
 }
 
 fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
-    use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Test};
+    use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Relay, Test};
     use TestScope::{All, LocalIntegration, PocketicIntegration, Unit};
 
     match cmd {
@@ -122,6 +123,10 @@ fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
         "historian_local_integration" => Some((Historian, LocalIntegration)),
         "historian_pocketic_integration" => Some((Historian, PocketicIntegration)),
         "historian_all" => Some((Historian, All)),
+        "relay_unit" => Some((Relay, Unit)),
+        "relay_local_integration" => Some((Relay, LocalIntegration)),
+        "relay_pocketic_integration" => Some((Relay, PocketicIntegration)),
+        "relay_all" => Some((Relay, All)),
         "frontend_unit" => Some((Frontend, Unit)),
         "frontend_local_integration" => Some((Frontend, LocalIntegration)),
         "frontend_all" => Some((Frontend, All)),
@@ -301,6 +306,7 @@ fn candid_path_for_canister(canister: &str) -> Option<String> {
         "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => "jupiter-disburser/jupiter_disburser_debug.did",
         "jupiter_faucet_dbg" | "jupiter_faucet_args_dbg" => "jupiter-faucet/jupiter_faucet_debug.did",
         "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => "jupiter-historian/jupiter_historian_debug.did",
+        "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => "jupiter-relay/jupiter_relay_debug.did",
         "mock_icrc_ledger" => "xtask/src/mocks/mock_icrc_ledger/mock_icrc_ledger.did",
         "mock_nns_governance" => "xtask/src/mocks/mock_nns_governance/mock_nns_governance.did",
         "mock_icp_index" => "xtask/src/mocks/mock_icp_index/mock_icp_index.did",
@@ -361,6 +367,9 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         }
         "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => {
             run_cargo_build("jupiter-historian", &["debug_api"])
+        }
+        "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => {
+            run_cargo_build("jupiter-relay", &["debug_api"])
         }
         _ => bail!("no local build mapping configured for {canister}"),
     }?;
@@ -621,6 +630,71 @@ struct HistorianDebugConfig {
     max_commitment_entries_per_canister: u32,
     max_index_pages_per_tick: u32,
     max_canisters_per_cycles_tick: u32,
+}
+
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelayMode {
+    BaselineOnly,
+    CyclesTopUp,
+    RawIcp,
+    Degraded,
+    NoFunds,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelayCanisterBurnSample {
+    canister_id: Principal,
+    previous_cycles: Option<Nat>,
+    current_cycles: Nat,
+    burn_cycles: Nat,
+    weight: Nat,
+    gross_share_e8s: u64,
+    amount_e8s: u64,
+    skipped_reason: Option<String>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelayProbeFailure {
+    canister_id: Principal,
+    error: String,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelaySummary {
+    mode: RelayMode,
+    started_at_ts_nanos: u64,
+    completed_at_ts_nanos: Option<u64>,
+    default_account_balance_start_e8s: u64,
+    fee_e8s: u64,
+    managed_canister_count: u32,
+    min_cycles_balance: Option<Nat>,
+    total_burn_cycles: Nat,
+    transfer_count: u32,
+    ledger_transfer_count: u32,
+    ledger_sent_e8s: u64,
+    ledger_fees_e8s: u64,
+    cmc_notify_success_count: u32,
+    cmc_notify_failed_count: u32,
+    cmc_notify_ambiguous_count: u32,
+    planned_retained_e8s: u64,
+    known_unspent_e8s: u64,
+    ambiguous_e8s: u64,
+    failed_transfers: u32,
+    ambiguous_transfers: u32,
+    partial_tick_count: u32,
+    probe_failures: Vec<RelayProbeFailure>,
+    canisters: Vec<RelayCanisterBurnSample>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelayDebugConfig {
+    managed_canisters: Vec<Principal>,
+    effective_managed_canisters: Vec<Principal>,
+    ledger_canister_id: Principal,
+    cmc_canister_id: Principal,
+    blackhole_canister_id: Principal,
+    main_interval_seconds: u64,
+    max_transfers_per_tick: Option<u32>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -1199,6 +1273,56 @@ fn cmd_setup_historian_local() -> Result<()> {
     deploy_local_canister("jupiter_historian_dbg", Some(&historian_args))?;
     add_self_controller("jupiter_historian_dbg")?;
 
+    let relay_args = format!(
+        r#"(record {{
+            managed_canisters = vec {{ principal "{managed_id}" }};
+            ledger_canister_id = opt principal "{ledger_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            blackhole_canister_id = opt principal "{blackhole_id}";
+            main_interval_seconds = opt (31536000:nat64);
+            max_transfers_per_tick = opt (10:nat32);
+            raw_icp_mode = null;
+        }},)"#,
+        managed_id = cmc_id.trim(),
+        ledger_id = ledger_id.trim(),
+        cmc_id = cmc_id.trim(),
+        blackhole_id = blackhole_id.trim(),
+    );
+    deploy_local_canister("jupiter_relay_dbg", Some(&relay_args))?;
+    add_self_controller("jupiter_relay_dbg")?;
+
+    Ok(())
+}
+
+fn cmd_setup_relay_local() -> Result<()> {
+    cmd_setup_common()?;
+
+    deploy_local_canister("mock_icrc_ledger", None)?;
+    deploy_local_canister("mock_cmc", None)?;
+    deploy_local_canister("mock_blackhole", None)?;
+
+    let ledger_id = canister_id("mock_icrc_ledger")?;
+    let cmc_id = canister_id("mock_cmc")?;
+    let blackhole_id = canister_id("mock_blackhole")?;
+    let relay_args = format!(
+        r#"(record {{
+            managed_canisters = vec {{ principal "{managed_id}" }};
+            ledger_canister_id = opt principal "{ledger_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            blackhole_canister_id = opt principal "{blackhole_id}";
+            main_interval_seconds = opt (31536000:nat64);
+            max_transfers_per_tick = opt (10:nat32);
+            raw_icp_mode = null;
+        }},)"#,
+        managed_id = cmc_id.trim(),
+        ledger_id = ledger_id.trim(),
+        cmc_id = cmc_id.trim(),
+        blackhole_id = blackhole_id.trim(),
+    );
+
+    deploy_local_canister("jupiter_relay_dbg", Some(&relay_args))?;
+    add_self_controller("jupiter_relay_dbg")?;
+
     Ok(())
 }
 
@@ -1339,6 +1463,24 @@ fn cmd_setup() -> Result<()> {
     deploy_local_canister("jupiter_historian_dbg", Some(&historian_args))?;
     add_self_controller("jupiter_historian_dbg")?;
 
+    let relay_args = format!(
+        r#"(record {{
+            managed_canisters = vec {{ principal "{managed_id}" }};
+            ledger_canister_id = opt principal "{ledger_id}";
+            cmc_canister_id = opt principal "{cmc_id}";
+            blackhole_canister_id = opt principal "{blackhole_id}";
+            main_interval_seconds = opt (31536000:nat64);
+            max_transfers_per_tick = opt (10:nat32);
+            raw_icp_mode = null;
+        }},)"#,
+        managed_id = cmc_id.trim(),
+        ledger_id = ledger_id.trim(),
+        cmc_id = cmc_id.trim(),
+        blackhole_id = blackhole_id.trim(),
+    );
+    deploy_local_canister("jupiter_relay_dbg", Some(&relay_args))?;
+    add_self_controller("jupiter_relay_dbg")?;
+
     Ok(())
 }
 
@@ -1370,6 +1512,8 @@ fn wasm_path_for_canister(canister: &str) -> Result<String> {
         "jupiter_faucet_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_faucet.wasm",
         "jupiter_historian_dbg" |
         "jupiter_historian_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_historian.wasm",
+        "jupiter_relay_dbg" |
+        "jupiter_relay_args_dbg" => "target/wasm32-unknown-unknown/release/jupiter_relay.wasm",
         _ => bail!("no explicit wasm path configured for {canister}"),
     };
     let wasm = std::path::Path::new(&repo).join(relative);
@@ -3682,11 +3826,286 @@ fn run_local_historian_config_roundtrip_scenario(outcomes: &mut Vec<ScenarioOutc
     Ok(())
 }
 
+fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    run_scenario(outcomes, label("icp", "relay", "config roundtrip includes effective self canister"), || {
+        let cfg: RelayDebugConfig = call_raw_noargs("jupiter_relay_dbg", "debug_config")?;
+        let relay_id = Principal::from_text(canister_id("jupiter_relay_dbg")?.trim())?;
+        let ledger_id = Principal::from_text(canister_id("mock_icrc_ledger")?.trim())?;
+        let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
+        let blackhole_id = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+        if cfg.ledger_canister_id != ledger_id || cfg.cmc_canister_id != cmc_id || cfg.blackhole_canister_id != blackhole_id {
+            bail!("unexpected relay config principals: {cfg:?}");
+        }
+        if !cfg.effective_managed_canisters.contains(&relay_id) || !cfg.effective_managed_canisters.contains(&cmc_id) {
+            bail!("expected effective managed set to contain relay and CMC canister: {cfg:?}");
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "relay", "first complete probe stores baseline without spending"), || {
+        let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
+        let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
+        let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_force_clear_active_job")?;
+        let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
+        let blackhole_id = canister_id("mock_blackhole")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(r#"(principal "{}", opt (10000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.trim()),
+        )?;
+        let relay_account = Account { owner: Principal::from_text(canister_id("jupiter_relay_dbg")?.trim())?, subaccount: None };
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 100000000:nat64)", account_to_candid(&relay_account)))?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_main_tick")?;
+        let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected relay summary")?;
+        if summary.mode != RelayMode::BaselineOnly || summary.transfer_count != 0 {
+            bail!("expected baseline-only summary with no transfers, got {summary:?}");
+        }
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if !transfers.is_empty() {
+            bail!("expected no relay transfers during baseline, got {transfers:?}");
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "relay", "public logs include cycles and config"), || {
+        let logs = run_icp_with_identity(&[
+            "canister",
+            "logs",
+            "--environment",
+            LOCAL_ENVIRONMENT,
+            "jupiter_relay_dbg",
+        ])?;
+        if !logs.contains("Cycles:") || !logs.contains("CONFIG ") {
+            bail!("expected relay logs to include Cycles and CONFIG lines, got {logs}");
+        }
+        if !logs.contains("managed_canisters")
+            || !logs.contains("effective_managed_canisters")
+            || !logs.contains("max_transfers_per_tick")
+        {
+            bail!("expected relay config log to include managed/effective sets and transfer limit, got {logs}");
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "relay", "second probe allocates weighted CMC top-up"), || {
+        let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
+        let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
+        let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
+        let blackhole_id = canister_id("mock_blackhole")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(r#"(principal "{}", opt (5000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.trim()),
+        )?;
+        let relay_account = Account { owner: Principal::from_text(canister_id("jupiter_relay_dbg")?.trim())?, subaccount: None };
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 100000000:nat64)", account_to_candid(&relay_account)))?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_main_tick")?;
+        let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected relay top-up summary")?;
+        if summary.mode != RelayMode::CyclesTopUp || summary.transfer_count == 0 {
+            bail!("expected cycles top-up summary with transfers, got {summary:?}");
+        }
+        if summary.canisters.iter().all(|sample| sample.canister_id != relay_account.owner) {
+            bail!("expected relay self canister in summary: {summary:?}");
+        }
+        let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
+        if notes.iter().all(|note| note.canister_id != cmc_id) {
+            bail!("expected CMC notification for managed canister, got {notes:?}");
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "relay", "missing blackhole status fails closed without transfers"), || {
+        let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
+        let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
+        let _: () = call_raw("mock_blackhole", "debug_reset", "()")?;
+        let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_force_clear_active_job")?;
+        let relay_account = Account { owner: Principal::from_text(canister_id("jupiter_relay_dbg")?.trim())?, subaccount: None };
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 100000000:nat64)", account_to_candid(&relay_account)))?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_main_tick")?;
+        let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected relay degraded summary")?;
+        if summary.mode != RelayMode::Degraded || summary.probe_failures.is_empty() {
+            bail!("expected degraded summary with probe failure, got {summary:?}");
+        }
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if !transfers.is_empty() {
+            bail!("expected fail-closed relay tick to avoid transfers, got {transfers:?}");
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "relay", "raw ICP mode pays external and self subaccount while retaining self default"), || {
+        if canister_id("jupiter_relay_args_dbg").is_err() {
+            create_canister("jupiter_relay_args_dbg")?;
+        }
+        let relay_id = Principal::from_text(canister_id("jupiter_relay_args_dbg")?.trim())?;
+        let ledger_id = Principal::from_text(canister_id("mock_icrc_ledger")?.trim())?;
+        let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
+        let blackhole_id = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+        let external = blackhole_id;
+        let mut self_sub = [0_u8; 32];
+        self_sub[31] = 9;
+        let self_sub_blob = bytes_to_candid_blob(&self_sub);
+        let raw_args = format!(
+            r#"(record {{
+                managed_canisters = vec {{ principal "{managed_id}" }};
+                ledger_canister_id = opt principal "{ledger_id}";
+                cmc_canister_id = opt principal "{cmc_id}";
+                blackhole_canister_id = opt principal "{blackhole_id}";
+                main_interval_seconds = opt (31536000:nat64);
+                max_transfers_per_tick = opt (10:nat32);
+                raw_icp_mode = opt record {{
+                    min_cycles_threshold = 0:nat;
+                    recipients = vec {{
+                        record {{ account = record {{ owner = principal "{relay_id}"; subaccount = opt blob "{self_sub_blob}" }}; memo = opt blob "\02" }};
+                        record {{ account = record {{ owner = principal "{external}"; subaccount = (null : opt blob) }}; memo = opt blob "\01" }};
+                        record {{ account = record {{ owner = principal "{relay_id}"; subaccount = (null : opt blob) }}; memo = (null : opt blob) }};
+                    }};
+                }};
+            }},)"#,
+            managed_id = cmc_id.to_text(),
+            ledger_id = ledger_id.to_text(),
+            cmc_id = cmc_id.to_text(),
+            blackhole_id = blackhole_id.to_text(),
+            external = external.to_text(),
+            relay_id = relay_id.to_text(),
+            self_sub_blob = self_sub_blob,
+        );
+        let wasm = wasm_path_for_canister("jupiter_relay_args_dbg")?;
+        run_icp_with_identity(&[
+            "canister",
+            "install",
+            "--environment",
+            LOCAL_ENVIRONMENT,
+            "jupiter_relay_args_dbg",
+            "--wasm",
+            &wasm,
+            "--mode",
+            "reinstall",
+            "--yes",
+            "--args",
+            &raw_args,
+        ])?;
+        add_self_controller("jupiter_relay_args_dbg")?;
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
+        let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(r#"(principal "{}", opt (10000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.to_text()),
+        )?;
+        let relay_account = Account { owner: relay_id, subaccount: None };
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)))?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+        let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+        let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected relay raw ICP summary")?;
+        if summary.mode != RelayMode::RawIcp || summary.ledger_transfer_count != 2 || summary.planned_retained_e8s != 33_000_000 {
+            bail!("expected raw ICP summary with two ledger transfers and retained self default share, got {summary:?}");
+        }
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers.len() != 2 {
+            bail!("expected exactly two raw ICP transfers, got {transfers:?}");
+        }
+        if !transfers.iter().any(|t| t.to.owner == external && t.memo == Some(vec![1])) {
+            bail!("expected external recipient transfer with memo 1, got {transfers:?}");
+        }
+        if !transfers.iter().any(|t| t.to.owner == relay_id && t.to.subaccount == Some(self_sub) && t.memo == Some(vec![2])) {
+            bail!("expected self subaccount transfer with memo 2, got {transfers:?}");
+        }
+        let default_balance: Nat = call_raw("mock_icrc_ledger", "icrc1_balance_of", &format!("({})", account_to_candid(&relay_account)))?;
+        if nat_to_u64(&default_balance) != 33_000_000 {
+            bail!("expected retained default balance 33000000, got {default_balance}");
+        }
+        Ok(())
+    });
+
+    run_scenario(outcomes, label("icp", "relay", "raw ICP mode stays inactive at threshold boundary"), || {
+        if canister_id("jupiter_relay_args_dbg").is_err() {
+            create_canister("jupiter_relay_args_dbg")?;
+        }
+        let relay_id = Principal::from_text(canister_id("jupiter_relay_args_dbg")?.trim())?;
+        let ledger_id = Principal::from_text(canister_id("mock_icrc_ledger")?.trim())?;
+        let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
+        let blackhole_id = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+        let raw_args = format!(
+            r#"(record {{
+                managed_canisters = vec {{ principal "{managed_id}" }};
+                ledger_canister_id = opt principal "{ledger_id}";
+                cmc_canister_id = opt principal "{cmc_id}";
+                blackhole_canister_id = opt principal "{blackhole_id}";
+                main_interval_seconds = opt (31536000:nat64);
+                max_transfers_per_tick = opt (10:nat32);
+                raw_icp_mode = opt record {{
+                    min_cycles_threshold = 5000000000000:nat;
+                    recipients = vec {{
+                        record {{ account = record {{ owner = principal "{external}"; subaccount = (null : opt blob) }}; memo = opt blob "\01" }};
+                    }};
+                }};
+            }},)"#,
+            managed_id = cmc_id.to_text(),
+            ledger_id = ledger_id.to_text(),
+            cmc_id = cmc_id.to_text(),
+            blackhole_id = blackhole_id.to_text(),
+            external = blackhole_id.to_text(),
+        );
+        let wasm = wasm_path_for_canister("jupiter_relay_args_dbg")?;
+        run_icp_with_identity(&[
+            "canister",
+            "install",
+            "--environment",
+            LOCAL_ENVIRONMENT,
+            "jupiter_relay_args_dbg",
+            "--wasm",
+            &wasm,
+            "--mode",
+            "reinstall",
+            "--yes",
+            "--args",
+            &raw_args,
+        ])?;
+        add_self_controller("jupiter_relay_args_dbg")?;
+
+        let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
+        let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(r#"(principal "{}", opt (5000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.to_text()),
+        )?;
+        let relay_account = Account { owner: relay_id, subaccount: None };
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)))?;
+
+        let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+        let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+        let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
+        let summary = summary.context("expected relay threshold summary")?;
+        if summary.mode != RelayMode::CyclesTopUp || summary.cmc_notify_success_count == 0 {
+            bail!("expected threshold equality to use CMC top-up mode, got {summary:?}");
+        }
+        let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+        if transfers.iter().any(|t| t.to.owner == blackhole_id && t.memo == Some(vec![1])) {
+            bail!("expected no raw recipient transfer at exact threshold, got {transfers:?}");
+        }
+        Ok(())
+    });
+
+    Ok(())
+}
+
 
 fn run_local_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_local_disburser_scenarios(outcomes)?;
     run_local_faucet_scenarios(outcomes)?;
     run_local_historian_scenarios(outcomes)?;
+    run_local_relay_scenarios(outcomes)?;
     run_local_frontend_scenarios(outcomes)?;
     run_local_historian_config_roundtrip_scenario(outcomes)?;
     Ok(())
@@ -3737,6 +4156,19 @@ fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         "historian",
         "cargo",
         &["test", "-p", "jupiter-historian", "--lib", "--", "--color", "always"],
+        &root,
+        &[],
+    )
+}
+
+fn run_unit_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "relay",
+        "cargo",
+        &["test", "-p", "jupiter-relay", "--lib", "--", "--color", "always"],
         &root,
         &[],
     )
@@ -3884,6 +4316,20 @@ fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
     )
 }
 
+fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    run_cargo_test_suite(
+        outcomes,
+        "pocketic",
+        "relay",
+        "cargo",
+        &["test", "-p", "jupiter-relay", "--test", "jupiter_relay_integration", "--", "--ignored", "--color", "always"],
+        &root,
+        &common_env,
+    )
+}
+
 fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
@@ -3918,11 +4364,13 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
             run_unit_disburser_suite(outcomes)?;
             run_unit_faucet_suite(outcomes)?;
             run_unit_historian_suite(outcomes)?;
+            run_unit_relay_suite(outcomes)?;
             run_frontend_unit_suite(outcomes)?;
         }
         TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_unit_faucet_suite(outcomes)?,
         TestComponent::Historian => run_unit_historian_suite(outcomes)?,
+        TestComponent::Relay => run_unit_relay_suite(outcomes)?,
         TestComponent::Frontend => run_frontend_unit_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_unit is not supported; use e2e_all"),
     }
@@ -3938,6 +4386,7 @@ fn run_local_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompo
             run_local_historian_scenarios(outcomes)?;
             run_local_historian_config_roundtrip_scenario(outcomes)?;
         }
+        TestComponent::Relay => run_local_relay_scenarios(outcomes)?,
         TestComponent::Frontend => run_frontend_local_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_local_integration is not supported; use e2e_all"),
     }
@@ -3950,11 +4399,13 @@ fn run_pocketic_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCo
             run_pocketic_disburser_suite(outcomes)?;
             run_pocketic_faucet_suite(outcomes)?;
             run_pocketic_historian_suite(outcomes)?;
+            run_pocketic_relay_suite(outcomes)?;
             run_e2e_suite(outcomes)?;
         }
         TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_pocketic_faucet_suite(outcomes)?,
         TestComponent::Historian => run_pocketic_historian_suite(outcomes)?,
+        TestComponent::Relay => run_pocketic_relay_suite(outcomes)?,
         TestComponent::Frontend => bail!("frontend_pocketic_integration is not supported; use frontend_all or frontend_local_integration"),
         TestComponent::E2e => run_e2e_suite(outcomes)?,
     }
@@ -3982,7 +4433,7 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
                 run_unit_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
             }
-            TestComponent::Disburser | TestComponent::Faucet | TestComponent::Historian => {
+            TestComponent::Disburser | TestComponent::Faucet | TestComponent::Historian | TestComponent::Relay => {
                 run_unit_component(&mut outcomes, component)?;
                 run_local_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
@@ -4012,6 +4463,10 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
         (TestComponent::Historian, TestScope::LocalIntegration) => "one or more historian local icp integration scenarios failed",
         (TestComponent::Historian, TestScope::PocketicIntegration) => "the historian pocketic integration suite failed",
         (TestComponent::Historian, TestScope::All) => "one or more historian test suites failed",
+        (TestComponent::Relay, TestScope::Unit) => "the relay unit test suite failed",
+        (TestComponent::Relay, TestScope::LocalIntegration) => "one or more relay local icp integration scenarios failed",
+        (TestComponent::Relay, TestScope::PocketicIntegration) => "the relay pocketic integration suite failed",
+        (TestComponent::Relay, TestScope::All) => "one or more relay test suites failed",
         (TestComponent::Frontend, TestScope::Unit) => "the frontend unit test suite failed",
         (TestComponent::Frontend, TestScope::LocalIntegration) => "one or more frontend local icp integration scenarios failed",
         (TestComponent::Frontend, TestScope::All) => "one or more frontend test suites failed",
@@ -4036,6 +4491,10 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
         (TestComponent::Historian, TestScope::LocalIntegration) => "historian_local_integration complete",
         (TestComponent::Historian, TestScope::PocketicIntegration) => "historian_pocketic_integration complete",
         (TestComponent::Historian, TestScope::All) => "historian_all complete",
+        (TestComponent::Relay, TestScope::Unit) => "relay_unit complete",
+        (TestComponent::Relay, TestScope::LocalIntegration) => "relay_local_integration complete",
+        (TestComponent::Relay, TestScope::PocketicIntegration) => "relay_pocketic_integration complete",
+        (TestComponent::Relay, TestScope::All) => "relay_all complete",
         (TestComponent::Frontend, TestScope::Unit) => "frontend_unit complete",
         (TestComponent::Frontend, TestScope::LocalIntegration) => "frontend_local_integration complete",
         (TestComponent::Frontend, TestScope::All) => "frontend_all complete",
@@ -4056,6 +4515,7 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
         (TestComponent::Disburser, TestScope::LocalIntegration | TestScope::All) => cmd_setup_disburser_local(),
         (TestComponent::Faucet, TestScope::LocalIntegration | TestScope::All) => cmd_setup_faucet_local(),
         (TestComponent::Historian, TestScope::LocalIntegration | TestScope::All) => cmd_setup_historian_local(),
+        (TestComponent::Relay, TestScope::LocalIntegration | TestScope::All) => cmd_setup_relay_local(),
         (TestComponent::Frontend, TestScope::LocalIntegration | TestScope::All) => cmd_setup_historian_local(),
         _ => cmd_setup(),
     };
@@ -4336,6 +4796,10 @@ fn main() -> Result<()> {
                  - historian_local_integration
                  - historian_pocketic_integration
                  - historian_all
+                 - relay_unit
+                 - relay_local_integration
+                 - relay_pocketic_integration
+                 - relay_all
                  - frontend_unit
                  - frontend_local_integration
                  - frontend_all
