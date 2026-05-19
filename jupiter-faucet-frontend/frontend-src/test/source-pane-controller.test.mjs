@@ -35,13 +35,7 @@ async function withFakeBrowser({ nodes, storageEntries = [] }, fn) {
     querySelectorAll(selector) {
       if (selector === '[data-source-module-hash]') return nodes.filter((node) => node.hasAttribute('data-source-module-hash'));
       if (selector === '[data-source-controllers]') return nodes.filter((node) => node.hasAttribute('data-source-controllers'));
-      if (selector === '[data-source-heap-memory], [data-source-stable-memory], [data-source-total-memory]') {
-        return nodes.filter((node) => (
-          node.hasAttribute('data-source-heap-memory')
-          || node.hasAttribute('data-source-stable-memory')
-          || node.hasAttribute('data-source-total-memory')
-        ));
-      }
+      if (selector === '[data-source-memory]') return nodes.filter((node) => node.hasAttribute('data-source-memory'));
       return [];
     },
   };
@@ -67,7 +61,7 @@ async function withFakeBrowser({ nodes, storageEntries = [] }, fn) {
 test('source pane renders cached canister info without calling the loader', async () => {
   const moduleHash = makeNode('data-source-module-hash', 'aaaaa-aa');
   const controllers = makeNode('data-source-controllers', 'aaaaa-aa');
-  const heap = makeNode('data-source-heap-memory', 'aaaaa-aa');
+  const memory = makeNode('data-source-memory', 'aaaaa-aa');
   const cacheKey = 'jupiter-faucet:source-pane-canister-info:v4:hist-aa';
   const cached = {
     cachedAt: Date.now(),
@@ -75,13 +69,13 @@ test('source pane renders cached canister info without calling the loader', asyn
       'aaaaa-aa': {
         moduleHash: 'abc123',
         controllers: ['aaaaa-aa'],
-        heapMemoryBytes: 2048,
+        totalMemoryBytes: 2048,
       },
     },
   };
 
   await withFakeBrowser({
-    nodes: [moduleHash, controllers, heap],
+    nodes: [moduleHash, controllers, memory],
     storageEntries: [[cacheKey, JSON.stringify(cached)]],
   }, async () => {
     const controller = createSourcePaneController({
@@ -98,7 +92,7 @@ test('source pane renders cached canister info without calling the loader', asyn
   assert.equal(moduleHash.title, 'abc123');
   assert.match(controllers.innerHTML, /data-tracker-principal="aaaaa-aa"/);
   assert.match(controllers.innerHTML, />aaaaa-aa<\/a>/);
-  assert.equal(heap.textContent, '2.00 KiB');
+  assert.equal(memory.textContent, '2.00 KiB total');
 });
 
 test('source pane writes cache only after controller data is complete', async () => {
@@ -136,6 +130,26 @@ test('source pane writes cache only after controller data is complete', async ()
   assert.equal(moduleHash.textContent, 'def456');
   assert.match(controllers.innerHTML, /data-tracker-principal="bbbbb-bb"/);
   assert.match(controllers.innerHTML, />bbbbb-bb<\/a>/);
+});
+
+test('source pane renders total memory without requiring a heap or stable breakdown', async () => {
+  const memory = makeNode('data-source-memory', 'aaaaa-aa');
+
+  await withFakeBrowser({ nodes: [memory] }, async () => {
+    const controller = createSourcePaneController({
+      frontendConfig: { historianCanisterId: 'hist-aa' },
+      isLocalHost: () => false,
+      loadCanisterInfo: async () => [{
+        canister_id: { toText: () => 'aaaaa-aa' },
+        module_hash_hex: [],
+        controllers: [[{ toText: () => 'bbbbb-bb' }]],
+        total_memory_bytes: [11_219_763n],
+      }],
+    });
+    await controller.ensureLoaded();
+  });
+
+  assert.equal(memory.textContent, '10.7 MiB total');
 });
 
 test('source pane marks values unavailable with the normalized loader failure', async () => {

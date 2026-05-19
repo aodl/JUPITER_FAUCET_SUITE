@@ -207,9 +207,7 @@ test('Source and Governance panes expose subnet context', () => {
   const governance = sectionMarkup('governance');
   assert.match(source, /source-pane-subnet-link pane-external-link[^>]*>Subnet pzp6e<\/a>/);
   assert.match(source, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae/);
-  assert.match(source, /data-source-total-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
-  assert.match(source, /data-source-heap-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
-  assert.match(source, /data-source-stable-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
+  assert.match(source, /data-source-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
   assert.match(indexHtml, /jupiter_relay/);
   assert.match(indexHtml, /Display name: Jupiter Relay/);
   assert.match(indexHtml, /data-source-module-hash="cm5kl-iiaaa-aaaac-be6za-cai"/);

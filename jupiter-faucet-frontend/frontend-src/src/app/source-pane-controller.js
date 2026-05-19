@@ -14,7 +14,7 @@ function sourcePaneControllerNodes() {
 }
 
 function sourcePaneMemoryNodes() {
-  return Array.from(document.querySelectorAll('[data-source-heap-memory], [data-source-stable-memory], [data-source-total-memory]'));
+  return Array.from(document.querySelectorAll('[data-source-memory]'));
 }
 
 function sourcePaneCanisterInfoNodes() {
@@ -23,14 +23,12 @@ function sourcePaneCanisterInfoNodes() {
 
 function normalizeSourcePaneInfo(infoByCanisterId, canisterId) {
   const entry = infoByCanisterId?.[canisterId];
-  if (!entry) return { moduleHash: null, controllers: null, heapMemoryBytes: null, stableMemoryBytes: null, totalMemoryBytes: null };
-  if (typeof entry === 'string') return { moduleHash: entry || null, controllers: null, heapMemoryBytes: null, stableMemoryBytes: null, totalMemoryBytes: null };
-  if (typeof entry !== 'object' || Array.isArray(entry)) return { moduleHash: null, controllers: null, heapMemoryBytes: null, stableMemoryBytes: null, totalMemoryBytes: null };
+  if (!entry) return { moduleHash: null, controllers: null, totalMemoryBytes: null };
+  if (typeof entry === 'string') return { moduleHash: entry || null, controllers: null, totalMemoryBytes: null };
+  if (typeof entry !== 'object' || Array.isArray(entry)) return { moduleHash: null, controllers: null, totalMemoryBytes: null };
   return {
     moduleHash: entry.moduleHash || entry.module_hash_hex || null,
     controllers: Array.isArray(entry.controllers) ? entry.controllers : null,
-    heapMemoryBytes: entry.heapMemoryBytes ?? entry.heap_memory_bytes ?? null,
-    stableMemoryBytes: entry.stableMemoryBytes ?? entry.stable_memory_bytes ?? null,
     totalMemoryBytes: entry.totalMemoryBytes ?? entry.total_memory_bytes ?? null,
   };
 }
@@ -39,6 +37,10 @@ function renderSourceControllers(controllers) {
   if (controllers === null || controllers === undefined) return 'Unavailable';
   if (!Array.isArray(controllers) || controllers.length === 0) return 'none';
   return controllers.map(formatSourceController).filter(Boolean).join(', ') || 'none';
+}
+
+function hasMemoryValue(value) {
+  return value !== null && value !== undefined;
 }
 
 export function createSourcePaneController({
@@ -61,9 +63,7 @@ export function createSourcePaneController({
     .map((node) => (
       node.getAttribute('data-source-module-hash')
       || node.getAttribute('data-source-controllers')
-      || node.getAttribute('data-source-heap-memory')
-      || node.getAttribute('data-source-stable-memory')
-      || node.getAttribute('data-source-total-memory')
+      || node.getAttribute('data-source-memory')
       || ''
     ))
     .filter(Boolean)));
@@ -89,20 +89,10 @@ export function createSourcePaneController({
       else node.removeAttribute('title');
     });
     sourcePaneMemoryNodes().forEach((node) => {
-      const canisterId = (
-        node.getAttribute('data-source-heap-memory')
-        || node.getAttribute('data-source-stable-memory')
-        || node.getAttribute('data-source-total-memory')
-        || ''
-      );
-      const { heapMemoryBytes, stableMemoryBytes, totalMemoryBytes } = normalizeSourcePaneInfo(infoByCanisterId, canisterId);
-      const value = node.hasAttribute('data-source-heap-memory')
-        ? heapMemoryBytes
-        : node.hasAttribute('data-source-stable-memory')
-          ? stableMemoryBytes
-          : totalMemoryBytes;
-      node.textContent = value === null || value === undefined ? 'Unavailable' : formatBytes(value);
-      if ((value === null || value === undefined) && fallbackTitle) node.setAttribute('title', fallbackTitle);
+      const canisterId = node.getAttribute('data-source-memory') || '';
+      const { totalMemoryBytes } = normalizeSourcePaneInfo(infoByCanisterId, canisterId);
+      node.textContent = hasMemoryValue(totalMemoryBytes) ? `${formatBytes(totalMemoryBytes)} total` : 'Unavailable';
+      if (!hasMemoryValue(totalMemoryBytes) && fallbackTitle) node.setAttribute('title', fallbackTitle);
       else node.removeAttribute('title');
     });
   };
@@ -161,8 +151,6 @@ export function createSourcePaneController({
           infos.map((item) => [formatPrincipal(item.canister_id), {
             moduleHash: readOpt(item.module_hash_hex) || null,
             controllers: readOpt(item.controllers)?.map(formatPrincipal) || null,
-            heapMemoryBytes: readOpt(item.heap_memory_bytes),
-            stableMemoryBytes: readOpt(item.stable_memory_bytes),
             totalMemoryBytes: readOpt(item.total_memory_bytes),
           }]),
         );

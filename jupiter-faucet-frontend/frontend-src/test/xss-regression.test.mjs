@@ -94,7 +94,7 @@ async function withSourcePaneBrowser({ nodes, storageEntries = [] }, fn) {
     querySelectorAll(selector) {
       if (selector === '[data-source-module-hash]') return nodes.filter((node) => node.hasAttribute('data-source-module-hash'));
       if (selector === '[data-source-controllers]') return nodes.filter((node) => node.hasAttribute('data-source-controllers'));
-      if (selector === '[data-source-heap-memory], [data-source-stable-memory], [data-source-total-memory]') return [];
+      if (selector === '[data-source-memory]') return [];
       return [];
     },
   };
