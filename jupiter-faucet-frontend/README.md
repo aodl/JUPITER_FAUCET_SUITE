@@ -17,8 +17,10 @@ Unless otherwise noted, command examples in this README are run from the reposit
 
 The canister serves two important HTTP surfaces:
 
-- `/` (via `index.html` fallback)
+- `/` (via the `index.html` alias)
   - the main landing page / dashboard shell
+- unknown asset/page paths
+  - a certified `404.html` fallback served with HTTP 404
 - `/metrics`
   - a small JSON endpoint served directly by the Rust canister with:
     - `num_assets`

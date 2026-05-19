@@ -1,5 +1,6 @@
 use ic_asset_certification::{
-    Asset, AssetConfig, AssetEncoding, AssetFallbackConfig, AssetMap, AssetRouter,
+    Asset, AssetCertificationError, AssetConfig, AssetEncoding, AssetFallbackConfig, AssetMap,
+    AssetRouter,
 };
 use ic_cdk::{
     api::data_certificate,
@@ -208,11 +209,26 @@ fn certify_all_assets() {
                 "cache-control".to_string(),
                 NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
             )]),
+            fallback_for: vec![],
+            aliased_by: vec!["/".to_string()],
+            encodings: compressed_encodings.clone(),
+        },
+        AssetConfig::File {
+            path: "404.html".to_string(),
+            content_type: Some("text/html".to_string()),
+            headers: get_asset_headers(vec![(
+                "cache-control".to_string(),
+                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+            )]),
             fallback_for: vec![AssetFallbackConfig {
                 scope: "/".to_string(),
-                status_code: Some(StatusCode::OK),
+                status_code: Some(StatusCode::NOT_FOUND),
             }],
-            aliased_by: vec!["/".to_string()],
+            aliased_by: vec![
+                "/404".to_string(),
+                "/404/".to_string(),
+                "/404.html".to_string(),
+            ],
             encodings: compressed_encodings.clone(),
         },
         AssetConfig::Pattern {
@@ -358,9 +374,18 @@ fn serve_asset(req: &HttpRequest) -> HttpResponse<'static> {
     ASSET_ROUTER.with_borrow(|asset_router| {
         match asset_router.serve_asset(&certificate, req) {
             Ok(response) => response,
-            Err(_) => plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "failed to serve frontend asset"),
+            Err(err) => asset_error_response(&err),
         }
     })
+}
+
+fn asset_error_response(err: &AssetCertificationError) -> HttpResponse<'static> {
+    match err {
+        AssetCertificationError::NoAssetMatchingRequestUrl { .. } => {
+            plain_error_response(StatusCode::NOT_FOUND, "not found")
+        }
+        _ => plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "failed to serve frontend asset"),
+    }
 }
 
 fn get_asset_headers(additional_headers: Vec<HeaderField>) -> Vec<HeaderField> {
@@ -437,6 +462,39 @@ mod tests {
         assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
         assert_eq!(header_value(&response, "x-content-type-options"), Some("nosniff"));
         assert!(header_value(&response, "content-security-policy").is_some());
+    }
+
+    #[test]
+    fn no_asset_matching_request_url_maps_to_not_found() {
+        let err = AssetCertificationError::NoAssetMatchingRequestUrl {
+            request_url: "/missing.css".to_string(),
+        };
+        let response = asset_error_response(&err);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(response.body(), b"not found");
+        assert_eq!(header_value(&response, "content-type"), Some("text/plain; charset=utf-8"));
+        assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
+    }
+
+    #[test]
+    fn certified_root_fallback_is_not_found_page_not_index() {
+        certify_all_assets();
+
+        ASSET_ROUTER.with_borrow(|asset_router| {
+            let root_index = asset_router
+                .get_assets()
+                .get("/", None, None)
+                .expect("expected root alias to serve index.html");
+            let root_fallback = asset_router
+                .get_fallback_assets()
+                .get("/", None, None)
+                .expect("expected root fallback to serve 404.html");
+
+            assert_eq!(root_index.status_code(), StatusCode::OK);
+            assert_eq!(root_fallback.status_code(), StatusCode::NOT_FOUND);
+            assert!(String::from_utf8_lossy(root_fallback.body()).contains("Not Found"));
+        });
     }
 
     #[test]
