@@ -10,6 +10,7 @@ export const idlFactory = ({ IDL }) => {
     id: IDL.Opt(NeuronId),
     created_timestamp_seconds: IDL.Nat64,
     aging_since_timestamp_seconds: IDL.Nat64,
+    maturity_e8s_equivalent: IDL.Nat64,
     followees: IDL.Vec(IDL.Tuple(IDL.Int32, Followees)),
     visibility: IDL.Opt(IDL.Int32),
     voting_power_refreshed_timestamp_seconds: IDL.Opt(IDL.Nat64),

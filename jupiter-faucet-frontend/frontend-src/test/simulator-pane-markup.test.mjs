@@ -520,8 +520,11 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   assert.match(simulator, /id="simulator-icp-xdr-source"/);
   assert.match(stake, /Age bonus diverted/);
   assert.match(stake, /id="stake-neuron-age-bonus"/);
+  assert.match(stake, /Current maturity/);
+  assert.match(stake, /id="stake-neuron-maturity"/);
   assert.match(stake, /Maturity disbursal/);
   assert.match(stake, /id="stake-neuron-disbursement"/);
+  assert.match(mainJs, /formatIcpE8s\(neuron\.maturity_e8s_equivalent\)/);
   assert.match(mainJs, /formatMaturityDisbursementStatus/);
   assert.match(mainJs, /formatMaturityDisbursementLandingText/);
   assert.match(mainJs, /updateLandingDisbursementStatus/);
@@ -529,6 +532,7 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   assert.match(mainJs, /link\.href = '#metric-stake'/);
   assert.match(mainJs, /link\.textContent = 'More info'/);
   assert.match(nnsGovernanceDidJs, /maturity_disbursements_in_progress/);
+  assert.match(nnsGovernanceDidJs, /maturity_e8s_equivalent/);
   assert.match(mainJs, /calculateAgeBonusBasisPointsFromAgingSince/);
   assert.match(mainJs, /state\.ageBonusBasisPoints/);
 });

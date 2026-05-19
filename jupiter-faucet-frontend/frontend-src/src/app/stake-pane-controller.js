@@ -95,6 +95,7 @@ export function createStakePaneController({
         neuron.aging_since_timestamp_seconds,
         Math.floor(Date.now() / 1000),
       ) ?? 0n;
+      setPaneValueText('stake-neuron-maturity', { value: formatIcpE8s(neuron.maturity_e8s_equivalent) });
       setPaneValueText('stake-neuron-age', { value: formatAgeFromSeconds(neuron.aging_since_timestamp_seconds) });
       setPaneValueText('stake-neuron-age-bonus', { value: formatAgeBonusDisplay(ageBonusBasisPoints) });
       setPaneValueText('stake-neuron-public', { value: 'Yes' });
@@ -119,6 +120,7 @@ export function createStakePaneController({
       : neuronLoading || !isNeuronLoaded()
         ? { loading: true }
         : { error: 'Public neuron details unavailable' };
+    setPaneValueText('stake-neuron-maturity', fallback);
     setPaneValueText('stake-neuron-age', fallback);
     setPaneValueText('stake-neuron-age-bonus', fallback);
     setPaneValueText('stake-neuron-public', fallback);
