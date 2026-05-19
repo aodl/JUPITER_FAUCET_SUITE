@@ -211,12 +211,12 @@ test('Source and Governance panes expose subnet context', () => {
   assert.match(indexHtml, /jupiter_relay/);
   assert.match(indexHtml, /Display name: Jupiter Relay/);
   assert.match(indexHtml, /data-source-module-hash="cm5kl-iiaaa-aaaac-be6za-cai"/);
-  assert.match(indexHtml, /jupiter-relay\/jupiter_relay\.did/);
-  assert.match(indexHtml, /jupiter-relay\/jupiter_relay_debug\.did/);
-  assert.match(indexHtml, /jupiter-relay\/README\.md/);
-  assert.match(indexHtml, /jupiter-relay\/mainnet-install-args\.did/);
-  assert.match(indexHtml, /production relay exposes no public app endpoints/);
-  assert.match(indexHtml, /public canister logs, source metadata, reproducible builds, and this source pane/);
+  assert.match(indexHtml, /JUPITER_FAUCET_SUITE\/tree\/master\/jupiter-relay/);
+  assert.doesNotMatch(indexHtml, /jupiter-relay\/jupiter_relay\.did/);
+  assert.doesNotMatch(indexHtml, /jupiter-relay\/jupiter_relay_debug\.did/);
+  assert.doesNotMatch(indexHtml, /jupiter-relay\/README\.md/);
+  assert.doesNotMatch(indexHtml, /jupiter-relay\/mainnet-install-args\.did/);
+  assert.match(indexHtml, /Converts ICP to cycles and distributes to Jupiter Faucet Suite canisters proportionally based on consumption rates\./);
   assert.match(navbarCss, /\.source-pane-canister \{[\s\S]*position: relative;[\s\S]*\}/);
   assert.match(navbarCss, /\.source-pane-subnet-link \{[\s\S]*position: absolute;[\s\S]*right: 16px;[\s\S]*\}/);
   assert.match(governance, /All Jupiter Faucet suite canisters reside on either the/);
