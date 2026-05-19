@@ -270,6 +270,18 @@ impl RelayEnv {
         summary.context("expected relay summary")
     }
 
+    fn logs_text(&self) -> Result<String> {
+        let records = self
+            .pic
+            .fetch_canister_logs(self.relay, Principal::anonymous())
+            .map_err(|e| anyhow::anyhow!("fetch_canister_logs reject: {e:?}"))?;
+        Ok(records
+            .iter()
+            .map(|record| String::from_utf8_lossy(&record.content).into_owned())
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+
     fn transfers(&self) -> Result<Vec<TransferRecord>> {
         query_one(
             &self.pic,
@@ -406,6 +418,17 @@ fn baseline_then_weighted_cmc_topup_records_real_async_notify() -> Result<()> {
     {
         bail!("expected CMC notification for managed canister, got {notifications:?}");
     }
+    let logs = env.logs_text()?;
+    if !logs.contains("Cycles:")
+        || !logs.contains("CONFIG ")
+        || !logs.contains("RELAY_SUMMARY mode=CyclesTopUp")
+        || !logs.contains("RELAY_CANISTER ")
+        || !logs.contains("burn_cycles=")
+        || !logs.contains("gross_share_e8s=")
+        || !logs.contains("amount_e8s=")
+    {
+        bail!("expected public relay logs for cycles top-up, got {logs}");
+    }
     Ok(())
 }
 
@@ -442,6 +465,20 @@ fn weighted_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
         .context("missing CMC managed-canister allocation")?;
     if cmc_sample.gross_share_e8s <= ledger_sample.gross_share_e8s {
         bail!("expected higher-burn CMC canister to receive larger gross share: ledger={ledger_sample:?} cmc={cmc_sample:?}");
+    }
+    let logs = env.logs_text()?;
+    let cmc_log_fragment = format!(
+        "RELAY_CANISTER canister_id={} previous_cycles=",
+        env.cmc.to_text()
+    );
+    if !logs.contains(&cmc_log_fragment)
+        || !logs.contains(&format!("burn_cycles={}", cmc_sample.burn_cycles))
+        || !logs.contains(&format!("gross_share_e8s={}", cmc_sample.gross_share_e8s))
+        || !logs.contains(&format!("amount_e8s={}", cmc_sample.amount_e8s))
+    {
+        bail!(
+            "expected public logs to include CMC burn/allocation sample {cmc_sample:?}, got {logs}"
+        );
     }
 
     let ledger_subaccount = principal_to_subaccount(env.ledger);
@@ -637,6 +674,15 @@ fn raw_icp_mode_transfers_external_and_self_subaccount_without_cmc_notify() -> R
     if retained != 33_000_000 {
         bail!("expected relay default account to retain one gross share, got {retained}");
     }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_SUMMARY mode=RawIcp")
+        || !logs.contains("RELAY_RAW_RECIPIENT ")
+        || !logs.contains("retained_self=true")
+        || !logs.contains("memo=a1b2")
+        || !logs.contains("memo=c3")
+    {
+        bail!("expected public raw ICP recipient logs, got {logs}");
+    }
     Ok(())
 }
 
@@ -733,6 +779,10 @@ fn fail_closed_blackhole_probe_failure_spends_nothing() -> Result<()> {
     )?;
     if !transfers.is_empty() {
         bail!("expected no ledger transfers when blackhole probe fails, got {transfers:?}");
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_SUMMARY mode=Degraded") || !logs.contains("RELAY_PROBE_FAILURE ") {
+        bail!("expected public degraded probe failure logs, got {logs}");
     }
     Ok(())
 }
@@ -863,6 +913,10 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
     {
         bail!("expected later tick to resume and complete transfer-limited job, got {summary:?}");
     }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_SUMMARY mode=CyclesTopUp") || !logs.contains("partial_tick_count=") {
+        bail!("expected transfer-limit public summary logs with partial_tick_count, got {logs}");
+    }
     Ok(())
 }
 
@@ -926,6 +980,13 @@ fn upgrade_after_trap_following_ledger_transfer_recovers_without_double_spend() 
     let st_done = env.debug_state()?;
     if st_done.active_job_present {
         bail!("expected post-upgrade recovery to complete the interrupted relay job");
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_SUMMARY mode=CyclesTopUp")
+        || !logs.contains("ledger_transfer_count=1")
+        || !logs.contains("cmc_notify_success_count=1")
+    {
+        bail!("expected coherent public summary after upgrade recovery, got {logs}");
     }
     Ok(())
 }

@@ -9,7 +9,9 @@ use crate::clients::{BlackholeClient, CmcClient, LedgerClient};
 use crate::logic::{self, RawIcpPlan};
 use crate::scheduler::cycles_probe::probe_cycles;
 use crate::scheduler::guards::MainGuard;
-use crate::scheduler::logging::{log_cycles_and_config, log_error, log_info};
+use crate::scheduler::logging::{
+    log_cycles_and_config, log_error, log_info, log_raw_recipients, log_summary,
+};
 use crate::scheduler::transfer::drive_pending_transfer;
 use crate::state::{
     self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingTransfer,
@@ -117,6 +119,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         summary.completed_at_ts_nanos = Some(now_nanos);
         summary.min_cycles_balance = min_cycles;
         summary.probe_failures = probe_failures;
+        log_summary(&summary);
         state::with_state_mut(|st| st.last_summary = Some(summary));
         return;
     }
@@ -131,6 +134,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
             RelaySummary::started(RelayMode::BaselineOnly, now_nanos, managed.len() as u32);
         summary.completed_at_ts_nanos = Some(now_nanos);
         summary.min_cycles_balance = min_cycles;
+        log_summary(&summary);
         state::with_state_mut(|st| {
             st.last_completed_cycles = current_cycles;
             st.last_summary = Some(summary);
@@ -151,6 +155,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
                 canister_id: cfg.ledger_canister_id,
                 error: format!("balance read failed: {err}"),
             });
+            log_summary(&summary);
             state::with_state_mut(|st| st.last_summary = Some(summary));
             return;
         }
@@ -167,6 +172,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
                 canister_id: cfg.ledger_canister_id,
                 error: format!("fee read failed: {err}"),
             });
+            log_summary(&summary);
             state::with_state_mut(|st| st.last_summary = Some(summary));
             return;
         }
@@ -179,6 +185,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         summary.default_account_balance_start_e8s = balance;
         summary.fee_e8s = fee;
         summary.min_cycles_balance = min_cycles;
+        log_summary(&summary);
         state::with_state_mut(|st| {
             st.last_completed_cycles = current_cycles;
             st.last_summary = Some(summary);
@@ -290,7 +297,10 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient>(
         });
         match plan_step {
             TransferPlanStep::Planned => continue,
-            TransferPlanStep::Paused => return true,
+            TransferPlanStep::Paused => {
+                log_active_job_summary();
+                return true;
+            }
             TransferPlanStep::Done => {}
         }
         complete_job(now_nanos);
@@ -387,8 +397,33 @@ fn complete_job(now_nanos: u64) {
             return;
         };
         job.summary.completed_at_ts_nanos = Some(now_nanos);
+        log_summary(&job.summary);
+        if matches!(job.mode, ActiveRelayMode::RawIcp) {
+            log_raw_recipients(
+                &job.raw_recipients,
+                ic_cdk::api::canister_self(),
+                job.balance_start_e8s,
+                job.fee_e8s,
+            );
+        }
         st.last_completed_cycles = job.current_cycles;
         st.last_summary = Some(job.summary);
+    });
+}
+
+fn log_active_job_summary() {
+    state::with_state(|st| {
+        if let Some(job) = &st.active_job {
+            log_summary(&job.summary);
+            if matches!(job.mode, ActiveRelayMode::RawIcp) {
+                log_raw_recipients(
+                    &job.raw_recipients,
+                    ic_cdk::api::canister_self(),
+                    job.balance_start_e8s,
+                    job.fee_e8s,
+                );
+            }
+        }
     });
 }
 

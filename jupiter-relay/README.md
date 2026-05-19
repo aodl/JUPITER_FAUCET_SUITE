@@ -53,6 +53,8 @@ If any required probe fails, the relay fails closed: it records a degraded summa
 
 ## Runtime Config Verification
 
+The production relay intentionally exposes no public application endpoints. Debug endpoints are only available in non-production debug builds, and the debug API guard traps if a debug build is ever installed at the production relay principal.
+
 The relay logs public runtime verification lines on every main tick that actually runs:
 
 ```text
@@ -62,12 +64,28 @@ CONFIG relay_canister_id=...
 
 The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ledger, CMC, blackhole, interval, transfer limit, raw ICP mode presence, raw ICP threshold, raw recipients, raw recipient memos, and whether the configured production managed set matches the known Jupiter suite set.
 
-After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, querying `get_config`, and comparing public logs:
+After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with `jupiter-relay/mainnet-install-args.did`, and using the frontend source pane. Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 
 ```bash
-icp canister call cm5kl-iiaaa-aaaac-be6za-cai get_config '()' -n ic
 icp canister logs cm5kl-iiaaa-aaaac-be6za-cai -n ic
 ```
+
+Canister logs have finite retention. Operators should archive logs externally if long-term history is required.
+
+## Public Log Records
+
+The relay emits stable, single-line, grep-friendly public records:
+
+```text
+Cycles: <relay_self_cycles_balance>
+CONFIG relay_canister_id=...
+RELAY_SUMMARY mode=<BaselineOnly|CyclesTopUp|RawIcp|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> total_burn_cycles=<nat> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32>
+RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> burn_cycles=<nat> weight=<nat> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null>
+RELAY_RAW_RECIPIENT owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> retained_self=<bool> skipped_reason=<escaped-text-or-null> memo=<hex-or-null>
+RELAY_PROBE_FAILURE canister_id=<principal> error=<escaped-text>
+```
+
+`RELAY_CANISTER` logs show how many cycles each managed canister had previously, how many cycles it had currently, how many cycles it burned, its allocation weight, gross ICP share, net ICP transfer amount or top-up amount after fee, and skipped reason if any.
 
 ## Tick Behavior
 
@@ -187,13 +205,25 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 
 1. Verify the blackhole can read every configured managed canister.
 2. Verify canister settings: logs public, log memory limit `2MiB`, canonical blackhole as an additional controller, and the current operational/admin controller retained until handoff is complete.
-3. Query `get_config` and compare it with `jupiter-relay/mainnet-install-args.did`.
+3. Compare `CONFIG` public logs with `jupiter-relay/mainnet-install-args.did`.
 4. Observe a first complete baseline tick and confirm it spends no ICP.
 5. Fund the relay with a small ICP amount through `cm5kl-iiaaa-aaaac-be6za-cai.`.
 6. Observe the first allocation tick and verify CMC notifications or raw ICP transfers match the expected mode.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
-Suggested settings checks:
+This MR does not perform deployment. Production deployment and settings changes remain manual operator actions after review.
+
+Exact settings update command:
+
+```bash
+icp canister settings update cm5kl-iiaaa-aaaac-be6za-cai \
+  --add-controller 77deu-baaaa-aaaar-qb6za-cai \
+  --log-visibility public \
+  --log-memory-limit 2mib \
+  -n ic
+```
+
+Suggested settings and log checks:
 
 ```bash
 icp canister settings show cm5kl-iiaaa-aaaac-be6za-cai -n ic

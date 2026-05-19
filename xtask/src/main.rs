@@ -858,6 +858,16 @@ fn account_to_candid(account: &Account) -> String {
     )
 }
 
+fn relay_local_logs(canister_name: &str) -> Result<String> {
+    run_icp_with_identity(&[
+        "canister",
+        "logs",
+        "--environment",
+        LOCAL_ENVIRONMENT,
+        canister_name,
+    ])
+}
+
 fn opt_blob_to_candid(bytes: Option<&[u8]>) -> String {
     match bytes {
         Some(bytes) => format!(
@@ -3870,13 +3880,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
     });
 
     run_scenario(outcomes, label("icp", "relay", "public logs include cycles and config"), || {
-        let logs = run_icp_with_identity(&[
-            "canister",
-            "logs",
-            "--environment",
-            LOCAL_ENVIRONMENT,
-            "jupiter_relay_dbg",
-        ])?;
+        let logs = relay_local_logs("jupiter_relay_dbg")?;
         if !logs.contains("Cycles:") || !logs.contains("CONFIG ") {
             bail!("expected relay logs to include Cycles and CONFIG lines, got {logs}");
         }
@@ -3911,6 +3915,15 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         if summary.canisters.iter().all(|sample| sample.canister_id != relay_account.owner) {
             bail!("expected relay self canister in summary: {summary:?}");
         }
+        let logs = relay_local_logs("jupiter_relay_dbg")?;
+        if !logs.contains("RELAY_SUMMARY mode=CyclesTopUp")
+            || !logs.contains("RELAY_CANISTER ")
+            || !logs.contains("burn_cycles=")
+            || !logs.contains("gross_share_e8s=")
+            || !logs.contains("amount_e8s=")
+        {
+            bail!("expected cycles top-up public logs with summary and canister allocation fields, got {logs}");
+        }
         let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
         if notes.iter().all(|note| note.canister_id != cmc_id) {
             bail!("expected CMC notification for managed canister, got {notes:?}");
@@ -3931,6 +3944,10 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         let summary = summary.context("expected relay degraded summary")?;
         if summary.mode != RelayMode::Degraded || summary.probe_failures.is_empty() {
             bail!("expected degraded summary with probe failure, got {summary:?}");
+        }
+        let logs = relay_local_logs("jupiter_relay_dbg")?;
+        if !logs.contains("RELAY_SUMMARY mode=Degraded") || !logs.contains("RELAY_PROBE_FAILURE ") {
+            bail!("expected degraded public logs with probe failure, got {logs}");
         }
         let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if !transfers.is_empty() {
@@ -4019,6 +4036,15 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         }
         if !transfers.iter().any(|t| t.to.owner == relay_id && t.to.subaccount == Some(self_sub) && t.memo == Some(vec![2])) {
             bail!("expected self subaccount transfer with memo 2, got {transfers:?}");
+        }
+        let logs = relay_local_logs("jupiter_relay_args_dbg")?;
+        if !logs.contains("RELAY_SUMMARY mode=RawIcp")
+            || !logs.contains("RELAY_RAW_RECIPIENT ")
+            || !logs.contains("retained_self=true")
+            || !logs.contains("memo=01")
+            || !logs.contains("memo=02")
+        {
+            bail!("expected raw ICP public logs with recipients, retention, and memos, got {logs}");
         }
         let default_balance: Nat = call_raw("mock_icrc_ledger", "icrc1_balance_of", &format!("({})", account_to_candid(&relay_account)))?;
         if nat_to_u64(&default_balance) != 33_000_000 {

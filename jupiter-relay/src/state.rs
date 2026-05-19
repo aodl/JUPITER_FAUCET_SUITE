@@ -274,6 +274,107 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
     )
 }
 
+pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
+    format!(
+        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} total_burn_cycles={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={}",
+        summary.mode,
+        summary.started_at_ts_nanos,
+        opt_u64(summary.completed_at_ts_nanos),
+        opt_u128(summary.min_cycles_balance),
+        summary.total_burn_cycles,
+        summary.default_account_balance_start_e8s,
+        summary.fee_e8s,
+        summary.transfer_count,
+        summary.ledger_transfer_count,
+        summary.ledger_sent_e8s,
+        summary.ledger_fees_e8s,
+        summary.cmc_notify_success_count,
+        summary.cmc_notify_failed_count,
+        summary.cmc_notify_ambiguous_count,
+        summary.planned_retained_e8s,
+        summary.known_unspent_e8s,
+        summary.ambiguous_e8s,
+        summary.failed_transfers,
+        summary.ambiguous_transfers,
+        summary.partial_tick_count,
+    )
+}
+
+pub(crate) fn relay_canister_log_line(sample: &CanisterBurnSample) -> String {
+    format!(
+        "RELAY_CANISTER canister_id={} previous_cycles={} current_cycles={} burn_cycles={} weight={} gross_share_e8s={} amount_e8s={} skipped_reason={}",
+        sample.canister_id.to_text(),
+        opt_u128(sample.previous_cycles),
+        sample.current_cycles,
+        sample.burn_cycles,
+        sample.weight,
+        sample.gross_share_e8s,
+        sample.amount_e8s,
+        opt_text(sample.skipped_reason.as_deref()),
+    )
+}
+
+pub(crate) fn relay_probe_failure_log_line(failure: &ProbeFailure) -> String {
+    format!(
+        "RELAY_PROBE_FAILURE canister_id={} error={}",
+        failure.canister_id.to_text(),
+        escape_log_text(&failure.error),
+    )
+}
+
+pub(crate) fn relay_raw_recipient_log_line(plan: &crate::logic::RawIcpPlan) -> String {
+    format!(
+        "RELAY_RAW_RECIPIENT owner={} subaccount={} gross_share_e8s={} amount_e8s={} retained_self={} skipped_reason={} memo={}",
+        plan.recipient.account.owner.to_text(),
+        plan.recipient
+            .account
+            .subaccount
+            .as_ref()
+            .map(|subaccount| hex_bytes(subaccount))
+            .unwrap_or_else(|| "null".to_string()),
+        plan.gross_share_e8s,
+        plan.amount_e8s,
+        plan.retain_self,
+        opt_text(plan.skipped_reason.as_deref()),
+        plan.recipient
+            .memo
+            .as_ref()
+            .map(|memo| hex_bytes(memo))
+            .unwrap_or_else(|| "null".to_string()),
+    )
+}
+
+fn opt_u64(value: Option<u64>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn opt_u128(value: Option<u128>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn opt_text(value: Option<&str>) -> String {
+    value
+        .map(escape_log_text)
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn escape_log_text(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' | b':' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 fn production_managed_set_matches(managed: &[Principal]) -> bool {
     let expected = PRODUCTION_JUPITER_MANAGED_CANISTERS
         .iter()
@@ -476,5 +577,57 @@ mod tests {
         assert!(line.contains("raw_icp_min_cycles_threshold=5000000000000"));
         assert!(line.contains("raw_icp_recipients=jufzc-caaaa-aaaar-qb5da-cai:null|cm5kl-iiaaa-aaaac-be6za-cai:0909090909090909090909090909090909090909090909090909090909090909"));
         assert!(line.contains("raw_icp_recipient_memos=0102|null"));
+    }
+
+    #[test]
+    fn relay_summary_log_line_is_single_line_and_includes_public_counters() {
+        let mut summary = RelaySummary::started(RelayMode::CyclesTopUp, 11, 2);
+        summary.completed_at_ts_nanos = Some(22);
+        summary.min_cycles_balance = Some(333);
+        summary.total_burn_cycles = 444;
+        summary.default_account_balance_start_e8s = 555;
+        summary.fee_e8s = 10;
+        summary.partial_tick_count = 1;
+
+        let line = relay_summary_log_line(&summary);
+
+        assert!(line.starts_with("RELAY_SUMMARY mode=CyclesTopUp"));
+        assert!(line.contains("started_at_ts_nanos=11"));
+        assert!(line.contains("completed_at_ts_nanos=22"));
+        assert!(line.contains("min_cycles_balance=333"));
+        assert!(line.contains("total_burn_cycles=444"));
+        assert!(line.contains("balance_start_e8s=555"));
+        assert!(line.contains("fee_e8s=10"));
+        assert!(line.contains("partial_tick_count=1"));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn relay_canister_and_probe_log_lines_escape_optional_text() {
+        let sample = CanisterBurnSample {
+            canister_id: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+            previous_cycles: Some(1_000),
+            current_cycles: 900,
+            burn_cycles: 100,
+            weight: 100,
+            gross_share_e8s: 50,
+            amount_e8s: 40,
+            skipped_reason: Some("gross share <= fee".to_string()),
+        };
+        let canister_line = relay_canister_log_line(&sample);
+        assert!(canister_line.starts_with("RELAY_CANISTER "));
+        assert!(canister_line.contains("burn_cycles=100"));
+        assert!(canister_line.contains("gross_share_e8s=50"));
+        assert!(canister_line.contains("amount_e8s=40"));
+        assert!(canister_line.contains("skipped_reason=gross%20share%20%3C%3D%20fee"));
+
+        let failure = ProbeFailure {
+            canister_id: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+            error: "call failed\nretry".to_string(),
+        };
+        let failure_line = relay_probe_failure_log_line(&failure);
+        assert!(failure_line.starts_with("RELAY_PROBE_FAILURE "));
+        assert!(failure_line.contains("error=call%20failed%0Aretry"));
+        assert!(!failure_line.contains('\n'));
     }
 }

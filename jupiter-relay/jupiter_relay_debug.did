@@ -84,9 +84,6 @@ type DebugConfig = record {
   raw_icp_mode : opt RawIcpModeConfig;
 };
 service : (InitArgs) -> {
-  get_config : () -> (Config) query;
-  get_last_summary : () -> (opt RelaySummary) query;
-  get_last_cycles_samples : () -> (vec record { principal; nat; nat64 }) query;
   debug_main_tick : () -> ();
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;

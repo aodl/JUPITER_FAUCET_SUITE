@@ -166,26 +166,6 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     crate::scheduler::schedule_immediate_resume_if_needed();
 }
 
-#[ic_cdk::query]
-fn get_config() -> crate::state::Config {
-    crate::state::with_state(|st| st.config.clone())
-}
-
-#[ic_cdk::query]
-fn get_last_summary() -> Option<crate::state::RelaySummary> {
-    crate::state::with_state(|st| st.last_summary.clone())
-}
-
-#[ic_cdk::query]
-fn get_last_cycles_samples() -> Vec<(Principal, u128, u64)> {
-    crate::state::with_state(|st| {
-        st.last_completed_cycles
-            .iter()
-            .map(|(principal, snapshot)| (*principal, snapshot.cycles, snapshot.timestamp_nanos))
-            .collect()
-    })
-}
-
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
 pub struct DebugState {

@@ -2,26 +2,94 @@
 set -euo pipefail
 
 RELAY_CANISTER_ID="cm5kl-iiaaa-aaaac-be6za-cai"
+BLACKHOLE_CONTROLLER_ID="77deu-baaaa-aaaar-qb6za-cai"
+SETTINGS_COMMAND="icp canister settings update ${RELAY_CANISTER_ID} --add-controller ${BLACKHOLE_CONTROLLER_ID} --log-visibility public --log-memory-limit 2mib -n ic"
 
-echo "Querying relay config"
-icp canister call "$RELAY_CANISTER_ID" get_config '()' -n ic
+EXPECTED_MANAGED_CANISTERS=(
+  "uccpi-cqaaa-aaaar-qby3q-cai"
+  "afisn-gqaaa-aaaar-qb4qa-cai"
+  "acjuz-liaaa-aaaar-qb4qq-cai"
+  "alk7f-5aaaa-aaaar-qb4ra-cai"
+  "jufzc-caaaa-aaaar-qb5da-cai"
+  "j5gs6-uiaaa-aaaar-qb5cq-cai"
+  "77deu-baaaa-aaaar-qb6za-cai"
+)
 
-echo "Querying relay last summary"
-icp canister call "$RELAY_CANISTER_ID" get_last_summary '()' -n ic
+require_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local context="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then
+    echo "relay smoke failed: expected $context to contain: $needle" >&2
+    exit 1
+  fi
+}
 
 echo "Fetching relay logs"
-icp canister logs "$RELAY_CANISTER_ID" -n ic
+logs="$(icp canister logs "$RELAY_CANISTER_ID" -n ic)"
+printf '%s\n' "$logs"
+
+require_contains "$logs" "Cycles:" "logs"
+require_contains "$logs" "CONFIG " "logs"
+require_contains "$logs" "$RELAY_CANISTER_ID" "logs"
+require_contains "$logs" "$BLACKHOLE_CONTROLLER_ID" "logs"
+require_contains "$logs" "max_transfers_per_tick" "logs"
+for canister_id in "${EXPECTED_MANAGED_CANISTERS[@]}"; do
+  require_contains "$logs" "$canister_id" "logs"
+done
+
+if [[ "$logs" == *"RELAY_SUMMARY mode=CyclesTopUp"* || "$logs" == *"RELAY_SUMMARY mode=RawIcp"* ]]; then
+  require_contains "$logs" "RELAY_SUMMARY " "allocation logs"
+  require_contains "$logs" "RELAY_CANISTER " "allocation logs"
+  require_contains "$logs" "burn_cycles" "allocation logs"
+  require_contains "$logs" "gross_share_e8s" "allocation logs"
+  require_contains "$logs" "amount_e8s" "allocation logs"
+fi
+
+if [[ "$logs" == *"RELAY_SUMMARY mode=RawIcp"* ]]; then
+  require_contains "$logs" "RELAY_RAW_RECIPIENT " "raw ICP logs"
+  require_contains "$logs" "retained_self" "raw ICP logs"
+  require_contains "$logs" "memo" "raw ICP logs"
+fi
+
+if [[ "$logs" == *"RELAY_SUMMARY mode=Degraded"* ]]; then
+  require_contains "$logs" "RELAY_PROBE_FAILURE " "degraded logs"
+fi
 
 echo "Showing relay settings"
-icp canister settings show "$RELAY_CANISTER_ID" -n ic
+settings="$(icp canister settings show "$RELAY_CANISTER_ID" -n ic)"
+printf '%s\n' "$settings"
+
+settings_ok=true
+if [[ "$settings" != *"$BLACKHOLE_CONTROLLER_ID"* ]]; then
+  settings_ok=false
+fi
+if [[ "$settings" != *"public"* && "$settings" != *"Public"* ]]; then
+  settings_ok=false
+fi
+if [[ "$settings" != *"2MiB"* && "$settings" != *"2 MiB"* && "$settings" != *"2mib"* && "$settings" != *"2097152"* ]]; then
+  settings_ok=false
+fi
+
+if [[ "$settings_ok" != true ]]; then
+  cat <<EOF
+
+Relay settings are not visibly configured with the expected controller/log settings.
+Run this exact command after confirming the operational/admin controller should be retained:
+
+${SETTINGS_COMMAND}
+EOF
+fi
 
 cat <<'EOF'
 
 Manual confirmations:
 - blackhole 77deu-baaaa-aaaar-qb6za-cai is a controller;
 - canister logs are public;
+- log memory limit is 2MiB;
+- the operational/admin controller is retained until intentional handoff;
 - managed_canisters are the Jupiter production suite set plus blackhole, excluding relay self;
 - effective managed canisters include relay self cm5kl-iiaaa-aaaac-be6za-cai;
-- first successful tick is BaselineOnly;
-- no ledger transfer happened on the baseline tick.
+- first successful tick is BaselineOnly and spends no ICP;
+- first funded allocation tick is observed before larger funding.
 EOF

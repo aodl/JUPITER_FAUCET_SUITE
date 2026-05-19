@@ -85,6 +85,58 @@ def validate_debug_methods_present_in_debug_did(path: Path) -> None:
         fail(f"{path} is expected to expose debug_* methods")
 
 
+def validate_relay_prod_did(path: Path) -> None:
+    text = path.read_text()
+    if not re.search(r"service\s*:\s*\(\s*InitArgs\s*\)\s*->\s*\{\s*\}\s*$", text, re.S):
+        fail(f"{path} relay production DID must expose an empty service")
+    forbidden = [
+        "get_config",
+        "get_last_summary",
+        "get_last_cycles_samples",
+        "Config",
+        "RelaySummary",
+        "CanisterBurnSample",
+    ]
+    for token in forbidden:
+        if re.search(rf"\b{re.escape(token)}\b", text):
+            fail(f"{path} unexpectedly contains relay production-only forbidden token `{token}`")
+    if re.search(r"\)\s*->\s*\(", text):
+        fail(f"{path} relay production DID must contain no public query/update methods")
+
+
+def validate_relay_debug_did(path: Path) -> None:
+    text = path.read_text()
+    expected = [
+        "debug_main_tick",
+        "debug_state",
+        "debug_config",
+        "debug_last_summary",
+        "debug_set_cycles_sample",
+        "debug_force_clear_active_job",
+        "debug_abort_after_successful_transfer",
+        "debug_trap_after_successful_transfer",
+    ]
+    for method in expected:
+        if not re.search(rf"\b{re.escape(method)}\b", text):
+            fail(f"{path} is missing debug relay method `{method}`")
+    forbidden = ["get_config", "get_last_summary", "get_last_cycles_samples"]
+    for method in forbidden:
+        if re.search(rf"\b{re.escape(method)}\b", text):
+            fail(f"{path} unexpectedly exposes removed relay production method `{method}`")
+
+
+def validate_relay_docs_and_smoke_are_log_only() -> None:
+    forbidden = ["get_config", "get_last_summary", "get_last_cycles_samples"]
+    for path in [
+        REPO_ROOT / "jupiter-relay" / "README.md",
+        REPO_ROOT / "scripts" / "smoke-relay-mainnet",
+    ]:
+        text = path.read_text()
+        for token in forbidden:
+            if token in text:
+                fail(f"{path} still mentions removed relay production endpoint `{token}`")
+
+
 def validate_disburser() -> None:
     path = REPO_ROOT / "jupiter-disburser" / "mainnet-install-args.did"
     text = path.read_text()
@@ -155,6 +207,8 @@ def require_opt_principal(text: str, field: str, expected: str, path: Path) -> N
 
 
 def validate_relay() -> None:
+    if "jupiter_relay" not in CANISTER_IDS:
+        fail(".icp/data/mappings/ic.ids.json is missing jupiter_relay")
     if PROD["jupiter_relay"] != EXPECTED_RELAY_ID:
         fail(
             ".icp/data/mappings/ic.ids.json has wrong jupiter_relay "
@@ -208,10 +262,13 @@ def main() -> None:
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-disburser" / "jupiter_disburser.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-historian" / "jupiter_historian.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "jupiter-relay" / "jupiter_relay.did")
+    validate_relay_prod_did(REPO_ROOT / "jupiter-relay" / "jupiter_relay.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-faucet" / "jupiter_faucet_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-disburser" / "jupiter_disburser_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-historian" / "jupiter_historian_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "jupiter-relay" / "jupiter_relay_debug.did")
+    validate_relay_debug_did(REPO_ROOT / "jupiter-relay" / "jupiter_relay_debug.did")
+    validate_relay_docs_and_smoke_are_log_only()
     print("mainnet install-args and DID validation OK")
 
 
