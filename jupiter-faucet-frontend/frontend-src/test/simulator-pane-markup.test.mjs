@@ -226,6 +226,7 @@ test('Source and Governance panes expose subnet context', () => {
   assert.match(governance, /moving toward SNS DAO control/);
   assert.match(governance, /data-panel="source"[^>]*>open source<\/a>/);
   assert.match(governance, /data-panel="source"[^>]*>reproducible builds<\/a>/);
+  assert.match(governance, /data-panel="source"[^>]*>Source Code<\/a>\s*pane/);
   assert.match(governance, /memo-builder-safety-notice[\s\S]*<strong>Blackholing:<\/strong>/);
   assert.match(governance, /core value-moving canisters/);
   assert.match(governance, /underlying Internet Computer system API\s*\n\s*\(<a href="https:\/\/nns\.ic0\.app\/"[^>]*>NNS-managed code<\/a>\)/);
