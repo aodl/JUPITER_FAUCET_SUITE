@@ -178,7 +178,7 @@ test('About pane includes social links and projects slide', () => {
   assert.match(about, /class="nav-panel-page" data-page="1"[\s\S]*<h2 class="about-projects-title">Featured Projects Powered by Jupiter Faucet<\/h2>[\s\S]*More coming soon!/);
   assert.match(about, /data-page-target="0"[^>]*>social channels<\/a>[\s\S]*class="about-project-grid"/);
   assert.match(about, /class="about-project-preview" href="\/"/);
-  assert.match(about, /src="\/preview\.jpg"[\s\S]*<strong>Jupiter Faucet<\/strong>/);
+  assert.match(about, /src="\/og\/preview-20260520\.jpg"[\s\S]*<strong>Jupiter Faucet<\/strong>/);
   assert.match(about, /Yes, Jupiter Faucet powers itself!/);
   assert.match(about, /<p class="about-project-canisters-title">Canisters<\/p>/);
   assert.match(about, /data-tracker-principal="uccpi-cqaaa-aaaar-qby3q-cai"[\s\S]*>Disburser<\/a>/);

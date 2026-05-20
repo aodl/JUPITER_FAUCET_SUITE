@@ -73,6 +73,7 @@ thread_local! {
 static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 const IMMUTABLE_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 const NO_CACHE_ASSET_CACHE_CONTROL: &str = "public, no-cache, no-store";
+const SOCIAL_PREVIEW_IMAGE_PATHS: [&str; 1] = ["og/preview-20260520.jpg"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequestTarget {
@@ -307,10 +308,10 @@ fn certify_all_assets() {
             encodings: compressed_encodings,
         },
         AssetConfig::File {
-            path: "preview.jpg".to_string(),
+            path: "og/preview-20260520.jpg".to_string(),
             content_type: Some("image/jpeg".to_string()),
             headers: get_asset_headers_for_path(
-                "preview.jpg",
+                "og/preview-20260520.jpg",
                 vec![(
                     "cache-control".to_string(),
                     IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
@@ -436,16 +437,18 @@ fn certify_head_assets(dir: &Dir<'static>) -> Result<(), String> {
         HeadAssetMatchKind::Exact,
     )?;
 
-    let preview_file = dir
-        .get_file("preview.jpg")
-        .ok_or_else(|| "preview.jpg is missing from frontend assets".to_string())?;
-    insert_head_asset(
-        &mut head_assets,
-        "/preview.jpg",
-        StatusCode::OK,
-        asset_headers_for_path("preview.jpg", preview_file.contents().len()),
-        HeadAssetMatchKind::Exact,
-    )?;
+    for path in SOCIAL_PREVIEW_IMAGE_PATHS {
+        let preview_file = dir
+            .get_file(path)
+            .ok_or_else(|| format!("{path} is missing from frontend assets"))?;
+        insert_head_asset(
+            &mut head_assets,
+            &format!("/{path}"),
+            StatusCode::OK,
+            asset_headers_for_path(path, preview_file.contents().len()),
+            HeadAssetMatchKind::Exact,
+        )?;
+    }
 
     let not_found_file = dir
         .get_file("404.html")
@@ -709,12 +712,16 @@ fn get_asset_headers_for_path(
     path: &str,
     additional_headers: Vec<HeaderField>,
 ) -> Vec<HeaderField> {
-    let corp = if path == "preview.jpg" {
+    let corp = if is_social_preview_image(path) {
         "cross-origin"
     } else {
         "same-origin"
     };
     get_asset_headers_with_corp(corp, additional_headers)
+}
+
+fn is_social_preview_image(path: &str) -> bool {
+    SOCIAL_PREVIEW_IMAGE_PATHS.contains(&path)
 }
 
 fn get_asset_headers_with_corp(
@@ -895,41 +902,55 @@ mod tests {
     }
 
     #[test]
-    fn get_preview_jpg_still_serves_image_asset() {
+    fn get_preview_jpg_returns_404_after_legacy_asset_removal() {
         certify_all_assets();
 
         let request = HttpRequest::get("/preview.jpg").build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_ne!(header_value(&response, "content-type"), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn get_cache_busted_preview_jpg_serves_cross_origin_image_asset() {
+        certify_all_assets();
+
+        let request = HttpRequest::get("/og/preview-20260520.jpg").build();
         let response = serve_asset_with_certificate(b"test-certificate", &request);
 
         assert_eq!(response.status_code(), StatusCode::OK);
         assert_eq!(header_value(&response, "content-type"), Some("image/jpeg"));
         assert_eq!(
-            header_value(&response, "cache-control"),
-            Some(IMMUTABLE_ASSET_CACHE_CONTROL)
+            header_value(&response, "cross-origin-resource-policy"),
+            Some("cross-origin")
         );
         assert!(!response.body().is_empty());
     }
 
     #[test]
-    fn get_preview_jpg_is_cross_origin_embeddable() {
-        certify_all_assets();
-
-        let request = HttpRequest::get("/preview.jpg").build();
-        let response = serve_asset_with_certificate(b"test-certificate", &request);
-
-        assert_eq!(
-            header_value(&response, "cross-origin-resource-policy"),
-            Some("cross-origin")
-        );
-    }
-
-    #[test]
-    fn head_preview_jpg_serves_certified_image_headers_without_body() {
+    fn head_preview_jpg_returns_404_after_legacy_head_entry_removal() {
         certify_all_assets();
 
         let request = HttpRequest::builder()
             .with_method(Method::HEAD)
             .with_url("/preview.jpg")
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_ne!(header_value(&response, "content-type"), Some("image/jpeg"));
+        assert_eq!(response.body(), b"");
+        assert!(header_value(&response, "ic-certificate").is_some());
+    }
+
+    #[test]
+    fn head_cache_busted_preview_jpg_serves_certified_cross_origin_image_headers_without_body() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/og/preview-20260520.jpg")
             .build();
         let response = serve_asset_with_certificate(b"test-certificate", &request);
 
@@ -941,22 +962,31 @@ mod tests {
         );
         assert_eq!(response.body(), b"");
         assert!(header_value(&response, "ic-certificate").is_some());
-    }
-
-    #[test]
-    fn head_preview_jpg_is_cross_origin_embeddable() {
-        certify_all_assets();
-
-        let request = HttpRequest::builder()
-            .with_method(Method::HEAD)
-            .with_url("/preview.jpg")
-            .build();
-        let response = serve_asset_with_certificate(b"test-certificate", &request);
-
         assert_eq!(
             header_value(&response, "cross-origin-resource-policy"),
             Some("cross-origin")
         );
+    }
+
+    #[test]
+    fn index_html_uses_cache_busted_social_preview_image_url() {
+        let index_html = ASSETS_DIR
+            .get_file("index.html")
+            .expect("index.html should be embedded in frontend assets");
+        let index_html = std::str::from_utf8(index_html.contents())
+            .expect("index.html should be valid utf-8");
+        let preview_url = "https://jupiter-faucet.com/og/preview-20260520.jpg";
+
+        assert!(index_html.contains(&format!(
+            r#"<meta property="og:image" content="{preview_url}" />"#
+        )));
+        assert!(index_html.contains(&format!(
+            r#"<meta property="og:image:secure_url" content="{preview_url}" />"#
+        )));
+        assert!(index_html.contains(&format!(
+            r#"<meta name="twitter:image" content="{preview_url}" />"#
+        )));
+        assert!(!index_html.contains("/preview.jpg"));
     }
 
     #[test]
