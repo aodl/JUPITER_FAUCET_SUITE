@@ -2,22 +2,18 @@ use ic_asset_certification::{
     Asset, AssetCertificationError, AssetConfig, AssetEncoding, AssetFallbackConfig, AssetMap,
     AssetRouter,
 };
-use ic_cdk::{
-    api::data_certificate,
-    init, post_upgrade, query,
-};
+use ic_cdk::{api::data_certificate, init, post_upgrade, query};
 use ic_http_certification::{
     utils::add_v2_certificate_header, DefaultCelBuilder, DefaultResponseCertification,
-    DefaultResponseOnlyCelExpression,
-    HeaderField, HttpCertification, HttpCertificationPath, HttpCertificationTree,
-    HttpCertificationTreeEntry, HttpRequest, HttpResponse, StatusCode,
-    CERTIFICATE_EXPRESSION_HEADER_NAME,
+    DefaultResponseOnlyCelExpression, HeaderField, HttpCertification, HttpCertificationPath,
+    HttpCertificationTree, HttpCertificationTreeEntry, HttpRequest, HttpResponse, Method,
+    StatusCode, CERTIFICATE_EXPRESSION_HEADER_NAME,
 };
 use include_dir::{include_dir, Dir};
 use serde::Serialize;
-use std::{cell::RefCell, rc::Rc};
 #[cfg(not(test))]
 use std::time::Duration;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Metrics {
@@ -70,6 +66,7 @@ thread_local! {
     static ASSET_ROUTER: RefCell<AssetRouter<'static>> = RefCell::new(
         AssetRouter::with_tree(HTTP_TREE.with(|tree| tree.clone()))
     );
+    static HEAD_ASSETS: RefCell<HashMap<HeadAssetKey, CertifiedHeadAsset>> = RefCell::new(HashMap::new());
     static CERTIFIED_METRICS_SNAPSHOT: RefCell<Option<CertifiedMetricsSnapshot>> = const { RefCell::new(None) };
 }
 
@@ -81,6 +78,24 @@ const NO_CACHE_ASSET_CACHE_CONTROL: &str = "public, no-cache, no-store";
 enum RequestTarget {
     Metrics,
     Asset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct HeadAssetKey {
+    path: String,
+    match_kind: HeadAssetMatchKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum HeadAssetMatchKind {
+    Exact,
+    Fallback,
+}
+
+#[derive(Debug, Clone)]
+struct CertifiedHeadAsset {
+    response: HttpResponse<'static>,
+    tree_entry: HttpCertificationTreeEntry<'static>,
 }
 
 fn request_target_for_path(path: &str) -> RequestTarget {
@@ -95,10 +110,19 @@ fn plain_error_response(status: StatusCode, message: &str) -> HttpResponse<'stat
     HttpResponse::builder()
         .with_status_code(status)
         .with_body(message.as_bytes().to_vec())
-        .with_headers(get_asset_headers(vec![
-            ("content-type".to_string(), "text/plain; charset=utf-8".to_string()),
-            ("cache-control".to_string(), NO_CACHE_ASSET_CACHE_CONTROL.to_string()),
-        ]))
+        .with_headers(get_asset_headers_with_corp(
+            "same-origin",
+            vec![
+                (
+                    "content-type".to_string(),
+                    "text/plain; charset=utf-8".to_string(),
+                ),
+                (
+                    "cache-control".to_string(),
+                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+                ),
+            ],
+        ))
         .build()
 }
 
@@ -141,11 +165,15 @@ fn current_cycle_balance() -> u128 {
 
 fn metrics_cel_expression() -> DefaultResponseOnlyCelExpression<'static> {
     DefaultCelBuilder::response_only_certification()
-        .with_response_certification(DefaultResponseCertification::response_header_exclusions(vec![]))
+        .with_response_certification(DefaultResponseCertification::response_header_exclusions(
+            vec![],
+        ))
         .build()
 }
 
-fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> CertifiedMetricsSnapshot {
+fn build_certified_metrics_snapshot(
+    asset_router: &AssetRouter<'static>,
+) -> CertifiedMetricsSnapshot {
     let metrics = Metrics {
         num_assets: asset_router.get_assets().len(),
         num_fallback_assets: asset_router.get_fallback_assets().len(),
@@ -153,19 +181,35 @@ fn build_certified_metrics_snapshot(asset_router: &AssetRouter<'static>) -> Cert
     };
     let body = serde_json::to_vec(&metrics).expect("failed to serialize metrics");
     let cel_expr = metrics_cel_expression();
-    let headers = get_asset_headers(vec![
-        (CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(), cel_expr.to_string()),
-        ("content-type".to_string(), "application/json".to_string()),
-        ("cache-control".to_string(), NO_CACHE_ASSET_CACHE_CONTROL.to_string()),
-    ]);
-    CertifiedMetricsSnapshot { body, headers, cel_expr }
+    let headers = get_asset_headers_with_corp(
+        "same-origin",
+        vec![
+            (
+                CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(),
+                cel_expr.to_string(),
+            ),
+            ("content-type".to_string(), "application/json".to_string()),
+            (
+                "cache-control".to_string(),
+                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+            ),
+        ],
+    );
+    CertifiedMetricsSnapshot {
+        body,
+        headers,
+        cel_expr,
+    }
 }
 
 #[cfg(not(test))]
 fn install_metrics_refresh_timer() {
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(METRICS_REFRESH_INTERVAL_SECS), || async {
-        refresh_certified_metrics_snapshot();
-    });
+    ic_cdk_timers::set_timer_interval(
+        Duration::from_secs(METRICS_REFRESH_INTERVAL_SECS),
+        || async {
+            refresh_certified_metrics_snapshot();
+        },
+    );
 }
 
 #[cfg(test)]
@@ -182,7 +226,8 @@ fn refresh_certified_metrics_snapshot() {
         let certification = HttpCertification::response_only(&snapshot.cel_expr, &response, None)
             .expect("failed to certify metrics response");
         let metrics_tree_path = metrics_tree_path();
-        let metrics_tree_entry = HttpCertificationTreeEntry::new(&metrics_tree_path, &certification);
+        let metrics_tree_entry =
+            HttpCertificationTreeEntry::new(&metrics_tree_path, &certification);
 
         HTTP_TREE.with(|tree| {
             let mut tree = tree.borrow_mut();
@@ -205,10 +250,13 @@ fn certify_all_assets() {
         AssetConfig::File {
             path: "index.html".to_string(),
             content_type: Some("text/html".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             fallback_for: vec![],
             aliased_by: vec!["/".to_string()],
             encodings: compressed_encodings.clone(),
@@ -216,10 +264,13 @@ fn certify_all_assets() {
         AssetConfig::File {
             path: "404.html".to_string(),
             content_type: Some("text/html".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             fallback_for: vec![AssetFallbackConfig {
                 scope: "/".to_string(),
                 status_code: Some(StatusCode::NOT_FOUND),
@@ -234,73 +285,111 @@ fn certify_all_assets() {
         AssetConfig::Pattern {
             pattern: "**/*.js".to_string(),
             content_type: Some("text/javascript".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: compressed_encodings.clone(),
         },
         AssetConfig::Pattern {
             pattern: "**/*.css".to_string(),
             content_type: Some("text/css".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: compressed_encodings,
+        },
+        AssetConfig::File {
+            path: "preview.jpg".to_string(),
+            content_type: Some("image/jpeg".to_string()),
+            headers: get_asset_headers_for_path(
+                "preview.jpg",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
+            fallback_for: vec![],
+            aliased_by: vec![],
+            encodings: vec![],
         },
         AssetConfig::Pattern {
             pattern: "**/*.ico".to_string(),
             content_type: Some("image/x-icon".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: vec![],
         },
         AssetConfig::Pattern {
             pattern: "**/*.png".to_string(),
             content_type: Some("image/png".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: vec![],
         },
         AssetConfig::Pattern {
             pattern: "**/*.{jpg,jpeg}".to_string(),
             content_type: Some("image/jpeg".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: vec![],
         },
         AssetConfig::Pattern {
             pattern: "**/*.webp".to_string(),
             content_type: Some("image/webp".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: vec![],
         },
         AssetConfig::Pattern {
             pattern: "**/*.svg".to_string(),
             content_type: Some("image/svg+xml".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             encodings: vec![],
         },
         AssetConfig::File {
             path: ".well-known/ic-domains".to_string(),
             content_type: Some("text/plain".to_string()),
-            headers: get_asset_headers(vec![(
-                "cache-control".to_string(),
-                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-            )]),
+            headers: get_asset_headers_with_corp(
+                "same-origin",
+                vec![(
+                    "cache-control".to_string(),
+                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
+                )],
+            ),
             fallback_for: vec![],
             aliased_by: vec![],
             encodings: vec![],
@@ -317,11 +406,159 @@ fn certify_all_assets() {
 
         update_certified_data(&asset_router.root_hash());
     });
+
+    if let Err(err) = certify_head_assets(&ASSETS_DIR) {
+        ic_cdk::trap(&format!("failed to certify frontend HEAD assets: {err}"));
+    }
+
+    HTTP_TREE.with(|tree| update_certified_data(&tree.borrow().root_hash()));
+}
+
+fn certify_head_assets(dir: &Dir<'static>) -> Result<(), String> {
+    let mut head_assets = HashMap::new();
+
+    let index_file = dir
+        .get_file("index.html")
+        .ok_or_else(|| "index.html is missing from frontend assets".to_string())?;
+    let index_headers = asset_headers_for_path("index.html", index_file.contents().len());
+    insert_head_asset(
+        &mut head_assets,
+        "/",
+        StatusCode::OK,
+        index_headers.clone(),
+        HeadAssetMatchKind::Exact,
+    )?;
+    insert_head_asset(
+        &mut head_assets,
+        "/index.html",
+        StatusCode::OK,
+        index_headers,
+        HeadAssetMatchKind::Exact,
+    )?;
+
+    let preview_file = dir
+        .get_file("preview.jpg")
+        .ok_or_else(|| "preview.jpg is missing from frontend assets".to_string())?;
+    insert_head_asset(
+        &mut head_assets,
+        "/preview.jpg",
+        StatusCode::OK,
+        asset_headers_for_path("preview.jpg", preview_file.contents().len()),
+        HeadAssetMatchKind::Exact,
+    )?;
+
+    let not_found_file = dir
+        .get_file("404.html")
+        .ok_or_else(|| "404.html is missing from frontend assets".to_string())?;
+    let not_found_headers = asset_headers_for_path("404.html", not_found_file.contents().len());
+    insert_head_asset(
+        &mut head_assets,
+        "/",
+        StatusCode::NOT_FOUND,
+        not_found_headers,
+        HeadAssetMatchKind::Fallback,
+    )?;
+
+    HEAD_ASSETS.with(|stored| *stored.borrow_mut() = head_assets);
+    Ok(())
+}
+
+fn insert_head_asset(
+    head_assets: &mut HashMap<HeadAssetKey, CertifiedHeadAsset>,
+    path: &str,
+    status_code: StatusCode,
+    headers: Vec<HeaderField>,
+    match_kind: HeadAssetMatchKind,
+) -> Result<(), String> {
+    let response = HttpResponse::builder()
+        .with_status_code(status_code)
+        .with_body(Vec::new())
+        .with_headers(headers)
+        .build();
+    let request = HttpRequest::builder()
+        .with_method(Method::HEAD)
+        .with_url(path)
+        .build();
+    let cel_expr = DefaultCelBuilder::full_certification()
+        .with_response_certification(DefaultResponseCertification::response_header_exclusions(
+            vec![],
+        ))
+        .build();
+    let certification = HttpCertification::full(&cel_expr, &request, &response, None)
+        .map_err(|err| err.to_string())?;
+    let certification_path = match match_kind {
+        HeadAssetMatchKind::Exact => HttpCertificationPath::exact(path.to_string()),
+        HeadAssetMatchKind::Fallback => HttpCertificationPath::wildcard(path.to_string()),
+    };
+    let tree_entry = HttpCertificationTreeEntry::new(certification_path, certification);
+
+    HTTP_TREE.with(|tree| tree.borrow_mut().insert(&tree_entry));
+    head_assets.insert(
+        HeadAssetKey {
+            path: path.to_string(),
+            match_kind,
+        },
+        CertifiedHeadAsset {
+            response,
+            tree_entry,
+        },
+    );
+
+    Ok(())
+}
+
+fn asset_headers_for_path(path: &str, content_length: usize) -> Vec<HeaderField> {
+    let cache_control =
+        if path == "index.html" || path == "404.html" || path == ".well-known/ic-domains" {
+            NO_CACHE_ASSET_CACHE_CONTROL
+        } else {
+            IMMUTABLE_ASSET_CACHE_CONTROL
+        };
+
+    let mut headers = vec![("content-length".to_string(), content_length.to_string())];
+    headers.extend(get_asset_headers_for_path(
+        path,
+        vec![("cache-control".to_string(), cache_control.to_string())],
+    ));
+
+    if let Some(content_type) = content_type_for_path(path) {
+        headers.push(("content-type".to_string(), content_type.to_string()));
+    }
+
+    headers.push((
+        CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(),
+        DefaultCelBuilder::full_certification()
+            .with_response_certification(DefaultResponseCertification::response_header_exclusions(
+                vec![],
+            ))
+            .build()
+            .to_string(),
+    ));
+
+    headers
+}
+
+fn content_type_for_path(path: &str) -> Option<&'static str> {
+    match path {
+        "index.html" | "404.html" => Some("text/html"),
+        ".well-known/ic-domains" => Some("text/plain"),
+        _ if path.ends_with(".js") => Some("text/javascript"),
+        _ if path.ends_with(".css") => Some("text/css"),
+        _ if path.ends_with(".ico") => Some("image/x-icon"),
+        _ if path.ends_with(".png") => Some("image/png"),
+        _ if path.ends_with(".jpg") || path.ends_with(".jpeg") => Some("image/jpeg"),
+        _ if path.ends_with(".webp") => Some("image/webp"),
+        _ if path.ends_with(".svg") => Some("image/svg+xml"),
+        _ => None,
+    }
 }
 
 fn serve_metrics() -> HttpResponse<'static> {
     let Some(snapshot) = CERTIFIED_METRICS_SNAPSHOT.with(|stored| stored.borrow().clone()) else {
-        return plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "metrics snapshot unavailable");
+        return plain_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "metrics snapshot unavailable",
+        );
     };
 
     let mut response = HttpResponse::builder()
@@ -337,16 +574,18 @@ fn serve_metrics() -> HttpResponse<'static> {
     HTTP_TREE.with(|tree| {
         let tree = tree.borrow();
         let metrics_tree_path = metrics_tree_path();
-        let certification = match HttpCertification::response_only(&snapshot.cel_expr, &response, None) {
-            Ok(certification) => certification,
-            Err(_) => {
-                return plain_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "metrics certification unavailable",
-                )
-            }
-        };
-        let metrics_tree_entry = HttpCertificationTreeEntry::new(&metrics_tree_path, &certification);
+        let certification =
+            match HttpCertification::response_only(&snapshot.cel_expr, &response, None) {
+                Ok(certification) => certification,
+                Err(_) => {
+                    return plain_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "metrics certification unavailable",
+                    )
+                }
+            };
+        let metrics_tree_entry =
+            HttpCertificationTreeEntry::new(&metrics_tree_path, &certification);
         let witness = match tree.witness(&metrics_tree_entry, "/metrics") {
             Ok(witness) => witness,
             Err(_) => {
@@ -371,12 +610,87 @@ fn serve_asset(req: &HttpRequest) -> HttpResponse<'static> {
     let Some(certificate) = data_certificate() else {
         return plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "certificate unavailable");
     };
-    ASSET_ROUTER.with_borrow(|asset_router| {
-        match asset_router.serve_asset(&certificate, req) {
+    serve_asset_with_certificate(&certificate, req)
+}
+
+fn serve_asset_with_certificate(certificate: &[u8], req: &HttpRequest) -> HttpResponse<'static> {
+    if req.method() == Method::HEAD {
+        return serve_head_asset(certificate, req);
+    }
+
+    ASSET_ROUTER.with_borrow(
+        |asset_router| match asset_router.serve_asset(&certificate, req) {
             Ok(response) => response,
             Err(err) => asset_error_response(&err),
+        },
+    )
+}
+
+fn serve_head_asset(certificate: &[u8], req: &HttpRequest) -> HttpResponse<'static> {
+    let path = match req.get_path() {
+        Ok(path) => path,
+        Err(err) => return asset_error_response(&AssetCertificationError::from(err)),
+    };
+
+    HEAD_ASSETS.with_borrow(
+        |head_assets| match find_head_asset(head_assets, &path).cloned() {
+            Some(mut asset) => {
+                let witness = HTTP_TREE.with(|tree| {
+                    tree.borrow()
+                        .witness(&asset.tree_entry, &path)
+                        .map_err(AssetCertificationError::from)
+                });
+                match witness {
+                    Ok(witness) => {
+                        add_v2_certificate_header(
+                            certificate,
+                            &mut asset.response,
+                            &witness,
+                            &asset.tree_entry.path.to_expr_path(),
+                        );
+                        asset.response
+                    }
+                    Err(err) => asset_error_response(&err),
+                }
+            }
+            None => asset_error_response(&AssetCertificationError::NoAssetMatchingRequestUrl {
+                request_url: path,
+            }),
+        },
+    )
+}
+
+fn find_head_asset<'a>(
+    head_assets: &'a HashMap<HeadAssetKey, CertifiedHeadAsset>,
+    path: &str,
+) -> Option<&'a CertifiedHeadAsset> {
+    if let Some(asset) = head_assets.get(&HeadAssetKey {
+        path: path.to_string(),
+        match_kind: HeadAssetMatchKind::Exact,
+    }) {
+        return Some(asset);
+    }
+
+    let mut url_scopes = path.split('/').collect::<Vec<_>>();
+    url_scopes.pop();
+
+    while !url_scopes.is_empty() {
+        let mut scope = url_scopes.join("/");
+        scope.push('/');
+
+        for candidate_scope in [scope.as_str(), scope.trim_end_matches('/')] {
+            if let Some(asset) = head_assets.get(&HeadAssetKey {
+                path: candidate_scope.to_string(),
+                match_kind: HeadAssetMatchKind::Fallback,
+            }) {
+                return Some(asset);
+            }
         }
-    })
+
+        url_scopes.pop();
+    }
+
+    None
 }
 
 fn asset_error_response(err: &AssetCertificationError) -> HttpResponse<'static> {
@@ -384,11 +698,29 @@ fn asset_error_response(err: &AssetCertificationError) -> HttpResponse<'static> 
         AssetCertificationError::NoAssetMatchingRequestUrl { .. } => {
             plain_error_response(StatusCode::NOT_FOUND, "not found")
         }
-        _ => plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "failed to serve frontend asset"),
+        _ => plain_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to serve frontend asset",
+        ),
     }
 }
 
-fn get_asset_headers(additional_headers: Vec<HeaderField>) -> Vec<HeaderField> {
+fn get_asset_headers_for_path(
+    path: &str,
+    additional_headers: Vec<HeaderField>,
+) -> Vec<HeaderField> {
+    let corp = if path == "preview.jpg" {
+        "cross-origin"
+    } else {
+        "same-origin"
+    };
+    get_asset_headers_with_corp(corp, additional_headers)
+}
+
+fn get_asset_headers_with_corp(
+    corp: &str,
+    additional_headers: Vec<HeaderField>,
+) -> Vec<HeaderField> {
     let mut headers = vec![
         (
             "strict-transport-security".to_string(),
@@ -416,13 +748,12 @@ fn get_asset_headers(additional_headers: Vec<HeaderField>) -> Vec<HeaderField> {
         ),
         (
             "cross-origin-resource-policy".to_string(),
-            "same-origin".to_string(),
+            corp.to_string(),
         ),
     ];
     headers.extend(additional_headers);
     headers
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -440,8 +771,14 @@ mod tests {
     fn request_target_routes_metrics_separately() {
         assert_eq!(request_target_for_path("/metrics"), RequestTarget::Metrics);
         assert_eq!(request_target_for_path("/"), RequestTarget::Asset);
-        assert_eq!(request_target_for_path("/assets/app.js"), RequestTarget::Asset);
-        assert_eq!(request_target_for_path("/does-not-exist"), RequestTarget::Asset);
+        assert_eq!(
+            request_target_for_path("/assets/app.js"),
+            RequestTarget::Asset
+        );
+        assert_eq!(
+            request_target_for_path("/does-not-exist"),
+            RequestTarget::Asset
+        );
     }
 
     #[test]
@@ -450,7 +787,10 @@ mod tests {
         let response = http_request(request);
         assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
         assert_eq!(response.body(), b"bad request path");
-        assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(NO_CACHE_ASSET_CACHE_CONTROL)
+        );
     }
 
     #[test]
@@ -458,9 +798,18 @@ mod tests {
         let response = plain_error_response(StatusCode::BAD_REQUEST, "bad request path");
         assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
         assert_eq!(response.body(), b"bad request path");
-        assert_eq!(header_value(&response, "content-type"), Some("text/plain; charset=utf-8"));
-        assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
-        assert_eq!(header_value(&response, "x-content-type-options"), Some("nosniff"));
+        assert_eq!(
+            header_value(&response, "content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(NO_CACHE_ASSET_CACHE_CONTROL)
+        );
+        assert_eq!(
+            header_value(&response, "x-content-type-options"),
+            Some("nosniff")
+        );
         assert!(header_value(&response, "content-security-policy").is_some());
     }
 
@@ -473,8 +822,14 @@ mod tests {
 
         assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
         assert_eq!(response.body(), b"not found");
-        assert_eq!(header_value(&response, "content-type"), Some("text/plain; charset=utf-8"));
-        assert_eq!(header_value(&response, "cache-control"), Some(NO_CACHE_ASSET_CACHE_CONTROL));
+        assert_eq!(
+            header_value(&response, "content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(NO_CACHE_ASSET_CACHE_CONTROL)
+        );
     }
 
     #[test]
@@ -498,17 +853,177 @@ mod tests {
     }
 
     #[test]
+    fn head_root_serves_index_metadata() {
+        certify_all_assets();
+
+        let get_request = HttpRequest::get("/").build();
+        let get_response = serve_asset_with_certificate(b"test-certificate", &get_request);
+        let head_request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/")
+            .build();
+        let head_response = serve_asset_with_certificate(b"test-certificate", &head_request);
+
+        assert_eq!(head_response.status_code(), StatusCode::OK);
+        assert_eq!(header_value(&head_response, "content-type"), Some("text/html"));
+        assert_eq!(
+            header_value(&head_response, "cache-control"),
+            header_value(&get_response, "cache-control")
+        );
+        assert_eq!(head_response.body(), b"");
+        assert!(header_value(&head_response, "ic-certificate").is_some());
+    }
+
+    #[test]
+    fn head_index_html_serves_index_metadata() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/index.html")
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(header_value(&response, "content-type"), Some("text/html"));
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(NO_CACHE_ASSET_CACHE_CONTROL)
+        );
+        assert_eq!(response.body(), b"");
+        assert!(header_value(&response, "ic-certificate").is_some());
+    }
+
+    #[test]
+    fn get_preview_jpg_still_serves_image_asset() {
+        certify_all_assets();
+
+        let request = HttpRequest::get("/preview.jpg").build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(header_value(&response, "content-type"), Some("image/jpeg"));
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(IMMUTABLE_ASSET_CACHE_CONTROL)
+        );
+        assert!(!response.body().is_empty());
+    }
+
+    #[test]
+    fn get_preview_jpg_is_cross_origin_embeddable() {
+        certify_all_assets();
+
+        let request = HttpRequest::get("/preview.jpg").build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(
+            header_value(&response, "cross-origin-resource-policy"),
+            Some("cross-origin")
+        );
+    }
+
+    #[test]
+    fn head_preview_jpg_serves_certified_image_headers_without_body() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/preview.jpg")
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(header_value(&response, "content-type"), Some("image/jpeg"));
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(IMMUTABLE_ASSET_CACHE_CONTROL)
+        );
+        assert_eq!(response.body(), b"");
+        assert!(header_value(&response, "ic-certificate").is_some());
+    }
+
+    #[test]
+    fn head_preview_jpg_is_cross_origin_embeddable() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/preview.jpg")
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(
+            header_value(&response, "cross-origin-resource-policy"),
+            Some("cross-origin")
+        );
+    }
+
+    #[test]
+    fn head_compressible_asset_is_not_served_as_unencoded_asset() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/base.css")
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_ne!(header_value(&response, "content-type"), Some("text/css"));
+    }
+
+    #[test]
+    fn head_unknown_path_returns_404_not_index() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/missing-path")
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(header_value(&response, "content-type"), Some("text/html"));
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(NO_CACHE_ASSET_CACHE_CONTROL)
+        );
+        assert_eq!(response.body(), b"");
+        assert!(header_value(&response, "ic-certificate").is_some());
+    }
+
+    #[test]
     fn asset_headers_include_expected_defaults_and_overrides() {
-        let headers = get_asset_headers(vec![("cache-control".to_string(), IMMUTABLE_ASSET_CACHE_CONTROL.to_string())]);
-        assert!(headers.iter().any(|(name, value)| name == "strict-transport-security" && value == "max-age=31536000; includeSubDomains"));
-        assert!(headers.iter().any(|(name, value)| name == "cache-control" && value == IMMUTABLE_ASSET_CACHE_CONTROL));
-        assert!(headers.iter().any(|(name, value)| name == "cross-origin-opener-policy" && value == "same-origin"));
+        let headers = get_asset_headers_with_corp(
+            "same-origin",
+            vec![(
+                "cache-control".to_string(),
+                IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
+            )],
+        );
+        assert!(headers
+            .iter()
+            .any(|(name, value)| name == "strict-transport-security"
+                && value == "max-age=31536000; includeSubDomains"));
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name == "cache-control"
+                    && value == IMMUTABLE_ASSET_CACHE_CONTROL)
+        );
+        assert!(headers
+            .iter()
+            .any(|(name, value)| name == "cross-origin-opener-policy" && value == "same-origin"));
     }
 
     #[test]
     fn metrics_cel_expression_is_response_only_not_skip_certification() {
         let cel_expr = metrics_cel_expression();
-        assert_ne!(cel_expr.to_string(), DefaultCelBuilder::skip_certification().to_string());
+        assert_ne!(
+            cel_expr.to_string(),
+            DefaultCelBuilder::skip_certification().to_string()
+        );
     }
 
     #[test]
@@ -517,7 +1032,9 @@ mod tests {
         initialize_runtime_state();
         CERTIFIED_METRICS_SNAPSHOT.with(|stored| {
             let snapshot = stored.borrow();
-            let snapshot = snapshot.as_ref().expect("expected certified metrics snapshot");
+            let snapshot = snapshot
+                .as_ref()
+                .expect("expected certified metrics snapshot");
             assert!(!snapshot.body.is_empty());
             assert_eq!(
                 snapshot
