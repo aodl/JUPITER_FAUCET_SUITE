@@ -527,14 +527,14 @@ mod tests {
 
     #[test]
     fn runtime_config_log_line_includes_all_fields() {
-        let self_id = principal("cm5kl-iiaaa-aaaac-be6za-cai");
+        let self_id = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
         let line = runtime_config_log_line(&base_config(), self_id);
 
         assert!(line.starts_with("CONFIG "));
-        assert!(line.contains("relay_canister_id=cm5kl-iiaaa-aaaac-be6za-cai"));
+        assert!(line.contains("relay_canister_id=u2qkp-aqaaa-aaaar-qb7ea-cai"));
         assert!(line.contains("managed_canisters=uccpi-cqaaa-aaaar-qby3q-cai"));
         assert!(line.contains("effective_managed_canisters="));
-        assert!(line.contains("cm5kl-iiaaa-aaaac-be6za-cai"));
+        assert!(line.contains("u2qkp-aqaaa-aaaar-qb7ea-cai"));
         assert!(line.contains("ledger_canister_id=ryjl3-tyaaa-aaaaa-aaaba-cai"));
         assert!(line.contains("cmc_canister_id=rkp4c-7iaaa-aaaaa-aaaca-cai"));
         assert!(line.contains("blackhole_canister_id=77deu-baaaa-aaaar-qb6za-cai"));
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn runtime_config_log_line_includes_raw_icp_recipients_and_memos() {
-        let self_id = principal("cm5kl-iiaaa-aaaac-be6za-cai");
+        let self_id = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
         let mut cfg = base_config();
         cfg.raw_icp_mode = Some(RawIcpModeConfig {
             min_cycles_threshold: 5_000_000_000_000,
@@ -575,7 +575,7 @@ mod tests {
 
         assert!(line.contains("raw_icp_mode_present=true"));
         assert!(line.contains("raw_icp_min_cycles_threshold=5000000000000"));
-        assert!(line.contains("raw_icp_recipients=jufzc-caaaa-aaaar-qb5da-cai:null|cm5kl-iiaaa-aaaac-be6za-cai:0909090909090909090909090909090909090909090909090909090909090909"));
+        assert!(line.contains("raw_icp_recipients=jufzc-caaaa-aaaar-qb5da-cai:null|u2qkp-aqaaa-aaaar-qb7ea-cai:0909090909090909090909090909090909090909090909090909090909090909"));
         assert!(line.contains("raw_icp_recipient_memos=0102|null"));
     }
 

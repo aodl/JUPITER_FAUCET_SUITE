@@ -185,6 +185,7 @@ pub(crate) fn source_module_hash_canister_ids() -> Vec<Principal> {
         "j5gs6-uiaaa-aaaar-qb5cq-cai",
         "afisn-gqaaa-aaaar-qb4qa-cai",
         "alk7f-5aaaa-aaaar-qb4ra-cai",
+        "u2qkp-aqaaa-aaaar-qb7ea-cai",
         "jufzc-caaaa-aaaar-qb5da-cai",
     ]
     .into_iter()

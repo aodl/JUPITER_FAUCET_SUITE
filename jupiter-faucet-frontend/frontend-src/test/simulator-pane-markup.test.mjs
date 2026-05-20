@@ -186,7 +186,7 @@ test('About pane includes social links and projects slide', () => {
   assert.match(about, /data-tracker-principal="j5gs6-uiaaa-aaaar-qb5cq-cai"[\s\S]*>Historian<\/a>/);
   assert.match(about, /data-tracker-principal="afisn-gqaaa-aaaar-qb4qa-cai"[\s\S]*>Lifeline<\/a>/);
   assert.match(about, /data-tracker-principal="alk7f-5aaaa-aaaar-qb4ra-cai"[\s\S]*>SNS Rewards<\/a>/);
-  assert.match(about, /data-tracker-principal="cm5kl-iiaaa-aaaac-be6za-cai"[\s\S]*>Relay<\/a>/);
+  assert.match(about, /data-tracker-principal="u2qkp-aqaaa-aaaar-qb7ea-cai"[\s\S]*>Relay<\/a>/);
   assert.match(about, /data-tracker-principal="jufzc-caaaa-aaaar-qb5da-cai"[\s\S]*>Frontend<\/a>/);
   assert.match(about, /class="about-project-card about-project-card--soon"[\s\S]*More coming soon!/);
   assert.match(about, /class="about-projects-see-all"[\s\S]*href="#metric-commitments"[^>]*data-panel="metric-commitments"[^>]*>See All<\/a>/);
@@ -210,7 +210,7 @@ test('Source and Governance panes expose subnet context', () => {
   assert.match(source, /data-source-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
   assert.match(indexHtml, /jupiter_relay/);
   assert.match(indexHtml, /Display name: Jupiter Relay/);
-  assert.match(indexHtml, /data-source-module-hash="cm5kl-iiaaa-aaaac-be6za-cai"/);
+  assert.match(indexHtml, /data-source-module-hash="u2qkp-aqaaa-aaaar-qb7ea-cai"/);
   assert.match(indexHtml, /JUPITER_FAUCET_SUITE\/tree\/master\/jupiter-relay/);
   assert.doesNotMatch(indexHtml, /jupiter-relay\/jupiter_relay\.did/);
   assert.doesNotMatch(indexHtml, /jupiter-relay\/jupiter_relay_debug\.did/);

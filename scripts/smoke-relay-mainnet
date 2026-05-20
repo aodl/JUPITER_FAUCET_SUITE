@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELAY_CANISTER_ID="cm5kl-iiaaa-aaaac-be6za-cai"
+RELAY_CANISTER_ID="u2qkp-aqaaa-aaaar-qb7ea-cai"
 BLACKHOLE_CONTROLLER_ID="77deu-baaaa-aaaar-qb6za-cai"
 SETTINGS_COMMAND="icp canister settings update ${RELAY_CANISTER_ID} --add-controller ${BLACKHOLE_CONTROLLER_ID} --log-visibility public --log-memory-limit 2mib -n ic"
 
@@ -89,7 +89,7 @@ Manual confirmations:
 - log memory limit is 2MiB;
 - the operational/admin controller is retained until intentional handoff;
 - managed_canisters are the Jupiter production suite set plus blackhole, excluding relay self;
-- effective managed canisters include relay self cm5kl-iiaaa-aaaac-be6za-cai;
+- effective managed canisters include relay self u2qkp-aqaaa-aaaar-qb7ea-cai;
 - first successful tick is BaselineOnly and spends no ICP;
 - first funded allocation tick is observed before larger funding.
 EOF

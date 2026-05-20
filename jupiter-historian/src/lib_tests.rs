@@ -443,6 +443,20 @@ mod tests {
     }
 
     #[test]
+    fn source_module_hash_canister_ids_include_relay_as_suite_canister() {
+        let ids: BTreeSet<_> = source_module_hash_canister_ids().into_iter().collect();
+
+        assert_eq!(ids.len(), 7);
+        assert!(ids.contains(&principal("uccpi-cqaaa-aaaar-qby3q-cai")));
+        assert!(ids.contains(&principal("acjuz-liaaa-aaaar-qb4qq-cai")));
+        assert!(ids.contains(&principal("j5gs6-uiaaa-aaaar-qb5cq-cai")));
+        assert!(ids.contains(&principal("afisn-gqaaa-aaaar-qb4qa-cai")));
+        assert!(ids.contains(&principal("alk7f-5aaaa-aaaar-qb4ra-cai")));
+        assert!(ids.contains(&principal("u2qkp-aqaaa-aaaar-qb7ea-cai")));
+        assert!(ids.contains(&principal("jufzc-caaaa-aaaar-qb5da-cai")));
+    }
+
+    #[test]
     fn canister_module_hash_success_requires_some_loaded_field() {
         let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
         let failed = CanisterModuleHash {

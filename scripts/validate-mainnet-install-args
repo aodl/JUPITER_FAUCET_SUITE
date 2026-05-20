@@ -26,7 +26,7 @@ PROD = {
     "jupiter_sns_rewards": CANISTER_IDS["jupiter_sns_rewards"],
 }
 
-EXPECTED_RELAY_ID = "cm5kl-iiaaa-aaaac-be6za-cai"
+EXPECTED_RELAY_ID = "u2qkp-aqaaa-aaaar-qb7ea-cai"
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
     PROD["jupiter_lifeline"],

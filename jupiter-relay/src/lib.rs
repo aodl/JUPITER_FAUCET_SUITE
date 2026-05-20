@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn production_relay_principal_is_recognized() {
-        let prod = Principal::from_text("cm5kl-iiaaa-aaaac-be6za-cai").unwrap();
+        let prod = Principal::from_text("u2qkp-aqaaa-aaaar-qb7ea-cai").unwrap();
         assert_eq!(production_canister_id(), prod);
         assert!(is_production_canister(prod));
         assert!(!is_production_canister(Principal::anonymous()));

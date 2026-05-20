@@ -30,7 +30,7 @@ jupiter_sns_rewards     alk7f-5aaaa-aaaar-qb4ra-cai
 jupiter_faucet_frontend jufzc-caaaa-aaaar-qb5da-cai
 jupiter_historian       j5gs6-uiaaa-aaaar-qb5cq-cai
 blackhole               77deu-baaaa-aaaar-qb6za-cai
-relay, auto-included    cm5kl-iiaaa-aaaac-be6za-cai
+relay, auto-included    u2qkp-aqaaa-aaaar-qb7ea-cai
 ```
 
 ## Funding
@@ -38,7 +38,7 @@ relay, auto-included    cm5kl-iiaaa-aaaac-be6za-cai
 The production relay default account can be funded through the faucet raw ICP route:
 
 ```text
-cm5kl-iiaaa-aaaac-be6za-cai.
+u2qkp-aqaaa-aaaar-qb7ea-cai.
 ```
 
 Start with a small funding amount, observe one allocation tick, and only then increase funding.
@@ -67,7 +67,7 @@ The `CONFIG` line includes the configured managed canisters, effective managed c
 After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with `jupiter-relay/mainnet-install-args.did`, and using the frontend source pane. Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 
 ```bash
-icp canister logs cm5kl-iiaaa-aaaac-be6za-cai -n ic
+icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
 ```
 
 Canister logs have finite retention. Operators should archive logs externally if long-term history is required.
@@ -164,7 +164,7 @@ Example upgrade args to enable raw ICP mode later:
         };
         record {
           account = record {
-            owner = principal "cm5kl-iiaaa-aaaac-be6za-cai";
+            owner = principal "u2qkp-aqaaa-aaaar-qb7ea-cai";
             subaccount = null;
           };
           memo = null;
@@ -207,7 +207,7 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 2. Verify canister settings: logs public, log memory limit `2MiB`, canonical blackhole as an additional controller, and the current operational/admin controller retained until handoff is complete.
 3. Compare `CONFIG` public logs with `jupiter-relay/mainnet-install-args.did`.
 4. Observe a first complete baseline tick and confirm it spends no ICP.
-5. Fund the relay with a small ICP amount through `cm5kl-iiaaa-aaaac-be6za-cai.`.
+5. Fund the relay with a small ICP amount through `u2qkp-aqaaa-aaaar-qb7ea-cai.`.
 6. Observe the first allocation tick and verify CMC notifications or raw ICP transfers match the expected mode.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
@@ -216,7 +216,7 @@ This MR does not perform deployment. Production deployment and settings changes 
 Exact settings update command:
 
 ```bash
-icp canister settings update cm5kl-iiaaa-aaaac-be6za-cai \
+icp canister settings update u2qkp-aqaaa-aaaar-qb7ea-cai \
   --add-controller 77deu-baaaa-aaaar-qb6za-cai \
   --log-visibility public \
   --log-memory-limit 2mib \
@@ -226,6 +226,6 @@ icp canister settings update cm5kl-iiaaa-aaaac-be6za-cai \
 Suggested settings and log checks:
 
 ```bash
-icp canister settings show cm5kl-iiaaa-aaaac-be6za-cai -n ic
-icp canister logs cm5kl-iiaaa-aaaac-be6za-cai -n ic
+icp canister settings show u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
+icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
 ```
