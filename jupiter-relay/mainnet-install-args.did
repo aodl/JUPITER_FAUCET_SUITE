@@ -12,11 +12,21 @@
 
     ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
     cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
+    governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
     blackhole_canister_id = opt principal "77deu-baaaa-aaaar-qb6za-cai";
 
     main_interval_seconds = opt (604800 : nat64);
     max_transfers_per_tick = opt (10 : nat32);
 
-    raw_icp_mode = null;
+    surplus_recipients = vec {
+      record {
+        target = variant { Neuron = 6_345_890_886_899_317_159 : nat64 };
+        memo = null;
+      };
+      record {
+        target = variant { Neuron = 11_614_578_985_374_291_210 : nat64 };
+        memo = opt blob "6345890886899317159";
+      };
+    };
   }
 )

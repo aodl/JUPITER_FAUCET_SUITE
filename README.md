@@ -5,10 +5,11 @@
 ### [Jupiter Faucet](https://jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol for the Internet Computer - built to help canister smart contracts keep running indefinitely.
 Its goal is simple: turn a durable ICP source into durable cycles for canisters, while keeping the value-moving path narrow, deterministic, and hard to tamper with. The [Internet Computer](https://dashboard.internetcomputer.org/) is designed for tamperproof, "unstoppable" on-chain services; Jupiter Faucet focuses on the practical part: making sure canisters don’t run out of cycles, even if nobody is maintaining the project.
 
-In the current production design, one NNS neuron is the economic source of truth. The suite uses that neuron’s recurring maturity to sustain two long-lived on-chain flows:
+In the current production design, one NNS neuron is the economic source of truth. The suite uses that neuron’s recurring maturity and relay-retained ICP to sustain three long-lived on-chain flows:
 
-1. a **cycles top-up flow** for participating canisters, handled by `jupiter-faucet`
-2. an **age-bonus ICP flow** for Jupiter ecosystem rewards and NNS-aligned support, handled by `jupiter-disburser`
+1. an **age-bonus / maturity routing flow**, handled by `jupiter-disburser`
+2. a **participant commitment and payout flow**, handled by `jupiter-faucet`
+3. a **suite self-funding and surplus routing flow**, handled by `jupiter-relay`
 
 These flows are supported by `jupiter-historian`, which provides historical indexing and observability for tracked canisters and faucet-related activity.
 
@@ -28,6 +29,11 @@ The operational canisters are intentionally small and specialized. The normal pa
   - evaluates each qualifying incoming transfer independently
   - interprets the transfer's `icrc1_memo` as a payout directive
   - routes payouts as canister cycle top-ups, raw ICP transfers, or NNS neuron stake transfers
+- `jupiter-relay`
+  - receives raw ICP from the faucet via the production memo `u2qkp-aqaaa-aaaar-qb7ea-cai.`
+  - samples cycles balances for the managed Jupiter Faucet Suite canisters
+  - tops up recent burn plus a fixed 1% headroom
+  - splits remaining production surplus ICP equally between the IO neuron and Jupiter Faucet neuron recipients
 
 ### Observability path
 
@@ -73,6 +79,11 @@ The live value-moving path is:
    - canister top-up directives send ICP to the target canister's CMC deposit subaccount and call `notify_top_up`
    - raw ICP directives send ICP directly to the declared canister's default account
    - neuron directives resolve the public neuron's staking subaccount, send ICP to that account, and then best-effort call `claim_or_refresh_neuron`
+9. The production suite uses the raw ICP directive `u2qkp-aqaaa-aaaar-qb7ea-cai.` to fund `jupiter-relay`. The trailing `.` uses the faucet raw-ICP memo syntax and produces an empty outgoing memo to the relay default account.
+10. `jupiter-relay` spends that default-account ICP by topping up managed suite canisters first. Each planned top-up is capped at recent burn plus 1%, and surplus routing is disabled until all probes, prior samples, and conversion data are usable.
+11. After planned canister top-ups for a tick are complete, remaining ICP after per-transfer ledger fees is split equally between two production surplus recipients:
+   - the IO neuron `6345890886899317159`, with no memo, for immediate IO stake growth
+   - the Jupiter Faucet neuron `11614578985374291210`, with memo `6345890886899317159`, for compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity
 
 The faucet payout path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. CMC `notify_top_up` is used only for canister top-up directives; raw ICP and neuron-stake directives are plain ledger transfers, with neuron transfers followed by a best-effort NNS `claim_or_refresh_neuron` call. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
@@ -80,6 +91,7 @@ For the exact split math, memo formats, retry semantics, and rescue logic, the c
 
 - [`jupiter-disburser/README.md`](jupiter-disburser/README.md)
 - [`jupiter-faucet/README.md`](jupiter-faucet/README.md)
+- [`jupiter-relay/README.md`](jupiter-relay/README.md)
 
 ## How a target opts into the faucet flow
 
@@ -141,6 +153,9 @@ See [`jupiter-faucet/README.md`](jupiter-faucet/README.md) for the exact rules a
   - no public production methods beyond installation / upgrade
 - `jupiter-faucet`
   - no public production methods beyond installation / upgrade
+- `jupiter-relay`
+  - no public production methods beyond installation / upgrade
+  - public verification is through logs, source/module metadata, and the frontend source verification view
 - `jupiter-historian`
   - public read-only query API for counts, status, histories, summaries, recent commitments, and recent burns
   - the historian keeps a durable beneficiary registry plus bounded history/recent-feed views in canister state; the canonical full transfer history remains on the ICP ledger and its archive canisters, and if tracked-canister cardinality ever becomes an operational issue the intended next step is an archive canister rather than a hard cap in the live historian
@@ -167,6 +182,7 @@ These production canister IDs are recorded in `.icp/data/mappings/ic.ids.json`:
 - `jupiter-lifeline` — `afisn-gqaaa-aaaar-qb4qa-cai`
 - `jupiter-sns-rewards` — `alk7f-5aaaa-aaaar-qb4ra-cai`
 - `jupiter-faucet-frontend` — `jufzc-caaaa-aaaar-qb5da-cai`
+- `jupiter-relay` — `u2qkp-aqaaa-aaaar-qb7ea-cai`
 
 These core canisters are deployed on the Fiduciary subnet:
 
@@ -217,6 +233,7 @@ Those can largely be ignored when building a first-principles understanding of t
 - `jupiter-disburser/` — maturity-routing canister
 - `jupiter-faucet/` — cycles top-up canister
 - `jupiter-historian/` — commitment, burn, and cycles-history canister
+- `jupiter-relay/` — suite self-funding, cycles top-up, and surplus-routing canister
 - `jupiter-faucet-frontend/` — certified public frontend canister and browser bundle source
 - `jupiter-lifeline/` — recovery canister
 - `jupiter-sns-rewards/` — placeholder rewards canister
@@ -292,6 +309,7 @@ Committed copy-pasteable install args live alongside the main operational canist
 - `jupiter-disburser/mainnet-install-args.did`
 - `jupiter-faucet/mainnet-install-args.did`
 - `jupiter-historian/mainnet-install-args.did`
+- `jupiter-relay/mainnet-install-args.did`
 
 These are the repo’s source of truth for the current production wiring captured in version control.
 
@@ -302,8 +320,9 @@ For a fast technical orientation, read the docs in this order:
 1. this file
 2. [`jupiter-disburser/README.md`](jupiter-disburser/README.md)
 3. [`jupiter-faucet/README.md`](jupiter-faucet/README.md)
-4. [`jupiter-historian/README.md`](jupiter-historian/README.md)
-5. [`jupiter-faucet-frontend/README.md`](jupiter-faucet-frontend/README.md)
-6. [`xtask/README.md`](xtask/README.md)
+4. [`jupiter-relay/README.md`](jupiter-relay/README.md)
+5. [`jupiter-historian/README.md`](jupiter-historian/README.md)
+6. [`jupiter-faucet-frontend/README.md`](jupiter-faucet-frontend/README.md)
+7. [`xtask/README.md`](xtask/README.md)
 
 That gives the system view first, then the value-moving path, then the public read model, then the production UI and the test harness that proves the current behavior.

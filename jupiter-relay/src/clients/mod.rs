@@ -1,5 +1,6 @@
 pub(crate) mod blackhole;
 pub(crate) mod cmc;
+pub(crate) mod governance;
 pub(crate) mod ledger;
 
 use async_trait::async_trait;
@@ -49,10 +50,16 @@ pub(crate) trait CmcClient: Send + Sync {
         &self,
         canister_id: Principal,
         block_index: u64,
-    ) -> Result<(), ClientError>;
+    ) -> Result<u128, ClientError>;
 }
 
 #[async_trait]
 pub(crate) trait BlackholeClient: Send + Sync {
     async fn cycles_balance(&self, canister_id: Principal) -> Result<u128, ClientError>;
+}
+
+#[async_trait]
+pub(crate) trait GovernanceClient: Send + Sync {
+    async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], ClientError>;
+    async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), ClientError>;
 }

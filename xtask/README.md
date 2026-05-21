@@ -117,6 +117,15 @@ cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
 
+### Relay commands
+
+```bash
+cargo run -p xtask -- relay_unit
+cargo run -p xtask -- relay_local_integration
+cargo run -p xtask -- relay_pocketic_integration
+cargo run -p xtask -- relay_all
+```
+
 ### End-to-end commands
 
 ```bash
@@ -162,6 +171,7 @@ Examples currently covered include:
 - faucet notify retry without duplicate transfer
 - faucet rescue invariants before first success and after broken / healthy controller transitions
 - historian indexing, protocol output/rewards tracking, SNS discovery, and frontend-facing public-read-model behavior
+- relay install/config wiring, cycle probes, CMC top-ups, and surplus-routing safety
 
 ### `*_pocketic_integration`
 
@@ -174,6 +184,7 @@ The heavier suites live under `xtask/src/pocketIC/`:
 - `jupiter_disburser_integration.rs`
 - `jupiter_faucet_integration.rs`
 - `jupiter_historian_integration.rs`
+- `jupiter_relay_integration.rs`
 - `e2e.rs`
 
 The mock canisters used by the local-`icp-cli` scenarios live under `xtask/src/mocks/`.

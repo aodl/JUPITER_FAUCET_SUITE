@@ -201,6 +201,8 @@ For ICRC-1 transfers, the faucet encodes the CMC top-up memo as an 8-byte **litt
 
 For `canister_id.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
 
+The production suite uses this raw ICP route to fund `jupiter-relay` via the memo `u2qkp-aqaaa-aaaar-qb7ea-cai.`.
+
 For neuron ID directives, the faucet reads the public NNS neuron, transfers ICP to NNS Governance with the neuron's staking subaccount, and then best-effort refreshes the neuron. It does not call CMC `notify_top_up`. A refresh failure does not roll back an accepted ledger transfer, so operators may need to manually refresh the declared neuron if the NNS refresh path is temporarily unavailable during payout processing.
 
 ### Outgoing ledger transfer memo

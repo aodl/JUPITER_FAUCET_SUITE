@@ -4,29 +4,29 @@ mod scheduler;
 mod state;
 
 use candid::{CandidType, Deserialize, Principal};
-use icrc_ledger_types::icrc1::account::Account;
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
     pub managed_canisters: Vec<Principal>,
     pub ledger_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
+    pub governance_canister_id: Option<Principal>,
     pub blackhole_canister_id: Option<Principal>,
     pub main_interval_seconds: Option<u64>,
     pub max_transfers_per_tick: Option<u32>,
-    pub raw_icp_mode: Option<RawIcpModeConfig>,
+    pub surplus_recipients: Vec<SurplusRecipient>,
 }
 
 #[derive(CandidType, Deserialize, Clone)]
-pub struct RawIcpModeConfig {
-    pub min_cycles_threshold: u128,
-    pub recipients: Vec<RawIcpRecipient>,
-}
-
-#[derive(CandidType, Deserialize, Clone)]
-pub struct RawIcpRecipient {
-    pub account: Account,
+pub struct SurplusRecipient {
+    pub target: SurplusTarget,
     pub memo: Option<Vec<u8>>,
+}
+
+#[derive(CandidType, Deserialize, Clone)]
+pub enum SurplusTarget {
+    Canister(Principal),
+    Neuron(u64),
 }
 
 #[derive(CandidType, Deserialize, Clone)]
@@ -34,10 +34,11 @@ pub struct UpgradeArgs {
     pub managed_canisters: Option<Vec<Principal>>,
     pub ledger_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
+    pub governance_canister_id: Option<Principal>,
     pub blackhole_canister_id: Option<Principal>,
     pub main_interval_seconds: Option<u64>,
     pub max_transfers_per_tick: Option<Option<u32>>,
-    pub raw_icp_mode: Option<Option<RawIcpModeConfig>>,
+    pub surplus_recipients: Option<Vec<SurplusRecipient>>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -46,6 +47,11 @@ fn mainnet_ledger_id() -> Principal {
 
 fn mainnet_cmc_id() -> Principal {
     Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").expect("invalid hardcoded cmc principal")
+}
+
+fn mainnet_governance_id() -> Principal {
+    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
+        .expect("invalid hardcoded governance principal")
 }
 
 fn mainnet_blackhole_id() -> Principal {
@@ -82,17 +88,13 @@ fn self_canister_principal_for_validation() -> Principal {
     }
 }
 
-fn raw_config_from_public(raw: RawIcpModeConfig) -> crate::state::RawIcpModeConfig {
-    crate::state::RawIcpModeConfig {
-        min_cycles_threshold: raw.min_cycles_threshold,
-        recipients: raw
-            .recipients
-            .into_iter()
-            .map(|recipient| crate::state::RawIcpRecipient {
-                account: recipient.account,
-                memo: recipient.memo,
-            })
-            .collect(),
+fn surplus_recipient_from_public(recipient: SurplusRecipient) -> crate::state::SurplusRecipient {
+    crate::state::SurplusRecipient {
+        target: match recipient.target {
+            SurplusTarget::Canister(canister_id) => crate::state::SurplusTarget::Canister(canister_id),
+            SurplusTarget::Neuron(neuron_id) => crate::state::SurplusTarget::Neuron(neuron_id),
+        },
+        memo: recipient.memo,
     }
 }
 
@@ -105,6 +107,9 @@ fn apply_upgrade_args(st: &mut crate::state::State, args: UpgradeArgs) {
             .ledger_canister_id
             .unwrap_or(st.config.ledger_canister_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or(st.config.cmc_canister_id),
+        governance_canister_id: args
+            .governance_canister_id
+            .unwrap_or(st.config.governance_canister_id),
         blackhole_canister_id: args
             .blackhole_canister_id
             .unwrap_or(st.config.blackhole_canister_id),
@@ -115,10 +120,15 @@ fn apply_upgrade_args(st: &mut crate::state::State, args: UpgradeArgs) {
         max_transfers_per_tick: args
             .max_transfers_per_tick
             .unwrap_or(st.config.max_transfers_per_tick),
-        raw_icp_mode: args
-            .raw_icp_mode
-            .map(|raw| raw.map(raw_config_from_public))
-            .unwrap_or_else(|| st.config.raw_icp_mode.clone()),
+        surplus_recipients: args
+            .surplus_recipients
+            .map(|recipients| {
+                recipients
+                    .into_iter()
+                    .map(surplus_recipient_from_public)
+                    .collect()
+            })
+            .unwrap_or_else(|| st.config.surplus_recipients.clone()),
     };
 }
 
@@ -129,6 +139,9 @@ fn init(args: InitArgs) {
         managed_canisters: args.managed_canisters,
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
+        governance_canister_id: args
+            .governance_canister_id
+            .unwrap_or_else(mainnet_governance_id),
         blackhole_canister_id: args
             .blackhole_canister_id
             .unwrap_or_else(mainnet_blackhole_id),
@@ -137,7 +150,11 @@ fn init(args: InitArgs) {
             .unwrap_or(7 * 24 * 60 * 60)
             .max(60),
         max_transfers_per_tick: args.max_transfers_per_tick,
-        raw_icp_mode: args.raw_icp_mode.map(raw_config_from_public),
+        surplus_recipients: args
+            .surplus_recipients
+            .into_iter()
+            .map(surplus_recipient_from_public)
+            .collect(),
     };
     crate::logic::validate_config(&cfg, self_canister_principal_for_validation())
         .expect("invalid relay config");
@@ -184,10 +201,11 @@ pub struct DebugConfig {
     pub effective_managed_canisters: Vec<Principal>,
     pub ledger_canister_id: Principal,
     pub cmc_canister_id: Principal,
+    pub governance_canister_id: Principal,
     pub blackhole_canister_id: Principal,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
-    pub raw_icp_mode: Option<crate::state::RawIcpModeConfig>,
+    pub surplus_recipients: Vec<crate::state::SurplusRecipient>,
 }
 
 #[cfg(feature = "debug_api")]
@@ -216,10 +234,11 @@ fn debug_config() -> DebugConfig {
         ),
         ledger_canister_id: st.config.ledger_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
+        governance_canister_id: st.config.governance_canister_id,
         blackhole_canister_id: st.config.blackhole_canister_id,
         main_interval_seconds: st.config.main_interval_seconds,
         max_transfers_per_tick: st.config.max_transfers_per_tick,
-        raw_icp_mode: st.config.raw_icp_mode.clone(),
+        surplus_recipients: st.config.surplus_recipients.clone(),
     })
 }
 
@@ -282,21 +301,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn init_args_raw_conversion_preserves_memo() {
+    fn init_args_surplus_conversion_preserves_target_and_memo() {
         let owner = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let raw = RawIcpModeConfig {
-            min_cycles_threshold: 7,
-            recipients: vec![RawIcpRecipient {
-                account: Account {
-                    owner,
-                    subaccount: None,
-                },
-                memo: Some(vec![1, 2, 3]),
-            }],
-        };
-        let converted = raw_config_from_public(raw);
-        assert_eq!(converted.min_cycles_threshold, 7);
-        assert_eq!(converted.recipients[0].memo, Some(vec![1, 2, 3]));
+        let converted = surplus_recipient_from_public(SurplusRecipient {
+            target: SurplusTarget::Canister(owner),
+            memo: Some(vec![1, 2, 3]),
+        });
+        assert_eq!(
+            converted.target,
+            crate::state::SurplusTarget::Canister(owner)
+        );
+        assert_eq!(converted.memo, Some(vec![1, 2, 3]));
     }
 
     #[test]
@@ -314,19 +329,14 @@ mod tests {
             managed_canisters: vec![owner],
             ledger_canister_id: Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap(),
             cmc_canister_id: mainnet_cmc_id(),
+            governance_canister_id: mainnet_governance_id(),
             blackhole_canister_id: mainnet_blackhole_id(),
             main_interval_seconds: 60,
             max_transfers_per_tick: Some(3),
-            raw_icp_mode: Some(crate::state::RawIcpModeConfig {
-                min_cycles_threshold: 7,
-                recipients: vec![crate::state::RawIcpRecipient {
-                    account: Account {
-                        owner,
-                        subaccount: None,
-                    },
-                    memo: None,
-                }],
-            }),
+            surplus_recipients: vec![crate::state::SurplusRecipient {
+                target: crate::state::SurplusTarget::Canister(owner),
+                memo: None,
+            }],
         };
         let mut st = crate::state::State::new(cfg, 1);
 
@@ -336,14 +346,15 @@ mod tests {
                 managed_canisters: None,
                 ledger_canister_id: None,
                 cmc_canister_id: None,
+                governance_canister_id: None,
                 blackhole_canister_id: None,
                 main_interval_seconds: None,
                 max_transfers_per_tick: None,
-                raw_icp_mode: None,
+                surplus_recipients: None,
             },
         );
         assert_eq!(st.config.max_transfers_per_tick, Some(3));
-        assert!(st.config.raw_icp_mode.is_some());
+        assert_eq!(st.config.surplus_recipients.len(), 1);
 
         apply_upgrade_args(
             &mut st,
@@ -351,14 +362,15 @@ mod tests {
                 managed_canisters: None,
                 ledger_canister_id: None,
                 cmc_canister_id: None,
+                governance_canister_id: None,
                 blackhole_canister_id: None,
                 main_interval_seconds: None,
                 max_transfers_per_tick: Some(None),
-                raw_icp_mode: Some(None),
+                surplus_recipients: Some(Vec::new()),
             },
         );
         assert_eq!(st.config.max_transfers_per_tick, None);
-        assert_eq!(st.config.raw_icp_mode, None);
+        assert!(st.config.surplus_recipients.is_empty());
 
         apply_upgrade_args(
             &mut st,
@@ -366,22 +378,17 @@ mod tests {
                 managed_canisters: None,
                 ledger_canister_id: None,
                 cmc_canister_id: None,
+                governance_canister_id: None,
                 blackhole_canister_id: None,
                 main_interval_seconds: None,
                 max_transfers_per_tick: Some(Some(1)),
-                raw_icp_mode: Some(Some(RawIcpModeConfig {
-                    min_cycles_threshold: 9,
-                    recipients: vec![RawIcpRecipient {
-                        account: Account {
-                            owner,
-                            subaccount: None,
-                        },
-                        memo: Some(vec![4]),
-                    }],
-                })),
+                surplus_recipients: Some(vec![SurplusRecipient {
+                    target: SurplusTarget::Neuron(42),
+                    memo: Some(vec![4]),
+                }]),
             },
         );
         assert_eq!(st.config.max_transfers_per_tick, Some(1));
-        assert_eq!(st.config.raw_icp_mode.unwrap().min_cycles_threshold, 9);
+        assert_eq!(st.config.surplus_recipients.len(), 1);
     }
 }

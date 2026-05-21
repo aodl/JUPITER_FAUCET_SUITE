@@ -1,6 +1,8 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
 use std::cell::RefCell;
 
+const MOCK_MINTED_CYCLES: u128 = 5_250_000_000_000;
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct NotifyTopUpArg {
     pub canister_id: Principal,
@@ -84,7 +86,7 @@ async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
                         canister_id: arg.canister_id,
                         block_index: arg.block_index,
                     });
-                    NotifyTopUpResult::Ok(Nat::from(0_u8))
+                    NotifyTopUpResult::Ok(Nat::from(MOCK_MINTED_CYCLES))
                 }
                 DebugNotifyBehavior::Processing => NotifyTopUpResult::Err(NotifyError::Processing),
                 DebugNotifyBehavior::Refunded { reason, block_index } => {
@@ -117,7 +119,7 @@ async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
             canister_id: arg.canister_id,
             block_index: arg.block_index,
         });
-        NotifyTopUpResult::Ok(Nat::from(0_u8))
+        NotifyTopUpResult::Ok(Nat::from(MOCK_MINTED_CYCLES))
     })
 }
 

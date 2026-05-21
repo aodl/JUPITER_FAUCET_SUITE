@@ -635,8 +635,7 @@ struct HistorianDebugConfig {
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum RelayMode {
     BaselineOnly,
-    CyclesTopUp,
-    RawIcp,
+    TopUpThenSurplus,
     Degraded,
     NoFunds,
 }
@@ -646,11 +645,35 @@ struct RelayCanisterBurnSample {
     canister_id: Principal,
     previous_cycles: Option<Nat>,
     current_cycles: Nat,
+    relay_minted_cycles: Nat,
     burn_cycles: Nat,
-    weight: Nat,
+    target_topup_cycles: Nat,
     gross_share_e8s: u64,
     amount_e8s: u64,
+    actual_minted_cycles: Nat,
     skipped_reason: Option<String>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+enum RelaySurplusTarget {
+    Canister(Principal),
+    Neuron(u64),
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelaySurplusTransferSample {
+    target: RelaySurplusTarget,
+    account: Account,
+    gross_share_e8s: u64,
+    amount_e8s: u64,
+    memo_len: Option<u32>,
+    skipped_reason: Option<String>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelayConversionEstimate {
+    cycles_per_e8: Nat,
+    timestamp_nanos: u64,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -684,6 +707,10 @@ struct RelaySummary {
     partial_tick_count: u32,
     probe_failures: Vec<RelayProbeFailure>,
     canisters: Vec<RelayCanisterBurnSample>,
+    conversion_estimate_used: Option<RelayConversionEstimate>,
+    surplus_e8s_before_fees: u64,
+    surplus_transfers: Vec<RelaySurplusTransferSample>,
+    skipped_surplus_reason: Option<String>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -692,6 +719,7 @@ struct RelayDebugConfig {
     effective_managed_canisters: Vec<Principal>,
     ledger_canister_id: Principal,
     cmc_canister_id: Principal,
+    governance_canister_id: Principal,
     blackhole_canister_id: Principal,
     main_interval_seconds: u64,
     max_transfers_per_tick: Option<u32>,
@@ -1288,10 +1316,11 @@ fn cmd_setup_historian_local() -> Result<()> {
             managed_canisters = vec {{ principal "{managed_id}" }};
             ledger_canister_id = opt principal "{ledger_id}";
             cmc_canister_id = opt principal "{cmc_id}";
+            governance_canister_id = opt principal "{cmc_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             main_interval_seconds = opt (31536000:nat64);
             max_transfers_per_tick = opt (10:nat32);
-            raw_icp_mode = null;
+            surplus_recipients = vec {{}};
         }},)"#,
         managed_id = cmc_id.trim(),
         ledger_id = ledger_id.trim(),
@@ -1319,10 +1348,11 @@ fn cmd_setup_relay_local() -> Result<()> {
             managed_canisters = vec {{ principal "{managed_id}" }};
             ledger_canister_id = opt principal "{ledger_id}";
             cmc_canister_id = opt principal "{cmc_id}";
+            governance_canister_id = opt principal "{cmc_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             main_interval_seconds = opt (31536000:nat64);
             max_transfers_per_tick = opt (10:nat32);
-            raw_icp_mode = null;
+            surplus_recipients = vec {{}};
         }},)"#,
         managed_id = cmc_id.trim(),
         ledger_id = ledger_id.trim(),
@@ -1478,10 +1508,11 @@ fn cmd_setup() -> Result<()> {
             managed_canisters = vec {{ principal "{managed_id}" }};
             ledger_canister_id = opt principal "{ledger_id}";
             cmc_canister_id = opt principal "{cmc_id}";
+            governance_canister_id = opt principal "{cmc_id}";
             blackhole_canister_id = opt principal "{blackhole_id}";
             main_interval_seconds = opt (31536000:nat64);
             max_transfers_per_tick = opt (10:nat32);
-            raw_icp_mode = null;
+            surplus_recipients = vec {{}};
         }},)"#,
         managed_id = cmc_id.trim(),
         ledger_id = ledger_id.trim(),
@@ -3909,18 +3940,18 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_main_tick")?;
         let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_dbg", "debug_last_summary")?;
         let summary = summary.context("expected relay top-up summary")?;
-        if summary.mode != RelayMode::CyclesTopUp || summary.transfer_count == 0 {
+        if summary.mode != RelayMode::TopUpThenSurplus || summary.transfer_count == 0 {
             bail!("expected cycles top-up summary with transfers, got {summary:?}");
         }
         if summary.canisters.iter().all(|sample| sample.canister_id != relay_account.owner) {
             bail!("expected relay self canister in summary: {summary:?}");
         }
         let logs = relay_local_logs("jupiter_relay_dbg")?;
-        if !logs.contains("RELAY_SUMMARY mode=CyclesTopUp")
+        if !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
             || !logs.contains("RELAY_CANISTER ")
             || !logs.contains("burn_cycles=")
-            || !logs.contains("gross_share_e8s=")
-            || !logs.contains("amount_e8s=")
+            || !logs.contains("planned_topup_e8s=")
+            || !logs.contains("actual_topup_e8s=")
         {
             bail!("expected cycles top-up public logs with summary and canister allocation fields, got {logs}");
         }
@@ -3956,33 +3987,25 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         Ok(())
     });
 
-    run_scenario(outcomes, label("icp", "relay", "raw ICP mode pays external and self subaccount while retaining self default"), || {
+    run_scenario(outcomes, label("icp", "relay", "surplus canister recipient uses configured memo"), || {
         if canister_id("jupiter_relay_args_dbg").is_err() {
             create_canister("jupiter_relay_args_dbg")?;
         }
-        let relay_id = Principal::from_text(canister_id("jupiter_relay_args_dbg")?.trim())?;
         let ledger_id = Principal::from_text(canister_id("mock_icrc_ledger")?.trim())?;
         let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
         let blackhole_id = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
         let external = blackhole_id;
-        let mut self_sub = [0_u8; 32];
-        self_sub[31] = 9;
-        let self_sub_blob = bytes_to_candid_blob(&self_sub);
         let raw_args = format!(
             r#"(record {{
                 managed_canisters = vec {{ principal "{managed_id}" }};
                 ledger_canister_id = opt principal "{ledger_id}";
                 cmc_canister_id = opt principal "{cmc_id}";
+                governance_canister_id = opt principal "{cmc_id}";
                 blackhole_canister_id = opt principal "{blackhole_id}";
                 main_interval_seconds = opt (31536000:nat64);
                 max_transfers_per_tick = opt (10:nat32);
-                raw_icp_mode = opt record {{
-                    min_cycles_threshold = 0:nat;
-                    recipients = vec {{
-                        record {{ account = record {{ owner = principal "{relay_id}"; subaccount = opt blob "{self_sub_blob}" }}; memo = opt blob "\02" }};
-                        record {{ account = record {{ owner = principal "{external}"; subaccount = (null : opt blob) }}; memo = opt blob "\01" }};
-                        record {{ account = record {{ owner = principal "{relay_id}"; subaccount = (null : opt blob) }}; memo = (null : opt blob) }};
-                    }};
+                surplus_recipients = vec {{
+                    record {{ target = variant {{ Canister = principal "{external}" }}; memo = opt blob "\01" }};
                 }};
             }},)"#,
             managed_id = cmc_id.to_text(),
@@ -3990,8 +4013,6 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             cmc_id = cmc_id.to_text(),
             blackhole_id = blackhole_id.to_text(),
             external = external.to_text(),
-            relay_id = relay_id.to_text(),
-            self_sub_blob = self_sub_blob,
         );
         let wasm = wasm_path_for_canister("jupiter_relay_args_dbg")?;
         run_icp_with_identity(&[
@@ -4017,43 +4038,43 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             "debug_set_status",
             &format!(r#"(principal "{}", opt (10000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.to_text()),
         )?;
-        let relay_account = Account { owner: relay_id, subaccount: None };
+        let relay_account = Account { owner: Principal::from_text(canister_id("jupiter_relay_args_dbg")?.trim())?, subaccount: None };
         let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)))?;
 
         let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(r#"(principal "{}", opt (5000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.to_text()),
+        )?;
+        let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)))?;
+        let _: () = call_raw(
+            "mock_blackhole",
+            "debug_set_status",
+            &format!(r#"(principal "{}", opt (10000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.to_text()),
+        )?;
         let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
         let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
-        let summary = summary.context("expected relay raw ICP summary")?;
-        if summary.mode != RelayMode::RawIcp || summary.ledger_transfer_count != 2 || summary.planned_retained_e8s != 33_000_000 {
-            bail!("expected raw ICP summary with two ledger transfers and retained self default share, got {summary:?}");
+        let summary = summary.context("expected relay surplus summary")?;
+        if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count == 0 {
+            bail!("expected top-up/surplus summary with ledger transfers, got {summary:?}");
         }
         let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-        if transfers.len() != 2 {
-            bail!("expected exactly two raw ICP transfers, got {transfers:?}");
-        }
         if !transfers.iter().any(|t| t.to.owner == external && t.memo == Some(vec![1])) {
-            bail!("expected external recipient transfer with memo 1, got {transfers:?}");
-        }
-        if !transfers.iter().any(|t| t.to.owner == relay_id && t.to.subaccount == Some(self_sub) && t.memo == Some(vec![2])) {
-            bail!("expected self subaccount transfer with memo 2, got {transfers:?}");
+            bail!("expected surplus canister transfer with memo 1, got {transfers:?}");
         }
         let logs = relay_local_logs("jupiter_relay_args_dbg")?;
-        if !logs.contains("RELAY_SUMMARY mode=RawIcp")
-            || !logs.contains("RELAY_RAW_RECIPIENT ")
-            || !logs.contains("retained_self=true")
-            || !logs.contains("memo=01")
-            || !logs.contains("memo=02")
+        if !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
+            || !logs.contains("RELAY_SURPLUS_TRANSFER ")
+            || !logs.contains("memo_len=1")
         {
-            bail!("expected raw ICP public logs with recipients, retention, and memos, got {logs}");
-        }
-        let default_balance: Nat = call_raw("mock_icrc_ledger", "icrc1_balance_of", &format!("({})", account_to_candid(&relay_account)))?;
-        if nat_to_u64(&default_balance) != 33_000_000 {
-            bail!("expected retained default balance 33000000, got {default_balance}");
+            bail!("expected surplus public logs with recipient and memo length, got {logs}");
         }
         Ok(())
     });
 
-    run_scenario(outcomes, label("icp", "relay", "raw ICP mode stays inactive at threshold boundary"), || {
+    run_scenario(outcomes, label("icp", "relay", "empty surplus recipients keep surplus retained"), || {
         if canister_id("jupiter_relay_args_dbg").is_err() {
             create_canister("jupiter_relay_args_dbg")?;
         }
@@ -4066,21 +4087,16 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
                 managed_canisters = vec {{ principal "{managed_id}" }};
                 ledger_canister_id = opt principal "{ledger_id}";
                 cmc_canister_id = opt principal "{cmc_id}";
+                governance_canister_id = opt principal "{cmc_id}";
                 blackhole_canister_id = opt principal "{blackhole_id}";
                 main_interval_seconds = opt (31536000:nat64);
                 max_transfers_per_tick = opt (10:nat32);
-                raw_icp_mode = opt record {{
-                    min_cycles_threshold = 5000000000000:nat;
-                    recipients = vec {{
-                        record {{ account = record {{ owner = principal "{external}"; subaccount = (null : opt blob) }}; memo = opt blob "\01" }};
-                    }};
-                }};
+                surplus_recipients = vec {{}};
             }},)"#,
             managed_id = cmc_id.to_text(),
             ledger_id = ledger_id.to_text(),
             cmc_id = cmc_id.to_text(),
             blackhole_id = blackhole_id.to_text(),
-            external = blackhole_id.to_text(),
         );
         let wasm = wasm_path_for_canister("jupiter_relay_args_dbg")?;
         run_icp_with_identity(&[
@@ -4112,13 +4128,13 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
         let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
         let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
-        let summary = summary.context("expected relay threshold summary")?;
-        if summary.mode != RelayMode::CyclesTopUp || summary.cmc_notify_success_count == 0 {
-            bail!("expected threshold equality to use CMC top-up mode, got {summary:?}");
+        let summary = summary.context("expected relay no-surplus-recipient summary")?;
+        if summary.mode != RelayMode::TopUpThenSurplus || summary.skipped_surplus_reason.as_deref() != Some("no_surplus_recipients") {
+            bail!("expected empty surplus config to retain surplus after any required top-up, got {summary:?}");
         }
         let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if transfers.iter().any(|t| t.to.owner == blackhole_id && t.memo == Some(vec![1])) {
-            bail!("expected no raw recipient transfer at exact threshold, got {transfers:?}");
+            bail!("expected no surplus transfer without recipients, got {transfers:?}");
         }
         Ok(())
     });

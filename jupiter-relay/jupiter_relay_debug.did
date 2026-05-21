@@ -1,45 +1,57 @@
 type Account = record { owner : principal; subaccount : opt blob };
-type RawIcpRecipient = record { account : Account; memo : opt blob };
-type RawIcpModeConfig = record {
-  min_cycles_threshold : nat;
-  recipients : vec RawIcpRecipient;
-};
+type SurplusTarget = variant { Canister : principal; Neuron : nat64 };
+type SurplusRecipient = record { target : SurplusTarget; memo : opt blob };
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
   cmc_canister_id : opt principal;
+  governance_canister_id : opt principal;
   blackhole_canister_id : opt principal;
   main_interval_seconds : opt nat64;
   max_transfers_per_tick : opt nat32;
-  raw_icp_mode : opt RawIcpModeConfig;
+  surplus_recipients : vec SurplusRecipient;
 };
 type Config = record {
   managed_canisters : vec principal;
   ledger_canister_id : principal;
   cmc_canister_id : principal;
+  governance_canister_id : principal;
   blackhole_canister_id : principal;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
-  raw_icp_mode : opt RawIcpModeConfig;
+  surplus_recipients : vec SurplusRecipient;
 };
 type RelayMode = variant {
   BaselineOnly;
-  CyclesTopUp;
-  RawIcp;
+  TopUpThenSurplus;
   Degraded;
   NoFunds;
+};
+type ConversionEstimate = record {
+  cycles_per_e8 : nat;
+  timestamp_nanos : nat64;
 };
 type CanisterBurnSample = record {
   canister_id : principal;
   previous_cycles : opt nat;
   current_cycles : nat;
+  relay_minted_cycles : nat;
   burn_cycles : nat;
-  weight : nat;
+  target_topup_cycles : nat;
   gross_share_e8s : nat64;
   amount_e8s : nat64;
+  actual_minted_cycles : nat;
   skipped_reason : opt text;
 };
 type ProbeFailure = record { canister_id : principal; error : text };
+type SurplusTransferSample = record {
+  target : SurplusTarget;
+  account : Account;
+  gross_share_e8s : nat64;
+  amount_e8s : nat64;
+  memo_len : opt nat32;
+  skipped_reason : opt text;
+};
 type RelaySummary = record {
   mode : RelayMode;
   started_at_ts_nanos : nat64;
@@ -64,6 +76,10 @@ type RelaySummary = record {
   partial_tick_count : nat32;
   probe_failures : vec ProbeFailure;
   canisters : vec CanisterBurnSample;
+  conversion_estimate_used : opt ConversionEstimate;
+  surplus_e8s_before_fees : nat64;
+  surplus_transfers : vec SurplusTransferSample;
+  skipped_surplus_reason : opt text;
 };
 type DebugState = record {
   last_main_run_ts : nat64;
@@ -78,10 +94,11 @@ type DebugConfig = record {
   effective_managed_canisters : vec principal;
   ledger_canister_id : principal;
   cmc_canister_id : principal;
+  governance_canister_id : principal;
   blackhole_canister_id : principal;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
-  raw_icp_mode : opt RawIcpModeConfig;
+  surplus_recipients : vec SurplusRecipient;
 };
 service : (InitArgs) -> {
   debug_main_tick : () -> ();

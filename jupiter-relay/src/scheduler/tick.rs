@@ -4,18 +4,17 @@ use icrc_ledger_types::icrc1::account::Account;
 
 use crate::clients::blackhole::BlackholeCanister;
 use crate::clients::cmc::CyclesMintingCanister;
+use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::ledger::IcrcLedgerCanister;
-use crate::clients::{BlackholeClient, CmcClient, LedgerClient};
-use crate::logic::{self, RawIcpPlan};
+use crate::clients::{BlackholeClient, CmcClient, GovernanceClient, LedgerClient};
+use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::probe_cycles;
 use crate::scheduler::guards::MainGuard;
-use crate::scheduler::logging::{
-    log_cycles_and_config, log_error, log_info, log_raw_recipients, log_summary,
-};
+use crate::scheduler::logging::{log_cycles_and_config, log_error, log_info, log_summary};
 use crate::scheduler::transfer::drive_pending_transfer;
 use crate::state::{
     self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingTransfer,
-    PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary,
+    PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary, SurplusTarget,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,13 +51,24 @@ async fn main_tick(force: bool) {
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
+    let governance = NnsGovernanceCanister::new(cfg.governance_canister_id);
     let blackhole = BlackholeCanister::new(cfg.blackhole_canister_id);
-    run_main_tick_with_clients(force, now_nanos, now_secs, &ledger, &cmc, &blackhole).await;
+    run_main_tick_with_clients(
+        force,
+        now_nanos,
+        now_secs,
+        &ledger,
+        &cmc,
+        &governance,
+        &blackhole,
+    )
+    .await;
 }
 
 pub(crate) async fn run_main_tick_with_clients<
     L: LedgerClient,
     C: CmcClient,
+    G: GovernanceClient,
     B: BlackholeClient,
 >(
     force: bool,
@@ -66,6 +76,7 @@ pub(crate) async fn run_main_tick_with_clients<
     now_secs: u64,
     ledger: &L,
     cmc: &C,
+    governance: &G,
     blackhole: &B,
 ) {
     let Some(guard) = MainGuard::acquire(now_secs) else {
@@ -82,7 +93,7 @@ pub(crate) async fn run_main_tick_with_clients<
     }
 
     log_cycles_and_config();
-    if !resume_or_start_job(now_nanos, ledger, cmc, blackhole).await {
+    if !resume_or_start_job(now_nanos, ledger, cmc, governance, blackhole).await {
         log_error("relay tick stopped after debug transfer injection");
         guard.finish(now_secs);
         return;
@@ -90,16 +101,22 @@ pub(crate) async fn run_main_tick_with_clients<
     guard.finish(now_secs);
 }
 
-async fn resume_or_start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
+async fn resume_or_start_job<
+    L: LedgerClient,
+    C: CmcClient,
+    G: GovernanceClient,
+    B: BlackholeClient,
+>(
     now_nanos: u64,
     ledger: &L,
     cmc: &C,
+    governance: &G,
     blackhole: &B,
 ) -> bool {
     if state::with_state(|st| st.active_job.is_none()) {
         start_job(now_nanos, ledger, blackhole).await;
     }
-    drive_active_job(now_nanos, ledger, cmc).await
+    drive_active_job(now_nanos, ledger, cmc, governance).await
 }
 
 async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: &L, blackhole: &B) {
@@ -119,6 +136,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         summary.completed_at_ts_nanos = Some(now_nanos);
         summary.min_cycles_balance = min_cycles;
         summary.probe_failures = probe_failures;
+        summary.skipped_surplus_reason = Some("probe_failed".to_string());
         log_summary(&summary);
         state::with_state_mut(|st| st.last_summary = Some(summary));
         return;
@@ -134,9 +152,11 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
             RelaySummary::started(RelayMode::BaselineOnly, now_nanos, managed.len() as u32);
         summary.completed_at_ts_nanos = Some(now_nanos);
         summary.min_cycles_balance = min_cycles;
+        summary.skipped_surplus_reason = Some("missing_previous_sample".to_string());
         log_summary(&summary);
         state::with_state_mut(|st| {
             st.last_completed_cycles = current_cycles;
+            st.relay_minted_cycles_since_sample.clear();
             st.last_summary = Some(summary);
         });
         log_info("stored baseline cycles sample");
@@ -151,6 +171,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
                 RelaySummary::started(RelayMode::Degraded, now_nanos, managed.len() as u32);
             summary.completed_at_ts_nanos = Some(now_nanos);
             summary.min_cycles_balance = min_cycles;
+            summary.skipped_surplus_reason = Some("probe_failed".to_string());
             summary.probe_failures.push(crate::state::ProbeFailure {
                 canister_id: cfg.ledger_canister_id,
                 error: format!("balance read failed: {err}"),
@@ -168,6 +189,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
             summary.completed_at_ts_nanos = Some(now_nanos);
             summary.default_account_balance_start_e8s = balance;
             summary.min_cycles_balance = min_cycles;
+            summary.skipped_surplus_reason = Some("probe_failed".to_string());
             summary.probe_failures.push(crate::state::ProbeFailure {
                 canister_id: cfg.ledger_canister_id,
                 error: format!("fee read failed: {err}"),
@@ -185,23 +207,34 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         summary.default_account_balance_start_e8s = balance;
         summary.fee_e8s = fee;
         summary.min_cycles_balance = min_cycles;
+        summary.skipped_surplus_reason = Some("no_surplus".to_string());
         log_summary(&summary);
         state::with_state_mut(|st| {
             st.last_completed_cycles = current_cycles;
+            st.relay_minted_cycles_since_sample.clear();
             st.last_summary = Some(summary);
         });
         return;
     }
 
-    let raw_active = cfg
-        .raw_icp_mode
-        .as_ref()
-        .map(|raw| logic::raw_mode_active(min_cycles, raw.min_cycles_threshold, true, false))
-        .unwrap_or(false);
-
-    let previous = state::with_state(|st| st.last_completed_cycles.clone());
-    let burn_plan = logic::build_burn_plan(&current_cycles, &previous, balance, fee);
-    let canisters = burn_plan
+    let (previous, relay_minted, conversion_estimate) = state::with_state(|st| {
+        (
+            st.last_completed_cycles.clone(),
+            st.relay_minted_cycles_since_sample.clone(),
+            st.conversion_estimate.clone(),
+        )
+    });
+    let allocation = logic::build_allocation_plan(
+        &current_cycles,
+        &previous,
+        &relay_minted,
+        balance,
+        fee,
+        conversion_estimate.as_ref(),
+        now_nanos,
+    );
+    let canisters = allocation
+        .topups
         .iter()
         .map(CanisterBurnSample::from)
         .collect::<Vec<_>>();
@@ -213,65 +246,75 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         id
     });
 
-    if raw_active {
-        let raw = cfg.raw_icp_mode.expect("raw mode configured when active");
-        let raw_plans =
-            logic::allocate_equal_raw_icp_shares(&raw.recipients, default_account, balance, fee);
-        let mut summary = RelaySummary::started(RelayMode::RawIcp, now_nanos, managed.len() as u32);
-        summary.default_account_balance_start_e8s = balance;
-        summary.fee_e8s = fee;
-        summary.min_cycles_balance = min_cycles;
-        summary.total_burn_cycles = total_burn_cycles;
-        summary.canisters = canisters.clone();
-        summary.planned_retained_e8s = retained_raw_e8s(balance, &raw_plans);
-        summary.known_unspent_e8s = summary.planned_retained_e8s;
-        let job = ActiveRelayJob {
-            id,
-            mode: ActiveRelayMode::RawIcp,
-            started_at_ts_nanos: now_nanos,
-            fee_e8s: fee,
-            balance_start_e8s: balance,
-            current_cycles,
-            canisters,
-            raw_recipients: raw.recipients,
-            pending_transfer: None,
-            next_transfer_index: 0,
-            next_created_at_time_nanos: now_nanos,
-            summary,
-        };
-        state::with_state_mut(|st| st.active_job = Some(job));
-    } else {
-        let mut summary =
-            RelaySummary::started(RelayMode::CyclesTopUp, now_nanos, managed.len() as u32);
-        summary.default_account_balance_start_e8s = balance;
-        summary.fee_e8s = fee;
-        summary.min_cycles_balance = min_cycles;
-        summary.total_burn_cycles = total_burn_cycles;
-        summary.canisters = canisters.clone();
-        summary.planned_retained_e8s = retained_topup_e8s(balance, &canisters);
-        summary.known_unspent_e8s = summary.planned_retained_e8s;
-        let job = ActiveRelayJob {
-            id,
-            mode: ActiveRelayMode::CyclesTopUp,
-            started_at_ts_nanos: now_nanos,
-            fee_e8s: fee,
-            balance_start_e8s: balance,
-            current_cycles,
-            canisters,
-            raw_recipients: Vec::new(),
-            pending_transfer: None,
-            next_transfer_index: 0,
-            next_created_at_time_nanos: now_nanos,
-            summary,
-        };
-        state::with_state_mut(|st| st.active_job = Some(job));
-    }
+    let mut summary =
+        RelaySummary::started(RelayMode::TopUpThenSurplus, now_nanos, managed.len() as u32);
+    summary.default_account_balance_start_e8s = balance;
+    summary.fee_e8s = fee;
+    summary.min_cycles_balance = min_cycles;
+    summary.total_burn_cycles = total_burn_cycles;
+    summary.canisters = canisters.clone();
+    summary.conversion_estimate_used = conversion_estimate;
+    summary.skipped_surplus_reason = allocation.skipped_surplus_reason;
+    summary.planned_retained_e8s = retained_e8s(balance, &canisters, &[]);
+    summary.known_unspent_e8s = summary.planned_retained_e8s;
+
+    let job = ActiveRelayJob {
+        id,
+        mode: ActiveRelayMode::TopUpThenSurplus,
+        started_at_ts_nanos: now_nanos,
+        fee_e8s: fee,
+        balance_start_e8s: balance,
+        current_cycles,
+        canisters,
+        surplus_transfers: Vec::new(),
+        surplus_memos: Vec::new(),
+        surplus_phase_planned: !allocation.topup_phase_fully_funded,
+        pending_transfer: None,
+        next_transfer_index: 0,
+        surplus_transfer_index: 0,
+        next_created_at_time_nanos: now_nanos,
+        summary,
+    };
+    state::with_state_mut(|st| st.active_job = Some(job));
 }
 
-async fn drive_active_job<L: LedgerClient, C: CmcClient>(
+async fn resolve_surplus_recipients<G: GovernanceClient>(
+    cfg: &crate::state::Config,
+    governance: &G,
+) -> Result<Vec<ResolvedSurplusRecipient>, String> {
+    let mut resolved = Vec::new();
+    for recipient in &cfg.surplus_recipients {
+        match recipient.target {
+            SurplusTarget::Canister(_) => {
+                if let Some(candidate) = logic::resolve_canister_surplus_recipient(recipient) {
+                    resolved.push(candidate);
+                }
+            }
+            SurplusTarget::Neuron(neuron_id) => {
+                let subaccount = governance
+                    .neuron_staking_subaccount(neuron_id)
+                    .await
+                    .map_err(|err| format!("neuron {neuron_id} is not publicly readable: {err}"))?;
+                resolved.push(ResolvedSurplusRecipient {
+                    target: recipient.target.clone(),
+                    account: Account {
+                        owner: cfg.governance_canister_id,
+                        subaccount: Some(subaccount),
+                    },
+                    memo: recipient.memo.clone(),
+                });
+            }
+        }
+    }
+    logic::reject_duplicate_resolved_destinations(&resolved)?;
+    Ok(resolved)
+}
+
+async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
     now_nanos: u64,
     ledger: &L,
     cmc: &C,
+    governance: &G,
 ) -> bool {
     let max_transfers_this_tick =
         state::with_state(|st| st.config.max_transfers_per_tick.map(u32::from));
@@ -285,6 +328,10 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient>(
             if !drive_pending_transfer(ledger, cmc, cmc_id, now_nanos).await {
                 return false;
             }
+            continue;
+        }
+        if topup_phase_done_and_surplus_unplanned() {
+            plan_surplus_phase(now_nanos, governance).await;
             continue;
         }
         let plan_step = state::with_state_mut(|st| {
@@ -308,6 +355,114 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient>(
     }
 }
 
+fn topup_phase_done_and_surplus_unplanned() -> bool {
+    state::with_state(|st| {
+        st.active_job
+            .as_ref()
+            .map(|job| {
+                (job.next_transfer_index as usize) >= job.canisters.len()
+                    && !job.surplus_phase_planned
+            })
+            .unwrap_or(false)
+    })
+}
+
+async fn plan_surplus_phase<G: GovernanceClient>(now_nanos: u64, governance: &G) {
+    let (cfg, clean_topup_phase, known_unspent_e8s, fee_e8s) = state::with_state(|st| {
+        let job = st.active_job.as_ref().expect("active job");
+        (
+            st.config.clone(),
+            surplus_allowed_after_topups(job),
+            job.summary.known_unspent_e8s,
+            job.fee_e8s,
+        )
+    });
+
+    if let Err(reason) = clean_topup_phase {
+        disable_surplus(reason);
+        return;
+    }
+
+    let resolved_surplus = match resolve_surplus_recipients(&cfg, governance).await {
+        Ok(recipients) => recipients,
+        Err(err) => {
+            log_error(&format!("surplus recipient resolution failed: {err}"));
+            disable_surplus("recipient_resolution_failed");
+            return;
+        }
+    };
+    let conversion_estimate = state::with_state(|st| st.conversion_estimate.clone());
+    let (surplus, surplus_e8s_before_fees, skipped_surplus_reason) = logic::build_surplus_plan(
+        &resolved_surplus,
+        known_unspent_e8s,
+        fee_e8s,
+        conversion_estimate.as_ref(),
+        now_nanos,
+    );
+    let memos = resolved_surplus
+        .into_iter()
+        .map(|recipient| recipient.memo)
+        .collect::<Vec<_>>();
+
+    state::with_state_mut(|st| {
+        let job = st.active_job.as_mut().expect("active job");
+        job.surplus_transfers = surplus;
+        job.surplus_memos = memos;
+        job.surplus_transfer_index = 0;
+        job.surplus_phase_planned = true;
+        job.summary.surplus_e8s_before_fees = surplus_e8s_before_fees;
+        job.summary.surplus_transfers = job.surplus_transfers.clone();
+        job.summary.skipped_surplus_reason = skipped_surplus_reason;
+        job.summary.planned_retained_e8s = retained_e8s(
+            job.balance_start_e8s,
+            &job.canisters,
+            &job.surplus_transfers,
+        );
+        job.summary.known_unspent_e8s = job.summary.planned_retained_e8s;
+    });
+}
+
+fn surplus_allowed_after_topups(job: &ActiveRelayJob) -> Result<(), &'static str> {
+    if job.summary.failed_transfers != 0 {
+        return Err("topup_transfer_failed");
+    }
+    if job.summary.ambiguous_transfers != 0 {
+        return Err("topup_transfer_ambiguous");
+    }
+    if job.summary.cmc_notify_failed_count != 0 {
+        return Err("cmc_notify_failed");
+    }
+    if job.summary.cmc_notify_ambiguous_count != 0 {
+        return Err("cmc_notify_ambiguous");
+    }
+    if job.summary.partial_tick_count != 0 {
+        return Err("topup_phase_incomplete");
+    }
+    if job.canisters.iter().any(|sample| {
+        sample.amount_e8s > 0 && sample.actual_minted_cycles < sample.target_topup_cycles
+    }) {
+        return Err("observed_conversion_worse_than_planned_topups");
+    }
+    Ok(())
+}
+
+fn disable_surplus(reason: &'static str) {
+    state::with_state_mut(|st| {
+        if let Some(job) = st.active_job.as_mut() {
+            job.surplus_transfers.clear();
+            job.surplus_memos.clear();
+            job.surplus_transfer_index = 0;
+            job.surplus_phase_planned = true;
+            job.summary.surplus_e8s_before_fees = 0;
+            job.summary.surplus_transfers.clear();
+            job.summary.skipped_surplus_reason = Some(reason.to_string());
+            job.summary.planned_retained_e8s =
+                retained_e8s(job.balance_start_e8s, &job.canisters, &[]);
+            job.summary.known_unspent_e8s = job.summary.planned_retained_e8s;
+        }
+    });
+}
+
 fn plan_next_transfer(
     job: &mut ActiveRelayJob,
     max_transfers_this_tick: Option<u32>,
@@ -318,13 +473,14 @@ fn plan_next_transfer(
         .unwrap_or(false)
     {
         job.summary.partial_tick_count = job.summary.partial_tick_count.saturating_add(1);
+        job.summary.skipped_surplus_reason = Some("topup_phase_incomplete".to_string());
+        job.surplus_transfers.clear();
+        job.surplus_memos.clear();
+        job.surplus_transfer_index = 0;
+        job.surplus_phase_planned = true;
         return TransferPlanStep::Paused;
     }
-    let planned = match job.mode {
-        ActiveRelayMode::CyclesTopUp => next_topup_pending(job),
-        ActiveRelayMode::RawIcp => next_raw_pending(job),
-    };
-    if planned.is_some() {
+    if next_topup_pending(job).is_some() || next_surplus_pending(job).is_some() {
         *transfers_started_this_tick = transfers_started_this_tick.saturating_add(1);
         TransferPlanStep::Planned
     } else {
@@ -340,14 +496,14 @@ fn next_topup_pending(job: &mut ActiveRelayJob) -> Option<()> {
         if sample.amount_e8s == 0 {
             continue;
         }
-        let created_at = job.next_created_at_time_nanos;
-        job.next_created_at_time_nanos = job.next_created_at_time_nanos.saturating_add(1);
+        let canister_id = sample.canister_id;
+        let gross_share_e8s = sample.gross_share_e8s;
+        let amount_e8s = sample.amount_e8s;
+        let created_at = next_created_at(job);
         job.pending_transfer = Some(PendingTransfer {
-            kind: PendingTransferKind::CmcTopUp {
-                canister_id: sample.canister_id,
-            },
-            gross_share_e8s: sample.gross_share_e8s,
-            amount_e8s: sample.amount_e8s,
+            kind: PendingTransferKind::CmcTopUp { canister_id },
+            gross_share_e8s,
+            amount_e8s,
             created_at_time_nanos: created_at,
             phase: PendingTransferPhase::AwaitingTransfer,
         });
@@ -356,30 +512,30 @@ fn next_topup_pending(job: &mut ActiveRelayJob) -> Option<()> {
     None
 }
 
-fn next_raw_pending(job: &mut ActiveRelayJob) -> Option<()> {
-    let default_account = Account {
-        owner: ic_cdk::api::canister_self(),
-        subaccount: None,
-    };
-    let plans = logic::allocate_equal_raw_icp_shares(
-        &job.raw_recipients,
-        default_account,
-        job.balance_start_e8s,
-        job.fee_e8s,
-    );
-    while (job.next_transfer_index as usize) < plans.len() {
-        let index = job.next_transfer_index as usize;
-        job.next_transfer_index = job.next_transfer_index.saturating_add(1);
-        let plan = &plans[index];
+fn next_surplus_pending(job: &mut ActiveRelayJob) -> Option<()> {
+    if let Err(reason) = surplus_allowed_after_topups(job) {
+        job.surplus_transfers.clear();
+        job.surplus_memos.clear();
+        job.surplus_transfer_index = 0;
+        job.summary.surplus_transfers.clear();
+        job.summary.surplus_e8s_before_fees = 0;
+        job.summary.skipped_surplus_reason = Some(reason.to_string());
+        return None;
+    }
+    while (job.surplus_transfer_index as usize) < job.surplus_transfers.len() {
+        let index = job.surplus_transfer_index as usize;
+        job.surplus_transfer_index = job.surplus_transfer_index.saturating_add(1);
+        let plan = job.surplus_transfers[index].clone();
         if plan.amount_e8s == 0 {
             continue;
         }
-        let created_at = job.next_created_at_time_nanos;
-        job.next_created_at_time_nanos = job.next_created_at_time_nanos.saturating_add(1);
+        let memo = job.surplus_memos.get(index).cloned().unwrap_or(None);
+        let created_at = next_created_at(job);
         job.pending_transfer = Some(PendingTransfer {
-            kind: PendingTransferKind::RawIcp {
-                account: plan.recipient.account,
-                memo: plan.recipient.memo.clone(),
+            kind: PendingTransferKind::SurplusIcp {
+                target: plan.target,
+                account: plan.account,
+                memo,
             },
             gross_share_e8s: plan.gross_share_e8s,
             amount_e8s: plan.amount_e8s,
@@ -391,6 +547,12 @@ fn next_raw_pending(job: &mut ActiveRelayJob) -> Option<()> {
     None
 }
 
+fn next_created_at(job: &mut ActiveRelayJob) -> u64 {
+    let created_at = job.next_created_at_time_nanos;
+    job.next_created_at_time_nanos = job.next_created_at_time_nanos.saturating_add(1);
+    created_at
+}
+
 fn complete_job(now_nanos: u64) {
     state::with_state_mut(|st| {
         let Some(mut job) = st.active_job.take() else {
@@ -398,15 +560,8 @@ fn complete_job(now_nanos: u64) {
         };
         job.summary.completed_at_ts_nanos = Some(now_nanos);
         log_summary(&job.summary);
-        if matches!(job.mode, ActiveRelayMode::RawIcp) {
-            log_raw_recipients(
-                &job.raw_recipients,
-                ic_cdk::api::canister_self(),
-                job.balance_start_e8s,
-                job.fee_e8s,
-            );
-        }
         st.last_completed_cycles = job.current_cycles;
+        st.relay_minted_cycles_since_sample.clear();
         st.last_summary = Some(job.summary);
     });
 }
@@ -415,34 +570,26 @@ fn log_active_job_summary() {
     state::with_state(|st| {
         if let Some(job) = &st.active_job {
             log_summary(&job.summary);
-            if matches!(job.mode, ActiveRelayMode::RawIcp) {
-                log_raw_recipients(
-                    &job.raw_recipients,
-                    ic_cdk::api::canister_self(),
-                    job.balance_start_e8s,
-                    job.fee_e8s,
-                );
-            }
         }
     });
 }
 
-fn retained_topup_e8s(balance: u64, canisters: &[CanisterBurnSample]) -> u64 {
-    let gross: u64 = canisters
+fn retained_e8s(
+    balance: u64,
+    canisters: &[CanisterBurnSample],
+    surplus: &[crate::state::SurplusTransferSample],
+) -> u64 {
+    let topup_gross: u64 = canisters
         .iter()
         .filter(|sample| sample.amount_e8s > 0)
         .map(|sample| sample.gross_share_e8s)
         .sum();
-    balance.saturating_sub(gross)
-}
-
-fn retained_raw_e8s(balance: u64, plans: &[RawIcpPlan]) -> u64 {
-    let gross_sent: u64 = plans
+    let surplus_gross: u64 = surplus
         .iter()
-        .filter(|plan| plan.amount_e8s > 0)
-        .map(|plan| plan.gross_share_e8s)
+        .filter(|sample| sample.amount_e8s > 0)
+        .map(|sample| sample.gross_share_e8s)
         .sum();
-    balance.saturating_sub(gross_sent)
+    balance.saturating_sub(topup_gross.saturating_add(surplus_gross))
 }
 
 #[cfg(test)]
@@ -463,10 +610,12 @@ mod tests {
             canister_id,
             previous_cycles: Some(1_000),
             current_cycles: 900,
+            relay_minted_cycles: 0,
             burn_cycles: 100,
-            weight: 100,
+            target_topup_cycles: 101,
             gross_share_e8s: amount_e8s + 10,
             amount_e8s,
+            actual_minted_cycles: 0,
             skipped_reason: None,
         }
     }
@@ -486,7 +635,7 @@ mod tests {
         );
         ActiveRelayJob {
             id: 1,
-            mode: ActiveRelayMode::CyclesTopUp,
+            mode: ActiveRelayMode::TopUpThenSurplus,
             started_at_ts_nanos: 1,
             fee_e8s: 10,
             balance_start_e8s: 1_000,
@@ -496,11 +645,14 @@ mod tests {
                 sample(canister_b, 200),
                 sample(canister_c, 300),
             ],
-            raw_recipients: Vec::new(),
+            surplus_transfers: Vec::new(),
+            surplus_memos: Vec::new(),
+            surplus_phase_planned: false,
             pending_transfer: None,
             next_transfer_index: 0,
+            surplus_transfer_index: 0,
             next_created_at_time_nanos: 10,
-            summary: RelaySummary::started(RelayMode::CyclesTopUp, 1, 3),
+            summary: RelaySummary::started(RelayMode::TopUpThenSurplus, 1, 3),
         }
     }
 
@@ -524,6 +676,10 @@ mod tests {
         );
         assert_eq!(job.summary.partial_tick_count, 1);
         assert_eq!(job.next_transfer_index, 1);
+        assert_eq!(
+            job.summary.skipped_surplus_reason.as_deref(),
+            Some("topup_phase_incomplete")
+        );
 
         let mut next_tick_started = 0;
         assert_eq!(
@@ -531,5 +687,44 @@ mod tests {
             TransferPlanStep::Planned
         );
         assert_eq!(job.next_transfer_index, 2);
+    }
+
+    #[test]
+    fn surplus_is_blocked_after_ambiguous_topup_boundary() {
+        let mut job = job_with_three_topups();
+        job.next_transfer_index = job.canisters.len() as u32;
+        job.surplus_phase_planned = true;
+        job.summary.ambiguous_transfers = 1;
+        job.summary.cmc_notify_ambiguous_count = 1;
+        job.surplus_transfers = vec![crate::state::SurplusTransferSample {
+            target: SurplusTarget::Canister(principal("jufzc-caaaa-aaaar-qb5da-cai")),
+            account: icrc_ledger_types::icrc1::account::Account {
+                owner: principal("jufzc-caaaa-aaaar-qb5da-cai"),
+                subaccount: None,
+            },
+            gross_share_e8s: 100,
+            amount_e8s: 90,
+            memo_len: None,
+            skipped_reason: None,
+        }];
+
+        assert!(next_surplus_pending(&mut job).is_none());
+        assert!(job.surplus_transfers.is_empty());
+        assert_eq!(
+            job.summary.skipped_surplus_reason.as_deref(),
+            Some("topup_transfer_ambiguous")
+        );
+    }
+
+    #[test]
+    fn surplus_is_blocked_when_observed_conversion_mints_less_than_target() {
+        let mut job = job_with_three_topups();
+        job.next_transfer_index = job.canisters.len() as u32;
+        job.canisters[0].actual_minted_cycles = job.canisters[0].target_topup_cycles - 1;
+
+        assert_eq!(
+            surplus_allowed_after_topups(&job),
+            Err("observed_conversion_worse_than_planned_topups")
+        );
     }
 }

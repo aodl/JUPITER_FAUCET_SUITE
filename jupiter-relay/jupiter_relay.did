@@ -1,16 +1,13 @@
-type Account = record { owner : principal; subaccount : opt blob };
-type RawIcpRecipient = record { account : Account; memo : opt blob };
-type RawIcpModeConfig = record {
-  min_cycles_threshold : nat;
-  recipients : vec RawIcpRecipient;
-};
+type SurplusTarget = variant { Canister : principal; Neuron : nat64 };
+type SurplusRecipient = record { target : SurplusTarget; memo : opt blob };
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
   cmc_canister_id : opt principal;
+  governance_canister_id : opt principal;
   blackhole_canister_id : opt principal;
   main_interval_seconds : opt nat64;
   max_transfers_per_tick : opt nat32;
-  raw_icp_mode : opt RawIcpModeConfig;
+  surplus_recipients : vec SurplusRecipient;
 };
 service : (InitArgs) -> {}

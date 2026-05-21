@@ -54,7 +54,7 @@ enum TransferAttemptOutcome {
 }
 
 enum NotifyAttemptOutcome {
-    Succeeded,
+    Succeeded(u128),
     Retryable,
     Terminal,
 }
@@ -85,7 +85,7 @@ fn destination_for_pending(cmc_id: Principal, pending: &PendingTransfer) -> Acco
         PendingTransferKind::CmcTopUp { canister_id } => {
             logic::cmc_deposit_account(cmc_id, *canister_id)
         }
-        PendingTransferKind::RawIcp { account, .. } => *account,
+        PendingTransferKind::SurplusIcp { account, .. } => *account,
     }
 }
 
@@ -94,7 +94,7 @@ fn memo_for_pending(pending: &PendingTransfer) -> Vec<u8> {
         PendingTransferKind::CmcTopUp { .. } => {
             logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec()
         }
-        PendingTransferKind::RawIcp { memo, .. } => memo.clone().unwrap_or_default(),
+        PendingTransferKind::SurplusIcp { memo, .. } => memo.clone().unwrap_or_default(),
     }
 }
 
@@ -131,7 +131,7 @@ async fn notify_once<C: CmcClient>(
     block_index: u64,
 ) -> NotifyAttemptOutcome {
     match cmc.notify_top_up(canister_id, block_index).await {
-        Ok(()) => NotifyAttemptOutcome::Succeeded,
+        Ok(cycles) => NotifyAttemptOutcome::Succeeded(cycles),
         Err(ClientError::TerminalNotify(_)) => NotifyAttemptOutcome::Terminal,
         Err(ClientError::RetryableNotify(_) | ClientError::Call(_) | ClientError::Convert(_)) => {
             NotifyAttemptOutcome::Retryable
@@ -219,14 +219,20 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
     if let PendingTransferKind::CmcTopUp { canister_id } = accepted.kind {
         let first = notify_once(cmc, canister_id, block_index).await;
         match first {
-            NotifyAttemptOutcome::Succeeded => {
-                mark_pending_completed(true);
+            NotifyAttemptOutcome::Succeeded(minted_cycles) => {
+                mark_pending_completed(
+                    true,
+                    Some((canister_id, accepted.amount_e8s, minted_cycles)),
+                );
                 true
             }
             NotifyAttemptOutcome::Retryable | NotifyAttemptOutcome::Terminal => {
                 match notify_once(cmc, canister_id, block_index).await {
-                    NotifyAttemptOutcome::Succeeded => {
-                        mark_pending_completed(true);
+                    NotifyAttemptOutcome::Succeeded(minted_cycles) => {
+                        mark_pending_completed(
+                            true,
+                            Some((canister_id, accepted.amount_e8s, minted_cycles)),
+                        );
                         true
                     }
                     NotifyAttemptOutcome::Terminal
@@ -243,7 +249,33 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
             }
         }
     } else {
-        mark_pending_completed(false);
+        let refresh_neuron = match &accepted.kind {
+            PendingTransferKind::SurplusIcp {
+                target: crate::state::SurplusTarget::Neuron(neuron_id),
+                ..
+            } => Some(*neuron_id),
+            _ => None,
+        };
+        mark_pending_completed(false, None);
+        if let Some(neuron_id) = refresh_neuron {
+            ic_cdk_timers::set_timer(std::time::Duration::from_secs(0), async move {
+                let governance_id = state::with_state(|st| st.config.governance_canister_id);
+                let governance =
+                    crate::clients::governance::NnsGovernanceCanister::new(governance_id);
+                if let Err(err) = crate::clients::GovernanceClient::claim_or_refresh_neuron(
+                    &governance,
+                    neuron_id,
+                )
+                .await
+                {
+                    ic_cdk::println!(
+                        "relay: surplus neuron refresh failed neuron_id={} error={}",
+                        neuron_id,
+                        err
+                    );
+                }
+            });
+        }
         true
     }
 }
@@ -267,12 +299,48 @@ fn mark_pending_ledger_accepted(block_index: u64) {
     });
 }
 
-fn mark_pending_completed(cmc_notify_succeeded: bool) {
+fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal, u64, u128)>) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
             if job.pending_transfer.take().is_some() && cmc_notify_succeeded {
                 job.summary.cmc_notify_success_count =
                     job.summary.cmc_notify_success_count.saturating_add(1);
+            }
+            if let Some((canister_id, transferred_e8s, minted_cycles)) = minted {
+                if let Some(sample) = job
+                    .canisters
+                    .iter_mut()
+                    .find(|sample| sample.canister_id == canister_id)
+                {
+                    sample.actual_minted_cycles =
+                        sample.actual_minted_cycles.saturating_add(minted_cycles);
+                }
+                if let Some(sample) = job
+                    .summary
+                    .canisters
+                    .iter_mut()
+                    .find(|sample| sample.canister_id == canister_id)
+                {
+                    sample.actual_minted_cycles =
+                        sample.actual_minted_cycles.saturating_add(minted_cycles);
+                }
+                *st.relay_minted_cycles_since_sample
+                    .entry(canister_id)
+                    .or_insert(0) = st
+                    .relay_minted_cycles_since_sample
+                    .get(&canister_id)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(minted_cycles);
+                let cycles_per_e8 = minted_cycles / u128::from(transferred_e8s.max(1));
+                if cycles_per_e8 > 0 {
+                    let estimate = crate::state::ConversionEstimate {
+                        cycles_per_e8,
+                        timestamp_nanos: job.started_at_ts_nanos,
+                    };
+                    job.summary.conversion_estimate_used = Some(estimate.clone());
+                    st.conversion_estimate = Some(estimate);
+                }
             }
         }
     });
@@ -351,24 +419,27 @@ mod tests {
             managed_canisters: vec![canister],
             ledger_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             main_interval_seconds: 60,
             max_transfers_per_tick: None,
-            raw_icp_mode: None,
+            surplus_recipients: Vec::new(),
         };
-        let mut summary = RelaySummary::started(RelayMode::CyclesTopUp, 1, 1);
+        let mut summary = RelaySummary::started(RelayMode::TopUpThenSurplus, 1, 1);
         summary.planned_retained_e8s = 100;
         summary.known_unspent_e8s = 100;
         let mut st = State::new(cfg, 1);
         st.active_job = Some(ActiveRelayJob {
             id: 1,
-            mode: ActiveRelayMode::CyclesTopUp,
+            mode: ActiveRelayMode::TopUpThenSurplus,
             started_at_ts_nanos: 1,
             fee_e8s: 10,
             balance_start_e8s: 1_000,
             current_cycles: BTreeMap::new(),
             canisters: Vec::new(),
-            raw_recipients: Vec::new(),
+            surplus_transfers: Vec::new(),
+            surplus_memos: Vec::new(),
+            surplus_phase_planned: true,
             pending_transfer: Some(PendingTransfer {
                 kind: PendingTransferKind::CmcTopUp {
                     canister_id: canister,
@@ -379,6 +450,7 @@ mod tests {
                 phase,
             }),
             next_transfer_index: 0,
+            surplus_transfer_index: 0,
             next_created_at_time_nanos: 2,
             summary,
         });

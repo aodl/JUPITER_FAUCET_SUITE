@@ -25,29 +25,29 @@ pub struct Config {
     pub managed_canisters: Vec<Principal>,
     pub ledger_canister_id: Principal,
     pub cmc_canister_id: Principal,
+    pub governance_canister_id: Principal,
     pub blackhole_canister_id: Principal,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
-    pub raw_icp_mode: Option<RawIcpModeConfig>,
+    pub surplus_recipients: Vec<SurplusRecipient>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct RawIcpModeConfig {
-    pub min_cycles_threshold: u128,
-    pub recipients: Vec<RawIcpRecipient>,
+pub struct SurplusRecipient {
+    pub target: SurplusTarget,
+    pub memo: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RawIcpRecipient {
-    pub account: Account,
-    pub memo: Option<Vec<u8>>,
+pub enum SurplusTarget {
+    Canister(Principal),
+    Neuron(u64),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum RelayMode {
     BaselineOnly,
-    CyclesTopUp,
-    RawIcp,
+    TopUpThenSurplus,
     Degraded,
     NoFunds,
 }
@@ -76,10 +76,28 @@ pub struct CanisterBurnSample {
     pub canister_id: Principal,
     pub previous_cycles: Option<u128>,
     pub current_cycles: u128,
+    pub relay_minted_cycles: u128,
     pub burn_cycles: u128,
-    pub weight: u128,
+    pub target_topup_cycles: u128,
     pub gross_share_e8s: u64,
     pub amount_e8s: u64,
+    pub actual_minted_cycles: u128,
+    pub skipped_reason: Option<String>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConversionEstimate {
+    pub cycles_per_e8: u128,
+    pub timestamp_nanos: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct SurplusTransferSample {
+    pub target: SurplusTarget,
+    pub account: Account,
+    pub gross_share_e8s: u64,
+    pub amount_e8s: u64,
+    pub memo_len: Option<u32>,
     pub skipped_reason: Option<String>,
 }
 
@@ -108,6 +126,10 @@ pub struct RelaySummary {
     pub partial_tick_count: u32,
     pub probe_failures: Vec<ProbeFailure>,
     pub canisters: Vec<CanisterBurnSample>,
+    pub conversion_estimate_used: Option<ConversionEstimate>,
+    pub surplus_e8s_before_fees: u64,
+    pub surplus_transfers: Vec<SurplusTransferSample>,
+    pub skipped_surplus_reason: Option<String>,
 }
 
 impl RelaySummary {
@@ -140,14 +162,17 @@ impl RelaySummary {
             partial_tick_count: 0,
             probe_failures: Vec::new(),
             canisters: Vec::new(),
+            conversion_estimate_used: None,
+            surplus_e8s_before_fees: 0,
+            surplus_transfers: Vec::new(),
+            skipped_surplus_reason: None,
         }
     }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ActiveRelayMode {
-    CyclesTopUp,
-    RawIcp,
+    TopUpThenSurplus,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -155,7 +180,8 @@ pub(crate) enum PendingTransferKind {
     CmcTopUp {
         canister_id: Principal,
     },
-    RawIcp {
+    SurplusIcp {
+        target: SurplusTarget,
         account: Account,
         memo: Option<Vec<u8>>,
     },
@@ -185,9 +211,12 @@ pub(crate) struct ActiveRelayJob {
     pub balance_start_e8s: u64,
     pub current_cycles: BTreeMap<Principal, CyclesSnapshot>,
     pub canisters: Vec<CanisterBurnSample>,
-    pub raw_recipients: Vec<RawIcpRecipient>,
+    pub surplus_transfers: Vec<SurplusTransferSample>,
+    pub surplus_memos: Vec<Option<Vec<u8>>>,
+    pub surplus_phase_planned: bool,
     pub pending_transfer: Option<PendingTransfer>,
     pub next_transfer_index: u32,
+    pub surplus_transfer_index: u32,
     pub next_created_at_time_nanos: u64,
     pub summary: RelaySummary,
 }
@@ -198,6 +227,8 @@ pub(crate) struct State {
     pub last_main_run_ts: u64,
     pub main_lock_state_ts: Option<u64>,
     pub last_completed_cycles: BTreeMap<Principal, CyclesSnapshot>,
+    pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
+    pub conversion_estimate: Option<ConversionEstimate>,
     pub active_job: Option<ActiveRelayJob>,
     pub last_summary: Option<RelaySummary>,
     pub next_job_id: u64,
@@ -210,6 +241,8 @@ impl State {
             last_main_run_ts: now_secs.saturating_sub(10 * 365 * 24 * 60 * 60),
             main_lock_state_ts: Some(0),
             last_completed_cycles: BTreeMap::new(),
+            relay_minted_cycles_since_sample: BTreeMap::new(),
+            conversion_estimate: None,
             active_job: None,
             last_summary: None,
             next_job_id: 1,
@@ -219,64 +252,47 @@ impl State {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> String {
     let effective = crate::logic::effective_managed_canisters(&cfg.managed_canisters, self_id);
-    let raw_icp_min_cycles_threshold = cfg
-        .raw_icp_mode
-        .as_ref()
-        .map(|raw| raw.min_cycles_threshold.to_string())
-        .unwrap_or_else(|| "null".to_string());
-    let raw_icp_recipients = cfg
-        .raw_icp_mode
-        .as_ref()
-        .map(|raw| {
-            raw.recipients
-                .iter()
-                .map(|recipient| account_log_text(&recipient.account))
-                .collect::<Vec<_>>()
-                .join("|")
+    let surplus_recipients = cfg
+        .surplus_recipients
+        .iter()
+        .map(|recipient| surplus_target_text(&recipient.target))
+        .collect::<Vec<_>>()
+        .join("|");
+    let surplus_recipient_memos = cfg
+        .surplus_recipients
+        .iter()
+        .map(|recipient| {
+            recipient
+                .memo
+                .as_ref()
+                .map(|memo| memo.len().to_string())
+                .unwrap_or_else(|| "null".to_string())
         })
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| "none".to_string());
-    let raw_icp_recipient_memos = cfg
-        .raw_icp_mode
-        .as_ref()
-        .map(|raw| {
-            raw.recipients
-                .iter()
-                .map(|recipient| {
-                    recipient
-                        .memo
-                        .as_ref()
-                        .map(|memo| hex_bytes(memo))
-                        .unwrap_or_else(|| "null".to_string())
-                })
-                .collect::<Vec<_>>()
-                .join("|")
-        })
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| "none".to_string());
+        .collect::<Vec<_>>()
+        .join("|");
     format!(
-        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, blackhole_canister_id={}, main_interval_seconds={}, max_transfers_per_tick={}, raw_icp_mode_present={}, raw_icp_min_cycles_threshold={}, raw_icp_recipients={}, raw_icp_recipient_memos={}, production_managed_set_match={}",
+        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, production_managed_set_match={}",
         self_id.to_text(),
         principal_list(&cfg.managed_canisters),
         principal_list(&effective),
         cfg.ledger_canister_id.to_text(),
         cfg.cmc_canister_id.to_text(),
+        cfg.governance_canister_id.to_text(),
         cfg.blackhole_canister_id.to_text(),
         cfg.main_interval_seconds,
         cfg.max_transfers_per_tick
             .map(|v| v.to_string())
             .unwrap_or_else(|| "null".to_string()),
-        cfg.raw_icp_mode.is_some(),
-        raw_icp_min_cycles_threshold,
-        raw_icp_recipients,
-        raw_icp_recipient_memos,
+        cfg.surplus_recipients.len(),
+        if surplus_recipients.is_empty() { "none" } else { &surplus_recipients },
+        if surplus_recipient_memos.is_empty() { "none" } else { &surplus_recipient_memos },
         production_managed_set_matches(&cfg.managed_canisters),
     )
 }
 
 pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
     format!(
-        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} total_burn_cycles={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={}",
+        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} total_burn_cycles={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={} conversion_cycles_per_e8={} surplus_e8s_before_fees={} skipped_surplus_reason={}",
         summary.mode,
         summary.started_at_ts_nanos,
         opt_u64(summary.completed_at_ts_nanos),
@@ -297,19 +313,28 @@ pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
         summary.failed_transfers,
         summary.ambiguous_transfers,
         summary.partial_tick_count,
+        summary
+            .conversion_estimate_used
+            .as_ref()
+            .map(|estimate| estimate.cycles_per_e8.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+        summary.surplus_e8s_before_fees,
+        opt_text(summary.skipped_surplus_reason.as_deref()),
     )
 }
 
 pub(crate) fn relay_canister_log_line(sample: &CanisterBurnSample) -> String {
     format!(
-        "RELAY_CANISTER canister_id={} previous_cycles={} current_cycles={} burn_cycles={} weight={} gross_share_e8s={} amount_e8s={} skipped_reason={}",
+        "RELAY_CANISTER canister_id={} previous_cycles={} current_cycles={} relay_minted_cycles={} burn_cycles={} target_topup_cycles={} planned_topup_e8s={} actual_topup_e8s={} actual_minted_cycles={} skipped_reason={}",
         sample.canister_id.to_text(),
         opt_u128(sample.previous_cycles),
         sample.current_cycles,
+        sample.relay_minted_cycles,
         sample.burn_cycles,
-        sample.weight,
+        sample.target_topup_cycles,
         sample.gross_share_e8s,
         sample.amount_e8s,
+        sample.actual_minted_cycles,
         opt_text(sample.skipped_reason.as_deref()),
     )
 }
@@ -322,26 +347,30 @@ pub(crate) fn relay_probe_failure_log_line(failure: &ProbeFailure) -> String {
     )
 }
 
-pub(crate) fn relay_raw_recipient_log_line(plan: &crate::logic::RawIcpPlan) -> String {
+pub(crate) fn relay_surplus_transfer_log_line(plan: &SurplusTransferSample) -> String {
     format!(
-        "RELAY_RAW_RECIPIENT owner={} subaccount={} gross_share_e8s={} amount_e8s={} retained_self={} skipped_reason={} memo={}",
-        plan.recipient.account.owner.to_text(),
-        plan.recipient
-            .account
+        "RELAY_SURPLUS_TRANSFER target={} owner={} subaccount={} gross_share_e8s={} amount_e8s={} skipped_reason={} memo_len={}",
+        surplus_target_text(&plan.target),
+        plan.account.owner.to_text(),
+        plan.account
             .subaccount
             .as_ref()
             .map(|subaccount| hex_bytes(subaccount))
             .unwrap_or_else(|| "null".to_string()),
         plan.gross_share_e8s,
         plan.amount_e8s,
-        plan.retain_self,
         opt_text(plan.skipped_reason.as_deref()),
-        plan.recipient
-            .memo
-            .as_ref()
-            .map(|memo| hex_bytes(memo))
+        plan.memo_len
+            .map(|len| len.to_string())
             .unwrap_or_else(|| "null".to_string()),
     )
+}
+
+fn surplus_target_text(target: &SurplusTarget) -> String {
+    match target {
+        SurplusTarget::Canister(canister_id) => format!("canister:{}", canister_id.to_text()),
+        SurplusTarget::Neuron(neuron_id) => format!("neuron:{neuron_id}"),
+    }
 }
 
 fn opt_u64(value: Option<u64>) -> String {
@@ -393,18 +422,6 @@ fn principal_list(principals: &[Principal]) -> String {
         .map(Principal::to_text)
         .collect::<Vec<_>>()
         .join("|")
-}
-
-fn account_log_text(account: &Account) -> String {
-    format!(
-        "{}:{}",
-        account.owner.to_text(),
-        account
-            .subaccount
-            .as_ref()
-            .map(|subaccount| hex_bytes(subaccount))
-            .unwrap_or_else(|| "null".to_string())
-    )
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -518,10 +535,11 @@ mod tests {
             ],
             ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             main_interval_seconds: 604_800,
             max_transfers_per_tick: Some(10),
-            raw_icp_mode: None,
+            surplus_recipients: Vec::new(),
         }
     }
 
@@ -537,51 +555,41 @@ mod tests {
         assert!(line.contains("u2qkp-aqaaa-aaaar-qb7ea-cai"));
         assert!(line.contains("ledger_canister_id=ryjl3-tyaaa-aaaaa-aaaba-cai"));
         assert!(line.contains("cmc_canister_id=rkp4c-7iaaa-aaaaa-aaaca-cai"));
+        assert!(line.contains("governance_canister_id=rrkah-fqaaa-aaaaa-aaaaq-cai"));
         assert!(line.contains("blackhole_canister_id=77deu-baaaa-aaaar-qb6za-cai"));
         assert!(line.contains("main_interval_seconds=604800"));
         assert!(line.contains("max_transfers_per_tick=10"));
-        assert!(line.contains("raw_icp_mode_present=false"));
-        assert!(line.contains("raw_icp_min_cycles_threshold=null"));
-        assert!(line.contains("raw_icp_recipients=none"));
-        assert!(line.contains("raw_icp_recipient_memos=none"));
+        assert!(line.contains("surplus_recipient_count=0"));
+        assert!(line.contains("surplus_recipients=none"));
+        assert!(line.contains("surplus_recipient_memo_lengths=none"));
         assert!(line.contains("production_managed_set_match=true"));
     }
 
     #[test]
-    fn runtime_config_log_line_includes_raw_icp_recipients_and_memos() {
+    fn runtime_config_log_line_includes_surplus_recipients_and_memos() {
         let self_id = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
         let mut cfg = base_config();
-        cfg.raw_icp_mode = Some(RawIcpModeConfig {
-            min_cycles_threshold: 5_000_000_000_000,
-            recipients: vec![
-                RawIcpRecipient {
-                    account: Account {
-                        owner: principal("jufzc-caaaa-aaaar-qb5da-cai"),
-                        subaccount: None,
-                    },
-                    memo: Some(vec![1, 2]),
-                },
-                RawIcpRecipient {
-                    account: Account {
-                        owner: self_id,
-                        subaccount: Some([9; 32]),
-                    },
-                    memo: None,
-                },
-            ],
-        });
+        cfg.surplus_recipients = vec![
+            SurplusRecipient {
+                target: SurplusTarget::Canister(principal("jufzc-caaaa-aaaar-qb5da-cai")),
+                memo: Some(vec![1, 2]),
+            },
+            SurplusRecipient {
+                target: SurplusTarget::Neuron(42),
+                memo: None,
+            },
+        ];
 
         let line = runtime_config_log_line(&cfg, self_id);
 
-        assert!(line.contains("raw_icp_mode_present=true"));
-        assert!(line.contains("raw_icp_min_cycles_threshold=5000000000000"));
-        assert!(line.contains("raw_icp_recipients=jufzc-caaaa-aaaar-qb5da-cai:null|u2qkp-aqaaa-aaaar-qb7ea-cai:0909090909090909090909090909090909090909090909090909090909090909"));
-        assert!(line.contains("raw_icp_recipient_memos=0102|null"));
+        assert!(line.contains("surplus_recipient_count=2"));
+        assert!(line.contains("surplus_recipients=canister:jufzc-caaaa-aaaar-qb5da-cai|neuron:42"));
+        assert!(line.contains("surplus_recipient_memo_lengths=2|null"));
     }
 
     #[test]
     fn relay_summary_log_line_is_single_line_and_includes_public_counters() {
-        let mut summary = RelaySummary::started(RelayMode::CyclesTopUp, 11, 2);
+        let mut summary = RelaySummary::started(RelayMode::TopUpThenSurplus, 11, 2);
         summary.completed_at_ts_nanos = Some(22);
         summary.min_cycles_balance = Some(333);
         summary.total_burn_cycles = 444;
@@ -591,7 +599,7 @@ mod tests {
 
         let line = relay_summary_log_line(&summary);
 
-        assert!(line.starts_with("RELAY_SUMMARY mode=CyclesTopUp"));
+        assert!(line.starts_with("RELAY_SUMMARY mode=TopUpThenSurplus"));
         assert!(line.contains("started_at_ts_nanos=11"));
         assert!(line.contains("completed_at_ts_nanos=22"));
         assert!(line.contains("min_cycles_balance=333"));
@@ -608,17 +616,19 @@ mod tests {
             canister_id: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
             previous_cycles: Some(1_000),
             current_cycles: 900,
+            relay_minted_cycles: 0,
             burn_cycles: 100,
-            weight: 100,
+            target_topup_cycles: 101,
             gross_share_e8s: 50,
             amount_e8s: 40,
+            actual_minted_cycles: 0,
             skipped_reason: Some("gross share <= fee".to_string()),
         };
         let canister_line = relay_canister_log_line(&sample);
         assert!(canister_line.starts_with("RELAY_CANISTER "));
         assert!(canister_line.contains("burn_cycles=100"));
-        assert!(canister_line.contains("gross_share_e8s=50"));
-        assert!(canister_line.contains("amount_e8s=40"));
+        assert!(canister_line.contains("planned_topup_e8s=50"));
+        assert!(canister_line.contains("actual_topup_e8s=40"));
         assert!(canister_line.contains("skipped_reason=gross%20share%20%3C%3D%20fee"));
 
         let failure = ProbeFailure {

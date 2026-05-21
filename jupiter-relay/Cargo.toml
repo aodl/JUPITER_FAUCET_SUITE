@@ -19,6 +19,7 @@ ic-cdk-timers = { workspace = true }
 ic-stable-structures = { workspace = true }
 icrc-ledger-types = { workspace = true }
 jupiter-ic-clients = { path = "../jupiter-ic-clients" }
+jupiter-nns-types = { path = "../jupiter-nns-types" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

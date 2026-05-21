@@ -31,9 +31,9 @@ enum NotifyError {
     },
 }
 
-fn classify_notify_top_up_result(result: NotifyTopUpResult) -> Result<(), ClientError> {
+fn classify_notify_top_up_result(result: NotifyTopUpResult) -> Result<u128, ClientError> {
     match result {
-        NotifyTopUpResult::Ok(_) => Ok(()),
+        NotifyTopUpResult::Ok(cycles) => crate::clients::nat_to_u128(&cycles),
         NotifyTopUpResult::Err(NotifyError::Processing) => Err(ClientError::RetryableNotify(
             "notify_top_up returned Processing".to_string(),
         )),
@@ -78,7 +78,7 @@ impl CmcClient for CyclesMintingCanister {
         &self,
         canister_id: Principal,
         block_index: u64,
-    ) -> Result<(), ClientError> {
+    ) -> Result<u128, ClientError> {
         let resp = Call::bounded_wait(self.canister_id, "notify_top_up")
             .with_arg(NotifyTopUpArg {
                 canister_id,

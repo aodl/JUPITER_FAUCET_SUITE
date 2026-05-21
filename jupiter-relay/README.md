@@ -1,6 +1,8 @@
 # Jupiter Relay
 
-`jupiter-relay` is an ICP-funded cycles allocator for the Jupiter Faucet Suite. It spends ICP from the relay canister default ICP ledger account:
+`jupiter-relay` is an ICP-funded cycles allocator and surplus router for the Jupiter Faucet Suite. Jupiter Faucet uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and tops them up proportional to recent burn. Each canister top-up is capped at 1% more than recent burn, so dependent canisters are designed to keep growing in cycles without over-accumulating surplus. Remaining production surplus ICP is split equally between IO neuron `6345890886899317159` and Jupiter Faucet neuron `11614578985374291210`. This gives 50% immediate IO stake growth and 50% compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
+
+It spends ICP from the relay canister default ICP ledger account:
 
 ```text
 Account { owner = <relay_canister_id>, subaccount = null }
@@ -41,7 +43,7 @@ The production relay default account can be funded through the faucet raw ICP ro
 u2qkp-aqaaa-aaaar-qb7ea-cai.
 ```
 
-Start with a small funding amount, observe one allocation tick, and only then increase funding.
+Start with a small funding amount, observe one baseline tick and one allocation tick, and only then increase funding.
 
 ## Managed Canisters
 
@@ -62,7 +64,7 @@ Cycles: <relay_self_cycles_balance>
 CONFIG relay_canister_id=...
 ```
 
-The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ledger, CMC, blackhole, interval, transfer limit, raw ICP mode presence, raw ICP threshold, raw recipients, raw recipient memos, and whether the configured production managed set matches the known Jupiter suite set.
+The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ledger, CMC, NNS Governance, blackhole, interval, transfer limit, surplus recipients, surplus memo lengths, and whether the configured production managed set matches the known Jupiter suite set.
 
 After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with `jupiter-relay/mainnet-install-args.did`, and using the frontend source pane. Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 
@@ -79,27 +81,28 @@ The relay emits stable, single-line, grep-friendly public records:
 ```text
 Cycles: <relay_self_cycles_balance>
 CONFIG relay_canister_id=...
-RELAY_SUMMARY mode=<BaselineOnly|CyclesTopUp|RawIcp|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> total_burn_cycles=<nat> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32>
-RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> burn_cycles=<nat> weight=<nat> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null>
-RELAY_RAW_RECIPIENT owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> retained_self=<bool> skipped_reason=<escaped-text-or-null> memo=<hex-or-null>
+RELAY_SUMMARY mode=<BaselineOnly|TopUpThenSurplus|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> total_burn_cycles=<nat> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32> conversion_cycles_per_e8=<nat-or-null> surplus_e8s_before_fees=<nat64> skipped_surplus_reason=<escaped-text-or-null>
+RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> relay_minted_cycles=<nat> burn_cycles=<nat> target_topup_cycles=<nat> planned_topup_e8s=<nat64> actual_topup_e8s=<nat64> actual_minted_cycles=<nat> skipped_reason=<escaped-text-or-null>
+RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null> memo_len=<nat32-or-null>
 RELAY_PROBE_FAILURE canister_id=<principal> error=<escaped-text>
 ```
 
-`RELAY_CANISTER` logs show how many cycles each managed canister had previously, how many cycles it had currently, how many cycles it burned, its allocation weight, gross ICP share, net ICP transfer amount or top-up amount after fee, and skipped reason if any.
+`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, burn plus fixed 1% headroom, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes.
 
 ## Tick Behavior
 
 The default main interval is seven days and timer intervals are clamped to at least 60 seconds. After upgrade, an active job schedules an immediate forced resume.
 
-The first successful complete probe is baseline-only. It stores current cycles and does not spend ICP. Later ticks compare the previous completed sample with the current probe:
+The first successful complete probe is baseline-only. It stores current cycles and does not spend ICP. Later ticks compare the previous completed sample, relay-minted cycles since that sample, and the current probe:
 
 ```text
-burn = previous_cycles.saturating_sub(current_cycles)
+estimated_burn_cycles = max(previous_cycles + relay_minted_cycles_since_previous_sample - current_cycles, 0)
+target_topup_cycles = ceil(estimated_burn_cycles * 101 / 100)
 ```
 
-If any canister gained cycles, that canister's burn is zero.
+Relay-minted cycles come from successful CMC `notify_top_up` responses. This prevents relay top-ups from hiding real burn when a canister's net cycles balance increases.
 
-`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the relay starts in one tick. It applies to CMC top-up transfers and raw ICP recipient transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks.
+`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the relay starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped.
 
 ## Upgrade Args
 
@@ -111,37 +114,42 @@ opt null        = clear the existing optional value
 opt opt <value> = set the value
 ```
 
-This applies to `max_transfers_per_tick` and `raw_icp_mode`. Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `blackhole_canister_id`, and `main_interval_seconds` use `null` to leave unchanged and `opt <value>` to set.
+This applies to `max_transfers_per_tick`. Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, and `surplus_recipients` use `null` to leave unchanged and `opt <value>` to set.
 
-## CMC Top-Up Mode
+## Top-Ups And Surplus
 
-When raw ICP mode is absent or inactive, the relay allocates the default account balance as CMC top-ups.
+The relay always executes canister top-ups before surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, the relay spends only on canister top-ups and routes no surplus.
 
-If total burn is positive, each canister's weight is its burn. Canisters with zero burn during a positive-burn interval receive no share. If no burn is detected anywhere, every managed canister gets weight `1` and the split is equal.
-
-Gross shares are floored:
+Top-up planning uses a recent CMC conversion estimate:
 
 ```text
-gross_share = floor(balance_e8s * weight / total_weight)
+cycles_per_e8 = minted_cycles / transferred_e8s
+planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
 ```
 
-The gross share includes the ledger fee. A top-up is sent only when `gross_share > fee`; the transferred amount is `gross_share - fee`. Dust and rounding remainder stay in the relay default account.
+If no reliable conversion estimate exists, the relay may use an internal bootstrap estimate for canister top-up planning, but surplus routing is disabled for that tick. Stale or ambiguous conversion data also disables surplus routing. A sharp drop in cycles-per-e8 reduces or eliminates surplus routing until canister top-up needs are covered.
+
+Surplus recipients are typed targets:
+
+```text
+SurplusRecipient {
+  target = Canister(principal) | Neuron(nat64)
+  memo = opt blob
+}
+```
+
+Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer.
 
 Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit account derived from the target canister principal, then call `notify_top_up { canister_id, block_index }`.
 
-## Raw ICP Mode
+Production surplus is split equally between two public NNS neuron recipients:
 
-`raw_icp_mode` is optional. When configured, it activates per tick only if every managed canister probe succeeds and the minimum current cycles balance is strictly greater than `min_cycles_threshold`.
+- IO neuron `6345890886899317159`, with `memo = null`
+- Jupiter Faucet neuron `11614578985374291210`, with memo `6345890886899317159`
 
-Raw ICP recipients split the default account balance equally by gross share. For each recipient:
+The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. This preserves the existing memo convention while separating immediate IO stake growth from compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
 
-- If the recipient is the relay default account, no transfer is made and that share remains in place.
-- If `gross_share > fee`, the relay transfers `gross_share - fee` with the configured memo bytes.
-- Otherwise the share is retained as dust.
-
-The mode is not a latch. If a later tick finds any managed canister at or below the threshold, the relay returns to CMC top-up mode.
-
-Example upgrade args to enable raw ICP mode later:
+Example upgrade args to set the production surplus recipients:
 
 ```candid
 (
@@ -149,44 +157,20 @@ Example upgrade args to enable raw ICP mode later:
     managed_canisters = null;
     ledger_canister_id = null;
     cmc_canister_id = null;
+    governance_canister_id = null;
     blackhole_canister_id = null;
     main_interval_seconds = null;
     max_transfers_per_tick = null;
-    raw_icp_mode = opt opt record {
-      min_cycles_threshold = 5_000_000_000_000 : nat;
-      recipients = vec {
-        record {
-          account = record {
-            owner = principal "<recipient-1>";
-            subaccount = null;
-          };
-          memo = opt blob "\01";
-        };
-        record {
-          account = record {
-            owner = principal "u2qkp-aqaaa-aaaar-qb7ea-cai";
-            subaccount = null;
-          };
-          memo = null;
-        };
+    surplus_recipients = opt vec {
+      record {
+        target = variant { Neuron = 6_345_890_886_899_317_159 : nat64 };
+        memo = null;
+      };
+      record {
+        target = variant { Neuron = 11_614_578_985_374_291_210 : nat64 };
+        memo = opt blob "6345890886899317159";
       };
     };
-  }
-)
-```
-
-Example upgrade args to clear raw ICP mode:
-
-```candid
-(
-  opt record {
-    managed_canisters = null;
-    ledger_canister_id = null;
-    cmc_canister_id = null;
-    blackhole_canister_id = null;
-    main_interval_seconds = null;
-    max_transfers_per_tick = null;
-    raw_icp_mode = opt null;
   }
 )
 ```
@@ -208,7 +192,7 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 3. Compare `CONFIG` public logs with `jupiter-relay/mainnet-install-args.did`.
 4. Observe a first complete baseline tick and confirm it spends no ICP.
 5. Fund the relay with a small ICP amount through `u2qkp-aqaaa-aaaar-qb7ea-cai.`.
-6. Observe the first allocation tick and verify CMC notifications or raw ICP transfers match the expected mode.
+6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
 This MR does not perform deployment. Production deployment and settings changes remain manual operator actions after review.

@@ -28,6 +28,7 @@ fn build_wasm_cached(
 
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
@@ -36,6 +37,9 @@ fn ledger_wasm() -> Result<Vec<u8>> {
 }
 fn cmc_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&CMC_WASM, "mock-cmc", None)
+}
+fn governance_wasm() -> Result<Vec<u8>> {
+    build_wasm_cached(&GOVERNANCE_WASM, "mock-nns-governance", None)
 }
 fn blackhole_wasm() -> Result<Vec<u8>> {
     build_wasm_cached(&BLACKHOLE_WASM, "mock-blackhole", None)
@@ -49,10 +53,11 @@ struct RelayInitArg {
     managed_canisters: Vec<Principal>,
     ledger_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
+    governance_canister_id: Option<Principal>,
     blackhole_canister_id: Option<Principal>,
     main_interval_seconds: Option<u64>,
     max_transfers_per_tick: Option<u32>,
-    raw_icp_mode: Option<RawIcpModeConfig>,
+    surplus_recipients: Vec<SurplusRecipient>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -60,29 +65,29 @@ struct RelayUpgradeArg {
     managed_canisters: Option<Vec<Principal>>,
     ledger_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
+    governance_canister_id: Option<Principal>,
     blackhole_canister_id: Option<Principal>,
     main_interval_seconds: Option<u64>,
     max_transfers_per_tick: Option<Option<u32>>,
-    raw_icp_mode: Option<Option<RawIcpModeConfig>>,
+    surplus_recipients: Option<Vec<SurplusRecipient>>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct RawIcpModeConfig {
-    min_cycles_threshold: u128,
-    recipients: Vec<RawIcpRecipient>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct RawIcpRecipient {
-    account: Account,
+struct SurplusRecipient {
+    target: SurplusTarget,
     memo: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum SurplusTarget {
+    Canister(Principal),
+    Neuron(u64),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum RelayMode {
     BaselineOnly,
-    CyclesTopUp,
-    RawIcp,
+    TopUpThenSurplus,
     Degraded,
     NoFunds,
 }
@@ -117,10 +122,15 @@ struct ProbeFailure {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct CanisterBurnSample {
     canister_id: Principal,
+    previous_cycles: Option<u128>,
+    current_cycles: u128,
+    relay_minted_cycles: u128,
     burn_cycles: u128,
-    weight: u128,
+    target_topup_cycles: u128,
     gross_share_e8s: u64,
     amount_e8s: u64,
+    actual_minted_cycles: u128,
+    skipped_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -165,13 +175,16 @@ struct RelayEnv {
     pic: PocketIc,
     ledger: Principal,
     cmc: Principal,
+    governance: Principal,
     blackhole: Principal,
     relay: Principal,
 }
 
 impl RelayEnv {
     fn new(max_transfers_per_tick: Option<u32>) -> Result<Self> {
-        Self::new_with_config(max_transfers_per_tick, |_, cmc, _, _| (vec![cmc], None))
+        Self::new_with_config(max_transfers_per_tick, |_, cmc, _, _| {
+            (vec![cmc], Vec::new())
+        })
     }
 
     fn new_with_config<F>(max_transfers_per_tick: Option<u32>, config: F) -> Result<Self>
@@ -181,34 +194,38 @@ impl RelayEnv {
             Principal,
             Principal,
             Principal,
-        ) -> (Vec<Principal>, Option<RawIcpModeConfig>),
+        ) -> (Vec<Principal>, Vec<SurplusRecipient>),
     {
         let pic = PocketIcBuilder::new().with_application_subnet().build();
         let ledger = pic.create_canister();
         let cmc = pic.create_canister();
+        let governance = pic.create_canister();
         let blackhole = pic.create_canister();
         let relay = pic.create_canister();
-        for canister in [ledger, cmc, blackhole, relay] {
+        for canister in [ledger, cmc, governance, blackhole, relay] {
             pic.add_cycles(canister, 5_000_000_000_000);
         }
         pic.install_canister(ledger, ledger_wasm()?, vec![], None);
         pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(governance, governance_wasm()?, vec![], None);
         pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
-        let (managed_canisters, raw_icp_mode) = config(ledger, cmc, blackhole, relay);
+        let (managed_canisters, surplus_recipients) = config(ledger, cmc, blackhole, relay);
         let init = RelayInitArg {
             managed_canisters,
             ledger_canister_id: Some(ledger),
             cmc_canister_id: Some(cmc),
+            governance_canister_id: Some(governance),
             blackhole_canister_id: Some(blackhole),
             main_interval_seconds: Some(31_536_000),
             max_transfers_per_tick,
-            raw_icp_mode,
+            surplus_recipients,
         };
         pic.install_canister(relay, relay_wasm()?, encode_one(init)?, None);
         Ok(Self {
             pic,
             ledger,
             cmc,
+            governance,
             blackhole,
             relay,
         })
@@ -302,17 +319,6 @@ impl RelayEnv {
         )
     }
 
-    fn balance_of(&self, account: Account) -> Result<u64> {
-        let balance: Nat = query_one(
-            &self.pic,
-            self.ledger,
-            Principal::anonymous(),
-            "icrc1_balance_of",
-            account,
-        )?;
-        Ok(nat_to_u64(&balance))
-    }
-
     fn set_trap_after_successful_transfer(&self, value: bool) -> Result<()> {
         update_one(
             &self.pic,
@@ -384,9 +390,15 @@ fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     out
 }
 
+fn neuron_subaccount(neuron_id: u64) -> [u8; 32] {
+    let mut account = [0u8; 32];
+    account[24..].copy_from_slice(&neuron_id.to_be_bytes());
+    account
+}
+
 #[test]
 #[ignore]
-fn baseline_then_weighted_cmc_topup_records_real_async_notify() -> Result<()> {
+fn baseline_then_headroom_cmc_topup_records_real_async_notify() -> Result<()> {
     require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
@@ -399,7 +411,7 @@ fn baseline_then_weighted_cmc_topup_records_real_async_notify() -> Result<()> {
 
     env.set_managed_cycles(5_000_000_000_000)?;
     let topup = env.tick_relay()?;
-    if topup.mode != RelayMode::CyclesTopUp
+    if topup.mode != RelayMode::TopUpThenSurplus
         || topup.ledger_transfer_count == 0
         || topup.cmc_notify_success_count == 0
     {
@@ -421,11 +433,11 @@ fn baseline_then_weighted_cmc_topup_records_real_async_notify() -> Result<()> {
     let logs = env.logs_text()?;
     if !logs.contains("Cycles:")
         || !logs.contains("CONFIG ")
-        || !logs.contains("RELAY_SUMMARY mode=CyclesTopUp")
+        || !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
         || !logs.contains("RELAY_CANISTER ")
         || !logs.contains("burn_cycles=")
-        || !logs.contains("gross_share_e8s=")
-        || !logs.contains("amount_e8s=")
+        || !logs.contains("planned_topup_e8s=")
+        || !logs.contains("actual_topup_e8s=")
     {
         bail!("expected public relay logs for cycles top-up, got {logs}");
     }
@@ -434,9 +446,9 @@ fn baseline_then_weighted_cmc_topup_records_real_async_notify() -> Result<()> {
 
 #[test]
 #[ignore]
-fn weighted_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
+fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], None))?;
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -449,7 +461,7 @@ fn weighted_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     env.set_canister_cycles(env.ledger, 9_000_000_000_000)?;
     env.set_managed_cycles(5_000_000_000_000)?;
     let summary = env.tick_relay()?;
-    if summary.mode != RelayMode::CyclesTopUp || summary.cmc_notify_success_count < 2 {
+    if summary.mode != RelayMode::TopUpThenSurplus || summary.cmc_notify_success_count < 2 {
         bail!("expected successful multi-canister cycles top-up, got {summary:?}");
     }
 
@@ -473,8 +485,8 @@ fn weighted_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     );
     if !logs.contains(&cmc_log_fragment)
         || !logs.contains(&format!("burn_cycles={}", cmc_sample.burn_cycles))
-        || !logs.contains(&format!("gross_share_e8s={}", cmc_sample.gross_share_e8s))
-        || !logs.contains(&format!("amount_e8s={}", cmc_sample.amount_e8s))
+        || !logs.contains(&format!("planned_topup_e8s={}", cmc_sample.gross_share_e8s))
+        || !logs.contains(&format!("actual_topup_e8s={}", cmc_sample.amount_e8s))
     {
         bail!(
             "expected public logs to include CMC burn/allocation sample {cmc_sample:?}, got {logs}"
@@ -504,9 +516,9 @@ fn weighted_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
 
 #[test]
 #[ignore]
-fn relay_canister_with_increased_cycles_gets_zero_weight_when_others_burned() -> Result<()> {
+fn relay_canister_with_increased_cycles_gets_no_topup_when_others_burned() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], None))?;
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -525,13 +537,11 @@ fn relay_canister_with_increased_cycles_gets_zero_weight_when_others_burned() ->
         .iter()
         .find(|sample| sample.canister_id == env.cmc)
         .context("missing gained canister sample")?;
-    if burned.amount_e8s == 0
-        || gained.burn_cycles != 0
-        || gained.weight != 0
-        || gained.gross_share_e8s != 0
-        || gained.amount_e8s != 0
-    {
-        bail!("expected gained canister to receive zero weight/share while another burned: {summary:?}");
+    if gained.burn_cycles != 0 || gained.target_topup_cycles != 0 || gained.amount_e8s != 0 {
+        bail!("expected gained canister to receive no top-up while another burned: {summary:?}");
+    }
+    if burned.burn_cycles == 0 {
+        bail!("expected burned canister to report positive burn: {summary:?}");
     }
     let notifications = env.notifications()?;
     if notifications
@@ -547,7 +557,7 @@ fn relay_canister_with_increased_cycles_gets_zero_weight_when_others_burned() ->
 #[ignore]
 fn relay_splits_equally_when_no_canister_burned_cycles() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], None))?;
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(99_000_000)?;
@@ -557,62 +567,31 @@ fn relay_splits_equally_when_no_canister_burned_cycles() -> Result<()> {
     env.set_managed_cycles(10_000_000_000_000)?;
     env.add_relay_cycles(1_000_000_000_000);
     let summary = env.tick_relay()?;
-    if summary.mode != RelayMode::CyclesTopUp {
+    if summary.mode != RelayMode::TopUpThenSurplus {
         bail!("expected cycles top-up mode, got {summary:?}");
     }
-    let managed = summary
+    if summary
         .canisters
         .iter()
-        .filter(|sample| sample.canister_id == env.ledger || sample.canister_id == env.cmc)
-        .collect::<Vec<_>>();
-    if managed.len() != 2 || managed.iter().any(|sample| sample.weight != 1) {
-        bail!("expected equal unit weights for zero-burn managed canisters, got {summary:?}");
-    }
-    let diff = managed[0]
-        .gross_share_e8s
-        .abs_diff(managed[1].gross_share_e8s);
-    if diff > 1 {
-        bail!("expected equal gross shares subject only to flooring, got {summary:?}");
+        .any(|sample| sample.burn_cycles != 0 || sample.target_topup_cycles != 0)
+    {
+        bail!("expected zero burn to plan no top-up, got {summary:?}");
     }
     Ok(())
 }
 
 #[test]
 #[ignore]
-fn raw_icp_mode_transfers_external_and_self_subaccount_without_cmc_notify() -> Result<()> {
+fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result<()> {
     require_ignored_flag()?;
-    let self_subaccount = [7_u8; 32];
     let external_memo = vec![0xA1, 0xB2];
-    let self_sub_memo = vec![0xC3];
-    let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
+    let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],
-            Some(RawIcpModeConfig {
-                min_cycles_threshold: 1_000_000_000_000,
-                recipients: vec![
-                    RawIcpRecipient {
-                        account: Account {
-                            owner: cmc,
-                            subaccount: None,
-                        },
-                        memo: Some(external_memo.clone()),
-                    },
-                    RawIcpRecipient {
-                        account: Account {
-                            owner: relay,
-                            subaccount: Some(self_subaccount),
-                        },
-                        memo: Some(self_sub_memo.clone()),
-                    },
-                    RawIcpRecipient {
-                        account: Account {
-                            owner: relay,
-                            subaccount: None,
-                        },
-                        memo: None,
-                    },
-                ],
-            }),
+            vec![SurplusRecipient {
+                target: SurplusTarget::Canister(cmc),
+                memo: Some(external_memo.clone()),
+            }],
         )
     })?;
     env.set_managed_cycles(4_000_000_000_000)?;
@@ -620,19 +599,20 @@ fn raw_icp_mode_transfers_external_and_self_subaccount_without_cmc_notify() -> R
 
     let baseline = env.tick_relay()?;
     if baseline.mode != RelayMode::BaselineOnly {
-        bail!("expected baseline-only first tick before raw mode transfer, got {baseline:?}");
+        bail!("expected baseline-only first tick before surplus transfer, got {baseline:?}");
     }
 
-    let summary = env.tick_relay()?;
-    if summary.mode != RelayMode::RawIcp
-        || summary.ledger_transfer_count != 2
-        || summary.cmc_notify_success_count != 0
-    {
-        bail!("expected raw ICP mode to make exactly two ledger transfers and no CMC notify, got {summary:?}");
+    env.set_managed_cycles(2_000_000_000_000)?;
+    let topup = env.tick_relay()?;
+    if topup.cmc_notify_success_count == 0 {
+        bail!("expected bootstrap top-up to establish conversion estimate, got {topup:?}");
     }
-    let notifications = env.notifications()?;
-    if !notifications.is_empty() {
-        bail!("expected raw ICP mode to skip CMC notify entirely, got {notifications:?}");
+
+    env.credit_relay(99_000_000)?;
+    env.set_managed_cycles(4_000_000_000_000)?;
+    let summary = env.tick_relay()?;
+    if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count == 0 {
+        bail!("expected surplus transfer after top-up phase, got {summary:?}");
     }
 
     let transfers = env.transfers()?;
@@ -645,95 +625,133 @@ fn raw_icp_mode_transfers_external_and_self_subaccount_without_cmc_notify() -> R
             && transfer.memo == Some(external_memo.clone())
     }) {
         bail!(
-            "expected external raw ICP recipient transfer with configured memo, got {transfers:?}"
+            "expected surplus canister recipient transfer with configured memo, got {transfers:?}"
         );
     }
-    if !transfers.iter().any(|transfer| {
-        transfer.to
-            == (Account {
-                owner: env.relay,
-                subaccount: Some(self_subaccount),
-            })
-            && transfer.memo == Some(self_sub_memo.clone())
-    }) {
-        bail!("expected relay self-subaccount raw ICP transfer with configured memo, got {transfers:?}");
-    }
-    if transfers.iter().any(|transfer| {
-        transfer.to
-            == (Account {
-                owner: env.relay,
-                subaccount: None,
-            })
-    }) {
-        bail!("expected relay default raw ICP recipient to be retained without transfer, got {transfers:?}");
-    }
-    let retained = env.balance_of(Account {
-        owner: env.relay,
-        subaccount: None,
-    })?;
-    if retained != 33_000_000 {
-        bail!("expected relay default account to retain one gross share, got {retained}");
-    }
     let logs = env.logs_text()?;
-    if !logs.contains("RELAY_SUMMARY mode=RawIcp")
-        || !logs.contains("RELAY_RAW_RECIPIENT ")
-        || !logs.contains("retained_self=true")
-        || !logs.contains("memo=a1b2")
-        || !logs.contains("memo=c3")
+    if !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
+        || !logs.contains("RELAY_SURPLUS_TRANSFER ")
+        || !logs.contains("memo_len=2")
     {
-        bail!("expected public raw ICP recipient logs, got {logs}");
+        bail!("expected public surplus recipient logs, got {logs}");
     }
     Ok(())
 }
 
 #[test]
 #[ignore]
-fn relay_does_not_switch_to_raw_icp_when_min_cycles_equals_threshold() -> Result<()> {
+fn surplus_neuron_transfers_split_equally_and_preserve_jupiter_faucet_memo() -> Result<()> {
+    require_ignored_flag()?;
+    let io_neuron = 6_345_890_886_899_317_159_u64;
+    let jupiter_faucet_neuron = 11_614_578_985_374_291_210_u64;
+    let io_memo = b"6345890886899317159".to_vec();
+    let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
+        (
+            vec![cmc],
+            vec![
+                SurplusRecipient {
+                    target: SurplusTarget::Neuron(io_neuron),
+                    memo: None,
+                },
+                SurplusRecipient {
+                    target: SurplusTarget::Neuron(jupiter_faucet_neuron),
+                    memo: Some(io_memo.clone()),
+                },
+            ],
+        )
+    })?;
+    env.set_managed_cycles(4_000_000_000_000)?;
+    env.credit_relay(99_000_000)?;
+
+    let baseline = env.tick_relay()?;
+    if baseline.mode != RelayMode::BaselineOnly {
+        bail!("expected baseline-only first tick before surplus transfer, got {baseline:?}");
+    }
+
+    env.set_managed_cycles(2_000_000_000_000)?;
+    let topup = env.tick_relay()?;
+    if topup.cmc_notify_success_count == 0 {
+        bail!("expected bootstrap top-up to establish conversion estimate, got {topup:?}");
+    }
+
+    env.credit_relay(99_000_000)?;
+    env.set_managed_cycles(4_000_000_000_000)?;
+    let summary = env.tick_relay()?;
+    if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count < 2 {
+        bail!("expected surplus neuron transfers after top-up phase, got {summary:?}");
+    }
+
+    let transfers = env.transfers()?;
+    let io_account = Account {
+        owner: env.governance,
+        subaccount: Some(neuron_subaccount(io_neuron)),
+    };
+    let jupiter_faucet_account = Account {
+        owner: env.governance,
+        subaccount: Some(neuron_subaccount(jupiter_faucet_neuron)),
+    };
+    let io_transfer = transfers
+        .iter()
+        .rev()
+        .find(|transfer| transfer.to == io_account)
+        .context("missing IO neuron surplus transfer")?;
+    let jupiter_faucet_transfer = transfers
+        .iter()
+        .rev()
+        .find(|transfer| transfer.to == jupiter_faucet_account)
+        .context("missing Jupiter Faucet neuron surplus transfer")?;
+    let io_amount = nat_to_u64(&io_transfer.amount);
+    let jupiter_faucet_amount = nat_to_u64(&jupiter_faucet_transfer.amount);
+    if io_amount.abs_diff(jupiter_faucet_amount) > 1 {
+        bail!(
+            "expected equal surplus split after fees, got io={io_amount} jupiter_faucet={jupiter_faucet_amount} transfers={transfers:?}"
+        );
+    }
+    if !matches!(io_transfer.memo.as_deref(), None | Some([]))
+        || jupiter_faucet_transfer.memo != Some(io_memo)
+    {
+        bail!("expected IO memo only on Jupiter Faucet neuron transfer, got {transfers:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> Result<()> {
     require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
         (
             vec![cmc],
-            Some(RawIcpModeConfig {
-                min_cycles_threshold: 5_000_000_000_000,
-                recipients: vec![RawIcpRecipient {
-                    account: Account {
-                        owner: relay,
-                        subaccount: None,
-                    },
-                    memo: None,
-                }],
-            }),
+            vec![SurplusRecipient {
+                target: SurplusTarget::Canister(relay),
+                memo: None,
+            }],
         )
     })?;
     env.set_managed_cycles(5_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
     let _ = env.tick_relay()?;
 
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(5_000_000_000_000)?;
     let summary = env.tick_relay()?;
-    if summary.mode != RelayMode::CyclesTopUp || summary.cmc_notify_success_count == 0 {
-        bail!("expected exact threshold to stay in CMC mode, got {summary:?}");
+    if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count != 0 {
+        bail!("expected unchanged cycles and missing conversion to retain funds, got {summary:?}");
     }
     Ok(())
 }
 
 #[test]
 #[ignore]
-fn relay_raw_mode_is_per_tick_not_permanent_latch() -> Result<()> {
+fn relay_recomputes_topups_each_tick_after_prior_no_topup_tick() -> Result<()> {
     require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
         (
             vec![cmc],
-            Some(RawIcpModeConfig {
-                min_cycles_threshold: 5_000_000_000_000,
-                recipients: vec![RawIcpRecipient {
-                    account: Account {
-                        owner: relay,
-                        subaccount: None,
-                    },
-                    memo: None,
-                }],
-            }),
+            vec![SurplusRecipient {
+                target: SurplusTarget::Canister(relay),
+                memo: None,
+            }],
         )
     })?;
     env.set_managed_cycles(6_000_000_000_000)?;
@@ -743,15 +761,15 @@ fn relay_raw_mode_is_per_tick_not_permanent_latch() -> Result<()> {
 
     env.set_managed_cycles(6_000_000_000_000)?;
     let raw = env.tick_relay()?;
-    if raw.mode != RelayMode::RawIcp {
-        bail!("expected raw mode while all cycles are above threshold, got {raw:?}");
+    if raw.mode != RelayMode::TopUpThenSurplus {
+        bail!("expected unchanged cycles to avoid top-up, got {raw:?}");
     }
 
     env.credit_relay(100_000_000)?;
     env.set_managed_cycles(4_000_000_000_000)?;
     let topup = env.tick_relay()?;
-    if topup.mode != RelayMode::CyclesTopUp || topup.cmc_notify_success_count == 0 {
-        bail!("expected later below-threshold tick to return to CMC mode, got {topup:?}");
+    if topup.mode != RelayMode::TopUpThenSurplus || topup.cmc_notify_success_count == 0 {
+        bail!("expected later burn tick to perform CMC top-up, got {topup:?}");
     }
     Ok(())
 }
@@ -800,6 +818,7 @@ fn cmc_processing_is_retried_without_double_spending_ledger() -> Result<()> {
         DebugNotifyBehavior::Processing,
         DebugNotifyBehavior::Ok,
     ])?;
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(5_000_000_000_000)?;
     let summary = env.tick_relay()?;
     if summary.ledger_transfer_count != 1
@@ -837,6 +856,7 @@ fn relay_marks_cmc_repeated_retryable_notify_as_ambiguous() -> Result<()> {
             error_message: "still processing".to_string(),
         },
     ])?;
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(5_000_000_000_000)?;
     let summary = env.tick_relay()?;
     if summary.ledger_transfer_count != 1
@@ -861,6 +881,7 @@ fn relay_treats_ledger_duplicate_as_accepted_transfer() -> Result<()> {
     let _ = env.tick_relay()?;
 
     env.set_ledger_error_script(vec![DebugNextTransferError::Duplicate { duplicate_of: 77 }])?;
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(5_000_000_000_000)?;
     let summary = env.tick_relay()?;
     if summary.ledger_transfer_count != 1
@@ -880,7 +901,8 @@ fn relay_treats_ledger_duplicate_as_accepted_transfer() -> Result<()> {
 #[ignore]
 fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| (vec![ledger, cmc], None))?;
+    let env =
+        RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -906,7 +928,7 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
             break;
         }
     }
-    if summary.mode != RelayMode::CyclesTopUp
+    if summary.mode != RelayMode::TopUpThenSurplus
         || summary.partial_tick_count == 0
         || summary.ledger_transfer_count < 2
         || env.debug_state()?.active_job_present
@@ -914,7 +936,9 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
         bail!("expected later tick to resume and complete transfer-limited job, got {summary:?}");
     }
     let logs = env.logs_text()?;
-    if !logs.contains("RELAY_SUMMARY mode=CyclesTopUp") || !logs.contains("partial_tick_count=") {
+    if !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
+        || !logs.contains("partial_tick_count=")
+    {
         bail!("expected transfer-limit public summary logs with partial_tick_count, got {logs}");
     }
     Ok(())
@@ -929,6 +953,7 @@ fn upgrade_after_trap_following_ledger_transfer_recovers_without_double_spend() 
     env.credit_relay(100_000_000)?;
     let _ = env.tick_relay()?;
 
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(5_000_000_000_000)?;
     env.set_trap_after_successful_transfer(true)?;
     let trapped = update_noargs::<()>(
@@ -971,7 +996,7 @@ fn upgrade_after_trap_following_ledger_transfer_recovers_without_double_spend() 
         bail!("expected one successful CMC notify after upgrade recovery, got {notifications:?}");
     }
     let summary = env.summary()?;
-    if summary.mode != RelayMode::CyclesTopUp
+    if summary.mode != RelayMode::TopUpThenSurplus
         || summary.cmc_notify_success_count != 1
         || summary.ledger_transfer_count != 1
     {
@@ -982,7 +1007,7 @@ fn upgrade_after_trap_following_ledger_transfer_recovers_without_double_spend() 
         bail!("expected post-upgrade recovery to complete the interrupted relay job");
     }
     let logs = env.logs_text()?;
-    if !logs.contains("RELAY_SUMMARY mode=CyclesTopUp")
+    if !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
         || !logs.contains("ledger_transfer_count=1")
         || !logs.contains("cmc_notify_success_count=1")
     {

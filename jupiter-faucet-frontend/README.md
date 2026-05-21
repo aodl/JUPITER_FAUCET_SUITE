@@ -109,6 +109,7 @@ The browser data loader is intentionally defensive:
 
 - it fetches historian counts, status, registered-canister summaries, and recent commitments together, then uses historian status to discover the ledger canister id for stake
 - the displayed historian history tables are intentionally bounded views and now also show the historian canister's current allocated memory footprint; the tracked target-canister registry is not pruned, and full transfer history still lives on the ICP ledger and its archive canisters
+- the source/governance verification view includes relay source/module metadata even though `jupiter-relay` has no public production app API
 - invalid memo text is not echoed back in the dashboard tables; invalid entries render as a generic placeholder instead
 - it only instantiates the ledger actor after historian status reveals the staking account and ledger canister ID
 - it preserves partial success, so one failed dashboard query does not blank the whole page
