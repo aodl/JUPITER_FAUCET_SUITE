@@ -251,11 +251,11 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /data-panel="metric-tracker"[^>]*>canister tracker<\/a>/);
   assert.match(howItWorks, /data-panel="simulator"[^>]*>simulator<\/a>/);
   assert.match(howItWorks, /newly minted <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
-  assert.match(howItWorks, /<strong>0%–19%<\/strong> distributed to <strong>SNS JUP stakers<\/strong>/);
+  assert.match(howItWorks, /<strong>0%–19%<\/strong> distributed to <strong>SNS jUP stakers<\/strong>/);
   assert.match(howItWorks, /<strong>0%–1%<\/strong> restaked into/);
   assert.match(howItWorks, /pre-requisite for truly unstoppable canisters is a secure and decentralized network/);
-  assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*JUP SNS tokens will be minted/);
-  assert.match(howItWorks, /JUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalised/);
+  assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*jUP SNS tokens will be minted/);
+  assert.match(howItWorks, /jUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalised/);
   assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>committed ICP<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d[^>]*>staking account<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);
