@@ -3898,7 +3898,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             &format!(r#"(principal "{}", opt (10000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.trim()),
         )?;
         let relay_account = Account { owner: Principal::from_text(canister_id("jupiter_relay_dbg")?.trim())?, subaccount: None };
-        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 100000000:nat64)", account_to_candid(&relay_account)))?;
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 5000000000:nat64)", account_to_candid(&relay_account)))?;
 
         let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_main_tick")?;
         let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_dbg", "debug_last_summary")?;
@@ -4081,7 +4081,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         Ok(())
     });
 
-    run_scenario(outcomes, label("icp", "relay", "empty surplus recipients keep surplus retained"), || {
+    run_scenario(outcomes, label("icp", "relay", "empty surplus recipients route all spendable ICP as cycles"), || {
         if canister_id("jupiter_relay_args_dbg").is_err() {
             create_canister("jupiter_relay_args_dbg")?;
         }
@@ -4137,8 +4137,11 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
         let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
         let summary = summary.context("expected relay no-surplus-recipient summary")?;
-        if summary.mode != RelayMode::TopUpThenSurplus || summary.skipped_surplus_reason.as_deref() != Some("no_surplus_recipients") {
-            bail!("expected empty surplus config to retain surplus after any required top-up, got {summary:?}");
+        if summary.mode != RelayMode::TopUpThenSurplus || summary.skipped_surplus_reason.as_deref() != Some("no_raw_icp_recipients") {
+            bail!("expected empty surplus config to route spendable ICP as cycles, got {summary:?}");
+        }
+        if summary.cmc_notify_success_count == 0 || summary.surplus_transfers.len() != 0 {
+            bail!("expected CMC top-up and no raw surplus transfers without recipients, got {summary:?}");
         }
         let transfers: Vec<TransferRecord> = call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
         if transfers.iter().any(|t| t.to.owner == blackhole_id && t.memo == Some(vec![1])) {

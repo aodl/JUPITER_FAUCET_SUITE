@@ -1,6 +1,6 @@
 # Jupiter Relay
 
-`jupiter-relay` is an ICP-funded cycles allocator and surplus router for the Jupiter Faucet Suite. Jupiter Faucet uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and tops them up proportional to recent burn. Each canister top-up is capped at 1% more than recent burn, so dependent canisters are designed to keep growing in cycles without over-accumulating surplus. Remaining production surplus ICP is split equally between IO neuron `6345890886899317159` and Jupiter Faucet neuron `11614578985374291210`. This gives 50% immediate IO stake growth and 50% compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
+`jupiter-relay` is an ICP-funded cycles allocator and optional surplus router for the Jupiter Faucet Suite. Jupiter Faucet uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and allocates ICP based on recent burn. When raw ICP surplus recipients are configured, top-ups are capped at 1% more than recent burn and remaining production surplus ICP is split equally across those recipients. When no raw ICP surplus recipients are configured, Relay routes ICP as cycles through CMC using burn-weighted allocations once the all-cycles batch is fee-efficient for every positive-burn managed canister.
 
 It spends ICP from the relay canister default ICP ledger account:
 
@@ -87,7 +87,7 @@ RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal
 RELAY_PROBE_FAILURE canister_id=<principal> error=<escaped-text>
 ```
 
-`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, burn plus fixed 1% headroom, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes.
+`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, the mode-specific top-up target, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes.
 
 ## Tick Behavior
 
@@ -97,7 +97,6 @@ The first successful complete probe is baseline-only. It stores current cycles a
 
 ```text
 estimated_burn_cycles = max(previous_cycles + relay_minted_cycles_since_previous_sample - current_cycles, 0)
-target_topup_cycles = ceil(estimated_burn_cycles * 101 / 100)
 ```
 
 Relay-minted cycles come from successful CMC `notify_top_up` responses. This prevents relay top-ups from hiding real burn when a canister's net cycles balance increases.
@@ -116,18 +115,43 @@ opt opt <value> = set the value
 
 This applies to `max_transfers_per_tick`. Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, `surplus_canister_recipients`, and `surplus_neuron_recipients` use `null` to leave unchanged and `opt <value>` to set. For surplus recipient fields, `opt vec {}` clears that recipient group.
 
-## Top-Ups And Surplus
+## Relay Allocation Modes
 
-The relay always executes canister top-ups before surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, the relay spends only on canister top-ups and routes no surplus.
+Jupiter Relay has two allocation modes depending on whether raw ICP surplus recipients are configured.
 
-Top-up planning uses a recent CMC conversion estimate:
+### Raw ICP Recipients Configured
+
+When one or more raw ICP surplus recipients are configured, Relay performs capped canister top-up planning.
+
+Relay first attempts to refresh the latest ICP/XDR conversion estimate. It uses that estimate to calculate capped CMC top-ups based on recent observed burn plus 1% headroom:
 
 ```text
-cycles_per_e8 = minted_cycles / transferred_e8s
+cycles_per_e8 = floor(icp_xdr_rate * 10000 / 10^decimals)
+target_topup_cycles = ceil(recent_burn_cycles * 101 / 100)
 planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
 ```
 
-If no reliable conversion estimate exists, the relay may use an internal bootstrap estimate for canister top-up planning, but surplus routing is disabled for that tick. Stale or ambiguous conversion data also disables surplus routing. A sharp drop in cycles-per-e8 reduces or eliminates surplus routing until canister top-up needs are covered.
+Successful CMC top-ups still update the cached conversion estimate from observed minted cycles. If the live ICP/XDR refresh fails or returns unusable data, Relay may fall back to the cached or bootstrap estimate for capped top-up planning.
+
+Relay always executes canister top-ups before raw ICP surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, Relay spends only on canister top-ups and routes no raw ICP surplus.
+
+Raw ICP surplus is routed only when every configured raw ICP recipient receives at least 1 ICP net of ledger fee. If the equal net share is below 1 ICP, Relay sends no raw ICP surplus transfers and keeps the ICP in its default ledger account for a future tick.
+
+This threshold applies uniformly to all raw ICP surplus recipients, including canister targets and neuron targets.
+
+### No Raw ICP Recipients Configured
+
+When no raw ICP surplus recipients are configured, Relay does not query ICP/XDR and does not apply the 1% capped top-up policy.
+
+Instead, Relay routes ICP to CMC top-ups using burn-weighted allocations across managed canisters with positive observed burn. The all-cycles batch is intentionally gated: Relay only sends the batch when every positive-burn managed canister would receive a fee-efficient top-up. In practice, the slowest positive-burn canister must receive a gross share of at least twice the ICP ledger fee, so that the net amount delivered to CMC is at least the fee paid to transfer it.
+
+If the batch is not yet fee-efficient for every positive-burn canister, Relay sends no CMC top-ups in that tick and leaves the ICP in its default ledger account for a future tick.
+
+This prevents slow-burning canisters from being skipped indefinitely and avoids wasting most of a slow burner's proportional allocation on ledger fees. Zero-burn canisters do not participate in the burn-weighted split and do not block the batch. Any unavoidable dust, integer-division remainder, or fee-unspendable balance remains in Relay's default ledger account.
+
+Clearing all raw ICP surplus recipients therefore switches Relay into all-cycles mode.
+
+## Surplus Recipient Configuration
 
 Surplus recipients use split homogeneous public install and upgrade records:
 

@@ -6,7 +6,9 @@ use crate::clients::blackhole::BlackholeCanister;
 use crate::clients::cmc::CyclesMintingCanister;
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::ledger::IcrcLedgerCanister;
-use crate::clients::{BlackholeClient, CmcClient, GovernanceClient, LedgerClient};
+use crate::clients::{
+    BlackholeClient, CmcClient, ExchangeRateClient, GovernanceClient, LedgerClient,
+};
 use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::probe_cycles;
 use crate::scheduler::guards::MainGuard;
@@ -16,6 +18,7 @@ use crate::state::{
     self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingTransfer,
     PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary, SurplusTarget,
 };
+use jupiter_ic_clients::xrc::XrcCanister;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransferPlanStep {
@@ -53,6 +56,7 @@ async fn main_tick(force: bool) {
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
     let governance = NnsGovernanceCanister::new(cfg.governance_canister_id);
     let blackhole = BlackholeCanister::new(cfg.blackhole_canister_id);
+    let xrc = XrcCanister::new();
     run_main_tick_with_clients(
         force,
         now_nanos,
@@ -61,6 +65,7 @@ async fn main_tick(force: bool) {
         &cmc,
         &governance,
         &blackhole,
+        &xrc,
     )
     .await;
 }
@@ -70,6 +75,7 @@ pub(crate) async fn run_main_tick_with_clients<
     C: CmcClient,
     G: GovernanceClient,
     B: BlackholeClient,
+    X: ExchangeRateClient,
 >(
     force: bool,
     now_nanos: u64,
@@ -78,6 +84,7 @@ pub(crate) async fn run_main_tick_with_clients<
     cmc: &C,
     governance: &G,
     blackhole: &B,
+    xrc: &X,
 ) {
     let Some(guard) = MainGuard::acquire(now_secs) else {
         return;
@@ -93,7 +100,7 @@ pub(crate) async fn run_main_tick_with_clients<
     }
 
     log_cycles_and_config();
-    if !resume_or_start_job(now_nanos, ledger, cmc, governance, blackhole).await {
+    if !resume_or_start_job(now_nanos, ledger, cmc, governance, blackhole, xrc).await {
         log_error("relay tick stopped after debug transfer injection");
         guard.finish(now_secs);
         return;
@@ -106,20 +113,27 @@ async fn resume_or_start_job<
     C: CmcClient,
     G: GovernanceClient,
     B: BlackholeClient,
+    X: ExchangeRateClient,
 >(
     now_nanos: u64,
     ledger: &L,
     cmc: &C,
     governance: &G,
     blackhole: &B,
+    xrc: &X,
 ) -> bool {
     if state::with_state(|st| st.active_job.is_none()) {
-        start_job(now_nanos, ledger, blackhole).await;
+        start_job(now_nanos, ledger, blackhole, xrc).await;
     }
     drive_active_job(now_nanos, ledger, cmc, governance).await
 }
 
-async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: &L, blackhole: &B) {
+async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
+    now_nanos: u64,
+    ledger: &L,
+    blackhole: &B,
+    xrc: &X,
+) {
     let cfg = state::with_state(|st| st.config.clone());
     let self_id = ic_cdk::api::canister_self();
     let managed = logic::effective_managed_canisters(&cfg.managed_canisters, self_id);
@@ -217,6 +231,9 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         return;
     }
 
+    let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
+    refresh_conversion_estimate_if_needed(has_raw_icp_recipients, xrc).await;
+
     let (previous, relay_minted, conversion_estimate) = state::with_state(|st| {
         (
             st.last_completed_cycles.clone(),
@@ -224,15 +241,19 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
             st.conversion_estimate.clone(),
         )
     });
-    let allocation = logic::build_allocation_plan(
-        &current_cycles,
-        &previous,
-        &relay_minted,
-        balance,
-        fee,
-        conversion_estimate.as_ref(),
-        now_nanos,
-    );
+    let allocation = if has_raw_icp_recipients {
+        logic::build_allocation_plan(
+            &current_cycles,
+            &previous,
+            &relay_minted,
+            balance,
+            fee,
+            conversion_estimate.as_ref(),
+            now_nanos,
+        )
+    } else {
+        logic::build_spend_all_cycles_plan(&current_cycles, &previous, &relay_minted, balance, fee)
+    };
     let canisters = allocation
         .topups
         .iter()
@@ -253,7 +274,11 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
     summary.min_cycles_balance = min_cycles;
     summary.total_burn_cycles = total_burn_cycles;
     summary.canisters = canisters.clone();
-    summary.conversion_estimate_used = conversion_estimate;
+    summary.conversion_estimate_used = if has_raw_icp_recipients {
+        conversion_estimate
+    } else {
+        None
+    };
     summary.skipped_surplus_reason = allocation.skipped_surplus_reason;
     summary.planned_retained_e8s = retained_e8s(balance, &canisters, &[]);
     summary.known_unspent_e8s = summary.planned_retained_e8s;
@@ -268,7 +293,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         canisters,
         surplus_transfers: Vec::new(),
         surplus_memos: Vec::new(),
-        surplus_phase_planned: !allocation.topup_phase_fully_funded,
+        surplus_phase_planned: !has_raw_icp_recipients || !allocation.topup_phase_fully_funded,
         pending_transfer: None,
         next_transfer_index: 0,
         surplus_transfer_index: 0,
@@ -276,6 +301,43 @@ async fn start_job<L: LedgerClient, B: BlackholeClient>(now_nanos: u64, ledger: 
         summary,
     };
     state::with_state_mut(|st| st.active_job = Some(job));
+}
+
+async fn refresh_conversion_estimate_if_needed<X: ExchangeRateClient>(
+    has_raw_icp_recipients: bool,
+    xrc: &X,
+) {
+    if has_raw_icp_recipients {
+        refresh_conversion_estimate_from_xrc(xrc).await;
+    }
+}
+
+async fn refresh_conversion_estimate_from_xrc<X: ExchangeRateClient>(xrc: &X) {
+    match xrc.get_icp_xdr_rate().await {
+        Ok(rate) => match logic::conversion_estimate_from_icp_xdr_rate(
+            rate.rate,
+            rate.decimals,
+            rate.timestamp,
+        ) {
+            Ok(estimate) => {
+                log_info(&format!(
+                    "refreshed ICP/XDR conversion estimate cycles_per_e8={} timestamp_nanos={}",
+                    estimate.cycles_per_e8, estimate.timestamp_nanos
+                ));
+                state::with_state_mut(|st| st.conversion_estimate = Some(estimate));
+            }
+            Err(err) => {
+                log_error(&format!(
+                    "invalid XRC ICP/XDR rate; using cached or bootstrap estimate: {err}"
+                ));
+            }
+        },
+        Err(err) => {
+            log_error(&format!(
+                "XRC ICP/XDR conversion estimate refresh failed; using cached or bootstrap estimate: {err}"
+            ));
+        }
+    }
 }
 
 async fn resolve_surplus_recipients<G: GovernanceClient>(
@@ -513,6 +575,9 @@ fn next_topup_pending(job: &mut ActiveRelayJob) -> Option<()> {
 }
 
 fn next_surplus_pending(job: &mut ActiveRelayJob) -> Option<()> {
+    if job.surplus_transfers.is_empty() {
+        return None;
+    }
     if let Err(reason) = surplus_allowed_after_topups(job) {
         job.surplus_transfers.clear();
         job.surplus_memos.clear();
@@ -595,14 +660,36 @@ fn retained_e8s(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use candid::Principal;
 
     use super::*;
+    use crate::clients::ClientError;
     use crate::state::CyclesSampleSource;
 
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
+    }
+
+    fn block_on<F: Future>(mut future: F) -> F::Output {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut future = unsafe { Pin::new_unchecked(&mut future) };
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
     }
 
     fn sample(canister_id: Principal, amount_e8s: u64) -> CanisterBurnSample {
@@ -654,6 +741,48 @@ mod tests {
             next_created_at_time_nanos: 10,
             summary: RelaySummary::started(RelayMode::TopUpThenSurplus, 1, 3),
         }
+    }
+
+    struct MockXrcClient {
+        calls: AtomicUsize,
+    }
+
+    impl MockXrcClient {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ExchangeRateClient for MockXrcClient {
+        async fn get_icp_xdr_rate(&self) -> Result<crate::clients::IcpXdrRate, ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(ClientError::Call("mock xrc failure".to_string()))
+        }
+    }
+
+    #[test]
+    fn start_job_without_raw_recipients_does_not_query_xrc() {
+        let xrc = MockXrcClient::new();
+
+        block_on(refresh_conversion_estimate_if_needed(false, &xrc));
+
+        assert_eq!(xrc.calls(), 0);
+    }
+
+    #[test]
+    fn start_job_with_raw_recipients_queries_xrc_before_planning() {
+        let xrc = MockXrcClient::new();
+
+        block_on(refresh_conversion_estimate_if_needed(true, &xrc));
+
+        assert_eq!(xrc.calls(), 1);
     }
 
     #[test]
@@ -725,6 +854,25 @@ mod tests {
         assert_eq!(
             surplus_allowed_after_topups(&job),
             Err("observed_conversion_worse_than_planned_topups")
+        );
+    }
+
+    #[test]
+    fn all_cycles_mode_does_not_run_raw_surplus_conversion_guard() {
+        let mut job = job_with_three_topups();
+        job.next_transfer_index = job.canisters.len() as u32;
+        job.surplus_phase_planned = true;
+        job.summary.skipped_surplus_reason = Some("no_raw_icp_recipients".to_string());
+        job.canisters[0].actual_minted_cycles = job.canisters[0].target_topup_cycles - 1;
+        let mut started = 0;
+
+        assert_eq!(
+            plan_next_transfer(&mut job, None, &mut started),
+            TransferPlanStep::Done
+        );
+        assert_eq!(
+            job.summary.skipped_surplus_reason.as_deref(),
+            Some("no_raw_icp_recipients")
         );
     }
 }

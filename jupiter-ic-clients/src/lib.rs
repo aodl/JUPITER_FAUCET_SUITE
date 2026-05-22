@@ -1,6 +1,7 @@
 pub mod account_identifier;
 pub mod index;
 pub mod ledger;
+pub mod xrc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {

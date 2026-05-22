@@ -44,7 +44,7 @@ pub(super) fn mainnet_sns_wasm_id() -> Principal {
 }
 
 pub(crate) fn mainnet_xrc_id() -> Principal {
-    crate::clients::xrc::mainnet_xrc_canister_id()
+    jupiter_ic_clients::xrc::mainnet_xrc_canister_id()
 }
 
 #[cfg(any(test, feature = "debug_api"))]

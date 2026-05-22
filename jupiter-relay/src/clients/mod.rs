@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use candid::{Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
+use jupiter_ic_clients::xrc::XrcCanister;
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ClientError {
@@ -19,6 +20,8 @@ pub(crate) enum ClientError {
     #[error("terminal CMC notify error: {0}")]
     TerminalNotify(String),
 }
+
+pub(crate) type IcpXdrRate = jupiter_ic_clients::xrc::IcpXdrRate;
 
 impl From<jupiter_ic_clients::ClientError> for ClientError {
     fn from(value: jupiter_ic_clients::ClientError) -> Self {
@@ -62,4 +65,16 @@ pub(crate) trait BlackholeClient: Send + Sync {
 pub(crate) trait GovernanceClient: Send + Sync {
     async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], ClientError>;
     async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), ClientError>;
+}
+
+#[async_trait]
+pub(crate) trait ExchangeRateClient: Send + Sync {
+    async fn get_icp_xdr_rate(&self) -> Result<IcpXdrRate, ClientError>;
+}
+
+#[async_trait]
+impl ExchangeRateClient for XrcCanister {
+    async fn get_icp_xdr_rate(&self) -> Result<IcpXdrRate, ClientError> {
+        Ok(XrcCanister::get_icp_xdr_rate(self).await?)
+    }
 }

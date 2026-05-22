@@ -3,22 +3,17 @@ pub(crate) mod governance;
 pub(crate) mod index;
 pub(crate) mod sns_root;
 pub(crate) mod sns_wasm;
-pub(crate) mod xrc;
 
 use async_trait::async_trait;
 use candid::Principal;
+use jupiter_ic_clients::xrc::XrcCanister;
 
 use crate::clients::blackhole::BlackholeCanisterStatus;
 use crate::clients::index::GetAccountIdentifierTransactionsResponse;
 use crate::clients::sns_root::GetSnsCanistersSummaryResponse;
 use crate::clients::sns_wasm::ListDeployedSnsesResponse;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct IcpXdrRate {
-    pub rate: u64,
-    pub decimals: u32,
-    pub timestamp: u64,
-}
+pub(crate) type IcpXdrRate = jupiter_ic_clients::xrc::IcpXdrRate;
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum ClientError {
@@ -68,4 +63,11 @@ pub(crate) trait SnsRootClient: Send + Sync {
 #[async_trait]
 pub(crate) trait ExchangeRateClient: Send + Sync {
     async fn get_icp_xdr_rate(&self) -> Result<IcpXdrRate, ClientError>;
+}
+
+#[async_trait]
+impl ExchangeRateClient for XrcCanister {
+    async fn get_icp_xdr_rate(&self) -> Result<IcpXdrRate, ClientError> {
+        Ok(XrcCanister::get_icp_xdr_rate(self).await?)
+    }
 }

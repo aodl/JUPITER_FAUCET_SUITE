@@ -7,7 +7,6 @@ pub(super) use crate::clients::governance::NnsGovernanceCanister;
 pub(super) use crate::clients::index::{account_identifier_text_for_account, IcpIndexCanister};
 pub(super) use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
 pub(super) use crate::clients::sns_wasm::SnsWasmCanister;
-pub(super) use crate::clients::xrc::XrcCanister;
 pub(super) use crate::clients::{
     BlackholeClient, ClientError, ExchangeRateClient, GovernanceClient, IndexClient,
     SnsRootClient, SnsWasmClient,
@@ -17,6 +16,7 @@ pub(super) use crate::{
     MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
 };
 pub(super) use crate::state::{self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind, InvalidCommitment, RecentCommitment, RecentNeuronCommitment};
+pub(super) use jupiter_ic_clients::xrc::XrcCanister;
 
 pub(super) const PAGE_SIZE: u64 = 500;
 pub(super) const MAX_INITIAL_CYCLES_PROBE_QUEUE: usize = 256;
