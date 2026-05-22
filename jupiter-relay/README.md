@@ -163,11 +163,17 @@ Example upgrade args to set the production surplus recipients:
     max_transfers_per_tick = null;
     surplus_recipients = opt vec {
       record {
-        target = variant { Neuron = 6_345_890_886_899_317_159 : nat64 };
+        target = (
+          variant { Neuron = 6_345_890_886_899_317_159 : nat64 }
+          : variant { Canister : principal; Neuron : nat64 }
+        );
         memo = null;
       };
       record {
-        target = variant { Neuron = 11_614_578_985_374_291_210 : nat64 };
+        target = (
+          variant { Neuron = 11_614_578_985_374_291_210 : nat64 }
+          : variant { Canister : principal; Neuron : nat64 }
+        );
         memo = opt blob "6345890886899317159";
       };
     };

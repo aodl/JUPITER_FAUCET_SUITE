@@ -235,8 +235,11 @@ def relay_surplus_recipient_errors(text: str, path: Path) -> list[str]:
         errors.append(f"{path} must configure surplus_recipients")
         return errors
 
+    target_type = r"variant\s*\{\s*Canister\s*:\s*principal\s*;\s*Neuron\s*:\s*nat64\s*\}"
     recipients = re.findall(
-        r"record\s*\{(?P<body>.*?)target\s*=\s*variant\s*\{\s*Neuron\s*=\s*(?P<neuron>[0-9_\s]+)\s*:\s*nat64\s*\}\s*;\s*"
+        r"record\s*\{(?P<body>.*?)target\s*=\s*\(\s*variant\s*\{\s*Neuron\s*=\s*"
+        r"(?P<neuron>[0-9_\s]+)\s*:\s*nat64\s*\}\s*:\s*"
+        rf"{target_type}\s*\)\s*;\s*"
         r"memo\s*=\s*(?P<memo>null|opt\s+blob\s+\"(?P<blob>(?:\\.|[^\"])*)\")\s*;(?P<trailing>.*?)\}",
         text,
         re.S,
@@ -247,6 +250,10 @@ def relay_surplus_recipient_errors(text: str, path: Path) -> list[str]:
 
     if EXPECTED_RELAY_IO_NEURON_CANONICAL not in by_neuron:
         errors.append(f"{path} must route production surplus to the IO neuron")
+    else:
+        memo, _ = by_neuron[EXPECTED_RELAY_IO_NEURON_CANONICAL]
+        if memo != "null":
+            errors.append(f"{path} IO surplus recipient memo must be null")
     if EXPECTED_RELAY_JUPITER_FAUCET_NEURON_CANONICAL not in by_neuron:
         errors.append(f"{path} must route production surplus to the Jupiter Faucet neuron")
         return errors
@@ -308,11 +315,17 @@ def run_self_tests() -> None:
     valid = f'''
     surplus_recipients = vec {{
       record {{
-        target = variant {{ Neuron = {EXPECTED_RELAY_IO_NEURON} : nat64 }};
+        target = (
+          variant {{ Neuron = {EXPECTED_RELAY_IO_NEURON} : nat64 }}
+          : variant {{ Canister : principal; Neuron : nat64 }}
+        );
         memo = null;
       }};
       record {{
-        target = variant {{ Neuron = {EXPECTED_RELAY_JUPITER_FAUCET_NEURON} : nat64 }};
+        target = (
+          variant {{ Neuron = {EXPECTED_RELAY_JUPITER_FAUCET_NEURON} : nat64 }}
+          : variant {{ Canister : principal; Neuron : nat64 }}
+        );
         memo = opt blob "{EXPECTED_RELAY_IO_NEURON_CANONICAL}";
       }};
     }};
@@ -329,6 +342,23 @@ def run_self_tests() -> None:
         f'memo = opt blob "{EXPECTED_RELAY_IO_NEURON_CANONICAL}";',
         "memo = null;",
     )
+    wrong_memo = valid.replace(
+        f'memo = opt blob "{EXPECTED_RELAY_IO_NEURON_CANONICAL}";',
+        'memo = opt blob "1";',
+    )
+    untyped_recipients = valid.replace(
+        f'''target = (
+          variant {{ Neuron = {EXPECTED_RELAY_IO_NEURON} : nat64 }}
+          : variant {{ Canister : principal; Neuron : nat64 }}
+        );''',
+        f"target = variant {{ Neuron = {EXPECTED_RELAY_IO_NEURON} : nat64 }};",
+    ).replace(
+        f'''target = (
+          variant {{ Neuron = {EXPECTED_RELAY_JUPITER_FAUCET_NEURON} : nat64 }}
+          : variant {{ Canister : principal; Neuron : nat64 }}
+        );''',
+        f"target = variant {{ Neuron = {EXPECTED_RELAY_JUPITER_FAUCET_NEURON} : nat64 }};",
+    )
     escaped_memo = valid.replace(
         f'"{EXPECTED_RELAY_IO_NEURON_CANONICAL}"',
         r'"\36\33\34\35\38\39\30\38\38\36\38\39\39\33\31\37\31\35\39"',
@@ -337,9 +367,11 @@ def run_self_tests() -> None:
     cases = [
         (valid, False, "valid relay surplus recipients"),
         (escaped_memo, False, "escaped IO neuron memo"),
+        (untyped_recipients, True, "untyped relay surplus recipients"),
         (missing_io, True, "missing IO neuron recipient"),
         (missing_jupiter, True, "missing Jupiter Faucet neuron recipient"),
         (missing_memo, True, "missing Jupiter Faucet IO memo"),
+        (wrong_memo, True, "wrong Jupiter Faucet IO memo"),
     ]
     for body, should_error, label in cases:
         errors = relay_surplus_recipient_errors(body, path)
