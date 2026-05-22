@@ -279,6 +279,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /Advanced Usage/);
   assert.match(howItWorks, /three memo-directed flows/);
   assert.match(howItWorks, /plain declared canister ID/);
+  assert.match(howItWorks, /To target a public neuron instead, use the neuron ID in the memo/);
+  assert.match(howItWorks, /Declared neurons must be\s*'public'\s*in order for Jupiter Faucet to derive their staking accounts/);
   assert.match(howItWorks, /memo builder on the next slide/);
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> You can adjust the <code>canister<\/code>\/<code>neuron<\/code>\s*and <code>label<\/code> parameters/);
   assert.match(howItWorks, /customise the memo helper\s*form on the next slide for a smoother user experience/);
@@ -372,6 +374,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(mainJs, /targetType: urlTargetType, displayTarget: urlDisplayTarget/);
   assert.doesNotMatch(mainJs, /target: urlTarget/);
   assert.match(mainJs, /prefillNote\.hidden = !hasPrefillTarget/);
+  assert.match(mainJs, /prefillNote\.textContent = urlTargetType === 'neuron' \? PREFILL_NEURON_NOTE : PREFILL_CANISTER_NOTE/);
+  assert.match(mainJs, /This memo helper simplifies constructing a memo from your chosen ID and a public protocol neuron/);
   assert.match(mainJs, /safetyNotice\.hidden = !urlDisplayTarget/);
   assert.match(mainJs, /safetyTargetKind\.textContent = urlTargetType === 'neuron' \? 'protocol neuron' : 'protocol canister'/);
   assert.match(mainJs, /safetyPrescriptionKind\.textContent = urlTargetType === 'neuron' \? 'neuron' : 'canister'/);

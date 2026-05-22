@@ -7,6 +7,9 @@ import {
   shouldApplyAdvancedMemoUrlTargetValue,
 } from '../advanced-memo-builder.js';
 
+const PREFILL_CANISTER_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a protocol canister that facilitates a specialised top-up flow.';
+const PREFILL_NEURON_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a public protocol neuron.';
+
 export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   const builder = document.getElementById('advanced-memo-builder');
   if (!builder || builder.dataset.bound === 'true') return;
@@ -59,7 +62,10 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     const { sanitizedCanister, sanitizedNeuron, targetType: urlTargetType, displayTarget: urlDisplayTarget } = urlPrefill;
     if (optionalLabel) optionalLabel.textContent = label || (hasPrefillTarget ? 'Identifier' : defaultOptionalLabel);
     if (builderTitle) builderTitle.textContent = label ? `${label} Memo Builder` : defaultBuilderTitle;
-    if (prefillNote) prefillNote.hidden = !hasPrefillTarget;
+    if (prefillNote) {
+      prefillNote.hidden = !hasPrefillTarget;
+      prefillNote.textContent = urlTargetType === 'neuron' ? PREFILL_NEURON_NOTE : PREFILL_CANISTER_NOTE;
+    }
     if (safetyNotice) safetyNotice.hidden = !urlDisplayTarget;
     if (safetyTargetKind) safetyTargetKind.textContent = urlTargetType === 'neuron' ? 'protocol neuron' : 'protocol canister';
     if (safetyPrescriptionKind) safetyPrescriptionKind.textContent = urlTargetType === 'neuron' ? 'neuron' : 'canister';
