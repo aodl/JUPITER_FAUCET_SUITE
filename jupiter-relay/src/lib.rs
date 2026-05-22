@@ -14,14 +14,20 @@ pub struct InitArgs {
     pub blackhole_canister_id: Option<Principal>,
     pub main_interval_seconds: Option<u64>,
     pub max_transfers_per_tick: Option<u32>,
-    pub surplus_recipients: Vec<SurplusRecipient>,
+    pub surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    pub surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
 }
 
 #[derive(CandidType, Deserialize, Clone)]
-pub struct SurplusRecipient {
-    pub canister_id: Option<Principal>,
-    pub neuron_id: Option<u64>,
-    pub memo: Option<Vec<u8>>,
+pub struct SurplusCanisterRecipient {
+    pub canister_id: Principal,
+    pub memo: Vec<u8>,
+}
+
+#[derive(CandidType, Deserialize, Clone)]
+pub struct SurplusNeuronRecipient {
+    pub neuron_id: u64,
+    pub memo: Vec<u8>,
 }
 
 #[derive(CandidType, Deserialize, Clone)]
@@ -33,7 +39,8 @@ pub struct UpgradeArgs {
     pub blackhole_canister_id: Option<Principal>,
     pub main_interval_seconds: Option<u64>,
     pub max_transfers_per_tick: Option<Option<u32>>,
-    pub surplus_recipients: Option<Vec<SurplusRecipient>>,
+    pub surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    pub surplus_neuron_recipients: Option<Vec<SurplusNeuronRecipient>>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -85,72 +92,151 @@ fn self_canister_principal_for_validation() -> Principal {
 
 fn validate_public_canister_target(canister_id: Principal) -> Result<(), String> {
     if canister_id == Principal::anonymous() {
-        return Err("surplus_recipients.canister_id must not be anonymous".to_string());
+        return Err("surplus_canister_recipients.canister_id must not be anonymous".to_string());
     }
     if canister_id == Principal::management_canister() {
         return Err(
-            "surplus_recipients.canister_id must not be the management canister".to_string(),
+            "surplus_canister_recipients.canister_id must not be the management canister"
+                .to_string(),
         );
     }
     Ok(())
 }
 
-fn surplus_recipient_from_public(
-    recipient: SurplusRecipient,
-) -> Result<crate::state::SurplusRecipient, String> {
-    let target = match (recipient.canister_id, recipient.neuron_id) {
-        (Some(canister_id), None) => {
-            validate_public_canister_target(canister_id)?;
-            crate::state::SurplusTarget::Canister(canister_id)
-        }
-        (None, Some(neuron_id)) => crate::state::SurplusTarget::Neuron(neuron_id),
-        (Some(_), Some(_)) => {
-            return Err(
-                "surplus recipient must set exactly one of canister_id or neuron_id".to_string(),
-            );
-        }
-        (None, None) => {
-            return Err(
-                "surplus recipient must set exactly one of canister_id or neuron_id".to_string(),
-            );
-        }
-    };
-    Ok(crate::state::SurplusRecipient {
-        target,
-        memo: recipient.memo,
-    })
-}
-
-#[cfg(feature = "debug_api")]
-fn surplus_recipient_to_public(recipient: crate::state::SurplusRecipient) -> SurplusRecipient {
-    match recipient.target {
-        crate::state::SurplusTarget::Canister(canister_id) => SurplusRecipient {
-            canister_id: Some(canister_id),
-            neuron_id: None,
-            memo: recipient.memo,
-        },
-        crate::state::SurplusTarget::Neuron(neuron_id) => SurplusRecipient {
-            canister_id: None,
-            neuron_id: Some(neuron_id),
-            memo: recipient.memo,
-        },
+fn public_memo_to_internal(memo: Vec<u8>) -> Option<Vec<u8>> {
+    if memo.is_empty() {
+        None
+    } else {
+        Some(memo)
     }
 }
 
+fn surplus_canister_recipient_from_public(
+    recipient: SurplusCanisterRecipient,
+) -> Result<crate::state::SurplusRecipient, String> {
+    validate_public_canister_target(recipient.canister_id)?;
+    Ok(crate::state::SurplusRecipient {
+        target: crate::state::SurplusTarget::Canister(recipient.canister_id),
+        memo: public_memo_to_internal(recipient.memo),
+    })
+}
+
+fn surplus_neuron_recipient_from_public(
+    recipient: SurplusNeuronRecipient,
+) -> crate::state::SurplusRecipient {
+    crate::state::SurplusRecipient {
+        target: crate::state::SurplusTarget::Neuron(recipient.neuron_id),
+        memo: public_memo_to_internal(recipient.memo),
+    }
+}
+
+#[cfg(feature = "debug_api")]
+fn internal_memo_to_public(memo: Option<Vec<u8>>) -> Vec<u8> {
+    memo.unwrap_or_default()
+}
+
 fn public_surplus_recipients_from_args(
-    recipients: Vec<SurplusRecipient>,
+    canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    neuron_recipients: Vec<SurplusNeuronRecipient>,
 ) -> Result<Vec<crate::state::SurplusRecipient>, String> {
+    let mut recipients = Vec::new();
+    for recipient in canister_recipients.unwrap_or_default() {
+        recipients.push(surplus_canister_recipient_from_public(recipient)?);
+    }
+    recipients.extend(
+        neuron_recipients
+            .into_iter()
+            .map(surplus_neuron_recipient_from_public),
+    );
+    Ok(recipients)
+}
+
+fn replace_surplus_recipients_by_target(
+    existing: &[crate::state::SurplusRecipient],
+    canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    neuron_recipients: Option<Vec<SurplusNeuronRecipient>>,
+) -> Result<Vec<crate::state::SurplusRecipient>, String> {
+    if canister_recipients.is_none() && neuron_recipients.is_none() {
+        return Ok(existing.to_vec());
+    }
+
+    let mut recipients = Vec::new();
+    match canister_recipients {
+        Some(canister_recipients) => {
+            for recipient in canister_recipients {
+                recipients.push(surplus_canister_recipient_from_public(recipient)?);
+            }
+        }
+        None => recipients.extend(
+            existing
+                .iter()
+                .filter(|recipient| {
+                    matches!(recipient.target, crate::state::SurplusTarget::Canister(_))
+                })
+                .cloned(),
+        ),
+    }
+    match neuron_recipients {
+        Some(neuron_recipients) => recipients.extend(
+            neuron_recipients
+                .into_iter()
+                .map(surplus_neuron_recipient_from_public),
+        ),
+        None => recipients.extend(
+            existing
+                .iter()
+                .filter(|recipient| {
+                    matches!(recipient.target, crate::state::SurplusTarget::Neuron(_))
+                })
+                .cloned(),
+        ),
+    }
+    Ok(recipients)
+}
+
+#[cfg(feature = "debug_api")]
+fn surplus_canister_recipients_to_public(
+    recipients: &[crate::state::SurplusRecipient],
+) -> Option<Vec<SurplusCanisterRecipient>> {
+    let canister_recipients = recipients
+        .iter()
+        .filter_map(|recipient| match recipient.target {
+            crate::state::SurplusTarget::Canister(canister_id) => Some(SurplusCanisterRecipient {
+                canister_id,
+                memo: internal_memo_to_public(recipient.memo.clone()),
+            }),
+            crate::state::SurplusTarget::Neuron(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if canister_recipients.is_empty() {
+        None
+    } else {
+        Some(canister_recipients)
+    }
+}
+
+#[cfg(feature = "debug_api")]
+fn surplus_neuron_recipients_to_public(
+    recipients: &[crate::state::SurplusRecipient],
+) -> Vec<SurplusNeuronRecipient> {
     recipients
-        .into_iter()
-        .map(surplus_recipient_from_public)
+        .iter()
+        .filter_map(|recipient| match recipient.target {
+            crate::state::SurplusTarget::Canister(_) => None,
+            crate::state::SurplusTarget::Neuron(neuron_id) => Some(SurplusNeuronRecipient {
+                neuron_id,
+                memo: internal_memo_to_public(recipient.memo.clone()),
+            }),
+        })
         .collect()
 }
 
 fn apply_upgrade_args(st: &mut crate::state::State, args: UpgradeArgs) -> Result<(), String> {
-    let surplus_recipients = match args.surplus_recipients {
-        Some(recipients) => public_surplus_recipients_from_args(recipients)?,
-        None => st.config.surplus_recipients.clone(),
-    };
+    let surplus_recipients = replace_surplus_recipients_by_target(
+        &st.config.surplus_recipients,
+        args.surplus_canister_recipients,
+        args.surplus_neuron_recipients,
+    )?;
     st.config = crate::state::Config {
         managed_canisters: args
             .managed_canisters
@@ -195,8 +281,11 @@ fn init(args: InitArgs) {
             .unwrap_or(7 * 24 * 60 * 60)
             .max(60),
         max_transfers_per_tick: args.max_transfers_per_tick,
-        surplus_recipients: public_surplus_recipients_from_args(args.surplus_recipients)
-            .expect("invalid relay surplus recipients"),
+        surplus_recipients: public_surplus_recipients_from_args(
+            args.surplus_canister_recipients,
+            args.surplus_neuron_recipients,
+        )
+        .expect("invalid relay surplus recipients"),
     };
     crate::logic::validate_config(&cfg, self_canister_principal_for_validation())
         .expect("invalid relay config");
@@ -247,7 +336,8 @@ pub struct DebugConfig {
     pub blackhole_canister_id: Principal,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
-    pub surplus_recipients: Vec<SurplusRecipient>,
+    pub surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    pub surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
 }
 
 #[cfg(feature = "debug_api")]
@@ -280,13 +370,12 @@ fn debug_config() -> DebugConfig {
         blackhole_canister_id: st.config.blackhole_canister_id,
         main_interval_seconds: st.config.main_interval_seconds,
         max_transfers_per_tick: st.config.max_transfers_per_tick,
-        surplus_recipients: st
-            .config
-            .surplus_recipients
-            .clone()
-            .into_iter()
-            .map(surplus_recipient_to_public)
-            .collect(),
+        surplus_canister_recipients: surplus_canister_recipients_to_public(
+            &st.config.surplus_recipients,
+        ),
+        surplus_neuron_recipients: surplus_neuron_recipients_to_public(
+            &st.config.surplus_recipients,
+        ),
     })
 }
 
@@ -379,8 +468,8 @@ mod tests {
     fn mainnet_install_args_preflight_decodes_to_rust_init_args() {
         let did = include_str!("../jupiter_relay.did");
         let install_args = include_str!("../mainnet-install-args.did");
-        let (init_types, (env, _service_type)) = instantiate_candid(CandidSource::Text(did))
-            .expect("relay DID should expose init args");
+        let (init_types, (env, _service_type)) =
+            instantiate_candid(CandidSource::Text(did)).expect("relay DID should expose init args");
         let parsed_args = parse_idl_args(install_args).expect("mainnet install args should parse");
         let bytes = parsed_args
             .to_bytes_with_types(&env, &init_types)
@@ -389,21 +478,20 @@ mod tests {
             decode_args(&bytes).expect("mainnet install args should decode into Rust InitArgs");
 
         assert!(!args.managed_canisters.is_empty());
-        assert_eq!(args.surplus_recipients.len(), 2);
-        assert_eq!(args.surplus_recipients[0].canister_id, None);
+        assert!(args.surplus_canister_recipients.is_none());
+        assert_eq!(args.surplus_neuron_recipients.len(), 2);
         assert_eq!(
-            args.surplus_recipients[0].neuron_id,
-            Some(6_345_890_886_899_317_159)
+            args.surplus_neuron_recipients[0].neuron_id,
+            6_345_890_886_899_317_159
         );
-        assert_eq!(args.surplus_recipients[0].memo, None);
-        assert_eq!(args.surplus_recipients[1].canister_id, None);
+        assert!(args.surplus_neuron_recipients[0].memo.is_empty());
         assert_eq!(
-            args.surplus_recipients[1].neuron_id,
-            Some(11_614_578_985_374_291_210)
+            args.surplus_neuron_recipients[1].neuron_id,
+            11_614_578_985_374_291_210
         );
         assert_eq!(
-            args.surplus_recipients[1].memo.as_deref(),
-            Some(&b"6345890886899317159"[..])
+            args.surplus_neuron_recipients[1].memo.as_slice(),
+            b"6345890886899317159"
         );
 
         let roundtrip = encode_args((args,)).expect("decoded Rust InitArgs should re-encode");
@@ -414,10 +502,9 @@ mod tests {
     #[test]
     fn init_args_surplus_conversion_preserves_canister_target_and_memo() {
         let owner = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let converted = surplus_recipient_from_public(SurplusRecipient {
-            canister_id: Some(owner),
-            neuron_id: None,
-            memo: Some(vec![1, 2, 3]),
+        let converted = surplus_canister_recipient_from_public(SurplusCanisterRecipient {
+            canister_id: owner,
+            memo: vec![1, 2, 3],
         })
         .unwrap();
         assert_eq!(
@@ -429,47 +516,42 @@ mod tests {
 
     #[test]
     fn public_surplus_conversion_preserves_neuron_target_and_memo() {
-        let converted = surplus_recipient_from_public(SurplusRecipient {
-            canister_id: None,
-            neuron_id: Some(42),
-            memo: Some(vec![4, 5]),
-        })
-        .unwrap();
+        let converted = surplus_neuron_recipient_from_public(SurplusNeuronRecipient {
+            neuron_id: 42,
+            memo: vec![4, 5],
+        });
         assert_eq!(converted.target, crate::state::SurplusTarget::Neuron(42));
         assert_eq!(converted.memo, Some(vec![4, 5]));
     }
 
     #[test]
-    fn public_surplus_conversion_rejects_both_or_neither_target_fields() {
-        let canister_id = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let both = surplus_recipient_from_public(SurplusRecipient {
-            canister_id: Some(canister_id),
-            neuron_id: Some(42),
-            memo: None,
-        });
-        assert!(both.unwrap_err().contains("exactly one"));
+    fn public_surplus_conversion_maps_empty_memo_to_none() {
+        let owner = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let canister = surplus_canister_recipient_from_public(SurplusCanisterRecipient {
+            canister_id: owner,
+            memo: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(canister.memo, None);
 
-        let neither = surplus_recipient_from_public(SurplusRecipient {
-            canister_id: None,
-            neuron_id: None,
-            memo: None,
+        let neuron = surplus_neuron_recipient_from_public(SurplusNeuronRecipient {
+            neuron_id: 42,
+            memo: Vec::new(),
         });
-        assert!(neither.unwrap_err().contains("exactly one"));
+        assert_eq!(neuron.memo, None);
     }
 
     #[test]
     fn public_surplus_conversion_rejects_invalid_canister_targets() {
-        let anonymous = surplus_recipient_from_public(SurplusRecipient {
-            canister_id: Some(Principal::anonymous()),
-            neuron_id: None,
-            memo: None,
+        let anonymous = surplus_canister_recipient_from_public(SurplusCanisterRecipient {
+            canister_id: Principal::anonymous(),
+            memo: Vec::new(),
         });
         assert!(anonymous.unwrap_err().contains("anonymous"));
 
-        let management = surplus_recipient_from_public(SurplusRecipient {
-            canister_id: Some(Principal::management_canister()),
-            neuron_id: None,
-            memo: None,
+        let management = surplus_canister_recipient_from_public(SurplusCanisterRecipient {
+            canister_id: Principal::management_canister(),
+            memo: Vec::new(),
         });
         assert!(management.unwrap_err().contains("management canister"));
     }
@@ -493,10 +575,16 @@ mod tests {
             blackhole_canister_id: mainnet_blackhole_id(),
             main_interval_seconds: 60,
             max_transfers_per_tick: Some(3),
-            surplus_recipients: vec![crate::state::SurplusRecipient {
-                target: crate::state::SurplusTarget::Canister(owner),
-                memo: None,
-            }],
+            surplus_recipients: vec![
+                crate::state::SurplusRecipient {
+                    target: crate::state::SurplusTarget::Canister(owner),
+                    memo: None,
+                },
+                crate::state::SurplusRecipient {
+                    target: crate::state::SurplusTarget::Neuron(7),
+                    memo: Some(vec![7]),
+                },
+            ],
         };
         let mut st = crate::state::State::new(cfg, 1);
 
@@ -510,12 +598,23 @@ mod tests {
                 blackhole_canister_id: None,
                 main_interval_seconds: None,
                 max_transfers_per_tick: None,
-                surplus_recipients: None,
+                surplus_canister_recipients: None,
+                surplus_neuron_recipients: None,
             },
         )
         .unwrap();
         assert_eq!(st.config.max_transfers_per_tick, Some(3));
-        assert_eq!(st.config.surplus_recipients.len(), 1);
+        assert_eq!(st.config.surplus_recipients.len(), 2);
+        assert_eq!(
+            st.config.surplus_recipients[0].target,
+            crate::state::SurplusTarget::Canister(owner)
+        );
+        assert_eq!(st.config.surplus_recipients[0].memo, None);
+        assert_eq!(
+            st.config.surplus_recipients[1].target,
+            crate::state::SurplusTarget::Neuron(7)
+        );
+        assert_eq!(st.config.surplus_recipients[1].memo, Some(vec![7]));
 
         apply_upgrade_args(
             &mut st,
@@ -527,7 +626,8 @@ mod tests {
                 blackhole_canister_id: None,
                 main_interval_seconds: None,
                 max_transfers_per_tick: Some(None),
-                surplus_recipients: Some(Vec::new()),
+                surplus_canister_recipients: Some(Vec::new()),
+                surplus_neuron_recipients: Some(Vec::new()),
             },
         )
         .unwrap();
@@ -544,10 +644,10 @@ mod tests {
                 blackhole_canister_id: None,
                 main_interval_seconds: None,
                 max_transfers_per_tick: Some(Some(1)),
-                surplus_recipients: Some(vec![SurplusRecipient {
-                    canister_id: None,
-                    neuron_id: Some(42),
-                    memo: Some(vec![4]),
+                surplus_canister_recipients: None,
+                surplus_neuron_recipients: Some(vec![SurplusNeuronRecipient {
+                    neuron_id: 42,
+                    memo: vec![4],
                 }]),
             },
         )

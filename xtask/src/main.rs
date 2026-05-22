@@ -1320,7 +1320,8 @@ fn cmd_setup_historian_local() -> Result<()> {
             blackhole_canister_id = opt principal "{blackhole_id}";
             main_interval_seconds = opt (31536000:nat64);
             max_transfers_per_tick = opt (10:nat32);
-            surplus_recipients = vec {{}};
+            surplus_canister_recipients = null;
+            surplus_neuron_recipients = vec {{}};
         }},)"#,
         managed_id = cmc_id.trim(),
         ledger_id = ledger_id.trim(),
@@ -1352,7 +1353,8 @@ fn cmd_setup_relay_local() -> Result<()> {
             blackhole_canister_id = opt principal "{blackhole_id}";
             main_interval_seconds = opt (31536000:nat64);
             max_transfers_per_tick = opt (10:nat32);
-            surplus_recipients = vec {{}};
+            surplus_canister_recipients = null;
+            surplus_neuron_recipients = vec {{}};
         }},)"#,
         managed_id = cmc_id.trim(),
         ledger_id = ledger_id.trim(),
@@ -1512,7 +1514,8 @@ fn cmd_setup() -> Result<()> {
             blackhole_canister_id = opt principal "{blackhole_id}";
             main_interval_seconds = opt (31536000:nat64);
             max_transfers_per_tick = opt (10:nat32);
-            surplus_recipients = vec {{}};
+            surplus_canister_recipients = null;
+            surplus_neuron_recipients = vec {{}};
         }},)"#,
         managed_id = cmc_id.trim(),
         ledger_id = ledger_id.trim(),
@@ -4004,13 +4007,13 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
                 blackhole_canister_id = opt principal "{blackhole_id}";
                 main_interval_seconds = opt (31536000:nat64);
                 max_transfers_per_tick = opt (10:nat32);
-                surplus_recipients = vec {{
+                surplus_canister_recipients = opt vec {{
                     record {{
-                        canister_id = opt principal "{external}";
-                        neuron_id = null;
-                        memo = opt blob "\01";
+                        canister_id = principal "{external}";
+                        memo = blob "\01";
                     }};
                 }};
+                surplus_neuron_recipients = vec {{}};
             }},)"#,
             managed_id = cmc_id.to_text(),
             ledger_id = ledger_id.to_text(),
@@ -4095,7 +4098,8 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
                 blackhole_canister_id = opt principal "{blackhole_id}";
                 main_interval_seconds = opt (31536000:nat64);
                 max_transfers_per_tick = opt (10:nat32);
-                surplus_recipients = vec {{}};
+                surplus_canister_recipients = null;
+                surplus_neuron_recipients = vec {{}};
             }},)"#,
             managed_id = cmc_id.to_text(),
             ledger_id = ledger_id.to_text(),

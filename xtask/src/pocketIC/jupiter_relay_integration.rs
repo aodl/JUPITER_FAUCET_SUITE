@@ -57,7 +57,8 @@ struct RelayInitArg {
     blackhole_canister_id: Option<Principal>,
     main_interval_seconds: Option<u64>,
     max_transfers_per_tick: Option<u32>,
-    surplus_recipients: Vec<SurplusRecipient>,
+    surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -69,14 +70,20 @@ struct RelayUpgradeArg {
     blackhole_canister_id: Option<Principal>,
     main_interval_seconds: Option<u64>,
     max_transfers_per_tick: Option<Option<u32>>,
-    surplus_recipients: Option<Vec<SurplusRecipient>>,
+    surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    surplus_neuron_recipients: Option<Vec<SurplusNeuronRecipient>>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct SurplusRecipient {
-    canister_id: Option<Principal>,
-    neuron_id: Option<u64>,
-    memo: Option<Vec<u8>>,
+struct SurplusCanisterRecipient {
+    canister_id: Principal,
+    memo: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct SurplusNeuronRecipient {
+    neuron_id: u64,
+    memo: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -178,7 +185,7 @@ struct RelayEnv {
 impl RelayEnv {
     fn new(max_transfers_per_tick: Option<u32>) -> Result<Self> {
         Self::new_with_config(max_transfers_per_tick, |_, cmc, _, _| {
-            (vec![cmc], Vec::new())
+            (vec![cmc], None, Vec::new())
         })
     }
 
@@ -189,7 +196,11 @@ impl RelayEnv {
             Principal,
             Principal,
             Principal,
-        ) -> (Vec<Principal>, Vec<SurplusRecipient>),
+        ) -> (
+            Vec<Principal>,
+            Option<Vec<SurplusCanisterRecipient>>,
+            Vec<SurplusNeuronRecipient>,
+        ),
     {
         let pic = PocketIcBuilder::new().with_application_subnet().build();
         let ledger = pic.create_canister();
@@ -204,7 +215,8 @@ impl RelayEnv {
         pic.install_canister(cmc, cmc_wasm()?, vec![], None);
         pic.install_canister(governance, governance_wasm()?, vec![], None);
         pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
-        let (managed_canisters, surplus_recipients) = config(ledger, cmc, blackhole, relay);
+        let (managed_canisters, surplus_canister_recipients, surplus_neuron_recipients) =
+            config(ledger, cmc, blackhole, relay);
         let init = RelayInitArg {
             managed_canisters,
             ledger_canister_id: Some(ledger),
@@ -213,7 +225,8 @@ impl RelayEnv {
             blackhole_canister_id: Some(blackhole),
             main_interval_seconds: Some(31_536_000),
             max_transfers_per_tick,
-            surplus_recipients,
+            surplus_canister_recipients,
+            surplus_neuron_recipients,
         };
         pic.install_canister(relay, relay_wasm()?, encode_one(init)?, None);
         Ok(Self {
@@ -443,7 +456,9 @@ fn baseline_then_headroom_cmc_topup_records_real_async_notify() -> Result<()> {
 #[ignore]
 fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
+        (vec![ledger, cmc], None, Vec::new())
+    })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -513,7 +528,9 @@ fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
 #[ignore]
 fn relay_canister_with_increased_cycles_gets_no_topup_when_others_burned() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
+        (vec![ledger, cmc], None, Vec::new())
+    })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -552,7 +569,9 @@ fn relay_canister_with_increased_cycles_gets_no_topup_when_others_burned() -> Re
 #[ignore]
 fn relay_splits_equally_when_no_canister_burned_cycles() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
+        (vec![ledger, cmc], None, Vec::new())
+    })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(99_000_000)?;
@@ -583,11 +602,11 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],
-            vec![SurplusRecipient {
-                canister_id: Some(cmc),
-                neuron_id: None,
-                memo: Some(external_memo.clone()),
-            }],
+            Some(vec![SurplusCanisterRecipient {
+                canister_id: cmc,
+                memo: external_memo.clone(),
+            }]),
+            Vec::new(),
         )
     })?;
     env.set_managed_cycles(4_000_000_000_000)?;
@@ -644,16 +663,15 @@ fn surplus_neuron_transfers_split_equally_and_preserve_jupiter_faucet_memo() -> 
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],
+            None,
             vec![
-                SurplusRecipient {
-                    canister_id: None,
-                    neuron_id: Some(io_neuron),
-                    memo: None,
+                SurplusNeuronRecipient {
+                    neuron_id: io_neuron,
+                    memo: Vec::new(),
                 },
-                SurplusRecipient {
-                    canister_id: None,
-                    neuron_id: Some(jupiter_faucet_neuron),
-                    memo: Some(io_memo.clone()),
+                SurplusNeuronRecipient {
+                    neuron_id: jupiter_faucet_neuron,
+                    memo: io_memo.clone(),
                 },
             ],
         )
@@ -720,11 +738,11 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
     let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
         (
             vec![cmc],
-            vec![SurplusRecipient {
-                canister_id: Some(relay),
-                neuron_id: None,
-                memo: None,
-            }],
+            Some(vec![SurplusCanisterRecipient {
+                canister_id: relay,
+                memo: Vec::new(),
+            }]),
+            Vec::new(),
         )
     })?;
     env.set_managed_cycles(5_000_000_000_000)?;
@@ -747,11 +765,11 @@ fn relay_recomputes_topups_each_tick_after_prior_no_topup_tick() -> Result<()> {
     let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
         (
             vec![cmc],
-            vec![SurplusRecipient {
-                canister_id: Some(relay),
-                neuron_id: None,
-                memo: None,
-            }],
+            Some(vec![SurplusCanisterRecipient {
+                canister_id: relay,
+                memo: Vec::new(),
+            }]),
+            Vec::new(),
         )
     })?;
     env.set_managed_cycles(6_000_000_000_000)?;
@@ -901,8 +919,9 @@ fn relay_treats_ledger_duplicate_as_accepted_transfer() -> Result<()> {
 #[ignore]
 fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> {
     require_ignored_flag()?;
-    let env =
-        RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| (vec![ledger, cmc], Vec::new()))?;
+    let env = RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| {
+        (vec![ledger, cmc], None, Vec::new())
+    })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;

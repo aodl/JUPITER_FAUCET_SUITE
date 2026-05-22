@@ -82,8 +82,8 @@ The live value-moving path is:
 9. The production suite uses the raw ICP directive `u2qkp-aqaaa-aaaar-qb7ea-cai.` to fund `jupiter-relay`. The trailing `.` uses the faucet raw-ICP memo syntax and produces an empty outgoing memo to the relay default account.
 10. `jupiter-relay` spends that default-account ICP by topping up managed suite canisters first. Each planned top-up is capped at recent burn plus 1%, and surplus routing is disabled until all probes, prior samples, and conversion data are usable.
 11. After planned canister top-ups for a tick are complete, remaining ICP after per-transfer ledger fees is split equally between two production surplus recipients:
-   - the IO neuron `6345890886899317159`, with no memo, for immediate IO stake growth
-   - the Jupiter Faucet neuron `11614578985374291210`, with memo `6345890886899317159`, for compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity
+   - the IO neuron `6345890886899317159`, with an empty memo blob/no outgoing memo, for immediate IO stake growth
+   - the Jupiter Faucet neuron `11614578985374291210`, with memo blob `6345890886899317159`, for compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity
 
 The faucet payout path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. CMC `notify_top_up` is used only for canister top-up directives; raw ICP and neuron-stake directives are plain ledger transfers, with neuron transfers followed by a best-effort NNS `claim_or_refresh_neuron` call. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 

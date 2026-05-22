@@ -18,16 +18,15 @@
     main_interval_seconds = opt (604800 : nat64);
     max_transfers_per_tick = opt (10 : nat32);
 
-    surplus_recipients = vec {
+    surplus_canister_recipients = null;
+    surplus_neuron_recipients = vec {
       record {
-        canister_id = null;
-        neuron_id = opt (6_345_890_886_899_317_159 : nat64);
-        memo = null;
+        neuron_id = 6_345_890_886_899_317_159 : nat64;
+        memo = blob "";
       };
       record {
-        canister_id = null;
-        neuron_id = opt (11_614_578_985_374_291_210 : nat64);
-        memo = opt blob "6345890886899317159";
+        neuron_id = 11_614_578_985_374_291_210 : nat64;
+        memo = blob "6345890886899317159";
       };
     };
   }

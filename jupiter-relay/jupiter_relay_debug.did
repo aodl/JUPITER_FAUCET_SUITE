@@ -1,10 +1,7 @@
 type Account = record { owner : principal; subaccount : opt blob };
 type SurplusTarget = variant { Canister : principal; Neuron : nat64 };
-type SurplusRecipient = record {
-  canister_id : opt principal;
-  neuron_id : opt nat64;
-  memo : opt blob;
-};
+type SurplusCanisterRecipient = record { canister_id : principal; memo : blob };
+type SurplusNeuronRecipient = record { neuron_id : nat64; memo : blob };
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
@@ -13,7 +10,8 @@ type InitArgs = record {
   blackhole_canister_id : opt principal;
   main_interval_seconds : opt nat64;
   max_transfers_per_tick : opt nat32;
-  surplus_recipients : vec SurplusRecipient;
+  surplus_canister_recipients : opt vec SurplusCanisterRecipient;
+  surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 type Config = record {
   managed_canisters : vec principal;
@@ -23,7 +21,8 @@ type Config = record {
   blackhole_canister_id : principal;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
-  surplus_recipients : vec SurplusRecipient;
+  surplus_canister_recipients : opt vec SurplusCanisterRecipient;
+  surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 type RelayMode = variant {
   BaselineOnly;
@@ -102,7 +101,8 @@ type DebugConfig = record {
   blackhole_canister_id : principal;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
-  surplus_recipients : vec SurplusRecipient;
+  surplus_canister_recipients : opt vec SurplusCanisterRecipient;
+  surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 service : (InitArgs) -> {
   debug_main_tick : () -> ();

@@ -114,7 +114,7 @@ opt null        = clear the existing optional value
 opt opt <value> = set the value
 ```
 
-This applies to `max_transfers_per_tick`. Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, and `surplus_recipients` use `null` to leave unchanged and `opt <value>` to set.
+This applies to `max_transfers_per_tick`. Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, `surplus_canister_recipients`, and `surplus_neuron_recipients` use `null` to leave unchanged and `opt <value>` to set. For surplus recipient fields, `opt vec {}` clears that recipient group.
 
 ## Top-Ups And Surplus
 
@@ -129,24 +129,28 @@ planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
 
 If no reliable conversion estimate exists, the relay may use an internal bootstrap estimate for canister top-up planning, but surplus routing is disabled for that tick. Stale or ambiguous conversion data also disables surplus routing. A sharp drop in cycles-per-e8 reduces or eliminates surplus routing until canister top-up needs are covered.
 
-Surplus recipients use variant-free public install and upgrade records:
+Surplus recipients use split homogeneous public install and upgrade records:
 
 ```text
-SurplusRecipient {
-  canister_id = opt principal
-  neuron_id = opt nat64
-  memo = opt blob
+SurplusCanisterRecipient {
+  canister_id = principal
+  memo = blob
+}
+
+SurplusNeuronRecipient {
+  neuron_id = nat64
+  memo = blob
 }
 ```
 
-Exactly one of `canister_id` or `neuron_id` must be set. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer.
+Install args use `surplus_canister_recipients : opt vec SurplusCanisterRecipient`; production currently sets it to `null` for no canister surplus recipients. Install args use `surplus_neuron_recipients : vec SurplusNeuronRecipient`. Upgrade args make both recipient groups optional: `null` leaves that group unchanged, `opt vec {}` clears it, and `opt vec { ... }` replaces it. An empty `memo = blob ""` means no outgoing ledger memo internally; a non-empty blob is used as the outgoing ledger memo. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer.
 
 Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit account derived from the target canister principal, then call `notify_top_up { canister_id, block_index }`.
 
-Production surplus is split equally between two public NNS neuron recipients:
+Production surplus is split 50/50 between two public NNS neuron recipients:
 
-- IO neuron `6345890886899317159`, with `memo = null`
-- Jupiter Faucet neuron `11614578985374291210`, with memo `6345890886899317159`
+- IO neuron `6345890886899317159`, with `memo = blob ""`
+- Jupiter Faucet neuron `11614578985374291210`, with `memo = blob "6345890886899317159"`
 
 The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. This preserves the existing memo convention while separating immediate IO stake growth from compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
 
@@ -162,16 +166,15 @@ Example upgrade args to set the production surplus recipients:
     blackhole_canister_id = null;
     main_interval_seconds = null;
     max_transfers_per_tick = null;
-    surplus_recipients = opt vec {
+    surplus_canister_recipients = null;
+    surplus_neuron_recipients = opt vec {
       record {
-        canister_id = null;
-        neuron_id = opt (6_345_890_886_899_317_159 : nat64);
-        memo = null;
+        neuron_id = 6_345_890_886_899_317_159 : nat64;
+        memo = blob "";
       };
       record {
-        canister_id = null;
-        neuron_id = opt (11_614_578_985_374_291_210 : nat64);
-        memo = opt blob "6345890886899317159";
+        neuron_id = 11_614_578_985_374_291_210 : nat64;
+        memo = blob "6345890886899317159";
       };
     };
   }
