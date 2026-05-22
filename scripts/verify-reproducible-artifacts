@@ -12,29 +12,14 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 workdir="$(mktemp -d)"
-image_a="jupiter-faucet-suite-repro-a-$$"
-image_b="jupiter-faucet-suite-repro-b-$$"
-cid_a=""
-cid_b=""
 cleanup() {
   rm -rf "$workdir"
-  if [[ -n "$cid_a" ]]; then docker rm -f "$cid_a" >/dev/null 2>&1 || true; fi
-  if [[ -n "$cid_b" ]]; then docker rm -f "$cid_b" >/dev/null 2>&1 || true; fi
-  docker image rm -f "$image_a" "$image_b" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-docker build --no-cache --file Dockerfile.repro --target artifact --tag "$image_a" . >/dev/null
-cid_a="$(docker create "$image_a")"
-docker cp "$cid_a:/release-artifacts/." "$workdir/run-a"
-docker rm "$cid_a" >/dev/null
-cid_a=""
+docker build --no-cache --file Dockerfile.repro --target artifact --output "type=local,dest=$workdir/run-a" .
 
-docker build --no-cache --file Dockerfile.repro --target artifact --tag "$image_b" . >/dev/null
-cid_b="$(docker create "$image_b")"
-docker cp "$cid_b:/release-artifacts/." "$workdir/run-b"
-docker rm "$cid_b" >/dev/null
-cid_b=""
+docker build --no-cache --file Dockerfile.repro --target artifact --output "type=local,dest=$workdir/run-b" .
 
 (
   cd "$workdir/run-a"
