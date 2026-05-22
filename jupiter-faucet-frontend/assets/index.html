@@ -223,6 +223,228 @@
       }
     }
 
+    .page-loading-overlay {
+      --loader-progress: 8;
+      position: fixed;
+      inset: 0;
+      z-index: 30000;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      box-sizing: border-box;
+      background: transparent;
+      opacity: 1;
+      visibility: visible;
+      transition: visibility 1500ms ease;
+    }
+
+    .page-loading-overlay.is-active {
+      display: grid;
+    }
+
+    .page-loading-overlay::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(255, 204, 0, 0.18), transparent 36%),
+        rgba(12, 12, 20, 0.86);
+      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(18px);
+      opacity: 1;
+      transition: opacity 520ms ease;
+    }
+
+    .page-loading-overlay.is-fading {
+      visibility: hidden;
+    }
+
+    .page-loading-overlay.is-fading::before {
+      opacity: 0;
+    }
+
+    .page-loading-pane {
+      position: relative;
+      z-index: 1;
+      width: min(100%, 560px);
+      min-height: 360px;
+      display: grid;
+      place-items: center;
+      padding: 46px 40px 42px;
+      box-sizing: border-box;
+      overflow: hidden;
+      border-radius: 24px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.014)),
+        rgba(3, 5, 9, 0.48);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      opacity: 1;
+      transform: scale(1);
+      transition: opacity 1400ms ease, transform 1400ms ease;
+      box-shadow:
+        0 26px 70px rgba(0, 0, 0, 0.52),
+        0 0 42px rgba(255, 204, 0, 0.16);
+    }
+
+    .page-loading-overlay.is-fading .page-loading-pane {
+      opacity: 0;
+      transform: scale(0.985);
+    }
+
+    .page-loading-pane::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      padding: 2px;
+      border-radius: inherit;
+      background:
+        conic-gradient(
+          from -90deg,
+          rgba(255, 255, 255, 0.98) 0%,
+          rgba(255, 255, 255, 0.98) calc(var(--loader-progress) * 1%),
+          rgba(255, 255, 255, 0.14) calc(var(--loader-progress) * 1%),
+          rgba(255, 255, 255, 0.14) 100%
+        );
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      transition: background 180ms linear;
+    }
+
+    .page-loading-content {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      justify-items: center;
+      gap: 18px;
+      text-align: center;
+    }
+
+    .page-loading-logo {
+      width: 142px;
+      height: 142px;
+      object-fit: contain;
+      filter: drop-shadow(0 0 22px rgba(255, 204, 0, 0.28));
+    }
+
+    .page-loading-title {
+      width: min(100%, 34ch);
+      min-height: 3.6em;
+      display: grid;
+      place-items: center;
+      margin: 0;
+      color: #fff;
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-shadow:
+        0 0 16px rgba(255, 255, 255, 0.22),
+        0 0 32px rgba(255, 204, 0, 0.2);
+    }
+
+    .page-loading-title.is-swiping-out {
+      animation: loading-title-swipe-out 260ms ease-in forwards;
+    }
+
+    .page-loading-title.is-swiping-in {
+      animation: loading-title-swipe-in 340ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes loading-title-swipe-out {
+      from {
+        opacity: 1;
+        transform: translateX(0);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateX(-28px);
+      }
+    }
+
+    @keyframes loading-title-swipe-in {
+      from {
+        opacity: 0;
+        transform: translateX(34px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .page-loading-status {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 0.94rem;
+      line-height: 1.4;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+    }
+
+    .page-loading-dot {
+      opacity: 0;
+      animation: loading-dot-typing 1200ms infinite;
+    }
+
+    .page-loading-dot:nth-child(2) {
+      animation-delay: 200ms;
+    }
+
+    .page-loading-dot:nth-child(3) {
+      animation-delay: 400ms;
+    }
+
+    @keyframes loading-dot-typing {
+      0%, 20% { opacity: 0; }
+      35%, 100% { opacity: 1; }
+    }
+
+    @media (max-width: 520px) {
+      .page-loading-pane {
+        min-height: 320px;
+        padding: 34px 24px;
+        border-radius: 20px;
+      }
+
+      .page-loading-logo {
+        width: 108px;
+        height: 108px;
+      }
+
+      .page-loading-title {
+        width: min(100%, 30ch);
+        min-height: 4.8em;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .page-loading-overlay,
+      .page-loading-overlay::before,
+      .page-loading-pane,
+      .page-loading-pane::before {
+        transition: none;
+      }
+
+      .page-loading-title.is-swiping-out,
+      .page-loading-title.is-swiping-in {
+        animation: none;
+      }
+
+      .page-loading-dot {
+        animation: none;
+        opacity: 1;
+      }
+    }
+
     .how-it-works-guide {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -274,6 +496,13 @@
     }
 
   </style>
+  <noscript>
+    <style>
+      #page-loading-overlay {
+        display: none !important;
+      }
+    </style>
+  </noscript>
 
   <!-- Styles: global first, then component-specific -->
   <link rel="stylesheet" href="/base.css?v=__ASSET_VERSION__" />
@@ -285,6 +514,7 @@
   <link rel="stylesheet" href="/immutable-label/immutable-label.css?v=__ASSET_VERSION__" />
 
   <!-- Scripts: background orbit + 3D band -->
+  <script src="/loading-overlay.js?v=__ASSET_VERSION__" defer></script>
   <script src="/navbar.js?v=__ASSET_VERSION__" defer></script>
   <script src="/hero.js?v=__ASSET_VERSION__" defer></script>
   <script src="/background-orbit/background-orbit.js?v=__ASSET_VERSION__" defer></script>
@@ -292,6 +522,15 @@
   <script type="module" src="/__APP_BUNDLE_PATH__"></script>
 </head>
 <body>
+  <div class="page-loading-overlay" id="page-loading-overlay" aria-label="Jupiter Faucet is loading">
+    <div class="page-loading-pane">
+      <div class="page-loading-content">
+        <img class="page-loading-logo" src="/jupiter_faucet_token_logo.svg?v=__ASSET_VERSION__" alt="" width="142" height="142" decoding="async" />
+        <p class="page-loading-title" id="page-loading-title" aria-hidden="true">Infinite Cycles Begin Here</p>
+        <p class="page-loading-status" role="status" aria-live="polite">Loading<span aria-hidden="true"><span class="page-loading-dot">.</span><span class="page-loading-dot">.</span><span class="page-loading-dot">.</span></span></p>
+      </div>
+    </div>
+  </div>
   <!-- Top navigation bar -->
   <header class="navbar" id="navbar">
     <nav class="navbar-inner">

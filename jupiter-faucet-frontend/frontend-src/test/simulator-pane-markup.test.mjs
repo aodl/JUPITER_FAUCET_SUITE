@@ -6,6 +6,8 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(resolve(__dirname, '../../assets/index.html'), 'utf8');
+const notFoundHtml = readFileSync(resolve(__dirname, '../../assets/404.html'), 'utf8');
+const loadingOverlayJs = readFileSync(resolve(__dirname, '../../assets/loading-overlay.js'), 'utf8');
 const metricsCss = readFileSync(resolve(__dirname, '../../assets/metrics.css'), 'utf8');
 const bootstrapJs = readFileSync(resolve(__dirname, '../src/app/bootstrap.js'), 'utf8');
 const advancedMemoControllerJs = readFileSync(resolve(__dirname, '../src/app/advanced-memo-controller.js'), 'utf8');
@@ -74,6 +76,57 @@ test('top navbar exposes Simulator and no longer exposes Partners', () => {
 
 test('hero How link opens the maturity and rewards page', () => {
   assert.match(indexHtml, /<a href="#how-it-works:3"[^>]*data-panel="how-it-works"[^>]*>How\?<\/a>/);
+});
+
+test('first-load overlay uses the token logo and rotating cycle phrases', () => {
+  const overlayTag = elementById(indexHtml, 'page-loading-overlay');
+  const titleTag = elementById(indexHtml, 'page-loading-title');
+
+  assert.match(overlayTag, /class="page-loading-overlay"/);
+  assert.equal(attrValue(overlayTag, 'aria-label'), 'Jupiter Faucet is loading');
+  assert.equal(attrValue(overlayTag, 'role'), null);
+  assert.equal(attrValue(overlayTag, 'aria-live'), null);
+  assert.match(indexHtml, /<script src="\/loading-overlay\.js\?v=__ASSET_VERSION__" defer><\/script>/);
+  assert.doesNotMatch(indexHtml, /<script>\s*\(\(\) => \{[\s\S]*page-loading-overlay/);
+  assert.match(indexHtml, /class="page-loading-pane"/);
+  assert.match(indexHtml, /class="page-loading-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
+  assert.match(indexHtml, /\.page-loading-overlay \{[^}]*display: none;/);
+  assert.match(indexHtml, /\.page-loading-overlay\.is-active \{[^}]*display: grid;/);
+  assert.match(indexHtml, /<noscript>[\s\S]*#page-loading-overlay \{[\s\S]*display: none !important;[\s\S]*<\/noscript>/);
+  assert.equal(attrValue(titleTag, 'aria-hidden'), 'true');
+  assert.match(indexHtml, /class="page-loading-title" id="page-loading-title" aria-hidden="true">Infinite Cycles Begin Here<\/p>/);
+  assert.match(indexHtml, /class="page-loading-status" role="status" aria-live="polite">Loading<span aria-hidden="true">/);
+  assert.match(indexHtml, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-overlay,[\s\S]*\.page-loading-overlay::before,[\s\S]*\.page-loading-pane,[\s\S]*\.page-loading-pane::before \{[\s\S]*transition: none;/);
+  assert.match(indexHtml, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-title\.is-swiping-out,[\s\S]*\.page-loading-title\.is-swiping-in \{[\s\S]*animation: none;/);
+  assert.match(indexHtml, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-dot \{[\s\S]*animation: none;[\s\S]*opacity: 1;/);
+  assert.match(indexHtml, /--loader-progress/);
+  assert.match(indexHtml, /conic-gradient\(/);
+  assert.match(loadingOverlayJs, /overlay\.classList\.add\("is-active"\);/);
+  assert.match(loadingOverlayJs, /Cycles keep canisters alive/);
+  assert.match(loadingOverlayJs, /Keep every canister fueled/);
+  assert.match(loadingOverlayJs, /Autonomous top-ups for unstoppable software/);
+  assert.doesNotMatch(loadingOverlayJs, /They die from lack of cycles/);
+  assert.match(loadingOverlayJs, /Math\.floor\(Math\.random\(\) \* phrases\.length\)/);
+  assert.match(loadingOverlayJs, /title\.textContent = phrases\[phraseIndex\];/);
+  assert.match(loadingOverlayJs, /title\.classList\.add\("is-swiping-out"\)/);
+  assert.match(loadingOverlayJs, /title\.classList\.add\("is-swiping-in"\)/);
+  assert.match(loadingOverlayJs, /\}, 2100\);/);
+  assert.match(loadingOverlayJs, /const minVisibleMs = 2000;/);
+  assert.match(loadingOverlayJs, /const maxVisibleMs = 10000;/);
+  assert.match(loadingOverlayJs, /const maxVisibleTimer = window\.setTimeout\(finish, maxVisibleMs\);/);
+  assert.match(loadingOverlayJs, /window\.requestAnimationFrame\(animateProgress\)/);
+  assert.match(loadingOverlayJs, /1 - Math\.exp\(-elapsedMs \/ 2600\)/);
+  assert.match(loadingOverlayJs, /window\.cancelAnimationFrame\(animationFrame\)/);
+  assert.match(loadingOverlayJs, /window\.addEventListener\("load", finish, \{ once: true \}\)/);
+  assert.match(loadingOverlayJs, /overlay\.style\.setProperty\("--loader-progress", progress\.toFixed\(1\)\)/);
+  assert.match(loadingOverlayJs, /overlay\.classList\.add\("is-fading"\)/);
+  assert.match(loadingOverlayJs, /\}, 1500\);/);
+});
+
+test('not found page displays the Jupiter Faucet token logo', () => {
+  assert.match(notFoundHtml, /class="not-found-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
+  assert.match(notFoundHtml, /\.not-found-logo \{[\s\S]*width: clamp\(112px, 24vw, 172px\);[\s\S]*height: clamp\(112px, 24vw, 172px\);/);
+  assert.match(notFoundHtml, /<h1>Not Found<\/h1>/);
 });
 
 test('orbit scene includes hoverable infographic callouts', () => {

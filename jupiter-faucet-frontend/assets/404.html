@@ -18,10 +18,20 @@
 
     main {
       width: min(100% - 32px, 640px);
+      display: grid;
+      justify-items: start;
+      gap: 14px;
+    }
+
+    .not-found-logo {
+      width: clamp(112px, 24vw, 172px);
+      height: clamp(112px, 24vw, 172px);
+      object-fit: contain;
+      filter: drop-shadow(0 0 28px rgba(255, 204, 0, 0.28));
     }
 
     h1 {
-      margin: 0 0 12px;
+      margin: 0;
       font-size: clamp(2rem, 6vw, 4rem);
       line-height: 1;
       font-weight: 700;
@@ -31,7 +41,7 @@
     }
 
     p {
-      margin: 0 0 24px;
+      margin: 0 0 10px;
       max-width: 46ch;
       color: rgba(255, 255, 255, 0.78);
       font-size: 1rem;
@@ -48,6 +58,7 @@
 </head>
 <body>
   <main>
+    <img class="not-found-logo" src="/jupiter_faucet_token_logo.svg?v=__ASSET_VERSION__" alt="" width="172" height="172" />
     <h1>Not Found</h1>
     <p>The requested Jupiter Faucet page or asset does not exist.</p>
     <a href="/">Return to Jupiter Faucet</a>
