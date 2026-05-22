@@ -265,6 +265,9 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f[^>]*>rewards account<\/a>/);
   assert.match(howItWorks, /data-panel="governance"[^>]*>Governance<\/a>/);
   assert.match(navbarJs, /data-page-target/);
+  assert.match(howItWorks, /<strong>Developer tip:<\/strong> If you need many small ICP transfers to build up to\s*the minimum 1 ICP threshold/);
+  assert.match(howItWorks, /href="#source"[^>]*data-panel="source"[^>]*>Jupiter Relay<\/a>/);
+  assert.match(howItWorks, /href="#how-it-works:1"[^>]*data-page-target="1"[^>]*>Advanced Usage<\/a>/);
 });
 
 test('How it works pane includes advanced usage memo builder without restoring simulator controls', () => {
@@ -285,16 +288,28 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> You can adjust the <code>canister<\/code>\/<code>neuron<\/code>\s*and <code>label<\/code> parameters/);
   assert.match(howItWorks, /customise the memo helper\s*form on the next slide for a smoother user experience/);
   assert.doesNotMatch(howItWorks, /next slide, for a smoother/);
-  assert.match(howItWorks, /<a class="memo-builder-tip-url pane-external-link mono" href="\/#how-it-works:2\?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/);
-  assert.match(howItWorks, /memo-builder-tip-url pane-external-link mono[\s\S]*\/#how-it-works:2\?canister=/);
+  assert.doesNotMatch(howItWorks, /<a class="memo-builder-tip-url/);
+  assert.match(howItWorks, /id="memo-builder-tip-url"[^>]*data-copy-value="#how-it-works:2\?canister=\{protocol canister ID\}&amp;label=\{custom label\}"/);
+  assert.match(howItWorks, /memo-builder-tip-url mono[\s\S]*#how-it-works:2\?canister=/);
+  assert.match(howItWorks, /id="copy-memo-builder-tip-url"[^>]*>Copy URL<\/button>/);
   assert.match(howItWorks, /memo-builder-placeholder[^>]*>\{protocol canister ID\}<\/span>&amp;label=/);
   assert.match(howItWorks, /memo-builder-placeholder[^>]*>\{custom label\}<\/span>/);
+  assert.match(howItWorks, /<strong>e\.g\.<\/strong>/);
+  assert.match(howItWorks, /href="#how-it-works:2\?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;label=mAIner%20ID%20Prefix%20\(xxxxx-xx\)"[^>]*>mAIner ID Prefix \(xxxxx-xx\) Memo Builder<\/a>/);
+  assert.match(howItWorks, /tops up the protocol's GameState canister with raw ICP/);
+  assert.match(howItWorks, /href="#how-it-works:2\?neuron=6345890886899317159&amp;label=IO%20Perpetual%20Stake"[^>]*>IO Perpetual Stake Memo Builder<\/a>/);
+  assert.match(howItWorks, /perpetually pay into the IO neuron's staking account/);
+  assert.match(howItWorks, /In this particular\s+case a <code>'\.'<\/code> suffix is superfluous/);
+  assert.match(howItWorks, /<strong>Extra tip:<\/strong> Developers may wish to deploy an instance of the\s*<a href="#source"[^>]*data-panel="source"[^>]*>Jupiter Relay<\/a>/);
+  assert.match(howItWorks, /using raw ICP\s*\(the <code>'\.'<\/code> memo syntax documented above\)/);
+  assert.match(howItWorks, /tops them up proportionally to burn rate/);
   assert.doesNotMatch(howItWorks, /custom identifier label/);
   assert.match(metricsCss, /\.memo-builder-tip-url \{[\s\S]*overflow-wrap: anywhere;[\s\S]*\}/);
+  assert.match(metricsCss, /\.memo-builder-tip-copy-row \{[\s\S]*display: flex;[\s\S]*\}/);
+  assert.match(metricsCss, /\.memo-builder-example-list \{[\s\S]*border-left: 2px solid rgba\(255, 255, 255, 0\.16\);[\s\S]*\}/);
   assert.match(metricsCss, /\.memo-builder-placeholder \{[\s\S]*color: rgba\(255, 226, 168, 0\.78\);[\s\S]*\}/);
   assert.doesNotMatch(howItWorks, /memo helper utility coming soon/);
   assert.doesNotMatch(howItWorks, /This enables more specialized designs/);
-  assert.doesNotMatch(howItWorks, /ONICAI/);
   assert.match(howItWorks, /32 characters/);
   assert.match(howItWorks, /Memo Builder/);
   assert.match(howItWorks, /id="memo-builder-title"[^>]*>Memo Builder<\/h3>/);
@@ -364,6 +379,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.doesNotMatch(mainJs, /params\.get\('memo_label'\)/);
   assert.match(mainJs, /builderTitle\.textContent = label \? `\$\{label\} Memo Builder` : defaultBuilderTitle/);
   assert.match(mainJs, /const hasPrefillTarget = canister !== null \|\| neuron !== null/);
+  assert.doesNotMatch(mainJs, /urlPrefillWasActive/);
+  assert.doesNotMatch(mainJs, /if \(!hasPrefillTarget[\s\S]*setOptionalMemoText\(''\)/);
   assert.match(mainJs, /let lastAppliedPrefillFragment = ''/);
   assert.match(mainJs, /shouldApplyAdvancedMemoUrlTargetValue\(currentFragment, lastAppliedPrefillFragment\)/);
   assert.doesNotMatch(mainJs, /shouldApplyTargetValue = currentFragment !== lastAppliedPrefillFragment \|\| hasCustomLabel/);
@@ -391,6 +408,11 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(mainJs, /neuronInput && shouldApplyTargetValue/);
   assert.match(mainJs, /hasPrefillTarget && shouldApplyTargetValue/);
   assert.match(mainJs, /lastAppliedPrefillFragment = currentFragment/);
+  assert.match(mainJs, /tipUrlCopyButton\?\.addEventListener\('click'/);
+  assert.match(mainJs, /copyTextToClipboard\(value\)/);
+  assert.match(mainJs, /window\.addEventListener\('popstate', render\)/);
+  assert.match(mainJs, /document\.addEventListener\('navpanel:open', render\)/);
+  assert.match(mainJs, /document\.addEventListener\('navpanel:pagechange', render\)/);
   assert.match(mainJs, /if \(sanitizedCanister\) \{[\s\S]*\} else if \(sanitizedNeuron\) \{/);
   assert.match(mainJs, /\|\| 'rawIcp'/);
   assert.match(mainJs, /sanitizeCanisterPrincipalText/);
@@ -649,6 +671,8 @@ test('pane fragment navigation participates in browser history', () => {
   assert.match(navbarJs, /history\.pushState\(null, "", panelHashFor\(key, 0\)\);/);
   assert.match(navbarJs, /function panelHashFor\(key, pageIndex = 0\)/);
   assert.match(navbarJs, /return pageIndex > 0 \? `#\$\{key\}:\$\{pageIndex\}` : `#\$\{key\}`;/);
+  assert.match(navbarJs, /document\.dispatchEvent\(new CustomEvent\("navpanel:pagechange"/);
+  assert.match(navbarJs, /detail: \{[\s\S]*key: sectionEl\.getAttribute\("data-panel"\),[\s\S]*page: clamped/);
   assert.match(navbarJs, /window\.addEventListener\("popstate", \(\) => applyHash\(window\.location\.hash\)\);/);
   assert.match(navbarJs, /if \(!key\) \{[\s\S]*closePanel\(\{ syncHash: false, restoreFocus: false \}\);/);
   assert.match(navbarJs, /function closePanel\(\{ syncHash = true, restoreFocus = true \} = \{\}\)/);

@@ -32,6 +32,8 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   const urlContext = document.getElementById('memo-builder-url-context');
   const outputInput = document.getElementById('memo-builder-output');
   const copyButton = document.getElementById('memo-builder-copy');
+  const tipUrlText = document.getElementById('memo-builder-tip-url');
+  const tipUrlCopyButton = document.getElementById('copy-memo-builder-tip-url');
   const messages = document.getElementById('memo-builder-messages');
   const defaultOptionalLabel = optionalLabel?.textContent || 'Optional outgoing transfer memo';
   const defaultBuilderTitle = builderTitle?.textContent || 'Memo Builder';
@@ -234,6 +236,26 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
       }, 1500);
     }
   });
+  tipUrlCopyButton?.addEventListener('click', async () => {
+    const value = tipUrlText?.getAttribute('data-copy-value') || tipUrlText?.textContent || '';
+    if (!value || typeof copyTextToClipboard !== 'function') return;
+    const defaultText = tipUrlCopyButton.textContent || 'Copy URL';
+    try {
+      await copyTextToClipboard(value);
+      tipUrlCopyButton.textContent = 'Copied';
+      window.setTimeout(() => {
+        tipUrlCopyButton.textContent = defaultText;
+      }, 1200);
+    } catch {
+      tipUrlCopyButton.textContent = 'Copy failed';
+      window.setTimeout(() => {
+        tipUrlCopyButton.textContent = defaultText;
+      }, 1500);
+    }
+  });
   window.addEventListener('hashchange', render);
+  window.addEventListener('popstate', render);
+  document.addEventListener('navpanel:open', render);
+  document.addEventListener('navpanel:pagechange', render);
   render();
 }

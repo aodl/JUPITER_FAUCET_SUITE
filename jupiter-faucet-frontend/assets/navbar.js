@@ -147,6 +147,12 @@
           if (window.location.hash !== nextHash) history.pushState(null, "", nextHash);
         }
       }
+      document.dispatchEvent(new CustomEvent("navpanel:pagechange", {
+        detail: {
+          key: sectionEl.getAttribute("data-panel"),
+          page: clamped,
+        },
+      }));
     }
 
     backdrop.addEventListener("click", (evt) => {

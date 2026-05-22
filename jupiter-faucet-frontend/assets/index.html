@@ -652,6 +652,12 @@
                 You can estimate how much ICP needs to be committed to the Jupiter Faucet stake to keep your canister
                 perpetually topped up using the <a href="#simulator" data-panel="simulator" class="pane-external-link">simulator</a>.
               </p>
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Developer tip:</strong> If you need many small ICP transfers to build up to
+                the minimum 1 ICP threshold, you might consider deploying an instance of the
+                <a href="#source" data-panel="source" class="pane-external-link">Jupiter Relay</a>
+                canister. See <a href="#how-it-works:1" data-page-target="1" class="pane-external-link">Advanced Usage</a>.
+              </p>
             </div>
               
             <div class="nav-panel-page" data-page="1">
@@ -666,7 +672,7 @@
 
               <p class="nav-panel-content">
                 To enable raw ICP transfer mode for a canister, add a full stop character
-                (<code>.</code>) after the declared canister ID in the ICP commitment memo.
+                (<code>'.'</code>) after the declared canister ID in the ICP commitment memo.
                 To target a public neuron instead, use the neuron ID in the memo. In either mode,
                 the full stop may be followed by optional text; Jupiter Faucet uses that optional
                 text as the outgoing memo on the perpetual ICP transfer. Declared neurons must be
@@ -681,8 +687,36 @@
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Developer tip:</strong> You can adjust the <code>canister</code>/<code>neuron</code>
                 and <code>label</code> parameters in the following URL to customise the memo helper
-                form on the next slide for a smoother user experience -
-                <a class="memo-builder-tip-url pane-external-link mono" href="/#how-it-works:2?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/#how-it-works:2?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></a>
+                form on the next slide for a smoother user experience:
+                <span class="memo-builder-tip-copy-row">
+                  <span class="memo-builder-tip-url mono" id="memo-builder-tip-url" data-copy-value="#how-it-works:2?canister={protocol canister ID}&amp;label={custom label}">#how-it-works:2?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></span>
+                  <button class="pane-page-button" id="copy-memo-builder-tip-url" type="button">Copy URL</button>
+                </span>
+              </p>
+              <div class="nav-panel-content memo-builder-example-list">
+                <p><strong>e.g.</strong></p>
+                <ul>
+                  <li>
+                    ONICAI's <a href="#how-it-works:2?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;label=mAIner%20ID%20Prefix%20(xxxxx-xx)" class="pane-external-link">mAIner ID Prefix (xxxxx-xx) Memo Builder</a>
+                    tops up the protocol's GameState canister with raw ICP, then routes a portion of
+                    that ICP as cycles to the declared mAIners.
+                  </li>
+                  <li>
+                    IO's <a href="#how-it-works:2?neuron=6345890886899317159&amp;label=IO%20Perpetual%20Stake" class="pane-external-link">IO Perpetual Stake Memo Builder</a>
+                    causes Jupiter Faucet to perpetually pay into the IO neuron's staking account,
+                    driving an ever-increasing minimum APY for all IO holders. In this particular
+                    case a <code>'.'</code> suffix is superfluous.
+                  </li>
+                </ul>
+              </div>
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Extra tip:</strong> Developers may wish to deploy an instance of the
+                <a href="#source" data-panel="source" class="pane-external-link">Jupiter Relay</a>
+                canister. The relay acts as a singular target for perpetual top-ups using raw ICP
+                (the <code>'.'</code> memo syntax documented above). It periodically samples the
+                cycles balance of configured canisters, tops them up proportionally to burn rate,
+                then routes remaining ICP to configured treasury canisters and/or public neuron
+                staking accounts.
               </p>
             </div>
 

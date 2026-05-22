@@ -804,7 +804,39 @@
 }
 
 .memo-builder-tip-url {
+  display: inline-block;
   overflow-wrap: anywhere;
+}
+
+.memo-builder-tip-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.memo-builder-tip-copy-row .memo-builder-tip-url {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.memo-builder-example-list {
+  margin-top: 14px;
+  padding-left: 14px;
+  border-left: 2px solid rgba(255, 255, 255, 0.16);
+}
+
+.memo-builder-example-list p {
+  margin: 0 0 6px;
+}
+
+.memo-builder-example-list ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.memo-builder-example-list li + li {
+  margin-top: 8px;
 }
 
 .memo-builder-placeholder {
