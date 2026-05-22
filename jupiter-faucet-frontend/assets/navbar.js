@@ -274,7 +274,7 @@
       }
     }
 
-    function handleTriggerClick(btn) {
+    function handleTriggerClick(btn, pageIndex = 0) {
       lastTriggerBtn = btn;
       const key = btn.getAttribute("data-panel");
 
@@ -288,16 +288,21 @@
       }
       setActiveButton(key);
       openPanel(key);
+      const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
+      activatePage(sectionEl, pageIndex);
     }
 
     panelTriggers.forEach((btn) => {
       btn.addEventListener("click", (evt) => {
         evt.preventDefault();
         const key = btn.getAttribute("data-panel");
-        if (key && window.location.hash !== panelHashFor(key, 0)) {
-          history.pushState(null, "", panelHashFor(key, 0));
+        const hrefTarget = panelTargetFromHash(btn.getAttribute("href"));
+        const page = hrefTarget.key === key ? hrefTarget.page : 0;
+        const nextHash = panelHashFor(key, page);
+        if (key && window.location.hash !== nextHash) {
+          history.pushState(null, "", nextHash);
         }
-        handleTriggerClick(btn);
+        handleTriggerClick(btn, page);
       });
     });
 

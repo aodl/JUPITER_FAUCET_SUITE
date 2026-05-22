@@ -72,6 +72,10 @@ test('top navbar exposes Simulator and no longer exposes Partners', () => {
   assert.doesNotMatch(indexHtml, />Partners<\/a>/i);
 });
 
+test('hero How link opens the maturity and rewards page', () => {
+  assert.match(indexHtml, /<a href="#how-it-works:3"[^>]*data-panel="how-it-works"[^>]*>How\?<\/a>/);
+});
+
 test('orbit scene includes hoverable infographic callouts', () => {
   const orbitCss = readFileSync(resolve(__dirname, '../../assets/background-orbit/background-orbit.css'), 'utf8');
   const orbitJs = readFileSync(resolve(__dirname, '../../assets/background-orbit/background-orbit.js'), 'utf8');
@@ -296,7 +300,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /memo-builder-placeholder[^>]*>\{custom label\}<\/span>/);
   assert.match(howItWorks, /<strong>e\.g\.<\/strong>/);
   assert.match(howItWorks, /href="#how-it-works:2\?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;label=mAIner%20ID%20Prefix%20\(xxxxx-xx\)"[^>]*>mAIner ID Prefix \(xxxxx-xx\) Memo Builder<\/a>/);
-  assert.match(howItWorks, /tops up the protocol's GameState canister with raw ICP/);
+  assert.match(howItWorks, /tops up the protocol's GameState canister with raw ICP; GameState then routes a\s*portion as cycles to the declared mAIner/);
   assert.match(howItWorks, /href="#how-it-works:2\?neuron=6345890886899317159&amp;label=IO%20Perpetual%20Stake"[^>]*>IO Perpetual Stake Memo Builder<\/a>/);
   assert.match(howItWorks, /perpetually pay into the IO neuron's staking account/);
   assert.match(howItWorks, /In this particular\s+case a <code>'\.'<\/code> suffix is superfluous/);
@@ -668,7 +672,11 @@ test('metrics nav button closes an open pane before showing the metrics rail', (
 });
 
 test('pane fragment navigation participates in browser history', () => {
-  assert.match(navbarJs, /history\.pushState\(null, "", panelHashFor\(key, 0\)\);/);
+  assert.match(navbarJs, /const hrefTarget = panelTargetFromHash\(btn\.getAttribute\("href"\)\);/);
+  assert.match(navbarJs, /const page = hrefTarget\.key === key \? hrefTarget\.page : 0;/);
+  assert.match(navbarJs, /const nextHash = panelHashFor\(key, page\);/);
+  assert.match(navbarJs, /history\.pushState\(null, "", nextHash\);/);
+  assert.match(navbarJs, /handleTriggerClick\(btn, page\);/);
   assert.match(navbarJs, /function panelHashFor\(key, pageIndex = 0\)/);
   assert.match(navbarJs, /return pageIndex > 0 \? `#\$\{key\}:\$\{pageIndex\}` : `#\$\{key\}`;/);
   assert.match(navbarJs, /document\.dispatchEvent\(new CustomEvent\("navpanel:pagechange"/);
