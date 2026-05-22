@@ -129,16 +129,17 @@ planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
 
 If no reliable conversion estimate exists, the relay may use an internal bootstrap estimate for canister top-up planning, but surplus routing is disabled for that tick. Stale or ambiguous conversion data also disables surplus routing. A sharp drop in cycles-per-e8 reduces or eliminates surplus routing until canister top-up needs are covered.
 
-Surplus recipients are typed targets:
+Surplus recipients use variant-free public install and upgrade records:
 
 ```text
 SurplusRecipient {
-  target = Canister(principal) | Neuron(nat64)
+  canister_id = opt principal
+  neuron_id = opt nat64
   memo = opt blob
 }
 ```
 
-Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer.
+Exactly one of `canister_id` or `neuron_id` must be set. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer.
 
 Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit account derived from the target canister principal, then call `notify_top_up { canister_id, block_index }`.
 
@@ -163,17 +164,13 @@ Example upgrade args to set the production surplus recipients:
     max_transfers_per_tick = null;
     surplus_recipients = opt vec {
       record {
-        target = (
-          variant { Neuron = 6_345_890_886_899_317_159 : nat64 }
-          : variant { Canister : principal; Neuron : nat64 }
-        );
+        canister_id = null;
+        neuron_id = opt (6_345_890_886_899_317_159 : nat64);
         memo = null;
       };
       record {
-        target = (
-          variant { Neuron = 11_614_578_985_374_291_210 : nat64 }
-          : variant { Canister : principal; Neuron : nat64 }
-        );
+        canister_id = null;
+        neuron_id = opt (11_614_578_985_374_291_210 : nat64);
         memo = opt blob "6345890886899317159";
       };
     };

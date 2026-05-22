@@ -29,6 +29,7 @@ debug_api = []
 [dev-dependencies]
 anyhow = { workspace = true }
 candid = { workspace = true }
+candid_parser = "0.1.4"
 icrc-ledger-types = { workspace = true }
 pocket-ic = { workspace = true }
 slog = { workspace = true }

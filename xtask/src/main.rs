@@ -4005,7 +4005,11 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
                 main_interval_seconds = opt (31536000:nat64);
                 max_transfers_per_tick = opt (10:nat32);
                 surplus_recipients = vec {{
-                    record {{ target = variant {{ Canister = principal "{external}" }}; memo = opt blob "\01" }};
+                    record {{
+                        canister_id = opt principal "{external}";
+                        neuron_id = null;
+                        memo = opt blob "\01";
+                    }};
                 }};
             }},)"#,
             managed_id = cmc_id.to_text(),

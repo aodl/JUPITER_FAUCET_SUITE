@@ -3261,6 +3261,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "candid",
+ "candid_parser",
  "ic-cdk",
  "ic-cdk-timers",
  "ic-stable-structures",

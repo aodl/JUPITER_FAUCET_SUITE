@@ -74,14 +74,9 @@ struct RelayUpgradeArg {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct SurplusRecipient {
-    target: SurplusTarget,
+    canister_id: Option<Principal>,
+    neuron_id: Option<u64>,
     memo: Option<Vec<u8>>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum SurplusTarget {
-    Canister(Principal),
-    Neuron(u64),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -589,7 +584,8 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
         (
             vec![cmc],
             vec![SurplusRecipient {
-                target: SurplusTarget::Canister(cmc),
+                canister_id: Some(cmc),
+                neuron_id: None,
                 memo: Some(external_memo.clone()),
             }],
         )
@@ -650,11 +646,13 @@ fn surplus_neuron_transfers_split_equally_and_preserve_jupiter_faucet_memo() -> 
             vec![cmc],
             vec![
                 SurplusRecipient {
-                    target: SurplusTarget::Neuron(io_neuron),
+                    canister_id: None,
+                    neuron_id: Some(io_neuron),
                     memo: None,
                 },
                 SurplusRecipient {
-                    target: SurplusTarget::Neuron(jupiter_faucet_neuron),
+                    canister_id: None,
+                    neuron_id: Some(jupiter_faucet_neuron),
                     memo: Some(io_memo.clone()),
                 },
             ],
@@ -723,7 +721,8 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
         (
             vec![cmc],
             vec![SurplusRecipient {
-                target: SurplusTarget::Canister(relay),
+                canister_id: Some(relay),
+                neuron_id: None,
                 memo: None,
             }],
         )
@@ -749,7 +748,8 @@ fn relay_recomputes_topups_each_tick_after_prior_no_topup_tick() -> Result<()> {
         (
             vec![cmc],
             vec![SurplusRecipient {
-                target: SurplusTarget::Canister(relay),
+                canister_id: Some(relay),
+                neuron_id: None,
                 memo: None,
             }],
         )

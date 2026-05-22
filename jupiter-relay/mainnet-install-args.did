@@ -18,22 +18,15 @@
     main_interval_seconds = opt (604800 : nat64);
     max_transfers_per_tick = opt (10 : nat32);
 
-    // Relay surplus targets use explicit variant type annotations because
-    // icp deploy/Candid encoding can otherwise infer a one-arm variant from
-    // `variant { Neuron = ... }`, causing init decode failure.
     surplus_recipients = vec {
       record {
-        target = (
-          variant { Neuron = 6_345_890_886_899_317_159 : nat64 }
-          : variant { Canister : principal; Neuron : nat64 }
-        );
+        canister_id = null;
+        neuron_id = opt (6_345_890_886_899_317_159 : nat64);
         memo = null;
       };
       record {
-        target = (
-          variant { Neuron = 11_614_578_985_374_291_210 : nat64 }
-          : variant { Canister : principal; Neuron : nat64 }
-        );
+        canister_id = null;
+        neuron_id = opt (11_614_578_985_374_291_210 : nat64);
         memo = opt blob "6345890886899317159";
       };
     };

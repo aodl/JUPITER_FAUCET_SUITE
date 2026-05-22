@@ -1,6 +1,10 @@
 type Account = record { owner : principal; subaccount : opt blob };
 type SurplusTarget = variant { Canister : principal; Neuron : nat64 };
-type SurplusRecipient = record { target : SurplusTarget; memo : opt blob };
+type SurplusRecipient = record {
+  canister_id : opt principal;
+  neuron_id : opt nat64;
+  memo : opt blob;
+};
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
