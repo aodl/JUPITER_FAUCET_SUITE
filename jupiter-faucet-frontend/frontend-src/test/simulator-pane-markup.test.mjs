@@ -275,6 +275,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /data-page="1"/);
   assert.match(howItWorks, /data-page="2"/);
   assert.match(howItWorks, /data-page="3"/);
+  assert.match(howItWorks, /data-page="1"[\s\S]*Advanced Usage[\s\S]*data-page="2"[\s\S]*Memo Builder[\s\S]*data-page="3"[\s\S]*Base maturity/);
   assert.match(howItWorks, /Advanced Usage/);
   assert.match(howItWorks, /three memo-directed flows/);
   assert.match(howItWorks, /plain declared canister ID/);
@@ -282,8 +283,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> You can adjust the <code>canister<\/code>\/<code>neuron<\/code>\s*and <code>label<\/code> parameters/);
   assert.match(howItWorks, /customise the memo helper\s*form on the next slide for a smoother user experience/);
   assert.doesNotMatch(howItWorks, /next slide, for a smoother/);
-  assert.match(howItWorks, /<a class="memo-builder-tip-url pane-external-link mono" href="\/#how-it-works:3\?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/);
-  assert.match(howItWorks, /memo-builder-tip-url pane-external-link mono[\s\S]*\/#how-it-works:3\?canister=/);
+  assert.match(howItWorks, /<a class="memo-builder-tip-url pane-external-link mono" href="\/#how-it-works:2\?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/);
+  assert.match(howItWorks, /memo-builder-tip-url pane-external-link mono[\s\S]*\/#how-it-works:2\?canister=/);
   assert.match(howItWorks, /memo-builder-placeholder[^>]*>\{protocol canister ID\}<\/span>&amp;label=/);
   assert.match(howItWorks, /memo-builder-placeholder[^>]*>\{custom label\}<\/span>/);
   assert.doesNotMatch(howItWorks, /custom identifier label/);
@@ -344,7 +345,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /href="#how-it-works"[^>]*data-page-target="0"[^>]*>basic instructions<\/a>/);
   assert.match(howItWorks, /\(in place of the "declared canister ID"\) to make your ICP commitment and initiate\s+perpetual top-ups/);
   assert.match(howItWorks, /Use the generated memo[\s\S]*For more information about this memo builder see/);
-  assert.match(howItWorks, /For more information about this memo builder see[\s\S]*href="#how-it-works:2"[^>]*data-page-target="2"[^>]*>Advanced Usage<\/a>/);
+  assert.match(howItWorks, /For more information about this memo builder see[\s\S]*href="#how-it-works:1"[^>]*data-page-target="1"[^>]*>Advanced Usage<\/a>/);
   assert.doesNotMatch(howItWorks, /Use the copied memo/);
   assert.doesNotMatch(howItWorks, /target="_blank"[^>]*>Advanced Usage<\/a>/);
   assert.doesNotMatch(howItWorks, /target="_blank"[^>]*>basic instructions<\/a>/);
@@ -564,8 +565,8 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
   assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
   assert.match(mainJs, /const registeredCount = data\?\.counts\?\.registered_canister_count;/);
   assert.match(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);

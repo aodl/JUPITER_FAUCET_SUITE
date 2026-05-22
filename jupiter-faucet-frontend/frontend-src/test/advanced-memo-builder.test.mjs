@@ -139,7 +139,7 @@ test('URL prefill state treats empty canister with requested mode as manually ed
 });
 
 test('URL target values apply once per fragment even when empty target has a label', () => {
-  const fragment = '#how-it-works:3?canister=&label=Foo';
+  const fragment = '#how-it-works:2?canister=&label=Foo';
 
   assert.equal(shouldApplyAdvancedMemoUrlTargetValue(fragment, ''), true);
   assert.equal(shouldApplyAdvancedMemoUrlTargetValue(fragment, fragment), false);

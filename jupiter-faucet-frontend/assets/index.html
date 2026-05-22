@@ -654,43 +654,7 @@
               </p>
             </div>
               
-            <div class="nav-panel-page" data-page="1">      
-              <p class="nav-panel-content">
-                <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
-                maturity generated from committed stake is used to perpetually burn ICP, mint cycles,
-                and top up the declared canister over time.
-              </p>
-
-              <p class="nav-panel-content">
-                <strong>Age bonus maturity:</strong> the age-bonus component (between
-                <strong>0% and 20%</strong> of total maturity depending on stake age) is split
-                into:
-                <br />
-                • <strong>0%–19%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly minted <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)
-                <br />
-                • <strong>0%–1%</strong> restaked into the
-                <a
-                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  ><strong>D-QUORUM</strong></a
-                >
-                neuron to help fund decentralized due diligence of NNS proposals, because a pre-requisite for truly unstoppable canisters is a secure and decentralized network.
-              </p>
-
-              <p class="nav-panel-content memo-builder-safety-notice">
-                <strong>Rewards:</strong>
-                jUP SNS tokens will be minted to patrons who have
-                <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
-                to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
-                of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
-                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
-                While the Jupiter Faucet SNS rewards components are still being finalised, the ICP will accumulate in the
-                <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
-                (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
-              </p>
-            </div>
-            <div class="nav-panel-page" data-page="2">
+            <div class="nav-panel-page" data-page="1">
               <h3 class="pane-section-title">Advanced Usage</h3>
 
               <p class="nav-panel-content">
@@ -717,11 +681,11 @@
                 <strong>Developer tip:</strong> You can adjust the <code>canister</code>/<code>neuron</code>
                 and <code>label</code> parameters in the following URL to customise the memo helper
                 form on the next slide for a smoother user experience -
-                <a class="memo-builder-tip-url pane-external-link mono" href="/#how-it-works:3?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/#how-it-works:3?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></a>
+                <a class="memo-builder-tip-url pane-external-link mono" href="/#how-it-works:2?canister=%7Bprotocol%20canister%20ID%7D&amp;label=%7Bcustom%20label%7D">/#how-it-works:2?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></a>
               </p>
             </div>
 
-            <div class="nav-panel-page" data-page="3">
+            <div class="nav-panel-page" data-page="2">
               <h3 class="pane-section-title" id="memo-builder-title">Memo Builder</h3>
               <p class="nav-panel-content" id="memo-builder-prefill-note" hidden>
                 This memo helper simplifies constructing a memo from your chosen ID and a protocol
@@ -791,15 +755,52 @@
               </p>
               <p class="nav-panel-content">
                 For more information about this memo builder see
-                <a href="#how-it-works:2" data-page-target="2" class="pane-external-link">Advanced Usage</a>.
+                <a href="#how-it-works:1" data-page-target="1" class="pane-external-link">Advanced Usage</a>.
+              </p>
+            </div>
+
+            <div class="nav-panel-page" data-page="3">
+              <p class="nav-panel-content">
+                <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
+                maturity generated from committed stake is used to perpetually burn ICP, mint cycles,
+                and top up the declared canister over time.
+              </p>
+
+              <p class="nav-panel-content">
+                <strong>Age bonus maturity:</strong> the age-bonus component (between
+                <strong>0% and 20%</strong> of total maturity depending on stake age) is split
+                into:
+                <br />
+                • <strong>0%–19%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly minted <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)
+                <br />
+                • <strong>0%–1%</strong> restaked into the
+                <a
+                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  ><strong>D-QUORUM</strong></a
+                >
+                neuron to help fund decentralized due diligence of NNS proposals, because a pre-requisite for truly unstoppable canisters is a secure and decentralized network.
+              </p>
+
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Rewards:</strong>
+                jUP SNS tokens will be minted to patrons who have
+                <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
+                to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
+                of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
+                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
+                While the Jupiter Faucet SNS rewards components are still being finalised, the ICP will accumulate in the
+                <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
+                (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
               </p>
             </div>
               
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
-              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Page 2" aria-selected="false"></button>
-              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Advanced Usage" aria-selected="false"></button>
-              <button class="nav-panel-dot" type="button" data-page="3" aria-label="Memo Builder" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Advanced Usage" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Memo Builder" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="3" aria-label="Maturity and rewards" aria-selected="false"></button>
             </div>
 
         </article>
@@ -950,7 +951,7 @@
               </div>
             </div>
             <div class="nav-panel-page" data-page="1">
-              <p class="nav-panel-content">See <a href="#how-it-works:2" class="pane-external-link">Advanced Usage</a> for raw ICP commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+              <p class="nav-panel-content">See <a href="#how-it-works:1" class="pane-external-link">Advanced Usage</a> for raw ICP commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
               <h3 class="pane-section-title">Declared Raw ICP Canisters</h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">
@@ -974,7 +975,7 @@
               </div>
             </div>
             <div class="nav-panel-page" data-page="2">
-              <p class="nav-panel-content">See <a href="#how-it-works:2" class="pane-external-link">Advanced Usage</a> for neuron commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+              <p class="nav-panel-content">See <a href="#how-it-works:1" class="pane-external-link">Advanced Usage</a> for neuron commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
               <h3 class="pane-section-title">Declared Neurons</h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">
