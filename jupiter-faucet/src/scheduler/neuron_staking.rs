@@ -11,12 +11,21 @@ pub(super) fn effective_denom_e8s(job: &ActivePayoutJob) -> u64 {
     job.effective_denom_staking_balance_e8s.unwrap_or(job.denom_staking_balance_e8s)
 }
 
-pub(super) fn ensure_active_job(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct FundingTranche {
+    pub tx_id: u64,
+    pub timestamp_nanos: u64,
+    pub amount_e8s: u64,
+}
+
+pub(super) fn ensure_active_job_with_boundary(
     now_nanos: u64,
     fee_e8s: u64,
     pot_start_e8s: u64,
     denom_e8s: u64,
+    round_end_time_nanos: u64,
     round_end_latest_tx_id: Option<u64>,
+    funding_tranche: Option<FundingTranche>,
 ) {
     state::with_state_mut(|st| {
         if st.active_payout_job.is_some() {
@@ -25,6 +34,9 @@ pub(super) fn ensure_active_job(
         let id = st.payout_nonce;
         st.payout_nonce = st.payout_nonce.saturating_add(1);
         let mut job = ActivePayoutJob::new(id, fee_e8s, pot_start_e8s, denom_e8s, now_nanos);
+        if let Some(tranche) = funding_tranche {
+            job.configure_funding_tranche(tranche.tx_id, tranche.timestamp_nanos, tranche.amount_e8s);
+        }
         match (
             st.current_round_start_time_nanos,
             st.current_round_start_staking_balance_e8s,
@@ -41,7 +53,7 @@ pub(super) fn ensure_active_job(
                     Some(round_start_time_nanos),
                     Some(round_start_staking_balance_e8s),
                     round_start_latest_tx_id,
-                    now_nanos,
+                    round_end_time_nanos,
                     effective_round_end_latest_tx_id,
                     round_start_staking_balance_e8s,
                     stake_unchanged_since_round_start,
@@ -51,14 +63,14 @@ pub(super) fn ensure_active_job(
                 }
             }
             _ => {
-                // Fresh installs / upgrades do not yet know the prior round boundary. Fall back to
-                // the legacy live-denominator model for exactly one transition payout, then store
-                // the current boundary as the next round's start snapshot when this job finalizes.
+                // Fresh installs do not yet know the prior round boundary. Use the current
+                // staking-account balance for the first strict tranche, then store the current
+                // boundary as the next round's start snapshot when this job finalizes.
                 job.configure_round_accounting(
                     Some(now_nanos),
                     Some(denom_e8s),
                     round_end_latest_tx_id,
-                    now_nanos,
+                    round_end_time_nanos,
                     round_end_latest_tx_id,
                     denom_e8s,
                     true,
@@ -68,4 +80,3 @@ pub(super) fn ensure_active_job(
         st.active_payout_job = Some(job);
     });
 }
-

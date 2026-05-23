@@ -18,6 +18,7 @@ pub(crate) struct Config {
     pub cmc_canister_id: Principal,
     #[serde(default)]
     pub governance_canister_id: Option<Principal>,
+    pub funding_source_account: Account,
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
@@ -70,13 +71,14 @@ fn opt_u64_text(value: Option<u64>) -> String {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
+        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, funding_source_account={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
         account_text(&cfg.staking_account),
         subaccount_text(&cfg.payout_subaccount),
         cfg.ledger_canister_id.to_text(),
         cfg.index_canister_id.to_text(),
         cfg.cmc_canister_id.to_text(),
         opt_principal_text(cfg.governance_canister_id),
+        account_text(&cfg.funding_source_account),
         cfg.rescue_controller.to_text(),
         opt_principal_text(cfg.blackhole_controller),
         opt_bool_text(cfg.blackhole_armed),
@@ -293,6 +295,14 @@ pub(crate) struct ActivePayoutJob {
     pub effective_denom_staking_balance_e8s: Option<u64>,
     #[serde(default)]
     pub effective_denom_scan_complete: Option<bool>,
+    #[serde(default)]
+    pub round_end_staking_balance_e8s: Option<u64>,
+    #[serde(default)]
+    pub funding_tx_id: Option<u64>,
+    #[serde(default)]
+    pub funding_tx_timestamp_nanos: Option<u64>,
+    #[serde(default)]
+    pub funding_amount_e8s: Option<u64>,
 }
 
 impl ActivePayoutJob {
@@ -331,6 +341,10 @@ impl ActivePayoutJob {
             round_end_latest_tx_id: None,
             effective_denom_staking_balance_e8s: None,
             effective_denom_scan_complete: None,
+            round_end_staking_balance_e8s: None,
+            funding_tx_id: None,
+            funding_tx_timestamp_nanos: None,
+            funding_amount_e8s: None,
         }
     }
 
@@ -351,6 +365,13 @@ impl ActivePayoutJob {
         self.round_end_latest_tx_id = round_end_latest_tx_id;
         self.effective_denom_staking_balance_e8s = Some(effective_denom_staking_balance_e8s);
         self.effective_denom_scan_complete = Some(effective_denom_scan_complete);
+        self.round_end_staking_balance_e8s = Some(effective_denom_staking_balance_e8s);
+    }
+
+    pub(crate) fn configure_funding_tranche(&mut self, tx_id: u64, timestamp_nanos: u64, amount_e8s: u64) {
+        self.funding_tx_id = Some(tx_id);
+        self.funding_tx_timestamp_nanos = Some(timestamp_nanos);
+        self.funding_amount_e8s = Some(amount_e8s);
     }
 }
 
@@ -382,6 +403,8 @@ pub(crate) struct State {
     pub current_round_start_staking_balance_e8s: Option<u64>,
     #[serde(default)]
     pub current_round_start_latest_tx_id: Option<u64>,
+    #[serde(default)]
+    pub last_processed_funding_tx_id: Option<u64>,
 }
 
 impl State {
@@ -409,6 +432,7 @@ impl State {
             current_round_start_time_nanos: None,
             current_round_start_staking_balance_e8s: None,
             current_round_start_latest_tx_id: None,
+            last_processed_funding_tx_id: None,
         }
     }
 }
@@ -686,6 +710,7 @@ mod tests {
             index_canister_id: principal(&[3]),
             cmc_canister_id: principal(&[4]),
             governance_canister_id: Some(principal(&[9])),
+            funding_source_account: Account { owner: principal(&[8]), subaccount: None },
             rescue_controller: principal(&[5]),
             blackhole_controller: Some(principal(&[6])),
             blackhole_armed: Some(false),
@@ -707,6 +732,7 @@ mod tests {
         assert!(line.contains("index_canister_id="));
         assert!(line.contains("cmc_canister_id="));
         assert!(line.contains("governance_canister_id="));
+        assert!(line.contains("funding_source_account="));
         assert!(line.contains("rescue_controller="));
         assert!(line.contains("blackhole_controller="));
         assert!(line.contains("blackhole_armed=false"));

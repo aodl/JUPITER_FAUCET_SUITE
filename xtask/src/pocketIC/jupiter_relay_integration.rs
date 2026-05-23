@@ -594,7 +594,7 @@ fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Res
         bail!("expected retained ICP to remain in relay default ledger account");
     }
 
-    env.credit_relay(5_000_000_000)?;
+    env.credit_relay(10_000_000_000)?;
     env.set_canister_cycles(env.cmc, 100_000_000_000)?;
     env.set_canister_cycles(env.ledger, 9_800_000_000_000)?;
     let funded = env.tick_relay()?;
@@ -652,7 +652,7 @@ fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
-    env.credit_relay(100_000_000)?;
+    env.credit_relay(10_000_000_000)?;
 
     let baseline = env.tick_relay()?;
     if baseline.mode != RelayMode::BaselineOnly || baseline.ledger_transfer_count != 0 {
@@ -724,7 +724,7 @@ fn relay_canister_with_increased_cycles_gets_no_topup_when_others_burned() -> Re
     })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
-    env.credit_relay(100_000_000)?;
+    env.credit_relay(5_000_000_000)?;
     let _ = env.tick_relay()?;
 
     env.set_canister_cycles(env.ledger, 8_000_000_000_000)?;
@@ -937,7 +937,7 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
         )
     })?;
     env.set_managed_cycles(5_000_000_000_000)?;
-    env.credit_relay(100_000_000)?;
+    env.credit_relay(5_000_000_000)?;
     let _ = env.tick_relay()?;
 
     env.add_relay_cycles(1_000_000_000_000);
@@ -1115,7 +1115,7 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
     })?;
     env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
     env.set_managed_cycles(10_000_000_000_000)?;
-    env.credit_relay(100_000_000)?;
+    env.credit_relay(5_000_000_000)?;
     let _ = env.tick_relay()?;
 
     env.set_canister_cycles(env.ledger, 8_000_000_000_000)?;

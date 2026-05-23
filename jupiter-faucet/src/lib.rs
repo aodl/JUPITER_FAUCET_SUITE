@@ -23,6 +23,7 @@ pub struct InitArgs {
     pub index_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
     pub governance_canister_id: Option<Principal>,
+    pub funding_source_account: Option<Account>,
 
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
@@ -102,6 +103,7 @@ fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
     assert_non_anonymous_principal("cmc_canister_id", cfg.cmc_canister_id);
     assert_non_anonymous_principal("governance_canister_id", cfg.governance_canister_id.expect("governance_canister_id must be configured"));
+    assert_non_anonymous_principal("funding_source_account.owner", cfg.funding_source_account.owner);
     let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
     assert!(cfg.rescue_controller != self_id, "rescue_controller must not equal the faucet canister principal");
@@ -149,11 +151,14 @@ fn init(args: InitArgs) {
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
         governance_canister_id: Some(args.governance_canister_id.unwrap_or_else(mainnet_governance_id)),
+        funding_source_account: args
+            .funding_source_account
+            .expect("funding_source_account is required"),
         rescue_controller: args.rescue_controller,
         blackhole_controller: Some(args.blackhole_controller.unwrap_or_else(mainnet_blackhole_id)),
         blackhole_armed: args.blackhole_armed,
         expected_first_staking_tx_id: args.expected_first_staking_tx_id,
-        main_interval_seconds: args.main_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
+        main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
         stake_recognition_delay_seconds: Some(args.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60)),
@@ -258,6 +263,7 @@ pub struct DebugConfig {
     pub index_canister_id: Principal,
     pub cmc_canister_id: Principal,
     pub governance_canister_id: Principal,
+    pub funding_source_account: Account,
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
@@ -331,6 +337,7 @@ fn debug_config() -> DebugConfig {
         index_canister_id: st.config.index_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
         governance_canister_id: st.config.governance_canister_id.expect("governance_canister_id configured"),
+        funding_source_account: st.config.funding_source_account,
         rescue_controller: st.config.rescue_controller,
         blackhole_controller: st.config.blackhole_controller,
         blackhole_armed: st.config.blackhole_armed,
@@ -386,6 +393,7 @@ fn debug_reset_runtime_state() {
         st.current_round_start_time_nanos = None;
         st.current_round_start_staking_balance_e8s = None;
         st.current_round_start_latest_tx_id = None;
+        st.last_processed_funding_tx_id = None;
         st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
     });
 }
@@ -525,6 +533,7 @@ mod tests {
             index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: Some(principal("rrkah-fqaaa-aaaaa-aaaaq-cai")),
+            funding_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
             blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
             blackhole_armed: Some(false),

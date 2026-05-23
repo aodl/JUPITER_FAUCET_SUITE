@@ -48,6 +48,7 @@ fn build_wasm(package: &str, features: Option<&str>) -> Result<Vec<u8>> {
 struct FaucetInitArg {
     staking_account: Account,
     payout_subaccount: Option<Vec<u8>>,
+    funding_source_account: Option<Account>,
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
@@ -192,6 +193,37 @@ fn cmc_deposit_account(cmc: Principal, target: Principal) -> Account {
     }
 }
 
+fn account_id_for(account: &Account) -> String {
+    account_identifier_text(account.owner, account.subaccount)
+}
+
+fn disburser_funding_source(disburser: Principal) -> Account {
+    Account {
+        owner: disburser,
+        subaccount: None,
+    }
+}
+
+fn append_faucet_funding_tranche(
+    pic: &PocketIc,
+    index: Principal,
+    funding_source: &Account,
+    payout: &Account,
+    amount_e8s: u64,
+) -> Result<u64> {
+    update_bytes(
+        pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer_from",
+        encode_args((
+            account_id_for(funding_source),
+            account_id_for(payout),
+            amount_e8s,
+            Option::<Vec<u8>>::None,
+        ))?,
+    )
+}
 
 #[test]
 #[ignore]
@@ -228,6 +260,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
+        funding_source_account: Some(disburser_funding_source(disburser)),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -285,8 +318,20 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         encode_args((disburser_staging, pot_e8s))?,
     )?;
 
+    let faucet_balance_before = icrc1_balance(&pic, ledger, &accounts.payout)?;
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
+    let faucet_balance_after = icrc1_balance(&pic, ledger, &accounts.payout)?;
+    let funding_amount = faucet_balance_after
+        .checked_sub(faucet_balance_before)
+        .ok_or_else(|| anyhow!("faucet payout balance decreased during disburser tick"))?;
+    append_faucet_funding_tranche(
+        &pic,
+        index,
+        &disburser_funding_source(disburser),
+        &accounts.payout,
+        funding_amount,
+    )?;
 
     let faucet_balance = icrc1_balance(&pic, ledger, &accounts.payout)?;
     if faucet_balance == 0 {
@@ -352,6 +397,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
+        funding_source_account: Some(disburser_funding_source(disburser)),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -423,8 +469,20 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
             "debug_credit",
             encode_args((disburser_staging, pot_e8s))?,
         )?;
+        let faucet_balance_before = icrc1_balance(&pic, ledger, &accounts.payout)?;
         let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
         tick_n(&pic, 10);
+        let faucet_balance_after = icrc1_balance(&pic, ledger, &accounts.payout)?;
+        let funding_amount = faucet_balance_after
+            .checked_sub(faucet_balance_before)
+            .ok_or_else(|| anyhow!("faucet payout balance decreased during disburser tick"))?;
+        append_faucet_funding_tranche(
+            &pic,
+            index,
+            &disburser_funding_source(disburser),
+            &accounts.payout,
+            funding_amount,
+        )?;
         let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
         tick_n(&pic, 10);
 
@@ -486,6 +544,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
+        funding_source_account: Some(disburser_funding_source(disburser)),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -540,8 +599,20 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         encode_args((disburser_staging, 100_000_000u64))?,
     )?;
 
+    let faucet_balance_before = icrc1_balance(&pic, ledger, &accounts.payout)?;
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
+    let faucet_balance_after = icrc1_balance(&pic, ledger, &accounts.payout)?;
+    let funding_amount = faucet_balance_after
+        .checked_sub(faucet_balance_before)
+        .ok_or_else(|| anyhow!("faucet payout balance decreased during disburser tick"))?;
+    append_faucet_funding_tranche(
+        &pic,
+        index,
+        &disburser_funding_source(disburser),
+        &accounts.payout,
+        funding_amount,
+    )?;
 
     let _: () = update_one(
         &pic,
@@ -610,6 +681,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
+        funding_source_account: Some(disburser_funding_source(disburser)),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -664,8 +736,20 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         encode_args((disburser_staging, 100_000_000u64))?,
     )?;
 
+    let faucet_balance_before = icrc1_balance(&pic, ledger, &accounts.payout)?;
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
+    let faucet_balance_after = icrc1_balance(&pic, ledger, &accounts.payout)?;
+    let funding_amount = faucet_balance_after
+        .checked_sub(faucet_balance_before)
+        .ok_or_else(|| anyhow!("faucet payout balance decreased during disburser tick"))?;
+    append_faucet_funding_tranche(
+        &pic,
+        index,
+        &disburser_funding_source(disburser),
+        &accounts.payout,
+        funding_amount,
+    )?;
 
     let _: () = update_one(
         &pic,
@@ -1022,6 +1106,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
+        funding_source_account: Some(disburser_funding_source(disburser)),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -1078,7 +1163,20 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let disburser_staging = Account { owner: disburser, subaccount: None };
     let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((disburser_staging, 100_000_000u64))?)?;
 
+    let faucet_balance_before = icrc1_balance(&pic, ledger, &accounts.payout)?;
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
+    tick_n(&pic, 10);
+    let faucet_balance_after = icrc1_balance(&pic, ledger, &accounts.payout)?;
+    let funding_amount = faucet_balance_after
+        .checked_sub(faucet_balance_before)
+        .ok_or_else(|| anyhow!("faucet payout balance decreased during disburser tick"))?;
+    append_faucet_funding_tranche(
+        &pic,
+        index,
+        &disburser_funding_source(disburser),
+        &accounts.payout,
+        funding_amount,
+    )?;
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
     pic.advance_time(Duration::from_secs(2));
     let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;

@@ -183,6 +183,11 @@ fn debug_reset() {
 
 #[ic_cdk::update]
 fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> u64 {
+    debug_append_transfer_from("mock-sender".to_string(), to, amount_e8s, memo)
+}
+
+#[ic_cdk::update]
+fn debug_append_transfer_from(from: String, to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> u64 {
     ST.with(|s| {
         let mut st = s.borrow_mut();
         st.next_id = st.next_id.saturating_add(1);
@@ -195,7 +200,7 @@ fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> 
                 operation: IndexOperation::Transfer {
                     to,
                     fee: Tokens { e8s: 10_000 },
-                    from: "mock-sender".to_string(),
+                    from,
                     amount: Tokens { e8s: amount_e8s },
                     spender: None,
                 },

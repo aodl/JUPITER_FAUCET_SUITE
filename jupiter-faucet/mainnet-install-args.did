@@ -9,11 +9,15 @@
     index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
     cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
     governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
+    funding_source_account = opt record {
+      owner = principal "uccpi-cqaaa-aaaar-qby3q-cai";
+      subaccount = null;
+    };
     rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
     blackhole_controller = opt principal "77deu-baaaa-aaaar-qb6za-cai";
     blackhole_armed = null;
     expected_first_staking_tx_id = opt (31118741 : nat64);
-    main_interval_seconds = opt 604800;
+    main_interval_seconds = opt 86400;
     rescue_interval_seconds = opt 86400;
     min_tx_e8s = opt 100000000;
     stake_recognition_delay_seconds = opt 86400;

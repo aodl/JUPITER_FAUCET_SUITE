@@ -33,16 +33,21 @@ By default the canister talks to:
 
 ## High-level payout model
 
-Each payout job works from two snapshots taken at the beginning of the job:
+Each Disburser-to-Faucet transfer into the faucet payout account creates one payout pot. The faucet requires a configured `funding_source_account`, scans the payout account history, selects the oldest unprocessed inbound transfer from that account, and processes exactly that transfer amount as one chronological tranche.
 
-- `pot_start_e8s` = current ICP balance of the faucet payout account
-- `denom_staking_balance_e8s` = current ICP balance of the configured staking account
+Each payout job works from the funding tranche and staking-account state bounded by that funding transfer:
+
+- `pot_start_e8s` = funding tranche amount, not the full live payout account balance
+- `denom_staking_balance_e8s` = current ICP balance of the configured staking account, retained as an operational/live snapshot
+- `effective_denom_staking_balance_e8s` = denominator actually used for tranche allocation after applying the funding boundary, stake-recognition delay, and time weighting
 
 The faucet then scans the staking account’s indexed transfer history from the beginning in a streaming, page-by-page pass and evaluates each eligible incoming transfer independently.
 
 For each eligible commitment it computes:
 
-`gross_share = floor(commitment_amount * pot_start / denom_staking_balance)`
+`gross_share = floor(commitment_amount_for_tranche * pot_start / effective_denom_staking_balance)`
+
+Commitments after the funding transfer transaction ID are excluded from that tranche, even if they are older than the stake-recognition delay by the time the faucet executes. Multiple unprocessed funding transfers are intentionally not aggregated; each main tick creates or resumes at most one funding-tranche payout job.
 
 If `gross_share` is greater than the current ledger fee, the faucet:
 
@@ -215,7 +220,7 @@ The faucet uses a fixed ledger memo equal to `TopUpCanister` (`1_347_768_404` as
 
 Default timers are:
 
-- `main_interval_seconds = 7 days`
+- `main_interval_seconds = 1 day`
 - `rescue_interval_seconds = 1 day`
 - index page size = `500`
 
@@ -236,14 +241,15 @@ On each successful main tick, the canister:
    - current ledger fee
    - payout-account balance
    - staking-account balance
-4. if the payout pot is too small or the denominator is zero, it performs only index-health probing and bootstrap-rescue checks
-5. otherwise, creates an `ActivePayoutJob`
-6. scans the staking account through the ICP index canister, page by page
-7. evaluates each eligible incoming transfer independently
-8. for each eligible beneficiary commitment, performs ledger transfer then `notify_top_up`
-9. if a transfer fails before acceptance or a post-acceptance notify fails, retries that step immediately once in-line
-10. when scanning is complete, optionally sends the remainder-to-self top-up
-11. finalizes the job into a persisted summary and applies health observations
+4. selects the oldest unprocessed Disburser-to-Faucet funding transfer as the payout pot
+5. if there is no unprocessed funding transfer, the payout pot is too small, or the denominator is zero, it performs only index-health probing and bootstrap-rescue checks
+6. otherwise, creates an `ActivePayoutJob`
+7. scans the staking account through the ICP index canister, page by page
+8. evaluates each eligible incoming transfer independently
+9. for each eligible beneficiary commitment, performs ledger transfer then `notify_top_up`
+10. if a transfer fails before acceptance or a post-acceptance notify fails, retries that step immediately once in-line
+11. when scanning is complete, optionally sends the remainder-to-self top-up
+12. finalizes the job into a persisted summary and applies health observations
 
 ## Retry and failure behavior
 
@@ -348,13 +354,17 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `index_canister_id` (optional; defaults to ICP Index)
 - `cmc_canister_id` (optional; defaults to the Cycles Minting Canister)
 - `governance_canister_id` (optional; defaults to NNS Governance)
+- `funding_source_account` (required)
+  - the Jupiter Disburser account whose indexed transfers into the payout account define chronological payout tranches
+  - the runtime config cannot represent an unset funding source; init traps if this argument is missing
+  - this faucet starts life in strict funding-tranche mode, with no legacy live-balance mode to migrate from
 - `rescue_controller`
 - `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the faucet canister principal or `rescue_controller`)
 - `blackhole_armed` (optional)
 - `expected_first_staking_tx_id` (optional)
   - a safety anchor for the oldest expected staking-account transaction **ID** visible through the index canister
   - type: `opt nat64`
-- `main_interval_seconds` (optional; defaults to 7 days)
+- `main_interval_seconds` (optional; defaults to 1 day)
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `1 ICP`; must be at least `0.1 ICP`)
   - upgrades already clear persisted skip ranges before resuming, so any rescue-time threshold change will cause historical staking activity to be re-scanned from first principles
@@ -394,7 +404,8 @@ The committed mainnet install args wire the current production constants used by
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - index canister: ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
-- `main_interval_seconds = 604800`
+- funding source account: Jupiter Disburser default account (`uccpi-cqaaa-aaaar-qby3q-cai`, with `subaccount = null`)
+- `main_interval_seconds = 86400`
 - `rescue_interval_seconds = 86400`
 - `min_tx_e8s = 100000000` (`1 ICP`, with an enforced hard floor of `10000000` / `0.1 ICP`)
 

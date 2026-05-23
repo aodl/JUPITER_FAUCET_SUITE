@@ -1,4 +1,63 @@
 use super::*;
+
+pub(super) async fn oldest_unprocessed_funding_tranche(
+    index: &impl IndexClient,
+    payout_account_identifier: String,
+    funding_source_account_identifier: String,
+    last_processed_funding_tx_id: Option<u64>,
+    fee_e8s: u64,
+) -> Option<FundingTranche> {
+    let mut cursor = None;
+    let mut candidate: Option<FundingTranche> = None;
+    let mut pages_scanned = 0u64;
+    loop {
+        if pages_scanned >= MAX_INDEX_PAGES_PER_LATEST_SCAN {
+            return None;
+        }
+        pages_scanned = pages_scanned.saturating_add(1);
+        let resp = index
+            .get_account_identifier_transactions(payout_account_identifier.clone(), cursor, PAGE_SIZE)
+            .await
+            .ok()?;
+        let descending = index_page_descending_from_cursor(&resp.transactions, cursor);
+        for tx in &resp.transactions {
+            if !tx_is_after_cursor_for_page(tx.id, cursor, descending) {
+                continue;
+            }
+            if last_processed_funding_tx_id.map(|last| tx.id <= last).unwrap_or(false) {
+                if descending {
+                    return candidate;
+                }
+                continue;
+            }
+            let IndexOperation::Transfer { from, to, amount, .. } = &tx.transaction.operation else {
+                continue;
+            };
+            if from == &funding_source_account_identifier
+                && to == &payout_account_identifier
+                && amount.e8s() > fee_e8s
+            {
+                let timestamp_nanos = logic::index_tx_timestamp_nanos(tx)?;
+                let tranche = FundingTranche {
+                    tx_id: tx.id,
+                    timestamp_nanos,
+                    amount_e8s: amount.e8s(),
+                };
+                if !descending {
+                    return Some(tranche);
+                }
+                if candidate.map(|existing| tranche.tx_id < existing.tx_id).unwrap_or(true) {
+                    candidate = Some(tranche);
+                }
+            }
+        }
+        if resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty() {
+            return candidate;
+        }
+        cursor = index_page_next_cursor(&resp.transactions);
+    }
+}
+
 pub(super) async fn process_payout(
     ledger: &impl LedgerClient,
     index: &impl IndexClient,
@@ -13,31 +72,42 @@ pub(super) async fn process_payout(
 
     if state::with_state(|st| st.active_payout_job.is_none()) {
         let fee_e8s = match ledger.fee_e8s().await { Ok(v) => v, Err(_) => return false };
-        let pot_start_e8s = match ledger.balance_of_e8s(payout_account()).await { Ok(v) => v, Err(_) => return false };
+        let payout_balance_e8s = match ledger.balance_of_e8s(payout_account()).await { Ok(v) => v, Err(_) => return false };
         let denom_e8s = match ledger.balance_of_e8s(cfg.staking_account.clone()).await { Ok(v) => v, Err(_) => return false };
-        if pot_start_e8s <= fee_e8s || denom_e8s == 0 {
+        if payout_balance_e8s <= fee_e8s || denom_e8s == 0 {
             probe_index_health(index, &staking_id, denom_e8s).await;
             maybe_latch_bootstrap_rescue(now_secs);
             return true;
         }
-        let (have_round_snapshot, stake_unchanged_since_round_start, round_start_latest_tx_id) = state::with_state(|st| {
-            let have_snapshot = st.current_round_start_time_nanos.is_some() && st.current_round_start_staking_balance_e8s.is_some();
-            let stake_unchanged = st.current_round_start_staking_balance_e8s == Some(denom_e8s);
-            (have_snapshot, stake_unchanged, st.current_round_start_latest_tx_id)
-        });
-        let round_end_latest_tx_id = if have_round_snapshot {
-            if stake_unchanged_since_round_start {
-                round_start_latest_tx_id
-            } else {
-                match scan_latest_tx_id(index, staking_id.clone(), state::with_state(|st| st.last_observed_latest_tx_id)).await {
-                    LatestScan::Read(latest_tx_id) => latest_tx_id,
-                    LatestScan::Unreadable | LatestScan::InvariantBroken => return false,
-                }
-            }
-        } else {
-            None
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let last_processed = state::with_state(|st| st.last_processed_funding_tx_id);
+        let Some(funding_tranche) = oldest_unprocessed_funding_tranche(
+            index,
+            payout_id,
+            funding_source_id,
+            last_processed,
+            fee_e8s,
+        )
+        .await else {
+            probe_index_health(index, &staking_id, denom_e8s).await;
+            maybe_latch_bootstrap_rescue(now_secs);
+            return true;
         };
-        ensure_active_job(now_nanos, fee_e8s, pot_start_e8s, denom_e8s, round_end_latest_tx_id);
+        if payout_balance_e8s < funding_tranche.amount_e8s {
+            return false;
+        }
+        let pot_start_e8s = funding_tranche.amount_e8s;
+        let round_end_latest_tx_id = Some(funding_tranche.tx_id);
+        ensure_active_job_with_boundary(
+            now_nanos,
+            fee_e8s,
+            pot_start_e8s,
+            denom_e8s,
+            funding_tranche.timestamp_nanos,
+            round_end_latest_tx_id,
+            Some(funding_tranche),
+        );
     }
 
     // Skip ranges are a durable cache of barren tx-id spans discovered by earlier jobs.
@@ -69,6 +139,7 @@ pub(super) async fn process_payout(
             let descending = index_page_descending_from_cursor(&resp.transactions, job.next_start);
             let mut page_next_start = job.next_start;
             let mut denom_delta_e8s = 0u64;
+            let mut round_end_staking_delta_e8s = 0u64;
             let mut reached_round_end = false;
             let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
             let round_start_time_nanos = job.round_start_time_nanos.unwrap_or(job.round_end_time_nanos.unwrap_or(now_nanos));
@@ -79,6 +150,7 @@ pub(super) async fn process_payout(
                 if !tx_is_after_cursor_for_page(tx.id, job.next_start, descending) {
                     continue;
                 }
+                page_next_start = Some(tx.id);
                 if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
                     if descending {
                         continue;
@@ -86,11 +158,13 @@ pub(super) async fn process_payout(
                     reached_round_end = true;
                     break;
                 }
-                page_next_start = Some(tx.id);
                 let Some(commitment) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
                     continue;
                 };
                 if !matches!(logic::classify_commitment(min_tx_e8s, &commitment), logic::CommitmentValidity::Valid { .. }) {
+                    continue;
+                }
+                if job.round_start_latest_tx_id.map(|start| tx.id <= start).unwrap_or(false) {
                     continue;
                 }
                 let weighted_amount_e8s = logic::commitment_amount_for_round_e8s(
@@ -104,6 +178,12 @@ pub(super) async fn process_payout(
                     recognition_delay_seconds,
                 ).unwrap_or(0);
                 denom_delta_e8s = denom_delta_e8s.saturating_add(weighted_amount_e8s);
+                if logic::index_tx_timestamp_nanos(tx)
+                    .map(|timestamp| logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
+                    .unwrap_or(false)
+                {
+                    round_end_staking_delta_e8s = round_end_staking_delta_e8s.saturating_add(commitment.amount_e8s);
+                }
             }
 
             let scan_complete = reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty();
@@ -114,6 +194,12 @@ pub(super) async fn process_payout(
                             .effective_denom_staking_balance_e8s
                             .unwrap_or(active_job.round_start_staking_balance_e8s.unwrap_or(active_job.denom_staking_balance_e8s))
                             .saturating_add(denom_delta_e8s)
+                    );
+                    active_job.round_end_staking_balance_e8s = Some(
+                        active_job
+                            .round_end_staking_balance_e8s
+                            .unwrap_or(active_job.round_start_staking_balance_e8s.unwrap_or(active_job.denom_staking_balance_e8s))
+                            .saturating_add(round_end_staking_delta_e8s)
                     );
                     if scan_complete {
                         active_job.effective_denom_scan_complete = Some(true);

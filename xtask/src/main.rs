@@ -488,6 +488,7 @@ struct FaucetDebugConfig {
     index_canister_id: Principal,
     cmc_canister_id: Principal,
     governance_canister_id: Principal,
+    funding_source_account: Account,
     rescue_controller: Principal,
     blackhole_controller: Option<Principal>,
     blackhole_armed: Option<bool>,
@@ -886,6 +887,32 @@ fn account_to_candid(account: &Account) -> String {
     )
 }
 
+fn local_faucet_funding_source_account() -> Result<Account> {
+    Ok(Account {
+        owner: Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai")?,
+        subaccount: None,
+    })
+}
+
+fn local_faucet_funding_source_candid() -> Result<String> {
+    Ok(account_to_candid(&local_faucet_funding_source_account()?))
+}
+
+fn append_local_faucet_funding_tranche(payout: &Account, amount_e8s: u64) -> Result<u64> {
+    let cfg: FaucetDebugConfig = call_raw_noargs("jupiter_faucet_dbg", "debug_config")?;
+    let funding_source = cfg.funding_source_account;
+    let funding_source_id = account_identifier_text(funding_source.owner, funding_source.subaccount);
+    let payout_id = account_identifier_text(payout.owner, payout.subaccount);
+    call_raw(
+        "mock_icp_index",
+        "debug_append_transfer_from",
+        &format!(
+            "(\"{}\", \"{}\", {}:nat64, null)",
+            funding_source_id, payout_id, amount_e8s
+        ),
+    )
+}
+
 fn relay_local_logs(canister_name: &str) -> Result<String> {
     run_icp_with_identity(&[
         "canister",
@@ -1141,6 +1168,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
     let blackhole_id = canister_id("mock_blackhole")?;
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
+    let funding_source = local_faucet_funding_source_candid()?;
     let faucet_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
@@ -1149,6 +1177,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             governance_canister_id = opt principal "{gov_id}";
+            funding_source_account = opt {funding_source};
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1165,6 +1194,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
         gov_id = gov_id.trim(),
+        funding_source = funding_source,
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
@@ -1230,6 +1260,10 @@ fn cmd_setup_historian_local() -> Result<()> {
 
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
+    let funding_source = account_to_candid(&Account {
+        owner: Principal::from_text(disb_id.trim())?,
+        subaccount: None,
+    });
     let faucet_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
@@ -1238,6 +1272,7 @@ fn cmd_setup_historian_local() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             governance_canister_id = opt principal "{gov_id}";
+            funding_source_account = opt {funding_source};
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1254,6 +1289,7 @@ fn cmd_setup_historian_local() -> Result<()> {
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
         gov_id = gov_id.trim(),
+        funding_source = funding_source,
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
@@ -1423,6 +1459,10 @@ fn cmd_setup() -> Result<()> {
 
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
+    let funding_source = account_to_candid(&Account {
+        owner: Principal::from_text(disb_id.trim())?,
+        subaccount: None,
+    });
     let faucet_args = format!(
         r#"(record {{
             staking_account = record {{ owner = principal "{staking_owner}"; subaccount = opt blob "{staking_subaccount}" }};
@@ -1431,6 +1471,7 @@ fn cmd_setup() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             governance_canister_id = opt principal "{gov_id}";
+            funding_source_account = opt {funding_source};
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1447,6 +1488,7 @@ fn cmd_setup() -> Result<()> {
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
         gov_id = gov_id.trim(),
+        funding_source = funding_source,
         faucet_rescue = faucet_rescue.to_text(),
         blackhole_id = blackhole_id.trim(),
     );
@@ -2039,6 +2081,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_repeated_transfer",
             &format!("(\"{}\", 3:nat64, 100000000:nat64, {})", staking_id, memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 90_000_000)?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
 
@@ -2084,6 +2127,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
 
@@ -2141,6 +2185,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                 "debug_credit",
                 &format!("({}, {}:nat64)", account_to_candid(&accounts.payout), pot),
             )?;
+            let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, pot)?;
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
             let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
             let summary = summary.context("expected faucet summary after payout job")?;
@@ -2185,7 +2230,6 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_credit",
             &format!("({}, 120000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
-
         let _: u64 = call_raw(
             "mock_icp_index",
             "debug_append_repeated_transfer",
@@ -2206,6 +2250,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 300000000:nat64, {})", staking_id, good_memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 120_000_000)?;
 
         let mut summary: Option<FaucetSummary> = None;
         for _ in 0..5 {
@@ -2261,6 +2306,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
 
         let _: () = call_raw("mock_cmc", "debug_set_script", "(vec { variant { Processing }; variant { Ok } })")?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
@@ -2317,6 +2363,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo_b),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
@@ -2354,6 +2401,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_credit",
             &format!("({}, 100000000:nat64)", account_to_candid(&accounts.payout)),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
@@ -2470,6 +2518,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, opt_blob_to_candid(Some(short_test_principal().to_text().as_bytes()))),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
@@ -2515,6 +2564,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_set_next_error",
@@ -2560,6 +2610,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
         let _: () = call_raw(
             "mock_icrc_ledger",
             "debug_set_next_error",
@@ -2610,6 +2661,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "debug_append_transfer",
             &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
         )?;
+        let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
         let _: () = call_raw(
             "mock_cmc",
             "debug_set_script",
@@ -2674,6 +2726,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                 "debug_append_transfer",
                 &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
             )?;
+            let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
             let _: () = call_raw("mock_cmc", "debug_set_script", script)?;
 
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
@@ -2724,6 +2777,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                 "debug_append_transfer",
                 &format!("(\"{}\", 100000000:nat64, {})", staking_id, memo),
             )?;
+            let _: u64 = append_local_faucet_funding_tranche(&accounts.payout, 100_000_000)?;
             let _: () = call_raw("mock_icrc_ledger", "debug_set_next_error", err_arg)?;
 
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
@@ -2762,11 +2816,15 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             && cfg.index_canister_id == mainnet_index_principal()
             && cfg.cmc_canister_id == mainnet_cmc_principal()
             && cfg.governance_canister_id == mainnet_governance_principal()
+            && cfg.funding_source_account == Account {
+                owner: Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai")?,
+                subaccount: None,
+            }
             && cfg.rescue_controller == prod_lifeline_principal()
             && cfg.blackhole_controller == Some(mainnet_blackhole_principal())
             && cfg.blackhole_armed.is_none()
             && cfg.expected_first_staking_tx_id == Some(31_118_741)
-            && cfg.main_interval_seconds == 604_800
+            && cfg.main_interval_seconds == 86_400
             && cfg.rescue_interval_seconds == 86_400
             && cfg.min_tx_e8s == 100_000_000;
         if !ok {
@@ -3938,7 +3996,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             &format!(r#"(principal "{}", opt (5000000000000:nat), vec {{ principal "{}" }})"#, cmc_id.to_text(), blackhole_id.trim()),
         )?;
         let relay_account = Account { owner: Principal::from_text(canister_id("jupiter_relay_dbg")?.trim())?, subaccount: None };
-        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 100000000:nat64)", account_to_candid(&relay_account)))?;
+        let _: () = call_raw("mock_icrc_ledger", "debug_credit", &format!("({}, 5000000000:nat64)", account_to_candid(&relay_account)))?;
 
         let _: () = call_raw_noargs::<()>("jupiter_relay_dbg", "debug_main_tick")?;
         let summary: Option<RelaySummary> = call_raw_noargs("jupiter_relay_dbg", "debug_last_summary")?;

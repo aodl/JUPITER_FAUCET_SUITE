@@ -108,6 +108,27 @@ fn run_faucet_round(pic: &PocketIc, faucet: Principal, phase: &str) -> Result<Fa
     summary.ok_or_else(|| anyhow!("{phase}: expected faucet summary after payout round"))
 }
 
+fn append_faucet_funding_tx(
+    pic: &PocketIc,
+    index: Principal,
+    disburser: Principal,
+    payout: &Account,
+    amount_e8s: u64,
+) -> Result<u64> {
+    update_bytes(
+        pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer_from",
+        encode_args((
+            account_identifier_text(disburser, None),
+            account_identifier_text(payout.owner, payout.subaccount),
+            amount_e8s,
+            None::<Vec<u8>>,
+        ))?,
+    )
+}
+
 fn effective_gross_beneficiary_e8s(summary: &FaucetSummary) -> Result<u128> {
     if summary.topped_up_count != 1 {
         bail!("expected exactly one beneficiary top-up when computing effective gross payout share: {summary:?}");
@@ -184,6 +205,7 @@ struct FaucetInitArg {
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
+    funding_source_account: Option<Account>,
     rescue_controller: Principal,
     blackhole_controller: Option<Principal>,
     blackhole_armed: Option<bool>,
@@ -4968,11 +4990,33 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         }
     }
 
+    fn append_funding_tx(
+        pic: &PocketIc,
+        index: Principal,
+        disburser: Principal,
+        payout: &Account,
+        amount_e8s: u64,
+    ) -> Result<u64> {
+        update_bytes(
+            pic,
+            index,
+            Principal::anonymous(),
+            "debug_append_transfer_from",
+            encode_args((
+                account_identifier_text(disburser, None),
+                account_identifier_text(payout.owner, payout.subaccount),
+                amount_e8s,
+                None::<Vec<u8>>,
+            ))?,
+        )
+    }
+
     fn finish_round_after_reward(
         pic: &PocketIc,
         ledger: Principal,
         gov: Principal,
         disburser: Principal,
+        index: Principal,
         controller: Principal,
         neuron_id: u64,
         faucet: Principal,
@@ -4990,6 +5034,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             phase,
             payout,
         )?;
+        append_funding_tx(pic, index, disburser, payout, pot)?;
         let backlog = maturity_before_stage.saturating_sub(maturity_delta);
         if backlog > ICP_LEDGER_FEE_E8S * 10 {
             bail!(
@@ -5016,6 +5061,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         ledger: Principal,
         gov: Principal,
         disburser: Principal,
+        index: Principal,
         controller: Principal,
         neuron_id: u64,
         whale_id: u64,
@@ -5031,6 +5077,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             ledger,
             gov,
             disburser,
+            index,
             controller,
             neuron_id,
             faucet,
@@ -5081,6 +5128,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             ledger_canister_id: Some(ledger),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
+            funding_source_account: Some(Account { owner: disburser, subaccount: None }),
             rescue_controller: fixture_principal(),
             blackhole_controller: Some(test_blackhole_controller()),
             blackhole_armed: Some(false),
@@ -5132,7 +5180,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
 
         let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
         if preexisting > 0 {
-            let _ = stage_existing_maturity_to_faucet(
+            let (warmup_pot, _, _) = stage_existing_maturity_to_faucet(
                 &pic,
                 ledger,
                 gov,
@@ -5142,6 +5190,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 "mitigated-timing-warmup-drain",
                 &payout,
             )?;
+            append_funding_tx(&pic, index, disburser, &payout, warmup_pot)?;
             let _ = run_faucet_round(&pic, faucet, "mitigated-timing-warmup-drain")?;
         }
         let post_warmup = get_full_neuron(&pic, gov, controller, neuron_id)?;
@@ -5159,6 +5208,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             ledger,
             gov,
             disburser,
+            index,
             controller,
             neuron_id,
             whale_id,
@@ -5188,6 +5238,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 "mitigated-timing-round2-late-top-up-stage",
                 &payout,
             )?;
+            append_funding_tx(&pic, index, disburser, &payout, pot)?;
             let backlog = maturity_before_stage.saturating_sub(maturity_delta);
             if backlog > ICP_LEDGER_FEE_E8S * 10 {
                 bail!(
@@ -5198,11 +5249,10 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                     backlog,
                 );
             }
-            // Make the second valid commitment land only after the round's payout pot has
-            // already been staged to the faucet but immediately before the faucet snapshots the
-            // denominator. With the faucet's conservative one-day stake-recognition delay, this
-            // should leave the affected-round effective denominator unchanged even though live
-            // stake has already increased by payout time.
+            // Make the second valid commitment land after the round's payout pot has already
+            // been staged to the faucet, then age it beyond the stake-recognition delay before
+            // the faucet runs. Funding-tranche accounting must still exclude it from the
+            // already-funded pot.
             apply_top_up(
                 &pic,
                 ledger,
@@ -5214,7 +5264,8 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 extra_top_up_e8s,
                 &late_memo,
             )?;
-            let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-late-top-up")?;
+            advance_time_steps(&pic, 3 * DAY_SECS, 6 * 60 * 60, 10);
+            let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-post-funding-aged-late-top-up")?;
             if summary.pot_start_e8s != pot {
                 bail!(
                     "mitigated-timing-round2-late-top-up: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
@@ -5229,6 +5280,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 ledger,
                 gov,
                 disburser,
+                index,
                 controller,
                 neuron_id,
                 whale_id,
@@ -5244,6 +5296,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             ledger,
             gov,
             disburser,
+            index,
             controller,
             neuron_id,
             whale_id,
@@ -5409,11 +5462,33 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         }
     }
 
+    fn append_funding_tx(
+        pic: &PocketIc,
+        index: Principal,
+        disburser: Principal,
+        payout: &Account,
+        amount_e8s: u64,
+    ) -> Result<u64> {
+        update_bytes(
+            pic,
+            index,
+            Principal::anonymous(),
+            "debug_append_transfer_from",
+            encode_args((
+                account_identifier_text(disburser, None),
+                account_identifier_text(payout.owner, payout.subaccount),
+                amount_e8s,
+                None::<Vec<u8>>,
+            ))?,
+        )
+    }
+
     fn finish_round_after_reward(
         pic: &PocketIc,
         ledger: Principal,
         gov: Principal,
         disburser: Principal,
+        index: Principal,
         controller: Principal,
         neuron_id: u64,
         faucet: Principal,
@@ -5431,6 +5506,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             phase,
             payout,
         )?;
+        append_funding_tx(pic, index, disburser, payout, pot)?;
         let backlog = maturity_before_stage.saturating_sub(maturity_delta);
         if backlog > ICP_LEDGER_FEE_E8S * 10 {
             bail!(
@@ -5457,6 +5533,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         ledger: Principal,
         gov: Principal,
         disburser: Principal,
+        index: Principal,
         controller: Principal,
         neuron_id: u64,
         whale_id: u64,
@@ -5472,6 +5549,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             ledger,
             gov,
             disburser,
+            index,
             controller,
             neuron_id,
             faucet,
@@ -5521,6 +5599,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             ledger_canister_id: Some(ledger),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
+            funding_source_account: Some(Account { owner: disburser, subaccount: None }),
             rescue_controller: fixture_principal(),
             blackhole_controller: Some(test_blackhole_controller()),
             blackhole_armed: Some(false),
@@ -5572,7 +5651,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
 
         let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
         if preexisting > 0 {
-            let _ = stage_existing_maturity_to_faucet(
+            let (warmup_pot, _, _) = stage_existing_maturity_to_faucet(
                 &pic,
                 ledger,
                 gov,
@@ -5582,6 +5661,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
                 "mitigated-invalid-timing-warmup-drain",
                 &payout,
             )?;
+            append_funding_tx(&pic, index, disburser, &payout, warmup_pot)?;
             let _ = run_faucet_round(&pic, faucet, "mitigated-invalid-timing-warmup-drain")?;
         }
         let post_warmup = get_full_neuron(&pic, gov, controller, neuron_id)?;
@@ -5599,6 +5679,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             ledger,
             gov,
             disburser,
+            index,
             controller,
             neuron_id,
             whale_id,
@@ -5628,6 +5709,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
                 "mitigated-invalid-timing-round2-late-top-up-stage",
                 &payout,
             )?;
+            append_funding_tx(&pic, index, disburser, &payout, pot)?;
             let backlog = maturity_before_stage.saturating_sub(maturity_delta);
             if backlog > ICP_LEDGER_FEE_E8S * 10 {
                 bail!(
@@ -5667,6 +5749,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
                 ledger,
                 gov,
                 disburser,
+                index,
                 controller,
                 neuron_id,
                 whale_id,
@@ -5682,6 +5765,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             ledger,
             gov,
             disburser,
+            index,
             controller,
             neuron_id,
             whale_id,
@@ -5743,9 +5827,12 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             treatment.round2,
         );
     }
-    if treatment.round2.ignored_bad_memo != 1 {
+    // Invalid commitments are counted only when they fall within the tranche boundary being
+    // evaluated. This malformed top-up was appended after round 2's funding transfer, so it is
+    // outside the affected tranche and is not included in round 2's bad-memo count.
+    if treatment.round2.ignored_bad_memo != 0 {
         bail!(
-            "expected the late invalid commitment to be recorded as one ignored bad memo in the affected round; treatment_round2={:?}",
+            "expected the post-funding invalid commitment to be outside the affected tranche scan; treatment_round2={:?}",
             treatment.round2,
         );
     }
@@ -5774,7 +5861,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
     }
     if round2_gap > ICP_LEDGER_FEE_E8S as u128 {
         bail!(
-            "expected weighted round accounting plus invalid-memo exclusion to prevent a late invalid top-up from pinching the existing beneficiary in the affected round; control_round2_gross={} treatment_round2_gross={} gap={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={} treatment_round2_ignored_bad_memo={}",
+            "expected funding-tranche accounting plus invalid-memo exclusion to prevent a post-funding invalid top-up from pinching the existing beneficiary in the affected round; control_round2_gross={} treatment_round2_gross={} gap={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={} treatment_round2_ignored_bad_memo={}",
             control.round2.gross,
             treatment.round2.gross,
             round2_gap,
@@ -5841,6 +5928,7 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
+        funding_source_account: Some(Account { owner: disburser, subaccount: None }),
         rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
@@ -5875,6 +5963,7 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
     let (warmup_pot, warmup_before_stage, warmup_after_stage) = stage_existing_maturity_to_faucet(
         &pic, ledger, gov, disburser, controller, neuron_id, "warmup-drain", &payout,
     )?;
+    append_faucet_funding_tx(&pic, index, disburser, &payout, warmup_pot)?;
     let warmup = query_call::<_, Option<FaucetSummary>>(&pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
     let _ = run_faucet_round(&pic, faucet, "warmup-drain")?;
     let after = get_full_neuron(&pic, gov, controller, neuron_id)?;
@@ -5945,6 +6034,7 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
+        funding_source_account: Some(Account { owner: disburser, subaccount: None }),
         rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
@@ -5984,7 +6074,8 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
 
     let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
     if preexisting > 0 {
-        let _ = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, "baseline-stability-warmup", &payout)?;
+        let (pot, _, _) = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, "baseline-stability-warmup", &payout)?;
+        append_faucet_funding_tx(&pic, index, disburser, &payout, pot)?;
         let _ = run_faucet_round(&pic, faucet, "baseline-stability-warmup")?;
     }
 
@@ -5997,6 +6088,7 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
         let delta = earn_one_reward_cycle_with_whale(&pic, gov, controller, neuron_id, whale_id, &phase, proposal_seq)?;
         let after_reward = get_full_neuron(&pic, gov, controller, neuron_id)?;
         let (pot, before_stage, after_stage) = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, &phase, &payout)?;
+        append_faucet_funding_tx(&pic, index, disburser, &payout, pot)?;
         let summary = run_faucet_round(&pic, faucet, &phase)?;
         let gross = effective_gross_beneficiary_e8s(&summary)? as u128;
         let backlog = before_stage.saturating_sub(delta);

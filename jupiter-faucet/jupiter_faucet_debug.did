@@ -8,6 +8,7 @@ type InitArgs = record {
   index_canister_id : opt principal;
   cmc_canister_id : opt principal;
   governance_canister_id : opt principal;
+  funding_source_account : opt Account;
 
   rescue_controller : principal;
   blackhole_controller : opt principal;
@@ -40,6 +41,7 @@ type DebugConfig = record {
   index_canister_id : principal;
   cmc_canister_id : principal;
   governance_canister_id : principal;
+  funding_source_account : Account;
   rescue_controller : principal;
   blackhole_controller : opt principal;
   blackhole_armed : opt bool;

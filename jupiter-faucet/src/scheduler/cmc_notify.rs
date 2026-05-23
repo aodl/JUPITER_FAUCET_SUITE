@@ -176,8 +176,14 @@ pub(super) async fn finalize_completed_job(status_client: &impl CanisterStatusCl
         apply_job_health_observations(st, &job, zero_success_run_counts);
         if let Some(round_end_time_nanos) = job.round_end_time_nanos {
             st.current_round_start_time_nanos = Some(round_end_time_nanos);
-            st.current_round_start_staking_balance_e8s = Some(job.denom_staking_balance_e8s);
+            st.current_round_start_staking_balance_e8s = Some(
+                job.round_end_staking_balance_e8s
+                    .unwrap_or(job.denom_staking_balance_e8s),
+            );
             st.current_round_start_latest_tx_id = job.round_end_latest_tx_id.or(job.observed_latest_tx_id);
+        }
+        if let Some(funding_tx_id) = job.funding_tx_id {
+            st.last_processed_funding_tx_id = Some(funding_tx_id);
         }
         let summary = logic::summary_from_job(&job);
         st.last_summary = Some(summary.clone());
@@ -185,4 +191,3 @@ pub(super) async fn finalize_completed_job(status_client: &impl CanisterStatusCl
     });
     log_summary(&summary);
 }
-

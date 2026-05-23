@@ -11,7 +11,7 @@ pub(super) use crate::clients::cmc::CyclesMintingCanister;
 pub(super) use crate::clients::governance::NnsGovernanceCanister;
 pub(super) use crate::clients::index::{
     account_identifier_text_for_account, GetAccountIdentifierTransactionsResponse,
-    IcpIndexCanister, IndexTransactionWithId,
+    IcpIndexCanister, IndexOperation, IndexTransactionWithId,
 };
 pub(super) use crate::clients::ledger::IcrcLedgerCanister;
 pub(super) use crate::clients::{CanisterStatusClient, CmcClient, GovernanceClient, IndexClient, LedgerClient};
