@@ -134,31 +134,111 @@ pub(crate) fn compute_weighted_amount_e8s(
     weighted.min(u64::MAX as u128) as u64
 }
 
-pub(crate) fn commitment_amount_for_round_e8s(
+fn effective_commitment_timestamp_nanos(
+    tx_timestamp_nanos: Option<u64>,
+    round_end_time_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> u64 {
+    conservative_effective_timestamp_nanos(
+        tx_timestamp_nanos.unwrap_or(round_end_time_nanos),
+        recognition_delay_seconds,
+    )
+}
+
+pub(crate) fn commitment_delta_for_effective_denominator_e8s(
     commitment: &Commitment,
     tx_id: u64,
     tx_timestamp_nanos: Option<u64>,
-    round_start_latest_tx_id: Option<u64>,
+    round_start_time_nanos: Option<u64>,
     round_end_latest_tx_id: Option<u64>,
-    round_start_time_nanos: u64,
     round_end_time_nanos: u64,
     recognition_delay_seconds: u64,
 ) -> Option<u64> {
     if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
         return None;
     }
+    let Some(round_start_time_nanos) = round_start_time_nanos else {
+        let recognized = tx_timestamp_nanos
+            .map(|timestamp| conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
+            .unwrap_or(false);
+        return Some(if recognized { commitment.amount_e8s } else { 0 });
+    };
+    if round_end_time_nanos <= round_start_time_nanos {
+        return Some(0);
+    }
+    let effective_timestamp_nanos = effective_commitment_timestamp_nanos(
+        tx_timestamp_nanos,
+        round_end_time_nanos,
+        recognition_delay_seconds,
+    );
+    if effective_timestamp_nanos <= round_start_time_nanos || effective_timestamp_nanos >= round_end_time_nanos {
+        return Some(0);
+    }
+    Some(compute_weighted_amount_e8s(
+        commitment.amount_e8s,
+        round_start_time_nanos,
+        round_end_time_nanos,
+        effective_timestamp_nanos,
+    ))
+}
+
+pub(crate) fn commitment_round_end_staking_delta_e8s(
+    commitment: &Commitment,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    round_start_time_nanos: Option<u64>,
+    round_end_latest_tx_id: Option<u64>,
+    round_end_time_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
+        return None;
+    }
+    let Some(timestamp) = tx_timestamp_nanos else {
+        return Some(0);
+    };
+    let effective_timestamp_nanos = conservative_effective_timestamp_nanos(
+        timestamp,
+        recognition_delay_seconds,
+    );
+    if effective_timestamp_nanos > round_end_time_nanos {
+        return Some(0);
+    }
+    if round_start_time_nanos
+        .map(|start| effective_timestamp_nanos <= start)
+        .unwrap_or(false)
+    {
+        return Some(0);
+    }
+    Some(commitment.amount_e8s)
+}
+
+pub(crate) fn commitment_amount_for_payout_e8s(
+    commitment: &Commitment,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    round_start_time_nanos: Option<u64>,
+    round_end_latest_tx_id: Option<u64>,
+    round_end_time_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
+        return None;
+    }
+    let Some(round_start_time_nanos) = round_start_time_nanos else {
+        let recognized = tx_timestamp_nanos
+            .map(|timestamp| conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
+            .unwrap_or(false);
+        return Some(if recognized { commitment.amount_e8s } else { 0 });
+    };
     // Legacy payout jobs and the one-off transition job do not yet have a meaningful
-    // accumulation window. In those cases we must preserve the historical behavior and
-    // treat in-range commitments as fully eligible for the round instead of letting a
-    // zero-width window collapse their weighted amount to zero.
+    // accumulation window. In those cases preserve the historical behavior.
     if round_end_time_nanos <= round_start_time_nanos {
         return Some(commitment.amount_e8s);
     }
-    if round_start_latest_tx_id.map(|start| tx_id <= start).unwrap_or(false) {
-        return Some(commitment.amount_e8s);
-    }
-    let effective_timestamp_nanos = conservative_effective_timestamp_nanos(
-        tx_timestamp_nanos.unwrap_or(round_end_time_nanos),
+    let effective_timestamp_nanos = effective_commitment_timestamp_nanos(
+        tx_timestamp_nanos,
+        round_end_time_nanos,
         recognition_delay_seconds,
     );
     Some(compute_weighted_amount_e8s(
@@ -203,6 +283,11 @@ pub(crate) fn summary_from_job(job: &ActivePayoutJob) -> Summary {
         pot_remaining_e8s: job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s),
         denom_staking_balance_e8s: job.denom_staking_balance_e8s,
         effective_denom_staking_balance_e8s: job.effective_denom_staking_balance_e8s,
+        funding_tx_id: job.funding_tx_id,
+        funding_amount_e8s: job.funding_amount_e8s,
+        round_end_latest_tx_id: job.round_end_latest_tx_id,
+        round_end_time_nanos: job.round_end_time_nanos,
+        last_processed_funding_tx_id: job.funding_tx_id,
         topped_up_count: job.topped_up_count,
         topped_up_sum_e8s: job.topped_up_sum_e8s,
         topped_up_min_e8s: job.topped_up_min_e8s,
@@ -251,24 +336,58 @@ mod tests {
     }
 
     #[test]
-    fn commitment_amount_for_round_uses_tx_id_boundaries_and_conservative_delay() {
+    fn commitment_amount_helpers_use_funding_and_recognition_boundaries() {
         let commitment = Commitment { amount_e8s: 1_000, memo_bytes: Some(target_canister().to_text().into_bytes()) };
         let round_end_nanos = 100_000_000_000;
         assert_eq!(
-            commitment_amount_for_round_e8s(&commitment, 10, Some(5_000_000_000), Some(20), Some(50), 0, round_end_nanos, 10),
+            commitment_amount_for_payout_e8s(&commitment, 10, Some(5_000_000_000), Some(20_000_000_000), Some(50), round_end_nanos, 10),
             Some(1_000),
         );
         assert_eq!(
-            commitment_amount_for_round_e8s(&commitment, 25, Some(20_000_000_000), Some(20), Some(50), 0, round_end_nanos, 10),
-            Some(700),
+            commitment_delta_for_effective_denominator_e8s(&commitment, 10, Some(5_000_000_000), Some(20_000_000_000), Some(50), round_end_nanos, 10),
+            Some(0),
         );
         assert_eq!(
-            commitment_amount_for_round_e8s(&commitment, 55, Some(20_000_000_000), Some(20), Some(50), 0, round_end_nanos, 10),
+            commitment_amount_for_payout_e8s(&commitment, 25, Some(20_000_000_000), Some(20_000_000_000), Some(50), round_end_nanos, 10),
+            Some(875),
+        );
+        assert_eq!(
+            commitment_delta_for_effective_denominator_e8s(&commitment, 25, Some(20_000_000_000), Some(20_000_000_000), Some(50), round_end_nanos, 10),
+            Some(875),
+        );
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 55, Some(20_000_000_000), Some(20_000_000_000), Some(50), round_end_nanos, 10),
             None,
         );
         assert_eq!(
-            commitment_amount_for_round_e8s(&commitment, 30, None, Some(20), Some(50), 0, round_end_nanos, 10),
+            commitment_amount_for_payout_e8s(&commitment, 30, None, Some(20_000_000_000), Some(50), round_end_nanos, 10),
             Some(0),
+        );
+    }
+
+    #[test]
+    fn commitment_effective_timestamp_equal_to_round_start_is_baseline_not_delta() {
+        let commitment = Commitment { amount_e8s: 1_000, memo_bytes: Some(target_canister().to_text().into_bytes()) };
+        assert_eq!(
+            commitment_delta_for_effective_denominator_e8s(&commitment, 10, Some(20_000_000_000), Some(30_000_000_000), Some(50), 100_000_000_000, 10),
+            Some(0),
+        );
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 10, Some(20_000_000_000), Some(30_000_000_000), Some(50), 100_000_000_000, 10),
+            Some(1_000),
+        );
+    }
+
+    #[test]
+    fn commitment_effective_timestamp_equal_to_funding_boundary_counts_for_genesis_tranche() {
+        let commitment = Commitment { amount_e8s: 1_000, memo_bytes: Some(target_canister().to_text().into_bytes()) };
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 10, Some(90_000_000_000), None, Some(50), 100_000_000_000, 10),
+            Some(1_000),
+        );
+        assert_eq!(
+            commitment_delta_for_effective_denominator_e8s(&commitment, 10, Some(90_000_000_000), None, Some(50), 100_000_000_000, 10),
+            Some(1_000),
         );
     }
 

@@ -49,6 +49,8 @@ For each eligible commitment it computes:
 
 Commitments after the funding transfer transaction ID are excluded from that tranche, even if they are older than the stake-recognition delay by the time the faucet executes. Multiple unprocessed funding transfers are intentionally not aggregated; each main tick creates or resumes at most one funding-tranche payout job.
 
+The Faucet compares staking-account commitment transaction IDs with payout-account funding transaction IDs. This relies on ICP Index transaction IDs being ICP ledger block indices in the global ledger order, not per-account sequence numbers.
+
 If `gross_share` is greater than the current ledger fee, the faucet:
 
 1. sends `gross_share - fee` ICP to the beneficiary’s CMC deposit subaccount
@@ -377,28 +379,39 @@ The production faucet canister was installed before external users were onboarde
 
 Reinstall intentionally discards faucet Wasm/stable state: runtime config, timers, `active_payout_job`, pending notifications, last summary, health counters, forced rescue state, skip ranges, current round snapshot, `last_processed_funding_tx_id`, and `active_funding_scan`. This is acceptable only while no faucet payout has ever completed.
 
+Do not use upgrade for this cutover. The strict-tranche production cutover intentionally uses reinstall because old stable state is not migrated. Use the repo deployment tooling in reinstall mode, with the reviewed production install args:
+
+```bash
+icp canister install jupiter_faucet \
+  --environment ic \
+  --mode reinstall \
+  --argument-file jupiter-faucet/mainnet-install-args.did \
+  --yes
+```
+
 Before reinstall:
 
 - Confirm the faucet canister ID is the intended production principal and will not change.
 - Confirm `payout_subaccount` in the new install args matches the current value, currently expected to be `null`.
-- Record the current faucet payout-account ICP balance.
-- Confirm no faucet payout has ever completed and `debug_last_summary` is `null`.
-- Confirm there is no `active_payout_job` and no pending CMC notification.
-- Confirm no prior Disburser-to-Faucet funding transfer has been processed by the faucet; `last_processed_funding_tx_id` must be `null`.
+- Confirm externally via ICP Ledger / ICP Index history that no Faucet payout transfers have occurred.
+- Confirm externally that no prior Disburser-to-Faucet funding transfer has been consumed by a Faucet payout.
+- Record the current Faucet payout-account ICP balance using a ledger query.
+- Record the current Faucet payout-account transaction history using ICP Index.
 - Confirm the ICP Index shows the expected Disburser-to-Faucet funding transfer or transfers.
 - Confirm `funding_source_account` equals the Disburser default account.
 - Confirm the Disburser `normal_recipient` equals the faucet payout account, including subaccount.
 - Confirm the faucet staking account is the intended Jupiter neuron staking account.
-- Confirm the old faucet will not run another scheduled tick before the reinstall.
+- Confirm the canister principal and payout subaccount from deployment config.
+- Confirm the old Faucet timer will not process the current funds before reinstall.
 - Run `python3 ./scripts/validate-mainnet-install-args` and confirm main/rescue/stake-recognition intervals are each `86400`.
 
 After reinstall:
 
-- Query `debug_config` and confirm `funding_source_account`, `payout_subaccount`, `staking_account`, `main_interval_seconds`, and `rescue_interval_seconds`.
-- Query the payout-account balance and confirm it is unchanged from the pre-reinstall record.
-- Run or wait for the first strict tick.
-- Confirm the first funding tranche was processed and `last_processed_funding_tx_id` matches that funding transfer.
-- Confirm no legacy live-balance payout path is present: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_staking_balance_e8s` must come from indexed staking history bounded by the funding transfer.
+- Query the payout-account balance externally and confirm it is unchanged from the pre-reinstall record.
+- Wait for the first scheduled strict timer tick. Production Faucet exposes no manual main-tick endpoint by design.
+- Verify via ICP Index that outgoing top-up transfers correspond to the expected tranche.
+- Verify the processed funding transfer by comparing ICP Index history with canister summary logs.
+- Confirm no legacy live-balance payout occurred by checking summary logs: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
 
 ### Upgrade args
 

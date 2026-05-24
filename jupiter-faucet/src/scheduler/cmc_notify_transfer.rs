@@ -145,8 +145,21 @@ pub(super) async fn send_and_notify(
     now_secs: u64,
     cmc_id: Principal,
 ) -> bool {
+    let invariant_broken = state::with_state(|st| {
+        st.active_payout_job
+            .as_ref()
+            .map(|job| job.gross_outflow_e8s.saturating_add(pending.gross_share_e8s) > job.pot_start_e8s)
+            .unwrap_or(false)
+    });
+    if invariant_broken {
+        state::with_state_mut(|st| {
+            if st.forced_rescue_reason.is_none() {
+                st.forced_rescue_reason = Some(ForcedRescueReason::AccountingInvariantBroken);
+            }
+        });
+        return false;
+    }
     let created_at_time_nanos = allocate_created_at_time_nanos(now_nanos);
     stage_pending_transfer(pending, created_at_time_nanos);
     drive_pending_transfer(ledger, cmc, governance, cmc_id, fee_e8s, now_nanos, now_secs).await
 }
-

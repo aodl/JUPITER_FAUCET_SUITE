@@ -112,6 +112,8 @@ fn validate_config(cfg: &crate::state::Config) {
         subaccount: cfg.payout_subaccount,
     };
     assert!(cfg.staking_account != payout_account, "staking_account must not equal the faucet payout account");
+    assert!(cfg.funding_source_account != payout_account, "funding_source_account must not equal the faucet payout account");
+    assert!(cfg.funding_source_account != cfg.staking_account, "funding_source_account must not equal staking_account");
     if let Some(blackhole_controller) = cfg.blackhole_controller {
         assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
         assert!(blackhole_controller != self_id, "blackhole_controller must not equal the faucet canister principal");
@@ -637,6 +639,34 @@ mod tests {
             owner: Principal::management_canister(),
             subaccount: Some([9u8; 32]),
         };
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "funding_source_account must not equal the faucet payout account")]
+    fn validate_config_rejects_funding_source_equal_to_payout_account() {
+        let mut cfg = sample_config();
+        cfg.payout_subaccount = Some([7u8; 32]);
+        cfg.funding_source_account = Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([7u8; 32]),
+        };
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "funding_source_account must not equal staking_account")]
+    fn validate_config_rejects_funding_source_equal_to_staking_account() {
+        let mut cfg = sample_config();
+        cfg.funding_source_account = cfg.staking_account;
+        validate_config(&cfg);
+    }
+
+    #[test]
+    #[should_panic(expected = "funding_source_account.owner must not be the anonymous principal")]
+    fn validate_config_rejects_anonymous_funding_source_owner() {
+        let mut cfg = sample_config();
+        cfg.funding_source_account.owner = Principal::anonymous();
         validate_config(&cfg);
     }
 

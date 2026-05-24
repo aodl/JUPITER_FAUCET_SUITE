@@ -218,6 +218,7 @@ pub enum ForcedRescueReason {
     IndexLatestInvariantBroken,
     IndexLatestUnreadable,
     CmcZeroSuccessRuns,
+    AccountingInvariantBroken,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -235,6 +236,16 @@ pub(crate) struct Summary {
     pub denom_staking_balance_e8s: u64,
     #[serde(default)]
     pub effective_denom_staking_balance_e8s: Option<u64>,
+    #[serde(default)]
+    pub funding_tx_id: Option<u64>,
+    #[serde(default)]
+    pub funding_amount_e8s: Option<u64>,
+    #[serde(default)]
+    pub round_end_latest_tx_id: Option<u64>,
+    #[serde(default)]
+    pub round_end_time_nanos: Option<u64>,
+    #[serde(default)]
+    pub last_processed_funding_tx_id: Option<u64>,
     pub topped_up_count: u64,
     pub topped_up_sum_e8s: u64,
     pub topped_up_min_e8s: Option<u64>,

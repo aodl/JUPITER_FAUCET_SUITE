@@ -25,7 +25,7 @@ fn genesis_round_amount_for_commitment_e8s(
     Some(if recognized { commitment.amount_e8s } else { 0 })
 }
 
-fn commitment_amount_for_job_round_e8s(
+fn commitment_delta_for_job_effective_denominator_e8s(
     job: &ActivePayoutJob,
     commitment: &logic::Commitment,
     tx_id: u64,
@@ -34,6 +34,51 @@ fn commitment_amount_for_job_round_e8s(
     recognition_delay_seconds: u64,
 ) -> Option<u64> {
     let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
+    logic::commitment_delta_for_effective_denominator_e8s(
+        commitment,
+        tx_id,
+        tx_timestamp_nanos,
+        job.round_start_time_nanos,
+        job.round_end_latest_tx_id,
+        round_end_time_nanos,
+        recognition_delay_seconds,
+    )
+}
+
+fn commitment_round_end_staking_delta_for_job_e8s(
+    job: &ActivePayoutJob,
+    commitment: &logic::Commitment,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    now_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    logic::commitment_round_end_staking_delta_e8s(
+        commitment,
+        tx_id,
+        tx_timestamp_nanos,
+        job.round_start_time_nanos,
+        job.round_end_latest_tx_id,
+        job.round_end_time_nanos.unwrap_or(now_nanos),
+        recognition_delay_seconds,
+    )
+}
+
+fn commitment_amount_for_job_payout_e8s(
+    job: &ActivePayoutJob,
+    commitment: &logic::Commitment,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    now_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
+    if job.round_start_time_nanos.is_none() && job.round_start_staking_balance_e8s != Some(0) {
+        if job.round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
+            return None;
+        }
+        return Some(commitment.amount_e8s);
+    }
     if job.round_start_time_nanos.is_none()
         && job.round_start_latest_tx_id.is_none()
         && job.round_start_staking_balance_e8s == Some(0)
@@ -47,16 +92,23 @@ fn commitment_amount_for_job_round_e8s(
             recognition_delay_seconds,
         );
     }
-    logic::commitment_amount_for_round_e8s(
+    logic::commitment_amount_for_payout_e8s(
         commitment,
         tx_id,
         tx_timestamp_nanos,
-        job.round_start_latest_tx_id,
+        job.round_start_time_nanos,
         job.round_end_latest_tx_id,
-        job.round_start_time_nanos.unwrap_or(round_end_time_nanos),
         round_end_time_nanos,
         recognition_delay_seconds,
     )
+}
+
+fn latch_accounting_invariant_rescue() {
+    state::with_state_mut(|st| {
+        if st.forced_rescue_reason.is_none() {
+            st.forced_rescue_reason = Some(ForcedRescueReason::AccountingInvariantBroken);
+        }
+    });
 }
 
 pub(super) async fn discover_oldest_unprocessed_funding_tranche(
@@ -119,7 +171,8 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
                 && amount.e8s() > fee_e8s
             {
                 let Some(timestamp_nanos) = logic::index_tx_timestamp_nanos(tx) else {
-                    continue;
+                    state::with_state_mut(|st| st.active_funding_scan = Some(scan));
+                    return FundingDiscovery::Unreadable;
                 };
                 let tranche = FundingTranche {
                     tx_id: tx.id,
@@ -238,7 +291,6 @@ pub(super) async fn process_payout(
             let mut round_end_staking_delta_e8s = 0u64;
             let mut reached_round_end = false;
             let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
-            let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
             let recognition_delay_seconds = recognition_delay_seconds();
 
             for tx in &resp.transactions {
@@ -259,23 +311,30 @@ pub(super) async fn process_payout(
                 if !matches!(logic::classify_commitment(min_tx_e8s, &commitment), logic::CommitmentValidity::Valid { .. }) {
                     continue;
                 }
-                if job.round_start_latest_tx_id.map(|start| tx.id <= start).unwrap_or(false) {
-                    continue;
-                }
-                let weighted_amount_e8s = commitment_amount_for_job_round_e8s(
+                // ICP Index TransactionWithId.id is the ICP ledger block index / global
+                // transaction id, not a per-account sequence number. Strict tranche accounting
+                // compares staking-account commitment tx ids with payout-account funding tx ids
+                // only to prove a commitment existed before the funding transfer boundary.
+                let tx_timestamp_nanos = logic::index_tx_timestamp_nanos(tx);
+                let weighted_amount_e8s = commitment_delta_for_job_effective_denominator_e8s(
                     &job,
                     &commitment,
                     tx.id,
-                    logic::index_tx_timestamp_nanos(tx),
+                    tx_timestamp_nanos,
                     now_nanos,
                     recognition_delay_seconds,
                 ).unwrap_or(0);
                 denom_delta_e8s = denom_delta_e8s.saturating_add(weighted_amount_e8s);
-                if weighted_amount_e8s > 0 || logic::index_tx_timestamp_nanos(tx)
-                    .map(|timestamp| logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
-                    .unwrap_or(false) {
-                    round_end_staking_delta_e8s = round_end_staking_delta_e8s.saturating_add(commitment.amount_e8s);
-                }
+                round_end_staking_delta_e8s = round_end_staking_delta_e8s.saturating_add(
+                    commitment_round_end_staking_delta_for_job_e8s(
+                        &job,
+                        &commitment,
+                        tx.id,
+                        tx_timestamp_nanos,
+                        now_nanos,
+                        recognition_delay_seconds,
+                    ).unwrap_or(0)
+                );
             }
 
             let scan_complete = reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty();
@@ -430,7 +489,7 @@ pub(super) async fn process_payout(
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
                 }
                 logic::CommitmentValidity::Valid { target } => {
-                    let amount_for_round_e8s = commitment_amount_for_job_round_e8s(
+                    let amount_for_round_e8s = commitment_amount_for_job_payout_e8s(
                         &snapshot.4,
                         &commitment,
                         tx.id,
@@ -442,6 +501,10 @@ pub(super) async fn process_payout(
                     if gross_share_e8s <= snapshot.2 {
                         record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                         continue;
+                    }
+                    if snapshot.4.gross_outflow_e8s.saturating_add(gross_share_e8s) > snapshot.0 {
+                        latch_accounting_invariant_rescue();
+                        return true;
                     }
                     record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                     flush_scan_progress(

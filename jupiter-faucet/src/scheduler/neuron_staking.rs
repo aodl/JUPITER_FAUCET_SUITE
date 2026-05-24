@@ -79,7 +79,10 @@ pub(super) fn ensure_active_job_with_boundary(
                     stake_unchanged_since_round_start,
                 );
                 if !stake_unchanged_since_round_start {
-                    job.next_start = round_start_latest_tx_id;
+                    // Recognition delay means tx id alone cannot prove baseline membership.
+                    // Re-scan staking history and let recognition timestamps decide whether
+                    // each commitment is baseline, current-round delta, or still unrecognized.
+                    job.next_start = None;
                 }
             }
             _ => {

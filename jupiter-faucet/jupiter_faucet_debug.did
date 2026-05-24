@@ -27,6 +27,7 @@ type ForcedRescueReason = variant {
   IndexLatestInvariantBroken;
   IndexLatestUnreadable;
   CmcZeroSuccessRuns;
+  AccountingInvariantBroken;
 };
 
 type DebugAccounts = record { payout : Account; staking : Account };
@@ -88,6 +89,11 @@ type Summary = record {
   pot_remaining_e8s : nat64;
   denom_staking_balance_e8s : nat64;
   effective_denom_staking_balance_e8s : opt nat64;
+  funding_tx_id : opt nat64;
+  funding_amount_e8s : opt nat64;
+  round_end_latest_tx_id : opt nat64;
+  round_end_time_nanos : opt nat64;
+  last_processed_funding_tx_id : opt nat64;
   topped_up_count : nat64;
   topped_up_sum_e8s : nat64;
   topped_up_min_e8s : opt nat64;
