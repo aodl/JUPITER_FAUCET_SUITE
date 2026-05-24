@@ -1,5 +1,5 @@
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
-use pocket_ic::{PocketIc, PocketIcBuilder};
+use pocket_ic::PocketIc;
 use slog::Level;
 
 pub const ICP_LEDGER_FEE_E8S: u64 = 10_000;
@@ -12,7 +12,7 @@ pub fn build_pic_with_real_icp() -> PocketIc {
         ..Default::default()
     };
 
-    PocketIcBuilder::new()
+    super::pocketic::builder()
         .with_nns_subnet()
         .with_application_subnet()
         .with_icp_features(icp_features)
@@ -30,7 +30,7 @@ pub fn build_pic_with_real_icp_and_nns_governance(log_level: Option<Level>) -> P
         ..Default::default()
     };
 
-    let mut builder = PocketIcBuilder::new();
+    let mut builder = super::pocketic::builder();
     if let Some(level) = log_level {
         builder = builder.with_log_level(level);
     }

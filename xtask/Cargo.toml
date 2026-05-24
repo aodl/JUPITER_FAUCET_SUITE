@@ -18,6 +18,7 @@ jupiter-nns-types = { path = "../jupiter-nns-types" }
 [dev-dependencies]
 pocket-ic = { workspace = true }
 slog = { workspace = true }
+tokio = { workspace = true }
 
 [[test]]
 name = "jupiter_faucet_integration"

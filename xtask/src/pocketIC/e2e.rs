@@ -3,7 +3,7 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use pocket_ic::{PocketIc, PocketIcBuilder};
+use pocket_ic::PocketIc;
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
@@ -233,7 +233,7 @@ fn append_faucet_funding_tranche(
 #[ignore]
 fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     require_ignored_flag()?;
-    let pic = PocketIcBuilder::new().with_application_subnet().build();
+    let pic = support::pocketic::builder().with_application_subnet().build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -371,7 +371,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
 #[ignore]
 fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<()> {
     require_ignored_flag()?;
-    let pic = PocketIcBuilder::new().with_application_subnet().build();
+    let pic = support::pocketic::builder().with_application_subnet().build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -519,7 +519,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
 #[ignore]
 fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_transfer() -> Result<()> {
     require_ignored_flag()?;
-    let pic = PocketIcBuilder::new().with_application_subnet().build();
+    let pic = support::pocketic::builder().with_application_subnet().build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -657,7 +657,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
 #[ignore]
 fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<()> {
     require_ignored_flag()?;
-    let pic = PocketIcBuilder::new().with_application_subnet().build();
+    let pic = support::pocketic::builder().with_application_subnet().build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -1080,7 +1080,7 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
 #[ignore]
 fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     require_ignored_flag()?;
-    let pic = PocketIcBuilder::new().with_application_subnet().build();
+    let pic = support::pocketic::builder().with_application_subnet().build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;

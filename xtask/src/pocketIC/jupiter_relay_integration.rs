@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
-use pocket_ic::{PocketIc, PocketIcBuilder};
+use pocket_ic::PocketIc;
 
 #[path = "support/mod.rs"]
 mod support;
@@ -227,7 +227,7 @@ impl RelayEnv {
             Vec<SurplusNeuronRecipient>,
         ),
     {
-        let pic = PocketIcBuilder::new().with_application_subnet().build();
+        let pic = support::pocketic::builder().with_application_subnet().build();
         let ledger = pic.create_canister();
         let cmc = pic.create_canister();
         let governance = pic.create_canister();

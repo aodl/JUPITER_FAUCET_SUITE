@@ -43,6 +43,7 @@ icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
 futures = "0.3"
 slog = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 jupiter-build-support = { path = "../jupiter-build-support" }

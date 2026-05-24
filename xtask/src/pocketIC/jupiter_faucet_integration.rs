@@ -8,7 +8,7 @@ use jupiter_nns_types::{
 };
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
-use pocket_ic::{PocketIc, PocketIcBuilder};
+use pocket_ic::PocketIc;
 use sha2::Digest;
 use std::cell::RefCell;
 use std::sync::OnceLock;
@@ -82,7 +82,7 @@ fn real_nns_pic() -> PocketIc {
         ..Default::default()
     };
 
-    PocketIcBuilder::new()
+    support::pocketic::builder()
         .with_nns_subnet()
         .with_application_subnet()
         .with_icp_features(icp_features)
@@ -408,7 +408,7 @@ impl FaucetEnv {
     where
         F: FnOnce(&mut FaucetInitArg),
     {
-        let pic = PocketIcBuilder::new().with_application_subnet().build();
+        let pic = support::pocketic::builder().with_application_subnet().build();
         let ledger = pic.create_canister();
         let index = pic.create_canister();
         let cmc = pic.create_canister();

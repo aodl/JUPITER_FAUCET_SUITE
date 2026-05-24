@@ -42,6 +42,7 @@ icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
 jupiter-memo-policy = { path = "../jupiter-memo-policy" }
 slog = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 jupiter-build-support = { path = "../jupiter-build-support" }

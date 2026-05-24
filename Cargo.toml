@@ -38,9 +38,10 @@ ic-nns-common = { git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94
 ic-nns-governance-api = { git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }
 icrc-ledger-types = "0.1.12"
 num-traits = "0.2"
-pocket-ic = "12"
+pocket-ic = "13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 slog = "2"
 thiserror = "1"
+tokio = { version = "1", features = ["rt"] }

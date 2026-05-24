@@ -33,6 +33,7 @@ candid_parser = "0.1.4"
 icrc-ledger-types = { workspace = true }
 pocket-ic = { workspace = true }
 slog = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 jupiter-build-support = { path = "../jupiter-build-support" }

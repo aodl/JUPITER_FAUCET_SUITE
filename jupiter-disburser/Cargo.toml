@@ -37,6 +37,7 @@ pocket-ic = { workspace = true }
 slog = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 jupiter-build-support = { path = "../jupiter-build-support" }

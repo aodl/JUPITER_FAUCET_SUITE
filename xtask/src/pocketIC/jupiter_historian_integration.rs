@@ -7,7 +7,7 @@ use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
     GetAccountIdentifierTransactionsResult,
 };
-use pocket_ic::{PocketIc, PocketIcBuilder};
+use pocket_ic::PocketIc;
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
@@ -381,7 +381,7 @@ struct Harness {
 
 impl Harness {
     fn new(enable_sns_tracking: bool) -> Result<Self> {
-        let pic = PocketIcBuilder::new().with_application_subnet().build();
+        let pic = support::pocketic::builder().with_application_subnet().build();
         let index = pic.create_canister();
         let blackhole = pic.create_canister();
         let sns_wasm = pic.create_canister();
