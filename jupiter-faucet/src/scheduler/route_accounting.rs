@@ -19,6 +19,9 @@ fn genesis_round_amount_for_commitment_e8s(
     if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
         return None;
     }
+    // A missing commitment timestamp affects only that commitment's recognition
+    // status. Treat it as unrecognized rather than making the whole tranche
+    // unreadable.
     let recognized = tx_timestamp_nanos
         .map(|timestamp| logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
         .unwrap_or(false);
@@ -73,12 +76,6 @@ fn commitment_amount_for_job_payout_e8s(
     recognition_delay_seconds: u64,
 ) -> Option<u64> {
     let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
-    if job.round_start_time_nanos.is_none() && job.round_start_staking_balance_e8s != Some(0) {
-        if job.round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
-            return None;
-        }
-        return Some(commitment.amount_e8s);
-    }
     if job.round_start_time_nanos.is_none()
         && job.round_start_latest_tx_id.is_none()
         && job.round_start_staking_balance_e8s == Some(0)
@@ -170,6 +167,9 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
                 && to == &payout_account_identifier
                 && amount.e8s() > fee_e8s
             {
+                // A funding transfer timestamp defines the tranche boundary. If a qualifying
+                // funding transfer lacks a timestamp, processing later funding transfers would
+                // risk violating chronological tranche order, so discovery fails closed.
                 let Some(timestamp_nanos) = logic::index_tx_timestamp_nanos(tx) else {
                     state::with_state_mut(|st| st.active_funding_scan = Some(scan));
                     return FundingDiscovery::Unreadable;

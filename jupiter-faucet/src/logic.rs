@@ -134,6 +134,11 @@ pub(crate) fn compute_weighted_amount_e8s(
     weighted.min(u64::MAX as u128) as u64
 }
 
+// Tranche boundary rules are intentionally inclusive/exclusive:
+// - tx ids greater than round_end_latest_tx_id are outside the tranche.
+// - genesis counts commitments recognized at or before round_end_time_nanos.
+// - later rounds treat effective timestamps <= round_start_time_nanos as baseline
+//   and effective timestamps >= round_end_time_nanos as no current-round delta.
 fn effective_commitment_timestamp_nanos(
     tx_timestamp_nanos: Option<u64>,
     round_end_time_nanos: u64,
@@ -158,6 +163,9 @@ pub(crate) fn commitment_delta_for_effective_denominator_e8s(
         return None;
     }
     let Some(round_start_time_nanos) = round_start_time_nanos else {
+        // A missing commitment timestamp affects only that commitment's recognition
+        // status. Treat it as unrecognized rather than making the whole tranche
+        // unreadable.
         let recognized = tx_timestamp_nanos
             .map(|timestamp| conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
             .unwrap_or(false);
@@ -195,6 +203,9 @@ pub(crate) fn commitment_round_end_staking_delta_e8s(
         return None;
     }
     let Some(timestamp) = tx_timestamp_nanos else {
+        // A missing commitment timestamp affects only that commitment's recognition
+        // status. Treat it as unrecognized rather than making the whole tranche
+        // unreadable.
         return Some(0);
     };
     let effective_timestamp_nanos = conservative_effective_timestamp_nanos(
@@ -226,15 +237,16 @@ pub(crate) fn commitment_amount_for_payout_e8s(
         return None;
     }
     let Some(round_start_time_nanos) = round_start_time_nanos else {
+        // A missing commitment timestamp affects only that commitment's recognition
+        // status. Treat it as unrecognized rather than making the whole tranche
+        // unreadable.
         let recognized = tx_timestamp_nanos
             .map(|timestamp| conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
             .unwrap_or(false);
         return Some(if recognized { commitment.amount_e8s } else { 0 });
     };
-    // Legacy payout jobs and the one-off transition job do not yet have a meaningful
-    // accumulation window. In those cases preserve the historical behavior.
     if round_end_time_nanos <= round_start_time_nanos {
-        return Some(commitment.amount_e8s);
+        return Some(0);
     }
     let effective_timestamp_nanos = effective_commitment_timestamp_nanos(
         tx_timestamp_nanos,
@@ -387,6 +399,23 @@ mod tests {
         );
         assert_eq!(
             commitment_delta_for_effective_denominator_e8s(&commitment, 10, Some(90_000_000_000), None, Some(50), 100_000_000_000, 10),
+            Some(1_000),
+        );
+    }
+
+    #[test]
+    fn commitment_effective_timestamp_equal_to_round_end_updates_next_baseline_without_current_delta() {
+        let commitment = Commitment { amount_e8s: 1_000, memo_bytes: Some(target_canister().to_text().into_bytes()) };
+        assert_eq!(
+            commitment_delta_for_effective_denominator_e8s(&commitment, 10, Some(90_000_000_000), Some(20_000_000_000), Some(50), 100_000_000_000, 10),
+            Some(0),
+        );
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 10, Some(90_000_000_000), Some(20_000_000_000), Some(50), 100_000_000_000, 10),
+            Some(0),
+        );
+        assert_eq!(
+            commitment_round_end_staking_delta_e8s(&commitment, 10, Some(90_000_000_000), Some(20_000_000_000), Some(50), 100_000_000_000, 10),
             Some(1_000),
         );
     }
@@ -857,5 +886,13 @@ mod tests {
         assert_eq!(summary.topped_up_count, 0);
         assert_eq!(summary.remainder_to_self_e8s, 0);
         assert_eq!(summary.pot_remaining_e8s, 70_000_000);
+    }
+
+    #[test]
+    fn strict_tranche_summary_pot_matches_funding_amount() {
+        let mut job = ActivePayoutJob::new(11, 10_000, 70_000_000, 200_000_000, 1);
+        job.configure_funding_tranche(42, 100_000_000_000, 70_000_000);
+        let summary = summary_from_job(&job);
+        assert_eq!(summary.pot_start_e8s, summary.funding_amount_e8s.unwrap());
     }
 }

@@ -1585,6 +1585,20 @@ fn cmd_teardown() -> Result<()> {
     Ok(())
 }
 
+fn cmd_faucet_production_reinstall_cutover() -> Result<()> {
+    println!(
+        "Faucet strict-tranche production cutover is reinstall-only.\n\
+         Do not use upgrade for this cutover. Old stable state is intentionally not migrated.\n\n\
+         Command:\n\
+         icp canister install jupiter_faucet \\\n\
+           --environment ic \\\n\
+           --mode reinstall \\\n\
+           --argument-file jupiter-faucet/mainnet-install-args.did \\\n\
+           --yes"
+    );
+    Ok(())
+}
+
 fn create_canister(canister: &str) -> Result<()> {
     build_canister_wasm(canister)?;
     run_icp_with_identity(&["canister", "create", "--environment", LOCAL_ENVIRONMENT, canister, "--quiet"])?;
@@ -4895,6 +4909,7 @@ fn main() -> Result<()> {
         "setup" => cmd_setup(),
         "teardown" => cmd_teardown(),
         "frontend_setup" => cmd_frontend_setup(),
+        "faucet_production_reinstall_cutover" => cmd_faucet_production_reinstall_cutover(),
         _ => {
             eprintln!(
                 "Usage: cargo run -p xtask -- <command>
@@ -4903,6 +4918,7 @@ fn main() -> Result<()> {
                  - setup
                  - teardown
                  - frontend_setup
+                 - faucet_production_reinstall_cutover
 
                  Scoped commands:
                  - disburser_unit

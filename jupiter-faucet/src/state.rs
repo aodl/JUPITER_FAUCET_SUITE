@@ -431,6 +431,9 @@ pub(crate) struct State {
     #[serde(default)]
     pub last_processed_funding_tx_id: Option<u64>,
     #[serde(default)]
+    // Stable runtime progress for payout-account funding discovery. Do not clear
+    // during upgrades unless funding discovery is deliberately restarted from a
+    // safe cursor.
     pub active_funding_scan: Option<FundingScanState>,
 }
 

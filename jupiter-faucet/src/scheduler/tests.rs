@@ -501,8 +501,24 @@ mod tests {
         test_config_with_intervals(60, 60)
     }
 
-    fn set_active_job(now_secs: u64, job: ActivePayoutJob) -> state::Config {
-        let cfg = test_config();
+    fn set_active_job(now_secs: u64, mut job: ActivePayoutJob) -> state::Config {
+        let mut cfg = test_config();
+        cfg.stake_recognition_delay_seconds = Some(0);
+        if job.round_start_time_nanos.is_none()
+            && job.round_start_staking_balance_e8s.is_none()
+            && job.round_start_latest_tx_id.is_none()
+            && job.round_end_time_nanos.is_none()
+        {
+            job.configure_round_accounting(
+                Some(0),
+                Some(job.denom_staking_balance_e8s),
+                None,
+                now_secs.saturating_mul(1_000_000_000),
+                None,
+                job.denom_staking_balance_e8s,
+                true,
+            );
+        }
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.active_payout_job = Some(job);
         state::clear_skip_ranges();
@@ -1337,6 +1353,41 @@ mod tests {
         assert!(summary.contains("remainder_to_self_e8s=69990000"));
         assert!(!summary.contains("ERR:"));
         assert!(!summary.contains("TOPUP"));
+    }
+
+    #[test]
+    fn summary_log_includes_tranche_identifiers_needed_for_production_verification() {
+        let summary = state::Summary {
+            funding_tx_id: Some(42),
+            funding_amount_e8s: Some(100_000_000),
+            pot_start_e8s: 100_000_000,
+            round_end_latest_tx_id: Some(41),
+            round_end_time_nanos: Some(123_000_000_000),
+            effective_denom_staking_balance_e8s: Some(500_000_000),
+            last_processed_funding_tx_id: Some(42),
+            topped_up_count: 2,
+            topped_up_sum_e8s: 99_970_000,
+            remainder_to_self_e8s: 10_000,
+            pot_remaining_e8s: 0,
+            ..Default::default()
+        };
+
+        let line = format_summary_log(&summary);
+        for field in [
+            "funding_tx_id=",
+            "funding_amount_e8s=",
+            "pot_start_e8s=",
+            "round_end_latest_tx_id=",
+            "round_end_time_nanos=",
+            "effective_denom_e8s=",
+            "last_processed_funding_tx_id=",
+            "topped_up_count=",
+            "topped_up_sum_e8s=",
+            "remainder_to_self_e8s=",
+            "pot_remaining_e8s=",
+        ] {
+            assert!(line.contains(field), "summary log missing {field}: {line}");
+        }
     }
 
 
@@ -2772,6 +2823,63 @@ mod tests {
     }
 
     #[test]
+    fn strict_tranche_job_creation_never_creates_legacy_no_start_nonzero_baseline_shape() {
+        let now_nanos = 3_000_000_000_000;
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(test_config(), 3_000));
+
+        ensure_active_job_with_boundary(
+            now_nanos,
+            10_000,
+            100_000_000,
+            250_000_000,
+            100_000_000_000,
+            Some(20),
+            Some(FundingTranche {
+                tx_id: 21,
+                timestamp_nanos: 100_000_000_000,
+                amount_e8s: 100_000_000,
+            }),
+        );
+
+        let genesis_job = state::with_state(|st| st.active_payout_job.clone().expect("genesis job"));
+        assert_eq!(genesis_job.round_start_time_nanos, None);
+        assert_eq!(genesis_job.round_start_latest_tx_id, None);
+        assert_eq!(genesis_job.round_start_staking_balance_e8s, Some(0));
+        assert_eq!(genesis_job.effective_denom_scan_complete, Some(false));
+        assert_ne!(genesis_job.round_start_staking_balance_e8s, Some(250_000_000));
+
+        let mut st = state::State::new(test_config(), 3_001);
+        st.current_round_start_time_nanos = Some(100_000_000_000);
+        st.current_round_start_staking_balance_e8s = Some(250_000_000);
+        st.current_round_start_latest_tx_id = Some(20);
+        state::set_state(st);
+
+        ensure_active_job_with_boundary(
+            now_nanos + 1,
+            10_000,
+            120_000_000,
+            300_000_000,
+            200_000_000_000,
+            Some(30),
+            Some(FundingTranche {
+                tx_id: 31,
+                timestamp_nanos: 200_000_000_000,
+                amount_e8s: 120_000_000,
+            }),
+        );
+
+        let later_job = state::with_state(|st| st.active_payout_job.clone().expect("later job"));
+        assert_eq!(later_job.round_start_time_nanos, Some(100_000_000_000));
+        assert_eq!(later_job.round_start_staking_balance_e8s, Some(250_000_000));
+        assert!(
+            !(later_job.round_start_time_nanos.is_none()
+                && later_job.round_start_staking_balance_e8s != Some(0)),
+            "strict job creation must not produce the no-start/nonzero-baseline shape"
+        );
+    }
+
+    #[test]
     fn first_strict_tranche_excludes_post_funding_commitment_from_effective_denominator() {
         let now_secs = 4_000;
         let cfg = test_config();
@@ -2815,6 +2923,29 @@ mod tests {
         assert_eq!(cmc.call_count(), 1);
         assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
         assert_eq!(last_processed_funding_tx_id, Some(2));
+    }
+
+    #[test]
+    fn strict_tranche_job_pot_matches_funding_amount() {
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(test_config(), 3_200));
+
+        ensure_active_job_with_boundary(
+            3_200_000_000_000,
+            10_000,
+            125_000_000,
+            250_000_000,
+            100_000_000_000,
+            Some(20),
+            Some(FundingTranche {
+                tx_id: 21,
+                timestamp_nanos: 100_000_000_000,
+                amount_e8s: 125_000_000,
+            }),
+        );
+
+        let job = state::with_state(|st| st.active_payout_job.clone().expect("strict job"));
+        assert_eq!(job.pot_start_e8s, job.funding_amount_e8s.unwrap());
     }
 
     #[test]

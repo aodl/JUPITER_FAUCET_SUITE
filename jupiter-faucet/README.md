@@ -155,7 +155,7 @@ Operationally, the mitigation strategy is therefore:
 The repo now covers this in three layers:
 
 - `src/logic.rs` unit tests verify the weighting, boundary, and payout arithmetic used by the faucet
-- `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, and falls back safely for exactly one transition payout if no prior round snapshot exists yet
+- `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, and handles the genesis strict tranche with a zero round-start baseline
 - the disburser/faucet PocketIC suite keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation
 
 The detailed reward-environment caveats and the rationale for the PocketIC whale background live in `xtask/README.md` and in the comments around the PocketIC reward helpers.
@@ -359,7 +359,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `funding_source_account` (required)
   - the Jupiter Disburser account whose indexed transfers into the payout account define chronological payout tranches
   - this field is structurally required in the Candid init interface
-  - this faucet starts life in strict funding-tranche mode, with no legacy live-balance mode to migrate from
+  - this faucet starts life in strict funding-tranche mode
 - `rescue_controller`
 - `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the faucet canister principal or `rescue_controller`)
 - `blackhole_armed` (optional)
@@ -411,7 +411,7 @@ After reinstall:
 - Wait for the first scheduled strict timer tick. Production Faucet exposes no manual main-tick endpoint by design.
 - Verify via ICP Index that outgoing top-up transfers correspond to the expected tranche.
 - Verify the processed funding transfer by comparing ICP Index history with canister summary logs.
-- Confirm no legacy live-balance payout occurred by checking summary logs: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
+- Confirm the strict-tranche payout shape by checking summary logs: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
 
 ### Upgrade args
 

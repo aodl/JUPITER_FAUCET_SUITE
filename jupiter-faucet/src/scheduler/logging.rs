@@ -31,8 +31,8 @@ pub(super) fn log_cycles() {
     }
 }
 
-pub(super) fn log_summary(summary: &state::Summary) {
-    emit_log_line(format!(
+pub(super) fn format_summary_log(summary: &state::Summary) -> String {
+    format!(
         "SUMMARY:funding_tx_id={} funding_amount_e8s={} pot_start_e8s={} round_end_latest_tx_id={} round_end_time_nanos={} effective_denom_e8s={} last_processed_funding_tx_id={} topped_up_count={} topped_up_sum_e8s={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={}",
         summary.funding_tx_id.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()),
         summary.funding_amount_e8s.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()),
@@ -49,7 +49,11 @@ pub(super) fn log_summary(summary: &state::Summary) {
         summary.ignored_bad_memo,
         summary.remainder_to_self_e8s,
         summary.pot_remaining_e8s
-    ));
+    )
+}
+
+pub(super) fn log_summary(summary: &state::Summary) {
+    emit_log_line(format_summary_log(summary));
 }
 
 pub(super) fn log_current_config() {
