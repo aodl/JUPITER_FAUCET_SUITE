@@ -339,10 +339,18 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
   - if the staking-account balance changes and the canister cannot confirm the latest staking-account tx ID, twice in a row
 - `CmcZeroSuccessRuns`
   - if two completed payout jobs in a row make beneficiary CMC notify attempts but record zero successful beneficiary top-up notifications
+- `AccountingInvariantBroken`
+  - if strict payout accounting would send more gross outflow than the active tranche pot permits
+- `FundingTrancheBalanceMismatch`
+  - if strict funding-tranche discovery finds a tranche amount that exceeds the current payout-account balance
+- `FundingDiscoveryUnreadable`
+  - if strict funding-tranche discovery finds a qualifying Disburser-to-Faucet funding transfer without the timestamp needed to define the tranche boundary
 - a persisted `skip_range_invariant_fault` latch
   - if persisted skip-range replay hints become internally inconsistent; the faucet now records an explicit fail-closed rescue latch instead of trapping so controller reconciliation can react to durable fault state
 
-These latches are persisted and can be cleared via upgrade args when appropriate.
+Strict-tranche accounting fails closed on persistent tranche invariants. If the Faucet discovers a funding tranche that cannot be safely processed, such as a funding amount exceeding the current payout-account balance or a qualifying funding transfer without a timestamp, it latches a forced-rescue reason rather than retrying silently forever. Transient ledger/index/CMC call failures continue to use the existing retry/failure-counter paths and do not immediately trigger forced rescue.
+
+These latches are persisted and can be cleared via upgrade args when appropriate. Forced rescue reasons only lead to controller changes when the blackhole/rescue controller policy is armed and configured accordingly.
 
 ## Install-time and upgrade-time configuration
 

@@ -152,11 +152,7 @@ pub(super) async fn send_and_notify(
             .unwrap_or(false)
     });
     if invariant_broken {
-        state::with_state_mut(|st| {
-            if st.forced_rescue_reason.is_none() {
-                st.forced_rescue_reason = Some(ForcedRescueReason::AccountingInvariantBroken);
-            }
-        });
+        state::latch_forced_rescue_reason(ForcedRescueReason::AccountingInvariantBroken);
         return false;
     }
     let created_at_time_nanos = allocate_created_at_time_nanos(now_nanos);

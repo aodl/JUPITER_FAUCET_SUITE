@@ -219,6 +219,8 @@ pub enum ForcedRescueReason {
     IndexLatestUnreadable,
     CmcZeroSuccessRuns,
     AccountingInvariantBroken,
+    FundingTrancheBalanceMismatch,
+    FundingDiscoveryUnreadable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -591,7 +593,6 @@ pub(crate) fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertE
     Ok(())
 }
 
-#[cfg(test)]
 pub(crate) fn latch_forced_rescue_reason(reason: ForcedRescueReason) {
     with_state_mut(|st| {
         if st.forced_rescue_reason.is_none() {

@@ -28,6 +28,8 @@ type ForcedRescueReason = variant {
   IndexLatestUnreadable;
   CmcZeroSuccessRuns;
   AccountingInvariantBroken;
+  FundingTrancheBalanceMismatch;
+  FundingDiscoveryUnreadable;
 };
 
 type DebugAccounts = record { payout : Account; staking : Account };

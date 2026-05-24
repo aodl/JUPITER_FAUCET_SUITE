@@ -128,6 +128,9 @@ enum ForcedRescueReason {
     IndexLatestInvariantBroken,
     IndexLatestUnreadable,
     CmcZeroSuccessRuns,
+    AccountingInvariantBroken,
+    FundingTrancheBalanceMismatch,
+    FundingDiscoveryUnreadable,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

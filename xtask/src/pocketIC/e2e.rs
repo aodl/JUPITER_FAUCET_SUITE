@@ -88,7 +88,11 @@ enum ForcedRescueReason {
     BootstrapNoSuccess,
     IndexAnchorMissing,
     IndexLatestInvariantBroken,
+    IndexLatestUnreadable,
     CmcZeroSuccessRuns,
+    AccountingInvariantBroken,
+    FundingTrancheBalanceMismatch,
+    FundingDiscoveryUnreadable,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

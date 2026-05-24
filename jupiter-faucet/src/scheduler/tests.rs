@@ -2714,8 +2714,124 @@ mod tests {
             10_000,
         ));
 
-        assert_eq!(discovery, FundingDiscovery::Unreadable);
+        assert_eq!(
+            discovery,
+            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::QualifyingFundingTransferMissingTimestamp)
+        );
         assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), None);
+    }
+
+    #[test]
+    fn funding_tranche_balance_mismatch_latches_forced_rescue_without_creating_job() {
+        let now_secs = 4_350;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.last_processed_funding_tx_id = Some(5));
+
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let index = ExclusiveIndex::new(vec![
+            funding_tx_at(10, &funding_source_id, &payout_id, 100_000_000, 20_000_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 50_000_000, 100_000_000, vec![111]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+
+        let (active_job, last_processed_funding_tx_id, forced_rescue_reason) = state::with_state(|st| {
+            (
+                st.active_payout_job.clone(),
+                st.last_processed_funding_tx_id,
+                st.forced_rescue_reason.clone(),
+            )
+        });
+        assert!(active_job.is_none());
+        assert_eq!(last_processed_funding_tx_id, Some(5));
+        assert_eq!(
+            forced_rescue_reason,
+            Some(ForcedRescueReason::FundingTrancheBalanceMismatch)
+        );
+        assert!(ledger.transfer_amounts().is_empty());
+        assert_eq!(cmc.call_count(), 0);
+    }
+
+    #[test]
+    fn unreadable_qualifying_funding_transfer_latches_forced_rescue() {
+        let now_secs = 4_360;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let index = ExclusiveIndex::new(vec![
+            funding_tx_at(20, &funding_source_id, &payout_id, 200_000_000, 30_000_000_000),
+            funding_tx_without_timestamp(10, &funding_source_id, &payout_id, 100_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 300_000_000, 100_000_000, vec![112]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+
+        let (active_job, last_processed_funding_tx_id, forced_rescue_reason) = state::with_state(|st| {
+            (
+                st.active_payout_job.clone(),
+                st.last_processed_funding_tx_id,
+                st.forced_rescue_reason.clone(),
+            )
+        });
+        assert!(active_job.is_none());
+        assert_eq!(last_processed_funding_tx_id, None);
+        assert_eq!(
+            forced_rescue_reason,
+            Some(ForcedRescueReason::FundingDiscoveryUnreadable)
+        );
+        assert!(ledger.transfer_amounts().is_empty());
+        assert_eq!(cmc.call_count(), 0);
+    }
+
+    #[test]
+    fn transient_index_error_does_not_immediately_latch_funding_rescue() {
+        let now_secs = 4_370;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg, now_secs));
+        let index = ScriptedIndex::new(vec![IndexResponseStep::Err]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![113]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(!run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+
+        assert_eq!(state::with_state(|st| st.forced_rescue_reason.clone()), None);
+        assert!(state::with_state(|st| st.active_payout_job.is_none()));
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), None);
+        assert!(ledger.transfer_amounts().is_empty());
+        assert_eq!(cmc.call_count(), 0);
     }
 
     #[test]

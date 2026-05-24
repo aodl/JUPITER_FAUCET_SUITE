@@ -5,7 +5,13 @@ pub(super) enum FundingDiscovery {
     Found(FundingTranche),
     InProgress,
     Empty,
-    Unreadable,
+    Unreadable(FundingDiscoveryUnreadableReason),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FundingDiscoveryUnreadableReason {
+    IndexReadFailed,
+    QualifyingFundingTransferMissingTimestamp,
 }
 
 fn genesis_round_amount_for_commitment_e8s(
@@ -100,14 +106,6 @@ fn commitment_amount_for_job_payout_e8s(
     )
 }
 
-fn latch_accounting_invariant_rescue() {
-    state::with_state_mut(|st| {
-        if st.forced_rescue_reason.is_none() {
-            st.forced_rescue_reason = Some(ForcedRescueReason::AccountingInvariantBroken);
-        }
-    });
-}
-
 pub(super) async fn discover_oldest_unprocessed_funding_tranche(
     index: &impl IndexClient,
     payout_account_identifier: String,
@@ -143,7 +141,7 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
             .ok();
         let Some(resp) = resp else {
             state::with_state_mut(|st| st.active_funding_scan = Some(scan));
-            return FundingDiscovery::Unreadable;
+            return FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::IndexReadFailed);
         };
         let descending = index_page_descending_from_cursor(&resp.transactions, scan.cursor);
         for tx in &resp.transactions {
@@ -172,7 +170,9 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
                 // risk violating chronological tranche order, so discovery fails closed.
                 let Some(timestamp_nanos) = logic::index_tx_timestamp_nanos(tx) else {
                     state::with_state_mut(|st| st.active_funding_scan = Some(scan));
-                    return FundingDiscovery::Unreadable;
+                    return FundingDiscovery::Unreadable(
+                        FundingDiscoveryUnreadableReason::QualifyingFundingTransferMissingTimestamp,
+                    );
                 };
                 let tranche = FundingTranche {
                     tx_id: tx.id,
@@ -241,10 +241,15 @@ pub(super) async fn process_payout(
                 maybe_latch_bootstrap_rescue(now_secs);
                 return true;
             }
-            FundingDiscovery::Unreadable => return false,
+            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::IndexReadFailed) => return false,
+            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::QualifyingFundingTransferMissingTimestamp) => {
+                state::latch_forced_rescue_reason(ForcedRescueReason::FundingDiscoveryUnreadable);
+                return true;
+            }
         };
         if payout_balance_e8s < funding_tranche.amount_e8s {
-            return false;
+            state::latch_forced_rescue_reason(ForcedRescueReason::FundingTrancheBalanceMismatch);
+            return true;
         }
         let pot_start_e8s = funding_tranche.amount_e8s;
         let round_end_latest_tx_id = Some(funding_tranche.tx_id);
@@ -503,7 +508,7 @@ pub(super) async fn process_payout(
                         continue;
                     }
                     if snapshot.4.gross_outflow_e8s.saturating_add(gross_share_e8s) > snapshot.0 {
-                        latch_accounting_invariant_rescue();
+                        state::latch_forced_rescue_reason(ForcedRescueReason::AccountingInvariantBroken);
                         return true;
                     }
                     record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
