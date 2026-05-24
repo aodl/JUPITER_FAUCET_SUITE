@@ -247,6 +247,20 @@ pub(crate) struct Summary {
     pub remainder_to_self_e8s: u64,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FundingTrancheState {
+    pub tx_id: u64,
+    pub timestamp_nanos: u64,
+    pub amount_e8s: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FundingScanState {
+    pub anchor_last_processed_funding_tx_id: Option<u64>,
+    pub cursor: Option<u64>,
+    pub candidate: Option<FundingTrancheState>,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub(crate) struct ActivePayoutJob {
     pub id: u64,
@@ -405,6 +419,8 @@ pub(crate) struct State {
     pub current_round_start_latest_tx_id: Option<u64>,
     #[serde(default)]
     pub last_processed_funding_tx_id: Option<u64>,
+    #[serde(default)]
+    pub active_funding_scan: Option<FundingScanState>,
 }
 
 impl State {
@@ -433,6 +449,7 @@ impl State {
             current_round_start_staking_balance_e8s: None,
             current_round_start_latest_tx_id: None,
             last_processed_funding_tx_id: None,
+            active_funding_scan: None,
         }
     }
 }

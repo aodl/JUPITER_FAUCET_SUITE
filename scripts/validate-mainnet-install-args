@@ -77,6 +77,28 @@ def extract_nat64(text: str, field: str, path: Path) -> int:
     return int(match.group(1))
 
 
+def extract_account(text: str, field: str, path: Path) -> tuple[str, str]:
+    match = re.search(
+        rf"{re.escape(field)}\s*=\s*(?:opt\s*)?record\s*\{{(?P<body>.*?)\}}\s*;",
+        text,
+        re.S,
+    )
+    if not match:
+        fail(f"{path} is missing account `{field}`")
+    body = match.group("body")
+    owner = re.search(r'owner\s*=\s*principal\s+"([^"]+)"\s*;', body)
+    subaccount = re.search(r"subaccount\s*=\s*(?P<value>[^;]+);", body)
+    if not owner or not subaccount:
+        fail(f"{path} has malformed account `{field}`")
+    return owner.group(1), re.sub(r"\s+", " ", subaccount.group("value").strip())
+
+
+def require_interval(text: str, field: str, expected: int, path: Path) -> None:
+    value = extract_nat64(text, field, path)
+    if value != expected:
+        fail(f"{path} configures {field}={value}; expected {expected}")
+
+
 def validate_no_debug_methods_in_prod_did(path: Path) -> None:
     text = path.read_text()
     if re.search(r"\bdebug_\w+\b", text):
@@ -173,6 +195,8 @@ def validate_disburser() -> None:
     require_contains(text, f'governance_canister_id = opt principal "{MAINNET["governance"]}";', str(path))
     require_contains(text, f'rescue_controller = principal "{PROD["jupiter_lifeline"]}";', str(path))
     require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
+    require_interval(text, "main_interval_seconds", 86400, path)
+    require_interval(text, "rescue_interval_seconds", 86400, path)
 
 
 def validate_faucet() -> int:
@@ -185,6 +209,11 @@ def validate_faucet() -> int:
     require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
     require_contains(text, f'rescue_controller = principal "{PROD["jupiter_lifeline"]}";', str(path))
     require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
+    require_contains(text, f'funding_source_account = record {{', str(path))
+    require_contains(text, f'owner = principal "{PROD["jupiter_disburser"]}";', str(path))
+    require_interval(text, "main_interval_seconds", 86400, path)
+    require_interval(text, "rescue_interval_seconds", 86400, path)
+    require_interval(text, "stake_recognition_delay_seconds", 86400, path)
 
     match = re.search(r"expected_first_staking_tx_id\s*=\s*([^;]+);", text)
     if not match:
@@ -399,6 +428,37 @@ def run_self_tests() -> None:
 
 
 def main() -> None:
+    disburser_text = (REPO_ROOT / "jupiter-disburser" / "mainnet-install-args.did").read_text()
+    faucet_text = (REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did").read_text()
+    disburser_normal_recipient = extract_account(
+        disburser_text,
+        "normal_recipient",
+        REPO_ROOT / "jupiter-disburser" / "mainnet-install-args.did",
+    )
+    faucet_payout_account = (PROD["jupiter_faucet"], "null")
+    faucet_funding_source = extract_account(
+        faucet_text,
+        "funding_source_account",
+        REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did",
+    )
+    faucet_staking_account = extract_account(
+        faucet_text,
+        "staking_account",
+        REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did",
+    )
+    if disburser_normal_recipient != faucet_payout_account:
+        fail(
+            "disburser normal_recipient must equal faucet payout account: "
+            f"got {disburser_normal_recipient}, expected {faucet_payout_account}"
+        )
+    if faucet_funding_source != (PROD["jupiter_disburser"], "null"):
+        fail(
+            "faucet funding_source_account must equal disburser default account: "
+            f"got {faucet_funding_source}"
+        )
+    if faucet_staking_account != (MAINNET["governance"], EXPECTED_STAKING_SUBACCOUNT):
+        fail(f"faucet staking_account mismatch: got {faucet_staking_account}")
+
     validate_disburser()
     faucet_min_tx_e8s = validate_faucet()
     historian_min_tx_e8s = validate_historian()

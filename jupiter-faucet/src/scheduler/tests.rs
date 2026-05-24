@@ -2456,7 +2456,8 @@ mod tests {
         }
         let index = ScriptedIndex::new(steps);
 
-        let tranche = run_ready(oldest_unprocessed_funding_tranche(
+        state::set_state(state::State::new(test_config(), 0));
+        let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
             &index,
             payout_id,
             funding_source_id,
@@ -2465,8 +2466,178 @@ mod tests {
         ));
 
         assert!(
-            tranche.is_none(),
+            matches!(discovery, FundingDiscovery::InProgress),
             "page-cap exhaustion must not process a newer funding candidate before proving no older unprocessed tranche is hidden past the cap"
+        );
+        assert!(state::with_state(|st| st.active_funding_scan.is_some()));
+    }
+
+    #[test]
+    fn funding_discovery_persists_cursor_across_page_cap_and_eventually_finds_oldest_tranche() {
+        let now_secs = 4_200;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let spam_count = MAX_FUNDING_SCAN_PAGES_PER_TICK * PAGE_SIZE + 1;
+        let mut txs = Vec::new();
+        for offset in 0..spam_count {
+            let id = spam_count + 20 - offset;
+            txs.push(funding_tx_at(id, "public-spammer", &payout_id, 100_000_000, 10_000_000_000));
+        }
+        txs.push(funding_tx_at(10, &funding_source_id, &payout_id, 100_000_000, 20_000_000_000));
+        txs.push(commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), 0));
+        let index = ExclusiveIndex::new(txs);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![91]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+        assert!(state::with_state(|st| st.active_payout_job.is_none()));
+        let scan_after_first_tick = state::with_state(|st| st.active_funding_scan.clone()).expect("scan should persist");
+        assert!(scan_after_first_tick.cursor.is_some());
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), None);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs + 1,
+        )));
+        assert!(state::with_state(|st| st.active_funding_scan.is_none()));
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), Some(10));
+        let summary = state::with_state(|st| st.last_summary.clone().expect("summary should be finalized"));
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(100_000_000));
+    }
+
+    #[test]
+    fn non_funding_payout_account_spam_cannot_permanently_block_next_disburser_funding_tranche() {
+        let now_secs = 4_300;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let spam_count = MAX_FUNDING_SCAN_PAGES_PER_TICK * PAGE_SIZE + 25;
+        let mut txs = Vec::new();
+        for offset in 0..spam_count {
+            let id = spam_count + 20 - offset;
+            txs.push(funding_tx_at(id, "public-spammer", &payout_id, 100_000_000, 10_000_000_000));
+        }
+        txs.push(funding_tx_at(10, &funding_source_id, &payout_id, 100_000_000, 20_000_000_000));
+        txs.push(commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), 0));
+        let index = ExclusiveIndex::new(txs);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![101]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        for tick in 0..3 {
+            assert!(run_ready(process_payout(
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+                100_000_000_000,
+                now_secs + tick,
+            )));
+            if state::with_state(|st| st.last_processed_funding_tx_id) == Some(10) {
+                break;
+            }
+        }
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), Some(10));
+        assert_eq!(state::with_state(|st| st.active_funding_scan.clone()), None);
+    }
+
+    #[test]
+    fn funding_discovery_resets_scan_when_last_processed_cursor_changes() {
+        state::set_state(state::State::new(test_config(), 0));
+        state::with_state_mut(|st| {
+            st.last_processed_funding_tx_id = Some(2);
+            st.active_funding_scan = Some(state::FundingScanState {
+                anchor_last_processed_funding_tx_id: Some(1),
+                cursor: Some(500),
+                candidate: Some(state::FundingTrancheState {
+                    tx_id: 300,
+                    timestamp_nanos: 1,
+                    amount_e8s: 100_000_000,
+                }),
+            });
+        });
+
+        let payout_id = "payout-account".to_string();
+        let funding_source_id = "funding-source".to_string();
+        let mut transactions = Vec::new();
+        let spam_count = MAX_FUNDING_SCAN_PAGES_PER_TICK * PAGE_SIZE + 1;
+        for id in (1_000..(1_000 + spam_count)).rev() {
+            transactions.push(funding_tx_at(id, "public-spammer", &payout_id, 100_000_000, 10_000_000_000));
+        }
+        let index = ExclusiveIndex::new(transactions);
+
+        let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
+            &index,
+            payout_id,
+            funding_source_id,
+            Some(2),
+            10_000,
+        ));
+        assert!(matches!(discovery, FundingDiscovery::InProgress));
+        let scan = state::with_state(|st| st.active_funding_scan.clone()).expect("scan should persist");
+        assert_eq!(scan.anchor_last_processed_funding_tx_id, Some(2));
+        assert!(scan.cursor.is_some());
+        assert_eq!(scan.candidate, None);
+    }
+
+    #[test]
+    fn funding_discovery_does_not_process_new_head_transfer_before_older_unprocessed_candidate() {
+        state::set_state(state::State::new(test_config(), 0));
+        state::with_state_mut(|st| {
+            st.active_funding_scan = Some(state::FundingScanState {
+                anchor_last_processed_funding_tx_id: None,
+                cursor: Some(100),
+                candidate: Some(state::FundingTrancheState {
+                    tx_id: 50,
+                    timestamp_nanos: 5,
+                    amount_e8s: 100_000_000,
+                }),
+            });
+        });
+
+        let payout_id = "payout-account".to_string();
+        let funding_source_id = "funding-source".to_string();
+        let index = ExclusiveIndex::new(vec![
+            funding_tx_at(200, &funding_source_id, &payout_id, 200_000_000, 20_000_000_000),
+            funding_tx_at(50, &funding_source_id, &payout_id, 100_000_000, 5_000_000_000),
+        ]);
+        let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
+            &index,
+            payout_id,
+            funding_source_id,
+            None,
+            10_000,
+        ));
+        assert_eq!(
+            discovery,
+            FundingDiscovery::Found(FundingTranche {
+                tx_id: 50,
+                timestamp_nanos: 5,
+                amount_e8s: 100_000_000,
+            })
         );
     }
 
@@ -2519,6 +2690,7 @@ mod tests {
         let st = state::State::new(cfg.clone(), now_secs);
         state::clear_skip_ranges();
         state::set_state(st);
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
 
         let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let payout_id = account_identifier_text_for_account(&payout_account());
@@ -2542,6 +2714,7 @@ mod tests {
         assert!(state::with_state(|st| st.active_payout_job.is_none()));
 
         state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
         let index = RecordingIndex::new(vec![
             commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary.to_text().into_bytes()), now_secs * 1_000_000_000),
             funding_tx_at(2, &funding_source_id, &payout_id, 100_000_000, now_secs * 1_000_000_000),
@@ -2559,17 +2732,116 @@ mod tests {
         )));
 
         let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
-        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(200_000_000));
-        assert_eq!(summary.remainder_to_self_e8s, 49_990_000);
-        assert_eq!(ledger.transfer_amounts(), vec![49_990_000, 49_990_000]);
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(summary.remainder_to_self_e8s, 0);
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
         let (round_start_time_nanos, round_start_staking_balance_e8s, round_start_latest_tx_id) = state::with_state(|st| (
             st.current_round_start_time_nanos,
             st.current_round_start_staking_balance_e8s,
             st.current_round_start_latest_tx_id,
         ));
         assert_eq!(round_start_time_nanos, Some(now_secs * 1_000_000_000));
-        assert_eq!(round_start_staking_balance_e8s, Some(200_000_000));
+        assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
         assert_eq!(round_start_latest_tx_id, Some(2));
+    }
+
+    #[test]
+    fn first_strict_tranche_excludes_post_funding_commitment_from_effective_denominator() {
+        let now_secs = 4_000;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary_a.to_text().into_bytes()), 0),
+            funding_tx_at(2, &funding_source_id, &payout_id, 100_000_000, 20_000_000_000),
+            commitment_tx_at(3, &staking_id, 100_000_000, Some(beneficiary_b.to_text().into_bytes()), 21_000_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![71]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+
+        let (summary, round_start_staking_balance_e8s, last_processed_funding_tx_id) = state::with_state(|st| {
+            (
+                st.last_summary.clone().expect("summary should be finalized"),
+                st.current_round_start_staking_balance_e8s,
+                st.last_processed_funding_tx_id,
+            )
+        });
+        assert_eq!(summary.pot_start_e8s, 100_000_000);
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
+        assert_eq!(cmc.call_count(), 1);
+        assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(last_processed_funding_tx_id, Some(2));
+    }
+
+    #[test]
+    fn first_strict_tranche_post_funding_commitment_becomes_eligible_for_second_tranche() {
+        let now_secs = 4_100;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let txs = vec![
+            commitment_tx_at(1, &staking_id, 100_000_000, Some(beneficiary_a.to_text().into_bytes()), 0),
+            funding_tx_at(2, &funding_source_id, &payout_id, 100_000_000, 20_000_000_000),
+            commitment_tx_at(3, &staking_id, 100_000_000, Some(beneficiary_b.to_text().into_bytes()), 21_000_000_000),
+            funding_tx_at(4, &funding_source_id, &payout_id, 100_000_000, 40_000_000_000),
+        ];
+        let index = RecordingIndex::new(txs.clone());
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![81]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+        let first_summary = state::with_state(|st| st.last_summary.clone().expect("first summary"));
+        assert_eq!(first_summary.effective_denom_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(first_summary.topped_up_count, 1);
+
+        let index = RecordingIndex::new(txs);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![82, 83, 84]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok, CmcStep::Ok]);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs + 1,
+        )));
+
+        let second_summary = state::with_state(|st| st.last_summary.clone().expect("second summary"));
+        assert!(second_summary.effective_denom_staking_balance_e8s.unwrap_or(0) > 100_000_000);
+        assert_eq!(second_summary.topped_up_count, 2);
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), Some(4));
+        assert_eq!(cmc.call_count(), 2);
     }
 
 }

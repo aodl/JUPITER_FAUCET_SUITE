@@ -356,7 +356,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `governance_canister_id` (optional; defaults to NNS Governance)
 - `funding_source_account` (required)
   - the Jupiter Disburser account whose indexed transfers into the payout account define chronological payout tranches
-  - the runtime config cannot represent an unset funding source; init traps if this argument is missing
+  - this field is structurally required in the Candid init interface
   - this faucet starts life in strict funding-tranche mode, with no legacy live-balance mode to migrate from
 - `rescue_controller`
 - `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the faucet canister principal or `rescue_controller`)
@@ -370,6 +370,35 @@ These latches are persisted and can be cleared via upgrade args when appropriate
   - upgrades already clear persisted skip ranges before resuming, so any rescue-time threshold change will cause historical staking activity to be re-scanned from first principles
 
 A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
+
+### Production strict-tranche reinstall checklist
+
+The production faucet canister was installed before external users were onboarded, but it has not processed payouts. For the strict funding-tranche cutover, use a controlled reinstall instead of carrying stable-state migration code for the old runtime state. Reinstalling preserves the faucet canister principal, so the default payout account stays the same when `payout_subaccount = null`; ICP ledger balances and ICP index transaction history remain external to the faucet canister state.
+
+Reinstall intentionally discards faucet Wasm/stable state: runtime config, timers, `active_payout_job`, pending notifications, last summary, health counters, forced rescue state, skip ranges, current round snapshot, `last_processed_funding_tx_id`, and `active_funding_scan`. This is acceptable only while no faucet payout has ever completed.
+
+Before reinstall:
+
+- Confirm the faucet canister ID is the intended production principal and will not change.
+- Confirm `payout_subaccount` in the new install args matches the current value, currently expected to be `null`.
+- Record the current faucet payout-account ICP balance.
+- Confirm no faucet payout has ever completed and `debug_last_summary` is `null`.
+- Confirm there is no `active_payout_job` and no pending CMC notification.
+- Confirm no prior Disburser-to-Faucet funding transfer has been processed by the faucet; `last_processed_funding_tx_id` must be `null`.
+- Confirm the ICP Index shows the expected Disburser-to-Faucet funding transfer or transfers.
+- Confirm `funding_source_account` equals the Disburser default account.
+- Confirm the Disburser `normal_recipient` equals the faucet payout account, including subaccount.
+- Confirm the faucet staking account is the intended Jupiter neuron staking account.
+- Confirm the old faucet will not run another scheduled tick before the reinstall.
+- Run `python3 ./scripts/validate-mainnet-install-args` and confirm main/rescue/stake-recognition intervals are each `86400`.
+
+After reinstall:
+
+- Query `debug_config` and confirm `funding_source_account`, `payout_subaccount`, `staking_account`, `main_interval_seconds`, and `rescue_interval_seconds`.
+- Query the payout-account balance and confirm it is unchanged from the pre-reinstall record.
+- Run or wait for the first strict tick.
+- Confirm the first funding tranche was processed and `last_processed_funding_tx_id` matches that funding transfer.
+- Confirm no legacy live-balance payout path is present: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_staking_balance_e8s` must come from indexed staking history bounded by the funding transfer.
 
 ### Upgrade args
 

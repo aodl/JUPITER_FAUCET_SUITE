@@ -48,7 +48,7 @@ fn build_wasm(package: &str, features: Option<&str>) -> Result<Vec<u8>> {
 struct FaucetInitArg {
     staking_account: Account,
     payout_subaccount: Option<Vec<u8>>,
-    funding_source_account: Option<Account>,
+    funding_source_account: Account,
     ledger_canister_id: Option<Principal>,
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
@@ -59,6 +59,7 @@ struct FaucetInitArg {
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
+    stake_recognition_delay_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -211,16 +212,19 @@ fn append_faucet_funding_tranche(
     payout: &Account,
     amount_e8s: u64,
 ) -> Result<u64> {
+    let timestamp_nanos = (pic.get_time().as_nanos_since_unix_epoch() as u64)
+        .saturating_add(2_000_000_000);
     update_bytes(
         pic,
         index,
         Principal::anonymous(),
-        "debug_append_transfer_from",
+        "debug_append_transfer_from_with_timestamp",
         encode_args((
             account_id_for(funding_source),
             account_id_for(payout),
             amount_e8s,
             Option::<Vec<u8>>::None,
+            timestamp_nanos,
         ))?,
     )
 }
@@ -260,7 +264,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
-        funding_source_account: Some(disburser_funding_source(disburser)),
+        funding_source_account: disburser_funding_source(disburser),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -271,6 +275,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
+        stake_recognition_delay_seconds: Some(1),
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -397,7 +402,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
-        funding_source_account: Some(disburser_funding_source(disburser)),
+        funding_source_account: disburser_funding_source(disburser),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -408,6 +413,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
+        stake_recognition_delay_seconds: Some(1),
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -544,7 +550,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
-        funding_source_account: Some(disburser_funding_source(disburser)),
+        funding_source_account: disburser_funding_source(disburser),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -555,6 +561,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
+        stake_recognition_delay_seconds: Some(1),
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
@@ -681,7 +688,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
-        funding_source_account: Some(disburser_funding_source(disburser)),
+        funding_source_account: disburser_funding_source(disburser),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -692,6 +699,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
+        stake_recognition_delay_seconds: Some(1),
     };
     pic.install_canister(faucet, faucet_wasm.clone(), encode_one(faucet_init)?, None);
 
@@ -1106,7 +1114,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
-        funding_source_account: Some(disburser_funding_source(disburser)),
+        funding_source_account: disburser_funding_source(disburser),
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
@@ -1117,6 +1125,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
         expected_first_staking_tx_id: None,
+        stake_recognition_delay_seconds: Some(1),
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 

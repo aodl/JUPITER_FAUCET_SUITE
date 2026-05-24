@@ -97,13 +97,14 @@ struct FaucetInitArg {
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
     governance_canister_id: Option<Principal>,
-    funding_source_account: Option<Account>,
+    funding_source_account: Account,
     rescue_controller: Principal,
     blackhole_controller: Option<Principal>,
     blackhole_armed: Option<bool>,
     expected_first_staking_tx_id: Option<u64>,
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
+    stake_recognition_delay_seconds: Option<u64>,
     min_tx_e8s: Option<u64>,
 }
 
@@ -441,13 +442,14 @@ impl FaucetEnv {
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
             governance_canister_id: Some(governance),
-            funding_source_account: Some(funding_source_account.clone()),
+            funding_source_account: funding_source_account.clone(),
             rescue_controller: lifeline,
             blackhole_controller: Some(blackhole_controller),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
+            stake_recognition_delay_seconds: Some(1),
             min_tx_e8s: Some(100_000_000),
         };
         edit_init(&mut init);
@@ -596,6 +598,10 @@ impl FaucetEnv {
 
     fn append_pending_funding_tranches(&self) -> Result<()> {
         let pending = std::mem::take(&mut *self.pending_funding_e8s.borrow_mut());
+        if !pending.is_empty() {
+            self.pic.advance_time(Duration::from_secs(2));
+            tick_n(&self.pic, 2);
+        }
         let funding_source_id = account_id_for(&self.funding_source_account);
         let payout_id = account_id_for(&self.accounts.payout);
         for amount_e8s in pending {
@@ -708,13 +714,14 @@ impl RealNnsFaucetEnv {
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
             governance_canister_id: Some(governance),
-            funding_source_account: Some(funding_source_account.clone()),
+            funding_source_account: funding_source_account.clone(),
             rescue_controller: lifeline,
             blackhole_controller: Some(blackhole),
             blackhole_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
+            stake_recognition_delay_seconds: Some(1),
             min_tx_e8s: Some(100_000_000),
         };
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
@@ -786,6 +793,10 @@ impl RealNnsFaucetEnv {
 
     fn append_pending_funding_tranches(&self) -> Result<()> {
         let pending = std::mem::take(&mut *self.pending_funding_e8s.borrow_mut());
+        if !pending.is_empty() {
+            self.pic.advance_time(Duration::from_secs(2));
+            tick_n(&self.pic, 2);
+        }
         let funding_source_id = account_id_for(&self.funding_source_account);
         let payout_id = account_id_for(&self.accounts.payout);
         for amount_e8s in pending {
@@ -928,6 +939,8 @@ fn account_id_for(account: &Account) -> String {
 fn append_funding_tranche(env: &FaucetEnv, funding_source: &Account, amount_e8s: u64) -> Result<u64> {
     let funding_source_id = account_id_for(funding_source);
     let payout_id = account_id_for(&env.accounts.payout);
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 2);
     env.credit_payout_balance_only(amount_e8s)?;
     env.append_index_transfer_from_to_account_id(funding_source_id, payout_id, amount_e8s, None)
 }
@@ -938,7 +951,7 @@ fn faucet_excludes_post_funding_commitment_even_after_recognition_delay() -> Res
     require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.funding_source_account = Some(funding_source.clone());
+        init.funding_source_account = funding_source.clone();
         init.main_interval_seconds = Some(365 * 24 * 60 * 60);
     })?;
     let pre_funding_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -946,6 +959,7 @@ fn faucet_excludes_post_funding_commitment_even_after_recognition_delay() -> Res
 
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(pre_funding_target.to_text().into_bytes()))?;
+    env.advance_time_and_tick(3 * 24 * 60 * 60, 10);
     append_funding_tranche(&env, &funding_source, 100_000_000)?;
     env.main_tick()?;
 
@@ -978,7 +992,7 @@ fn faucet_processes_disburser_funding_transfers_as_chronological_tranches() -> R
     require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.funding_source_account = Some(funding_source.clone());
+        init.funding_source_account = funding_source.clone();
         init.main_interval_seconds = Some(365 * 24 * 60 * 60);
     })?;
     let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -986,6 +1000,7 @@ fn faucet_processes_disburser_funding_transfers_as_chronological_tranches() -> R
 
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(first_target.to_text().into_bytes()))?;
+    env.advance_time_and_tick(3 * 24 * 60 * 60, 10);
     append_funding_tranche(&env, &funding_source, 50_000_000)?;
     env.main_tick()?;
 
@@ -1019,7 +1034,7 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
     require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.funding_source_account = Some(funding_source.clone());
+        init.funding_source_account = funding_source.clone();
         init.main_interval_seconds = Some(365 * 24 * 60 * 60);
     })?;
     let warmup_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -1028,6 +1043,7 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
 
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(warmup_target.to_text().into_bytes()))?;
+    env.advance_time_and_tick(3 * 24 * 60 * 60, 10);
     append_funding_tranche(&env, &funding_source, 300_000_000)?;
     env.main_tick()?;
     let warmup_notifications = env.notifications()?.len();
@@ -1391,7 +1407,7 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
         .filter(|c| c.account_identifier == env.staking_id)
         .map(|c| c.start)
         .collect();
-    if first_starts != vec![None] {
+    if first_starts != vec![None, None] {
         bail!("expected first payout job to begin scanning from start, got starts {first_starts:?}");
     }
 
@@ -1413,7 +1429,7 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
         .filter(|c| c.account_identifier == env.staking_id)
         .map(|c| c.start)
         .collect();
-    if starts != vec![None, None] {
+    if starts != vec![None, None, None] {
         bail!("expected each new payout job to rescan from start, got starts {starts:?}");
     }
 
@@ -1501,14 +1517,10 @@ fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_w
     env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
     env.append_repeated_transfer(499, 1_000_000, Some(first.to_text().into_bytes()))?;
     env.append_transfer(101_000_000, Some(second.to_text().into_bytes()))?;
-    env.credit_payout_balance_only(120_000_000)?;
-    env.append_index_transfer_from_to_account_id(
-        account_id_for(&env.funding_source_account),
-        account_id_for(&env.accounts.payout),
-        120_000_000,
-        None,
-    )?;
+    append_funding_tranche(&env, &env.funding_source_account, 120_000_000)?;
     env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
@@ -1561,14 +1573,10 @@ fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_fo
     env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
     env.append_repeated_transfer(499, 1_000_000, Some(first.to_text().into_bytes()))?;
     env.append_transfer(101_000_000, Some(second.to_text().into_bytes()))?;
-    env.credit_payout_balance_only(120_000_000)?;
-    env.append_index_transfer_from_to_account_id(
-        account_id_for(&env.funding_source_account),
-        account_id_for(&env.accounts.payout),
-        120_000_000,
-        None,
-    )?;
+    append_funding_tranche(&env, &env.funding_source_account, 120_000_000)?;
     env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
@@ -2253,18 +2261,14 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
     let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let second_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
 
-    env.credit_payout_balance_only(120_000_000)?;
     env.credit_staking(800_000_000)?;
     env.append_transfer(200_000_000, Some(first_target.to_text().into_bytes()))?;
     env.append_repeated_transfer(499, 1_000_000, Some(first_target.to_text().into_bytes()))?;
     env.append_transfer(101_000_000, Some(second_target.to_text().into_bytes()))?;
-    env.append_index_transfer_from_to_account_id(
-        account_id_for(&env.funding_source_account),
-        account_id_for(&env.accounts.payout),
-        120_000_000,
-        None,
-    )?;
+    append_funding_tranche(&env, &env.funding_source_account, 120_000_000)?;
     env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
@@ -2315,7 +2319,7 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
         .iter()
         .filter(|c| c.account_identifier == env.staking_id)
         .collect();
-    if calls.len() < 3 || calls[0].start.is_some() || calls[1].start.is_none() || calls[2].start != calls[1].start {
+    if calls.len() < 5 || calls[2].start.is_some() || calls[3].start.is_none() || calls[4].start != calls[3].start {
         bail!("expected resume after failure to retry the same later-page cursor, got calls {all_calls:?}");
     }
 
@@ -2330,18 +2334,14 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
     let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let second_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
 
-    env.credit_payout_balance_only(120_000_000)?;
     env.credit_staking(800_000_000)?;
     env.append_transfer(200_000_000, Some(first_target.to_text().into_bytes()))?;
     env.append_repeated_transfer(499, 1_000_000, Some(first_target.to_text().into_bytes()))?;
     env.append_transfer(101_000_000, Some(second_target.to_text().into_bytes()))?;
-    env.append_index_transfer_from_to_account_id(
-        account_id_for(&env.funding_source_account),
-        account_id_for(&env.accounts.payout),
-        120_000_000,
-        None,
-    )?;
+    append_funding_tranche(&env, &env.funding_source_account, 120_000_000)?;
     env.set_index_get_script(vec![
+        DebugIndexGetBehavior::Ok,
+        DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Ok,
         DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
@@ -2393,7 +2393,7 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
         .iter()
         .filter(|c| c.account_identifier == env.staking_id)
         .collect();
-    if calls.len() < 3 || calls[0].start.is_some() || calls[1].start.is_none() || calls[2].start != calls[1].start {
+    if calls.len() < 5 || calls[2].start.is_some() || calls[3].start.is_none() || calls[4].start != calls[3].start {
         bail!("expected rescue-driven resume to retry the interrupted later-page cursor, got calls {all_calls:?}");
     }
 

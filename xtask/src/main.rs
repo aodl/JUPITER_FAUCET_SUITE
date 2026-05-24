@@ -496,6 +496,7 @@ struct FaucetDebugConfig {
     main_interval_seconds: u64,
     rescue_interval_seconds: u64,
     min_tx_e8s: u64,
+    stake_recognition_delay_seconds: u64,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -903,12 +904,21 @@ fn append_local_faucet_funding_tranche(payout: &Account, amount_e8s: u64) -> Res
     let funding_source = cfg.funding_source_account;
     let funding_source_id = account_identifier_text(funding_source.owner, funding_source.subaccount);
     let payout_id = account_identifier_text(payout.owner, payout.subaccount);
+    let timestamp_nanos = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("system clock before UNIX epoch")?
+        .as_nanos() as u64)
+        .saturating_add(
+            cfg.stake_recognition_delay_seconds
+                .saturating_add(1)
+                .saturating_mul(1_000_000_000),
+        );
     call_raw(
         "mock_icp_index",
-        "debug_append_transfer_from",
+        "debug_append_transfer_from_with_timestamp",
         &format!(
-            "(\"{}\", \"{}\", {}:nat64, null)",
-            funding_source_id, payout_id, amount_e8s
+            "(\"{}\", \"{}\", {}:nat64, null, {}:nat64)",
+            funding_source_id, payout_id, amount_e8s, timestamp_nanos
         ),
     )
 }
@@ -1177,7 +1187,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             governance_canister_id = opt principal "{gov_id}";
-            funding_source_account = opt {funding_source};
+            funding_source_account = {funding_source};
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1272,7 +1282,7 @@ fn cmd_setup_historian_local() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             governance_canister_id = opt principal "{gov_id}";
-            funding_source_account = opt {funding_source};
+            funding_source_account = {funding_source};
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -1471,7 +1481,7 @@ fn cmd_setup() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             governance_canister_id = opt principal "{gov_id}";
-            funding_source_account = opt {funding_source};
+            funding_source_account = {funding_source};
             rescue_controller = principal "{faucet_rescue}";
             blackhole_controller = opt principal "{blackhole_id}";
             blackhole_armed = opt false;
@@ -2200,9 +2210,9 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             .filter(|c| c.account_identifier == staking_id)
             .map(|c| c.start)
             .collect();
-        if starts != vec![None, None] {
+        if starts.len() != 3 || starts.iter().any(|start| start.is_some()) {
             bail!(
-                "expected both payout jobs to start scanning from the beginning, got starts {starts:?} from calls {calls:?}"
+                "expected first-tranche denominator pre-scan and both payout scans to start from the beginning, got starts {starts:?} from calls {calls:?}"
             );
         }
 
@@ -2494,7 +2504,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         Ok(())
     });
 
-    run_scenario(outcomes, label("icp", "faucet", "tiny computed shares are skipped and payout falls back to self"), || {
+    run_scenario(outcomes, label("icp", "faucet", "first strict tranche ignores live staking balance when computing share"), || {
         let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
         let _: () = call_raw("mock_icp_index", "debug_reset", "()")?;
         let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
@@ -2523,16 +2533,16 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_main_tick")?;
         let summary: Option<FaucetSummary> = call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
         let summary = summary.context("expected faucet summary")?;
-        if summary.topped_up_count != 0 || summary.ignored_under_threshold != 0 || summary.ignored_bad_memo != 0 {
+        if summary.topped_up_count != 1 || summary.ignored_under_threshold != 0 || summary.ignored_bad_memo != 0 {
             bail!(
-                "expected tiny computed share to be treated as no-transfer, got topped_up_count={} ignored_under_threshold={} ignored_bad_memo={}",
+                "expected strict first-tranche denominator to pay the indexed commitment despite large live staking balance, got topped_up_count={} ignored_under_threshold={} ignored_bad_memo={}",
                 summary.topped_up_count,
                 summary.ignored_under_threshold,
                 summary.ignored_bad_memo
             );
         }
-        if summary.remainder_to_self_e8s != 99_990_000 {
-            bail!("expected fallback remainder to self of 99_990_000 e8s, got {}", summary.remainder_to_self_e8s);
+        if summary.remainder_to_self_e8s != 0 {
+            bail!("expected no fallback remainder after full first-tranche allocation, got {}", summary.remainder_to_self_e8s);
         }
 
         Ok(())

@@ -25,6 +25,7 @@ pub(super) use crate::{logic, policy, state};
 pub(super) const PAGE_SIZE: u64 = 500;
 pub(super) const MAX_INDEX_PAGES_PER_PAYOUT_TICK: u64 = 64;
 pub(super) const MAX_INDEX_PAGES_PER_LATEST_SCAN: u64 = 128;
+pub(super) const MAX_FUNDING_SCAN_PAGES_PER_TICK: u64 = MAX_INDEX_PAGES_PER_LATEST_SCAN;
 // Only persist large barren spans so the durable skip-range cache stays small and a
 // one-time adversarial history scan remains much more expensive for the attacker than for
 // the faucet. These ranges are only valid while commitment-classification policy is

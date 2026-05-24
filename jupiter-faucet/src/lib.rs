@@ -23,7 +23,7 @@ pub struct InitArgs {
     pub index_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
     pub governance_canister_id: Option<Principal>,
-    pub funding_source_account: Option<Account>,
+    pub funding_source_account: Account,
 
     pub rescue_controller: Principal,
     pub blackhole_controller: Option<Principal>,
@@ -151,9 +151,7 @@ fn init(args: InitArgs) {
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
         governance_canister_id: Some(args.governance_canister_id.unwrap_or_else(mainnet_governance_id)),
-        funding_source_account: args
-            .funding_source_account
-            .expect("funding_source_account is required"),
+        funding_source_account: args.funding_source_account,
         rescue_controller: args.rescue_controller,
         blackhole_controller: Some(args.blackhole_controller.unwrap_or_else(mainnet_blackhole_id)),
         blackhole_armed: args.blackhole_armed,
@@ -245,6 +243,15 @@ pub struct DebugState {
     pub last_observed_staking_balance_e8s: Option<u64>,
     pub last_observed_latest_tx_id: Option<u64>,
     pub expected_first_staking_tx_id: Option<u64>,
+    pub last_processed_funding_tx_id: Option<u64>,
+    pub active_funding_scan_cursor: Option<u64>,
+    pub active_funding_scan_candidate_tx_id: Option<u64>,
+    pub active_funding_scan_candidate_amount_e8s: Option<u64>,
+    pub active_funding_scan_anchor_last_processed_funding_tx_id: Option<u64>,
+    pub active_payout_funding_tx_id: Option<u64>,
+    pub active_payout_funding_amount_e8s: Option<u64>,
+    pub active_payout_round_end_latest_tx_id: Option<u64>,
+    pub active_payout_effective_denom_scan_complete: Option<bool>,
 }
 
 #[cfg(feature = "debug_api")]
@@ -303,6 +310,27 @@ fn debug_state() -> DebugState {
         last_observed_staking_balance_e8s: st.last_observed_staking_balance_e8s,
         last_observed_latest_tx_id: st.last_observed_latest_tx_id,
         expected_first_staking_tx_id: st.config.expected_first_staking_tx_id,
+        last_processed_funding_tx_id: st.last_processed_funding_tx_id,
+        active_funding_scan_cursor: st.active_funding_scan.as_ref().and_then(|scan| scan.cursor),
+        active_funding_scan_candidate_tx_id: st
+            .active_funding_scan
+            .as_ref()
+            .and_then(|scan| scan.candidate.map(|candidate| candidate.tx_id)),
+        active_funding_scan_candidate_amount_e8s: st
+            .active_funding_scan
+            .as_ref()
+            .and_then(|scan| scan.candidate.map(|candidate| candidate.amount_e8s)),
+        active_funding_scan_anchor_last_processed_funding_tx_id: st
+            .active_funding_scan
+            .as_ref()
+            .and_then(|scan| scan.anchor_last_processed_funding_tx_id),
+        active_payout_funding_tx_id: st.active_payout_job.as_ref().and_then(|job| job.funding_tx_id),
+        active_payout_funding_amount_e8s: st.active_payout_job.as_ref().and_then(|job| job.funding_amount_e8s),
+        active_payout_round_end_latest_tx_id: st.active_payout_job.as_ref().and_then(|job| job.round_end_latest_tx_id),
+        active_payout_effective_denom_scan_complete: st
+            .active_payout_job
+            .as_ref()
+            .and_then(|job| job.effective_denom_scan_complete),
     })
 }
 
@@ -394,6 +422,7 @@ fn debug_reset_runtime_state() {
         st.current_round_start_staking_balance_e8s = None;
         st.current_round_start_latest_tx_id = None;
         st.last_processed_funding_tx_id = None;
+        st.active_funding_scan = None;
         st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
     });
 }

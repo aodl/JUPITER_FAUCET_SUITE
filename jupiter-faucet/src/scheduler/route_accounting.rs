@@ -1,32 +1,113 @@
 use super::*;
 
-pub(super) async fn oldest_unprocessed_funding_tranche(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FundingDiscovery {
+    Found(FundingTranche),
+    InProgress,
+    Empty,
+    Unreadable,
+}
+
+fn genesis_round_amount_for_commitment_e8s(
+    commitment: &logic::Commitment,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    round_end_latest_tx_id: Option<u64>,
+    round_end_time_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
+        return None;
+    }
+    let recognized = tx_timestamp_nanos
+        .map(|timestamp| logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
+        .unwrap_or(false);
+    Some(if recognized { commitment.amount_e8s } else { 0 })
+}
+
+fn commitment_amount_for_job_round_e8s(
+    job: &ActivePayoutJob,
+    commitment: &logic::Commitment,
+    tx_id: u64,
+    tx_timestamp_nanos: Option<u64>,
+    now_nanos: u64,
+    recognition_delay_seconds: u64,
+) -> Option<u64> {
+    let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
+    if job.round_start_time_nanos.is_none()
+        && job.round_start_latest_tx_id.is_none()
+        && job.round_start_staking_balance_e8s == Some(0)
+    {
+        return genesis_round_amount_for_commitment_e8s(
+            commitment,
+            tx_id,
+            tx_timestamp_nanos,
+            job.round_end_latest_tx_id,
+            round_end_time_nanos,
+            recognition_delay_seconds,
+        );
+    }
+    logic::commitment_amount_for_round_e8s(
+        commitment,
+        tx_id,
+        tx_timestamp_nanos,
+        job.round_start_latest_tx_id,
+        job.round_end_latest_tx_id,
+        job.round_start_time_nanos.unwrap_or(round_end_time_nanos),
+        round_end_time_nanos,
+        recognition_delay_seconds,
+    )
+}
+
+pub(super) async fn discover_oldest_unprocessed_funding_tranche(
     index: &impl IndexClient,
     payout_account_identifier: String,
     funding_source_account_identifier: String,
     last_processed_funding_tx_id: Option<u64>,
     fee_e8s: u64,
-) -> Option<FundingTranche> {
-    let mut cursor = None;
-    let mut candidate: Option<FundingTranche> = None;
+) -> FundingDiscovery {
+    let mut scan = state::with_state_mut(|st| {
+        let reset = st
+            .active_funding_scan
+            .as_ref()
+            .map(|scan| scan.anchor_last_processed_funding_tx_id != last_processed_funding_tx_id)
+            .unwrap_or(true);
+        if reset {
+            st.active_funding_scan = Some(state::FundingScanState {
+                anchor_last_processed_funding_tx_id: last_processed_funding_tx_id,
+                cursor: None,
+                candidate: None,
+            });
+        }
+        st.active_funding_scan.clone().expect("funding scan state should exist")
+    });
     let mut pages_scanned = 0u64;
     loop {
-        if pages_scanned >= MAX_INDEX_PAGES_PER_LATEST_SCAN {
-            return None;
+        if pages_scanned >= MAX_FUNDING_SCAN_PAGES_PER_TICK {
+            state::with_state_mut(|st| st.active_funding_scan = Some(scan));
+            return FundingDiscovery::InProgress;
         }
         pages_scanned = pages_scanned.saturating_add(1);
         let resp = index
-            .get_account_identifier_transactions(payout_account_identifier.clone(), cursor, PAGE_SIZE)
+            .get_account_identifier_transactions(payout_account_identifier.clone(), scan.cursor, PAGE_SIZE)
             .await
-            .ok()?;
-        let descending = index_page_descending_from_cursor(&resp.transactions, cursor);
+            .ok();
+        let Some(resp) = resp else {
+            state::with_state_mut(|st| st.active_funding_scan = Some(scan));
+            return FundingDiscovery::Unreadable;
+        };
+        let descending = index_page_descending_from_cursor(&resp.transactions, scan.cursor);
         for tx in &resp.transactions {
-            if !tx_is_after_cursor_for_page(tx.id, cursor, descending) {
+            if !tx_is_after_cursor_for_page(tx.id, scan.cursor, descending) {
                 continue;
             }
             if last_processed_funding_tx_id.map(|last| tx.id <= last).unwrap_or(false) {
                 if descending {
-                    return candidate;
+                    state::with_state_mut(|st| st.active_funding_scan = None);
+                    return scan
+                        .candidate
+                        .map(|candidate| FundingDiscovery::Found(candidate.into()))
+                        .unwrap_or(FundingDiscovery::Empty);
                 }
                 continue;
             }
@@ -37,24 +118,35 @@ pub(super) async fn oldest_unprocessed_funding_tranche(
                 && to == &payout_account_identifier
                 && amount.e8s() > fee_e8s
             {
-                let timestamp_nanos = logic::index_tx_timestamp_nanos(tx)?;
+                let Some(timestamp_nanos) = logic::index_tx_timestamp_nanos(tx) else {
+                    continue;
+                };
                 let tranche = FundingTranche {
                     tx_id: tx.id,
                     timestamp_nanos,
                     amount_e8s: amount.e8s(),
                 };
                 if !descending {
-                    return Some(tranche);
+                    state::with_state_mut(|st| st.active_funding_scan = None);
+                    return FundingDiscovery::Found(tranche);
                 }
-                if candidate.map(|existing| tranche.tx_id < existing.tx_id).unwrap_or(true) {
-                    candidate = Some(tranche);
+                if scan
+                    .candidate
+                    .map(|existing| tranche.tx_id < existing.tx_id)
+                    .unwrap_or(true)
+                {
+                    scan.candidate = Some(tranche.into());
                 }
             }
         }
         if resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty() {
-            return candidate;
+            state::with_state_mut(|st| st.active_funding_scan = None);
+            return scan
+                .candidate
+                .map(|candidate| FundingDiscovery::Found(candidate.into()))
+                .unwrap_or(FundingDiscovery::Empty);
         }
-        cursor = index_page_next_cursor(&resp.transactions);
+        scan.cursor = index_page_next_cursor(&resp.transactions);
     }
 }
 
@@ -82,17 +174,21 @@ pub(super) async fn process_payout(
         let payout_id = account_identifier_text_for_account(&payout_account());
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let last_processed = state::with_state(|st| st.last_processed_funding_tx_id);
-        let Some(funding_tranche) = oldest_unprocessed_funding_tranche(
+        let funding_tranche = match discover_oldest_unprocessed_funding_tranche(
             index,
             payout_id,
             funding_source_id,
             last_processed,
             fee_e8s,
         )
-        .await else {
-            probe_index_health(index, &staking_id, denom_e8s).await;
-            maybe_latch_bootstrap_rescue(now_secs);
-            return true;
+        .await {
+            FundingDiscovery::Found(tranche) => tranche,
+            FundingDiscovery::InProgress | FundingDiscovery::Empty => {
+                probe_index_health(index, &staking_id, denom_e8s).await;
+                maybe_latch_bootstrap_rescue(now_secs);
+                return true;
+            }
+            FundingDiscovery::Unreadable => return false,
         };
         if payout_balance_e8s < funding_tranche.amount_e8s {
             return false;
@@ -142,7 +238,6 @@ pub(super) async fn process_payout(
             let mut round_end_staking_delta_e8s = 0u64;
             let mut reached_round_end = false;
             let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
-            let round_start_time_nanos = job.round_start_time_nanos.unwrap_or(job.round_end_time_nanos.unwrap_or(now_nanos));
             let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
             let recognition_delay_seconds = recognition_delay_seconds();
 
@@ -167,21 +262,18 @@ pub(super) async fn process_payout(
                 if job.round_start_latest_tx_id.map(|start| tx.id <= start).unwrap_or(false) {
                     continue;
                 }
-                let weighted_amount_e8s = logic::commitment_amount_for_round_e8s(
+                let weighted_amount_e8s = commitment_amount_for_job_round_e8s(
+                    &job,
                     &commitment,
                     tx.id,
                     logic::index_tx_timestamp_nanos(tx),
-                    job.round_start_latest_tx_id,
-                    job.round_end_latest_tx_id,
-                    round_start_time_nanos,
-                    round_end_time_nanos,
+                    now_nanos,
                     recognition_delay_seconds,
                 ).unwrap_or(0);
                 denom_delta_e8s = denom_delta_e8s.saturating_add(weighted_amount_e8s);
-                if logic::index_tx_timestamp_nanos(tx)
+                if weighted_amount_e8s > 0 || logic::index_tx_timestamp_nanos(tx)
                     .map(|timestamp| logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
-                    .unwrap_or(false)
-                {
+                    .unwrap_or(false) {
                     round_end_staking_delta_e8s = round_end_staking_delta_e8s.saturating_add(commitment.amount_e8s);
                 }
             }
@@ -325,10 +417,7 @@ pub(super) async fn process_payout(
                     effective_denom_e8s(job),
                     job.fee_e8s,
                     st.config.min_tx_e8s,
-                    job.round_start_latest_tx_id,
-                    job.round_end_latest_tx_id,
-                    job.round_start_time_nanos.unwrap_or(job.round_end_time_nanos.unwrap_or(now_nanos)),
-                    job.round_end_time_nanos.unwrap_or(now_nanos),
+                    job.clone(),
                 )
             });
             match logic::classify_commitment(snapshot.3, &commitment) {
@@ -341,14 +430,12 @@ pub(super) async fn process_payout(
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
                 }
                 logic::CommitmentValidity::Valid { target } => {
-                    let amount_for_round_e8s = logic::commitment_amount_for_round_e8s(
+                    let amount_for_round_e8s = commitment_amount_for_job_round_e8s(
+                        &snapshot.4,
                         &commitment,
                         tx.id,
                         logic::index_tx_timestamp_nanos(tx),
-                        snapshot.4,
-                        snapshot.5,
-                        snapshot.6,
-                        snapshot.7,
+                        now_nanos,
                         recognition_delay_seconds(),
                     ).unwrap_or(0);
                     let gross_share_e8s = logic::compute_raw_share_e8s(amount_for_round_e8s, snapshot.0, snapshot.1);

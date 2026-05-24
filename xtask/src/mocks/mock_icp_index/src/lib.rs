@@ -188,6 +188,17 @@ fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> 
 
 #[ic_cdk::update]
 fn debug_append_transfer_from(from: String, to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> u64 {
+    debug_append_transfer_from_with_timestamp(from, to, amount_e8s, memo, ic_cdk::api::time() as u64)
+}
+
+#[ic_cdk::update]
+fn debug_append_transfer_from_with_timestamp(
+    from: String,
+    to: String,
+    amount_e8s: u64,
+    memo: Option<Vec<u8>>,
+    timestamp_nanos: u64,
+) -> u64 {
     ST.with(|s| {
         let mut st = s.borrow_mut();
         st.next_id = st.next_id.saturating_add(1);
@@ -206,7 +217,7 @@ fn debug_append_transfer_from(from: String, to: String, amount_e8s: u64, memo: O
                 },
                 created_at_time: None,
                 timestamp: Some(IndexTimeStamp {
-                    timestamp_nanos: ic_cdk::api::time() as u64,
+                    timestamp_nanos,
                 }),
             },
         });

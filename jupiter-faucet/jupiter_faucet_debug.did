@@ -8,7 +8,7 @@ type InitArgs = record {
   index_canister_id : opt principal;
   cmc_canister_id : opt principal;
   governance_canister_id : opt principal;
-  funding_source_account : opt Account;
+  funding_source_account : Account;
 
   rescue_controller : principal;
   blackhole_controller : opt principal;
@@ -73,6 +73,15 @@ type DebugState = record {
   last_observed_staking_balance_e8s : opt nat64;
   last_observed_latest_tx_id : opt nat64;
   expected_first_staking_tx_id : opt nat64;
+  last_processed_funding_tx_id : opt nat64;
+  active_funding_scan_cursor : opt nat64;
+  active_funding_scan_candidate_tx_id : opt nat64;
+  active_funding_scan_candidate_amount_e8s : opt nat64;
+  active_funding_scan_anchor_last_processed_funding_tx_id : opt nat64;
+  active_payout_funding_tx_id : opt nat64;
+  active_payout_funding_amount_e8s : opt nat64;
+  active_payout_round_end_latest_tx_id : opt nat64;
+  active_payout_effective_denom_scan_complete : opt bool;
 };
 type Summary = record {
   pot_start_e8s : nat64;

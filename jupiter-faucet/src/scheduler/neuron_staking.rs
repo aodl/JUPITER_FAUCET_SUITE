@@ -18,6 +18,26 @@ pub(super) struct FundingTranche {
     pub amount_e8s: u64,
 }
 
+impl From<state::FundingTrancheState> for FundingTranche {
+    fn from(value: state::FundingTrancheState) -> Self {
+        Self {
+            tx_id: value.tx_id,
+            timestamp_nanos: value.timestamp_nanos,
+            amount_e8s: value.amount_e8s,
+        }
+    }
+}
+
+impl From<FundingTranche> for state::FundingTrancheState {
+    fn from(value: FundingTranche) -> Self {
+        Self {
+            tx_id: value.tx_id,
+            timestamp_nanos: value.timestamp_nanos,
+            amount_e8s: value.amount_e8s,
+        }
+    }
+}
+
 pub(super) fn ensure_active_job_with_boundary(
     now_nanos: u64,
     fee_e8s: u64,
@@ -63,17 +83,17 @@ pub(super) fn ensure_active_job_with_boundary(
                 }
             }
             _ => {
-                // Fresh installs do not yet know the prior round boundary. Use the current
-                // staking-account balance for the first strict tranche, then store the current
-                // boundary as the next round's start snapshot when this job finalizes.
+                // Fresh strict-tranche installs start from genesis. The first round must still
+                // scan indexed staking history up to the funding transfer boundary; the live
+                // staking balance is only an operational snapshot.
                 job.configure_round_accounting(
-                    Some(now_nanos),
-                    Some(denom_e8s),
-                    round_end_latest_tx_id,
+                    None,
+                    Some(0),
+                    None,
                     round_end_time_nanos,
                     round_end_latest_tx_id,
-                    denom_e8s,
-                    true,
+                    0,
+                    false,
                 );
             }
         }
