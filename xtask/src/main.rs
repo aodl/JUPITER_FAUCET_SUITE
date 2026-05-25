@@ -3,10 +3,10 @@ use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use num_traits::ToPrimitive;
-use std::env;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader};
+use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -380,6 +380,7 @@ fn call_raw<T>(canister: &str, method: &str, args: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de> + CandidType,
 {
+    let encoded_args = encode_call_args(canister, method, args)?;
     let cmd: Vec<String> = vec![
         "canister".into(),
         "call".into(),
@@ -387,7 +388,9 @@ where
         LOCAL_ENVIRONMENT.into(),
         canister.into(),
         method.into(),
-        args.into(),
+        encoded_args,
+        "--args-format".into(),
+        "hex".into(),
         "--output".into(),
         "hex".into(),
     ];
@@ -396,6 +399,22 @@ where
     let hex_str = out.trim().trim_start_matches("0x");
     let bytes = hex::decode(hex_str)?;
     Ok(decode_one(&bytes)?)
+}
+
+fn encode_call_args(canister: &str, method: &str, args: &str) -> Result<String> {
+    let candid =
+        candid_path_for_canister(canister).with_context(|| format!("no Candid file configured for {canister}"))?;
+    let output = Command::new("didc")
+        .args(["encode", "--defs", candid.as_str(), "--method", method, args])
+        .output()
+        .with_context(|| format!("failed to spawn didc for {canister}.{method}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("didc encode failed for {canister}.{method}: {}", stderr.trim());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn call_raw_noargs<T>(canister: &str, method: &str) -> Result<T>
@@ -408,6 +427,43 @@ where
 fn canister_id(name: &str) -> Result<String> {
     let out = run_icp_with_identity(&["canister", "status", name, "--id-only", "--environment", LOCAL_ENVIRONMENT])?;
     Ok(out.trim().to_string())
+}
+
+fn try_canister_id(name: &str) -> Result<Option<String>> {
+    let root = repo_root();
+    let output = Command::new("icp")
+        .args([
+            "--project-root-override",
+            &root,
+            "canister",
+            "status",
+            name,
+            "--id-only",
+            "--environment",
+            LOCAL_ENVIRONMENT,
+            "--identity",
+            LOCAL_IDENTITY,
+        ])
+        .output()
+        .with_context(|| format!("failed to lookup canister ID for {name}"))?;
+
+    if output.status.success() {
+        return Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("could not find ID for canister") || stderr.contains("failed to lookup canister ID") {
+        return Ok(None);
+    }
+
+    bail!("failed to lookup canister ID for {name}: {}", stderr.trim());
+}
+
+fn ensure_canister_exists(canister: &str) -> Result<()> {
+    if try_canister_id(canister)?.is_none() {
+        create_canister(canister)?;
+    }
+    Ok(())
 }
 
 fn local_replica_host() -> String {
@@ -4077,9 +4133,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
     });
 
     run_scenario(outcomes, label("icp", "relay", "surplus canister recipient uses configured memo"), || {
-        if canister_id("jupiter_relay_args_dbg").is_err() {
-            create_canister("jupiter_relay_args_dbg")?;
-        }
+        ensure_canister_exists("jupiter_relay_args_dbg")?;
         let ledger_id = Principal::from_text(canister_id("mock_icrc_ledger")?.trim())?;
         let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
         let blackhole_id = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
@@ -4168,9 +4222,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
     });
 
     run_scenario(outcomes, label("icp", "relay", "empty surplus recipients route all spendable ICP as cycles"), || {
-        if canister_id("jupiter_relay_args_dbg").is_err() {
-            create_canister("jupiter_relay_args_dbg")?;
-        }
+        ensure_canister_exists("jupiter_relay_args_dbg")?;
         let relay_id = Principal::from_text(canister_id("jupiter_relay_args_dbg")?.trim())?;
         let ledger_id = Principal::from_text(canister_id("mock_icrc_ledger")?.trim())?;
         let cmc_id = Principal::from_text(canister_id("mock_cmc")?.trim())?;
@@ -4413,9 +4465,13 @@ fn run_frontend_local_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_local_frontend_scenarios(outcomes)
 }
 
+fn pocketic_test_env() -> [(&'static str, &'static str); 2] {
+    [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")]
+}
+
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    let common_env = pocketic_test_env();
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4429,7 +4485,7 @@ fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
 fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    let common_env = pocketic_test_env();
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4443,7 +4499,7 @@ fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
 
 fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    let common_env = pocketic_test_env();
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4457,7 +4513,7 @@ fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
 fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    let common_env = pocketic_test_env();
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4471,7 +4527,7 @@ fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
 fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")];
+    let common_env = pocketic_test_env();
     run_cargo_test_suite(
         outcomes,
         "e2e",
