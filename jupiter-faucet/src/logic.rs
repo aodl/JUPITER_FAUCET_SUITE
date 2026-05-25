@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(parse_beneficiary_from_memo(b"not-a-principal"), None);
         assert_eq!(parse_beneficiary_from_memo(b""), None);
         assert_eq!(parse_beneficiary_from_memo(&p.as_slice()[..p.as_slice().len().saturating_sub(1)]), None);
-        assert_eq!(parse_beneficiary_from_memo(&vec![0xff; 64]), None);
+        assert_eq!(parse_beneficiary_from_memo(&[0xff; 64]), None);
     }
 
     #[test]

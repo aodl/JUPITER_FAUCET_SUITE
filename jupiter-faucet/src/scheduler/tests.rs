@@ -1,5 +1,14 @@
 use super::*;
 #[cfg(test)]
+// Large scheduler tests favor explicit setup values over lint-driven terseness.
+#[allow(
+    clippy::bool_assert_comparison,
+    clippy::clone_on_copy,
+    clippy::manual_contains,
+    clippy::module_inception,
+    clippy::type_complexity,
+    clippy::unnecessary_sort_by
+)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
@@ -15,6 +24,12 @@ mod tests {
     use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
+    fn assert_no_persistence_batch() {
+        assert!(
+            !state::persistence_batch_active(),
+            "mock async client was invoked while a persistence batch was active"
+        );
+    }
 
     struct UnexpectedIndex;
 
@@ -26,6 +41,7 @@ mod tests {
             _start: Option<u64>,
             _max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             panic!("index should not be called")
         }
     }
@@ -35,10 +51,12 @@ mod tests {
     #[async_trait]
     impl GovernanceClient for NoopGovernance {
         async fn neuron_staking_subaccount(&self, _neuron_id: u64) -> Result<[u8; 32], crate::clients::ClientError> {
+            assert_no_persistence_batch();
             panic!("governance should not be called")
         }
 
         async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), crate::clients::ClientError> {
+            assert_no_persistence_batch();
             panic!("governance should not be called")
         }
     }
@@ -70,11 +88,13 @@ mod tests {
     #[async_trait]
     impl GovernanceClient for ScriptedGovernance {
         async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.calls.lock().unwrap().push(neuron_id);
             self.steps.lock().unwrap().pop_front().expect("missing governance step")
         }
 
         async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.refresh_calls.lock().unwrap().push(neuron_id);
             Ok(())
         }
@@ -97,6 +117,7 @@ mod tests {
     #[async_trait]
     impl CanisterStatusClient for ExistingCanisterStatus {
         async fn canister_exists(&self, canister_id: Principal) -> Result<bool, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             Ok(self.existing.iter().any(|existing| *existing == canister_id))
         }
     }
@@ -104,6 +125,7 @@ mod tests {
     #[async_trait]
     impl CmcClient for PendingCmc {
         async fn notify_top_up(&self, _canister_id: Principal, _block_index: u64) -> Result<(), crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.calls.fetch_add(1, Ordering::SeqCst);
             pending::<Result<(), crate::clients::ClientError>>().await
         }
@@ -156,9 +178,10 @@ mod tests {
 
     #[async_trait]
     impl LedgerClient for ScriptedLedger {
-        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { panic!("fee_e8s should not be called") }
-        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { panic!("balance_of_e8s should not be called") }
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { assert_no_persistence_batch(); panic!("fee_e8s should not be called") }
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, crate::clients::ClientError> { assert_no_persistence_batch(); panic!("balance_of_e8s should not be called") }
         async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.transfer_calls.fetch_add(1, Ordering::SeqCst);
             self.created_at_times.lock().unwrap().push(arg.created_at_time);
             self.destinations.lock().unwrap().push(arg.to);
@@ -201,8 +224,9 @@ mod tests {
 
     #[async_trait]
     impl LedgerClient for BalanceRecordingLedger {
-        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { Ok(self.fee_e8s) }
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> { assert_no_persistence_batch(); Ok(self.fee_e8s) }
         async fn balance_of_e8s(&self, account: Account) -> Result<u64, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             let staking = state::with_state(|st| st.config.staking_account.clone());
             if account == staking {
                 Ok(self.staking_balance_e8s)
@@ -211,6 +235,7 @@ mod tests {
             }
         }
         async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             let amount_u64 = arg.amount.0.to_string().parse::<u64>().unwrap_or(0);
             self.transfer_amounts.lock().unwrap().push(amount_u64);
             let block = self.transfer_blocks.lock().unwrap().pop_front().unwrap_or(1);
@@ -246,6 +271,7 @@ mod tests {
     #[async_trait]
     impl CmcClient for ScriptedCmc {
         async fn notify_top_up(&self, _canister_id: Principal, _block_index: u64) -> Result<(), crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.calls.fetch_add(1, Ordering::SeqCst);
             match self.steps.lock().unwrap().pop_front().expect("missing cmc step") {
                 CmcStep::Ok => Ok(()),
@@ -278,6 +304,7 @@ mod tests {
             start: Option<u64>,
             max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.starts.lock().unwrap().push(start);
             let start_idx = match start {
                 None => 0,
@@ -325,6 +352,7 @@ mod tests {
             start: Option<u64>,
             max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.starts.lock().unwrap().push(start);
             let transactions = self
                 .txs
@@ -370,6 +398,7 @@ mod tests {
             start: Option<u64>,
             max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             self.starts.lock().unwrap().push(start);
             let page_idx = start.map(|last_seen| last_seen / PAGE_SIZE).unwrap_or(0);
             if page_idx >= self.page_count {
@@ -418,6 +447,7 @@ mod tests {
             _start: Option<u64>,
             _max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
             match self.steps.lock().unwrap().pop_front().expect("missing index step") {
                 IndexResponseStep::Ok(resp) => Ok(resp),
                 IndexResponseStep::Err => Err(crate::clients::ClientError::Call("scripted index failure".to_string())),
@@ -930,6 +960,113 @@ mod tests {
     }
 
     #[test]
+    fn governance_lookup_failure_once_then_success_pays_neuron_stake() {
+        let now_secs = 1_476_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(270, 10_000, 100_000_000, 100_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let neuron_subaccount = [8u8; 32];
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 100_000_000, Some(b"42".to_vec())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91)]);
+        let cmc = ScriptedCmc::new(vec![]);
+        let governance = ScriptedGovernance::new(vec![
+            Err(crate::clients::ClientError::Call("transient governance failure".to_string())),
+            Ok(neuron_subaccount),
+        ]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &governance, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(governance.calls(), vec![42, 42]);
+        assert_eq!(governance.refresh_calls(), vec![42]);
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert_eq!(
+            ledger.destinations(),
+            vec![Account {
+                owner: cfg.governance_canister_id.expect("governance_canister_id configured"),
+                subaccount: Some(neuron_subaccount),
+            }]
+        );
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
+    }
+
+    #[test]
+    fn valid_neuron_stake_followed_by_valid_cycles_top_up_completes_both() {
+        let now_secs = 1_477_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(271, 10_000, 200_000_000, 200_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let neuron_subaccount = [10u8; 32];
+        let canister_id = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 100_000_000, Some(b"42".to_vec())),
+            commitment_tx(11, &staking_id, 100_000_000, Some(canister_id.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91), LedgerStep::Ok(92)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+        let governance = ScriptedGovernance::new(vec![Ok(neuron_subaccount)]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &governance, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(governance.calls(), vec![42]);
+        assert_eq!(governance.refresh_calls(), vec![42]);
+        assert_eq!(ledger.transfer_calls(), 2);
+        assert_eq!(cmc.call_count(), 1);
+        assert_eq!(
+            ledger.destinations(),
+            vec![
+                Account {
+                    owner: cfg.governance_canister_id.expect("governance_canister_id configured"),
+                    subaccount: Some(neuron_subaccount),
+                },
+                logic::cmc_deposit_account(cfg.cmc_canister_id, canister_id),
+            ]
+        );
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 2);
+        assert_eq!(summary.topped_up_sum_e8s, 199_980_000);
+        assert_eq!(summary.failed_topups, 0);
+        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 0);
+    }
+
+    #[test]
+    fn governance_lookup_failure_then_cycles_top_up_continues_scanner() {
+        let now_secs = 1_478_u64;
+        let cfg = set_active_job(now_secs, ActivePayoutJob::new(272, 10_000, 160_000_000, 160_000_000, now_secs * 1_000_000_000));
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let canister_id = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(10, &staking_id, 80_000_000, Some(b"42".to_vec())),
+            commitment_tx(11, &staking_id, 80_000_000, Some(canister_id.to_text().into_bytes())),
+        ]);
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91), LedgerStep::Ok(92)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+        let governance = ScriptedGovernance::new(vec![
+            Err(crate::clients::ClientError::Call("first governance failure".to_string())),
+            Err(crate::clients::ClientError::Call("second governance failure".to_string())),
+        ]);
+
+        assert!(run_ready(process_payout(&ledger, &index, &cmc, &governance, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
+        assert_eq!(governance.calls(), vec![42, 42]);
+        assert_eq!(ledger.transfer_calls(), 2, "cycles top-up plus self-remainder should still be sent");
+        assert_eq!(cmc.call_count(), 2);
+        assert_eq!(
+            ledger.destinations(),
+            vec![
+                logic::cmc_deposit_account(cfg.cmc_canister_id, canister_id),
+                logic::cmc_deposit_account(cfg.cmc_canister_id, Principal::anonymous()),
+            ]
+        );
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(summary.topped_up_sum_e8s, 79_990_000);
+        assert_eq!(summary.failed_topups, 1);
+        assert_eq!(summary.ambiguous_topups, 0);
+        assert_eq!(summary.remainder_to_self_e8s, 79_990_000);
+    }
+
+    #[test]
     fn dotted_neuron_id_memo_resolves_staking_subaccount_and_preserves_transfer_memo() {
         let cases = [
             (b"42.vault.memo".to_vec(), b"vault.memo".to_vec()),
@@ -968,7 +1105,7 @@ mod tests {
     }
 
     #[test]
-    fn numeric_neuron_id_governance_lookup_failure_counts_failed_and_preserves_remainder() {
+    fn governance_lookup_failure_twice_counts_failed_and_preserves_remainder() {
         let now_secs = 1_485_u64;
         let cfg = set_active_job(now_secs, ActivePayoutJob::new(28, 10_000, 80_000_000, 160_000_000, now_secs * 1_000_000_000));
         let staking_id = account_identifier_text_for_account(&cfg.staking_account);
@@ -977,10 +1114,13 @@ mod tests {
         ]);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91)]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
-        let governance = ScriptedGovernance::new(vec![Err(crate::clients::ClientError::Call("not authorized".to_string()))]);
+        let governance = ScriptedGovernance::new(vec![
+            Err(crate::clients::ClientError::Call("not authorized".to_string())),
+            Err(crate::clients::ClientError::Call("still not authorized".to_string())),
+        ]);
 
         assert!(run_ready(process_payout(&ledger, &index, &cmc, &governance, &crate::clients::canister_info::NoopCanisterStatusClient, now_secs * 1_000_000_000, now_secs)));
-        assert_eq!(governance.calls(), vec![42]);
+        assert_eq!(governance.calls(), vec![42, 42]);
         assert_eq!(ledger.transfer_calls(), 1, "only the self-remainder transfer should be sent after unresolved neuron lookup");
         assert_eq!(cmc.call_count(), 1);
         assert_eq!(ledger.destinations(), vec![logic::cmc_deposit_account(cfg.cmc_canister_id, Principal::anonymous())]);

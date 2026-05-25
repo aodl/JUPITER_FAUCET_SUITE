@@ -83,13 +83,13 @@ struct State {
 }
 
 thread_local! {
-    static ST: RefCell<State> = RefCell::new(State {
+    static ST: RefCell<State> = const { RefCell::new(State {
         rate: 100_000,
         decimals: 4,
         timestamp: 1_700_000_000,
         error: None,
         calls: Vec::new(),
-    });
+    }) };
 }
 
 #[ic_cdk::init]

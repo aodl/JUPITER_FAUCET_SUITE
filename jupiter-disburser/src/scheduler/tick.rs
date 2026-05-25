@@ -96,7 +96,7 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
 /// - logs "CONFIG ..." only when the tick reaches the payout / maturity-disbursement path
 /// - logs only errors otherwise
 pub(super) async fn main_tick(force: bool) {
-    let now_nanos = ic_cdk::api::time() as u64;
+    let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);

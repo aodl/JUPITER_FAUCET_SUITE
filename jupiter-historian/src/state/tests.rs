@@ -1,5 +1,7 @@
 use super::*;
 #[cfg(test)]
+// Stable-state tests intentionally mirror storage shapes and assert map absence directly.
+#[allow(clippy::module_inception, clippy::unnecessary_get_then_check)]
 mod tests {
     use super::*;
     use crate::RegisteredCanisterSummary;

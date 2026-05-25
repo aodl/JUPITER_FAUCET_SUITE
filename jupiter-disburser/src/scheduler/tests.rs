@@ -1,5 +1,7 @@
 use super::*;
 #[cfg(test)]
+// Scheduler tests are organized as a nested module to match the existing include-file layout.
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
@@ -774,4 +776,3 @@ mod tests {
         assert_eq!(gov.claim_or_refresh_calls(), 2);
     }
 }
-

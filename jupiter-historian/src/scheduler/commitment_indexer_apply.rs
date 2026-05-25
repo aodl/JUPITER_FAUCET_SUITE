@@ -33,7 +33,7 @@ pub(super) fn apply_verified_qualifying_commitment(
         st.config.max_commitment_entries_per_canister,
     );
     if inserted {
-        let meta = st.per_canister_meta.entry(canister_id).or_insert_with(CanisterMeta::default);
+        let meta = st.per_canister_meta.entry(canister_id).or_default();
         let needs_initial_cycles_probe = meta.last_cycles_probe_ts.is_none();
         logic::apply_commitment_seen(meta, commitment.timestamp_nanos, now_secs);
         let recent = st.recent_commitments.get_or_insert_with(Vec::new);
@@ -344,6 +344,8 @@ pub(super) async fn process_commitment_indexing_ascending<I: IndexClient>(
 // can pick up new arrivals from the latest page, while `oldest_cursor` is the
 // oldest tx id backfilled so older history can continue without treating normal
 // lower tx ids as non-monotonic.
+// Kept wide because tests seed every cursor/page boundary for the descending ICP index walk.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient>(
     index: &I,
     now_secs: u64,
@@ -459,4 +461,3 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
     });
     Ok(())
 }
-

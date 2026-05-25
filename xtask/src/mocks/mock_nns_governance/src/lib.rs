@@ -86,7 +86,7 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
         id,
     } = req;
 
-    let refreshed_neuron_id = id.or_else(|| match neuron_id_or_subaccount {
+    let refreshed_neuron_id = id.or(match neuron_id_or_subaccount {
         Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(id)) => Some(id),
         Some(manage_neuron::NeuronIdOrSubaccount::Subaccount(_)) => None,
         None => None,

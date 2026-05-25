@@ -98,7 +98,7 @@ pub(super) async fn process_payout<L: LedgerClient>(
         let t = &plan.transfers[i];
         let arg = TransferArg {
             from_subaccount: None,
-            to: t.to.clone(),
+            to: t.to,
             fee: Some(Nat::from(plan.fee_e8s)),
             created_at_time: Some(t.created_at_time_nanos),
             memo: Some(Memo::from(t.memo.clone())),

@@ -167,9 +167,8 @@ mod tests {
         let whitespace_only = b"  \n\t".to_vec();
         let non_ascii = vec![0xff; 64];
         let truncated_target_text = target.to_text();
-        let truncated_target = truncated_target_text[..truncated_target_text.len().saturating_sub(1)]
-            .as_bytes()
-            .to_vec();
+        let truncated_target =
+            truncated_target_text.as_bytes()[..truncated_target_text.len().saturating_sub(1)].to_vec();
 
         let cases: Vec<(&str, Vec<u8>, Option<Principal>)> = vec![
             ("valid declared canister ID text", target.to_text().into_bytes(), Some(target)),

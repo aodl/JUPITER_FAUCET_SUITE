@@ -4,10 +4,6 @@ pub(super) fn log_error(code: u32) {
 }
 
 pub(super) fn log_cycles() {
-    #[cfg(test)]
-    {
-        return;
-    }
     #[cfg(not(test))]
     {
         let cycles: u128 = ic_cdk::api::canister_cycle_balance();

@@ -32,7 +32,7 @@ pub(super) fn note_attempted_beneficiary(pending: &PendingNotification) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
             let beneficiaries = job.cmc_attempted_beneficiaries.get_or_insert_with(Vec::new);
-            if !beneficiaries.iter().any(|existing| *existing == pending.beneficiary) {
+            if !beneficiaries.contains(&pending.beneficiary) {
                 beneficiaries.push(pending.beneficiary);
             }
         }
@@ -122,6 +122,10 @@ pub(super) enum TransferAttemptOutcome {
 }
 
 pub(super) async fn transfer_once(ledger: &impl LedgerClient, arg: TransferArg) -> TransferAttemptOutcome {
+    debug_assert!(
+        !state::persistence_batch_active(),
+        "persistence batch must be dropped before ledger transfer"
+    );
     match ledger.transfer(arg).await {
         Err(_) => TransferAttemptOutcome::ImmediateRetryable,
         Ok(Ok(block)) => match u64::try_from(block.0.clone()) {
@@ -145,6 +149,10 @@ pub(super) enum NotifyAttemptOutcome {
 }
 
 pub(super) async fn notify_once(cmc: &impl CmcClient, pending: &PendingNotification) -> NotifyAttemptOutcome {
+    debug_assert!(
+        !state::persistence_batch_active(),
+        "persistence batch must be dropped before CMC notify"
+    );
     note_attempted_beneficiary(pending);
     increment_cmc_attempts(pending);
     match cmc.notify_top_up(pending.beneficiary, pending.block_index).await {

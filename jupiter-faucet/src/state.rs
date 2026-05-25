@@ -375,6 +375,8 @@ impl ActivePayoutJob {
         }
     }
 
+    // Test/setup helper intentionally mirrors the stable-state round-boundary fields.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn configure_round_accounting(
         &mut self,
         round_start_time_nanos: Option<u64>,
@@ -470,6 +472,8 @@ impl State {
     }
 }
 
+// Stable-state enum shape is part of the upgrade contract; boxing V1 would change Candid.
+#[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) enum VersionedStableState {
     Uninitialized,
@@ -494,10 +498,10 @@ thread_local! {
     static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
-        std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
     static STABLE_SKIP_RANGE_MAP: std::cell::RefCell<Option<StableBTreeMap<U64Key, U64Value, Memory>>> =
-        std::cell::RefCell::new(None);
-    static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
+    static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static PERSISTENCE_DIRTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -641,7 +645,7 @@ pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|s| f(s.borrow().as_ref().expect("state not initialized")))
 }
 
-fn persistence_batch_active() -> bool {
+pub(crate) fn persistence_batch_active() -> bool {
     PERSISTENCE_BATCH_DEPTH.with(|depth| jupiter_persistence_batch::is_active(depth.get()))
 }
 
@@ -827,6 +831,129 @@ mod tests {
         assert_eq!(decoded.kind, TransferKind::Beneficiary);
         assert_eq!(decoded.beneficiary, principal(&[8]));
         assert_eq!(decoded.transfer_memo, None);
+    }
+
+    #[test]
+    fn current_faucet_state_decodes_legacy_shape_with_safe_defaults() {
+        #[derive(CandidType, Deserialize)]
+        struct LegacyActivePayoutJob {
+            id: u64,
+            fee_e8s: u64,
+            pot_start_e8s: u64,
+            denom_staking_balance_e8s: u64,
+            next_start: Option<u64>,
+            scan_complete: bool,
+            ignored_under_threshold: u64,
+            ignored_bad_memo: u64,
+            gross_outflow_e8s: u64,
+            topped_up_count: u64,
+            topped_up_sum_e8s: u64,
+            topped_up_min_e8s: Option<u64>,
+            topped_up_max_e8s: Option<u64>,
+            failed_topups: u64,
+            ambiguous_topups: u64,
+            remainder_to_self_e8s: u64,
+            skip_candidate_tx_count: u64,
+            next_created_at_time_nanos: u64,
+            observed_oldest_tx_id: Option<u64>,
+            observed_latest_tx_id: Option<u64>,
+            cmc_attempt_count: Option<u64>,
+            cmc_success_count: Option<u64>,
+        }
+
+        #[derive(CandidType, Deserialize)]
+        struct LegacyState {
+            config: Config,
+            last_summary: Option<Summary>,
+            last_successful_transfer_ts: Option<u64>,
+            last_rescue_check_ts: u64,
+            rescue_triggered: bool,
+            blackhole_armed_since_ts: Option<u64>,
+            forced_rescue_reason: Option<ForcedRescueReason>,
+            consecutive_index_anchor_failures: Option<u8>,
+            consecutive_index_latest_invariant_failures: Option<u8>,
+            consecutive_cmc_zero_success_runs: Option<u8>,
+            last_observed_staking_balance_e8s: Option<u64>,
+            last_observed_latest_tx_id: Option<u64>,
+            main_lock_state_ts: Option<u64>,
+            payout_nonce: u64,
+            active_payout_job: Option<LegacyActivePayoutJob>,
+            last_main_run_ts: u64,
+        }
+
+        // Mirrors the pre-change stable enum layout; boxing would change the Candid shape under test.
+        #[allow(clippy::large_enum_variant)]
+        #[derive(CandidType, Deserialize)]
+        enum LegacyVersionedStableState {
+            Uninitialized,
+            V1(LegacyState),
+        }
+
+        let legacy = LegacyVersionedStableState::V1(LegacyState {
+            config: sample_config(),
+            last_summary: None,
+            last_successful_transfer_ts: Some(77),
+            last_rescue_check_ts: 88,
+            rescue_triggered: false,
+            blackhole_armed_since_ts: Some(99),
+            forced_rescue_reason: Some(ForcedRescueReason::CmcZeroSuccessRuns),
+            consecutive_index_anchor_failures: Some(1),
+            consecutive_index_latest_invariant_failures: Some(2),
+            consecutive_cmc_zero_success_runs: Some(3),
+            last_observed_staking_balance_e8s: Some(4_000),
+            last_observed_latest_tx_id: Some(44),
+            main_lock_state_ts: Some(55),
+            payout_nonce: 7,
+            active_payout_job: None,
+            last_main_run_ts: 66,
+        });
+        let bytes = candid::encode_one(legacy).expect("encode legacy faucet shape");
+        let decoded: VersionedStableState = candid::decode_one(&bytes).expect("decode legacy faucet shape");
+
+        let VersionedStableState::V1(restored) = decoded else {
+            panic!("expected V1 faucet state");
+        };
+        assert_eq!(restored.last_successful_transfer_ts, Some(77));
+        assert_eq!(restored.skip_range_invariant_fault, None);
+        assert_eq!(restored.consecutive_index_latest_unreadable_failures, None);
+        assert_eq!(restored.current_round_start_time_nanos, None);
+        assert_eq!(restored.last_processed_funding_tx_id, None);
+        assert_eq!(restored.active_funding_scan, None);
+        assert_eq!(restored.last_summary, None);
+        assert!(restored.active_payout_job.is_none());
+
+        let legacy_job = LegacyActivePayoutJob {
+            id: 9,
+            fee_e8s: 10,
+            pot_start_e8s: 1_000,
+            denom_staking_balance_e8s: 2_000,
+            next_start: Some(12),
+            scan_complete: false,
+            ignored_under_threshold: 2,
+            ignored_bad_memo: 4,
+            gross_outflow_e8s: 500,
+            topped_up_count: 2,
+            topped_up_sum_e8s: 500,
+            topped_up_min_e8s: Some(200),
+            topped_up_max_e8s: Some(300),
+            failed_topups: 1,
+            ambiguous_topups: 0,
+            remainder_to_self_e8s: 0,
+            skip_candidate_tx_count: 0,
+            next_created_at_time_nanos: 123_456,
+            observed_oldest_tx_id: Some(1),
+            observed_latest_tx_id: Some(12),
+            cmc_attempt_count: Some(5),
+            cmc_success_count: Some(2),
+        };
+        let job_bytes = candid::encode_one(legacy_job).expect("encode legacy active job shape");
+        let job: ActivePayoutJob = candid::decode_one(&job_bytes).expect("decode legacy active job shape");
+        assert_eq!(job.id, 9);
+        assert_eq!(job.ambiguous_topups, 0);
+        assert_eq!(job.pending_transfer, None);
+        assert_eq!(job.cmc_attempted_beneficiaries, None);
+        assert_eq!(job.effective_denom_scan_complete, None);
+        assert_eq!(job.funding_amount_e8s, None);
     }
 
     #[test]

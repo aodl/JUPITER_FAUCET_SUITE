@@ -1,3 +1,12 @@
+#![allow(
+    clippy::clone_on_copy,
+    clippy::get_first,
+    clippy::manual_abs_diff,
+    clippy::manual_div_ceil,
+    clippy::too_many_arguments,
+    clippy::unnecessary_cast
+)]
+
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;

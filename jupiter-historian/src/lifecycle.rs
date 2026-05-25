@@ -106,7 +106,7 @@ pub(super) fn count_sns_discovered_canisters(st: &State) -> u64 {
 
 
 pub(super) fn effective_faucet_canister_id(st: &State) -> Principal {
-    st.config.faucet_canister_id.clone().unwrap_or_else(mainnet_faucet_id)
+    st.config.faucet_canister_id.unwrap_or_else(mainnet_faucet_id)
 }
 
 pub(super) fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Option<u64>) {
@@ -463,7 +463,7 @@ pub(super) fn registered_canister_summaries(st: &State) -> Vec<RegisteredCaniste
 
 #[ic_cdk::init]
 pub(super) fn init(args: InitArgs) {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     let cfg = config_from_init_args(args);
     state::init_stable_storage();
     let mut st = State::new(cfg, now_secs);
@@ -554,4 +554,3 @@ pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
     state::set_state_root_only(st);
     scheduler::install_timers();
 }
-

@@ -12,8 +12,8 @@ pub(super) fn indexed_route_name(kind: &IndexedRouteKind) -> &'static str {
 
 pub(super) fn indexed_route_account(cfg: &state::Config, kind: &IndexedRouteKind) -> icrc_ledger_types::icrc1::account::Account {
     match kind {
-        IndexedRouteKind::Output => cfg.output_account.clone(),
-        IndexedRouteKind::Rewards => cfg.rewards_account.clone(),
+        IndexedRouteKind::Output => cfg.output_account,
+        IndexedRouteKind::Rewards => cfg.rewards_account,
     }
 }
 

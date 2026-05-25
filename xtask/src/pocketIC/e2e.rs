@@ -1,3 +1,6 @@
+// PocketIC integration fixtures keep literal conversions/copies for readable scenario setup.
+#![allow(clippy::clone_on_copy, clippy::unnecessary_cast)]
+
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;

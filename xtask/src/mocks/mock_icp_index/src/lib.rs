@@ -188,7 +188,7 @@ fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> 
 
 #[ic_cdk::update]
 fn debug_append_transfer_from(from: String, to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> u64 {
-    debug_append_transfer_from_with_timestamp(from, to, amount_e8s, memo, ic_cdk::api::time() as u64)
+    debug_append_transfer_from_with_timestamp(from, to, amount_e8s, memo, ic_cdk::api::time())
 }
 
 #[ic_cdk::update]
@@ -245,7 +245,7 @@ fn debug_append_transfer_with_numeric_memo(to: String, amount_e8s: u64, memo: u6
                 },
                 created_at_time: None,
                 timestamp: Some(IndexTimeStamp {
-                    timestamp_nanos: ic_cdk::api::time() as u64,
+                    timestamp_nanos: ic_cdk::api::time(),
                 }),
             },
         });
@@ -271,7 +271,7 @@ fn debug_append_burn(from: String, amount_e8s: u64) -> u64 {
                 },
                 created_at_time: None,
                 timestamp: Some(IndexTimeStamp {
-                    timestamp_nanos: ic_cdk::api::time() as u64,
+                    timestamp_nanos: ic_cdk::api::time(),
                 }),
             },
         });
@@ -301,7 +301,7 @@ fn debug_append_repeated_transfer(to: String, count: u64, amount_e8s: u64, memo:
                     },
                     created_at_time: None,
                     timestamp: Some(IndexTimeStamp {
-                        timestamp_nanos: ic_cdk::api::time() as u64,
+                        timestamp_nanos: ic_cdk::api::time(),
                     }),
                 },
             });

@@ -1,5 +1,7 @@
 use super::*;
 #[cfg(test)]
+// Scheduler tests use explicit copied principals/accounts to keep fixture setup readable.
+#[allow(clippy::clone_on_copy, clippy::module_inception)]
 mod tests {
     use super::*;
     use crate::clients::index::{GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens};

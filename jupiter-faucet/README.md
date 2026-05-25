@@ -287,11 +287,13 @@ If the ledger replies with `Duplicate`, the faucet reuses the returned block ind
 The faucet does **not** retry forever and does **not** buffer a retry queue in memory. Behavior is:
 
 - first accepted-ledger notify failure → retry that notify once immediately, inline
+- first NNS Governance staking-subaccount lookup failure for a neuron directive → retry that lookup once immediately, inline
 - if both notify replies are typed terminal rejections → count that commitment as **failed** and continue
 - otherwise, if the retry still leaves transport / retryable uncertainty → count that commitment as **ambiguous** and continue
+- if both staking-subaccount lookup attempts fail → count that commitment as **failed** and continue
 - if the wider payout tick later aborts for some unrelated transient reason, the unfinished active job is preserved and retried on the next scheduler opportunity (weekly main tick by default, or sooner via the daily rescue tick's forced main resume)
 
-This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible commitments may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
+This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible commitments may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. Neuron `claim_or_refresh_neuron` is also best effort after a ledger-accepted neuron-stake transfer; the NNS endpoint is publicly callable, and a failed claim/refresh does not mean the transferred ICP is lost. Later natural NNS flow or a manual/public retry can refresh the neuron, so no durable claim-refresh retry queue is maintained. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
 
 ### Logging policy
@@ -471,7 +473,7 @@ Debug builds expose helper surfaces behind `debug_api`, including:
 - `debug_footprint`
 - debug methods for forcing timer runs and manipulating rescue state during tests
 
-These are for local integration and PocketIC tests only. The committed debug Candid file is:
+These are for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production faucet principal. The current operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is currently desired for these debug surfaces. The committed debug Candid file is:
 
 - [`jupiter_faucet_debug.did`](jupiter_faucet_debug.did)
 

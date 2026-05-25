@@ -3,6 +3,7 @@ FROM debian:bookworm-slim@sha256:74d56e3931e0d5a1dd51f8c8a2466d21de84a271cd3b5a7
 ARG DEBIAN_SNAPSHOT=20250331T000000Z
 ARG RUST_TOOLCHAIN=1.94.0
 ARG RUSTUP_VERSION=1.28.1
+ARG RUSTUP_INIT_SHA256=a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/opt/ic-wasm/bin:/root/.cargo/bin:${PATH}"
@@ -29,6 +30,8 @@ RUN printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian
 
 RUN curl --proto '=https' --tlsv1.2 -fsSLo /tmp/rustup-init \
         "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
+    && test -n "${RUSTUP_INIT_SHA256}" \
+    && echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c - \
     && chmod +x /tmp/rustup-init \
     && /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
     && rm -f /tmp/rustup-init

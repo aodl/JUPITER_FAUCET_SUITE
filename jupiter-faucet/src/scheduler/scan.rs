@@ -51,7 +51,7 @@ pub(super) fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option
 }
 
 pub(super) fn next_skip_jump_target(cursor: Option<u64>, skip_ranges: &[SkipRange], skip_range_idx: &mut usize) -> Option<u64> {
-    let Some(last_seen) = cursor else { return None; };
+    let last_seen = cursor?;
     while let Some(range) = skip_ranges.get(*skip_range_idx) {
         if last_seen >= range.end_tx_id {
             *skip_range_idx += 1;
@@ -129,4 +129,3 @@ pub(super) fn flush_scan_progress(
     *ignored_under_threshold_delta = 0;
     *ignored_bad_memo_delta = 0;
 }
-

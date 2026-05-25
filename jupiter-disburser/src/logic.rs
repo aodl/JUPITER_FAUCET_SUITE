@@ -35,7 +35,7 @@ pub(crate) fn compute_gross_split(total_e8s: u64, age_seconds: u64) -> GrossSpli
     let bonus = total_e8s.saturating_sub(base);
 
     // 95/5, rounding toward recipient 1 side (ceil).
-    let bonus1 = (((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128) + 99) / 100;
+    let bonus1 = ((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128).div_ceil(100);
     let bonus1 = bonus1 as u64;
     let bonus2 = bonus.saturating_sub(bonus1);
 
@@ -68,6 +68,8 @@ pub(crate) struct Planned {
 /// - for each destination:
 ///   if gross_share > fee => plan net transfer = gross_share - fee
 ///   else skip and leave it in staging
+// Planning stays parameterized so tests can exercise payout math without canister state.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_payout_transfers(
     payout_id: u64,
     created_at_base_nanos: u64,
@@ -88,7 +90,7 @@ pub(crate) fn plan_payout_transfers(
             return;
         }
         out.push(Planned {
-            to: to.clone(),
+            to: *to,
             gross_share_e8s: share,
             amount_e8s: share - fee_e8s,
             memo: build_memo(payout_id, idx),
@@ -162,7 +164,7 @@ mod tests {
             assert_eq!(g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s, total);
 
             let bonus = total - g.base_e8s;
-            let expected_bonus1 = (((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128) + 99) / 100;
+            let expected_bonus1 = ((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128).div_ceil(100);
             assert_eq!(g.bonus_recipient_1_e8s, expected_bonus1 as u64);
             assert_eq!(g.bonus_recipient_2_e8s, bonus - g.bonus_recipient_1_e8s);
         }
@@ -232,7 +234,7 @@ mod tests {
     fn gross_split_sums_for_various_ages_and_totals() {
         let ages = [
             0u64,
-            1 * SECS_PER_YEAR,
+            SECS_PER_YEAR,
             2 * SECS_PER_YEAR,
             4 * SECS_PER_YEAR,
             10 * SECS_PER_YEAR, // should clamp at 4y
@@ -340,7 +342,7 @@ mod tests {
 
         let ages = [
             0u64,
-            1 * SECS_PER_YEAR,
+            SECS_PER_YEAR,
             2 * SECS_PER_YEAR,
             3 * SECS_PER_YEAR,
             4 * SECS_PER_YEAR,

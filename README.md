@@ -85,7 +85,7 @@ The live value-moving path is:
    - the IO neuron `6345890886899317159`, with an empty memo blob/no outgoing memo, for immediate IO stake growth
    - the Jupiter Faucet neuron `11614578985374291210`, with memo blob `6345890886899317159`, for compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity
 
-The faucet payout path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry at ambiguous transfer / notify boundaries. CMC `notify_top_up` is used only for canister top-up directives; raw ICP and neuron-stake directives are plain ledger transfers, with neuron transfers followed by a best-effort NNS `claim_or_refresh_neuron` call. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work. The faucet also rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
+The faucet payout path is intentionally **best effort**. Each eligible commitment is attempted independently, with at most one immediate inline retry for selected transient external calls, including ambiguous transfer / notify boundaries and NNS staking-subaccount lookup. CMC `notify_top_up` is used only for canister top-up directives; raw ICP and neuron-stake directives are plain ledger transfers, with neuron transfers followed by a best-effort NNS `claim_or_refresh_neuron` call. A failed claim/refresh does not imply funds are lost: the endpoint is public, and later natural NNS flow or a manual/public retry can refresh the neuron. Deterministic failures are counted in `failed_topups`; exhausted retry paths that may already have partially settled are counted in `ambiguous_topups`. The job still continues rather than buffering deferred retry work or adding unbounded durable queues. The faucet also rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
 For the exact split math, memo formats, retry semantics, and rescue logic, the component READMEs are the canonical source:
 
@@ -100,13 +100,13 @@ At a high level, a participant:
 1. transfers ICP into the faucet neuron’s configured ICRC-1 staking account address `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 2. puts a supported declaration in the transfer memo as ASCII text
 
-The primary flow is still canister cycle top-up: put the **declared canister ID** in `icrc1_memo`. The committer does **not** need to own the declared canister. The parser accepts short ASCII principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit.
+The primary flow is still canister cycle top-up: put the **declared canister ID** in `icrc1_memo`. The committer does **not** need to own the declared canister. The parser accepts short ASCII principal text that fits within the memo constraint; in practice, principals short enough for this path are canister principals, while ordinary non-canister principal IDs are too long for the 32-byte memo limit. Anonymous and management canister principals remain rejected.
 
 Advanced memo forms are also supported in `icrc1_memo`: `canister_id.memo` routes raw ICP to the declared canister's default account with the right-hand memo segment as the outgoing ledger memo, and a decimal NNS neuron ID routes ICP to that neuron's staking account. Neuron commitments require the neuron to be public, because the faucet must read the neuron through NNS Governance to resolve its staking subaccount before sending the transfer.
 
 The supported memo path is ASCII text carried in `icrc1_memo`; use the ICRC-1 account address above in the [NNS dapp](https://nns.ic0.app/wallet/?u=) so that text memo path is available. The old 64-bit legacy memo field is intentionally ignored; numeric neuron IDs are supported only when supplied as ASCII text in `icrc1_memo`.
 
-The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Declared canister ID text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up.
+The suite intentionally does **not** hard-code textual conventions such as a `-cai` suffix check. Declared canister ID text is treated as syntax only. The value-moving faucet path does not eagerly probe the network to confirm that a memo target characterizes a canister, because keeping that path minimal reduces unnecessary cost and preserves the blackholed canister's resilience against cycle-drain pressure. Accepted memo text is therefore a project policy input, not a proof that the beneficiary is an installed canister; if the current CMC top-up path accepts the target, the faucet may still attempt the top-up. This is intentional simplicity, not a missing validation layer.
 
 That means the project deliberately accepts a bounded griefing surface: a committer can supply syntactically valid short principal text that does not correspond to a useful installed canister, and the faucet may still spend ledger fee / CMC work attempting the top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The production answer to that trade-off is economic rather than heuristic. The memo path is kept simple and non-probing, while the production `min_tx_e8s` remains high enough that repeatedly funding such attempts is materially costly to the attacker and simultaneously adds real protocol funding into the staking path.
 
@@ -170,7 +170,9 @@ That split is intentional: the value-moving canisters stay narrow; the public re
 
 ## Build reproducibility
 
-The release build expects committed lockfiles (`Cargo.lock` and `package-lock.json`) and uses `npm ci` for the frontend bundle path. `Dockerfile.repro` now pins the Debian package universe through `snapshot.debian.org`, uses a versioned `rustup-init` artifact, and emits a deterministic `release-artifacts/build-info.json` manifest capturing the exact toolchain versions and key input hashes used for the build. The helper script `scripts/verify-reproducible-artifacts` rebuilds the release artifact twice from scratch (`--no-cache`) and diffs the resulting file hashes so reproducibility can be checked in CI or before cutting a release.
+The release build expects committed lockfiles (`Cargo.lock` and `package-lock.json`) and uses `npm ci` for the frontend bundle path. `Dockerfile.repro` pins the Debian package universe through `snapshot.debian.org`, downloads a versioned `rustup-init` artifact, verifies that binary against a committed SHA256, and emits a deterministic `release-artifacts/build-info.json` manifest capturing the exact toolchain versions and key input hashes used for the build. The helper script `scripts/verify-reproducible-artifacts` rebuilds the release artifact twice from scratch (`--no-cache`) and diffs the resulting file hashes so reproducibility can be checked in CI or before cutting a release.
+
+This is deterministic rebuild verification in a pinned environment, not a claim of fully independent long-term third-party reproducibility. Remaining trust assumptions are explicit: Rust toolchains are fetched from the Rust distribution service after the checked `rustup-init` bootstrap, Rust crates resolve through `Cargo.lock`, npm packages resolve through `package-lock.json`, Debian packages come from the configured snapshot archive, and the final confidence check is same-environment double-build equality.
 
 ## Production canisters recorded in this repo
 
@@ -273,6 +275,12 @@ To build a single canister, for example:
 ### Test orchestration
 
 The preferred entry point for local Rust/canister testing is `xtask`.
+
+### Stable-state compatibility tests
+
+Stateful canisters keep small stable-state compatibility tests near their state modules. Tests that dynamically encode local legacy structs are legacy-shape compatibility checks: they prove the current `VersionedStableState` can decode the modeled prior shape, preserve meaningful fields, and apply safe defaults for new optional fields. Do not describe these as golden fixtures unless the repo contains checked-in Candid bytes, Candid text, or another committed artifact generated from a prior release.
+
+When a stable schema changes, add a minimal representative legacy-shape test or, where release provenance matters, add a true checked-in fixture under a small test fixture path. Keep fixtures small and reviewable rather than copying production dumps.
 
 Examples:
 

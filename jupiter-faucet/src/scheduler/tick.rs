@@ -74,7 +74,7 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
 }
 
 pub(super) async fn main_tick(force: bool) {
-    let now_nanos = ic_cdk::api::time() as u64;
+    let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
@@ -85,6 +85,8 @@ pub(super) async fn main_tick(force: bool) {
     run_main_tick_with_clients(force, now_nanos, now_secs, &ledger, &index, &cmc, &governance, &status_client).await;
 }
 
+// The scheduler takes explicit clients so tests can verify async/state invariants without canister calls.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClient, G: GovernanceClient, S: CanisterStatusClient>(
     force: bool,
     now_nanos: u64,

@@ -149,13 +149,13 @@ pub(super) fn get_public_status() -> PublicStatus {
     let heap_memory_bytes = allocated_heap_memory_bytes();
     let stable_memory_bytes = allocated_stable_memory_bytes();
     state::with_state(|st| PublicStatus {
-        staking_account: st.config.staking_account.clone(),
+        staking_account: st.config.staking_account,
         ledger_canister_id: st.config.ledger_canister_id,
         faucet_canister_id: effective_faucet_canister_id(st),
         cmc_canister_id: st.config.cmc_canister_id,
-        output_source_account: Some(st.config.output_source_account.clone()),
-        output_account: Some(st.config.output_account.clone()),
-        rewards_account: Some(st.config.rewards_account.clone()),
+        output_source_account: Some(st.config.output_source_account),
+        output_account: Some(st.config.output_account),
+        rewards_account: Some(st.config.rewards_account),
         index_canister_id: Some(st.config.index_canister_id),
         last_index_run_ts: st.last_index_run_ts.or(Some(st.last_main_run_ts)),
         index_interval_seconds: st.config.scan_interval_seconds,
@@ -300,7 +300,7 @@ pub(crate) async fn refresh_canister_module_hash_cache_if_due(now_secs: u64) {
         release_canister_module_hash_refresh(now_secs);
         return;
     }
-    let completed_ts = (ic_cdk::api::time() as u64) / 1_000_000_000;
+    let completed_ts = ic_cdk::api::time() / 1_000_000_000;
     finish_canister_module_hash_refresh(now_secs, completed_ts, hashes);
 }
 
@@ -346,7 +346,6 @@ pub(super) fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRe
         let mut items: Vec<RecentCommitmentListItem> = if let Some(recent) = &st.recent_commitments {
             let mut merged: Vec<RecentCommitmentListItem> = recent
                 .iter()
-                .cloned()
                 .map(|item| RecentCommitmentListItem {
                     canister_id: Some(item.canister_id),
                     neuron_id: None,
@@ -361,7 +360,7 @@ pub(super) fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRe
                 })
                 .collect();
             if let Some(low_value) = &st.recent_under_threshold_commitments {
-                merged.extend(low_value.iter().cloned().map(|item| RecentCommitmentListItem {
+                merged.extend(low_value.iter().map(|item| RecentCommitmentListItem {
                     canister_id: Some(item.canister_id),
                     neuron_id: None,
                     raw_icp_memo_text: item.raw_icp_memo_text.clone(),
@@ -375,7 +374,7 @@ pub(super) fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRe
                 }));
             }
             if let Some(neurons) = &st.recent_neuron_commitments {
-                merged.extend(neurons.iter().cloned().map(|item| RecentCommitmentListItem {
+                merged.extend(neurons.iter().map(|item| RecentCommitmentListItem {
                     canister_id: None,
                     neuron_id: Some(item.neuron_id),
                     raw_icp_memo_text: None,
@@ -389,7 +388,7 @@ pub(super) fn list_recent_commitments(args: ListRecentCommitmentsArgs) -> ListRe
                 }));
             }
             if let Some(neurons) = &st.recent_under_threshold_neuron_commitments {
-                merged.extend(neurons.iter().cloned().map(|item| RecentCommitmentListItem {
+                merged.extend(neurons.iter().map(|item| RecentCommitmentListItem {
                     canister_id: None,
                     neuron_id: Some(item.neuron_id),
                     raw_icp_memo_text: None,

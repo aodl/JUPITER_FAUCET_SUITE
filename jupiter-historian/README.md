@@ -334,7 +334,7 @@ icp canister install jupiter_historian \
 
 The production canister exposes the query interface described above.
 
-Additional debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC testing only. The debug Candid surface is committed at:
+Additional debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC testing only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production historian principal. The current operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is currently desired for these debug surfaces. The debug Candid surface is committed at:
 
 - [`jupiter_historian_debug.did`](jupiter_historian_debug.did)
 

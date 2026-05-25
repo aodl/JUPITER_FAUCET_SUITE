@@ -114,14 +114,14 @@ pub(crate) fn allocated_stable_memory_bytes() -> u64 {
 
 pub(crate) fn normalize_recent_commitment_bucket(items: &mut Vec<RecentCommitment>, counts_toward_faucet: bool, max_entries: usize) {
     items.retain(|item| item.counts_toward_faucet == counts_toward_faucet);
-    items.sort_by(|a, b| commitment_sort_key(b).cmp(&commitment_sort_key(a)));
+    items.sort_by_key(|item| std::cmp::Reverse(commitment_sort_key(item)));
     let mut seen = BTreeSet::new();
     items.retain(|item| seen.insert(item.tx_id));
     items.truncate(max_entries);
 }
 
 pub(crate) fn normalize_recent_invalid_commitments(items: &mut Vec<InvalidCommitment>) {
-    items.sort_by(|a, b| invalid_commitment_sort_key(b).cmp(&invalid_commitment_sort_key(a)));
+    items.sort_by_key(|item| std::cmp::Reverse(invalid_commitment_sort_key(item)));
     let mut seen = BTreeSet::new();
     items.retain(|item| seen.insert(item.tx_id));
     items.truncate(MAX_RECENT_INVALID_COMMITMENTS);

@@ -686,6 +686,8 @@ impl State {
     }
 }
 
+// Stable-state enum shape is part of the upgrade contract; boxing Current would change Candid.
+#[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) enum VersionedStableState {
     Uninitialized,

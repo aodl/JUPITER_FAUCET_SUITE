@@ -265,7 +265,7 @@ fn apply_upgrade_args(st: &mut crate::state::State, args: UpgradeArgs) -> Result
 
 #[ic_cdk::init]
 fn init(args: InitArgs) {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     let cfg = crate::state::Config {
         managed_canisters: args.managed_canisters,
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
@@ -296,7 +296,7 @@ fn init(args: InitArgs) {
 
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: Option<UpgradeArgs>) {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
     let mut st = crate::state::restore_state_from_stable()
         .expect("stable state missing during relay post_upgrade");

@@ -9,7 +9,7 @@ use super::*;
 /// controller update. It does not require fresh ledger, governance, or canister-status
 /// health checks at the point of escalation.
 pub(super) async fn rescue_tick() {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
 
     state::with_state_mut(|st| {
         if st.forced_rescue_reason.is_none()
@@ -48,10 +48,10 @@ pub(super) async fn rescue_tick() {
         desired
     };
 
-    desired.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
+    desired.sort_by_key(|a| a.to_text());
     desired.dedup();
 
-    let rescue_active = desired.iter().any(|p| *p == rescue_controller);
+    let rescue_active = desired.contains(&rescue_controller);
 
     let arg = UpdateSettingsArgs {
         canister_id: self_id,
@@ -71,4 +71,3 @@ pub(super) async fn rescue_tick() {
         st.last_rescue_check_ts = now_secs;
     });
 }
-

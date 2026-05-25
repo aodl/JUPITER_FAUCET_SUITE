@@ -228,7 +228,7 @@ fn refresh_certified_metrics_snapshot() {
             .expect("failed to certify metrics response");
         let metrics_tree_path = metrics_tree_path();
         let metrics_tree_entry =
-            HttpCertificationTreeEntry::new(&metrics_tree_path, &certification);
+            HttpCertificationTreeEntry::new(&metrics_tree_path, certification);
 
         HTTP_TREE.with(|tree| {
             let mut tree = tree.borrow_mut();
@@ -402,14 +402,14 @@ fn certify_all_assets() {
 
     ASSET_ROUTER.with_borrow_mut(|asset_router| {
         if let Err(err) = asset_router.certify_assets(assets, asset_configs) {
-            ic_cdk::trap(&format!("failed to certify frontend assets: {err}"));
+            ic_cdk::trap(format!("failed to certify frontend assets: {err}"));
         }
 
         update_certified_data(&asset_router.root_hash());
     });
 
     if let Err(err) = certify_head_assets(&ASSETS_DIR) {
-        ic_cdk::trap(&format!("failed to certify frontend HEAD assets: {err}"));
+        ic_cdk::trap(format!("failed to certify frontend HEAD assets: {err}"));
     }
 
     HTTP_TREE.with(|tree| update_certified_data(&tree.borrow().root_hash()));
@@ -588,7 +588,7 @@ fn serve_metrics() -> HttpResponse<'static> {
                 }
             };
         let metrics_tree_entry =
-            HttpCertificationTreeEntry::new(&metrics_tree_path, &certification);
+            HttpCertificationTreeEntry::new(&metrics_tree_path, certification);
         let witness = match tree.witness(&metrics_tree_entry, "/metrics") {
             Ok(witness) => witness,
             Err(_) => {
@@ -622,7 +622,7 @@ fn serve_asset_with_certificate(certificate: &[u8], req: &HttpRequest) -> HttpRe
     }
 
     ASSET_ROUTER.with_borrow(
-        |asset_router| match asset_router.serve_asset(&certificate, req) {
+        |asset_router| match asset_router.serve_asset(certificate, req) {
             Ok(response) => response,
             Err(err) => asset_error_response(&err),
         },

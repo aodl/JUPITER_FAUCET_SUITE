@@ -1,3 +1,6 @@
+// PocketIC historian scenarios use explicit casts to mirror Candid/interface boundary values.
+#![allow(clippy::unnecessary_cast)]
+
 use anyhow::{anyhow, bail, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;

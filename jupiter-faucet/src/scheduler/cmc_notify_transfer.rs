@@ -51,7 +51,7 @@ pub(super) async fn drive_pending_transfer(
             let to = deposit_account_for_pending(cmc_id, &staged.notification);
             let memo_bytes = transfer_memo_for_pending(&staged.notification);
             let first_arg = transfer_arg(
-                to.clone(),
+                to,
                 staged.notification.amount_e8s,
                 fee_e8s,
                 staged.created_at_time_nanos,
@@ -99,6 +99,10 @@ pub(super) async fn drive_pending_transfer(
     if !accepted.kind.requires_cmc_notify() {
         if let TransferKind::NeuronStake = accepted.kind {
             if let Some(neuron_id) = accepted.neuron_id {
+                debug_assert!(
+                    !state::persistence_batch_active(),
+                    "persistence batch must be dropped before neuron claim/refresh"
+                );
                 let _ = governance.claim_or_refresh_neuron(neuron_id).await;
             }
         }
@@ -135,6 +139,8 @@ pub(super) async fn drive_pending_transfer(
     }
 }
 
+// This helper keeps the ledger/CMC/governance clients explicit for scheduler unit tests.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn send_and_notify(
     ledger: &impl LedgerClient,
     cmc: &impl CmcClient,

@@ -71,10 +71,11 @@ fn init() {}
 async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
     let scripted = ST.with(|s| {
         let mut st = s.borrow_mut();
-        st.scripted_behaviors.first().cloned().map(|behavior| {
-            st.scripted_behaviors.remove(0);
-            behavior
-        })
+        if st.scripted_behaviors.is_empty() {
+            None
+        } else {
+            Some(st.scripted_behaviors.remove(0))
+        }
     });
 
     if let Some(behavior) = scripted {

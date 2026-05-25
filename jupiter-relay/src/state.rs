@@ -434,6 +434,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
     out
 }
 
+// Stable-state enum shape is part of the upgrade contract; boxing V1 would change Candid.
+#[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) enum VersionedStableState {
     Uninitialized,
@@ -458,7 +460,7 @@ thread_local! {
     static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
-        std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -517,6 +519,14 @@ pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reset_test_storage() {
+        with_stable_cell(|cell| {
+            cell.set(VersionedStableState::Uninitialized)
+                .expect("failed to reset relay stable state for test");
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
 
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
@@ -639,5 +649,51 @@ mod tests {
         assert!(failure_line.starts_with("RELAY_PROBE_FAILURE "));
         assert!(failure_line.contains("error=call%20failed%0Aretry"));
         assert!(!failure_line.contains('\n'));
+    }
+
+    #[test]
+    fn current_relay_state_roundtrip_restores_current_shape() {
+        reset_test_storage();
+        let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        let mut st = State::new(base_config(), 10_000);
+        st.last_main_run_ts = 9_900;
+        st.main_lock_state_ts = Some(0);
+        st.last_completed_cycles.insert(
+            canister_id,
+            CyclesSnapshot {
+                cycles: 1_000_000_000_000,
+                timestamp_nanos: 123_000_000_000,
+                source: CyclesSampleSource::BlackholeStatus,
+            },
+        );
+        st.relay_minted_cycles_since_sample.insert(canister_id, 50_000);
+        st.conversion_estimate = Some(ConversionEstimate {
+            cycles_per_e8: 7_000_000_000,
+            timestamp_nanos: 124_000_000_000,
+        });
+        st.next_job_id = 12;
+        set_state(st.clone());
+
+        let encoded_state = with_stable_cell(|cell| cell.get().clone());
+        let VersionedStableState::V1(decoded_state) = encoded_state else {
+            panic!("expected relay V1 state");
+        };
+        assert_eq!(decoded_state.last_main_run_ts, 9_900);
+        assert_eq!(decoded_state.next_job_id, 12);
+        assert_eq!(
+            decoded_state.last_completed_cycles.get(&canister_id).map(|sample| sample.cycles),
+            Some(1_000_000_000_000)
+        );
+        assert_eq!(decoded_state.relay_minted_cycles_since_sample.get(&canister_id), Some(&50_000));
+
+        let restored = restore_state_from_stable().expect("expected restored relay state");
+        assert_eq!(restored.config, st.config);
+        assert_eq!(restored.active_job, None);
+        assert_eq!(restored.last_summary, None);
+        assert_eq!(restored.conversion_estimate, st.conversion_estimate);
+        assert_eq!(
+            restored.last_completed_cycles.get(&canister_id).map(|sample| sample.timestamp_nanos),
+            Some(123_000_000_000)
+        );
     }
 }

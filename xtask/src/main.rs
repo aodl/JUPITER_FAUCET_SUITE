@@ -1,3 +1,12 @@
+#![allow(
+    clippy::cmp_owned,
+    clippy::collapsible_if,
+    clippy::len_zero,
+    clippy::manual_split_once,
+    clippy::unnecessary_cast,
+    clippy::while_let_on_iterator
+)]
+
 use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;

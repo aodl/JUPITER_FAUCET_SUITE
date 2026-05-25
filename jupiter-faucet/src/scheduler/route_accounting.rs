@@ -106,6 +106,27 @@ fn commitment_amount_for_job_payout_e8s(
     )
 }
 
+fn assert_no_persistence_batch_for_async() {
+    debug_assert!(
+        !state::persistence_batch_active(),
+        "persistence batch must be dropped before async client calls"
+    );
+}
+
+async fn neuron_staking_subaccount_retry_once(
+    governance: &impl GovernanceClient,
+    neuron_id: u64,
+) -> Result<[u8; 32], crate::clients::ClientError> {
+    assert_no_persistence_batch_for_async();
+    match governance.neuron_staking_subaccount(neuron_id).await {
+        Ok(subaccount) => Ok(subaccount),
+        Err(_) => {
+            assert_no_persistence_batch_for_async();
+            governance.neuron_staking_subaccount(neuron_id).await
+        }
+    }
+}
+
 pub(super) async fn discover_oldest_unprocessed_funding_tranche(
     index: &impl IndexClient,
     payout_account_identifier: String,
@@ -135,6 +156,7 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
             return FundingDiscovery::InProgress;
         }
         pages_scanned = pages_scanned.saturating_add(1);
+        assert_no_persistence_batch_for_async();
         let resp = index
             .get_account_identifier_transactions(payout_account_identifier.clone(), scan.cursor, PAGE_SIZE)
             .await
@@ -216,10 +238,14 @@ pub(super) async fn process_payout(
     let staking_id = account_identifier_text_for_account(&cfg.staking_account);
 
     if state::with_state(|st| st.active_payout_job.is_none()) {
+        assert_no_persistence_batch_for_async();
         let fee_e8s = match ledger.fee_e8s().await { Ok(v) => v, Err(_) => return false };
+        assert_no_persistence_batch_for_async();
         let payout_balance_e8s = match ledger.balance_of_e8s(payout_account()).await { Ok(v) => v, Err(_) => return false };
-        let denom_e8s = match ledger.balance_of_e8s(cfg.staking_account.clone()).await { Ok(v) => v, Err(_) => return false };
+        assert_no_persistence_batch_for_async();
+        let denom_e8s = match ledger.balance_of_e8s(cfg.staking_account).await { Ok(v) => v, Err(_) => return false };
         if payout_balance_e8s <= fee_e8s || denom_e8s == 0 {
+            assert_no_persistence_batch_for_async();
             probe_index_health(index, &staking_id, denom_e8s).await;
             maybe_latch_bootstrap_rescue(now_secs);
             return true;
@@ -227,6 +253,7 @@ pub(super) async fn process_payout(
         let payout_id = account_identifier_text_for_account(&payout_account());
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let last_processed = state::with_state(|st| st.last_processed_funding_tx_id);
+        assert_no_persistence_batch_for_async();
         let funding_tranche = match discover_oldest_unprocessed_funding_tranche(
             index,
             payout_id,
@@ -237,6 +264,7 @@ pub(super) async fn process_payout(
         .await {
             FundingDiscovery::Found(tranche) => tranche,
             FundingDiscovery::InProgress | FundingDiscovery::Empty => {
+                assert_no_persistence_batch_for_async();
                 probe_index_health(index, &staking_id, denom_e8s).await;
                 maybe_latch_bootstrap_rescue(now_secs);
                 return true;
@@ -278,6 +306,7 @@ pub(super) async fn process_payout(
         let job = state::with_state(|st| st.active_payout_job.clone());
         let Some(job) = job else { maybe_latch_bootstrap_rescue(now_secs); return true; };
         if job.pending_transfer.is_some() {
+            assert_no_persistence_batch_for_async();
             if !drive_pending_transfer(ledger, cmc, governance, cfg.cmc_canister_id, job.fee_e8s, now_nanos, now_secs).await {
                 return true;
             }
@@ -285,6 +314,7 @@ pub(super) async fn process_payout(
         }
 
         if !effective_denom_scan_complete(&job) {
+            assert_no_persistence_batch_for_async();
             let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
                 Ok(v) => v,
                 Err(_) => return false,
@@ -383,10 +413,12 @@ pub(super) async fn process_payout(
             if remainder_gross_e8s > job.fee_e8s && job.remainder_to_self_e8s == 0 {
                 let self_id = self_canister_principal();
                 let pending = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: remainder_gross_e8s, amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s), block_index: 0, next_start: None, transfer_memo: None, destination_subaccount: None, neuron_id: None };
+                assert_no_persistence_batch_for_async();
                 if !send_and_notify(ledger, cmc, governance, pending, job.fee_e8s, now_nanos, now_secs, cfg.cmc_canister_id).await {
                     return true;
                 }
             }
+            assert_no_persistence_batch_for_async();
             finalize_completed_job(status_client).await;
             maybe_latch_bootstrap_rescue(now_secs);
             return true;
@@ -409,6 +441,7 @@ pub(super) async fn process_payout(
             continue;
         }
 
+        assert_no_persistence_batch_for_async();
         let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
             Ok(v) => v,
             Err(_) => return false,
@@ -430,19 +463,25 @@ pub(super) async fn process_payout(
             });
             return false;
         }
-        note_index_page(&resp);
+        {
+            let _batch = state::begin_persistence_batch();
+            note_index_page(&resp);
+        }
         if resp.transactions.is_empty() {
             let mut skip_candidate = LocalSkipCandidate::from_job(&job);
             let mut pending_skip_ranges = Vec::new();
             record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
-            state::with_state_mut(|st| {
-                if let Some(active_job) = st.active_payout_job.as_mut() {
-                    active_job.scan_complete = true;
-                    active_job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
-                    active_job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
-                    active_job.skip_candidate_tx_count = skip_candidate.tx_count;
-                }
-            });
+            {
+                let _batch = state::begin_persistence_batch();
+                state::with_state_mut(|st| {
+                    if let Some(active_job) = st.active_payout_job.as_mut() {
+                        active_job.scan_complete = true;
+                        active_job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+                        active_job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+                        active_job.skip_candidate_tx_count = skip_candidate.tx_count;
+                    }
+                });
+            }
             if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
                 latch_skip_range_invariant_rescue();
                 return true;
@@ -457,7 +496,6 @@ pub(super) async fn process_payout(
         let mut skip_candidate = LocalSkipCandidate::from_job(&job);
         let mut pending_skip_ranges = Vec::new();
         let mut reached_round_end = false;
-        let mut scan_batch = Some(state::begin_persistence_batch());
         for tx in &resp.transactions {
             if !tx_is_after_cursor_for_page(tx.id, page_start, descending) {
                 continue;
@@ -512,13 +550,15 @@ pub(super) async fn process_payout(
                         return true;
                     }
                     record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
-                    flush_scan_progress(
-                        &mut ignored_under_threshold_delta,
-                        &mut ignored_bad_memo_delta,
-                        page_next_start,
-                        &skip_candidate,
-                    );
-                    drop(scan_batch.take());
+                    {
+                        let _batch = state::begin_persistence_batch();
+                        flush_scan_progress(
+                            &mut ignored_under_threshold_delta,
+                            &mut ignored_bad_memo_delta,
+                            page_next_start,
+                            &skip_candidate,
+                        );
+                    }
                     if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
                         latch_skip_range_invariant_rescue();
                         return true;
@@ -527,7 +567,7 @@ pub(super) async fn process_payout(
                         logic::PayoutTarget::CyclesTopUp { canister_id } => (TransferKind::Beneficiary, canister_id, None, None, None),
                         logic::PayoutTarget::RawIcp { canister_id, memo } => (TransferKind::RawIcp, canister_id, Some(memo), None, None),
                         logic::PayoutTarget::NeuronStake { neuron_id, memo } => {
-                            let subaccount = match governance.neuron_staking_subaccount(neuron_id).await {
+                            let subaccount = match neuron_staking_subaccount_retry_once(governance, neuron_id).await {
                                 Ok(subaccount) => subaccount,
                                 Err(_) => {
                                     state::with_state_mut(|st| {
@@ -535,7 +575,6 @@ pub(super) async fn process_payout(
                                             job.failed_topups = job.failed_topups.saturating_add(1);
                                         }
                                     });
-                                    scan_batch = Some(state::begin_persistence_batch());
                                     continue;
                                 }
                             };
@@ -549,10 +588,10 @@ pub(super) async fn process_payout(
                         }
                     };
                     let pending = PendingNotification { kind, beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(snapshot.2), block_index: 0, next_start: Some(tx.id), transfer_memo, destination_subaccount, neuron_id };
+                    assert_no_persistence_batch_for_async();
                     if !send_and_notify(ledger, cmc, governance, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
                         return true;
                     }
-                    scan_batch = Some(state::begin_persistence_batch());
                 }
             }
         }
@@ -560,18 +599,20 @@ pub(super) async fn process_payout(
         if scan_complete {
             record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
         }
-        state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
-            job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(ignored_under_threshold_delta);
-            job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(ignored_bad_memo_delta);
-            if let Some(next_start) = page_next_start {
-                job.next_start = Some(next_start);
-            }
-            job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
-            job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
-            job.skip_candidate_tx_count = skip_candidate.tx_count;
-            if scan_complete { job.scan_complete = true; } else if !reached_round_end { job.next_start = last_id; }
-        });
-        drop(scan_batch);
+        {
+            let _batch = state::begin_persistence_batch();
+            state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
+                job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(ignored_under_threshold_delta);
+                job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(ignored_bad_memo_delta);
+                if let Some(next_start) = page_next_start {
+                    job.next_start = Some(next_start);
+                }
+                job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+                job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+                job.skip_candidate_tx_count = skip_candidate.tx_count;
+                if scan_complete { job.scan_complete = true; } else if !reached_round_end { job.next_start = last_id; }
+            });
+        }
         if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
             latch_skip_range_invariant_rescue();
             return true;

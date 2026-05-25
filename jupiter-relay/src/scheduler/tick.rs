@@ -49,7 +49,7 @@ pub(crate) async fn debug_main_tick_impl() {
 }
 
 async fn main_tick(force: bool) {
-    let now_nanos = ic_cdk::api::time() as u64;
+    let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
@@ -70,6 +70,8 @@ async fn main_tick(force: bool) {
     .await;
 }
 
+// The relay scheduler keeps clients explicit so integration tests can model each dependency.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_main_tick_with_clients<
     L: LedgerClient,
     C: CmcClient,
@@ -378,8 +380,7 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
     cmc: &C,
     governance: &G,
 ) -> bool {
-    let max_transfers_this_tick =
-        state::with_state(|st| st.config.max_transfers_per_tick.map(u32::from));
+    let max_transfers_this_tick = state::with_state(|st| st.config.max_transfers_per_tick);
     let mut transfers_started_this_tick = 0_u32;
     loop {
         if state::with_state(|st| st.active_job.is_none()) {

@@ -1,5 +1,7 @@
 use super::*;
 #[cfg(test)]
+// API tests keep fixture construction explicit even when values are Copy.
+#[allow(clippy::clone_on_copy, clippy::useless_conversion)]
 mod tests {
     use super::*;
     use crate::state::{CanisterMeta, CyclesSampleSource, InvalidCommitment, RecentNeuronCommitment};

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -99,16 +100,82 @@ def require_interval(text: str, field: str, expected: int, path: Path) -> None:
         fail(f"{path} configures {field}={value}; expected {expected}")
 
 
+FORBIDDEN_PROD_DID_METHOD_PATTERNS = [
+    r"\bdebug_\w+\b",
+    r"\bforce_\w+\b",
+    r"\bclear_active\w*\b",
+    r"\binject_\w+\b",
+    r"\btrap_\w+\b",
+]
+
+
 def validate_no_debug_methods_in_prod_did(path: Path) -> None:
     text = path.read_text()
-    if re.search(r"\bdebug_\w+\b", text):
-        fail(f"{path} unexpectedly exposes debug_* methods in the production DID")
+    for pattern in FORBIDDEN_PROD_DID_METHOD_PATTERNS:
+        match = re.search(pattern, text)
+        if match:
+            fail(f"{path} unexpectedly exposes debug-only method pattern `{match.group(0)}` in the production DID")
 
 
 def validate_debug_methods_present_in_debug_did(path: Path) -> None:
+    if not path.name.endswith("_debug.did"):
+        fail(f"{path} debug DID must use the *_debug.did naming convention")
     text = path.read_text()
     if not re.search(r"\bdebug_\w+\b", text):
         fail(f"{path} is expected to expose debug_* methods")
+
+
+def build_one_invocations(text: str) -> list[list[str]]:
+    commands: list[list[str]] = []
+    logical_line = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not logical_line and not stripped.startswith("build_one "):
+            continue
+        if stripped.endswith("\\"):
+            logical_line += stripped[:-1] + " "
+            continue
+        logical_line += stripped
+        try:
+            parts = shlex.split(logical_line)
+        except ValueError as exc:
+            fail(f"scripts/build-canister contains an unparsable shell command near `{logical_line}`: {exc}")
+        if parts and parts[0] == "build_one":
+            commands.append(parts)
+        logical_line = ""
+    if logical_line:
+        try:
+            parts = shlex.split(logical_line)
+        except ValueError as exc:
+            fail(f"scripts/build-canister contains an unparsable shell command near `{logical_line}`: {exc}")
+        if parts and parts[0] == "build_one":
+            commands.append(parts)
+    return commands
+
+
+def validate_release_build_script_uses_release_dids() -> None:
+    path = REPO_ROOT / "scripts" / "build-canister"
+    text = path.read_text()
+    release_mappings = {
+        "jupiter-disburser/jupiter_disburser.did": "jupiter-disburser/jupiter_disburser_debug.did",
+        "jupiter-faucet/jupiter_faucet.did": "jupiter-faucet/jupiter_faucet_debug.did",
+        "jupiter-historian/jupiter_historian.did": "jupiter-historian/jupiter_historian_debug.did",
+        "jupiter-relay/jupiter_relay.did": "jupiter-relay/jupiter_relay_debug.did",
+    }
+    commands = build_one_invocations(text)
+    for release_did, debug_did in release_mappings.items():
+        if release_did not in text:
+            fail(f"{path} is missing release DID mapping `{release_did}`")
+        release_target = release_did.split("/")[0]
+        matching_commands = [command for command in commands if release_target in command]
+        if not matching_commands:
+            fail(f"{path} is missing a build_one invocation for `{release_target}`")
+        for command in matching_commands:
+            command_text = " ".join(command)
+            if debug_did in command or any(part.endswith("_debug.did") for part in command):
+                fail(f"{path} uses debug DID in a release build_one mapping: `{command_text}`")
 
 
 def validate_relay_prod_did(path: Path) -> None:
@@ -463,6 +530,7 @@ def main() -> None:
     faucet_min_tx_e8s = validate_faucet()
     historian_min_tx_e8s = validate_historian()
     validate_relay()
+    validate_release_build_script_uses_release_dids()
     if faucet_min_tx_e8s != historian_min_tx_e8s:
         fail(
             f"faucet/historian min_tx_e8s mismatch: faucet={faucet_min_tx_e8s} historian={historian_min_tx_e8s}"

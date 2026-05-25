@@ -2,7 +2,7 @@ use super::*;
 pub(super) fn apply_sns_canister_summary(timestamp_nanos: u64, now_secs: u64, max_cycles_entries: u32, summary: SnsCanisterSummary) {
     let Some(canister_id) = summary.canister_id else { return; };
     let cycles = summary.status.and_then(|status| status.cycles).and_then(|cycles| nat_to_u128(&cycles));
-    let dirty_canister_id = canister_id.clone();
+    let dirty_canister_id = canister_id;
     state::with_root_registry_and_cycles_canister_state_mut(dirty_canister_id, |st| {
         st.distinct_canisters.insert(canister_id);
         st.canister_sources.insert(
@@ -108,4 +108,3 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     });
     Ok(())
 }
-

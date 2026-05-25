@@ -1,3 +1,6 @@
+// The module hash parser intentionally takes the final matching line from command output.
+#![allow(clippy::double_ended_iterator_last)]
+
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

@@ -26,7 +26,7 @@ struct Args {
 }
 
 thread_local! {
-    static STATUSES: RefCell<BTreeMap<Principal, BlackholeCanisterStatus>> = RefCell::new(BTreeMap::new());
+    static STATUSES: RefCell<BTreeMap<Principal, BlackholeCanisterStatus>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 #[ic_cdk::init]

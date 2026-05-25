@@ -141,6 +141,8 @@ impl State {
     }
 }
 
+// Stable-state enum shape is part of the upgrade contract; boxing V1 would change Candid.
+#[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) enum VersionedStableState {
     Uninitialized,
@@ -165,8 +167,8 @@ thread_local! {
     static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static STABLE_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
-        std::cell::RefCell::new(None);
-    static STATE: std::cell::RefCell<Option<State>> = std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
+    static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     #[cfg(test)]
     static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     #[cfg(test)]

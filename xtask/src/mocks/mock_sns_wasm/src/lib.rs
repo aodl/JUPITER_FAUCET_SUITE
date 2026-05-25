@@ -12,7 +12,7 @@ struct ListDeployedSnsesResponse {
 }
 
 thread_local! {
-    static ROOTS: RefCell<Vec<Principal>> = RefCell::new(Vec::new());
+    static ROOTS: RefCell<Vec<Principal>> = const { RefCell::new(Vec::new()) };
 }
 
 #[ic_cdk::init]

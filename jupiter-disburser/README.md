@@ -254,7 +254,7 @@ The committed mainnet install args currently wire:
 
 Production builds expose **no public methods**.
 
-Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. The committed debug Candid file is:
+Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production disburser principal. The current operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is currently desired for these debug surfaces. The committed debug Candid file is:
 
 - [`jupiter_disburser_debug.did`](jupiter_disburser_debug.did)
 

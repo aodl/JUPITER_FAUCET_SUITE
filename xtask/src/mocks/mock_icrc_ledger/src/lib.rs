@@ -236,8 +236,8 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
         }
 
         st.transfers.push(TransferRecord {
-            from: from.clone(),
-            to: arg.to.clone(),
+            from,
+            to: arg.to,
             amount: Nat::from(amount),
             fee: Nat::from(fee),
             memo: memo_opt.clone(),

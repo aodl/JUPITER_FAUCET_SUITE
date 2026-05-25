@@ -1,4 +1,6 @@
 use super::*;
+// Keeping the inputs separate makes the controller policy tests table-driven and avoids state coupling.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn desired_rescue_controllers(
     now_secs: u64,
     blackhole_armed: bool,
@@ -23,7 +25,7 @@ pub(super) fn desired_rescue_controllers(
         };
         desired
     };
-    desired.sort_by(|a: &Principal, b: &Principal| a.to_text().cmp(&b.to_text()));
+    desired.sort_by_key(|a: &Principal| a.to_text());
     desired.dedup();
     Ok(Some(desired))
 }
@@ -60,14 +62,14 @@ pub(super) async fn attempt_rescue(now_secs: u64) {
     let Some(desired) = desired_opt else {
         return;
     };
-    let rescue_active = desired.iter().any(|p| *p == rescue_controller);
+    let rescue_active = desired.contains(&rescue_controller);
     let arg = UpdateSettingsArgs { canister_id: self_id, settings: CanisterSettings { controllers: Some(desired), ..Default::default() } };
     if update_settings(&arg).await.is_err() { log_error(3101); return; }
     state::with_state_mut(|st| { st.last_rescue_check_ts = now_secs; st.rescue_triggered = rescue_active; });
 }
 
 pub(super) async fn rescue_tick() {
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     rescue_tick_with_resume_at(now_secs, || async {
         main_tick(true).await;
     }).await;

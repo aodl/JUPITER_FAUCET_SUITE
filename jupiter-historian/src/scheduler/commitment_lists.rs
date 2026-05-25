@@ -8,7 +8,7 @@ pub(super) fn push_recent_commitment(recent: &mut Vec<RecentCommitment>, item: R
         return false;
     }
     recent.push(item);
-    recent.sort_by(|a, b| commitment_sort_key(b).cmp(&commitment_sort_key(a)));
+    recent.sort_by_key(|item| std::cmp::Reverse(commitment_sort_key(item)));
     if recent.len() > max_entries {
         recent.truncate(max_entries);
     }
@@ -20,7 +20,7 @@ pub(super) fn push_recent_neuron_commitment(recent: &mut Vec<RecentNeuronCommitm
         return false;
     }
     recent.push(item);
-    recent.sort_by(|a, b| (b.timestamp_nanos.unwrap_or(0), b.tx_id).cmp(&(a.timestamp_nanos.unwrap_or(0), a.tx_id)));
+    recent.sort_by_key(|item| std::cmp::Reverse((item.timestamp_nanos.unwrap_or(0), item.tx_id)));
     if recent.len() > max_entries {
         recent.truncate(max_entries);
     }

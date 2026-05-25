@@ -54,17 +54,17 @@ pub(crate) fn install_timers() {
     ic_cdk_timers::set_timer(Duration::from_secs(1), async { main_tick(true).await; });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(interval_s.max(60)), || async { main_tick(false).await; });
     ic_cdk_timers::set_timer(Duration::from_secs(5), async {
-        let now_secs = (ic_cdk::api::time() as u64) / 1_000_000_000;
+        let now_secs = ic_cdk::api::time() / 1_000_000_000;
         crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
     });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(crate::read_model::MODULE_HASH_REFRESH_INTERVAL_SECONDS), || async {
-        let now_secs = (ic_cdk::api::time() as u64) / 1_000_000_000;
+        let now_secs = ic_cdk::api::time() / 1_000_000_000;
         crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
     });
 }
 
 pub async fn main_tick(force: bool) {
-    let now_nanos = ic_cdk::api::time() as u64;
+    let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let Some(guard) = MainGuard::acquire(now_secs) else { return; };
     if !force {
@@ -188,6 +188,8 @@ pub async fn debug_refresh_icp_xdr_rate_now(now_secs: u64, xrc_canister_id: Prin
     refresh_icp_xdr_rate(now_secs, &xrc).await
 }
 
+// The scheduler takes explicit clients so unit tests can cover degraded dependencies independently.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient, G: GovernanceClient, X: ExchangeRateClient>(
     now_nanos: u64,
     now_secs: u64,

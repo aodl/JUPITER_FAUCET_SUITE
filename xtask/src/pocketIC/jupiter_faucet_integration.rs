@@ -1,3 +1,6 @@
+// PocketIC faucet scenarios keep explicit copies and index access for fixture readability.
+#![allow(clippy::clone_on_copy, clippy::get_first, clippy::unnecessary_cast)]
+
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;

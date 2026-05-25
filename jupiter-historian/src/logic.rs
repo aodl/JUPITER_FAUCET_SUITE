@@ -38,6 +38,7 @@ pub(crate) enum IndexedCommitmentEntry {
     Invalid(IndexedInvalidCommitment),
 }
 
+pub(crate) type IndexMemoTransfer = (u64, Option<Vec<u8>>, u64, Option<u64>);
 
 
 #[cfg(test)]
@@ -45,7 +46,7 @@ fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
     jupiter_memo_policy::parse_target_canister_principal_from_memo(bytes)
 }
 
-pub(crate) fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<(u64, Option<Vec<u8>>, u64, Option<u64>)> {
+pub(crate) fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_account_id: &str) -> Option<IndexMemoTransfer> {
     match &tx.transaction.operation {
         IndexOperation::Transfer { to, amount, .. } if to == staking_account_id => {
             let memo = tx
@@ -174,9 +175,7 @@ mod tests {
         let whitespace_only = b"  \n\t".to_vec();
         let non_ascii = vec![0xff; 64];
         let truncated_target_text = target.to_text();
-        let truncated_target = truncated_target_text[..truncated_target_text.len().saturating_sub(1)]
-            .as_bytes()
-            .to_vec();
+        let truncated_target = truncated_target_text.as_bytes()[..truncated_target_text.len().saturating_sub(1)].to_vec();
 
         vec![
             ("valid declared canister ID text", target.to_text().into_bytes(), Some(target)),
