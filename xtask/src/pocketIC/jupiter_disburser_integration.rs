@@ -5096,7 +5096,12 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         )
     }
 
-    fn run_scenario(with_late_extra_top_up: bool, memo: u64, proposal_seq_base: u64) -> Result<ScenarioRec> {
+    fn run_scenario(
+        with_late_extra_top_up: bool,
+        memo: u64,
+        proposal_seq_base: u64,
+        recognition_delay_seconds: u64,
+    ) -> Result<ScenarioRec> {
         let pic = build_pic();
         let ledger = Principal::from_text(ICP_LEDGER_ID)?;
         let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -5145,7 +5150,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             main_interval_seconds: Some(very_long_interval),
             rescue_interval_seconds: Some(very_long_interval),
             min_tx_e8s: Some(100_000_000),
-            stake_recognition_delay_seconds: Some(DAY_SECS),
+            stake_recognition_delay_seconds: Some(recognition_delay_seconds),
         };
         pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
         set_blackholed_controllers(&pic, faucet)?;
@@ -5273,7 +5278,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 extra_top_up_e8s,
                 &late_memo,
             )?;
-            advance_time_steps(&pic, 3 * DAY_SECS, 6 * 60 * 60, 10);
+            advance_time_steps(&pic, recognition_delay_seconds.saturating_add(DAY_SECS), 6 * 60 * 60, 10);
             let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-post-funding-aged-late-top-up")?;
             if summary.pot_start_e8s != pot {
                 bail!(
@@ -5284,22 +5289,49 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             }
             summary_round(&summary)
         } else {
-            record_clean_round(
+            let maturity_delta = earn_one_reward_cycle_with_whale(
+                &pic,
+                gov,
+                controller,
+                neuron_id,
+                whale_id,
+                "mitigated-timing-round2-control-reward",
+                proposal_seq_base + 1,
+            )?;
+            let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
                 &pic,
                 ledger,
                 gov,
                 disburser,
-                index,
                 controller,
                 neuron_id,
-                whale_id,
-                faucet,
+                "mitigated-timing-round2-control-stage",
                 &payout,
-                "mitigated-timing-round2-control",
-                proposal_seq_base + 1,
-            )?
+            )?;
+            append_funding_tx(&pic, index, disburser, &payout, pot)?;
+            let backlog = maturity_before_stage.saturating_sub(maturity_delta);
+            if backlog > ICP_LEDGER_FEE_E8S * 10 {
+                bail!(
+                    "mitigated-timing-round2-control: round is contaminated by carry-over maturity; maturity_delta={} maturity_before_stage={} maturity_after_stage={} backlog={}",
+                    maturity_delta,
+                    maturity_before_stage,
+                    maturity_after_stage,
+                    backlog,
+                );
+            }
+            advance_time_steps(&pic, recognition_delay_seconds.saturating_add(DAY_SECS), 6 * 60 * 60, 10);
+            let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-control-post-funding-wait")?;
+            if summary.pot_start_e8s != pot {
+                bail!(
+                    "mitigated-timing-round2-control: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
+                    summary.pot_start_e8s,
+                    pot,
+                );
+            }
+            summary_round(&summary)
         };
 
+        advance_time_steps(&pic, recognition_delay_seconds.saturating_add(DAY_SECS), 6 * 60 * 60, 10);
         let round3 = record_clean_round(
             &pic,
             ledger,
@@ -5322,94 +5354,62 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         Ok(ScenarioRec { baseline, round2, round3 })
     }
 
-    let control = run_scenario(false, 4747, 70_001)?;
-    let treatment = run_scenario(true, 4748, 80_001)?;
-    let round2_gap = if control.round2.gross >= treatment.round2.gross {
-        control.round2.gross - treatment.round2.gross
-    } else {
-        treatment.round2.gross - control.round2.gross
-    };
+    for (label, recognition_delay_seconds, control_memo, treatment_memo, control_seq, treatment_seq) in [
+        ("mechanism-one-day-delay", DAY_SECS, 4747, 4748, 70_001, 80_001),
+        ("production-seven-day-delay", 7 * DAY_SECS, 4749, 4750, 90_001, 100_001),
+    ] {
+        let control = run_scenario(false, control_memo, control_seq, recognition_delay_seconds)?;
+        let treatment = run_scenario(true, treatment_memo, treatment_seq, recognition_delay_seconds)?;
+        let round2_gap = if control.round2.gross >= treatment.round2.gross {
+            control.round2.gross - treatment.round2.gross
+        } else {
+            treatment.round2.gross - control.round2.gross
+        };
 
-    eprintln!(
-        "[mitigated-top-up-timing] control_baseline_gross={} treatment_baseline_gross={} control_round2_gross={} treatment_round2_gross={} control_round2_pot={} treatment_round2_pot={} control_round2_live_denom={} treatment_round2_live_denom={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_count={} treatment_round2_count={} control_round3_count={} treatment_round3_count={} round2_gap={}",
-        control.baseline.gross,
-        treatment.baseline.gross,
-        control.round2.gross,
-        treatment.round2.gross,
-        control.round2.pot,
-        treatment.round2.pot,
-        control.round2.live_denom,
-        treatment.round2.live_denom,
-        control.round2.effective_denom,
-        treatment.round2.effective_denom,
-        control.round2.topped_up_count,
-        treatment.round2.topped_up_count,
-        control.round3.topped_up_count,
-        treatment.round3.topped_up_count,
-        round2_gap,
-    );
-
-    if control.baseline.topped_up_count != 1 || treatment.baseline.topped_up_count != 1 {
-        bail!(
-            "expected both baseline rounds to pay exactly the pre-existing beneficiary; control_baseline={:?} treatment_baseline={:?}",
-            control.baseline,
-            treatment.baseline,
-        );
-    }
-    if control.round2.topped_up_count != 1 || treatment.round2.topped_up_count != 1 {
-        bail!(
-            "expected the affected round to pay only the pre-existing beneficiary in both scenarios; control_round2={:?} treatment_round2={:?}",
-            control.round2,
-            treatment.round2,
-        );
-    }
-    if treatment.round2.live_denom <= control.round2.live_denom {
-        bail!(
-            "expected the late valid top-up to increase the live staking denominator before payout; control_round2_live_denom={} treatment_round2_live_denom={}",
-            control.round2.live_denom,
-            treatment.round2.live_denom,
-        );
-    }
-    if control.round2.effective_denom != treatment.round2.effective_denom {
-        bail!(
-            "expected weighted round accounting to keep the affected-round effective denominator unchanged by a very late top-up; control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}",
-            control.round2.effective_denom,
-            treatment.round2.effective_denom,
-            control.round2.live_denom,
-            treatment.round2.live_denom,
-        );
-    }
-    if control.round2.pot != treatment.round2.pot {
-        bail!(
-            "expected a very late top-up to leave the affected-round payout pot unchanged because the reward had already accrued; control_round2_pot={} treatment_round2_pot={}",
-            control.round2.pot,
-            treatment.round2.pot,
-        );
-    }
-    if round2_gap > ICP_LEDGER_FEE_E8S as u128 {
-        bail!(
-            "expected weighted round accounting to prevent a late valid top-up from pinching the existing beneficiary in the affected round; control_round2_gross={} treatment_round2_gross={} gap={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}",
+        eprintln!(
+            "[mitigated-top-up-timing:{label}] recognition_delay_seconds={} control_baseline_gross={} treatment_baseline_gross={} control_round2_gross={} treatment_round2_gross={} control_round2_pot={} treatment_round2_pot={} control_round2_live_denom={} treatment_round2_live_denom={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_count={} treatment_round2_count={} control_round3_count={} treatment_round3_count={} round2_gap={}",
+            recognition_delay_seconds,
+            control.baseline.gross,
+            treatment.baseline.gross,
             control.round2.gross,
             treatment.round2.gross,
-            round2_gap,
-            control.round2.effective_denom,
-            treatment.round2.effective_denom,
+            control.round2.pot,
+            treatment.round2.pot,
             control.round2.live_denom,
             treatment.round2.live_denom,
+            control.round2.effective_denom,
+            treatment.round2.effective_denom,
+            control.round2.topped_up_count,
+            treatment.round2.topped_up_count,
+            control.round3.topped_up_count,
+            treatment.round3.topped_up_count,
+            round2_gap,
         );
-    }
-    if treatment.round3.topped_up_count != 2 {
-        bail!(
-            "expected the late committer to begin participating by the following clean round; treatment_round3={:?}",
-            treatment.round3,
-        );
-    }
-    if treatment.round3.effective_denom <= control.round3.effective_denom {
-        bail!(
-            "expected the following clean round to include the late committer in the effective denominator; control_round3_effective_denom={} treatment_round3_effective_denom={}",
-            control.round3.effective_denom,
-            treatment.round3.effective_denom,
-        );
+
+        if control.baseline.topped_up_count != 1 || treatment.baseline.topped_up_count != 1 {
+            bail!("{label}: expected both baseline rounds to pay exactly the pre-existing beneficiary; control_baseline={:?} treatment_baseline={:?}", control.baseline, treatment.baseline);
+        }
+        if control.round2.topped_up_count != 1 || treatment.round2.topped_up_count != 1 {
+            bail!("{label}: expected the affected round to pay only the pre-existing beneficiary in both scenarios; control_round2={:?} treatment_round2={:?}", control.round2, treatment.round2);
+        }
+        if treatment.round2.live_denom <= control.round2.live_denom {
+            bail!("{label}: expected the late valid top-up to increase the live staking denominator before payout; control_round2_live_denom={} treatment_round2_live_denom={}", control.round2.live_denom, treatment.round2.live_denom);
+        }
+        if control.round2.effective_denom != treatment.round2.effective_denom {
+            bail!("{label}: expected weighted round accounting to keep the affected-round effective denominator unchanged by a very late top-up; control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}", control.round2.effective_denom, treatment.round2.effective_denom, control.round2.live_denom, treatment.round2.live_denom);
+        }
+        if control.round2.pot != treatment.round2.pot {
+            bail!("{label}: expected a very late top-up to leave the affected-round payout pot unchanged because the reward had already accrued; control_round2_pot={} treatment_round2_pot={}", control.round2.pot, treatment.round2.pot);
+        }
+        if round2_gap > ICP_LEDGER_FEE_E8S as u128 {
+            bail!("{label}: expected weighted round accounting to prevent a late valid top-up from pinching the existing beneficiary in the affected round; control_round2_gross={} treatment_round2_gross={} gap={} control_round2_effective_denom={} treatment_round2_effective_denom={} control_round2_live_denom={} treatment_round2_live_denom={}", control.round2.gross, treatment.round2.gross, round2_gap, control.round2.effective_denom, treatment.round2.effective_denom, control.round2.live_denom, treatment.round2.live_denom);
+        }
+        if treatment.round3.topped_up_count != 2 {
+            bail!("{label}: expected the late committer to begin participating by the following clean round; treatment_round3={:?}", treatment.round3);
+        }
+        if treatment.round3.effective_denom <= control.round3.effective_denom {
+            bail!("{label}: expected the following clean round to include the late committer in the effective denominator; control_round3_effective_denom={} treatment_round3_effective_denom={}", control.round3.effective_denom, treatment.round3.effective_denom);
+        }
     }
 
     Ok(())

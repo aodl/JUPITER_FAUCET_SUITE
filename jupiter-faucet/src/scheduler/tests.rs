@@ -3182,6 +3182,146 @@ mod tests {
     }
 
     #[test]
+    fn strict_tranche_accounting_counts_historical_stake_and_prorates_mid_round_commitments() {
+        let now_secs = 4_020;
+        let mut cfg = test_config();
+        let funding_source = Account {
+            owner: Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai").unwrap(),
+            subaccount: None,
+        };
+        cfg.funding_source_account = funding_source.clone();
+        let mut st = state::State::new(cfg.clone(), now_secs);
+        st.current_round_start_time_nanos = Some(100_000_000_000);
+        st.current_round_start_staking_balance_e8s = Some(100_000_000);
+        st.current_round_start_latest_tx_id = Some(10);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&funding_source);
+        let old_beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let mid_beneficiary = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let too_late_beneficiary = Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            commitment_tx_at(1, &staking_id, 100_000_000, Some(old_beneficiary.to_text().into_bytes()), 0),
+            commitment_tx_at(11, &staking_id, 100_000_000, Some(mid_beneficiary.to_text().into_bytes()), 140_000_000_000),
+            commitment_tx_at(12, &staking_id, 100_000_000, Some(too_late_beneficiary.to_text().into_bytes()), 195_000_000_000),
+            funding_tx_at(20, &funding_source_id, &payout_id, 150_000_000, 200_000_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 150_000_000, 300_000_000, vec![111, 112]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            200_000_000_000,
+            now_secs,
+        )));
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(
+            summary.effective_denom_staking_balance_e8s,
+            Some(150_000_000),
+            "denominator is old baseline plus the half-round effective commitment, not live stake"
+        );
+        assert_eq!(summary.denom_staking_balance_e8s, 300_000_000);
+        assert_eq!(summary.topped_up_count, 2);
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000, 49_990_000]);
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), Some(20));
+    }
+
+    #[test]
+    fn funding_cursor_does_not_truncate_staking_commitment_history() {
+        let now_secs = 4_030;
+        let cfg = test_config();
+        let mut st = state::State::new(cfg.clone(), now_secs);
+        st.last_processed_funding_tx_id = Some(10);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let old_beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let post_boundary_beneficiary = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            // This commitment is before the already-processed funding cursor. The
+            // cursor applies only to payout-account funding transfers, so staking
+            // history must still be replayed and counted.
+            commitment_tx_at(5, &staking_id, 100_000_000, Some(old_beneficiary.to_text().into_bytes()), 0),
+            funding_tx_at(20, &funding_source_id, &payout_id, 100_000_000, 100_000_000_000),
+            commitment_tx_at(21, &staking_id, 100_000_000, Some(post_boundary_beneficiary.to_text().into_bytes()), 0),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![121]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
+        assert_eq!(state::with_state(|st| st.last_processed_funding_tx_id), Some(20));
+    }
+
+    #[test]
+    fn first_post_upgrade_round_without_cursor_seed_is_documented_and_conservative() {
+        let now_secs = 4_040;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let old_beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let too_fresh_beneficiary = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let index = RecordingIndex::new(vec![
+            commitment_tx_at(1, &staking_id, 100_000_000, Some(old_beneficiary.to_text().into_bytes()), 0),
+            funding_tx_at(5, &funding_source_id, &payout_id, 100_000_000, 100_000_000_000),
+            // With legacy state lacking a cursor seed, the first strict round may
+            // attach to the oldest unprocessed funding marker. Recognition delay
+            // still prevents a too-fresh commitment from becoming fully eligible.
+            commitment_tx_at(6, &staking_id, 100_000_000, Some(too_fresh_beneficiary.to_text().into_bytes()), 95_000_000_000),
+            funding_tx_at(20, &funding_source_id, &payout_id, 100_000_000, 200_000_000_000),
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![131]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance, &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            now_secs,
+        )));
+
+        let summary = state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(summary.topped_up_count, 1);
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
+        assert_eq!(
+            state::with_state(|st| st.last_processed_funding_tx_id),
+            Some(5),
+            "without a cursor seed, strict accounting starts from the oldest observed unprocessed funding marker"
+        );
+    }
+
+    #[test]
     fn strict_tranche_job_pot_matches_funding_amount() {
         state::clear_skip_ranges();
         state::set_state(state::State::new(test_config(), 3_200));

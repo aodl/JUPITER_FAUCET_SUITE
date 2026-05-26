@@ -348,6 +348,89 @@ mod tests {
     }
 
     #[test]
+    fn production_delay_prorates_six_day_old_and_fully_counts_seven_day_old_commitments() {
+        const DAY_NANOS: u64 = 86_400_000_000_000;
+        const PRODUCTION_DELAY_SECS: u64 = 7 * 24 * 60 * 60;
+        let amount = 1_000_000_001;
+        let commitment = Commitment { amount_e8s: amount, memo_bytes: Some(target_canister().to_text().into_bytes()) };
+        let round_start = 10 * DAY_NANOS;
+        let round_end = 12 * DAY_NANOS;
+        let delay_nanos = PRODUCTION_DELAY_SECS * 1_000_000_000;
+
+        // A six-day-old commitment is deliberately too fresh under the production
+        // seven-day recognition delay, so it receives half-round weight here rather
+        // than being treated as fully eligible.
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 10, Some(round_start.saturating_sub(6 * DAY_NANOS)), Some(round_start), Some(50), round_end, PRODUCTION_DELAY_SECS),
+            Some(amount / 2),
+        );
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 10, Some(round_start.saturating_sub(delay_nanos + 1)), Some(round_start), Some(50), round_end, PRODUCTION_DELAY_SECS),
+            Some(amount),
+        );
+    }
+
+    #[test]
+    fn mid_round_effective_commitment_is_prorated() {
+        const DAY_NANOS: u64 = 86_400_000_000_000;
+        const PRODUCTION_DELAY_SECS: u64 = 7 * 24 * 60 * 60;
+        let amount = 1_000_000_001;
+        let commitment = Commitment { amount_e8s: amount, memo_bytes: Some(target_canister().to_text().into_bytes()) };
+        let round_start = 10 * DAY_NANOS;
+        let round_end = 12 * DAY_NANOS;
+        let delay_nanos = PRODUCTION_DELAY_SECS * 1_000_000_000;
+
+        let cases = [
+            ("effective before start", round_start.saturating_sub(delay_nanos + 1), amount),
+            ("effective exactly at start", round_start.saturating_sub(delay_nanos), amount),
+            ("effective halfway", round_start + DAY_NANOS - delay_nanos, amount / 2),
+            ("effective exactly at end", round_end.saturating_sub(delay_nanos), 0),
+            ("effective after end", round_end.saturating_sub(delay_nanos).saturating_add(1), 0),
+        ];
+        for (label, commitment_time, expected) in cases {
+            assert_eq!(
+                commitment_amount_for_payout_e8s(&commitment, 10, Some(commitment_time), Some(round_start), Some(50), round_end, PRODUCTION_DELAY_SECS),
+                Some(expected),
+                "{label}"
+            );
+        }
+        assert_eq!(
+            commitment_amount_for_payout_e8s(&commitment, 51, Some(round_start.saturating_sub(delay_nanos)), Some(round_start), Some(50), round_end, PRODUCTION_DELAY_SECS),
+            None,
+            "tx ids after the funding boundary are excluded even when timestamp-eligible"
+        );
+    }
+
+    #[test]
+    fn weighted_amount_table_documents_rounding_and_safety_invariants() {
+        let amount = 1_000_000_001;
+        let round_start = 100;
+        let round_end = 200;
+        let table = [
+            (0, amount),
+            (100, amount),
+            (125, 750_000_000),
+            (150, 500_000_000),
+            (175, 250_000_000),
+            (200, 0),
+            (u64::MAX, 0),
+        ];
+        let mut previous = u64::MAX;
+        for (effective, expected) in table {
+            let weighted = compute_weighted_amount_e8s(amount, round_start, round_end, effective);
+            assert!(weighted <= amount);
+            assert!(weighted <= previous, "later effective times must not increase weight");
+            assert_eq!(weighted, expected, "rounding floors fractional e8s");
+            previous = weighted;
+        }
+        assert_eq!(compute_weighted_amount_e8s(amount, 100, 100, 50), 0);
+        assert_eq!(compute_weighted_amount_e8s(amount, 101, 100, 50), 0);
+        assert_eq!(compute_weighted_amount_e8s(0, 100, 200, 100), 0);
+        assert_eq!(compute_weighted_amount_e8s(u64::MAX, 0, u64::MAX, 1), u64::MAX - 1);
+        assert_eq!(compute_weighted_amount_e8s(u64::MAX, u64::MAX - 10, u64::MAX, u64::MAX - 5), u64::MAX / 2);
+    }
+
+    #[test]
     fn commitment_amount_helpers_use_funding_and_recognition_boundaries() {
         let commitment = Commitment { amount_e8s: 1_000, memo_bytes: Some(target_canister().to_text().into_bytes()) };
         let round_end_nanos = 100_000_000_000;

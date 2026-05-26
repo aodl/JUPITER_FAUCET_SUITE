@@ -60,6 +60,8 @@ EXPECTED_STAKING_SUBACCOUNT = (
     r'opt blob "\ff\0c\0b\36\af\ef\ff\d0\c7\a4\d8\5c\0b\ce\a3\66\ac\d6\d7\4f\45\f7\70\3d\07\83\cc\64\48\89\9c\68"'
 )
 
+EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS = 7 * 24 * 60 * 60
+
 
 def fail(msg: str) -> None:
     print(f"mainnet install-args validation failed: {msg}", file=sys.stderr)
@@ -98,6 +100,17 @@ def require_interval(text: str, field: str, expected: int, path: Path) -> None:
     value = extract_nat64(text, field, path)
     if value != expected:
         fail(f"{path} configures {field}={value}; expected {expected}")
+
+
+def faucet_recognition_delay_error(text: str, path: Path) -> str | None:
+    value = extract_nat64(text, "stake_recognition_delay_seconds", path)
+    if value != EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS:
+        return (
+            f"{path} configures stake_recognition_delay_seconds={value}; "
+            f"expected {EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS} "
+            "(7 days, faucet-side recognition delay)"
+        )
+    return None
 
 
 FORBIDDEN_PROD_DID_METHOD_PATTERNS = [
@@ -280,7 +293,9 @@ def validate_faucet() -> int:
     require_contains(text, f'owner = principal "{PROD["jupiter_disburser"]}";', str(path))
     require_interval(text, "main_interval_seconds", 86400, path)
     require_interval(text, "rescue_interval_seconds", 86400, path)
-    require_interval(text, "stake_recognition_delay_seconds", 86400, path)
+    recognition_delay_error = faucet_recognition_delay_error(text, path)
+    if recognition_delay_error:
+        fail(recognition_delay_error)
 
     match = re.search(r"expected_first_staking_tx_id\s*=\s*([^;]+);", text)
     if not match:
@@ -491,6 +506,14 @@ def run_self_tests() -> None:
             fail(f"self-test failed to reject {label}")
         if not should_error and errors:
             fail(f"self-test unexpectedly rejected {label}: {errors[0]}")
+
+    faucet_path = REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did"
+    valid_faucet_delay = "stake_recognition_delay_seconds = opt 604800;"
+    stale_faucet_delay = "stake_recognition_delay_seconds = opt 86400;"
+    if faucet_recognition_delay_error(valid_faucet_delay, faucet_path):
+        fail("self-test unexpectedly rejected production 7-day faucet recognition delay")
+    if faucet_recognition_delay_error(stale_faucet_delay, faucet_path) is None:
+        fail("self-test failed to reject stale 1-day faucet recognition delay")
     print("validate-mainnet-install-args self-tests OK")
 
 

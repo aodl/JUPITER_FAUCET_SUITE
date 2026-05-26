@@ -128,7 +128,23 @@ Instead, the faucet now carries forward a **round-start staking snapshot** and b
 - valid in-round commitments are added with a conservative time weight
 - commitments whose tx id is beyond the round-end snapshot are excluded from the current round entirely
 
-The time weight is intentionally conservative. The faucet uses the commitment timestamp plus a configured stake-recognition delay (default `86400` seconds) before treating that commitment as effective for the current round. This approximates the fact that the staking neuron only begins earning the larger maturity stream after a later `ClaimOrRefresh`, and it biases slightly against over-crediting very recent stake.
+The time weight is intentionally conservative. The faucet uses the commitment timestamp plus a configured stake-recognition delay before treating that commitment as effective for the current round. The committed production install args set `stake_recognition_delay_seconds = 604800` (7 days). This is faucet-side accounting only: it does not change when NNS maturity accrues, when maturity can be spawned, or when the disburser runs. It approximates the fact that the staking neuron only begins earning the larger maturity stream after later NNS-side recognition, and it biases against over-crediting very recent stake.
+
+A commitment's effective time is:
+
+```text
+commitment_time + stake_recognition_delay_seconds
+```
+
+Round weighting uses inclusive/exclusive boundaries:
+
+- effective at or before round start => full weight
+- effective during the round => linearly prorated weight
+- effective at or after round end => zero weight in that round
+
+The funding-tranche cursor and staking-history scan are intentionally separate. `last_processed_funding_tx_id` tracks which payout-account funding transfers have already been consumed, but the staking-account scan still considers historical commitments so old stake keeps contributing to later rounds.
+
+For legacy state that has already paid once before strict tranche accounting is deployed, the first post-upgrade strict round may be imperfect if there is no exact funding cursor seed: the faucet may attach the first strict job to the oldest observed unprocessed funding marker. Recognition delay and round weighting still apply, so too-fresh stake is not fully included simply because the payout account has been funded. Once the funding cursor advances, subsequent rounds self-align. The current single-participant production deployment can mitigate this operationally by avoiding fresh commitments inside the recognition-delay window; multi-user deployments should prefer exact config and cursor alignment.
 
 The tx-id boundaries are more authoritative than timestamps for inclusion. The faucet captures the latest staking-account tx id at the end of each completed round and uses that as the inclusive upper bound for the next payout job, so equal timestamps do not create ambiguity.
 
@@ -154,9 +170,9 @@ Operationally, the mitigation strategy is therefore:
 
 The repo now covers this in three layers:
 
-- `src/logic.rs` unit tests verify the weighting, boundary, and payout arithmetic used by the faucet
-- `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, and handles the genesis strict tranche with a zero round-start baseline
-- the disburser/faucet PocketIC suite keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation
+- `src/logic.rs` unit tests verify the weighting, boundary, production-delay, and payout arithmetic used by the faucet
+- `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, keeps historical stake contributing, and handles the genesis strict tranche with a zero round-start baseline
+- the disburser/faucet PocketIC suite keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation; short-delay variants prove the mechanism, and the production-delay variant proves the 7-day policy
 
 The detailed reward-environment caveats and the rationale for the PocketIC whale background live in `xtask/README.md` and in the comments around the PocketIC reward helpers.
 
@@ -413,7 +429,7 @@ Before reinstall:
 - Confirm the faucet staking account is the intended Jupiter neuron staking account.
 - Confirm the canister principal and payout subaccount from deployment config.
 - Confirm the old Faucet timer will not process the current funds before reinstall.
-- Run `python3 ./scripts/validate-mainnet-install-args` and confirm main/rescue/stake-recognition intervals are each `86400`.
+- Run `python3 ./scripts/validate-mainnet-install-args` and confirm `main_interval_seconds = 86400`, `rescue_interval_seconds = 86400`, and `stake_recognition_delay_seconds = 604800`.
 
 After reinstall:
 
@@ -459,6 +475,7 @@ The committed mainnet install args wire the current production constants used by
 - funding source account: Jupiter Disburser default account (`uccpi-cqaaa-aaaar-qby3q-cai`, with `subaccount = null`)
 - `main_interval_seconds = 86400`
 - `rescue_interval_seconds = 86400`
+- `stake_recognition_delay_seconds = 604800` (7 days, faucet-side accounting delay)
 - `min_tx_e8s = 100000000` (`1 ICP`, with an enforced hard floor of `10000000` / `0.1 ICP`)
 
 ## Public interface

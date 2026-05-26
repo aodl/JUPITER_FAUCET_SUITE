@@ -71,7 +71,7 @@ On each successful main tick, the canister does the following:
 
 The skip while in flight is intentional. The current implementation stores exactly one captured age snapshot (`prev_age_seconds`) and later uses that snapshot when staged ICP is split. By refusing to overlap payout work with an already in-flight maturity disbursement, the canister avoids applying the wrong captured age to staged ICP from a different disbursement cycle.
 
-That ordering also matters for the faucet's round-accounting fairness model. Newly added stake may become visible in the neuron's live stake before its proportional base maturity has fully reached the faucet payout account. The faucet now addresses that directly with a round-effective denominator: it carries a round-start staking snapshot forward, clamps the completed round by tx id, and applies a conservative stake-recognition delay before weighting valid in-round commitments into the denominator. The disburser-side PocketIC suite still exercises the full stake -> maturity -> disburser -> faucet path, but the unfair first-round dilution condition is now mitigated in faucet logic rather than merely observed.
+That ordering also matters for the faucet's round-accounting fairness model. Newly added stake may become visible in the neuron's live stake before its proportional base maturity has fully reached the faucet payout account. The faucet now addresses that directly with a round-effective denominator: it carries a round-start staking snapshot forward, clamps the completed round by tx id, and applies a conservative stake-recognition delay before weighting valid in-round commitments into the denominator. That delay is faucet-side accounting only; it does not alter NNS maturity accrual, maturity spawning, or disburser timing. The disburser-side PocketIC suite still exercises the full stake -> maturity -> disburser -> faucet path, but the unfair first-round dilution condition is now mitigated in faucet logic rather than merely observed.
 
 ## PocketIC test note on maturity variability
 
@@ -249,6 +249,8 @@ The committed mainnet install args currently wire:
 - `blackhole_armed = false`
 - `main_interval_seconds = 86400`
 - `rescue_interval_seconds = 86400`
+
+The faucet production install args separately configure `stake_recognition_delay_seconds = 604800` for round weighting. That value is not a disburser interval.
 
 ## Public interface
 
