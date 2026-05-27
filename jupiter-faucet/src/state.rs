@@ -30,60 +30,6 @@ pub(crate) struct Config {
     pub stake_recognition_delay_seconds: Option<u64>,
 }
 
-pub(crate) fn jupiter_disburser_default_account() -> Account {
-    Account {
-        owner: Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai")
-            .expect("invalid hardcoded disburser principal"),
-        subaccount: None,
-    }
-}
-
-// Temporary production migration: the deployed faucet stable-state config was
-// written before `funding_source_account` existed. Remove this legacy shape
-// after the production canister has been upgraded once and has persisted V1
-// with the current `Config`.
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-struct LegacyConfigWithoutFundingSource {
-    staking_account: Account,
-    payout_subaccount: Option<[u8; 32]>,
-    ledger_canister_id: Principal,
-    index_canister_id: Principal,
-    cmc_canister_id: Principal,
-    #[serde(default)]
-    governance_canister_id: Option<Principal>,
-    rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
-    expected_first_staking_tx_id: Option<u64>,
-    main_interval_seconds: u64,
-    rescue_interval_seconds: u64,
-    min_tx_e8s: u64,
-    #[serde(default)]
-    stake_recognition_delay_seconds: Option<u64>,
-}
-
-impl From<LegacyConfigWithoutFundingSource> for Config {
-    fn from(legacy: LegacyConfigWithoutFundingSource) -> Self {
-        Self {
-            staking_account: legacy.staking_account,
-            payout_subaccount: legacy.payout_subaccount,
-            ledger_canister_id: legacy.ledger_canister_id,
-            index_canister_id: legacy.index_canister_id,
-            cmc_canister_id: legacy.cmc_canister_id,
-            governance_canister_id: legacy.governance_canister_id,
-            funding_source_account: jupiter_disburser_default_account(),
-            rescue_controller: legacy.rescue_controller,
-            blackhole_controller: legacy.blackhole_controller,
-            blackhole_armed: legacy.blackhole_armed,
-            expected_first_staking_tx_id: legacy.expected_first_staking_tx_id,
-            main_interval_seconds: legacy.main_interval_seconds,
-            rescue_interval_seconds: legacy.rescue_interval_seconds,
-            min_tx_e8s: legacy.min_tx_e8s,
-            stake_recognition_delay_seconds: legacy.stake_recognition_delay_seconds,
-        }
-    }
-}
-
 fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
     let Some(bytes) = subaccount else {
         return "none".to_string();
@@ -495,75 +441,6 @@ pub(crate) struct State {
     pub active_funding_scan: Option<FundingScanState>,
 }
 
-// Temporary production migration for the deployed V1 state whose nested Config
-// lacks `funding_source_account`. Keep the field list aligned with `State` and
-// convert immediately to the current shape during stable decode.
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-struct LegacyStateWithoutFundingSource {
-    config: LegacyConfigWithoutFundingSource,
-    last_summary: Option<Summary>,
-    last_successful_transfer_ts: Option<u64>,
-    last_rescue_check_ts: u64,
-    rescue_triggered: bool,
-    blackhole_armed_since_ts: Option<u64>,
-    forced_rescue_reason: Option<ForcedRescueReason>,
-    #[serde(default)]
-    skip_range_invariant_fault: Option<bool>,
-    consecutive_index_anchor_failures: Option<u8>,
-    consecutive_index_latest_invariant_failures: Option<u8>,
-    #[serde(default)]
-    consecutive_index_latest_unreadable_failures: Option<u8>,
-    consecutive_cmc_zero_success_runs: Option<u8>,
-    last_observed_staking_balance_e8s: Option<u64>,
-    last_observed_latest_tx_id: Option<u64>,
-    main_lock_state_ts: Option<u64>,
-    payout_nonce: u64,
-    active_payout_job: Option<ActivePayoutJob>,
-    last_main_run_ts: u64,
-    #[serde(default)]
-    current_round_start_time_nanos: Option<u64>,
-    #[serde(default)]
-    current_round_start_staking_balance_e8s: Option<u64>,
-    #[serde(default)]
-    current_round_start_latest_tx_id: Option<u64>,
-    #[serde(default)]
-    last_processed_funding_tx_id: Option<u64>,
-    #[serde(default)]
-    active_funding_scan: Option<FundingScanState>,
-}
-
-impl From<LegacyStateWithoutFundingSource> for State {
-    fn from(legacy: LegacyStateWithoutFundingSource) -> Self {
-        Self {
-            config: legacy.config.into(),
-            last_summary: legacy.last_summary,
-            last_successful_transfer_ts: legacy.last_successful_transfer_ts,
-            last_rescue_check_ts: legacy.last_rescue_check_ts,
-            rescue_triggered: legacy.rescue_triggered,
-            blackhole_armed_since_ts: legacy.blackhole_armed_since_ts,
-            forced_rescue_reason: legacy.forced_rescue_reason,
-            skip_range_invariant_fault: legacy.skip_range_invariant_fault,
-            consecutive_index_anchor_failures: legacy.consecutive_index_anchor_failures,
-            consecutive_index_latest_invariant_failures: legacy
-                .consecutive_index_latest_invariant_failures,
-            consecutive_index_latest_unreadable_failures: legacy
-                .consecutive_index_latest_unreadable_failures,
-            consecutive_cmc_zero_success_runs: legacy.consecutive_cmc_zero_success_runs,
-            last_observed_staking_balance_e8s: legacy.last_observed_staking_balance_e8s,
-            last_observed_latest_tx_id: legacy.last_observed_latest_tx_id,
-            main_lock_state_ts: legacy.main_lock_state_ts,
-            payout_nonce: legacy.payout_nonce,
-            active_payout_job: legacy.active_payout_job,
-            last_main_run_ts: legacy.last_main_run_ts,
-            current_round_start_time_nanos: legacy.current_round_start_time_nanos,
-            current_round_start_staking_balance_e8s: legacy.current_round_start_staking_balance_e8s,
-            current_round_start_latest_tx_id: legacy.current_round_start_latest_tx_id,
-            last_processed_funding_tx_id: legacy.last_processed_funding_tx_id,
-            active_funding_scan: legacy.active_funding_scan,
-        }
-    }
-}
-
 impl State {
     pub(crate) fn new(config: Config, now_secs: u64) -> Self {
         let blackhole_armed_since_ts = config.blackhole_armed.unwrap_or(false).then_some(now_secs);
@@ -603,41 +480,13 @@ pub(crate) enum VersionedStableState {
     V1(State),
 }
 
-// Temporary production migration companion for `LegacyStateWithoutFundingSource`.
-#[allow(clippy::large_enum_variant)]
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-enum LegacyVersionedStableStateWithoutFundingSource {
-    Uninitialized,
-    V1(LegacyStateWithoutFundingSource),
-}
-
-impl From<LegacyVersionedStableStateWithoutFundingSource> for VersionedStableState {
-    fn from(legacy: LegacyVersionedStableStateWithoutFundingSource) -> Self {
-        match legacy {
-            LegacyVersionedStableStateWithoutFundingSource::Uninitialized => Self::Uninitialized,
-            LegacyVersionedStableStateWithoutFundingSource::V1(st) => Self::V1(st.into()),
-        }
-    }
-}
-
 impl Storable for VersionedStableState {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Owned(candid::encode_one(self).expect("failed to encode faucet stable state"))
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        match candid::decode_one(bytes.as_ref()) {
-            Ok(current) => current,
-            Err(current_err) => {
-                let legacy: LegacyVersionedStableStateWithoutFundingSource =
-                    candid::decode_one(bytes.as_ref()).unwrap_or_else(|legacy_err| {
-                        panic!(
-                            "failed to decode faucet stable state as current ({current_err}) or legacy production config without funding_source_account ({legacy_err})"
-                        )
-                    });
-                legacy.into()
-            }
-        }
+        candid::decode_one(bytes.as_ref()).expect("failed to decode faucet stable state")
     }
 
     const BOUND: Bound = Bound::Unbounded;
@@ -909,56 +758,6 @@ mod tests {
         }
     }
 
-    fn sample_legacy_config_without_funding_source() -> LegacyConfigWithoutFundingSource {
-        LegacyConfigWithoutFundingSource {
-            staking_account: Account {
-                owner: principal(&[1]),
-                subaccount: None,
-            },
-            payout_subaccount: Some([7; 32]),
-            ledger_canister_id: principal(&[2]),
-            index_canister_id: principal(&[3]),
-            cmc_canister_id: principal(&[4]),
-            governance_canister_id: Some(principal(&[9])),
-            rescue_controller: principal(&[5]),
-            blackhole_controller: Some(principal(&[6])),
-            blackhole_armed: Some(false),
-            expected_first_staking_tx_id: Some(11),
-            main_interval_seconds: 60,
-            rescue_interval_seconds: 120,
-            min_tx_e8s: 100_000_000,
-            stake_recognition_delay_seconds: Some(24 * 60 * 60),
-        }
-    }
-
-    fn sample_legacy_state_without_funding_source() -> LegacyStateWithoutFundingSource {
-        LegacyStateWithoutFundingSource {
-            config: sample_legacy_config_without_funding_source(),
-            last_summary: None,
-            last_successful_transfer_ts: Some(77),
-            last_rescue_check_ts: 88,
-            rescue_triggered: false,
-            blackhole_armed_since_ts: Some(99),
-            forced_rescue_reason: Some(ForcedRescueReason::CmcZeroSuccessRuns),
-            skip_range_invariant_fault: Some(false),
-            consecutive_index_anchor_failures: Some(1),
-            consecutive_index_latest_invariant_failures: Some(2),
-            consecutive_index_latest_unreadable_failures: Some(0),
-            consecutive_cmc_zero_success_runs: Some(3),
-            last_observed_staking_balance_e8s: Some(4_000),
-            last_observed_latest_tx_id: Some(44),
-            main_lock_state_ts: Some(55),
-            payout_nonce: 7,
-            active_payout_job: None,
-            last_main_run_ts: 66,
-            current_round_start_time_nanos: None,
-            current_round_start_staking_balance_e8s: None,
-            current_round_start_latest_tx_id: None,
-            last_processed_funding_tx_id: Some(123),
-            active_funding_scan: None,
-        }
-    }
-
     #[test]
     fn runtime_config_log_line_includes_all_config_fields() {
         let line = runtime_config_log_line(&sample_config());
@@ -1002,40 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_config_without_funding_source_decodes_and_migrates() {
-        let legacy = LegacyVersionedStableStateWithoutFundingSource::V1(
-            sample_legacy_state_without_funding_source(),
-        );
-        let bytes = candid::encode_one(legacy).expect("encode legacy faucet stable state");
-        assert!(candid::decode_one::<VersionedStableState>(&bytes).is_err());
-
-        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
-        let VersionedStableState::V1(restored) = decoded else {
-            panic!("expected migrated V1 faucet state");
-        };
-        assert_eq!(restored.last_successful_transfer_ts, Some(77));
-        assert_eq!(restored.last_processed_funding_tx_id, Some(123));
-        assert_eq!(restored.config.main_interval_seconds, 60);
-    }
-
-    #[test]
-    fn migrated_legacy_state_uses_jupiter_disburser_funding_source() {
-        let legacy = LegacyVersionedStableStateWithoutFundingSource::V1(
-            sample_legacy_state_without_funding_source(),
-        );
-        let bytes = candid::encode_one(legacy).expect("encode legacy faucet stable state");
-
-        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
-        let VersionedStableState::V1(restored) = decoded else {
-            panic!("expected migrated V1 faucet state");
-        };
-        assert_eq!(
-            restored.config.funding_source_account,
-            jupiter_disburser_default_account()
-        );
-    }
-
-    #[test]
     fn current_config_preserves_explicit_funding_source() {
         let explicit = Account {
             owner: principal(&[42]),
@@ -1051,26 +816,6 @@ mod tests {
             panic!("expected V1 faucet state");
         };
         assert_eq!(restored.config.funding_source_account, explicit);
-    }
-
-    #[test]
-    fn migrated_legacy_state_reencodes_as_current_stable_shape() {
-        let legacy = LegacyVersionedStableStateWithoutFundingSource::V1(
-            sample_legacy_state_without_funding_source(),
-        );
-        let legacy_bytes = candid::encode_one(legacy).expect("encode legacy faucet stable state");
-        let migrated = VersionedStableState::from_bytes(Cow::Owned(legacy_bytes));
-
-        let current_bytes = migrated.to_bytes();
-        let decoded_current: VersionedStableState = candid::decode_one(current_bytes.as_ref())
-            .expect("decode reencoded current faucet state");
-        let VersionedStableState::V1(restored) = decoded_current else {
-            panic!("expected V1 faucet state");
-        };
-        assert_eq!(
-            restored.config.funding_source_account,
-            jupiter_disburser_default_account()
-        );
     }
 
     #[test]
