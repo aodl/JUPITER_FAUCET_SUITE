@@ -334,7 +334,7 @@ def validate_faucet_docs_do_not_use_install_args_for_upgrade() -> None:
     ]:
         text = path.read_text()
         if faucet_upgrade_example_uses_install_args(text):
-            fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use temporary UpgradeArgs instead")
+            fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use appropriate UpgradeArgs instead")
 
 
 def validate_historian() -> int:
@@ -542,13 +542,13 @@ def run_self_tests() -> None:
     icp canister install jupiter_faucet \
       --environment ic \
       --mode upgrade \
-      --argument-file jupiter-faucet/mainnet-install-args.did \
+      --args-file jupiter-faucet/mainnet-install-args.did \
       --yes
     """
     bad_upgrade_example_args_first = """
     icp canister install jupiter_faucet \
       --environment ic \
-      --argument-file jupiter-faucet/mainnet-install-args.did \
+      --args-file jupiter-faucet/mainnet-install-args.did \
       --mode upgrade \
       --yes
     """

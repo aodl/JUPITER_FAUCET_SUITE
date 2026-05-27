@@ -1659,13 +1659,13 @@ fn cmd_teardown() -> Result<()> {
 fn cmd_faucet_production_reinstall_cutover() -> Result<()> {
     println!(
         "Faucet reinstall is only for fresh deployments where no faucet payout has completed.\n\
-         The current production faucet has paid out, so use upgrade with temporary UpgradeArgs instead.\n\
+         The current production faucet has paid out, so use upgrade with appropriate UpgradeArgs instead.\n\
          Do not pass jupiter-faucet/mainnet-install-args.did to upgrade.\n\n\
          Fresh-only command:\n\
          icp canister install jupiter_faucet \\\n\
            --environment ic \\\n\
            --mode reinstall \\\n\
-           --argument-file jupiter-faucet/mainnet-install-args.did \\\n\
+           --args-file jupiter-faucet/mainnet-install-args.did \\\n\
            --yes"
     );
     Ok(())

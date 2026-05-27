@@ -142,9 +142,7 @@ Round weighting uses inclusive/exclusive boundaries:
 - effective during the round => linearly prorated weight
 - effective at or after round end => zero weight in that round
 
-The funding-tranche cursor and staking-history scan are intentionally separate. `last_processed_funding_tx_id` tracks which payout-account funding transfers have already been consumed, but the staking-account scan still considers historical commitments so old stake keeps contributing to later rounds.
-
-For legacy state that has already paid once before strict tranche accounting is deployed, the first post-upgrade strict round may be imperfect if there is no exact funding cursor seed: the faucet may attach the first strict job to the oldest observed unprocessed funding marker. Recognition delay and round weighting still apply, so too-fresh stake is not fully included simply because the payout account has been funded. Once the funding cursor advances, subsequent rounds self-align. The current single-participant production deployment can mitigate this operationally by avoiding fresh commitments inside the recognition-delay window; multi-user deployments should prefer exact config and cursor alignment.
+The funding cursor and staking-history scan are separate: the funding cursor selects consumed payout-account funding tranches, while staking-account history remains replayable so older commitments continue contributing according to the recognition-delay and round-weighting rules. Deployments that introduce new tranche semantics should ensure cursor/config alignment before opening multi-user participation.
 
 The tx-id boundaries are more authoritative than timestamps for inclusion. The faucet captures the latest staking-account tx id at the end of each completed round and uses that as the inclusive upper bound for the next payout job, so equal timestamps do not create ambiguity.
 
@@ -407,21 +405,31 @@ The current production faucet has already completed a payout. Use upgrade for th
 
 Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`.
 
-Routine production upgrades normally pass `null` upgrade args or no upgrade-time config changes, depending on the deployment tooling. If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
+Routine production upgrades with no config change should pass explicit `null` upgrade args:
+
+```bash
+icp canister install jupiter_faucet \
+  --environment ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_faucet.wasm.gz \
+  --args '(null)' \
+  --yes
+```
+
+If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
 
 Before upgrade:
 
 - Confirm the faucet canister ID is the intended production principal and will not change.
 - Confirm no active payout job or pending transfer/notification is in progress from logs and operational state.
 - Confirm the payout account is empty, dust-only, or otherwise at the expected balance for the planned upgrade window.
-- Avoid fresh staking commitments inside the 7-day recognition window before the next payout.
 - Run `python3 ./scripts/validate-mainnet-install-args` and confirm the production install args still set `stake_recognition_delay_seconds = 604800`.
 
 After upgrade:
 
 - Wait for or trigger the normal safe config log path and verify the live restored config reports the expected runtime configuration.
 - Verify config checks from runtime output such as the `CONFIG` log line, not merely from the committed install args.
-- Monitor the first post-upgrade payout summary and confirm the strict-tranche payout shape: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
+- Monitor the next payout summary and confirm the strict-tranche payout shape: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
 - Verify via ICP Index that outgoing top-up transfers correspond to the expected tranche.
 
 ### Fresh-only reinstall checklist
@@ -436,7 +444,7 @@ For a fresh-only deployment, use the reviewed production install args:
 icp canister install jupiter_faucet \
   --environment ic \
   --mode reinstall \
-  --argument-file jupiter-faucet/mainnet-install-args.did \
+  --args-file jupiter-faucet/mainnet-install-args.did \
   --yes
 ```
 
@@ -473,7 +481,7 @@ Upgrade args currently support:
 - `clear_forced_rescue`
 - `stake_recognition_delay_seconds`
 
-There is no committed canonical production upgrade args file. Upgrade args are deployment-time inputs. Routine production upgrades normally pass `null` upgrade args or no upgrade-time config changes, depending on the deployment tooling. If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
+There is no committed canonical production upgrade args file. Upgrade args are deployment-time inputs. Routine production upgrades with no config change should pass explicit `null` upgrade args, for example `--args '(null)'`. If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
 
 Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative: skip ranges are treated as disposable replay hints rather than durable truth, and upgrades are expected to be exceptional enough that paying the re-scan cost is preferable to risking stale cache semantics.
 

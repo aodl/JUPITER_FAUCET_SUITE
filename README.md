@@ -323,7 +323,7 @@ These are the repo’s source of truth for fresh install/reinstall wiring captur
 
 The existing production faucet has already paid out, so its current production path is upgrade, not reinstall. The `icp.yaml` `init_args` entries are install/reinstall inputs only. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`.
 
-Routine production upgrades normally require no args. If a future DAO-approved upgrade-time config change is needed, pass the appropriate canister-specific `UpgradeArgs` opt record explicitly at deployment time.
+Routine faucet upgrades with no config change should pass explicit `null` upgrade args, for example `--args '(null)'`. If a future DAO-approved upgrade-time config change is needed, pass the appropriate canister-specific `UpgradeArgs` opt record explicitly at deployment time.
 
 ## Suggested reading order
 
