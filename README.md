@@ -319,7 +319,30 @@ Committed copy-pasteable install args live alongside the main operational canist
 - `jupiter-historian/mainnet-install-args.did`
 - `jupiter-relay/mainnet-install-args.did`
 
-These are the repo’s source of truth for the current production wiring captured in version control.
+These are the repo’s source of truth for fresh install/reinstall wiring captured in version control. Do not pass an install args file to an upgrade.
+
+The existing production faucet has already paid out, so its current production path is upgrade, not reinstall. The `icp.yaml` `init_args` entries are install/reinstall inputs only. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`; if tooling cannot distinguish install from upgrade args, pass a temporary deployment-time upgrade args file manually.
+
+For the current one-time production recognition-delay correction, create the upgrade args outside the repo at deployment time:
+
+```bash
+cat > /tmp/jupiter-faucet-upgrade-args.did <<'EOF'
+(
+  opt record {
+    blackhole_controller = null;
+    blackhole_armed = null;
+    clear_forced_rescue = null;
+    stake_recognition_delay_seconds = opt 604800;
+  }
+)
+EOF
+
+icp canister install jupiter_faucet \
+  --environment ic \
+  --mode upgrade \
+  --argument-file /tmp/jupiter-faucet-upgrade-args.did \
+  --yes
+```
 
 ## Suggested reading order
 

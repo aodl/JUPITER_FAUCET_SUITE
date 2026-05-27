@@ -1656,9 +1656,10 @@ fn cmd_teardown() -> Result<()> {
 
 fn cmd_faucet_production_reinstall_cutover() -> Result<()> {
     println!(
-        "Faucet strict-tranche production cutover is reinstall-only.\n\
-         Do not use upgrade for this cutover. Old stable state is intentionally not migrated.\n\n\
-         Command:\n\
+        "Faucet reinstall is only for fresh deployments where no faucet payout has completed.\n\
+         The current production faucet has paid out, so use upgrade with temporary UpgradeArgs instead.\n\
+         Do not pass jupiter-faucet/mainnet-install-args.did to upgrade.\n\n\
+         Fresh-only command:\n\
          icp canister install jupiter_faucet \\\n\
            --environment ic \\\n\
            --mode reinstall \\\n\

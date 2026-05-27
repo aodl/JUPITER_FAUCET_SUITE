@@ -80,6 +80,13 @@ def extract_nat64(text: str, field: str, path: Path) -> int:
     return int(match.group(1))
 
 
+def extract_nat64_or_none(text: str, field: str) -> int | None:
+    match = re.search(rf"{re.escape(field)}\s*=\s*(?:opt\s*)?(?:\()?\s*(\d+)(?:\s*:\s*nat64)?\s*\)?\s*;", text)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
 def extract_account(text: str, field: str, path: Path) -> tuple[str, str]:
     match = re.search(
         rf"{re.escape(field)}\s*=\s*(?:opt\s*)?record\s*\{{(?P<body>.*?)\}}\s*;",
@@ -105,6 +112,41 @@ def require_interval(text: str, field: str, expected: int, path: Path) -> None:
 def faucet_recognition_delay_error(text: str, path: Path) -> str | None:
     value = extract_nat64(text, "stake_recognition_delay_seconds", path)
     if value != EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS:
+        return (
+            f"{path} configures stake_recognition_delay_seconds={value}; "
+            f"expected {EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS} "
+            "(7 days, faucet-side recognition delay)"
+        )
+    return None
+
+
+def require_faucet_recognition_delay(text: str, path: Path) -> None:
+    recognition_delay_error = faucet_recognition_delay_error(text, path)
+    if recognition_delay_error:
+        fail(recognition_delay_error)
+
+
+def faucet_upgrade_args_error(text: str, path: Path) -> str | None:
+    if not re.search(r"\(\s*opt\s+record\s*\{", text):
+        return f"{path} must be an opt record of faucet upgrade args"
+    for install_only_field in [
+        "staking_account",
+        "payout_subaccount",
+        "ledger_canister_id",
+        "index_canister_id",
+        "cmc_canister_id",
+        "governance_canister_id",
+        "funding_source_account",
+        "rescue_controller",
+        "expected_first_staking_tx_id",
+        "main_interval_seconds",
+        "rescue_interval_seconds",
+        "min_tx_e8s",
+    ]:
+        if re.search(rf"\b{re.escape(install_only_field)}\s*=", text):
+            return f"{path} contains install-only field `{install_only_field}`; do not use install args for faucet upgrade"
+    value = extract_nat64_or_none(text, "stake_recognition_delay_seconds")
+    if value is not None and value != EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS:
         return (
             f"{path} configures stake_recognition_delay_seconds={value}; "
             f"expected {EXPECTED_FAUCET_STAKE_RECOGNITION_DELAY_SECONDS} "
@@ -293,9 +335,7 @@ def validate_faucet() -> int:
     require_contains(text, f'owner = principal "{PROD["jupiter_disburser"]}";', str(path))
     require_interval(text, "main_interval_seconds", 86400, path)
     require_interval(text, "rescue_interval_seconds", 86400, path)
-    recognition_delay_error = faucet_recognition_delay_error(text, path)
-    if recognition_delay_error:
-        fail(recognition_delay_error)
+    require_faucet_recognition_delay(text, path)
 
     match = re.search(r"expected_first_staking_tx_id\s*=\s*([^;]+);", text)
     if not match:
@@ -311,6 +351,15 @@ def validate_faucet() -> int:
     fail(
         f"{path} has invalid `expected_first_staking_tx_id` value `{value}`; expected `null` or `opt <nat64>`"
     )
+
+
+def validate_faucet_docs_do_not_use_install_args_for_upgrade() -> None:
+    for path in [REPO_ROOT / "README.md", REPO_ROOT / "jupiter-faucet" / "README.md"]:
+        text = path.read_text()
+        if re.search(r"icp canister install jupiter_faucet[\s\S]{0,300}--mode\s+upgrade[\s\S]{0,300}jupiter-faucet/mainnet-install-args\.did", text):
+            fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use temporary UpgradeArgs instead")
+        if re.search(r"icp canister install jupiter_faucet[\s\S]{0,300}jupiter-faucet/mainnet-install-args\.did[\s\S]{0,300}--mode\s+upgrade", text):
+            fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use temporary UpgradeArgs instead")
 
 
 def validate_historian() -> int:
@@ -508,12 +557,37 @@ def run_self_tests() -> None:
             fail(f"self-test unexpectedly rejected {label}: {errors[0]}")
 
     faucet_path = REPO_ROOT / "jupiter-faucet" / "mainnet-install-args.did"
+    faucet_upgrade_path = Path("<temporary faucet upgrade args>")
     valid_faucet_delay = "stake_recognition_delay_seconds = opt 604800;"
     stale_faucet_delay = "stake_recognition_delay_seconds = opt 86400;"
     if faucet_recognition_delay_error(valid_faucet_delay, faucet_path):
         fail("self-test unexpectedly rejected production 7-day faucet recognition delay")
     if faucet_recognition_delay_error(stale_faucet_delay, faucet_path) is None:
         fail("self-test failed to reject stale 1-day faucet recognition delay")
+    valid_upgrade_args = """
+    (
+      opt record {
+        blackhole_controller = null;
+        blackhole_armed = null;
+        clear_forced_rescue = null;
+        stake_recognition_delay_seconds = opt 604800;
+      }
+    )
+    """
+    stale_upgrade_args = valid_upgrade_args.replace("604800", "86400")
+    missing_upgrade_delay = valid_upgrade_args.replace("stake_recognition_delay_seconds = opt 604800;", "")
+    install_args_as_upgrade = valid_upgrade_args.replace(
+        "blackhole_controller = null;",
+        "staking_account = record { owner = principal \"rrkah-fqaaa-aaaaa-aaaaq-cai\"; subaccount = null; };",
+    )
+    if faucet_upgrade_args_error(valid_upgrade_args, faucet_upgrade_path):
+        fail("self-test unexpectedly rejected valid production faucet upgrade args")
+    if faucet_upgrade_args_error(stale_upgrade_args, faucet_upgrade_path) is None:
+        fail("self-test failed to reject stale 1-day faucet upgrade recognition delay")
+    if faucet_upgrade_args_error(missing_upgrade_delay, faucet_upgrade_path):
+        fail("self-test unexpectedly rejected upgrade args that omit the optional recognition delay")
+    if faucet_upgrade_args_error(install_args_as_upgrade, faucet_upgrade_path) is None:
+        fail("self-test failed to reject install args used as faucet upgrade args")
     print("validate-mainnet-install-args self-tests OK")
 
 
@@ -551,6 +625,7 @@ def main() -> None:
 
     validate_disburser()
     faucet_min_tx_e8s = validate_faucet()
+    validate_faucet_docs_do_not_use_install_args_for_upgrade()
     historian_min_tx_e8s = validate_historian()
     validate_relay()
     validate_release_build_script_uses_release_dids()

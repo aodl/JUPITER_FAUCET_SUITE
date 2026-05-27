@@ -41,6 +41,7 @@ pub struct UpgradeArgs {
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
     pub clear_forced_rescue: Option<bool>,
+    pub stake_recognition_delay_seconds: Option<u64>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -199,6 +200,10 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             st.consecutive_index_latest_invariant_failures = Some(0);
             st.consecutive_index_latest_unreadable_failures = Some(0);
             st.consecutive_cmc_zero_success_runs = Some(0);
+        }
+        if let Some(delay) = args.stake_recognition_delay_seconds {
+            assert!(delay > 0, "stake_recognition_delay_seconds must be greater than 0");
+            st.config.stake_recognition_delay_seconds = Some(delay);
         }
     }
     validate_config(&st.config);
@@ -685,6 +690,7 @@ mod tests {
                 blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
                 blackhole_armed: Some(true),
                 clear_forced_rescue: Some(true),
+                stake_recognition_delay_seconds: None,
             }),
             now_secs,
         );
@@ -707,6 +713,7 @@ mod tests {
                 blackhole_controller: None,
                 blackhole_armed: Some(false),
                 clear_forced_rescue: Some(true),
+                stake_recognition_delay_seconds: None,
             }),
             now_secs,
         );
@@ -731,6 +738,7 @@ mod tests {
                 blackhole_controller: None,
                 blackhole_armed: Some(true),
                 clear_forced_rescue: Some(true),
+                stake_recognition_delay_seconds: None,
             }),
             now_secs,
         );
@@ -742,6 +750,65 @@ mod tests {
         assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
         assert_eq!(st.consecutive_cmc_zero_success_runs, Some(0));
         assert_eq!(actions, PostUpgradeActions { schedule_immediate_controller_reconcile: true });
+    }
+
+    #[test]
+    fn apply_upgrade_args_can_update_stale_stake_recognition_delay() {
+        let now_secs = 890;
+        let mut st = State::new(sample_config(), now_secs);
+        st.config.stake_recognition_delay_seconds = Some(86_400);
+
+        let actions = apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: None,
+                blackhole_armed: None,
+                clear_forced_rescue: None,
+                stake_recognition_delay_seconds: Some(604_800),
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.config.stake_recognition_delay_seconds, Some(604_800));
+        assert_eq!(actions, PostUpgradeActions::default());
+    }
+
+    #[test]
+    fn apply_upgrade_args_preserves_stake_recognition_delay_when_omitted() {
+        let now_secs = 891;
+        let mut st = State::new(sample_config(), now_secs);
+        st.config.stake_recognition_delay_seconds = Some(86_400);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: None,
+                blackhole_armed: None,
+                clear_forced_rescue: None,
+                stake_recognition_delay_seconds: None,
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.config.stake_recognition_delay_seconds, Some(86_400));
+    }
+
+    #[test]
+    #[should_panic(expected = "stake_recognition_delay_seconds must be greater than 0")]
+    fn apply_upgrade_args_rejects_zero_stake_recognition_delay() {
+        let now_secs = 892;
+        let mut st = State::new(sample_config(), now_secs);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_controller: None,
+                blackhole_armed: None,
+                clear_forced_rescue: None,
+                stake_recognition_delay_seconds: Some(0),
+            }),
+            now_secs,
+        );
     }
 }
 

@@ -396,16 +396,63 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `rescue_interval_seconds` (optional; defaults to 1 day)
 - `min_tx_e8s` (optional; defaults to `1 ICP`; must be at least `0.1 ICP`)
   - upgrades already clear persisted skip ranges before resuming, so any rescue-time threshold change will cause historical staking activity to be re-scanned from first principles
+- `stake_recognition_delay_seconds` (optional; code default is 1 day for local/dev compatibility)
+  - production fresh install/reinstall must pass an explicit value; the committed production install args set `604800` (7 days), and validation rejects the stale one-day production value
 
-A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
+A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did). It is for fresh install/reinstall only, not upgrade.
 
-### Production strict-tranche reinstall checklist
+### Production upgrade checklist
 
-The production faucet canister was installed before external users were onboarded, but it has not processed payouts. For the strict funding-tranche cutover, use a controlled reinstall instead of carrying stable-state migration code for the old runtime state. Reinstalling preserves the faucet canister principal, so the default payout account stays the same when `payout_subaccount = null`; ICP ledger balances and ICP index transaction history remain external to the faucet canister state.
+The current production faucet has already completed a payout. Use upgrade for the current production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
+
+Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`.
+
+For the current one-time production recognition-delay correction, create a temporary deployment-time upgrade args file outside the repo:
+
+```bash
+cat > /tmp/jupiter-faucet-upgrade-args.did <<'EOF'
+(
+  opt record {
+    blackhole_controller = null;
+    blackhole_armed = null;
+    clear_forced_rescue = null;
+    stake_recognition_delay_seconds = opt 604800;
+  }
+)
+EOF
+
+icp canister install jupiter_faucet \
+  --environment ic \
+  --mode upgrade \
+  --argument-file /tmp/jupiter-faucet-upgrade-args.did \
+  --yes
+```
+
+The temporary upgrade args file is not a repo source-of-truth file. It is deployment scratch input for this specific production upgrade.
+
+Before upgrade:
+
+- Confirm the faucet canister ID is the intended production principal and will not change.
+- Confirm no active payout job or pending transfer/notification is in progress from logs and operational state.
+- Confirm the payout account is empty, dust-only, or otherwise at the expected balance for the planned upgrade window.
+- Avoid fresh staking commitments inside the 7-day recognition window before the next payout.
+- Run `python3 ./scripts/validate-mainnet-install-args` and confirm the production install args still set `stake_recognition_delay_seconds = 604800`.
+- Confirm the temporary upgrade args set `stake_recognition_delay_seconds = opt 604800` and leave `blackhole_controller`, `blackhole_armed`, and `clear_forced_rescue` as `null` unless the DAO intentionally approves a separate rescue/controller change.
+
+After upgrade:
+
+- Wait for or trigger the normal safe config log path and verify the live restored config reports `stake_recognition_delay_seconds=604800`.
+- Verify the check is from runtime output such as the `CONFIG` log line, not merely from the committed install args.
+- Monitor the first post-upgrade payout summary and confirm the strict-tranche payout shape: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
+- Verify via ICP Index that outgoing top-up transfers correspond to the expected tranche.
+
+### Fresh-only reinstall checklist
+
+Reinstall is only for genuinely fresh deployments where no faucet payout has completed and stable state can safely be discarded. Reinstalling preserves the faucet canister principal, so the default payout account stays the same when `payout_subaccount = null`; ICP ledger balances and ICP index transaction history remain external to the faucet canister state.
 
 Reinstall intentionally discards faucet Wasm/stable state: runtime config, timers, `active_payout_job`, pending notifications, last summary, health counters, forced rescue state, skip ranges, current round snapshot, `last_processed_funding_tx_id`, and `active_funding_scan`. This is acceptable only while no faucet payout has ever completed.
 
-Do not use upgrade for this cutover. The strict-tranche production cutover intentionally uses reinstall because old stable state is not migrated. Use the repo deployment tooling in reinstall mode, with the reviewed production install args:
+For a fresh-only deployment, use the reviewed production install args:
 
 ```bash
 icp canister install jupiter_faucet \
@@ -446,6 +493,9 @@ Upgrade args currently support:
 - `blackhole_controller`
 - `blackhole_armed`
 - `clear_forced_rescue`
+- `stake_recognition_delay_seconds`
+
+There is no committed canonical production upgrade args file. Upgrade args are deployment-time inputs. For the current one-time production recognition-delay correction, use a temporary local file that sets `stake_recognition_delay_seconds = opt 604800` and leaves the blackhole/rescue fields as `null` unless the DAO intentionally approves a separate rescue/controller change.
 
 Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative: skip ranges are treated as disposable replay hints rather than durable truth, and upgrades are expected to be exceptional enough that paying the re-scan cost is preferable to risking stale cache semantics.
 
