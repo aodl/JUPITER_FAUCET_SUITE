@@ -353,12 +353,23 @@ def validate_faucet() -> int:
     )
 
 
+def faucet_upgrade_example_uses_install_args(text: str) -> bool:
+    install_args = r"jupiter-faucet/mainnet-install-args\.did"
+    patterns = [
+        rf"icp canister install jupiter_faucet[\s\S]{{0,300}}--mode\s+upgrade[\s\S]{{0,300}}{install_args}",
+        rf"icp canister install jupiter_faucet[\s\S]{{0,300}}{install_args}[\s\S]{{0,300}}--mode\s+upgrade",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
 def validate_faucet_docs_do_not_use_install_args_for_upgrade() -> None:
-    for path in [REPO_ROOT / "README.md", REPO_ROOT / "jupiter-faucet" / "README.md"]:
+    for path in [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "jupiter-faucet" / "README.md",
+        REPO_ROOT / "xtask" / "src" / "main.rs",
+    ]:
         text = path.read_text()
-        if re.search(r"icp canister install jupiter_faucet[\s\S]{0,300}--mode\s+upgrade[\s\S]{0,300}jupiter-faucet/mainnet-install-args\.did", text):
-            fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use temporary UpgradeArgs instead")
-        if re.search(r"icp canister install jupiter_faucet[\s\S]{0,300}jupiter-faucet/mainnet-install-args\.did[\s\S]{0,300}--mode\s+upgrade", text):
+        if faucet_upgrade_example_uses_install_args(text):
             fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use temporary UpgradeArgs instead")
 
 
@@ -588,6 +599,27 @@ def run_self_tests() -> None:
         fail("self-test unexpectedly rejected upgrade args that omit the optional recognition delay")
     if faucet_upgrade_args_error(install_args_as_upgrade, faucet_upgrade_path) is None:
         fail("self-test failed to reject install args used as faucet upgrade args")
+    bad_upgrade_example_mode_first = """
+    icp canister install jupiter_faucet \
+      --environment ic \
+      --mode upgrade \
+      --argument-file jupiter-faucet/mainnet-install-args.did \
+      --yes
+    """
+    bad_upgrade_example_args_first = """
+    icp canister install jupiter_faucet \
+      --environment ic \
+      --argument-file jupiter-faucet/mainnet-install-args.did \
+      --mode upgrade \
+      --yes
+    """
+    reinstall_example = bad_upgrade_example_mode_first.replace("--mode upgrade", "--mode reinstall")
+    if not faucet_upgrade_example_uses_install_args(bad_upgrade_example_mode_first):
+        fail("self-test failed to reject faucet upgrade example using install args after --mode upgrade")
+    if not faucet_upgrade_example_uses_install_args(bad_upgrade_example_args_first):
+        fail("self-test failed to reject faucet upgrade example using install args before --mode upgrade")
+    if faucet_upgrade_example_uses_install_args(reinstall_example):
+        fail("self-test unexpectedly rejected fresh-only faucet reinstall example using install args")
     print("validate-mainnet-install-args self-tests OK")
 
 
