@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -23,6 +24,7 @@ use std::time::Instant;
 
 const LOCAL_IDENTITY: &str = "xtask-dev";
 const LOCAL_ENVIRONMENT: &str = "local";
+const POCKET_IC_SERVER_VERSION: &str = "13.0.0";
 
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
@@ -4475,13 +4477,70 @@ fn run_frontend_local_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_local_frontend_scenarios(outcomes)
 }
 
-fn pocketic_test_env() -> [(&'static str, &'static str); 2] {
-    [("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")]
+fn validate_pocketic_binary(path: &Path) -> Result<()> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("failed to inspect PocketIC binary at {}", path.display()))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        bail!("PocketIC binary at {} is missing or empty", path.display());
+    }
+    let output = Command::new(path)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("failed to run {} --version", path.display()))?;
+    if !output.status.success() {
+        bail!("{} --version failed", path.display());
+    }
+    let version = String::from_utf8_lossy(&output.stdout);
+    let expected = format!("pocket-ic-server {POCKET_IC_SERVER_VERSION}");
+    if version.trim() != expected {
+        bail!(
+            "PocketIC binary at {} reports `{}`; expected `{expected}`",
+            path.display(),
+            version.trim()
+        );
+    }
+    Ok(())
+}
+
+fn discover_pocketic_binary() -> Option<PathBuf> {
+    let home = env::var_os("HOME")?;
+    let root = PathBuf::from(home).join(".local/share/icp-cli/pkg/network-launcher");
+    let entries = fs::read_dir(root).ok()?;
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("pocket-ic"))
+        .find(|path| validate_pocketic_binary(path).is_ok())
+}
+
+fn ensure_pocketic_bin_env() -> Result<()> {
+    if let Some(path) = env::var_os("POCKET_IC_BIN") {
+        validate_pocketic_binary(Path::new(&path))?;
+        return Ok(());
+    }
+    if let Some(path) = discover_pocketic_binary() {
+        eprintln!(
+            "{DIM}Using PocketIC server {} at {}{RESET}",
+            POCKET_IC_SERVER_VERSION,
+            path.display()
+        );
+        env::set_var("POCKET_IC_BIN", path);
+        return Ok(());
+    }
+    bail!(
+        "could not find a local PocketIC server {POCKET_IC_SERVER_VERSION} binary; \
+         install one or set POCKET_IC_BIN to an executable \
+         `pocket-ic-server {POCKET_IC_SERVER_VERSION}` binary"
+    );
+}
+
+fn pocketic_test_env() -> Result<[(&'static str, &'static str); 2]> {
+    ensure_pocketic_bin_env()?;
+    Ok([("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")])
 }
 
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env();
+    let common_env = pocketic_test_env()?;
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4495,7 +4554,7 @@ fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
 fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env();
+    let common_env = pocketic_test_env()?;
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4509,7 +4568,7 @@ fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
 
 fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env();
+    let common_env = pocketic_test_env()?;
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4523,7 +4582,7 @@ fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
 fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env();
+    let common_env = pocketic_test_env()?;
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -4537,7 +4596,7 @@ fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
 fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env();
+    let common_env = pocketic_test_env()?;
     run_cargo_test_suite(
         outcomes,
         "e2e",

@@ -180,9 +180,9 @@ Runs the heavier PocketIC suites.
 
 These exercise real canister execution more deeply and are where the repo currently validates many of its strongest behavioral guarantees.
 
-PocketIC-backed suites use the workspace `pocket-ic` crate version. By default, the harness uses the crate's normal server startup/acquisition behavior, including auto-download where supported. Developers and CI may set `POCKET_IC_BIN=/absolute/path/to/pocket-ic` to force a specific compatible PocketIC server binary. Do not hardcode local PocketIC binary paths in repository code.
+PocketIC-backed suites use the workspace `pocket-ic` crate version. The harness requires a local PocketIC server `13.0.0` binary before starting the Rust tests. Developers and CI may set `POCKET_IC_BIN=/absolute/path/to/pocket-ic` to force a specific compatible PocketIC server binary; otherwise xtask looks in the user-local `icp-cli` network-launcher package cache and exports the matching binary for the child test process.
 
-PocketIC server and Rust client versions must be compatible. If you set `POCKET_IC_BIN`, ensure it points to a server binary compatible with the pinned workspace `pocket-ic` crate.
+PocketIC server and Rust client versions must be compatible. If you set `POCKET_IC_BIN`, ensure it points to an executable binary whose `--version` output is exactly `pocket-ic-server 13.0.0`.
 
 The heavier suites live under `xtask/src/pocketIC/`:
 
