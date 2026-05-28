@@ -1,4 +1,5 @@
 use super::*;
+use candid::decode_one;
 pub(super) fn mainnet_ledger_id() -> Principal {
     Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("invalid hardcoded ledger principal")
 }
@@ -542,8 +543,24 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     st.main_lock_state_ts = Some(0);
 }
 
+pub(super) fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
+    let zero_args = candid::encode_args(()).expect("failed to encode Candid zero args");
+    if raw.is_empty() || raw == zero_args.as_slice() {
+        return Ok(None);
+    }
+    if decode_one::<InitArgs>(raw).is_ok() {
+        return Err(
+            "received InitArgs in historian post_upgrade; do not pass install args to upgrade"
+                .to_string(),
+        );
+    }
+    decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode historian UpgradeArgs: {err}"))
+}
+
 #[ic_cdk::post_upgrade]
-pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
+pub(super) fn post_upgrade() {
+    let args = decode_post_upgrade_args_from_bytes(&ic_cdk::api::msg_arg_data())
+        .unwrap_or_else(|err| ic_cdk::trap(&err));
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable().expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);

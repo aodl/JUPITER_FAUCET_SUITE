@@ -320,15 +320,13 @@ icp canister install jupiter_historian \
   --args-file jupiter-historian/mainnet-install-args.did
 ```
 
-Upgrade:
+Routine upgrade:
 
 ```bash
-icp canister install jupiter_historian \
-  --environment ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_historian.wasm.gz \
-  --args-file jupiter-historian/mainnet-install-args.did
+icp deploy jupiter_historian --environment ic
 ```
+
+Routine upgrades preserve existing state and do not pass install args. Use direct upgrade args only for an intentional manual config patch; [`mainnet-install-args.did`](mainnet-install-args.did) is for fresh install/reinstall only.
 
 ## Debug interface
 

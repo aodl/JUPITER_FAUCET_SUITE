@@ -329,18 +329,17 @@ icp canister install jupiter_disburser \
   --args-file jupiter-disburser/mainnet-install-args.did
 ```
 
-### Upgrade release artifact
+### Routine production upgrade
 
-Upgrades preserve existing state and do not require args unless you are intentionally toggling upgrade-only settings.
+Routine upgrades preserve existing state and do not require args unless you are intentionally toggling upgrade-only settings.
 
 ```bash
-icp canister install jupiter_disburser \
-  --environment ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz
+icp deploy jupiter_disburser --environment ic
 ```
 
 ### Toggle blackhole arming via upgrade args
+
+Use direct upgrade args only for an intentional manual config patch.
 
 Arm:
 

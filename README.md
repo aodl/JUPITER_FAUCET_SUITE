@@ -319,11 +319,32 @@ Committed copy-pasteable install args live alongside the main operational canist
 - `jupiter-historian/mainnet-install-args.did`
 - `jupiter-relay/mainnet-install-args.did`
 
-These are the repo’s source of truth for fresh install/reinstall wiring captured in version control. Do not pass an install args file to an upgrade.
+These are the repo’s source of truth for fresh install/reinstall wiring captured in version control. Committed `mainnet-install-args.did` files are reviewed install/reinstall inputs only. They are not wired into `icp.yaml` because routine production deploys are upgrades and should not pass install args.
 
-The existing production faucet has already paid out, so its current production path is upgrade, not reinstall. The `icp.yaml` `init_args` entries are install/reinstall inputs only. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`.
+Routine production upgrades should use:
 
-Routine faucet upgrades with no config change should pass explicit `null` upgrade args, for example `--args '(null)'`. If a future DAO-approved upgrade-time config change is needed, pass the appropriate canister-specific `UpgradeArgs` opt record explicitly at deployment time.
+```bash
+icp deploy <canister_name> --environment ic
+```
+
+For example:
+
+```bash
+icp deploy jupiter_faucet --environment ic
+```
+
+This performs a normal upgrade with no upgrade-time config change. If a future DAO-approved upgrade-time config change is needed, pass the appropriate canister-specific `UpgradeArgs` opt record explicitly at deployment time.
+
+Fresh install/reinstall is a separate deliberate operation. When performing one, pass the appropriate `mainnet-install-args.did` file explicitly with the install/reinstall command:
+
+```bash
+icp canister install jupiter_faucet \
+  --environment ic \
+  --mode reinstall \
+  --wasm release-artifacts/jupiter_faucet.wasm.gz \
+  --args-file jupiter-faucet/mainnet-install-args.did \
+  --yes
+```
 
 ## Suggested reading order
 

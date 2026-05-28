@@ -403,18 +403,15 @@ A copy-pasteable mainnet install args file is committed at [`mainnet-install-arg
 
 The current production faucet has already completed a payout. Use upgrade for the current production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
 
-Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`.
+Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`. The faucet upgrade decoder rejects install args, and `scripts/validate-mainnet-install-args` rejects docs that wire install args into upgrade examples.
 
-Routine production upgrades with no config change should pass explicit `null` upgrade args:
+Routine production upgrades with no config change should use normal deploy:
 
 ```bash
-icp canister install jupiter_faucet \
-  --environment ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_faucet.wasm.gz \
-  --args '(null)' \
-  --yes
+icp deploy jupiter_faucet --environment ic
 ```
+
+The faucet `post_upgrade` hook treats omitted upgrade args as no config change. Install/reinstall args remain committed in `mainnet-install-args.did`, but they must only be supplied explicitly for fresh install/reinstall operations.
 
 If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
 
@@ -481,7 +478,7 @@ Upgrade args currently support:
 - `clear_forced_rescue`
 - `stake_recognition_delay_seconds`
 
-There is no committed canonical production upgrade args file. Upgrade args are deployment-time inputs. Routine production upgrades with no config change should pass explicit `null` upgrade args, for example `--args '(null)'`. If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
+There is no committed canonical production upgrade args file. Upgrade args are exceptional deployment-time inputs. Routine production upgrades with no config change should use `icp deploy jupiter_faucet --environment ic`; omitted upgrade args are decoded as no config change. If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
 
 Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative: skip ranges are treated as disposable replay hints rather than durable truth, and upgrades are expected to be exceptional enough that paying the re-scan cost is preferable to risking stale cache semantics.
 

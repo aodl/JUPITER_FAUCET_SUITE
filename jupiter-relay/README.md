@@ -227,6 +227,14 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 
 This MR does not perform deployment. Production deployment and settings changes remain manual operator actions after review.
 
+Routine production upgrades preserve existing state and should use normal deploy with no args:
+
+```bash
+icp deploy jupiter_relay --environment ic
+```
+
+Fresh install/reinstall is a deliberate separate path. Supply `jupiter-relay/mainnet-install-args.did` explicitly only for that install/reinstall operation, not for routine upgrades.
+
 Exact settings update command:
 
 ```bash

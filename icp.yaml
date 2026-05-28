@@ -6,9 +6,6 @@ canisters:
           commands:
             - ./scripts/build-canister jupiter-disburser
             - cp release-artifacts/jupiter_disburser.wasm "$ICP_WASM_OUTPUT_PATH"
-    init_args:
-      path: jupiter-disburser/mainnet-install-args.did
-      format: candid
   - name: jupiter_lifeline
     build:
       steps:
@@ -23,11 +20,6 @@ canisters:
           commands:
             - ./scripts/build-canister jupiter-faucet
             - cp release-artifacts/jupiter_faucet.wasm "$ICP_WASM_OUTPUT_PATH"
-    # Install/reinstall args only. Do not pass these InitArgs to faucet upgrades;
-    # upgrades use a different UpgradeArgs Candid shape supplied at deployment time.
-    init_args:
-      path: jupiter-faucet/mainnet-install-args.did
-      format: candid
   - name: jupiter_sns_rewards
     build:
       steps:
@@ -49,9 +41,6 @@ canisters:
           commands:
             - ./scripts/build-canister jupiter-historian
             - cp release-artifacts/jupiter_historian.wasm "$ICP_WASM_OUTPUT_PATH"
-    init_args:
-      path: jupiter-historian/mainnet-install-args.did
-      format: candid
   - name: jupiter_relay
     build:
       steps:
@@ -59,9 +48,6 @@ canisters:
           commands:
             - ./scripts/build-canister jupiter-relay
             - cp release-artifacts/jupiter_relay.wasm "$ICP_WASM_OUTPUT_PATH"
-    init_args:
-      path: jupiter-relay/mainnet-install-args.did
-      format: candid
   - name: mock_icrc_ledger
     build:
       steps:

@@ -4,6 +4,7 @@ use super::*;
 #[allow(clippy::clone_on_copy, clippy::useless_conversion)]
 mod tests {
     use super::*;
+    use candid::encode_args;
     use crate::state::{CanisterMeta, CyclesSampleSource, InvalidCommitment, RecentNeuronCommitment};
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,6 +24,100 @@ mod tests {
             owner: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             subaccount: Some([7u8; 32]),
         }
+    }
+
+    fn sample_init_args() -> InitArgs {
+        InitArgs {
+            staking_account: sample_account(),
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
+            ledger_canister_id: None,
+            index_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+            blackhole_canister_id: None,
+            sns_wasm_canister_id: None,
+            xrc_canister_id: None,
+            enable_sns_tracking: None,
+            scan_interval_seconds: Some(600),
+            cycles_interval_seconds: Some(604800),
+            min_tx_e8s: Some(100_000_000),
+            max_cycles_entries_per_canister: Some(100),
+            max_commitment_entries_per_canister: Some(100),
+            max_index_pages_per_tick: Some(10),
+            max_canisters_per_cycles_tick: Some(25),
+        }
+    }
+
+    fn expect_decode_err(raw: &[u8]) -> String {
+        match decode_post_upgrade_args_from_bytes(raw) {
+            Ok(_) => panic!("decode unexpectedly succeeded"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_empty_as_none() {
+        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_zero_args_as_none() {
+        let raw = encode_args(()).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_null_as_none() {
+        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_decodes_upgrade_record() {
+        let raw = encode_args((Some(UpgradeArgs {
+            staking_account: Some(alternate_account()),
+            ledger_canister_id: None,
+            index_canister_id: None,
+            enable_sns_tracking: Some(true),
+            clear_commitment_index_fault: Some(true),
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
+            scan_interval_seconds: Some(120),
+            cycles_interval_seconds: None,
+            min_tx_e8s: None,
+            max_cycles_entries_per_canister: None,
+            max_commitment_entries_per_canister: None,
+            max_index_pages_per_tick: Some(2),
+            max_canisters_per_cycles_tick: None,
+            blackhole_canister_id: None,
+            sns_wasm_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+            xrc_canister_id: None,
+        }),))
+        .unwrap();
+        let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
+        assert_eq!(decoded.staking_account, Some(alternate_account()));
+        assert_eq!(decoded.enable_sns_tracking, Some(true));
+        assert_eq!(decoded.clear_commitment_index_fault, Some(true));
+        assert_eq!(decoded.scan_interval_seconds, Some(120));
+        assert_eq!(decoded.max_index_pages_per_tick, Some(2));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_install_args() {
+        let raw = encode_args((sample_init_args(),)).unwrap();
+        let err = expect_decode_err(&raw);
+        assert!(err.contains("received InitArgs in historian post_upgrade"));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_malformed_bytes() {
+        let err = expect_decode_err(b"not candid");
+        assert!(err.contains("failed to decode historian UpgradeArgs"));
     }
 
     fn base_state() -> State {

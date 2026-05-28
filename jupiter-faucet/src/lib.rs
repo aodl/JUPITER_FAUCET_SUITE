@@ -4,7 +4,7 @@ mod policy;
 mod scheduler;
 mod state;
 
-use candid::{CandidType, Deserialize, Principal};
+use candid::{decode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 
 use crate::state::State;
@@ -217,8 +217,24 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
     actions
 }
 
+fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
+    let zero_args = candid::encode_args(()).expect("failed to encode Candid zero args");
+    if raw.is_empty() || raw == zero_args.as_slice() {
+        return Ok(None);
+    }
+    if decode_one::<InitArgs>(raw).is_ok() {
+        return Err(
+            "received InitArgs in faucet post_upgrade; do not pass install args to upgrade"
+                .to_string(),
+        );
+    }
+    decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode faucet UpgradeArgs: {err}"))
+}
+
 #[ic_cdk::post_upgrade]
-fn post_upgrade(args: Option<UpgradeArgs>) {
+fn post_upgrade() {
+    let args = decode_post_upgrade_args_from_bytes(&ic_cdk::api::msg_arg_data())
+        .unwrap_or_else(|err| ic_cdk::trap(&err));
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
     let mut st = crate::state::restore_state_from_stable().expect("stable state missing during faucet post_upgrade");
@@ -549,6 +565,7 @@ async fn debug_rescue_tick() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candid::encode_args;
 
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
@@ -579,6 +596,79 @@ mod tests {
             min_tx_e8s: 100_000_000,
             stake_recognition_delay_seconds: Some(24 * 60 * 60),
         }
+    }
+
+    fn sample_init_args() -> InitArgs {
+        InitArgs {
+            staking_account: sample_account(),
+            payout_subaccount: None,
+            ledger_canister_id: None,
+            index_canister_id: None,
+            cmc_canister_id: None,
+            governance_canister_id: None,
+            funding_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
+            rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
+            blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
+            blackhole_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: Some(60),
+            rescue_interval_seconds: Some(60),
+            min_tx_e8s: Some(100_000_000),
+            stake_recognition_delay_seconds: Some(24 * 60 * 60),
+        }
+    }
+
+    fn expect_decode_err(raw: &[u8]) -> String {
+        match decode_post_upgrade_args_from_bytes(raw) {
+            Ok(_) => panic!("decode unexpectedly succeeded"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_empty_as_none() {
+        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_zero_args_as_none() {
+        let raw = encode_args(()).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_null_as_none() {
+        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_decodes_upgrade_record() {
+        let raw = encode_args((Some(UpgradeArgs {
+            blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
+            blackhole_armed: Some(true),
+            clear_forced_rescue: Some(false),
+            stake_recognition_delay_seconds: Some(604_800),
+        }),))
+        .unwrap();
+        let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
+        assert_eq!(decoded.blackhole_controller, Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")));
+        assert_eq!(decoded.blackhole_armed, Some(true));
+        assert_eq!(decoded.clear_forced_rescue, Some(false));
+        assert_eq!(decoded.stake_recognition_delay_seconds, Some(604_800));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_install_args() {
+        let raw = encode_args((sample_init_args(),)).unwrap();
+        let err = expect_decode_err(&raw);
+        assert!(err.contains("received InitArgs in faucet post_upgrade"));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_malformed_bytes() {
+        let err = expect_decode_err(b"not candid");
+        assert!(err.contains("failed to decode faucet UpgradeArgs"));
     }
 
     #[test]

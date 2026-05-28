@@ -3,7 +3,7 @@ mod logic;
 mod scheduler;
 mod state;
 
-use candid::{CandidType, Deserialize, Principal};
+use candid::{decode_one, CandidType, Deserialize, Principal};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -263,6 +263,20 @@ fn apply_upgrade_args(st: &mut crate::state::State, args: UpgradeArgs) -> Result
     Ok(())
 }
 
+fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
+    let zero_args = candid::encode_args(()).expect("failed to encode Candid zero args");
+    if raw.is_empty() || raw == zero_args.as_slice() {
+        return Ok(None);
+    }
+    if decode_one::<InitArgs>(raw).is_ok() {
+        return Err(
+            "received InitArgs in relay post_upgrade; do not pass install args to upgrade"
+                .to_string(),
+        );
+    }
+    decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode relay UpgradeArgs: {err}"))
+}
+
 #[ic_cdk::init]
 fn init(args: InitArgs) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
@@ -295,7 +309,9 @@ fn init(args: InitArgs) {
 }
 
 #[ic_cdk::post_upgrade]
-fn post_upgrade(args: Option<UpgradeArgs>) {
+fn post_upgrade() {
+    let args = decode_post_upgrade_args_from_bytes(&ic_cdk::api::msg_arg_data())
+        .unwrap_or_else(|err| ic_cdk::trap(&err));
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
     let mut st = crate::state::restore_state_from_stable()
@@ -440,6 +456,86 @@ mod tests {
     use candid_parser::parse_idl_args;
     use candid_parser::utils::{instantiate_candid, service_equal, CandidSource};
     use std::path::Path;
+
+    fn principal(text: &str) -> Principal {
+        Principal::from_text(text).unwrap()
+    }
+
+    fn sample_init_args() -> InitArgs {
+        InitArgs {
+            managed_canisters: vec![principal("22255-zqaaa-aaaas-qf6uq-cai")],
+            ledger_canister_id: None,
+            cmc_canister_id: None,
+            governance_canister_id: None,
+            blackhole_canister_id: None,
+            main_interval_seconds: Some(60),
+            max_transfers_per_tick: Some(3),
+            surplus_canister_recipients: None,
+            surplus_neuron_recipients: vec![SurplusNeuronRecipient { neuron_id: 42, memo: Vec::new() }],
+        }
+    }
+
+    fn expect_decode_err(raw: &[u8]) -> String {
+        match decode_post_upgrade_args_from_bytes(raw) {
+            Ok(_) => panic!("decode unexpectedly succeeded"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_empty_as_none() {
+        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_zero_args_as_none() {
+        let raw = encode_args(()).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_treats_null_as_none() {
+        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_decodes_upgrade_record() {
+        let raw = encode_args((Some(UpgradeArgs {
+            managed_canisters: Some(vec![principal("22255-zqaaa-aaaas-qf6uq-cai")]),
+            ledger_canister_id: None,
+            cmc_canister_id: None,
+            governance_canister_id: None,
+            blackhole_canister_id: None,
+            main_interval_seconds: Some(120),
+            max_transfers_per_tick: Some(Some(2)),
+            surplus_canister_recipients: Some(Vec::new()),
+            surplus_neuron_recipients: Some(vec![SurplusNeuronRecipient { neuron_id: 7, memo: vec![7] }]),
+        }),))
+        .unwrap();
+        let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
+        assert_eq!(decoded.managed_canisters, Some(vec![principal("22255-zqaaa-aaaas-qf6uq-cai")]));
+        assert_eq!(decoded.main_interval_seconds, Some(120));
+        assert_eq!(decoded.max_transfers_per_tick, Some(Some(2)));
+        assert_eq!(decoded.surplus_canister_recipients.as_ref().map(Vec::len), Some(0));
+        let neuron_recipients = decoded.surplus_neuron_recipients.unwrap();
+        assert_eq!(neuron_recipients.len(), 1);
+        assert_eq!(neuron_recipients[0].neuron_id, 7);
+        assert_eq!(neuron_recipients[0].memo, vec![7]);
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_install_args() {
+        let raw = encode_args((sample_init_args(),)).unwrap();
+        let err = expect_decode_err(&raw);
+        assert!(err.contains("received InitArgs in relay post_upgrade"));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_malformed_bytes() {
+        let err = expect_decode_err(b"not candid");
+        assert!(err.contains("failed to decode relay UpgradeArgs"));
+    }
 
     fn assert_committed_did_matches_rust_service(did_file: &str) {
         let did_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(did_file);
