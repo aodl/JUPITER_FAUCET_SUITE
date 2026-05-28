@@ -74,6 +74,7 @@ static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 const IMMUTABLE_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 const NO_CACHE_ASSET_CACHE_CONTROL: &str = "public, no-cache, no-store";
 const SOCIAL_PREVIEW_IMAGE_PATHS: [&str; 1] = ["og/preview-20260520.jpg"];
+const PRIVATE_BUILD_MANIFEST_PATH: &str = "generated/frontend-bundle.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequestTarget {
@@ -132,7 +133,10 @@ fn collect_assets<'content, 'path>(
     assets: &mut Vec<Asset<'content, 'path>>,
 ) {
     for file in dir.files() {
-        assets.push(Asset::new(file.path().to_string_lossy(), file.contents()));
+        let path = file.path().to_string_lossy();
+        if path != PRIVATE_BUILD_MANIFEST_PATH {
+            assets.push(Asset::new(path, file.contents()));
+        }
     }
 
     for dir in dir.dirs() {
@@ -736,7 +740,7 @@ fn get_asset_headers_with_corp(
         ("x-content-type-options".to_string(), "nosniff".to_string()),
         (
             "content-security-policy".to_string(),
-            "default-src 'self';              connect-src 'self' https://icp0.io https://*.icp0.io;              base-uri 'self';              img-src 'self' data:;              style-src 'self' 'unsafe-inline';              style-src-attr 'unsafe-inline';              form-action 'self';              object-src 'none';              frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com;              upgrade-insecure-requests"
+            "default-src 'self';              connect-src 'self' https://icp0.io https://*.icp0.io;              base-uri 'self';              script-src 'self';              img-src 'self' data:;              style-src 'self' 'unsafe-inline';              style-src-attr 'unsafe-inline';              worker-src 'none';              child-src 'none';              frame-src 'none';              manifest-src 'self';              form-action 'self';              object-src 'none';              frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com;              upgrade-insecure-requests"
                 .to_string(),
         ),
         ("referrer-policy".to_string(), "no-referrer".to_string()),
@@ -772,6 +776,20 @@ mod tests {
             .iter()
             .find(|(header, _)| header.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
+    }
+
+    fn generated_app_js_path() -> String {
+        let generated_dir = ASSETS_DIR
+            .get_dir("generated")
+            .expect("generated assets directory should be embedded");
+        generated_dir
+            .files()
+            .find_map(|file| {
+                let path = file.path().to_string_lossy();
+                (path.starts_with("generated/app.") && path.ends_with(".js"))
+                    .then(|| format!("/{path}"))
+            })
+            .expect("generated app bundle should be embedded")
     }
 
     #[test]
@@ -837,6 +855,53 @@ mod tests {
             header_value(&response, "cache-control"),
             Some(NO_CACHE_ASSET_CACHE_CONTROL)
         );
+    }
+
+    #[test]
+    fn generated_frontend_bundle_manifest_is_not_routable() {
+        certify_all_assets();
+
+        let request = HttpRequest::get(format!("/{PRIVATE_BUILD_MANIFEST_PATH}")).build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_ne!(
+            header_value(&response, "content-type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn generated_frontend_bundle_manifest_head_is_not_routable() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url(format!("/{PRIVATE_BUILD_MANIFEST_PATH}"))
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(response.body(), b"");
+        assert_ne!(
+            header_value(&response, "content-type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn generated_app_bundle_remains_routable_as_javascript() {
+        certify_all_assets();
+
+        let request = HttpRequest::get(generated_app_js_path()).build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(
+            header_value(&response, "content-type"),
+            Some("text/javascript")
+        );
+        assert!(!response.body().is_empty());
     }
 
     #[test]
@@ -1045,6 +1110,33 @@ mod tests {
         assert!(headers
             .iter()
             .any(|(name, value)| name == "cross-origin-opener-policy" && value == "same-origin"));
+    }
+
+    #[test]
+    fn csp_spells_out_explicit_frontend_directives() {
+        let headers = get_asset_headers_with_corp("same-origin", vec![]);
+        let csp = headers
+            .iter()
+            .find(|(name, _)| name == "content-security-policy")
+            .map(|(_, value)| value.as_str())
+            .expect("security headers should include CSP");
+
+        for directive in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "worker-src 'none'",
+            "child-src 'none'",
+            "frame-src 'none'",
+            "manifest-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            "style-src-attr 'unsafe-inline'",
+            "frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com",
+        ] {
+            assert!(
+                csp.contains(directive),
+                "expected CSP to contain {directive:?}, got {csp:?}"
+            );
+        }
     }
 
     #[test]
