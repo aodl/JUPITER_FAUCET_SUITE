@@ -75,6 +75,12 @@ mod tests {
     }
 
     #[test]
+    fn decode_post_upgrade_args_wrapper_decodes_valid_none() {
+        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
+        assert!(decode_post_upgrade_args(raw).is_none());
+    }
+
+    #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
             staking_account: Some(alternate_account()),

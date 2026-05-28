@@ -557,10 +557,12 @@ pub(super) fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<U
     decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode historian UpgradeArgs: {err}"))
 }
 
-#[ic_cdk::post_upgrade]
-pub(super) fn post_upgrade() {
-    let args = decode_post_upgrade_args_from_bytes(&ic_cdk::api::msg_arg_data())
-        .unwrap_or_else(|err| ic_cdk::trap(&err));
+pub(super) fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
+    decode_post_upgrade_args_from_bytes(&raw).unwrap_or_else(|err| ic_cdk::trap(&err))
+}
+
+#[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
+pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable().expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);

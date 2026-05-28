@@ -277,6 +277,10 @@ fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>
     decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode relay UpgradeArgs: {err}"))
 }
 
+fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
+    decode_post_upgrade_args_from_bytes(&raw).unwrap_or_else(|err| ic_cdk::trap(&err))
+}
+
 #[ic_cdk::init]
 fn init(args: InitArgs) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
@@ -308,10 +312,8 @@ fn init(args: InitArgs) {
     crate::scheduler::install_timers();
 }
 
-#[ic_cdk::post_upgrade]
-fn post_upgrade() {
-    let args = decode_post_upgrade_args_from_bytes(&ic_cdk::api::msg_arg_data())
-        .unwrap_or_else(|err| ic_cdk::trap(&err));
+#[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
+fn post_upgrade(args: Option<UpgradeArgs>) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
     let mut st = crate::state::restore_state_from_stable()
@@ -497,6 +499,12 @@ mod tests {
     fn decode_post_upgrade_args_treats_null_as_none() {
         let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
         assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_wrapper_decodes_valid_none() {
+        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
+        assert!(decode_post_upgrade_args(raw).is_none());
     }
 
     #[test]
