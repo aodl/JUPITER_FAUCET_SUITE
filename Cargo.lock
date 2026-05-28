@@ -3176,11 +3176,8 @@ dependencies = [
  "candid",
  "ic-asset-certification",
  "ic-cdk",
- "ic-cdk-timers",
  "ic-http-certification",
  "include_dir",
- "serde",
- "serde_json",
 ]
 
 [[package]]

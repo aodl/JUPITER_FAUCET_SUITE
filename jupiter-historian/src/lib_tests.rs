@@ -546,6 +546,16 @@ mod tests {
     }
 
     #[test]
+    fn module_hash_refresh_timing_constants_keep_distinct_roles() {
+        assert_eq!(MODULE_HASH_REFRESH_LEASE_SECONDS, 5 * 60);
+        assert_eq!(MODULE_HASH_REFRESH_INTERVAL_SECONDS, 10 * 60);
+        assert_eq!(MODULE_HASH_CACHE_TTL_SECONDS, 60 * 60);
+
+        assert!(MODULE_HASH_REFRESH_LEASE_SECONDS < MODULE_HASH_REFRESH_INTERVAL_SECONDS);
+        assert!(MODULE_HASH_REFRESH_INTERVAL_SECONDS < MODULE_HASH_CACHE_TTL_SECONDS);
+    }
+
+    #[test]
     fn source_module_hash_canister_ids_include_relay_as_suite_canister() {
         let ids: BTreeSet<_> = source_module_hash_canister_ids().into_iter().collect();
 

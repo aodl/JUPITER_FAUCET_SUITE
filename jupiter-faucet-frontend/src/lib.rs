@@ -1,41 +1,18 @@
 use ic_asset_certification::{
-    Asset, AssetCertificationError, AssetConfig, AssetEncoding, AssetFallbackConfig, AssetMap,
-    AssetRouter,
+    Asset, AssetCertificationError, AssetConfig, AssetEncoding, AssetFallbackConfig, AssetRouter,
 };
 use ic_cdk::{api::data_certificate, init, post_upgrade, query};
 use ic_http_certification::{
     utils::add_v2_certificate_header, DefaultCelBuilder, DefaultResponseCertification,
-    DefaultResponseOnlyCelExpression, HeaderField, HttpCertification, HttpCertificationPath,
-    HttpCertificationTree, HttpCertificationTreeEntry, HttpRequest, HttpResponse, Method,
-    StatusCode, CERTIFICATE_EXPRESSION_HEADER_NAME,
+    HeaderField, HttpCertification, HttpCertificationPath, HttpCertificationTree,
+    HttpCertificationTreeEntry, HttpRequest, HttpResponse, Method, StatusCode,
+    CERTIFICATE_EXPRESSION_HEADER_NAME,
 };
 use include_dir::{include_dir, Dir};
-use serde::Serialize;
-#[cfg(not(test))]
-use std::time::Duration;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Metrics {
-    pub num_assets: usize,
-    pub num_fallback_assets: usize,
-    pub cycle_balance: u128,
-}
-
-#[derive(Debug, Clone)]
-struct CertifiedMetricsSnapshot {
-    body: Vec<u8>,
-    headers: Vec<HeaderField>,
-    cel_expr: DefaultResponseOnlyCelExpression<'static>,
-}
-
-#[cfg(not(test))]
-const METRICS_REFRESH_INTERVAL_SECS: u64 = 60;
 
 fn initialize_runtime_state() {
     certify_all_assets();
-    refresh_certified_metrics_snapshot();
-    install_metrics_refresh_timer();
 }
 
 #[init]
@@ -50,15 +27,11 @@ fn post_upgrade() {
 
 #[query]
 fn http_request(req: HttpRequest) -> HttpResponse {
-    let path = match req.get_path() {
-        Ok(path) => path,
-        Err(_) => return plain_error_response(StatusCode::BAD_REQUEST, "bad request path"),
-    };
-
-    match request_target_for_path(&path) {
-        RequestTarget::Metrics => serve_metrics(),
-        RequestTarget::Asset => serve_asset(&req),
+    if req.get_path().is_err() {
+        return plain_error_response(StatusCode::BAD_REQUEST, "bad request path");
     }
+
+    serve_asset(&req)
 }
 
 thread_local! {
@@ -67,7 +40,6 @@ thread_local! {
         AssetRouter::with_tree(HTTP_TREE.with(|tree| tree.clone()))
     );
     static HEAD_ASSETS: RefCell<HashMap<HeadAssetKey, CertifiedHeadAsset>> = RefCell::new(HashMap::new());
-    static CERTIFIED_METRICS_SNAPSHOT: RefCell<Option<CertifiedMetricsSnapshot>> = const { RefCell::new(None) };
 }
 
 static ASSETS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
@@ -75,12 +47,6 @@ const IMMUTABLE_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable
 const NO_CACHE_ASSET_CACHE_CONTROL: &str = "public, no-cache, no-store";
 const SOCIAL_PREVIEW_IMAGE_PATHS: [&str; 1] = ["og/preview-20260520.jpg"];
 const PRIVATE_BUILD_MANIFEST_PATH: &str = "generated/frontend-bundle.json";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestTarget {
-    Metrics,
-    Asset,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct HeadAssetKey {
@@ -98,14 +64,6 @@ enum HeadAssetMatchKind {
 struct CertifiedHeadAsset {
     response: HttpResponse<'static>,
     tree_entry: HttpCertificationTreeEntry<'static>,
-}
-
-fn request_target_for_path(path: &str) -> RequestTarget {
-    if path == "/metrics" {
-        RequestTarget::Metrics
-    } else {
-        RequestTarget::Asset
-    }
 }
 
 fn plain_error_response(status: StatusCode, message: &str) -> HttpResponse<'static> {
@@ -144,10 +102,6 @@ fn collect_assets<'content, 'path>(
     }
 }
 
-fn metrics_tree_path() -> HttpCertificationPath<'static> {
-    HttpCertificationPath::exact("/metrics")
-}
-
 #[cfg(not(test))]
 fn update_certified_data(root_hash: &[u8]) {
     ic_cdk::api::certified_data_set(root_hash);
@@ -156,93 +110,6 @@ fn update_certified_data(root_hash: &[u8]) {
 #[cfg(test)]
 fn update_certified_data(root_hash: &[u8]) {
     let _ = root_hash;
-}
-
-#[cfg(not(test))]
-fn current_cycle_balance() -> u128 {
-    ic_cdk::api::canister_cycle_balance()
-}
-
-#[cfg(test)]
-fn current_cycle_balance() -> u128 {
-    0
-}
-
-fn metrics_cel_expression() -> DefaultResponseOnlyCelExpression<'static> {
-    DefaultCelBuilder::response_only_certification()
-        .with_response_certification(DefaultResponseCertification::response_header_exclusions(
-            vec![],
-        ))
-        .build()
-}
-
-fn build_certified_metrics_snapshot(
-    asset_router: &AssetRouter<'static>,
-) -> CertifiedMetricsSnapshot {
-    let metrics = Metrics {
-        num_assets: asset_router.get_assets().len(),
-        num_fallback_assets: asset_router.get_fallback_assets().len(),
-        cycle_balance: current_cycle_balance(),
-    };
-    let body = serde_json::to_vec(&metrics).expect("failed to serialize metrics");
-    let cel_expr = metrics_cel_expression();
-    let headers = get_asset_headers_with_corp(
-        "same-origin",
-        vec![
-            (
-                CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(),
-                cel_expr.to_string(),
-            ),
-            ("content-type".to_string(), "application/json".to_string()),
-            (
-                "cache-control".to_string(),
-                NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-            ),
-        ],
-    );
-    CertifiedMetricsSnapshot {
-        body,
-        headers,
-        cel_expr,
-    }
-}
-
-#[cfg(not(test))]
-fn install_metrics_refresh_timer() {
-    ic_cdk_timers::set_timer_interval(
-        Duration::from_secs(METRICS_REFRESH_INTERVAL_SECS),
-        || async {
-            refresh_certified_metrics_snapshot();
-        },
-    );
-}
-
-#[cfg(test)]
-fn install_metrics_refresh_timer() {}
-
-fn refresh_certified_metrics_snapshot() {
-    ASSET_ROUTER.with_borrow(|asset_router| {
-        let snapshot = build_certified_metrics_snapshot(asset_router);
-        let response = HttpResponse::builder()
-            .with_status_code(StatusCode::OK)
-            .with_body(snapshot.body.clone())
-            .with_headers(snapshot.headers.clone())
-            .build();
-        let certification = HttpCertification::response_only(&snapshot.cel_expr, &response, None)
-            .expect("failed to certify metrics response");
-        let metrics_tree_path = metrics_tree_path();
-        let metrics_tree_entry =
-            HttpCertificationTreeEntry::new(&metrics_tree_path, certification);
-
-        HTTP_TREE.with(|tree| {
-            let mut tree = tree.borrow_mut();
-            tree.delete_by_path(&metrics_tree_path);
-            tree.insert(&metrics_tree_entry);
-            update_certified_data(&tree.root_hash());
-        });
-
-        CERTIFIED_METRICS_SNAPSHOT.with(|stored| *stored.borrow_mut() = Some(snapshot));
-    });
 }
 
 fn certify_all_assets() {
@@ -560,59 +427,6 @@ fn content_type_for_path(path: &str) -> Option<&'static str> {
     }
 }
 
-fn serve_metrics() -> HttpResponse<'static> {
-    let Some(snapshot) = CERTIFIED_METRICS_SNAPSHOT.with(|stored| stored.borrow().clone()) else {
-        return plain_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "metrics snapshot unavailable",
-        );
-    };
-
-    let mut response = HttpResponse::builder()
-        .with_status_code(StatusCode::OK)
-        .with_body(snapshot.body)
-        .with_headers(snapshot.headers)
-        .build();
-
-    let Some(certificate) = data_certificate() else {
-        return plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "certificate unavailable");
-    };
-
-    HTTP_TREE.with(|tree| {
-        let tree = tree.borrow();
-        let metrics_tree_path = metrics_tree_path();
-        let certification =
-            match HttpCertification::response_only(&snapshot.cel_expr, &response, None) {
-                Ok(certification) => certification,
-                Err(_) => {
-                    return plain_error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "metrics certification unavailable",
-                    )
-                }
-            };
-        let metrics_tree_entry =
-            HttpCertificationTreeEntry::new(&metrics_tree_path, certification);
-        let witness = match tree.witness(&metrics_tree_entry, "/metrics") {
-            Ok(witness) => witness,
-            Err(_) => {
-                return plain_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "metrics witness unavailable",
-                )
-            }
-        };
-        add_v2_certificate_header(
-            &certificate,
-            &mut response,
-            &witness,
-            &metrics_tree_path.to_expr_path(),
-        );
-
-        response
-    })
-}
-
 fn serve_asset(req: &HttpRequest) -> HttpResponse<'static> {
     let Some(certificate) = data_certificate() else {
         return plain_error_response(StatusCode::INTERNAL_SERVER_ERROR, "certificate unavailable");
@@ -769,6 +583,7 @@ fn get_asset_headers_with_corp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ic_asset_certification::AssetMap;
 
     fn header_value<'a>(response: &'a HttpResponse<'static>, name: &str) -> Option<&'a str> {
         response
@@ -790,20 +605,6 @@ mod tests {
                     .then(|| format!("/{path}"))
             })
             .expect("generated app bundle should be embedded")
-    }
-
-    #[test]
-    fn request_target_routes_metrics_separately() {
-        assert_eq!(request_target_for_path("/metrics"), RequestTarget::Metrics);
-        assert_eq!(request_target_for_path("/"), RequestTarget::Asset);
-        assert_eq!(
-            request_target_for_path("/assets/app.js"),
-            RequestTarget::Asset
-        );
-        assert_eq!(
-            request_target_for_path("/does-not-exist"),
-            RequestTarget::Asset
-        );
     }
 
     #[test]
@@ -878,6 +679,38 @@ mod tests {
         let request = HttpRequest::builder()
             .with_method(Method::HEAD)
             .with_url(format!("/{PRIVATE_BUILD_MANIFEST_PATH}"))
+            .build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(response.body(), b"");
+        assert_ne!(
+            header_value(&response, "content-type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn metrics_path_is_not_public_get_endpoint() {
+        certify_all_assets();
+
+        let request = HttpRequest::get("/metrics").build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+        assert_ne!(
+            header_value(&response, "content-type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn metrics_path_is_not_public_head_endpoint() {
+        certify_all_assets();
+
+        let request = HttpRequest::builder()
+            .with_method(Method::HEAD)
+            .with_url("/metrics")
             .build();
         let response = serve_asset_with_certificate(b"test-certificate", &request);
 
@@ -1139,58 +972,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn metrics_cel_expression_is_response_only_not_skip_certification() {
-        let cel_expr = metrics_cel_expression();
-        assert_ne!(
-            cel_expr.to_string(),
-            DefaultCelBuilder::skip_certification().to_string()
-        );
-    }
-
-    #[test]
-    fn initialize_runtime_state_populates_certified_metrics_snapshot() {
-        CERTIFIED_METRICS_SNAPSHOT.with(|stored| *stored.borrow_mut() = None);
-        initialize_runtime_state();
-        CERTIFIED_METRICS_SNAPSHOT.with(|stored| {
-            let snapshot = stored.borrow();
-            let snapshot = snapshot
-                .as_ref()
-                .expect("expected certified metrics snapshot");
-            assert!(!snapshot.body.is_empty());
-            assert_eq!(
-                snapshot
-                    .headers
-                    .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-                    .map(|(_, value)| value.as_str()),
-                Some("application/json")
-            );
-        });
-    }
-
-    #[test]
-    fn build_certified_metrics_snapshot_uses_certified_metrics_headers() {
-        certify_all_assets();
-        ASSET_ROUTER.with_borrow(|asset_router| {
-            let snapshot = build_certified_metrics_snapshot(asset_router);
-            let expected_cel_expr = snapshot.cel_expr.to_string();
-            assert_eq!(
-                snapshot
-                    .headers
-                    .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-                    .map(|(_, value)| value.as_str()),
-                Some("application/json")
-            );
-            assert_eq!(
-                snapshot
-                    .headers
-                    .iter()
-                    .find(|(name, _)| name == CERTIFICATE_EXPRESSION_HEADER_NAME)
-                    .map(|(_, value)| value.as_str()),
-                Some(expected_cel_expr.as_str())
-            );
-        });
-    }
 }

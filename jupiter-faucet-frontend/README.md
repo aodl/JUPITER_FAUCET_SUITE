@@ -21,19 +21,14 @@ The canister serves two important HTTP surfaces:
   - the main landing page / dashboard shell
 - unknown asset/page paths
   - a certified `404.html` fallback served with HTTP 404
-- `/metrics`
-  - a small JSON endpoint served directly by the Rust canister with:
-    - `num_assets`
-    - `num_fallback_assets`
-    - `cycle_balance`
 
 Asset responses are certified and content-typed through the Rust asset router.
 
-The `/metrics` endpoint is also certified now, but as a periodically refreshed snapshot rather than an uncached live recomputation. The frontend canister refreshes and re-certifies the metrics document on a timer, so `/metrics` stays trustworthy without relying on uncertified boundary-node data for the JSON body.
+The frontend canister intentionally does not expose a public metrics endpoint. Live cycle and accounting data should come from the suite's existing controller, blackhole, and status monitoring paths.
 
 The canister also applies a deliberate cache policy:
 
-- `index.html`, `/.well-known/ic-domains`, and `/metrics` are served with `cache-control: public, no-cache, no-store`
+- `index.html` and `/.well-known/ic-domains` are served with `cache-control: public, no-cache, no-store`
 - hashed JS / CSS assets are served with `cache-control: public, max-age=31536000, immutable`
 
 Asset responses also carry the canister’s standard security headers, including HSTS, `X-Content-Type-Options: nosniff`, a restrictive Content Security Policy, and COEP / COOP / CORP headers.

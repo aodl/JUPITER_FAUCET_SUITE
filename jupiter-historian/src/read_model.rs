@@ -175,8 +175,8 @@ pub(super) fn get_public_status() -> PublicStatus {
 }
 
 pub(crate) const MODULE_HASH_CACHE_TTL_SECONDS: u64 = 60 * 60;
-pub(crate) const MODULE_HASH_REFRESH_INTERVAL_SECONDS: u64 = 5 * 60;
-const MODULE_HASH_REFRESH_LEASE_SECONDS: u64 = 5 * 60;
+pub(crate) const MODULE_HASH_REFRESH_INTERVAL_SECONDS: u64 = 10 * 60;
+pub(crate) const MODULE_HASH_REFRESH_LEASE_SECONDS: u64 = 5 * 60;
 
 pub(crate) fn source_module_hash_canister_ids() -> Vec<Principal> {
     [
