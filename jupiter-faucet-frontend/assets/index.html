@@ -926,11 +926,11 @@
                 memo builder on the next slide to build a valid memo.
               </p>
               <p class="nav-panel-content memo-builder-safety-notice">
-                <strong>Developer tip:</strong> You can adjust the <code>canister</code>/<code>neuron</code>
-                and <code>label</code> parameters in the following URL to customise the memo helper
+                <strong>Developer tip:</strong> You can adjust the <code>canister</code>/<code>neuron</code>,
+                <code>title</code>, and <code>label</code> parameters in the following URL to customise the memo helper
                 form on the next slide for a smoother user experience:
                 <span class="memo-builder-tip-copy-row">
-                  <span class="memo-builder-tip-url mono" id="memo-builder-tip-url" data-copy-value="#how-it-works:2?canister={protocol canister ID}&amp;label={custom label}">#how-it-works:2?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></span>
+                  <span class="memo-builder-tip-url mono" id="memo-builder-tip-url" data-copy-value="#how-it-works:2?canister={protocol canister ID}&amp;title={custom title}&amp;label={custom label}">#how-it-works:2?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;title=<span class="memo-builder-placeholder">{custom title}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></span>
                   <button class="pane-page-button" id="copy-memo-builder-tip-url" type="button">Copy URL</button>
                 </span>
               </p>
@@ -938,12 +938,12 @@
                 <p><strong>e.g.</strong></p>
                 <ul>
                   <li>
-                    ONICAI's <a href="#how-it-works:2?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;label=mAIner%20ID%20Prefix%20(xxxxx-xx)" class="pane-external-link">mAIner ID Prefix (xxxxx-xx) Memo Builder</a>
+                    ONICAI's <a href="#how-it-works:2?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;title=mAIner%20ID&amp;label=mAIner%20ID%20Prefix%20(xxxxx-xx)" class="pane-external-link">mAIner ID Memo Builder</a>
                     tops up the protocol's GameState canister with raw ICP; GameState then routes a
                     portion as cycles to the declared mAIner.
                   </li>
                   <li>
-                    IO's <a href="#how-it-works:2?neuron=6345890886899317159&amp;label=IO%20Perpetual%20Stake" class="pane-external-link">IO Perpetual Stake Memo Builder</a>
+                    IO's <a href="#how-it-works:2?neuron=6345890886899317159&amp;title=IO%20Perpetual%20Stake&amp;label=Optional%20Donor%20Name" class="pane-external-link">IO Perpetual Stake Memo Builder</a>
                     causes Jupiter Faucet to perpetually pay into the IO neuron's staking account,
                     driving an ever-increasing minimum APY for all IO holders. In this particular
                     case a <code>'.'</code> suffix is superfluous.
@@ -1066,7 +1066,7 @@
                 to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
                 of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
                 (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
-                While the Jupiter Faucet SNS rewards components are still being finalised, the ICP will accumulate in the
+                While the Jupiter Faucet SNS rewards components are still being finalised the ICP will accumulate in the
                 <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
                 (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
               </p>

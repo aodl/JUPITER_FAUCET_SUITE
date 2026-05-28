@@ -56,6 +56,7 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     const params = fragmentParams();
     const canister = params.get('canister');
     const neuron = params.get('neuron');
+    const title = (params.get('title') || '').slice(0, 30);
     const label = (params.get('label') || '').slice(0, 30);
     const hasPrefillTarget = canister !== null || neuron !== null;
     const shouldApplyTargetValue = shouldApplyAdvancedMemoUrlTargetValue(currentFragment, lastAppliedPrefillFragment);
@@ -63,7 +64,7 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     const urlPrefill = advancedMemoUrlPrefillState({ canister, neuron, requestedMode });
     const { sanitizedCanister, sanitizedNeuron, targetType: urlTargetType, displayTarget: urlDisplayTarget } = urlPrefill;
     if (optionalLabel) optionalLabel.textContent = label || (hasPrefillTarget ? 'Identifier' : defaultOptionalLabel);
-    if (builderTitle) builderTitle.textContent = label ? `${label} Memo Builder` : defaultBuilderTitle;
+    if (builderTitle) builderTitle.textContent = title ? `${title} Memo Builder` : defaultBuilderTitle;
     if (prefillNote) {
       prefillNote.hidden = !hasPrefillTarget;
       prefillNote.textContent = urlTargetType === 'neuron' ? PREFILL_NEURON_NOTE : PREFILL_CANISTER_NOTE;
@@ -72,10 +73,14 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     if (safetyTargetKind) safetyTargetKind.textContent = urlTargetType === 'neuron' ? 'protocol neuron' : 'protocol canister';
     if (safetyPrescriptionKind) safetyPrescriptionKind.textContent = urlTargetType === 'neuron' ? 'neuron' : 'canister';
     if (urlContext) {
+      const suppliedContext = [`${urlTargetType} ID`];
+      if (title) suppliedContext.push(`title '${title}'`);
+      if (label) suppliedContext.push(`memo label '${label}'`);
+      const suppliedContextText = suppliedContext.length > 2
+        ? `${suppliedContext.slice(0, -1).join(', ')}, and ${suppliedContext[suppliedContext.length - 1]}`
+        : suppliedContext.join(' and ');
       urlContext.textContent = urlDisplayTarget
-        ? (label
-          ? ` The ${urlTargetType} ID and term '${label}' were supplied in the URL.`
-          : ` The ${urlTargetType} ID was supplied in the URL.`)
+        ? ` The ${suppliedContextText} ${suppliedContext.length === 1 ? 'was' : 'were'} supplied in the URL.`
         : '';
     }
     if (canisterDashboardLink) {
