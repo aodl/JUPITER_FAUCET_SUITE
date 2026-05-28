@@ -225,8 +225,6 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
-This MR does not perform deployment. Production deployment and settings changes remain manual operator actions after review.
-
 Routine production upgrades preserve existing state and should use normal deploy with no args:
 
 ```bash

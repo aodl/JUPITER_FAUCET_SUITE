@@ -276,11 +276,13 @@ To build a single canister, for example:
 
 The preferred entry point for local Rust/canister testing is `xtask`.
 
-### Stable-state compatibility tests
+### Stable-state compatibility and upgrades
 
 Stateful canisters keep small stable-state compatibility tests near their state modules. Tests that dynamically encode local legacy structs are legacy-shape compatibility checks: they prove the current `VersionedStableState` can decode the modeled prior shape, preserve meaningful fields, and apply safe defaults for new optional fields. Do not describe these as golden fixtures unless the repo contains checked-in Candid bytes, Candid text, or another committed artifact generated from a prior release.
 
 When a stable schema changes, add a minimal representative legacy-shape test or, where release provenance matters, add a true checked-in fixture under a small test fixture path. Keep fixtures small and reviewable rather than copying production dumps.
+
+Routine upgrades must preserve stable state and must not accidentally receive init/install args. Deployment validation should keep fresh install/reinstall args separate from normal upgrade commands.
 
 Examples:
 
@@ -310,7 +312,7 @@ npm run test:frontend-dashboard-local
 
 For the full command matrix and what each layer covers, see [`xtask/README.md`](xtask/README.md).
 
-## Committed mainnet init / install args
+## Committed mainnet install/reinstall args
 
 Committed copy-pasteable install args live alongside the main operational canisters:
 

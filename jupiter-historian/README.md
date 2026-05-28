@@ -156,7 +156,7 @@ Defaults are:
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-The historian also schedules an immediate one-shot tick roughly 1 second after install / upgrade so local and fresh deployments do not have to wait for the first full scan interval.
+The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval.
 
 ### What the driver does
 
@@ -241,7 +241,7 @@ The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently c
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-That file is intended to be the copy-pasteable install / upgrade argument source for an IC deployment of the historian.
+That file is intended to be the copy-pasteable install/reinstall argument source for an IC deployment of the historian. Routine upgrades preserve existing state and should normally pass no args.
 
 ## Build and test
 
@@ -326,7 +326,7 @@ Routine upgrade:
 icp deploy jupiter_historian --environment ic
 ```
 
-Routine upgrades preserve existing state and do not pass install args. Use direct upgrade args only for an intentional manual config patch; [`mainnet-install-args.did`](mainnet-install-args.did) is for fresh install/reinstall only.
+Routine upgrades preserve existing state and do not pass install args. Use optional `UpgradeArgs` only for an intentional manual config patch; [`mainnet-install-args.did`](mainnet-install-args.did) is for fresh install/reinstall only.
 
 ## Debug interface
 

@@ -223,7 +223,7 @@ The three configured recipients must be pairwise distinct. The runtime also reje
 - `main_interval_seconds` (optional; defaults to 86400)
 - `rescue_interval_seconds` (optional; defaults to 86400)
 
-A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did).
+A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did). It is for fresh install/reinstall only, not routine upgrades.
 
 ### Upgrade args
 
@@ -331,7 +331,7 @@ icp canister install jupiter_disburser \
 
 ### Routine production upgrade
 
-Routine upgrades preserve existing state and do not require args unless you are intentionally toggling upgrade-only settings.
+Routine upgrades preserve existing state and should normally pass no args. Use optional `UpgradeArgs` only when intentionally toggling upgrade-only settings.
 
 ```bash
 icp deploy jupiter_disburser --environment ic

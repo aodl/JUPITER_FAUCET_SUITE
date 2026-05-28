@@ -397,13 +397,13 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 - `stake_recognition_delay_seconds` (optional; code default is 1 day for local/dev compatibility)
   - production fresh install/reinstall must pass an explicit value; the committed production install args set `604800` (7 days), and validation rejects any production value that differs
 
-A copy-pasteable mainnet install args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did). It is for fresh install/reinstall only, not upgrade.
+A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did). It is for fresh install/reinstall only, not routine upgrades.
 
 ### Production upgrade checklist
 
 The current production faucet has already completed a payout. Use upgrade for the current production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
 
-Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch. Faucet upgrades use `UpgradeArgs`, which are a different Candid shape from `InitArgs`. The faucet upgrade decoder rejects install args, and `scripts/validate-mainnet-install-args` rejects docs that wire install args into upgrade examples.
+Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch.
 
 Routine production upgrades with no config change should use normal deploy:
 
@@ -411,9 +411,7 @@ Routine production upgrades with no config change should use normal deploy:
 icp deploy jupiter_faucet --environment ic
 ```
 
-The faucet `post_upgrade` hook treats omitted upgrade args as no config change. Install/reinstall args remain committed in `mainnet-install-args.did`, but they must only be supplied explicitly for fresh install/reinstall operations.
-
-If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
+Omitted upgrade args are decoded as no config change. Use optional `UpgradeArgs` only for an intentional DAO-approved upgrade-time config patch; they are a different Candid shape from `InitArgs`, and the faucet upgrade decoder rejects install args.
 
 Before upgrade:
 
@@ -478,7 +476,7 @@ Upgrade args currently support:
 - `clear_forced_rescue`
 - `stake_recognition_delay_seconds`
 
-There is no committed canonical production upgrade args file. Upgrade args are exceptional deployment-time inputs. Routine production upgrades with no config change should use `icp deploy jupiter_faucet --environment ic`; omitted upgrade args are decoded as no config change. If a future DAO-approved upgrade-time config change is needed, pass the appropriate `UpgradeArgs` opt record explicitly at deployment time.
+There is no committed canonical production upgrade args file. Upgrade args are exceptional deployment-time inputs; routine production upgrades with no config change should use `icp deploy jupiter_faucet --environment ic`.
 
 Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative: skip ranges are treated as disposable replay hints rather than durable truth, and upgrades are expected to be exceptional enough that paying the re-scan cost is preferable to risking stale cache semantics.
 
