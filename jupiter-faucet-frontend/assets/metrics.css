@@ -1004,6 +1004,7 @@
 
 .tracker-chart-bar {
   fill: rgba(255, 255, 255, 0.78);
+  transition: opacity 160ms ease;
 }
 
 .tracker-chart-bar--commitment {
@@ -1014,6 +1015,116 @@
   fill: rgba(255, 255, 255, 0.54);
   stroke: rgba(255, 255, 255, 0.76);
   stroke-width: 1;
+}
+
+.tracker-chart-bar--source-faucet {
+  fill: rgba(34, 197, 94, 0.9);
+}
+
+.tracker-chart-bar--source-faucet-matching-memo {
+  fill: rgba(22, 163, 74, 0.95);
+}
+
+.tracker-chart-bar--source-faucet-other-memo {
+  fill: rgba(132, 204, 22, 0.86);
+}
+
+.tracker-chart-bar--source-relay {
+  fill: rgba(96, 165, 250, 0.88);
+}
+
+.tracker-chart-bar--source-protocol {
+  fill: rgba(245, 158, 11, 0.9);
+}
+
+.tracker-chart-bar--source-other {
+  fill: rgba(148, 163, 184, 0.82);
+}
+
+.tracker-source-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.9rem;
+  font-size: 0.82rem;
+}
+
+.tracker-source-legend-item {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+  outline: none;
+}
+
+.tracker-source-legend-item:focus-visible {
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.28);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet {
+  color: rgba(34, 197, 94, 0.9);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-matching-memo {
+  color: rgba(22, 163, 74, 0.95);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-other-memo {
+  color: rgba(132, 204, 22, 0.86);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-relay {
+  color: rgba(96, 165, 250, 0.88);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-protocol {
+  color: rgba(245, 158, 11, 0.9);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-other {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+.tracker-source-legend i {
+  background: currentColor;
+  border-radius: 3px;
+  display: inline-block;
+  height: 0.65rem;
+  width: 0.65rem;
+}
+
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="faucet"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="faucet"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="faucet-matching-memo"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="faucet-matching-memo"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="faucet-other-memo"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="faucet-other-memo"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="protocol"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="protocol"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="other"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="other"]) {
+  opacity: 0.28;
+}
+
+.tracker-candidate-section {
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.tracker-candidate-section h3 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.tracker-candidate-section ul {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tracker-candidate-section li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
 }
 
 .tracker-chart-line {

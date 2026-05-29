@@ -156,6 +156,25 @@ type ListRegisteredCanisterSummariesResponse = record {
   page_size : nat32;
   total : nat64;
 };
+type FindCanistersByMemoPrefixArgs = record {
+  prefix : text;
+  limit : opt nat32;
+  source_filter : opt CanisterSource;
+};
+type CanisterPrefixMatch = record {
+  canister_id : principal;
+  sources : vec CanisterSource;
+  matched_prefix : text;
+  qualifying_commitment_count : nat64;
+  total_qualifying_committed_e8s : nat64;
+  last_commitment_ts : opt nat64;
+  latest_cycles : opt nat;
+  last_cycles_probe_ts : opt nat64;
+};
+type FindCanistersByMemoPrefixResponse = record {
+  items : vec CanisterPrefixMatch;
+  truncated : bool;
+};
 type ListRecentCommitmentsArgs = record {
   limit : opt nat32;
   qualifying_only : opt bool;
@@ -215,6 +234,7 @@ service : (InitArgs) -> {
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
+  find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;
   list_registered_canister_summaries : (ListRegisteredCanisterSummariesArgs) -> (ListRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
   debug_state : () -> (DebugState) query;

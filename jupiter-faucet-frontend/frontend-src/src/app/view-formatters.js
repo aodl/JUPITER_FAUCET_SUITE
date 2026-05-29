@@ -1,6 +1,6 @@
 import { escapeHtml } from '../followee-links.js';
 import { calculateAgeBonusMaturityShareBasisPoints } from '../projection-simulator.js';
-import { trackerHashForPrincipal } from './hash-routes.js';
+import { trackerHashForMemo, trackerHashForPrincipal } from './hash-routes.js';
 
 export const DASH = '—';
 
@@ -21,6 +21,26 @@ export function renderCanisterDashboardLink(value, label = 'Open dashboard') {
   const principalText = formatPrincipal(value).trim();
   if (!principalText) return DASH;
   return `<a href="https://dashboard.internetcomputer.org/canister/${escapeHtml(principalText)}" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">${escapeHtml(label)}</a>`;
+}
+
+export function renderNeuronTrackerLink(value, { label = null, className = 'pane-neuron-tracker-link pane-external-link mono' } = {}) {
+  const neuronText = String(value ?? '').trim();
+  if (!neuronText) return DASH;
+  return renderMemoTrackerLink(neuronText, { label, className });
+}
+
+export function renderMemoTrackerLink(value, { label = null, className = 'pane-memo-tracker-link pane-external-link mono' } = {}) {
+  const memoText = String(value ?? '').trim();
+  if (!memoText) return DASH;
+  const display = label === null || label === undefined ? memoText : String(label);
+  return `<a href="${escapeHtml(trackerHashForMemo({ memo: memoText }))}" data-tracker-memo="${escapeHtml(memoText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
+}
+
+export function renderNeuronDashboardLink(value, label = null) {
+  const neuronText = String(value ?? '').trim();
+  if (!neuronText) return DASH;
+  const display = label === null || label === undefined ? neuronText : String(label);
+  return `<a href="https://dashboard.internetcomputer.org/neuron/${encodeURIComponent(neuronText)}" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">${escapeHtml(display)}</a>`;
 }
 
 export function formatSourceController(value) {

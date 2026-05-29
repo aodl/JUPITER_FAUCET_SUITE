@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderAmountBarChart, renderEmptyChart, renderLineChart, scaleBigInt } from '../src/chart-rendering.js';
+import { renderAmountBarChart, renderEmptyChart, renderLineChart, renderStackedAmountBarChart, scaleBigInt } from '../src/chart-rendering.js';
 
 function countLabels(html, prefix) {
   const matches = html.match(new RegExp(`>${prefix}\\d+<\\/text>`, 'g')) || [];
@@ -255,4 +255,53 @@ test('scaleBigInt maps signed ranges into chart ratios and clamps out-of-range v
 test('renderEmptyChart escapes custom class names and message content', () => {
   const html = renderEmptyChart('<empty>', { className: 'custom <class>' });
   assert.equal(html, '<div class="custom &lt;class&gt;">&lt;empty&gt;</div>');
+});
+
+test('renderStackedAmountBarChart renders one rect per non-zero segment and escapes labels', () => {
+  const html = renderStackedAmountBarChart({
+    buckets: [{ label: 'D<1>', faucetAmountE8s: 10n, faucetTransferCount: 1, otherAmountE8s: 5n, otherTransferCount: 2 }],
+    segments: [
+      { key: 'faucetAmountE8s', countKey: 'faucetTransferCount', className: 'tracker-chart-bar--source-faucet', label: 'Faucet <x>', legendKey: 'faucet' },
+      { key: 'otherAmountE8s', countKey: 'otherTransferCount', className: 'tracker-chart-bar--source-other', label: 'Other', legendKey: 'other' },
+    ],
+    emptyMessage: 'empty',
+    ariaLabel: 'stacked <chart>',
+    valueFormatter: (value) => `${value} e8s`,
+  });
+
+  assert.equal((html.match(/<rect/g) || []).length, 2);
+  assert.match(html, /tracker-chart-bar--source-faucet/);
+  assert.match(html, /data-source-segment="faucet"/);
+  assert.match(html, /data-source-segment="other"/);
+  assert.match(html, /Faucet &lt;x&gt;/);
+  assert.match(html, /D&lt;1&gt;/);
+  assert.match(html, /aria-label="stacked &lt;chart&gt;"/);
+  assert.match(html, /15 e8s/);
+});
+
+test('renderStackedAmountBarChart returns empty chart for zero totals', () => {
+  const html = renderStackedAmountBarChart({
+    buckets: [{ label: 'D1', faucetAmountE8s: 0n }],
+    segments: [{ key: 'faucetAmountE8s', countKey: 'faucetTransferCount' }],
+    emptyMessage: 'No stacked <data>',
+    ariaLabel: 'empty',
+  });
+  assert.equal(html, '<div class="tracker-chart-empty">No stacked &lt;data&gt;</div>');
+});
+
+test('time-scaled stacked bars honor dense timeline width options', () => {
+  const html = renderStackedAmountBarChart({
+    buckets: [
+      { label: 'D1', startMs: Date.UTC(2026, 0, 1), endMs: Date.UTC(2026, 0, 2), faucetAmountE8s: 10n },
+      { label: 'D365', startMs: Date.UTC(2026, 11, 31), endMs: Date.UTC(2027, 0, 1), faucetAmountE8s: 20n },
+    ],
+    segments: [{ key: 'faucetAmountE8s', countKey: 'faucetTransferCount' }],
+    emptyMessage: 'empty',
+    ariaLabel: 'dense',
+    xAxis: 'time',
+    minBarWidth: 2,
+    maxBarWidth: 28,
+    allowMinBarOverflow: true,
+  });
+  assert.ok(rectWidths(html).every((width) => width >= 2 && width <= 28));
 });

@@ -174,6 +174,81 @@ export function renderAmountBarChart({
     </svg>`;
 }
 
+export function renderStackedAmountBarChart({
+  buckets,
+  segments,
+  emptyMessage,
+  ariaLabel,
+  labelBuilder,
+  valueFormatter,
+  showAllTicks = false,
+  xAxis = 'category',
+  minBarWidth = 8,
+  maxBarWidth = 44,
+  barWidthRatio = 0.58,
+  allowMinBarOverflow = false,
+}) {
+  const rows = Array.isArray(buckets) ? buckets : [];
+  const segmentRows = Array.isArray(segments) ? segments : [];
+  const totalForBucket = (bucket) => segmentRows.reduce((sum, segment) => sum + toBigIntValue(bucket?.[segment.key], 0n), 0n);
+  const maxAmount = rows.reduce((max, bucket) => {
+    const total = totalForBucket(bucket);
+    return total > max ? total : max;
+  }, 0n);
+  if (maxAmount <= 0n) {
+    return renderEmptyChart(emptyMessage);
+  }
+
+  const { width, height, padLeft, padRight, padTop, chartWidth, chartHeight } = chartGeometry();
+  const slot = chartWidth / Math.max(1, rows.length);
+  const domain = xAxis === 'time' ? timeDomain(rows) : null;
+  const usableBarHeight = Math.max(1, chartHeight - BAR_TOP_LABEL_HEADROOM);
+  const bars = rows.map((bucket, index) => {
+    const total = totalForBucket(bucket);
+    const totalRatio = ratioBigInt(total, maxAmount);
+    const totalHeight = Math.max(total > 0n ? 2 : 0, totalRatio * usableBarHeight);
+    const timeGeometry = domain ? bucketTimeGeometry(bucket, { domain, padLeft, chartWidth }) : null;
+    const bucketWidth = timeGeometry?.width || slot;
+    const barMaxWidth = allowMinBarOverflow ? maxBarWidth : Math.min(maxBarWidth, bucketWidth);
+    const barWidth = clampNumber(bucketWidth * barWidthRatio, minBarWidth, barMaxWidth);
+    const x = timeGeometry
+      ? timeGeometry.x + (bucketWidth - barWidth) / 2
+      : padLeft + (index * slot) + (slot - barWidth) / 2;
+    let yBottom = padTop + BAR_TOP_LABEL_HEADROOM + usableBarHeight;
+    return segmentRows.map((segment) => {
+      const amount = toBigIntValue(bucket?.[segment.key], 0n);
+      if (amount <= 0n || total <= 0n) return '';
+      const segmentHeight = Math.max(1, (Number((amount * 1_000_000n) / total) / 1_000_000) * totalHeight);
+      const y = yBottom - segmentHeight;
+      yBottom = y;
+      const count = bucket?.[segment.countKey] || 0;
+      const className = `tracker-chart-bar ${segment.className || ''}`.trim();
+      const label = labelBuilder
+        ? labelBuilder(bucket, segment, amount, count, total)
+        : `${bucket.label}: ${segment.label || segment.key} ${valueFormatter ? valueFormatter(amount) : amount.toString()} across ${count} items`;
+      const segmentName = segment.legendKey || segment.key || '';
+      const segmentAttribute = segmentName ? ` data-source-segment="${escapeChartHtml(segmentName)}"` : '';
+      return `<rect class="${escapeChartHtml(className)}"${segmentAttribute} x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${segmentHeight.toFixed(2)}" rx="3"><title>${escapeChartHtml(label)}</title></rect>`;
+    }).join('');
+  }).join('');
+  const ticks = renderBucketTicks({
+    buckets: rows,
+    slot,
+    padLeft,
+    height,
+    showAllTicks,
+    xForBucket: domain ? (bucket, index) => bucketTimeGeometry(bucket, { domain, padLeft, chartWidth })?.center ?? (padLeft + (index * slot) + slot / 2) : null,
+  });
+  const axisLabel = valueFormatter ? valueFormatter(maxAmount) : maxAmount.toString();
+  return `
+    <svg class="tracker-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeChartHtml(ariaLabel)}">
+      <line class="tracker-chart-axis" x1="${padLeft}" y1="${padTop + chartHeight}" x2="${width - padRight}" y2="${padTop + chartHeight}"></line>
+      <text class="tracker-chart-y-label" x="8" y="20">${escapeChartHtml(axisLabel)}</text>
+      ${bars}
+      ${ticks}
+    </svg>`;
+}
+
 export function renderLineChart({
   buckets,
   valueKey,

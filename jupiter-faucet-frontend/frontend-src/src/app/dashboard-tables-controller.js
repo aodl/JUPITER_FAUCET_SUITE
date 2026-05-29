@@ -15,6 +15,8 @@ import {
   formatInteger,
   formatTimestampNanos,
   renderCanisterTrackerLink,
+  renderMemoTrackerLink,
+  renderNeuronTrackerLink,
 } from './view-formatters.js';
 
 function numericValue(value, fallback = 0) {
@@ -47,22 +49,28 @@ function renderCyclesStatusCell(label = 'unavailable') {
 function formatCommitmentTarget(item) {
   const neuronId = Array.isArray(item?.neuron_id) ? item.neuron_id[0] : item?.neuron_id;
   if (neuronId !== undefined && neuronId !== null) {
-    const label = escapeHtml(String(neuronId));
-    return `<a class="pane-external-link mono" href="https://dashboard.internetcomputer.org/neuron/${encodeURIComponent(String(neuronId))}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    return renderNeuronTrackerLink(neuronId);
   }
   const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
   if (canister) return renderCanisterTrackerLink(canister);
   return 'invalid declared memo';
 }
 
-function rawIcpMemoText(item) {
-  const text = Array.isArray(item?.raw_icp_memo_text) ? item.raw_icp_memo_text[0] : item?.raw_icp_memo_text;
-  return text === undefined || text === null || text === '' ? DASH : String(text);
+function rawIcpDeclaredMemo(item) {
+  const canister = Array.isArray(item?.canister_id) ? item.canister_id[0] : item?.canister_id;
+  const right = Array.isArray(item?.raw_icp_memo_text) ? item.raw_icp_memo_text[0] : item?.raw_icp_memo_text;
+  if (!canister || right === undefined || right === null) return '';
+  const left = canister.toText ? canister.toText() : String(canister);
+  return `${left.split('-').join('')}.${String(right)}`;
 }
 
-function neuronMemoText(item) {
-  const text = Array.isArray(item?.neuron_memo_text) ? item.neuron_memo_text[0] : item?.neuron_memo_text;
-  return text === undefined || text === null || text === '' ? DASH : String(text);
+function neuronDeclaredMemo(item) {
+  const neuronId = Array.isArray(item?.neuron_id) ? item.neuron_id[0] : item?.neuron_id;
+  const right = Array.isArray(item?.neuron_memo_text) ? item.neuron_memo_text[0] : item?.neuron_memo_text;
+  if (neuronId === undefined || neuronId === null) return '';
+  return right === undefined || right === null
+    ? String(neuronId)
+    : `${String(neuronId)}.${String(right)}`;
 }
 
 function transactionHref(item) {
@@ -317,11 +325,10 @@ export function createDashboardTablesController({
         <tr>
           <td>${renderTimestampCell(item)}</td>
           <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
-          <td>${formatCommitmentTarget(item)}</td>
-          <td>${escapeHtml(rawIcpMemoText(item))}</td>
+          <td>${renderMemoTrackerLink(rawIcpDeclaredMemo(item))}</td>
         </tr>`,
       paneEmptyMessage(data, 'recent', 'No raw ICP commitments indexed yet.'),
-      4,
+      3,
     );
     paginate(
       'commitments-neurons',
@@ -330,11 +337,10 @@ export function createDashboardTablesController({
         <tr>
           <td>${renderTimestampCell(item)}</td>
           <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
-          <td>${formatCommitmentTarget(item)}</td>
-          <td>${escapeHtml(neuronMemoText(item))}</td>
+          <td>${renderMemoTrackerLink(neuronDeclaredMemo(item))}</td>
         </tr>`,
       paneEmptyMessage(data, 'recent', 'No declared neuron commitments indexed yet.'),
-      4,
+      3,
     );
   };
 

@@ -890,6 +890,94 @@ mod tests {
     }
 
     #[test]
+    fn find_canisters_by_memo_prefix_returns_visible_memo_commitment_matches() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
+        let mut st = base_state();
+        st.distinct_canisters.extend([canister, sns_only]);
+        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources.insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.commitment_history.insert(
+            canister,
+            vec![CommitmentSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 50_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        state::set_state(st);
+
+        let first_group = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
+            prefix: "2225".to_string(),
+            limit: Some(10),
+            source_filter: Some(CanisterSource::MemoCommitment),
+        });
+
+        assert!(!first_group.truncated);
+        assert_eq!(first_group.items.len(), 1);
+        assert_eq!(first_group.items[0].canister_id, canister);
+        assert_eq!(first_group.items[0].matched_prefix, "2225");
+
+        for prefix in ["22255zq", "22255-ZQ", "22255-zq"] {
+            let response = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
+                prefix: prefix.to_string(),
+                limit: Some(10),
+                source_filter: Some(CanisterSource::MemoCommitment),
+            });
+
+            assert!(!response.truncated, "prefix {prefix}");
+            assert_eq!(response.items.len(), 1, "prefix {prefix}");
+            assert_eq!(response.items[0].canister_id, canister, "prefix {prefix}");
+            assert_eq!(response.items[0].matched_prefix, "22255zq", "prefix {prefix}");
+        }
+
+        let rejected = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
+            prefix: "22255zz".to_string(),
+            limit: Some(10),
+            source_filter: Some(CanisterSource::MemoCommitment),
+        });
+        assert!(rejected.items.is_empty());
+        assert!(!rejected.truncated);
+    }
+
+    #[test]
+    fn find_canisters_by_memo_prefix_respects_limit_and_short_prefix_policy() {
+        let a = principal("baywr-lm7ay-ul7m5-o7emp-qla");
+        let b = principal("baywx-ntmjw-avn7h-w2duv-rei");
+        let mut st = base_state();
+        for canister in [a, b] {
+            st.distinct_canisters.insert(canister);
+            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.commitment_history.insert(
+                canister,
+                vec![CommitmentSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1_000_000_000),
+                    amount_e8s: 50_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+        }
+        state::set_state(st);
+
+        let short = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
+            prefix: "bay".to_string(),
+            limit: Some(10),
+            source_filter: None,
+        });
+        assert!(short.items.is_empty());
+
+        let limited = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
+            prefix: "bayw".to_string(),
+            limit: Some(1),
+            source_filter: None,
+        });
+        assert_eq!(limited.items.len(), 1);
+        assert!(limited.truncated);
+    }
+
+    #[test]
     fn list_recent_commitments_returns_qualifying_and_non_qualifying_commitments() {
         let qualifying = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let low_amount = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");

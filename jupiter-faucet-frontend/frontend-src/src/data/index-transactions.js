@@ -29,6 +29,17 @@ function transferOperation(operation) {
   return null;
 }
 
+function decodeMemoText(memo) {
+  if (memo === undefined || memo === null) return null;
+  if (!Array.isArray(memo)) return null;
+  if (memo.length === 0) return '';
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(memo));
+  } catch {
+    return null;
+  }
+}
+
 function routeTransferFromIndexTransaction(tx, expectedFromAccountIdentifier, expectedToAccountIdentifier) {
   const transfer = transferOperation(tx?.transaction?.operation);
   if (!transfer) return null;
@@ -166,6 +177,30 @@ function cmcTopUpTransferFromIndexTransaction(tx, expectedToAccountIdentifier) {
   };
 }
 
+function incomingIcpTransferFromIndexTransaction(tx, expectedToAccountIdentifier, sourceIds, memoText) {
+  const transfer = transferOperation(tx?.transaction?.operation);
+  if (!transfer) return null;
+
+  const from = String(transfer.from || '').toLowerCase();
+  const to = String(transfer.to || '').toLowerCase();
+  if (to !== expectedToAccountIdentifier) return null;
+
+  const amount = tokenE8s(transfer.amount);
+  if (amount === null || tx?.id === undefined || tx?.id === null) return null;
+
+  const icrc1MemoText = decodeMemoText(tx?.transaction?.icrc1_memo);
+  return {
+    tx_id: tx.id,
+    timestamp_nanos: routeTransferTimestampOpt(tx.transaction),
+    amount_e8s: amount,
+    from_account_identifier: String(transfer.from || ''),
+    to_account_identifier: String(transfer.to || ''),
+    icrc1_memo_text: icrc1MemoText,
+    is_matching_source: sourceIds.size > 0 && sourceIds.has(from),
+    is_matching_memo: memoText !== null && icrc1MemoText === memoText,
+  };
+}
+
 export async function loadCmcTopUpTransfersFromIndex({
   index,
   canisterId,
@@ -208,6 +243,55 @@ export async function loadCmcTopUpTransfersFromIndex({
     const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
     if (lastIdBigInt === 0n) break;
 
+    const nextStart = lastIdBigInt - 1n;
+    if (start !== null && nextStart >= BigInt(start)) break;
+    start = nextStart;
+  }
+
+  return { items: normalizeRouteTransferItems(items, limit) };
+}
+
+export async function loadIncomingIcpTransfersFromIndex({
+  index,
+  account,
+  limit = RECENT_ROUTE_TRANSFER_LIMIT,
+  pageSize = RECENT_ROUTE_TRANSFER_PAGE_SIZE,
+  maxPages = RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES,
+  sourceAccountIdentifiers = [],
+  memoText = null,
+} = {}) {
+  if (!index || typeof index.get_account_identifier_transactions !== 'function') {
+    throw new Error('ICP index actor is unavailable');
+  }
+  if (!account) return { items: [] };
+
+  const accountIdentifier = accountIdentifierHex(account).toLowerCase();
+  const sourceIds = new Set((sourceAccountIdentifiers || []).map((value) => String(value || '').toLowerCase()).filter(Boolean));
+  const exactMemo = memoText === null || memoText === undefined ? null : String(memoText);
+  const items = [];
+  const seen = new Set();
+  let start = null;
+
+  for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
+    const response = await getAccountIdentifierTransactions(index, accountIdentifier, start, pageSize);
+    const transactions = response?.transactions || [];
+    for (const tx of transactions) {
+      const item = incomingIcpTransferFromIndexTransaction(tx, accountIdentifier, sourceIds, exactMemo);
+      if (item) {
+        const key = String(item.tx_id);
+        if (!seen.has(key)) {
+          seen.add(key);
+          items.push(item);
+        }
+      }
+      if (items.length >= limit) break;
+    }
+
+    if (transactions.length < pageSize) break;
+    const lastId = transactions[transactions.length - 1]?.id;
+    if (lastId === undefined || lastId === null) break;
+    const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
+    if (lastIdBigInt === 0n) break;
     const nextStart = lastIdBigInt - 1n;
     if (start !== null && nextStart >= BigInt(start)) break;
     start = nextStart;

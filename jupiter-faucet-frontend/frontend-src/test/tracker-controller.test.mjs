@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Principal } from '@icp-sdk/core/principal';
 
 import { createTrackerController } from '../src/app/tracker-controller.js';
 import { simulatorHashForPrefill } from '../src/app/hash-routes.js';
+import { JUPITER_RELAY_CANISTER_ID } from '../src/app/config.js';
+import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
+import { defaultCanisterAccountIdentifier } from '../src/data/transfer-source-classification.js';
 
 class FakeElement {
   constructor(attrs = {}) {
@@ -173,6 +177,16 @@ function minimalTrackerData() {
   };
 }
 
+function rawTransfer(id, from, amountE8s, isMatchingMemo = false) {
+  return {
+    tx_id: BigInt(id),
+    timestamp_nanos: [1_700_000_000_000_000_000n + BigInt(id)],
+    amount_e8s: BigInt(amountE8s),
+    from_account_identifier: from,
+    is_matching_memo: isMatchingMemo,
+  };
+}
+
 test('tracker hash hydration submits once for the same principal', async () => {
   const calls = [];
   const nodes = trackerNodes();
@@ -191,13 +205,13 @@ test('tracker hash hydration submits once for the same principal', async () => {
     assert.equal(controller.hydrateFromLocationHash({ submit: true }), true);
     await flushMicrotasks();
 
-    assert.equal(nodeMap.get('tracker-principal-input').value, 'aaaaa-aa');
+    assert.equal(nodeMap.get('tracker-principal-input').value, 'jufzc-caaaa-aaaar-qb5da-cai');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].historianCanisterId, 'hist-aa');
     assert.equal(calls[0].host, 'https://example.test');
     assert.equal(calls[0].local, true);
-    assert.equal(calls[0].canisterId.toText(), 'aaaaa-aa');
-  }, { hash: '#metric-tracker-aaaaa-aa' });
+    assert.equal(calls[0].canisterId.toText(), 'jufzc-caaaa-aaaar-qb5da-cai');
+  }, { hash: '#metric-tracker-jufzc-caaaa-aaaar-qb5da-cai' });
 });
 
 test('tracker submit rejects invalid principals without loading data', async () => {
@@ -218,7 +232,7 @@ test('tracker submit rejects invalid principals without loading data', async () 
     await nodeMap.get('tracker-form').listeners.get('submit')({ preventDefault() {} });
 
     assert.equal(calls, 0);
-    assert.equal(nodeMap.get('tracker-status').textContent, 'Enter a valid declared canister ID.');
+    assert.equal(nodeMap.get('tracker-status').textContent, 'Memo target is not a valid canister principal or neuron ID.');
     assert.equal(nodeMap.get('tracker-principal-input').focused, true);
   });
 });
@@ -235,7 +249,7 @@ test('tracker range buttons rerender loaded beneficiary data', async () => {
       loadData: async () => minimalTrackerData(),
     });
     controller.bindPane();
-    nodeMap.get('tracker-principal-input').value = 'aaaaa-aa';
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
     await controller.submitPrincipal();
 
     controller.setRange('month');
@@ -290,7 +304,7 @@ test('delegated tracker links open the tracker panel and submit linked principal
     });
     controller.bindPane();
     controller.bindLinks();
-    const trigger = new FakeElement({ 'data-tracker-principal': 'aaaaa-aa' });
+    const trigger = new FakeElement({ 'data-tracker-principal': 'jufzc-caaaa-aaaar-qb5da-cai' });
 
     documentListeners.get('click')({
       target: trigger,
@@ -300,7 +314,184 @@ test('delegated tracker links open the tracker panel and submit linked principal
     await flushMicrotasks();
 
     assert.deepEqual(clickedPanels, ['click']);
-    assert.equal(nodeMap.get('tracker-principal-input').value, 'aaaaa-aa');
-    assert.deepEqual(calls, ['aaaaa-aa']);
+    assert.equal(nodeMap.get('tracker-principal-input').value, 'jufzc-caaaa-aaaar-qb5da-cai');
+    assert.deepEqual(calls, ['jufzc-caaaa-aaaar-qb5da-cai']);
+  });
+});
+
+test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const protocol = 'jufzc-caaaa-aaaar-qb5da-cai';
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+  const relayAccountId = defaultCanisterAccountIdentifier(JUPITER_RELAY_CANISTER_ID);
+  const protocolAccountId = defaultCanisterAccountIdentifier(protocol);
+  const otherAccountId = 'f'.repeat(64);
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => ({
+        status: { output_account: [faucetAccount] },
+        transfers: { items: [
+          rawTransfer(5, faucetAccountId, 500_000_000n, true),
+          rawTransfer(4, faucetAccountId, 400_000_000n, false),
+          rawTransfer(3, relayAccountId, 300_000_000n, false),
+          rawTransfer(2, protocolAccountId, 200_000_000n, false),
+          rawTransfer(1, otherAccountId, 100_000_000n, true),
+        ] },
+        candidates: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    controller.state.protocolCanisterText = protocol;
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Jupiter Faucet · matching memo/);
+    assert.match(html, /Jupiter Faucet · other memo/);
+    assert.match(html, /tracker-chart-bar--source-faucet-matching-memo/);
+    assert.match(html, /tracker-chart-bar--source-faucet-other-memo/);
+    assert.match(html, /Jupiter Relay/);
+    assert.match(html, /Protocol canister/);
+    assert.match(html, /Other/);
+    assert.match(html, /Visible Jupiter Faucet transfers matching the outgoing memo: 1 · 5 ICP/);
+    assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
+    assert.match(html, /Jupiter Faucet · other memo 4 ICP across 1 transfer/);
+  });
+});
+
+test('raw ICP tracker legend only includes sources with visible bars', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => ({
+        status: { output_account: [faucetAccount] },
+        transfers: { items: [
+          rawTransfer(5, faucetAccountId, 500_000_000n, true),
+        ] },
+        candidates: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Jupiter Faucet · matching memo/);
+    assert.match(html, /data-source-segment="faucet-matching-memo"/);
+    assert.doesNotMatch(html, /Jupiter Faucet · other memo/);
+    assert.doesNotMatch(html, /Jupiter Relay/);
+    assert.doesNotMatch(html, /Protocol canister/);
+    assert.doesNotMatch(html, /data-source-segment="faucet-other-memo"/);
+    assert.doesNotMatch(html, /data-source-segment="relay"/);
+  });
+});
+
+test('raw ICP tracker treats an empty outgoing memo as present', async () => {
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+  const relayAccountId = defaultCanisterAccountIdentifier(JUPITER_RELAY_CANISTER_ID);
+
+  const nodes = trackerNodes();
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => ({
+        status: { output_account: [faucetAccount] },
+        transfers: { items: [
+          rawTransfer(5, faucetAccountId, 500_000_000n, true),
+          rawTransfer(4, faucetAccountId, 400_000_000n, false),
+          rawTransfer(3, relayAccountId, 300_000_000n, false),
+        ] },
+        candidates: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.`;
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Raw ICP canister memo/);
+    assert.match(html, /Jupiter Faucet · matching memo/);
+    assert.match(html, /Jupiter Faucet · other memo/);
+    assert.match(html, /data-source-segment="faucet-matching-memo"/);
+    assert.match(html, /data-source-segment="faucet-other-memo"/);
+    assert.match(html, /Visible Jupiter Faucet transfers matching the outgoing memo: 1 · 5 ICP/);
+    assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
+    assert.match(html, /<dt>Outgoing memo matched<\/dt><dd class="pane-detail-value mono"><\/dd>/);
+    assert.match(html, /Prefix matching is skipped for short outgoing memos/);
+    assert.doesNotMatch(html, /data-source-segment="faucet"/);
+  });
+});
+
+test('raw ICP tracker uses generic source segments when outgoing memo is absent', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+  const relayAccountId = defaultCanisterAccountIdentifier(JUPITER_RELAY_CANISTER_ID);
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+    });
+    controller.bindPane();
+    controller.state.viewMode = 'rawIcpCanister';
+    controller.state.data = {
+      status: { output_account: [faucetAccount] },
+      transfers: { items: [
+        rawTransfer(5, faucetAccountId, 500_000_000n, true),
+        rawTransfer(4, faucetAccountId, 400_000_000n, false),
+        rawTransfer(3, relayAccountId, 300_000_000n, false),
+      ] },
+      candidates: { items: [] },
+      errors: {},
+    };
+    controller.state.parsedMemo = {
+      kind: 'rawIcpCanister',
+      canisterText: canister,
+      canisterId: Principal.fromText(canister),
+      normalizedMemoText: canister,
+      outgoingMemoText: null,
+    };
+
+    controller.setRange('all');
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Raw ICP canister memo/);
+    assert.match(html, /Jupiter Faucet/);
+    assert.match(html, /data-source-segment="faucet"/);
+    assert.match(html, /Jupiter Faucet 9 ICP across 2 transfers/);
+    assert.doesNotMatch(html, /matching memo/);
+    assert.doesNotMatch(html, /other memo/);
+    assert.doesNotMatch(html, /data-source-segment="faucet-matching-memo"/);
+    assert.doesNotMatch(html, /data-source-segment="faucet-other-memo"/);
+    assert.doesNotMatch(html, /Outgoing memo matched/);
   });
 });

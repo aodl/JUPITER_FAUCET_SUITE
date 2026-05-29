@@ -132,6 +132,25 @@ export const idlFactory = ({ IDL }) => {
     page_size: IDL.Nat32,
     total: IDL.Nat64,
   });
+  const FindCanistersByMemoPrefixArgs = IDL.Record({
+    prefix: IDL.Text,
+    limit: IDL.Opt(IDL.Nat32),
+    source_filter: IDL.Opt(CanisterSource),
+  });
+  const CanisterPrefixMatch = IDL.Record({
+    canister_id: IDL.Principal,
+    sources: IDL.Vec(CanisterSource),
+    matched_prefix: IDL.Text,
+    qualifying_commitment_count: IDL.Nat64,
+    total_qualifying_committed_e8s: IDL.Nat64,
+    last_commitment_ts: IDL.Opt(IDL.Nat64),
+    latest_cycles: IDL.Opt(IDL.Nat),
+    last_cycles_probe_ts: IDL.Opt(IDL.Nat64),
+  });
+  const FindCanistersByMemoPrefixResponse = IDL.Record({
+    items: IDL.Vec(CanisterPrefixMatch),
+    truncated: IDL.Bool,
+  });
   const ListRecentCommitmentsArgs = IDL.Record({
     limit: IDL.Opt(IDL.Nat32),
     qualifying_only: IDL.Opt(IDL.Bool),
@@ -172,6 +191,11 @@ export const idlFactory = ({ IDL }) => {
     get_canister_overview: IDL.Func([IDL.Principal], [IDL.Opt(CanisterOverview)], ['query']),
     get_public_counts: IDL.Func([], [PublicCounts], ['query']),
     get_public_status: IDL.Func([], [PublicStatus], ['query']),
+    find_canisters_by_memo_prefix: IDL.Func(
+      [FindCanistersByMemoPrefixArgs],
+      [FindCanistersByMemoPrefixResponse],
+      ['query'],
+    ),
     list_registered_canister_summaries: IDL.Func(
       [ListRegisteredCanisterSummariesArgs],
       [ListRegisteredCanisterSummariesResponse],

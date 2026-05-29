@@ -8,6 +8,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const Neuron = IDL.Record({
     id: IDL.Opt(NeuronId),
+    account: IDL.Vec(IDL.Nat8),
     created_timestamp_seconds: IDL.Nat64,
     aging_since_timestamp_seconds: IDL.Nat64,
     maturity_e8s_equivalent: IDL.Nat64,

@@ -1,8 +1,11 @@
 import { createActor as createIndexActor } from '../../declarations/icp_index/index.js';
 import { createActor as createHistorianActor } from '../../declarations/jupiter_historian/index.js';
+import { createActor as createGovernanceActor } from '../../declarations/nns_governance/index.js';
 import { createHistorianClient, normalizeError } from '../app/agent.js';
+import { GOVERNANCE_CANISTER_ID } from '../app/config.js';
 import { loadCanisterLogs } from './cycles.js';
-import { loadCmcTopUpTransfersFromIndex } from './index-transactions.js';
+import { loadCmcTopUpTransfersFromIndex, loadIncomingIcpTransfersFromIndex } from './index-transactions.js';
+import { loadPublicNeuronStakingAccount } from './nns-neurons.js';
 import {
   MAINNET_CMC_CANISTER_ID,
   fulfilledOrNull,
@@ -62,6 +65,21 @@ async function loadTrackerCmcTransfers({ historian, status = null, agent, indexA
     index,
     canisterId,
     cmcCanisterId: effectiveCmcCanisterId,
+    limit: historyLimit,
+  });
+}
+
+async function loadRawIncomingTransfers({ historian, status = null, agent, indexActorFactory, account, memoText, historyLimit }) {
+  const resolvedStatus = status || await historian.get_public_status();
+  const indexCanisterId = principalToText(resolvedStatus?.index_canister_id);
+  if (!indexCanisterId) {
+    throw new Error('Historian status does not expose an ICP index canister ID');
+  }
+  const index = indexActorFactory(indexCanisterId, { agent });
+  return loadIncomingIcpTransfersFromIndex({
+    index,
+    account,
+    memoText,
     limit: historyLimit,
   });
 }
@@ -159,5 +177,110 @@ export async function loadTrackerData({
       logs: logsResult.status === 'rejected' ? normalizeError(logsResult.reason) : null,
       cmcTransfers: cmcTransfersResult.status === 'rejected' ? normalizeError(cmcTransfersResult.reason) : null,
     },
+  };
+}
+
+export async function loadRawIcpCanisterTrackerData({
+  historianCanisterId,
+  host,
+  local = false,
+  agent = null,
+  historianActor = null,
+  historianActorFactory = createHistorianActor,
+  indexActorFactory = createIndexActor,
+  canisterId,
+  outgoingMemoText = null,
+  prefixLimit = 10,
+  historyLimit = TRACKER_HISTORY_PAGE_SIZE,
+} = {}) {
+  if (!canisterId) throw new Error('A canister ID is required');
+  const { agent: resolvedAgent, historian } = await createHistorianClient({
+    historianCanisterId,
+    host,
+    local,
+    agent,
+    historianActor,
+    historianActorFactory,
+  });
+  const statusPromise = historian.get_public_status();
+  const transfersPromise = statusPromise.then((status) => loadRawIncomingTransfers({
+    historian,
+    status,
+    agent: resolvedAgent,
+    indexActorFactory,
+    account: { owner: canisterId, subaccount: [] },
+    memoText: outgoingMemoText,
+    historyLimit,
+  }));
+  const prefix = String(outgoingMemoText || '');
+  const candidatesPromise = prefix.length >= 4 && typeof historian.find_canisters_by_memo_prefix === 'function'
+    ? historian.find_canisters_by_memo_prefix({
+        prefix,
+        limit: [prefixLimit],
+        source_filter: [{ MemoCommitment: null }],
+      })
+    : Promise.resolve({ items: [], truncated: false });
+  const [statusResult, transfersResult, candidatesResult] = await Promise.allSettled([
+    statusPromise,
+    transfersPromise,
+    candidatesPromise,
+  ]);
+  return {
+    canisterId,
+    status: fulfilledOrNull(statusResult),
+    transfers: fulfilledOrNull(transfersResult) || { items: [] },
+    candidates: fulfilledOrNull(candidatesResult) || { items: [], truncated: false },
+    errors: {
+      transfers: transfersResult.status === 'rejected' ? normalizeError(transfersResult.reason) : null,
+      candidates: candidatesResult.status === 'rejected' ? normalizeError(candidatesResult.reason) : null,
+    },
+  };
+}
+
+export async function loadNeuronStakeTrackerData({
+  historianCanisterId,
+  host,
+  local = false,
+  agent = null,
+  historianActor = null,
+  historianActorFactory = createHistorianActor,
+  indexActorFactory = createIndexActor,
+  governanceActorFactory = createGovernanceActor,
+  governanceCanisterId = GOVERNANCE_CANISTER_ID,
+  neuronId,
+  outgoingMemoText = null,
+  historyLimit = TRACKER_HISTORY_PAGE_SIZE,
+} = {}) {
+  if (neuronId === null || neuronId === undefined) throw new Error('A neuron ID is required');
+  const { agent: resolvedAgent, historian } = await createHistorianClient({
+    historianCanisterId,
+    host,
+    local,
+    agent,
+    historianActor,
+    historianActorFactory,
+  });
+  const governance = governanceActorFactory(governanceCanisterId, { agent: resolvedAgent });
+  const stakingAccount = await loadPublicNeuronStakingAccount({
+    governance,
+    neuronId,
+    governanceCanisterId,
+  });
+  const status = await historian.get_public_status();
+  const transfers = await loadRawIncomingTransfers({
+    historian,
+    status,
+    agent: resolvedAgent,
+    indexActorFactory,
+    account: stakingAccount,
+    memoText: outgoingMemoText,
+    historyLimit,
+  });
+  return {
+    neuronId,
+    stakingAccount,
+    status,
+    transfers,
+    errors: { transfers: null },
   };
 }

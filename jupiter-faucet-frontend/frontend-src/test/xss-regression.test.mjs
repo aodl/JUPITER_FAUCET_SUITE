@@ -310,6 +310,7 @@ test('raw HTML sinks stay inventoried for XSS review coverage', () => {
     'app/tracker-controller.js:result.innerHTML = `',
     'app/tracker-controller.js:result.innerHTML = `',
     'app/tracker-controller.js:result.innerHTML = `',
+    'app/tracker-controller.js:result.innerHTML = `',
     'app/tracker-controller.js:wrapper.innerHTML = `',
     'app/tracker-controller.js:wrapper.innerHTML = renderTrackerEmptyChart(message);',
     'dom-helpers.js:export function setPaneValueTrustedHtml(id, { value = null, loading = false, error = null } = {}) {',

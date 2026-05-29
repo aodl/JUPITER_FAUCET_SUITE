@@ -160,6 +160,31 @@ pub struct ListRegisteredCanisterSummariesResponse {
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
+pub struct FindCanistersByMemoPrefixArgs {
+    pub prefix: String,
+    pub limit: Option<u32>,
+    pub source_filter: Option<CanisterSource>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize)]
+pub struct CanisterPrefixMatch {
+    pub canister_id: Principal,
+    pub sources: Vec<CanisterSource>,
+    pub matched_prefix: String,
+    pub qualifying_commitment_count: u64,
+    pub total_qualifying_committed_e8s: u64,
+    pub last_commitment_ts: Option<u64>,
+    pub latest_cycles: Option<u128>,
+    pub last_cycles_probe_ts: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize)]
+pub struct FindCanistersByMemoPrefixResponse {
+    pub items: Vec<CanisterPrefixMatch>,
+    pub truncated: bool,
+}
+
+#[derive(CandidType, Deserialize, Clone, Default)]
 pub struct ListRecentCommitmentsArgs {
     pub limit: Option<u32>,
     pub qualifying_only: Option<bool>,

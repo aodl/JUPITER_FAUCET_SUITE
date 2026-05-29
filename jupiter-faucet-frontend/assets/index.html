@@ -563,7 +563,7 @@
         <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">—</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
       </a>
       <a href="#metric-tracker" class="metric-rail-link metric-rail-link--action nav-item" data-panel="metric-tracker">
-        <span class="metric-rail-link-label">Track Canisters</span>
+        <span class="metric-rail-link-label">Track Memos</span>
       </a>
     </div>
   </aside>
@@ -889,7 +889,7 @@
                 mid-round commitments may be partially weighted, and very recent commitments may
                 wait for a later payout round.
                 You can monitor Jupiter Faucet top-ups to your canister via the
-                <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">canister tracker</a>.
+                <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">memo tracker</a>.
                 You can estimate how much ICP needs to be committed to the Jupiter Faucet stake to keep your canister
                 perpetually topped up using the <a href="#simulator" data-panel="simulator" class="pane-external-link">simulator</a>.
               </p>
@@ -1236,11 +1236,10 @@
                       <th>Timestamp</th>
                       <th>Amount</th>
                       <th>Declared</th>
-                      <th>Memo</th>
                     </tr>
                   </thead>
                   <tbody id="commitments-raw-pane-body">
-                    <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+                    <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1260,11 +1259,10 @@
                       <th>Timestamp</th>
                       <th>Amount</th>
                       <th>Declared</th>
-                      <th>Memo</th>
                     </tr>
                   </thead>
                   <tbody id="commitments-neurons-pane-body">
-                    <tr><td colspan="4" class="empty-cell">Loading…</td></tr>
+                    <tr><td colspan="3" class="empty-cell">Loading…</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1283,12 +1281,12 @@
         </article>
 
         <article class="nav-panel-section" data-panel="metric-tracker" id="nav-panel-metric-tracker">
-          <h2 class="nav-panel-title">Tracker</h2>
+          <h2 class="nav-panel-title">Memo Tracker</h2>
           <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle">Inspect a commitment beneficiary’s ICP commitments, observed CMC top-ups, and cycles observations.</p>
-            <p class="nav-panel-content">Paste a declared canister ID. If historian recognises it as a memo-registered commitment beneficiary, this pane shows memo-registered commitments, observed transfers into that canister’s CMC top-up account, and cycles observations as separate charts so the scales and meanings stay clear.</p>
+            <p class="nav-panel-subtitle">Inspect memo-based cycle top-ups, raw ICP canister inflows, and public neuron staking-account inflows.</p>
+            <p class="nav-panel-content">Paste the memo you used. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP into the target canister account; numeric memos show public neuron staking-account inflows.</p>
             <form class="tracker-form" id="tracker-form">
-              <label class="tracker-label" for="tracker-principal-input">Declared canister ID</label>
+              <label class="tracker-label" for="tracker-principal-input">Memo</label>
               <div class="tracker-input-row">
                 <input
                   class="tracker-input mono"
@@ -1297,7 +1295,7 @@
                   autocomplete="off"
                   autocapitalize="none"
                   spellcheck="false"
-                  placeholder="jufzc-caaaa-aaaar-qb5da-cai"
+                  placeholder="Canister memo, raw ICP memo, or neuron memo"
                 />
                 <button class="pane-page-button tracker-submit" id="tracker-submit" type="submit">Track</button>
               </div>

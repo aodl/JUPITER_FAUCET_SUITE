@@ -305,7 +305,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /set the transaction memo to your declared canister ID/);
   assert.doesNotMatch(howItWorks, /Transfer ICP to the long-form ICRC-1 staking account address displayed above/);
   assert.doesNotMatch(howItWorks, /While stake commitments can be made today/);
-  assert.match(howItWorks, /data-panel="metric-tracker"[^>]*>canister tracker<\/a>/);
+  assert.match(howItWorks, /data-panel="metric-tracker"[^>]*>memo tracker<\/a>/);
   assert.match(howItWorks, /data-panel="simulator"[^>]*>simulator<\/a>/);
   assert.match(howItWorks, /newly minted <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
   assert.match(howItWorks, /<strong>0%–19%<\/strong> distributed to <strong>SNS jUP stakers<\/strong>/);
@@ -635,7 +635,7 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 
   assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
   assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
-  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Track Canisters/);
+  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Track Memos/);
   assert.doesNotMatch(rail, /Declared Canisters/);
   assert.doesNotMatch(rail, /Target Canisters/);
   assert.doesNotMatch(rail, />Commitments<\/span>/);
@@ -657,8 +657,9 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
   assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Memo<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>[\s\S]*<th>Memo<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.doesNotMatch(commitments, /<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
   assert.match(mainJs, /const registeredCount = data\?\.counts\?\.registered_canister_count;/);
   assert.match(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);
@@ -666,10 +667,10 @@ test('Patron Commitments table omits redundant category column', () => {
   assert.doesNotMatch(commitments, /private neurons cannot be refreshed by the faucet top-up process/);
   assert.doesNotMatch(commitments, /<th>Category<\/th>/);
   assert.match(commitments, /<td colspan="3" class="empty-cell">Loading…<\/td>/);
-  assert.match(commitments, /<td colspan="4" class="empty-cell">Loading…<\/td>/);
+  assert.doesNotMatch(commitments, /<td colspan="4" class="empty-cell">Loading…<\/td>/);
   assert.doesNotMatch(mainJs, /formatCommitmentOutcome/);
   assert.doesNotMatch(mainJs, /commitmentOutcomeCategory/);
-  assert.match(mainJs, /const renderCommitmentsPane = \(data\) => \{[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*rawIcpMemoText\(item\)[\s\S]*commitments-neurons[\s\S]*neuronMemoText\(item\)/);
+  assert.match(mainJs, /const renderCommitmentsPane = \(data\) => \{[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*rawIcpDeclaredMemo\(item\)[\s\S]*commitments-neurons[\s\S]*neuronDeclaredMemo\(item\)/);
   assert.match(mainJs, /'commitments-raw', renderCommitmentsPane/);
   assert.match(mainJs, /'commitments-neurons', renderCommitmentsPane/);
 });
@@ -803,7 +804,7 @@ test('simulator prepopulates ICP/XDR price from historian XRC cache without over
 test('canister tracker links use shareable metric-tracker fragments', () => {
   assert.match(mainJs, /const TRACKER_HASH_PREFIX = '#metric-tracker-'/);
   assert.match(mainJs, /trackerHashForPrincipal/);
-  assert.match(mainJs, /trackerPrincipalFromHash/);
+  assert.match(mainJs, /trackerStateFromHash/);
   assert.match(navbarJs, /key\.startsWith\("metric-tracker-"\)/);
   assert.match(indexHtml, /href="#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai"/);
 });
@@ -837,11 +838,11 @@ test('simulator prefill links use shareable simulator fragments', () => {
 });
 
 test('metric tracker hash deep links submit once on cold load and panel open', () => {
-  assert.match(mainJs, /let lastHashSubmitPrincipal = ''/);
+  assert.match(mainJs, /let lastHashSubmitMemo = ''/);
   assert.match(mainJs, /trackerController\.hydrateFromLocationHash\(\{ submit: true \}\);/);
-  assert.match(mainJs, /submit && lastHashSubmitPrincipal !== principalText/);
-  assert.match(mainJs, /lastHashSubmitPrincipal = principalText/);
-  assert.match(mainJs, /replaceLocationHash\(principal\.toText\(\)\);/);
+  assert.match(mainJs, /submit && lastHashSubmitMemo !== `\$\{memoText\}\|\$\{state\.protocolCanisterText\}`/);
+  assert.match(mainJs, /lastHashSubmitMemo = `\$\{memoText\}\|\$\{state\.protocolCanisterText\}`/);
+  assert.match(mainJs, /replaceLocationHash\(parsed\.normalizedMemoText\);/);
   assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*trackerController\.hydrateFromLocationHash\(\{ submit: true \}\)/);
 });
 
@@ -864,7 +865,7 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /oldest and newest loaded/);
   assert.match(mainJs, /renderCyclesProbeInfoNote/);
   assert.match(mainJs, /using canister log cycles/);
-  assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(data\);/);
+  assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(classifiedData\);/);
   assert.match(trackerCyclesJs, /estimateCyclesBurnedPerDay/);
   assert.match(mainJs, /formatTrillionCyclesPerDay/);
   assert.match(mainJs, /renderTrackerLogs\(data\)/);

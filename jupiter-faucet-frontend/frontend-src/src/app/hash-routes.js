@@ -1,9 +1,36 @@
 export const TRACKER_HASH_PREFIX = '#metric-tracker-';
+export const TRACKER_QUERY_HASH_PREFIX = '#metric-tracker';
 export const SIMULATOR_HASH_PREFIX = '#simulator-';
+
+export function trackerHashForMemo({ memo = '', protocolCanister = '' } = {}) {
+  const text = String(memo || '').trim();
+  if (!text) return '#metric-tracker';
+  const params = new URLSearchParams();
+  params.set('memo', text);
+  if (protocolCanister) params.set('protocol-canister', String(protocolCanister).trim());
+  return `${TRACKER_QUERY_HASH_PREFIX}?${params.toString()}`;
+}
 
 export function trackerHashForPrincipal(principalText) {
   const text = String(principalText || '').trim();
   return text ? `${TRACKER_HASH_PREFIX}${encodeURIComponent(text)}` : '#metric-tracker';
+}
+
+export function trackerStateFromHash(hash = window.location.hash) {
+  const fragment = String(hash || '');
+  if (fragment.startsWith(TRACKER_HASH_PREFIX)) {
+    const legacyPrincipal = trackerPrincipalFromHash(fragment);
+    return { memo: legacyPrincipal, protocolCanister: '', legacyPrincipal };
+  }
+  if (!fragment.startsWith(`${TRACKER_QUERY_HASH_PREFIX}?`)) {
+    return { memo: '', protocolCanister: '', legacyPrincipal: '' };
+  }
+  const params = new URLSearchParams(fragment.slice(`${TRACKER_QUERY_HASH_PREFIX}?`.length));
+  return {
+    memo: params.get('memo') || '',
+    protocolCanister: params.get('protocol-canister') || '',
+    legacyPrincipal: '',
+  };
 }
 
 export function trackerPrincipalFromHash(hash = window.location.hash) {

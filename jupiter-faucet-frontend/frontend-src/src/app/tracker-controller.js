@@ -1,10 +1,12 @@
 import { Principal } from '@icp-sdk/core/principal';
-import { normalizeError, loadTrackerData } from '../dashboard-data.js';
+import { normalizeError, loadTrackerData, loadRawIcpCanisterTrackerData, loadNeuronStakeTrackerData } from '../dashboard-data.js';
 import { readOpt } from '../candid-opt.js';
 import { escapeHtml } from '../followee-links.js';
-import { renderAmountBarChart, renderEmptyChart, renderLineChart } from '../chart-rendering.js';
+import { renderAmountBarChart, renderEmptyChart, renderLineChart, renderStackedAmountBarChart } from '../chart-rendering.js';
 import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from '../tracker-cycles.js';
-import { trackerHashForPrincipal, trackerPrincipalFromHash } from './hash-routes.js';
+import { parseJupiterMemo } from '../memo-policy.js';
+import { classifyTransferItem } from '../data/transfer-source-classification.js';
+import { trackerHashForMemo, trackerHashForPrincipal, trackerStateFromHash } from './hash-routes.js';
 import { formatDailyBurnInputFromCyclesPerDay, formatIcpCommitmentInputRoundedUp } from './simulator-controller.js';
 import {
   DASH,
@@ -17,6 +19,7 @@ import {
   formatTrillionCycles,
   renderCanisterDashboardLink,
   renderCanisterTrackerLink,
+  renderNeuronDashboardLink,
 } from './view-formatters.js';
 
 const TRACKER_REGISTRATION_URL = '#how-it-works';
@@ -25,6 +28,19 @@ const TRACKER_RANGE_LABELS = {
   year: 'last year',
   all: 'all currently loaded history',
 };
+const SOURCE_SEGMENTS = [
+  { key: 'faucetAmountE8s', countKey: 'faucetTransferCount', className: 'tracker-chart-bar--source-faucet', label: 'Jupiter Faucet', legendKey: 'faucet' },
+  { key: 'relayAmountE8s', countKey: 'relayTransferCount', className: 'tracker-chart-bar--source-relay', label: 'Jupiter Relay', legendKey: 'relay' },
+  { key: 'protocolAmountE8s', countKey: 'protocolTransferCount', className: 'tracker-chart-bar--source-protocol', label: 'Protocol canister', legendKey: 'protocol' },
+  { key: 'otherAmountE8s', countKey: 'otherTransferCount', className: 'tracker-chart-bar--source-other', label: 'Other', legendKey: 'other' },
+];
+const RAW_SOURCE_SEGMENTS = [
+  { key: 'faucetMatchingMemoAmountE8s', countKey: 'faucetMatchingMemoTransferCount', className: 'tracker-chart-bar--source-faucet-matching-memo', label: 'Jupiter Faucet · matching memo', legendKey: 'faucet-matching-memo' },
+  { key: 'faucetOtherMemoAmountE8s', countKey: 'faucetOtherMemoTransferCount', className: 'tracker-chart-bar--source-faucet-other-memo', label: 'Jupiter Faucet · other memo', legendKey: 'faucet-other-memo' },
+  { key: 'relayAmountE8s', countKey: 'relayTransferCount', className: 'tracker-chart-bar--source-relay', label: 'Jupiter Relay', legendKey: 'relay' },
+  { key: 'protocolAmountE8s', countKey: 'protocolTransferCount', className: 'tracker-chart-bar--source-protocol', label: 'Protocol canister', legendKey: 'protocol' },
+  { key: 'otherAmountE8s', countKey: 'otherTransferCount', className: 'tracker-chart-bar--source-other', label: 'Other', legendKey: 'other' },
+];
 
 function optValue(value) {
   return readOpt(value);
@@ -138,6 +154,12 @@ function trackerAllDatedItems(data) {
   ];
 }
 
+function rawTransferTimestampMs(item) {
+  const timestamp = optValue(item?.timestamp_nanos);
+  const date = timestampNanosToDate(timestamp);
+  return date ? date.getTime() : null;
+}
+
 function latestTrackerTimestampMs(data) {
   return trackerAllDatedItems(data).reduce((latest, item) => {
     const timestampMs = trackerItemTimestampMs(item);
@@ -216,9 +238,23 @@ function emptyTrackerBucket(period) {
     qualifyingCommitmentCount: 0,
     observedCmcAmountE8s: 0n,
     observedCmcTransferCount: 0,
+    faucetAmountE8s: 0n,
+    faucetTransferCount: 0,
+    relayAmountE8s: 0n,
+    relayTransferCount: 0,
+    protocolAmountE8s: 0n,
+    protocolTransferCount: 0,
+    otherAmountE8s: 0n,
+    otherTransferCount: 0,
     cycles: null,
     cyclesTs: null,
   };
+}
+
+function addSourceAmount(bucket, category, amount) {
+  const prefix = category === 'faucet' || category === 'relay' || category === 'protocol' ? category : 'other';
+  bucket[`${prefix}AmountE8s`] += amount;
+  bucket[`${prefix}TransferCount`] += 1;
 }
 
 function aggregateTrackerData(data, range) {
@@ -252,6 +288,7 @@ function aggregateTrackerData(data, range) {
     const bucket = ensureBucket(trackerPeriod(date, range));
     bucket.observedCmcAmountE8s += itemAmountE8s(item);
     bucket.observedCmcTransferCount += 1;
+    addSourceAmount(bucket, item.source_category, itemAmountE8s(item));
   }
 
   for (const item of data?.cycles?.items || []) {
@@ -272,6 +309,80 @@ function aggregateTrackerData(data, range) {
     }
   }
 
+  return Array.from(buckets.values()).sort((left, right) => left.startMs - right.startMs);
+}
+
+function rawTimelineBounds(items, range) {
+  const timestamps = (items || []).map(rawTransferTimestampMs).filter((value) => value !== null);
+  if (timestamps.length === 0) return null;
+  const maxMs = Math.max(...timestamps);
+  const minMs = range === 'all' ? Math.min(...timestamps) : trackerRangeCutoffMs(range, maxMs);
+  if (minMs === null) return null;
+  return { start: trackerPeriod(new Date(minMs), range), end: trackerPeriod(new Date(maxMs), range) };
+}
+
+function emptyRawBucket(period) {
+  return {
+    ...period,
+    totalIcpE8s: 0n,
+    totalTransferCount: 0,
+    faucetAmountE8s: 0n,
+    faucetTransferCount: 0,
+    faucetMatchingMemoAmountE8s: 0n,
+    faucetMatchingMemoTransferCount: 0,
+    faucetOtherMemoAmountE8s: 0n,
+    faucetOtherMemoTransferCount: 0,
+    relayAmountE8s: 0n,
+    relayTransferCount: 0,
+    protocolAmountE8s: 0n,
+    protocolTransferCount: 0,
+    otherAmountE8s: 0n,
+    otherTransferCount: 0,
+  };
+}
+
+function rawTransferSourceSegment(item) {
+  if (item?.source_category === 'faucet' && item?.is_matching_memo) return 'faucetMatchingMemo';
+  if (item?.source_category === 'faucet') return 'faucetOtherMemo';
+  if (item?.source_category === 'relay') return 'relay';
+  if (item?.source_category === 'protocol') return 'protocol';
+  return 'other';
+}
+
+function addRawSourceAmount(bucket, item, amount) {
+  if (item?.source_category === 'faucet') {
+    bucket.faucetAmountE8s += amount;
+    bucket.faucetTransferCount += 1;
+  }
+  const prefix = rawTransferSourceSegment(item);
+  bucket[`${prefix}AmountE8s`] += amount;
+  bucket[`${prefix}TransferCount`] += 1;
+}
+
+function aggregateRawTransfers(items, range) {
+  const buckets = new Map();
+  const ensureBucket = (period) => {
+    const existing = buckets.get(period.key);
+    if (existing) return existing;
+    const created = emptyRawBucket(period);
+    buckets.set(period.key, created);
+    return created;
+  };
+  for (const item of items || []) {
+    const date = timestampNanosToDate(optValue(item.timestamp_nanos));
+    if (!date) continue;
+    const bucket = ensureBucket(trackerPeriod(date, range));
+    const amount = itemAmountE8s(item);
+    bucket.totalIcpE8s += amount;
+    bucket.totalTransferCount += 1;
+    addRawSourceAmount(bucket, item, amount);
+  }
+  const bounds = rawTimelineBounds(items, range);
+  if (bounds) {
+    for (let period = bounds.start; period.startMs <= bounds.end.startMs; period = nextTrackerPeriod(period, range)) {
+      ensureBucket(period);
+    }
+  }
   return Array.from(buckets.values()).sort((left, right) => left.startMs - right.startMs);
 }
 
@@ -303,6 +414,44 @@ function trackerMetricSummary(data) {
     observedCmcE8s: sumE8s(transferItems),
     latestCycles,
   };
+}
+
+function classifyTrackerData(data, protocolCanisterId = null) {
+  if (!data) return data;
+  return {
+    ...data,
+    cmcTransfers: {
+      ...(data.cmcTransfers || { items: [] }),
+      items: (data.cmcTransfers?.items || []).map((item) => classifyTransferItem(item, {
+        status: data.status,
+        protocolCanisterId,
+      })),
+    },
+  };
+}
+
+function rawSummary(items) {
+  return (items || []).reduce((summary, item) => {
+    const amount = itemAmountE8s(item);
+    summary.totalTransferCount += 1;
+    summary.totalIcpE8s += amount;
+    if (item.source_category === 'faucet') {
+      summary.faucetTransferCount += 1;
+      summary.faucetIcpE8s += amount;
+      if (item.is_matching_memo) {
+        summary.faucetMatchingMemoTransferCount += 1;
+        summary.faucetMatchingMemoIcpE8s += amount;
+      }
+    }
+    return summary;
+  }, {
+    totalTransferCount: 0,
+    totalIcpE8s: 0n,
+    faucetTransferCount: 0,
+    faucetIcpE8s: 0n,
+    faucetMatchingMemoTransferCount: 0,
+    faucetMatchingMemoIcpE8s: 0n,
+  });
 }
 
 function renderTrackerLogs(data) {
@@ -347,18 +496,25 @@ export function createTrackerController({
   frontendConfig,
   isLocalHost,
   loadData = loadTrackerData,
+  loadRawCanisterData = loadRawIcpCanisterTrackerData,
+  loadNeuronData = loadNeuronStakeTrackerData,
   normalizeLoadError = normalizeError,
   simulatorHashForPrefill,
   onSimulatorPrefillHash = () => {},
 }) {
   const state = {
+    memoText: '',
     principalText: '',
+    parsedMemo: null,
+    protocolCanisterText: '',
+    protocolCanisterId: null,
+    viewMode: '',
     data: null,
     range: 'all',
     loading: false,
     error: null,
   };
-  let lastHashSubmitPrincipal = '';
+  let lastHashSubmitMemo = '';
 
   const trackerRangeLabel = (range = state.range) => TRACKER_RANGE_LABELS[range] || TRACKER_RANGE_LABELS.month;
 
@@ -435,18 +591,48 @@ export function createTrackerController({
     labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying commitment')}`,
   });
 
-  const renderTrackerObservedCmcChart = (buckets, fullData = null) => renderTrackerAmountBarChart({
+  const legendSegments = (segments, includeProtocol) => segments
+    .filter((segment) => includeProtocol || segment.legendKey !== 'protocol')
+    .map((segment) => `
+      <span class="tracker-source-legend-item ${escapeHtml(segment.className)}" data-source-segment="${escapeHtml(segment.legendKey || segment.key)}" tabindex="0">
+        <i></i>${escapeHtml(segment.label)}
+      </span>`)
+    .join('');
+
+  const renderSourceLegend = ({ includeProtocol = false, segments = SOURCE_SEGMENTS } = {}) => `
+    <div class="tracker-source-legend" aria-label="Transfer source legend">
+      ${legendSegments(segments, includeProtocol)}
+    </div>`;
+
+  const activeSourceSegments = (segments, buckets) => {
+    const rows = Array.isArray(buckets) ? buckets : [];
+    return segments.filter((segment) => rows.some((bucket) => {
+      const value = bucket?.[segment.key];
+      return (typeof value === 'bigint' ? value : BigInt(value || 0)) > 0n;
+    }));
+  };
+
+  const renderActiveSourceLegend = ({ includeProtocol = false, segments = SOURCE_SEGMENTS, buckets = [] } = {}) => {
+    const activeSegments = activeSourceSegments(segments, buckets);
+    if (activeSegments.length === 0) return '';
+    return renderSourceLegend({ includeProtocol, segments: activeSegments });
+  };
+
+  const renderTrackerObservedCmcChart = (buckets, fullData = null) => renderStackedAmountBarChart({
     buckets,
-    amountKey: 'observedCmcAmountE8s',
-    countKey: 'observedCmcTransferCount',
-    barClass: 'tracker-chart-bar--observed-cmc',
+    segments: activeSourceSegments(SOURCE_SEGMENTS, buckets),
     emptyMessage: trackerRangeEmptyMessage({
       fullItems: fullData?.cmcTransfers?.items,
       rangeMessage: `No dated ICP transfers to the canister’s CMC top-up account are available in ${trackerRangeLabel()}.`,
       emptyMessage: 'No dated ICP transfers to the canister’s CMC top-up account are available yet.',
     }),
     ariaLabel: `Observed CMC top-up transfers in ${trackerRangeLabel()}`,
-    labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.observedCmcAmountE8s)} across ${pluralize(bucket.observedCmcTransferCount, 'observed CMC transfer')}`,
+    labelBuilder: (bucket, segment, amount, count) => `${bucket.label}: ${segment.label} ${formatIcpE8s(amount)} across ${pluralize(count, 'observed CMC transfer')}`,
+    valueFormatter: formatIcpE8s,
+    xAxis: 'time',
+    minBarWidth: 2,
+    maxBarWidth: 28,
+    allowMinBarOverflow: true,
   });
 
   const trackerCyclesChartPoints = (data) => sortedCycleSamples(data).map((sample) => {
@@ -510,8 +696,9 @@ export function createTrackerController({
       <div class="tracker-chart-card">
         <div class="tracker-chart-header">
           <h3>Observed CMC top-ups</h3>
-          <span>Transfers to the CMC deposit account in the selected range; direct non-Jupiter top-ups may appear.</span>
+          <span>Transfers to the CMC deposit account in the selected range, colour-coded by source; direct non-Jupiter top-ups may appear.</span>
         </div>
+        ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), buckets })}
         ${renderTrackerObservedCmcChart(buckets, fullData)}
       </div>
       <div class="tracker-chart-card">
@@ -540,25 +727,26 @@ export function createTrackerController({
   const renderData = (data, principalText) => {
     const result = document.getElementById('tracker-result');
     if (!result) return;
-    if (!data?.isCommitmentBeneficiary) {
-      renderRecognitionMessage(data, principalText);
+    const classifiedData = classifyTrackerData(data, state.protocolCanisterId);
+    if (!classifiedData?.isCommitmentBeneficiary) {
+      renderRecognitionMessage(classifiedData, principalText);
       return;
     }
 
-    const visibleData = filterTrackerDataByRange(data, state.range);
+    const visibleData = filterTrackerDataByRange(classifiedData, state.range);
     const summary = trackerMetricSummary(visibleData);
-    const fullSummary = trackerMetricSummary(data);
-    const cycleSamples = sortedCycleSamples(data);
+    const fullSummary = trackerMetricSummary(classifiedData);
+    const cycleSamples = sortedCycleSamples(classifiedData);
     const rangeLabel = trackerRangeLabel();
-    const sources = sourceNames(data.overview?.sources).join(', ') || DASH;
-    const firstSeen = formatTimestampSeconds(optValue(data.overview?.meta?.first_seen_ts));
-    const lastCommitment = formatTimestampSeconds(optValue(data.overview?.meta?.last_commitment_ts));
-    const cyclesStatus = cyclesProbeStatusInfo(data);
+    const sources = sourceNames(classifiedData.overview?.sources).join(', ') || DASH;
+    const firstSeen = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.first_seen_ts));
+    const lastCommitment = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.last_commitment_ts));
+    const cyclesStatus = cyclesProbeStatusInfo(classifiedData);
     const usingLogCycles = cycleSamples[0]?.source === 'log';
     const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
       ? escapeHtml(formatCycles(summary.latestCycles))
       : renderCyclesStatusCell(cyclesStatus.label);
-    const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay(data);
+    const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay(classifiedData);
     const estimatedCyclesBurnHtml = estimatedObservedCyclesBurnedPerDay === null
       ? null
       : escapeHtml(formatTrillionCyclesPerDay(estimatedObservedCyclesBurnedPerDay));
@@ -567,18 +755,21 @@ export function createTrackerController({
       commitmentE8s: fullSummary.qualifyingCommittedE8s || fullSummary.totalCommittedE8s,
       simulatorHashForPrefill,
     });
-    const burnEstimateSamples = cycleSamplesForBurnEstimate(data);
+    const burnEstimateSamples = cycleSamplesForBurnEstimate(classifiedData);
     const cycleSourceLabel = burnEstimateSamples.length > 0 ? cycleSampleSourceLabel(burnEstimateSamples) : 'available cycle data';
-    const commitmentError = data.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(data.errors.commitments)}</p>` : '';
-    const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
-    const hasCyclesOutsideRange = (data?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
+    const commitmentError = classifiedData.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(classifiedData.errors.commitments)}</p>` : '';
+    const cyclesError = classifiedData.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(classifiedData.errors.cycles)}</p>` : '';
+    const hasCyclesOutsideRange = (classifiedData?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
     const cyclesStatusNote = summary.latestCycles === null || summary.latestCycles === undefined
       ? `<p class="pane-status-note tracker-status-note">${escapeHtml(hasCyclesOutsideRange ? `No cycles samples are available in ${rangeLabel}.` : cyclesStatus.note)}</p>`
       : '';
     const cyclesProbeIssueNote = summary.latestCycles !== null && summary.latestCycles !== undefined
       ? renderCyclesProbeInfoNote(cyclesStatus, usingLogCycles)
       : '';
-    const cmcError = data.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(data.errors.cmcTransfers)}</p>` : '';
+    const cmcError = classifiedData.errors?.cmcTransfers ? `<p class="pane-status-note tracker-status-note">Observed CMC top-up history unavailable: ${escapeHtml(classifiedData.errors.cmcTransfers)}</p>` : '';
+    const protocolHtml = state.protocolCanisterText
+      ? `<div><dt>Protocol canister</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(state.protocolCanisterText)}</dd></div>`
+      : '';
     result.innerHTML = `
       ${renderTrackerRangeControls()}
       <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>
@@ -587,6 +778,7 @@ export function createTrackerController({
       <dl class="pane-detail-grid tracker-summary-grid">
         <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
         <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
+        ${protocolHtml}
         <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
         <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
         <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
@@ -601,12 +793,12 @@ export function createTrackerController({
       </dl>
       <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
       ${estimatedCyclesBurnHtml === null ? '' : `<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from the oldest and newest loaded ${escapeHtml(cycleSourceLabel)} samples. Top-ups between samples can affect the estimate.</p>`}
-      ${renderTrackerCadenceNote(data)}
+      ${renderTrackerCadenceNote(classifiedData)}
       ${commitmentError}
       ${cyclesStatusNote}
       ${cyclesError}
       ${cmcError}`;
-    renderTrackerCharts(visibleData, data);
+    renderTrackerCharts(visibleData, classifiedData);
   };
 
   const setLoading = (loading) => {
@@ -624,12 +816,117 @@ export function createTrackerController({
     status.className = kind ? `pane-status-note tracker-status-note tracker-status-note--${kind}` : 'pane-status-note tracker-status-note';
   };
 
+  const classifyRawTransfers = (data) => ({
+    ...data,
+    transfers: {
+      ...(data?.transfers || { items: [] }),
+      items: (data?.transfers?.items || []).map((item) => classifyTransferItem(item, {
+        status: data?.status,
+        protocolCanisterId: state.protocolCanisterId,
+      })),
+    },
+  });
+
+  const renderRawIcpChart = ({ buckets, emptyMessage, ariaLabel, segments = RAW_SOURCE_SEGMENTS }) => {
+    if (buckets.length === 0) return renderEmptyChart(emptyMessage);
+    const activeSegments = activeSourceSegments(segments, buckets);
+    return renderStackedAmountBarChart({
+      buckets,
+      segments: activeSegments,
+      emptyMessage,
+      ariaLabel,
+      labelBuilder: (bucket, segment, amount, count) => `${bucket.label}: ${segment.label} ${formatIcpE8s(amount)} across ${pluralize(count, 'transfer')}`,
+      valueFormatter: formatIcpE8s,
+      xAxis: 'time',
+      minBarWidth: 2,
+      maxBarWidth: 28,
+      allowMinBarOverflow: true,
+    });
+  };
+
+  const renderCandidateLinks = (data, parsed) => {
+    const prefix = parsed.outgoingMemoText || '';
+    if (prefix.length < 4) {
+      return '<p class="pane-status-note tracker-status-note">Prefix matching is skipped for short outgoing memos; use at least four compact-principal characters for candidate search.</p>';
+    }
+    const items = data?.candidates?.items || [];
+    if (items.length === 0) {
+      return '<p class="pane-status-note tracker-status-note">No possible matching tracked canisters were found. This does not prove the target canister is absent; it may not yet be known to Jupiter Faucet through a direct cycle top-up memo commitment.</p>';
+    }
+    const links = items.map((item) => {
+      const canisterText = item.canister_id.toText();
+      const href = trackerHashForMemo({ memo: canisterText, protocolCanister: parsed.canisterText });
+      return `<li><a class="pane-external-link mono" href="${escapeHtml(href)}" data-tracker-memo="${escapeHtml(canisterText)}" data-protocol-canister="${escapeHtml(parsed.canisterText)}">${escapeHtml(canisterText)}</a> <span>${escapeHtml(formatIcpE8s(item.total_qualifying_committed_e8s))} qualifying</span></li>`;
+    }).join('');
+    return `
+      <div class="tracker-candidate-section">
+        <h3>Possible matching tracked canisters</h3>
+        <ul>${links}</ul>
+        ${data?.candidates?.truncated ? '<p class="pane-status-note tracker-status-note">More possible matches exist than are shown.</p>' : ''}
+      </div>`;
+  };
+
+  const renderRawIcpData = (data, parsed) => {
+    const result = document.getElementById('tracker-result');
+    if (!result) return;
+    const classified = classifyRawTransfers(data);
+    const latestRawMs = (classified.transfers?.items || [])
+      .map(rawTransferTimestampMs)
+      .filter((value) => value !== null)
+      .reduce((latest, value) => value > latest ? value : latest, 0);
+    const visibleItems = (classified.transfers?.items || []).filter((item) => {
+      if (state.range === 'all') return true;
+      const timestamp = rawTransferTimestampMs(item);
+      return timestamp !== null && timestamp >= trackerRangeCutoffMs(state.range, latestRawMs || Date.now());
+    });
+    const summary = rawSummary(visibleItems);
+    const isNeuron = parsed.kind === 'neuronStake';
+    const title = isNeuron ? 'Raw ICP neuron memo' : 'Raw ICP canister memo';
+    const target = isNeuron ? parsed.neuronId.toString() : parsed.canisterText;
+    const targetHtml = isNeuron ? renderNeuronDashboardLink(target) : escapeHtml(target);
+    const hasOutgoingMemo = parsed.outgoingMemoText !== null && parsed.outgoingMemoText !== undefined;
+    const sourceSegments = hasOutgoingMemo ? RAW_SOURCE_SEGMENTS : SOURCE_SEGMENTS;
+    const buckets = aggregateRawTransfers(visibleItems, state.range);
+    const matchingNote = !hasOutgoingMemo
+      ? ''
+      : `<p class="pane-status-note tracker-status-note">Visible Jupiter Faucet transfers matching the outgoing memo: ${escapeHtml(formatInteger(summary.faucetMatchingMemoTransferCount))} · ${escapeHtml(formatIcpE8s(summary.faucetMatchingMemoIcpE8s))}. If no transfers match, the top-up may not have been indexed yet, may be outside the loaded range, or may not have been paid through Jupiter Faucet yet.</p>`;
+    result.innerHTML = `
+      ${renderTrackerRangeControls()}
+      <div class="tracker-chart-wrapper" id="tracker-chart-wrapper">
+        <div class="tracker-chart-card">
+          <div class="tracker-chart-header">
+            <h3>${escapeHtml(title)}</h3>
+            <span>Observed incoming ICP transfers into the ${isNeuron ? 'staking' : 'canister'} account, colour-coded by source.</span>
+          </div>
+          ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), segments: sourceSegments, buckets })}
+          ${renderRawIcpChart({
+            buckets,
+            emptyMessage: `No dated incoming ICP transfers are available in ${trackerRangeLabel()}.`,
+            ariaLabel: `${title} incoming transfers in ${trackerRangeLabel()}`,
+            segments: sourceSegments,
+          })}
+        </div>
+      </div>
+      <dl class="pane-detail-grid tracker-summary-grid">
+        <div><dt>Memo type</dt><dd class="pane-detail-value">${escapeHtml(title)}</dd></div>
+        <div><dt>Tracked target</dt><dd class="pane-detail-value mono">${targetHtml}</dd></div>
+        <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
+        <div><dt>Incoming ICP shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalIcpE8s))}</dd></div>
+        <div><dt>Jupiter Faucet inflow shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.faucetTransferCount)} · ${formatIcpE8s(summary.faucetIcpE8s)}`)}</dd></div>
+        ${!hasOutgoingMemo ? '' : `<div><dt>Outgoing memo matched</dt><dd class="pane-detail-value mono">${escapeHtml(parsed.outgoingMemoText)}</dd></div>`}
+      </dl>
+      ${matchingNote}
+      ${!isNeuron ? renderCandidateLinks(classified, parsed) : ''}
+      ${classified.errors?.transfers ? `<p class="pane-status-note tracker-status-note">Raw ICP transfer history unavailable: ${escapeHtml(classified.errors.transfers)}</p>` : ''}
+      ${classified.errors?.candidates ? `<p class="pane-status-note tracker-status-note">Possible matching canisters unavailable: ${escapeHtml(classified.errors.candidates)}</p>` : ''}`;
+  };
+
   const renderPrompt = () => {
     const result = document.getElementById('tracker-result');
     if (!result || result.innerHTML.trim()) return;
     result.innerHTML = `
       <div class="tracker-empty-state">
-        <p>Paste a declared canister ID to inspect its memo-derived commitments and cycles tracking history.</p>
+        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP into the target canister account; numeric memos show public neuron staking-account inflows.</p>
       </div>`;
   };
 
@@ -640,41 +937,49 @@ export function createTrackerController({
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
-    if (state.data?.isCommitmentBeneficiary) {
+    if (state.viewMode === 'cyclesTopUp' && state.data?.isCommitmentBeneficiary) {
       renderData(state.data, state.principalText);
+    } else if ((state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake') && state.data && state.parsedMemo) {
+      renderRawIcpData(state.data, state.parsedMemo);
     }
   };
 
-  const replaceLocationHash = (principalText) => {
-    const hash = trackerHashForPrincipal(principalText);
+  const replaceLocationHash = (memoText, protocolCanister = state.protocolCanisterText) => {
+    const hash = trackerHashForMemo({ memo: memoText, protocolCanister });
     if (window.location.hash !== hash) {
       history.replaceState(null, '', hash);
     }
   };
 
-  const submitPrincipal = async () => {
+  const parseProtocolCanister = (text) => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return null;
+    try {
+      return Principal.fromText(trimmed);
+    } catch {
+      return null;
+    }
+  };
+
+  const submitMemo = async () => {
     const input = document.getElementById('tracker-principal-input');
     const result = document.getElementById('tracker-result');
-    const raw = input?.value?.trim() || '';
-    state.principalText = raw;
+    const raw = input?.value || '';
+    state.memoText = raw;
     state.error = null;
 
-    if (!raw) {
-      setStatus('Paste a declared canister ID first.', 'error');
+    const parsed = parseJupiterMemo(raw);
+    state.parsedMemo = parsed;
+    if (parsed.kind === 'invalid') {
+      setStatus(parsed.reason, 'error');
       input?.focus?.();
       return;
     }
 
-    let principal;
-    try {
-      principal = Principal.fromText(raw);
-    } catch {
-      setStatus('Enter a valid declared canister ID.', 'error');
-      input?.focus?.();
-      return;
-    }
-
-    replaceLocationHash(principal.toText());
+    state.viewMode = parsed.kind;
+    state.principalText = parsed.canisterText || '';
+    state.protocolCanisterId = parseProtocolCanister(state.protocolCanisterText);
+    replaceLocationHash(parsed.normalizedMemoText);
     setLoading(true);
     setStatus('Loading tracker data…', 'loading');
     if (result) {
@@ -682,15 +987,20 @@ export function createTrackerController({
     }
 
     try {
-      const data = await loadData({
+      const common = {
         historianCanisterId: frontendConfig?.historianCanisterId,
         host: window.location.origin,
         local: isLocalHost(),
-        canisterId: principal,
-      });
+      };
+      const data = parsed.kind === 'cyclesTopUp'
+        ? await loadData({ ...common, canisterId: parsed.canisterId })
+        : parsed.kind === 'rawIcpCanister'
+          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText })
+          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText });
       state.data = data;
       setStatus('', '');
-      renderData(data, principal.toText());
+      if (parsed.kind === 'cyclesTopUp') renderData(data, parsed.canisterText);
+      else renderRawIcpData(data, parsed);
     } catch (error) {
       state.data = null;
       state.error = normalizeLoadError(error);
@@ -703,18 +1013,22 @@ export function createTrackerController({
     }
   };
 
+  const submitPrincipal = submitMemo;
+
   const hydrateFromLocationHash = ({ submit = false } = {}) => {
-    const principalText = trackerPrincipalFromHash();
-    if (!principalText) return false;
-    state.principalText = principalText;
+    const route = trackerStateFromHash();
+    const memoText = route.memo || route.legacyPrincipal;
+    if (!memoText) return false;
+    state.memoText = memoText;
+    state.protocolCanisterText = route.protocolCanister || '';
     const input = document.getElementById('tracker-principal-input');
-    if (input) input.value = principalText;
-    if (submit && lastHashSubmitPrincipal !== principalText) {
-      lastHashSubmitPrincipal = principalText;
+    if (input) input.value = memoText;
+    if (submit && lastHashSubmitMemo !== `${memoText}|${state.protocolCanisterText}`) {
+      lastHashSubmitMemo = `${memoText}|${state.protocolCanisterText}`;
       window.setTimeout(() => {
         const refreshedInput = document.getElementById('tracker-principal-input');
-        if (refreshedInput) refreshedInput.value = principalText;
-        void submitPrincipal();
+        if (refreshedInput) refreshedInput.value = memoText;
+        void submitMemo();
       }, 0);
     }
     return true;
@@ -737,27 +1051,40 @@ export function createTrackerController({
     window.location.hash = principalText ? trackerHashForPrincipal(principalText) : '#metric-tracker';
   };
 
-  const trackLinkedPrincipal = (principalText) => {
-    const text = String(principalText || '').trim();
+  const trackLinkedMemo = ({ memo, protocolCanister = '' } = {}) => {
+    const text = String(memo || '').trim();
     if (!text) return;
-    state.principalText = text;
+    state.memoText = text;
+    state.protocolCanisterText = String(protocolCanister || '').trim();
     const input = document.getElementById('tracker-principal-input');
     if (input) input.value = text;
     openPanelForLinkedPrincipal(text);
     window.setTimeout(() => {
       const refreshedInput = document.getElementById('tracker-principal-input');
       if (refreshedInput) refreshedInput.value = text;
-      replaceLocationHash(text);
-      void submitPrincipal();
+      replaceLocationHash(text, state.protocolCanisterText);
+      void submitMemo();
     }, 0);
   };
+
+  const trackLinkedPrincipal = (principalText) => trackLinkedMemo({ memo: principalText });
 
   const bindLinks = () => {
     if (document.documentElement.dataset.trackerLinksBound === 'true') return;
     document.documentElement.dataset.trackerLinksBound = 'true';
     document.addEventListener('click', (event) => {
       const trigger = event.target instanceof Element ? event.target.closest('[data-tracker-principal]') : null;
-      if (!trigger) return;
+      const memoTrigger = event.target instanceof Element ? event.target.closest('[data-tracker-memo]') : null;
+      if (!trigger && !memoTrigger) return;
+      if (memoTrigger) {
+        const memo = memoTrigger.getAttribute('data-tracker-memo') || '';
+        const protocolCanister = memoTrigger.getAttribute('data-protocol-canister') || '';
+        if (!memo) return;
+        event.preventDefault();
+        event.stopPropagation();
+        trackLinkedMemo({ memo, protocolCanister });
+        return;
+      }
       const principalText = trigger.getAttribute('data-tracker-principal') || '';
       if (!principalText) return;
       event.preventDefault();

@@ -174,6 +174,31 @@ pub(super) fn get_public_status() -> PublicStatus {
     })
 }
 
+fn principal_matches_compact_prefix(principal: Principal, prefix: &str) -> bool {
+    let text = principal.to_text();
+    let first_group = text.split_once('-').map(|(head, _)| head).unwrap_or(text.as_str());
+
+    if prefix.len() <= first_group.len() {
+        return first_group.starts_with(prefix);
+    }
+
+    if !prefix.starts_with(first_group) {
+        return false;
+    }
+
+    let mut expected_chars = prefix.chars();
+    for ch in text.chars().filter(|ch| *ch != '-') {
+        let Some(expected) = expected_chars.next() else {
+            return true;
+        };
+        if ch.to_ascii_lowercase() != expected {
+            return false;
+        }
+    }
+
+    expected_chars.next().is_none()
+}
+
 pub(crate) const MODULE_HASH_CACHE_TTL_SECONDS: u64 = 60 * 60;
 pub(crate) const MODULE_HASH_REFRESH_INTERVAL_SECONDS: u64 = 10 * 60;
 pub(crate) const MODULE_HASH_REFRESH_LEASE_SECONDS: u64 = 5 * 60;
@@ -335,6 +360,51 @@ pub(super) fn list_registered_canister_summaries(
             page_size,
             total,
         }
+    })
+}
+
+#[ic_cdk::query]
+pub(super) fn find_canisters_by_memo_prefix(
+    args: FindCanistersByMemoPrefixArgs,
+) -> FindCanistersByMemoPrefixResponse {
+    state::with_state(|st| {
+        let prefix = args.prefix.replace('-', "").to_ascii_lowercase();
+        if prefix.len() < 4 || !prefix.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return FindCanistersByMemoPrefixResponse { items: Vec::new(), truncated: false };
+        }
+        let limit = clamp_public_limit(args.limit, 20).min(50);
+        let source_filter = args.source_filter.unwrap_or(CanisterSource::MemoCommitment);
+        let mut items = Vec::new();
+        let mut matched = 0usize;
+        for canister_id in st.distinct_canisters.iter().copied() {
+            if !principal_matches_compact_prefix(canister_id, &prefix) {
+                continue;
+            }
+            let Some(sources) = visible_sources_for_canister(st, &canister_id) else {
+                continue;
+            };
+            if !sources.contains(&source_filter) {
+                continue;
+            }
+            let Some(summary) = registered_canister_summary_for(st, canister_id) else {
+                continue;
+            };
+            matched += 1;
+            if items.len() < limit {
+                items.push(CanisterPrefixMatch {
+                    canister_id,
+                    sources: summary.sources,
+                    matched_prefix: prefix.clone(),
+                    qualifying_commitment_count: summary.qualifying_commitment_count,
+                    total_qualifying_committed_e8s: summary.total_qualifying_committed_e8s,
+                    last_commitment_ts: summary.last_commitment_ts,
+                    latest_cycles: summary.latest_cycles,
+                    last_cycles_probe_ts: summary.last_cycles_probe_ts,
+                });
+            }
+        }
+        items.sort_by_key(|item| (std::cmp::Reverse(item.total_qualifying_committed_e8s), item.canister_id));
+        FindCanistersByMemoPrefixResponse { items, truncated: matched > limit }
     })
 }
 
