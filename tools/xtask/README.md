@@ -26,7 +26,7 @@ cargo run -p xtask -- frontend_all
 
 The frontend `xtask` commands auto-install or refresh repo-root Node dependencies when they are missing or stale, and `frontend_setup` lets you do that preflight explicitly.
 
-The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every `frontend-src/test/*.test.mjs` file):
+The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every `canisters/frontend/web/test/*.test.mjs` file):
 
 ```bash
 npm run setup:frontend
@@ -184,7 +184,7 @@ PocketIC-backed suites use the workspace `pocket-ic` crate version. The harness 
 
 PocketIC server and Rust client versions must be compatible. If you set `POCKET_IC_BIN`, ensure it points to an executable binary whose `--version` output is exactly `pocket-ic-server 13.0.0`.
 
-The heavier suites live under `tests/pocketic/`:
+The heavier suites live under [`tests/pocketic/`](../../tests/pocketic):
 
 - `jupiter_disburser_integration.rs`
 - `jupiter_faucet_integration.rs`
@@ -192,7 +192,7 @@ The heavier suites live under `tests/pocketic/`:
 - `jupiter_relay_integration.rs`
 - `e2e.rs`
 
-The mock canisters used by the local-`icp-cli` scenarios live under `tests/mocks/`.
+The mock canisters used by the local-`icp-cli` scenarios live under [`tests/mocks/`](../../tests/mocks).
 
 Examples covered by the current PocketIC suites include:
 
@@ -247,7 +247,7 @@ cargo test -p xtask --test e2e probe_real_cmc_topup_flow_diagnostics -- --ignore
 
 ## Reproducible blackhole requirement in historian / E2E suites
 
-Historian and E2E PocketIC coverage build the vendored `vendor/ic-blackhole` source through its pinned reproducible build path:
+Historian and E2E PocketIC coverage build the vendored [`vendor/ic-blackhole`](../../vendor/ic-blackhole) source through its pinned reproducible build path:
 
 ```bash
 cd vendor/ic-blackhole

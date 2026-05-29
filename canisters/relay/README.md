@@ -66,7 +66,7 @@ CONFIG relay_canister_id=...
 
 The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ledger, CMC, NNS Governance, blackhole, interval, transfer limit, surplus recipients, surplus memo lengths, and whether the configured production managed set matches the known Jupiter suite set.
 
-After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with `canisters/relay/mainnet-install-args.did`, and using the frontend source pane. Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
+After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with [`mainnet-install-args.did`](mainnet-install-args.did), and using the frontend source pane. Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 
 ```bash
 icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
@@ -219,7 +219,7 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 
 1. Verify the blackhole can read every configured managed canister.
 2. Verify canister settings: logs public, log memory limit `2MiB`, canonical blackhole as an additional controller, and the current operational/admin controller retained until handoff is complete.
-3. Compare `CONFIG` public logs with `canisters/relay/mainnet-install-args.did`.
+3. Compare `CONFIG` public logs with [`mainnet-install-args.did`](mainnet-install-args.did).
 4. Observe a first complete baseline tick and confirm it spends no ICP.
 5. Fund the relay with a small ICP amount through `u2qkp-aqaaa-aaaar-qb7ea-cai.`.
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
@@ -231,7 +231,7 @@ Routine production upgrades preserve existing state and should use normal deploy
 icp deploy jupiter_relay --environment ic
 ```
 
-Fresh install/reinstall is a deliberate separate path. Supply `canisters/relay/mainnet-install-args.did` explicitly only for that install/reinstall operation, not for routine upgrades.
+Fresh install/reinstall is a deliberate separate path. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly only for that install/reinstall operation, not for routine upgrades.
 
 Exact settings update command:
 

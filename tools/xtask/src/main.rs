@@ -41,12 +41,11 @@ struct ScenarioOutcome {
 }
 
 fn repo_root() -> String {
-    // xtask/Cargo.toml dir
-    let xtask_dir = env!("CARGO_MANIFEST_DIR");
-    // repo root is one directory up from xtask/
-    std::path::Path::new(xtask_dir)
-        .parent()
-        .expect("xtask should live under repo root")
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .ancestors()
+        .find(|dir| dir.join("Cargo.toml").is_file() && dir.join("icp.yaml").is_file())
+        .expect("xtask should live under a repository root containing Cargo.toml and icp.yaml")
         .to_string_lossy()
         .to_string()
 }

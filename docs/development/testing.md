@@ -17,4 +17,4 @@ npm run test:frontend-unit
 npm run lint:frontend-exports
 ```
 
-PocketIC integration sources live under `tests/pocketic/`. Mock canisters used by local scenarios live under `tests/mocks/`.
+PocketIC integration sources live under [`tests/pocketic/`](../../tests/pocketic). Mock canisters used by local scenarios live under [`tests/mocks/`](../../tests/mocks).

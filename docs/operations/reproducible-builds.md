@@ -1,6 +1,6 @@
 # Reproducible Builds
 
-Release build helpers now live under `tools/scripts/`.
+Release build helpers live under [`tools/scripts/`](../../tools/scripts).
 
 ```bash
 ./tools/scripts/build-canister all

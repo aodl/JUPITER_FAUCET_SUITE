@@ -235,7 +235,7 @@ The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently c
 - `enable_sns_tracking = false`
 - `scan_interval_seconds = 600`
 - `cycles_interval_seconds = 604800`
-- `min_tx_e8s = 100_000_000` (must match the faucet config, and both are validated by `tools/scripts/validate-mainnet-install-args`)
+- `min_tx_e8s = 100_000_000` (must match the faucet config, and both are validated by [`../../tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args))
 - `max_cycles_entries_per_canister = 100`
 - `max_commitment_entries_per_canister = 100`
 - `max_index_pages_per_tick = 10`
@@ -301,7 +301,7 @@ chmod +x tools/scripts/docker-build tools/scripts/build-canister
 ./tools/scripts/docker-build
 ```
 
-This uses `Dockerfile.repro`, which pins the base image digest, Rust toolchain, and `ic-wasm` version, then runs `tools/scripts/build-canister` inside that controlled environment.
+This uses [`../../Dockerfile.repro`](../../Dockerfile.repro), which pins the base image digest, Rust toolchain, and `ic-wasm` version, then runs [`../../tools/scripts/build-canister`](../../tools/scripts/build-canister) inside that controlled environment.
 
 It produces the canonical release artifacts under `release-artifacts/`, including:
 
