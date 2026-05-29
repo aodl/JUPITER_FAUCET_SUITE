@@ -793,7 +793,7 @@ export function createTrackerController({
         ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Simulator prefill</dt><dd class="pane-detail-value">${simulatorPrefillHtml}</dd></div>`}
       </dl>
       <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
-      ${estimatedCyclesBurnHtml === null ? '' : `<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from the oldest and newest loaded ${escapeHtml(cycleSourceLabel)} samples. Top-ups between samples can affect the estimate.</p>`}
+      ${estimatedCyclesBurnHtml === null ? '' : `<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from loaded ${escapeHtml(cycleSourceLabel)} samples and observed CMC top-ups when a cached ICP/XDR rate is available; otherwise it falls back to downward balance changes.</p>`}
       ${renderTrackerCadenceNote(classifiedData)}
       ${commitmentError}
       ${cyclesStatusNote}

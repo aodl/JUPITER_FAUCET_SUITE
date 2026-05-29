@@ -50,3 +50,60 @@ test('burn estimate falls back to log samples when probe history has fewer than 
   assert.equal(cycleSamplesForBurnEstimate(data)[0].source, 'log');
   assert.equal(estimateCyclesBurnedPerDay(data), 100n);
 });
+
+test('burn estimate accounts for observed top-ups when probe balances grow', () => {
+  const data = {
+    status: {
+      icp_xdr_rate: [{ rate: 5n, decimals: 0n }],
+    },
+    cycles: {
+      items: [
+        {
+          timestamp_nanos: 1n * NANOS_PER_DAY,
+          cycles: 10_000_000_000_000n,
+        },
+        {
+          timestamp_nanos: 3n * NANOS_PER_DAY,
+          cycles: 14_000_000_000_000n,
+        },
+      ],
+    },
+    cmcTransfers: {
+      items: [{
+        timestamp_nanos: [2n * NANOS_PER_DAY],
+        amount_e8s: 100_000_000n,
+      }],
+    },
+    logs: { items: [] },
+  };
+
+  assert.equal(estimateCyclesBurnedPerDay(data), 500_000_000_000n);
+});
+
+test('burn estimate falls back to observed balance drops when top-up conversion is unavailable', () => {
+  const data = {
+    cycles: {
+      items: [
+        {
+          timestamp_nanos: 1n * NANOS_PER_DAY,
+          cycles: 10_000n,
+        },
+        {
+          timestamp_nanos: 2n * NANOS_PER_DAY,
+          cycles: 9_000n,
+        },
+        {
+          timestamp_nanos: 3n * NANOS_PER_DAY,
+          cycles: 15_000n,
+        },
+        {
+          timestamp_nanos: 4n * NANOS_PER_DAY,
+          cycles: 14_000n,
+        },
+      ],
+    },
+    logs: { items: [] },
+  };
+
+  assert.equal(estimateCyclesBurnedPerDay(data), 666n);
+});

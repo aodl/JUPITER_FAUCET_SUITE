@@ -862,7 +862,8 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /cyclesStatus\.kind !== 'error'/);
   assert.match(mainJs, /cyclesStatus\.kind !== 'notAvailable'/);
   assert.match(mainJs, /Estimated observed cycles burned\/day/);
-  assert.match(mainJs, /oldest and newest loaded/);
+  assert.match(mainJs, /observed CMC top-ups when a cached ICP\/XDR rate is available/);
+  assert.match(mainJs, /falls back to downward balance changes/);
   assert.match(mainJs, /renderCyclesProbeInfoNote/);
   assert.match(mainJs, /using canister log cycles/);
   assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(classifiedData\);/);
