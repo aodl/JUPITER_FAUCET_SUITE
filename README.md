@@ -2,6 +2,8 @@
 
 Jupiter Faucet Suite is an Internet Computer canister workspace for the Jupiter Faucet protocol. The repository is organized by domain so contributors can find production canisters, shared crates, tests, tooling, documentation, and vendored code at a glance.
 
+![Jupiter Faucet](canisters/frontend/public/og/preview-20260520.jpg)
+
 ## Repository Layout
 
 - `canisters/` - production IC canisters.
