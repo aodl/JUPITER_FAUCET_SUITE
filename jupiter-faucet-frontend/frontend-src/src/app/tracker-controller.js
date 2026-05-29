@@ -676,6 +676,7 @@ export function createTrackerController({
     const wrapper = document.getElementById('tracker-chart-wrapper');
     if (!wrapper) return;
     const buckets = aggregateTrackerData(data, state.range);
+    const hasObservedCmcTopUps = (fullData?.cmcTransfers?.items || []).length > 0;
     if (buckets.length === 0) {
       const hasOlderLoadedData = state.range !== 'all' && trackerHasAnyDatedItems(fullData);
       const message = state.range === 'all'
@@ -693,14 +694,14 @@ export function createTrackerController({
         </div>
         ${renderTrackerCommitmentsChart(buckets, fullData)}
       </div>
-      <div class="tracker-chart-card">
+      ${hasObservedCmcTopUps ? `<div class="tracker-chart-card">
         <div class="tracker-chart-header">
           <h3>Observed CMC top-ups</h3>
           <span>Transfers to the CMC deposit account in the selected range, colour-coded by source; direct non-Jupiter top-ups may appear.</span>
         </div>
         ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), buckets })}
         ${renderTrackerObservedCmcChart(buckets, fullData)}
-      </div>
+      </div>` : ''}
       <div class="tracker-chart-card">
         <div class="tracker-chart-header">
           <h3>Cycles balance</h3>
@@ -851,7 +852,7 @@ export function createTrackerController({
     }
     const items = data?.candidates?.items || [];
     if (items.length === 0) {
-      return '<p class="pane-status-note tracker-status-note">No possible matching tracked canisters were found. This does not prove the target canister is absent; it may not yet be known to Jupiter Faucet through a direct cycle top-up memo commitment.</p>';
+      return '<p class="pane-status-note tracker-status-note">If the right-hand side of the memo identifies another canister then it is not yet known to Jupiter Faucet through a direct cycle top-up memo commitment. You can track that canister directly by committing 1 ICP with that canister&#39;s full ID in the memo (see <a class="pane-external-link" href="#how-it-works">How it Works</a>).</p>';
     }
     const links = items.map((item) => {
       const canisterText = item.canister_id.toText();
@@ -860,7 +861,7 @@ export function createTrackerController({
     }).join('');
     return `
       <div class="tracker-candidate-section">
-        <h3>Possible matching tracked canisters</h3>
+        <h3>Tracked canisters matching the memo&#39;s &#39;.&#39; suffix</h3>
         <ul>${links}</ul>
         ${data?.candidates?.truncated ? '<p class="pane-status-note tracker-status-note">More possible matches exist than are shown.</p>' : ''}
       </div>`;
@@ -913,7 +914,7 @@ export function createTrackerController({
         <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
         <div><dt>Incoming ICP shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalIcpE8s))}</dd></div>
         <div><dt>Jupiter Faucet inflow shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.faucetTransferCount)} · ${formatIcpE8s(summary.faucetIcpE8s)}`)}</dd></div>
-        ${!hasOutgoingMemo ? '' : `<div><dt>Outgoing memo matched</dt><dd class="pane-detail-value mono">${escapeHtml(parsed.outgoingMemoText)}</dd></div>`}
+        ${!hasOutgoingMemo ? '' : `<div><dt>Outgoing memo</dt><dd class="pane-detail-value mono">${escapeHtml(parsed.outgoingMemoText)}</dd></div>`}
       </dl>
       ${matchingNote}
       ${!isNeuron ? renderCandidateLinks(classified, parsed) : ''}
@@ -979,7 +980,7 @@ export function createTrackerController({
     state.viewMode = parsed.kind;
     state.principalText = parsed.canisterText || '';
     state.protocolCanisterId = parseProtocolCanister(state.protocolCanisterText);
-    replaceLocationHash(parsed.normalizedMemoText);
+    replaceLocationHash(raw);
     setLoading(true);
     setStatus('Loading tracker data…', 'loading');
     if (result) {

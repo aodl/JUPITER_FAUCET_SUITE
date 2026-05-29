@@ -41,6 +41,7 @@ class FakeElement {
     if (selector === '[data-simulator-prefill]' && this.attrs.has('data-simulator-prefill')) return this;
     if (selector === '[data-tracker-range]' && this.attrs.has('data-tracker-range')) return this;
     if (selector === '[data-tracker-principal]' && this.attrs.has('data-tracker-principal')) return this;
+    if (selector === '[data-tracker-memo]' && this.attrs.has('data-tracker-memo')) return this;
     return null;
   }
 
@@ -319,6 +320,70 @@ test('delegated tracker links open the tracker panel and submit linked principal
   });
 });
 
+test('delegated tracker memo links preserve compact dotted memo hashes', async () => {
+  const nodes = trackerNodes();
+  const calls = [];
+  const compactMemo = '22255zqaaaaaaasqf6uqcai.miner';
+  await withFakeTrackerDom(nodes, async ({ nodeMap, documentListeners, historyCalls }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async (request) => {
+        calls.push({
+          canisterId: request.canisterId.toText(),
+          outgoingMemoText: request.outgoingMemoText,
+        });
+        return {
+          status: {},
+          transfers: { items: [] },
+          candidates: { items: [] },
+          errors: {},
+        };
+      },
+    });
+    controller.bindPane();
+    controller.bindLinks();
+    const trigger = new FakeElement({ 'data-tracker-memo': compactMemo });
+
+    documentListeners.get('click')({
+      target: trigger,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+    await flushMicrotasks();
+
+    assert.equal(nodeMap.get('tracker-principal-input').value, compactMemo);
+    assert.deepEqual(calls, [{
+      canisterId: '22255-zqaaa-aaaas-qf6uq-cai',
+      outgoingMemoText: 'miner',
+    }]);
+    assert.deepEqual(historyCalls.map((call) => call.hash), ['#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.miner']);
+  });
+});
+
+test('tracker hides observed CMC top-up card when no top-ups are loaded', async () => {
+  const nodes = trackerNodes();
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => minimalTrackerData(),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    assert.match(html, /ICP commitments/);
+    assert.match(html, /Cycles balance/);
+    assert.doesNotMatch(html, /Observed CMC top-ups/);
+    assert.doesNotMatch(html, /No dated ICP transfers to the canister’s CMC top-up account are available yet/);
+  });
+});
+
 test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
@@ -405,6 +470,52 @@ test('raw ICP tracker legend only includes sources with visible bars', async () 
   });
 });
 
+test('raw ICP tracker renders revised candidate empty and heading copy', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => ({
+        status: {},
+        transfers: { items: [] },
+        candidates: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+
+    const emptyHtml = nodeMap.get('tracker-result').innerHTML;
+    assert.match(emptyHtml, /If the right-hand side of the memo identifies another canister/);
+    assert.match(emptyHtml, /committing 1 ICP with that canister&#39;s full ID in the memo/);
+    assert.match(emptyHtml, /href="#how-it-works"[^>]*>How it Works<\/a>/);
+    assert.doesNotMatch(emptyHtml, /No possible matching tracked canisters/);
+
+    controller.state.data = {
+      status: {},
+      transfers: { items: [] },
+      candidates: {
+        items: [{
+          canister_id: Principal.fromText(canister),
+          total_qualifying_committed_e8s: 100_000_000n,
+        }],
+      },
+      errors: {},
+    };
+    controller.setRange('all');
+
+    const candidateHtml = nodeMap.get('tracker-result').innerHTML;
+    assert.match(candidateHtml, /Tracked canisters matching the memo&#39;s &#39;\.&#39; suffix/);
+    assert.doesNotMatch(candidateHtml, /Possible matching tracked canisters/);
+  });
+});
+
 test('raw ICP tracker treats an empty outgoing memo as present', async () => {
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const compactCanister = canister.replaceAll('-', '');
@@ -442,7 +553,7 @@ test('raw ICP tracker treats an empty outgoing memo as present', async () => {
     assert.match(html, /data-source-segment="faucet-other-memo"/);
     assert.match(html, /Visible Jupiter Faucet transfers matching the outgoing memo: 1 · 5 ICP/);
     assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
-    assert.match(html, /<dt>Outgoing memo matched<\/dt><dd class="pane-detail-value mono"><\/dd>/);
+    assert.match(html, /<dt>Outgoing memo<\/dt><dd class="pane-detail-value mono"><\/dd>/);
     assert.match(html, /Prefix matching is skipped for short outgoing memos/);
     assert.doesNotMatch(html, /data-source-segment="faucet"/);
   });
@@ -492,6 +603,6 @@ test('raw ICP tracker uses generic source segments when outgoing memo is absent'
     assert.doesNotMatch(html, /other memo/);
     assert.doesNotMatch(html, /data-source-segment="faucet-matching-memo"/);
     assert.doesNotMatch(html, /data-source-segment="faucet-other-memo"/);
-    assert.doesNotMatch(html, /Outgoing memo matched/);
+    assert.doesNotMatch(html, /Outgoing memo<\/dt>/);
   });
 });

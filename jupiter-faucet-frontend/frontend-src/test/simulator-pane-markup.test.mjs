@@ -842,7 +842,7 @@ test('metric tracker hash deep links submit once on cold load and panel open', (
   assert.match(mainJs, /trackerController\.hydrateFromLocationHash\(\{ submit: true \}\);/);
   assert.match(mainJs, /submit && lastHashSubmitMemo !== `\$\{memoText\}\|\$\{state\.protocolCanisterText\}`/);
   assert.match(mainJs, /lastHashSubmitMemo = `\$\{memoText\}\|\$\{state\.protocolCanisterText\}`/);
-  assert.match(mainJs, /replaceLocationHash\(parsed\.normalizedMemoText\);/);
+  assert.match(mainJs, /replaceLocationHash\(raw\);/);
   assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*trackerController\.hydrateFromLocationHash\(\{ submit: true \}\)/);
 });
 
