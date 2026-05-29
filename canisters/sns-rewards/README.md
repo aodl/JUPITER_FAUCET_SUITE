@@ -15,7 +15,7 @@ Unless otherwise noted, command examples in this README are run from the reposit
 
 Today this canister is the configured recipient for **95% of the disburser’s age-bonus ICP flow**.
 
-Its main practical role right now is to reserve the production canister principal and its default ledger account so that reward-distribution logic can be added later without changing the live routing destination.
+Its main practical role is to reserve the production canister principal and its default ledger account so that reward-distribution logic can be added later without changing the live routing destination.
 
 ## Current implementation
 

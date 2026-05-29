@@ -166,7 +166,7 @@ On each driver run it:
 2. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
 3. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
 
-Commitment indexing now records a visible durable fault if the historian observes non-monotonic staking-account transaction ids from the index. While the fault is present the dashboard surfaces the degraded state, and later driver ticks retry commitment indexing from the last known-good cursor. Once the upstream index recovers and forward progress resumes cleanly, the fault clears automatically.
+Commitment indexing records a visible durable fault if the historian observes non-monotonic staking-account transaction ids from the index. While the fault is present the dashboard surfaces the degraded state, and later driver ticks retry commitment indexing from the last known-good cursor. Once the upstream index recovers and forward progress resumes cleanly, the fault clears automatically.
 
 The historian logs its own `Cycles: <amount>` line only once per completed sweep sample of **itself**, not on every 10-minute driver tick.
 

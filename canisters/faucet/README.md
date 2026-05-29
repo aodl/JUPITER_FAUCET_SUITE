@@ -97,6 +97,19 @@ The faucet also intentionally does **not** perform an eager canister-existence p
 
 This is an explicit economic trade-off, not an oversight. A committer can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the blackholed value-moving path. The mitigation is the commitment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
 
+### How a participant declares a target
+
+A participant declares a faucet target by sending ICP to the configured staking account and placing a supported ASCII declaration in `icrc1_memo`:
+
+- staking account address (ICRC-1 text): `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
+- primary cycles top-up form: the declared canister ID, for example `aaaaa-aa`
+- raw ICP form: `canister_id.memo`
+- neuron top-up form: decimal NNS neuron ID, optionally `neuron_id.memo`
+
+When using the [NNS dapp](https://nns.ic0.app/wallet/?u=), send to the long-form ICRC-1 staking account address so the text memo path is available. If the memo field is hidden, use the command menu to enable transaction memos before submitting the transfer. The faucet ignores the legacy numeric memo field; neuron IDs are supported only as ASCII text in `icrc1_memo`.
+
+The committer does not need to control the declared canister. Commitments are declarations about the desired beneficiary target, not ownership proofs.
+
 ## Important payout semantics
 
 ### 1) Every new payout job rescans the full history
@@ -122,7 +135,7 @@ So if the same beneficiary appears twice in staking-account history, the faucet 
 
 A payout job still snapshots the payout pot exactly once at job start, but it no longer uses the raw live staking balance as the beneficiary denominator for the completed reward round.
 
-Instead, the faucet now carries forward a **round-start staking snapshot** and builds a **round-effective denominator** for the round that just finished:
+Instead, the faucet carries forward a **round-start staking snapshot** and builds a **round-effective denominator** for the round that just finished:
 
 - stake already present at the start of the round counts at full weight
 - valid in-round commitments are added with a conservative time weight
@@ -152,7 +165,7 @@ A job uses the payout-account balance captured at the beginning of the job. It d
 
 ### 4a) Timing-aware payout fairness
 
-The faucet now explicitly addresses the case where the same additional stake amount arrives at different times within the reward accumulation window. The intended property is:
+The faucet explicitly addresses the case where the same additional stake amount arrives at different times within the reward accumulation window. The intended property is:
 
 - if extra stake is present for the full window, pot growth and denominator growth should track closely, so beneficiary payout should stay roughly unchanged
 - if the same stake arrives late in the window, it should receive only the weight justified by the time it could plausibly have been earning, rather than pinching earlier committers
@@ -166,7 +179,7 @@ Operationally, the mitigation strategy is therefore:
 4. use the same weighted amount for each in-round commitment's numerator and for the round-effective denominator
 5. ignore invalid memo commitments in the weighting adjustment path so adversaries cannot force large numbers of pointless weighting calculations with malformed deposits
 
-The repo now covers this in three layers:
+The repo covers this in three layers:
 
 - `src/logic.rs` unit tests verify the weighting, boundary, production-delay, and payout arithmetic used by the faucet
 - `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, keeps historical stake contributing, and handles the genesis strict tranche with a zero round-start baseline
@@ -362,7 +375,7 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 - `FundingDiscoveryUnreadable`
   - if strict funding-tranche discovery finds a qualifying Disburser-to-Faucet funding transfer without the timestamp needed to define the tranche boundary
 - a persisted `skip_range_invariant_fault` latch
-  - if persisted skip-range replay hints become internally inconsistent; the faucet now records an explicit fail-closed rescue latch instead of trapping so controller reconciliation can react to durable fault state
+  - if persisted skip-range replay hints become internally inconsistent; the faucet records an explicit fail-closed rescue latch instead of trapping so controller reconciliation can react to durable fault state
 
 Strict-tranche accounting fails closed on persistent tranche invariants. If the Faucet discovers a funding tranche that cannot be safely processed, such as a funding amount exceeding the current payout-account balance or a qualifying funding transfer without a timestamp, it latches a forced-rescue reason rather than retrying silently forever. Transient ledger/index/CMC call failures continue to use the existing retry/failure-counter paths and do not immediately trigger forced rescue.
 
@@ -485,7 +498,7 @@ Every upgrade also clears the persisted skip-range cache before the faucet resum
 - the latched forced-rescue reason
 - the related consecutive-failure counters
 
-When `clear_forced_rescue = true` is used while blackhole mode remains armed, the faucet now also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the armed-mode controller policy is the only one the canister reconciles itself toward.
+When `clear_forced_rescue = true` is used while blackhole mode remains armed, the faucet also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the armed-mode controller policy is the only one the canister reconciles itself toward.
 
 ### Current production wiring recorded in this repo
 
