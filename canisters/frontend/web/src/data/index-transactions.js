@@ -31,13 +31,22 @@ function transferOperation(operation) {
 
 function decodeMemoText(memo) {
   if (memo === undefined || memo === null) return null;
+  if (ArrayBuffer.isView(memo)) return decodeMemoText(Array.from(memo));
   if (!Array.isArray(memo)) return null;
   if (memo.length === 0) return '';
+  if (!memo.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) return null;
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(memo));
   } catch {
     return null;
   }
+}
+
+function decodeIcrc1MemoText(memo) {
+  if (memo === undefined || memo === null) return null;
+  if (!Array.isArray(memo)) return decodeMemoText(memo);
+  if (memo.length === 0) return null;
+  return decodeMemoText(memo[0]);
 }
 
 function routeTransferFromIndexTransaction(tx, expectedFromAccountIdentifier, expectedToAccountIdentifier) {
@@ -188,7 +197,7 @@ function incomingIcpTransferFromIndexTransaction(tx, expectedToAccountIdentifier
   const amount = tokenE8s(transfer.amount);
   if (amount === null || tx?.id === undefined || tx?.id === null) return null;
 
-  const icrc1MemoText = decodeMemoText(tx?.transaction?.icrc1_memo);
+  const icrc1MemoText = decodeIcrc1MemoText(tx?.transaction?.icrc1_memo);
   return {
     tx_id: tx.id,
     timestamp_nanos: routeTransferTimestampOpt(tx.transaction),

@@ -28,9 +28,9 @@ test('loadIncomingIcpTransfersFromIndex filters incoming transfers and marks sou
     async get_account_identifier_transactions(args) {
       assert.equal(args.account_identifier, to);
       return { Ok: { transactions: [
-        transferTx(3, { from: source, to, memo: [109, 101, 109, 111] }),
-        transferTx(2, { from: other, to: 'c'.repeat(64), memo: [109, 101, 109, 111] }),
-        transferTx(1, { from: other, to, memo: [0xff] }),
+        transferTx(3, { from: source, to, memo: [Uint8Array.from([109, 101, 109, 111])] }),
+        transferTx(2, { from: other, to: 'c'.repeat(64), memo: [[109, 101, 109, 111]] }),
+        transferTx(1, { from: other, to, memo: [[0xff]] }),
       ] } };
     },
   };
@@ -56,9 +56,9 @@ test('loadIncomingIcpTransfersFromIndex distinguishes missing, empty, matching, 
     async get_account_identifier_transactions() {
       return { Ok: { transactions: [
         transferTx(5, { from: source, to }),
-        transferTx(4, { from: source, to, memo: [] }),
-        transferTx(3, { from: source, to, memo: [109, 101, 109, 111] }),
-        transferTx(2, { from: source, to, memo: [0xff] }),
+        transferTx(4, { from: source, to, memo: [[]] }),
+        transferTx(3, { from: source, to, memo: [[109, 101, 109, 111]] }),
+        transferTx(2, { from: source, to, memo: [[0xff]] }),
       ] } };
     },
   };
@@ -79,4 +79,29 @@ test('loadIncomingIcpTransfersFromIndex distinguishes missing, empty, matching, 
     memoText: 'memo',
   });
   assert.deepEqual(memoResult.items.map((item) => item.is_matching_memo), [false, false, true, false]);
+});
+
+test('loadIncomingIcpTransfersFromIndex decodes Candid optional Uint8Array memos for tracker matching', async () => {
+  const account = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const to = accountIdentifierHex(account);
+  const source = 'a'.repeat(64);
+  const index = {
+    async get_account_identifier_transactions() {
+      return { Ok: { transactions: [
+        transferTx(3, { from: source, to, memo: [Uint8Array.from([74, 117, 112, 105, 116, 101, 114])] }),
+        transferTx(2, { from: source, to, memo: [Uint8Array.from([116, 101, 115, 116])] }),
+        transferTx(1, { from: source, to, memo: [[0xff]] }),
+      ] } };
+    },
+  };
+
+  const result = await loadIncomingIcpTransfersFromIndex({
+    index,
+    account,
+    sourceAccountIdentifiers: [source],
+    memoText: 'Jupiter',
+  });
+
+  assert.deepEqual(result.items.map((item) => item.icrc1_memo_text), ['Jupiter', 'test', null]);
+  assert.deepEqual(result.items.map((item) => item.is_matching_memo), [true, false, false]);
 });
