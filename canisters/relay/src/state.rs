@@ -185,6 +185,12 @@ pub(crate) enum PendingTransferKind {
         account: Account,
         memo: Option<Vec<u8>>,
     },
+    FaucetCommitment {
+        neuron_id: u64,
+        account: Account,
+        from_subaccount: [u8; 32],
+        memo: Vec<u8>,
+    },
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -221,6 +227,13 @@ pub(crate) struct ActiveRelayJob {
     pub summary: RelaySummary,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingFaucetCommitmentTransfer {
+    pub transfer: PendingTransfer,
+    pub fee_e8s: u64,
+    pub balance_start_e8s: u64,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub(crate) struct State {
     pub config: Config,
@@ -230,6 +243,7 @@ pub(crate) struct State {
     pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
     pub conversion_estimate: Option<ConversionEstimate>,
     pub active_job: Option<ActiveRelayJob>,
+    pub active_faucet_commitment_transfer: Option<PendingFaucetCommitmentTransfer>,
     pub last_summary: Option<RelaySummary>,
     pub next_job_id: u64,
 }
@@ -244,6 +258,7 @@ impl State {
             relay_minted_cycles_since_sample: BTreeMap::new(),
             conversion_estimate: None,
             active_job: None,
+            active_faucet_commitment_transfer: None,
             last_summary: None,
             next_job_id: 1,
         }
@@ -363,6 +378,37 @@ pub(crate) fn relay_surplus_transfer_log_line(plan: &SurplusTransferSample) -> S
         plan.memo_len
             .map(|len| len.to_string())
             .unwrap_or_else(|| "null".to_string()),
+    )
+}
+
+pub(crate) fn relay_faucet_commitment_log_line(
+    source: Account,
+    destination: Account,
+    balance_start_e8s: u64,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo_len: u32,
+    skipped_reason: Option<&str>,
+) -> String {
+    format!(
+        "RELAY_FAUCET_COMMITMENT source_owner={} source_subaccount={} destination_owner={} destination_subaccount={} balance_start_e8s={} amount_e8s={} fee_e8s={} memo_len={} skipped_reason={}",
+        source.owner.to_text(),
+        source
+            .subaccount
+            .as_ref()
+            .map(|subaccount| hex_bytes(subaccount))
+            .unwrap_or_else(|| "null".to_string()),
+        destination.owner.to_text(),
+        destination
+            .subaccount
+            .as_ref()
+            .map(|subaccount| hex_bytes(subaccount))
+            .unwrap_or_else(|| "null".to_string()),
+        balance_start_e8s,
+        amount_e8s,
+        fee_e8s,
+        memo_len,
+        opt_text(skipped_reason),
     )
 }
 
@@ -520,6 +566,25 @@ pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
 mod tests {
     use super::*;
 
+    #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+    struct OldStateWithoutFaucetCommitment {
+        pub config: Config,
+        pub last_main_run_ts: u64,
+        pub main_lock_state_ts: Option<u64>,
+        pub last_completed_cycles: BTreeMap<Principal, CyclesSnapshot>,
+        pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
+        pub conversion_estimate: Option<ConversionEstimate>,
+        pub active_job: Option<ActiveRelayJob>,
+        pub last_summary: Option<RelaySummary>,
+        pub next_job_id: u64,
+    }
+
+    #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+    enum OldVersionedStableStateWithoutFaucetCommitment {
+        Uninitialized,
+        V1(OldStateWithoutFaucetCommitment),
+    }
+
     fn reset_test_storage() {
         with_stable_cell(|cell| {
             cell.set(VersionedStableState::Uninitialized)
@@ -547,7 +612,7 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
-            main_interval_seconds: 604_800,
+            main_interval_seconds: 86_400,
             max_transfers_per_tick: Some(10),
             surplus_recipients: Vec::new(),
         }
@@ -567,7 +632,7 @@ mod tests {
         assert!(line.contains("cmc_canister_id=rkp4c-7iaaa-aaaaa-aaaca-cai"));
         assert!(line.contains("governance_canister_id=rrkah-fqaaa-aaaaa-aaaaq-cai"));
         assert!(line.contains("blackhole_canister_id=77deu-baaaa-aaaar-qb6za-cai"));
-        assert!(line.contains("main_interval_seconds=604800"));
+        assert!(line.contains("main_interval_seconds=86400"));
         assert!(line.contains("max_transfers_per_tick=10"));
         assert!(line.contains("surplus_recipient_count=0"));
         assert!(line.contains("surplus_recipients=none"));
@@ -652,6 +717,39 @@ mod tests {
     }
 
     #[test]
+    fn relay_faucet_commitment_log_line_omits_raw_memo_and_includes_skip_reason() {
+        let source = Account {
+            owner: principal("u2qkp-aqaaa-aaaar-qb7ea-cai"),
+            subaccount: Some(crate::logic::relay_subaccount_one()),
+        };
+        let destination = Account {
+            owner: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+            subaccount: Some([7u8; 32]),
+        };
+
+        let line = relay_faucet_commitment_log_line(
+            source,
+            destination,
+            100_010_000,
+            100_000_000,
+            10_000,
+            29,
+            Some("subaccount_1_below_1_icp_net"),
+        );
+
+        assert!(line.starts_with("RELAY_FAUCET_COMMITMENT "));
+        assert!(line.contains("source_owner=u2qkp-aqaaa-aaaar-qb7ea-cai"));
+        assert!(line.contains(
+            "source_subaccount=0000000000000000000000000000000000000000000000000000000000000001"
+        ));
+        assert!(line.contains("destination_owner=rrkah-fqaaa-aaaaa-aaaaq-cai"));
+        assert!(line.contains("amount_e8s=100000000"));
+        assert!(line.contains("memo_len=29"));
+        assert!(line.contains("skipped_reason=subaccount_1_below_1_icp_net"));
+        assert!(!line.contains("u2qkpaqaaaaaaarqb7eacai.Relay"));
+    }
+
+    #[test]
     fn current_relay_state_roundtrip_restores_current_shape() {
         reset_test_storage();
         let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
@@ -695,5 +793,32 @@ mod tests {
             restored.last_completed_cycles.get(&canister_id).map(|sample| sample.timestamp_nanos),
             Some(123_000_000_000)
         );
+    }
+
+    #[test]
+    fn previous_stable_state_shape_decodes_with_no_active_faucet_commitment() {
+        let old = OldStateWithoutFaucetCommitment {
+            config: base_config(),
+            last_main_run_ts: 9_900,
+            main_lock_state_ts: Some(0),
+            last_completed_cycles: BTreeMap::new(),
+            relay_minted_cycles_since_sample: BTreeMap::new(),
+            conversion_estimate: None,
+            active_job: None,
+            last_summary: None,
+            next_job_id: 12,
+        };
+        let bytes = candid::encode_one(OldVersionedStableStateWithoutFaucetCommitment::V1(old))
+            .expect("old relay stable state should encode");
+
+        let decoded: VersionedStableState =
+            candid::decode_one(&bytes).expect("current relay stable state should decode old shape");
+        let VersionedStableState::V1(decoded_state) = decoded else {
+            panic!("expected relay V1 state");
+        };
+
+        assert_eq!(decoded_state.next_job_id, 12);
+        assert!(decoded_state.active_job.is_none());
+        assert!(decoded_state.active_faucet_commitment_transfer.is_none());
     }
 }

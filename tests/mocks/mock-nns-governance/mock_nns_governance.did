@@ -79,8 +79,8 @@ service : {
   debug_reset : () -> ();
   debug_set_in_flight : (bool) -> ();
   debug_set_aging_since : (nat64) -> ();
+  debug_set_claim_or_refresh_fails : (bool) -> ();
   debug_get_manage_calls : () -> (nat64) query;
   debug_get_refresh_calls : () -> (nat64) query;
   debug_get_claim_or_refresh_calls : () -> (nat64) query;
 }
-

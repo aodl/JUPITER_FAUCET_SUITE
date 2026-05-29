@@ -294,6 +294,21 @@ impl RelayEnv {
         Ok(())
     }
 
+    fn credit_relay_subaccount_one(&self, amount_e8s: u64) -> Result<()> {
+        let relay_account = Account {
+            owner: self.relay,
+            subaccount: Some(relay_subaccount_one()),
+        };
+        let _: () = update_bytes(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_credit",
+            encode_args((relay_account, amount_e8s))?,
+        )?;
+        Ok(())
+    }
+
     fn add_relay_cycles(&self, cycles: u128) {
         self.pic.add_cycles(self.relay, cycles);
     }
@@ -356,6 +371,20 @@ impl RelayEnv {
         Ok(nat_to_u64(&balance))
     }
 
+    fn relay_subaccount_one_balance(&self) -> Result<u64> {
+        let balance: Nat = query_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "icrc1_balance_of",
+            Account {
+                owner: self.relay,
+                subaccount: Some(relay_subaccount_one()),
+            },
+        )?;
+        Ok(nat_to_u64(&balance))
+    }
+
     fn notifications(&self) -> Result<Vec<NotifyRecord>> {
         query_one(
             &self.pic,
@@ -363,6 +392,26 @@ impl RelayEnv {
             Principal::anonymous(),
             "debug_notifications",
             (),
+        )
+    }
+
+    fn claim_or_refresh_calls(&self) -> Result<u64> {
+        query_one(
+            &self.pic,
+            self.governance,
+            Principal::anonymous(),
+            "debug_get_claim_or_refresh_calls",
+            (),
+        )
+    }
+
+    fn set_claim_or_refresh_fails(&self, value: bool) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.governance,
+            Principal::anonymous(),
+            "debug_set_claim_or_refresh_fails",
+            value,
         )
     }
 
@@ -441,6 +490,178 @@ fn neuron_subaccount(neuron_id: u64) -> [u8; 32] {
     let mut account = [0u8; 32];
     account[24..].copy_from_slice(&neuron_id.to_be_bytes());
     account
+}
+
+fn relay_subaccount_one() -> [u8; 32] {
+    let mut subaccount = [0u8; 32];
+    subaccount[31] = 1;
+    subaccount
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<()> {
+    require_ignored_flag()?;
+    let jupiter_faucet_neuron = 11_614_578_985_374_291_210_u64;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay_subaccount_one(100_010_000)?;
+
+    let summary = env.tick_relay()?;
+    if summary.ledger_transfer_count != 0 || summary.cmc_notify_success_count != 0 {
+        bail!("expected default-account job to avoid ledger work, got {summary:?}");
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected no CMC notification for subaccount-1 forwarding");
+    }
+
+    let transfers = env.transfers()?;
+    if transfers.len() != 1 {
+        bail!("expected exactly one subaccount-1 transfer, got {transfers:?}");
+    }
+    let transfer = &transfers[0];
+    if transfer.from
+        != (Account {
+            owner: env.relay,
+            subaccount: Some(relay_subaccount_one()),
+        })
+    {
+        bail!("expected transfer source to be Relay subaccount 1, got {transfer:?}");
+    }
+    if transfer.to
+        != (Account {
+            owner: env.governance,
+            subaccount: Some(neuron_subaccount(jupiter_faucet_neuron)),
+        })
+    {
+        bail!("expected transfer destination to be Jupiter Faucet neuron staking account, got {transfer:?}");
+    }
+    if nat_to_u64(&transfer.amount) != 100_000_000 || nat_to_u64(&transfer.fee) != 10_000 {
+        bail!("expected transfer to send balance minus fee, got {transfer:?}");
+    }
+    let expected_memo = format!("{}.Relay", env.relay.to_text().replace('-', "")).into_bytes();
+    if transfer.memo.as_deref() != Some(expected_memo.as_slice()) {
+        bail!("expected compact Relay Faucet memo, got {transfer:?}");
+    }
+    if env.claim_or_refresh_calls()? != 1 {
+        bail!("expected one Jupiter Faucet neuron claim_or_refresh call");
+    }
+    if env.relay_balance()? != 0 || env.relay_subaccount_one_balance()? != 0 {
+        bail!(
+            "expected default and subaccount-1 balances to be zero after transfer, default={} sub1={}",
+            env.relay_balance()?,
+            env.relay_subaccount_one_balance()?
+        );
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_FAUCET_COMMITMENT ")
+        || !logs.contains("amount_e8s=100000000")
+        || !logs.contains("memo_len=")
+        || logs.contains(&String::from_utf8(expected_memo).unwrap())
+    {
+        bail!("expected faucet commitment log without raw memo bytes, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_commitment_waits_until_one_icp_net() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay_subaccount_one(100_009_999)?;
+
+    let summary = env.tick_relay()?;
+    if summary.ledger_transfer_count != 0 || !env.transfers()?.is_empty() {
+        bail!("expected no transfer below 1 ICP net threshold, got {summary:?}");
+    }
+    if env.relay_subaccount_one_balance()? != 100_009_999 {
+        bail!(
+            "expected subaccount-1 balance to remain accumulated, got {}",
+            env.relay_subaccount_one_balance()?
+        );
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_FAUCET_COMMITMENT ")
+        || !logs.contains("skipped_reason=subaccount_1_below_1_icp_net")
+    {
+        bail!("expected below-threshold subaccount-1 skip log, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_commitment_treats_ledger_duplicate_as_accepted() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay_subaccount_one(100_010_000)?;
+    env.set_ledger_error_script(vec![DebugNextTransferError::Duplicate { duplicate_of: 77 }])?;
+
+    let summary = env.tick_relay()?;
+    if summary.ledger_transfer_count != 0 || summary.cmc_notify_success_count != 0 {
+        bail!("expected default-account job to stay idle, got {summary:?}");
+    }
+    if env.claim_or_refresh_calls()? != 1 {
+        bail!("expected duplicate response to be accepted and followed by claim_or_refresh");
+    }
+    if !env.transfers()?.is_empty() {
+        bail!("mock duplicate response should not create a second ledger transfer record");
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_FAUCET_COMMITMENT ")
+        || !logs.contains("amount_e8s=100000000")
+        || !logs.contains("skipped_reason=null")
+    {
+        bail!("expected accepted duplicate faucet commitment log, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay_subaccount_one(100_010_000)?;
+    env.set_claim_or_refresh_fails(true)?;
+
+    let summary = env.tick_relay()?;
+    if summary.ledger_transfer_count != 0 || summary.cmc_notify_success_count != 0 {
+        bail!("expected default-account job to stay idle, got {summary:?}");
+    }
+    let transfers = env.transfers()?;
+    if transfers.len() != 1 {
+        bail!("expected exactly one ledger transfer despite refresh failure, got {transfers:?}");
+    }
+
+    let _ = env.tick_relay()?;
+    let transfers_after = env.transfers()?;
+    if transfers_after.len() != 1 {
+        bail!("expected no duplicate transfer on later tick after refresh failure, got {transfers_after:?}");
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("RELAY_FAUCET_COMMITMENT ")
+        || !logs.contains("skipped_reason=null")
+        || !logs.contains("faucet commitment neuron refresh failed")
+    {
+        bail!("expected accepted transfer and logged follow-up refresh failure, got {logs}");
+    }
+    let summary_pos = logs
+        .find("RELAY_SUMMARY ")
+        .context("expected allocation-job summary log")?;
+    let refresh_failure_pos = logs
+        .find("faucet commitment neuron refresh failed")
+        .context("expected scheduled refresh failure log")?;
+    if refresh_failure_pos < summary_pos {
+        bail!(
+            "expected faucet commitment refresh failure to be logged after allocation-job summary, got {logs}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

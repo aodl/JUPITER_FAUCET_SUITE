@@ -4,7 +4,10 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, Transfer
 
 use crate::clients::{ClientError, CmcClient, LedgerClient};
 use crate::logic;
-use crate::state::{self, PendingTransfer, PendingTransferKind, PendingTransferPhase};
+use crate::state::{
+    self, PendingFaucetCommitmentTransfer, PendingTransfer, PendingTransferKind,
+    PendingTransferPhase,
+};
 
 const LEDGER_CREATED_AT_VALID_WINDOW_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 
@@ -64,6 +67,7 @@ fn block_index_to_u64(block: &BlockIndex) -> Option<u64> {
 }
 
 fn transfer_arg(
+    from_subaccount: Option<[u8; 32]>,
     to: Account,
     amount_e8s: u64,
     fee_e8s: u64,
@@ -71,7 +75,7 @@ fn transfer_arg(
     memo_bytes: Vec<u8>,
 ) -> TransferArg {
     TransferArg {
-        from_subaccount: None,
+        from_subaccount,
         to,
         fee: Some(Nat::from(fee_e8s)),
         created_at_time: Some(created_at_time_nanos),
@@ -86,6 +90,16 @@ fn destination_for_pending(cmc_id: Principal, pending: &PendingTransfer) -> Acco
             logic::cmc_deposit_account(cmc_id, *canister_id)
         }
         PendingTransferKind::SurplusIcp { account, .. } => *account,
+        PendingTransferKind::FaucetCommitment { account, .. } => *account,
+    }
+}
+
+fn from_subaccount_for_pending(pending: &PendingTransfer) -> Option<[u8; 32]> {
+    match &pending.kind {
+        PendingTransferKind::CmcTopUp { .. } | PendingTransferKind::SurplusIcp { .. } => None,
+        PendingTransferKind::FaucetCommitment {
+            from_subaccount, ..
+        } => Some(*from_subaccount),
     }
 }
 
@@ -95,6 +109,7 @@ fn memo_for_pending(pending: &PendingTransfer) -> Vec<u8> {
             logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec()
         }
         PendingTransferKind::SurplusIcp { memo, .. } => memo.clone().unwrap_or_default(),
+        PendingTransferKind::FaucetCommitment { memo, .. } => memo.clone(),
     }
 }
 
@@ -162,6 +177,7 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
             let destination = destination_for_pending(cmc_id, &staged);
             let memo = memo_for_pending(&staged);
             let first_arg = transfer_arg(
+                from_subaccount_for_pending(&staged),
                 destination,
                 staged.amount_e8s,
                 state::with_state(|st| st.active_job.as_ref().unwrap().fee_e8s),
@@ -169,6 +185,7 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                 memo.clone(),
             );
             let second_arg = transfer_arg(
+                from_subaccount_for_pending(&staged),
                 destination,
                 staged.amount_e8s,
                 state::with_state(|st| st.active_job.as_ref().unwrap().fee_e8s),
@@ -280,6 +297,90 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
     }
 }
 
+pub(super) async fn drive_pending_faucet_commitment_transfer<L: LedgerClient>(
+    ledger: &L,
+    now_nanos: u64,
+) -> bool {
+    let Some(staged) = state::with_state(|st| st.active_faucet_commitment_transfer.clone()) else {
+        return true;
+    };
+
+    let accepted = match staged.transfer.phase {
+        PendingTransferPhase::AwaitingTransfer => {
+            if !created_at_time_is_valid(staged.transfer.created_at_time_nanos, now_nanos) {
+                mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
+                return true;
+            }
+            let destination =
+                destination_for_pending(Principal::management_canister(), &staged.transfer);
+            let memo = memo_for_pending(&staged.transfer);
+            let first_arg = transfer_arg(
+                from_subaccount_for_pending(&staged.transfer),
+                destination,
+                staged.transfer.amount_e8s,
+                staged.fee_e8s,
+                staged.transfer.created_at_time_nanos,
+                memo.clone(),
+            );
+            let second_arg = transfer_arg(
+                from_subaccount_for_pending(&staged.transfer),
+                destination,
+                staged.transfer.amount_e8s,
+                staged.fee_e8s,
+                staged.transfer.created_at_time_nanos,
+                memo,
+            );
+            let block_index = match transfer_once(ledger, first_arg).await {
+                TransferAttemptOutcome::Accepted(v) => v,
+                TransferAttemptOutcome::ImmediateRetryable => {
+                    match transfer_once(ledger, second_arg).await {
+                        TransferAttemptOutcome::Accepted(v) => v,
+                        TransferAttemptOutcome::ImmediateRetryable
+                        | TransferAttemptOutcome::Failed => {
+                            mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
+                            return true;
+                        }
+                    }
+                }
+                TransferAttemptOutcome::Failed => {
+                    mark_faucet_commitment_failed("subaccount_1_transfer_failed");
+                    return true;
+                }
+            };
+            match debug_successful_transfer_injection() {
+                DebugSuccessfulTransferInjection::None => {}
+                DebugSuccessfulTransferInjection::Abort => return false,
+                DebugSuccessfulTransferInjection::Trap => {
+                    ic_cdk::trap("debug trap after successful relay transfer")
+                }
+            }
+            mark_faucet_commitment_ledger_accepted(block_index);
+            state::with_state(|st| st.active_faucet_commitment_transfer.clone().unwrap())
+        }
+        PendingTransferPhase::TransferAccepted { .. } => staged,
+    };
+
+    let neuron_id = match &accepted.transfer.kind {
+        PendingTransferKind::FaucetCommitment { neuron_id, .. } => *neuron_id,
+        _ => return true,
+    };
+    mark_faucet_commitment_completed();
+    ic_cdk_timers::set_timer(std::time::Duration::from_secs(0), async move {
+        let governance_id = state::with_state(|st| st.config.governance_canister_id);
+        let governance = crate::clients::governance::NnsGovernanceCanister::new(governance_id);
+        if let Err(err) =
+            crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id).await
+        {
+            ic_cdk::println!(
+                "relay: faucet commitment neuron refresh failed neuron_id={} error={}",
+                neuron_id,
+                err
+            );
+        }
+    });
+    true
+}
+
 fn mark_pending_ledger_accepted(block_index: u64) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
@@ -295,6 +396,59 @@ fn mark_pending_ledger_accepted(block_index: u64) {
                 job.summary.ledger_fees_e8s =
                     job.summary.ledger_fees_e8s.saturating_add(job.fee_e8s);
             }
+        }
+    });
+}
+
+fn log_faucet_commitment(transfer: &PendingFaucetCommitmentTransfer, skipped_reason: Option<&str>) {
+    let source = Account {
+        owner: ic_cdk::api::canister_self(),
+        subaccount: from_subaccount_for_pending(&transfer.transfer),
+    };
+    let destination = destination_for_pending(Principal::management_canister(), &transfer.transfer);
+    let memo_len = memo_for_pending(&transfer.transfer).len() as u32;
+    ic_cdk::println!(
+        "{}",
+        state::relay_faucet_commitment_log_line(
+            source,
+            destination,
+            transfer.balance_start_e8s,
+            transfer.transfer.amount_e8s,
+            transfer.fee_e8s,
+            memo_len,
+            skipped_reason,
+        )
+    );
+}
+
+fn mark_faucet_commitment_ledger_accepted(block_index: u64) {
+    state::with_state_mut(|st| {
+        if let Some(active) = st.active_faucet_commitment_transfer.as_mut() {
+            active.transfer.phase = PendingTransferPhase::TransferAccepted { block_index };
+        }
+    });
+}
+
+fn mark_faucet_commitment_completed() {
+    state::with_state_mut(|st| {
+        if let Some(active) = st.active_faucet_commitment_transfer.take() {
+            log_faucet_commitment(&active, None);
+        }
+    });
+}
+
+fn mark_faucet_commitment_failed(reason: &'static str) {
+    state::with_state_mut(|st| {
+        if let Some(active) = st.active_faucet_commitment_transfer.take() {
+            log_faucet_commitment(&active, Some(reason));
+        }
+    });
+}
+
+fn mark_faucet_commitment_ambiguous(reason: &'static str) {
+    state::with_state_mut(|st| {
+        if let Some(active) = st.active_faucet_commitment_transfer.take() {
+            log_faucet_commitment(&active, Some(reason));
         }
     });
 }

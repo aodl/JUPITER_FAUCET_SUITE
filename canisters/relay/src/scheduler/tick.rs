@@ -13,10 +13,11 @@ use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::probe_cycles;
 use crate::scheduler::guards::MainGuard;
 use crate::scheduler::logging::{log_cycles_and_config, log_error, log_info, log_summary};
-use crate::scheduler::transfer::drive_pending_transfer;
+use crate::scheduler::transfer::{drive_pending_faucet_commitment_transfer, drive_pending_transfer};
 use crate::state::{
-    self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingTransfer,
-    PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary, SurplusTarget,
+    self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingFaucetCommitmentTransfer,
+    PendingTransfer, PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary,
+    SurplusTarget,
 };
 use jupiter_ic_clients::xrc::XrcCanister;
 
@@ -35,8 +36,10 @@ pub(crate) fn install_timers() {
 }
 
 pub(crate) fn schedule_immediate_resume_if_needed() {
-    let has_active_job = state::with_state(|st| st.active_job.is_some());
-    if has_active_job {
+    let has_pending_work = state::with_state(|st| {
+        st.active_job.is_some() || st.active_faucet_commitment_transfer.is_some()
+    });
+    if has_pending_work {
         ic_cdk_timers::set_timer(Duration::from_secs(1), async {
             main_tick(true).await;
         });
@@ -102,6 +105,11 @@ pub(crate) async fn run_main_tick_with_clients<
     }
 
     log_cycles_and_config();
+    if !resume_or_start_faucet_commitment(now_nanos, ledger, governance).await {
+        log_error("relay tick stopped after debug faucet commitment transfer injection");
+        guard.finish(now_secs);
+        return;
+    }
     if !resume_or_start_job(now_nanos, ledger, cmc, governance, blackhole, xrc).await {
         log_error("relay tick stopped after debug transfer injection");
         guard.finish(now_secs);
@@ -128,6 +136,186 @@ async fn resume_or_start_job<
         start_job(now_nanos, ledger, blackhole, xrc).await;
     }
     drive_active_job(now_nanos, ledger, cmc, governance).await
+}
+
+async fn resume_or_start_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
+    now_nanos: u64,
+    ledger: &L,
+    governance: &G,
+) -> bool {
+    if state::with_state(|st| st.active_faucet_commitment_transfer.is_none()) {
+        plan_faucet_commitment(now_nanos, ledger, governance).await;
+    }
+    drive_pending_faucet_commitment_transfer(ledger, now_nanos).await
+}
+
+async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
+    now_nanos: u64,
+    ledger: &L,
+    governance: &G,
+) {
+    let cfg = state::with_state(|st| st.config.clone());
+    let self_id = ic_cdk::api::canister_self();
+    let source = logic::relay_subaccount_one_account(self_id);
+    let fee = match ledger.fee_e8s().await {
+        Ok(v) => v,
+        Err(err) => {
+            log_error(&format!("subaccount 1 fee read failed: {err}"));
+            log_faucet_commitment_skip(
+                source,
+                Account {
+                    owner: cfg.governance_canister_id,
+                    subaccount: None,
+                },
+                0,
+                0,
+                0,
+                0,
+                "subaccount_1_fee_read_failed",
+            );
+            return;
+        }
+    };
+    let balance = match ledger.balance_of_e8s(source).await {
+        Ok(v) => v,
+        Err(err) => {
+            log_error(&format!("subaccount 1 balance read failed: {err}"));
+            log_faucet_commitment_skip(
+                source,
+                Account {
+                    owner: cfg.governance_canister_id,
+                    subaccount: None,
+                },
+                0,
+                0,
+                fee,
+                0,
+                "subaccount_1_balance_read_failed",
+            );
+            return;
+        }
+    };
+
+    let probe_subaccount = [0u8; 32];
+    let threshold_probe = logic::build_faucet_commitment_plan(
+        self_id,
+        cfg.governance_canister_id,
+        probe_subaccount,
+        balance,
+        fee,
+    );
+    if let Err(reason) = threshold_probe {
+        log_faucet_commitment_skip(
+            source,
+            Account {
+                owner: cfg.governance_canister_id,
+                subaccount: None,
+            },
+            balance,
+            0,
+            fee,
+            logic::relay_faucet_commitment_memo(self_id)
+                .map(|memo| memo.len() as u32)
+                .unwrap_or(0),
+            reason,
+        );
+        return;
+    }
+
+    let staking_subaccount = match governance
+        .neuron_staking_subaccount(logic::JUPITER_FAUCET_NEURON_ID)
+        .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            log_error(&format!(
+                "subaccount 1 Jupiter Faucet neuron resolution failed: {err}"
+            ));
+            log_faucet_commitment_skip(
+                source,
+                Account {
+                    owner: cfg.governance_canister_id,
+                    subaccount: None,
+                },
+                balance,
+                0,
+                fee,
+                logic::relay_faucet_commitment_memo(self_id)
+                    .map(|memo| memo.len() as u32)
+                    .unwrap_or(0),
+                "subaccount_1_neuron_resolution_failed",
+            );
+            return;
+        }
+    };
+    let plan = match logic::build_faucet_commitment_plan(
+        self_id,
+        cfg.governance_canister_id,
+        staking_subaccount,
+        balance,
+        fee,
+    ) {
+        Ok(plan) => plan,
+        Err(reason) => {
+            log_faucet_commitment_skip(
+                source,
+                Account {
+                    owner: cfg.governance_canister_id,
+                    subaccount: Some(staking_subaccount),
+                },
+                balance,
+                0,
+                fee,
+                logic::relay_faucet_commitment_memo(self_id)
+                    .map(|memo| memo.len() as u32)
+                    .unwrap_or(0),
+                reason,
+            );
+            return;
+        }
+    };
+
+    state::with_state_mut(|st| {
+        st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
+            transfer: PendingTransfer {
+                kind: PendingTransferKind::FaucetCommitment {
+                    neuron_id: logic::JUPITER_FAUCET_NEURON_ID,
+                    account: plan.destination_account,
+                    from_subaccount: logic::relay_subaccount_one(),
+                    memo: plan.memo,
+                },
+                gross_share_e8s: plan.balance_start_e8s,
+                amount_e8s: plan.amount_e8s,
+                created_at_time_nanos: now_nanos,
+                phase: PendingTransferPhase::AwaitingTransfer,
+            },
+            fee_e8s: plan.fee_e8s,
+            balance_start_e8s: plan.balance_start_e8s,
+        });
+    });
+}
+
+fn log_faucet_commitment_skip(
+    source: Account,
+    destination: Account,
+    balance_start_e8s: u64,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo_len: u32,
+    reason: &'static str,
+) {
+    ic_cdk::println!(
+        "{}",
+        state::relay_faucet_commitment_log_line(
+            source,
+            destination,
+            balance_start_e8s,
+            amount_e8s,
+            fee_e8s,
+            memo_len,
+            Some(reason),
+        )
+    );
 }
 
 async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(

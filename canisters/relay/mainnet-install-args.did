@@ -15,7 +15,7 @@
     governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
     blackhole_canister_id = opt principal "77deu-baaaa-aaaar-qb6za-cai";
 
-    main_interval_seconds = opt (604800 : nat64);
+    main_interval_seconds = opt (86400 : nat64);
     max_transfers_per_tick = opt (10 : nat32);
 
     surplus_canister_recipients = null;

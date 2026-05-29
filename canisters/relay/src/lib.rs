@@ -296,7 +296,7 @@ fn init(args: InitArgs) {
             .unwrap_or_else(mainnet_blackhole_id),
         main_interval_seconds: args
             .main_interval_seconds
-            .unwrap_or(7 * 24 * 60 * 60)
+            .unwrap_or(24 * 60 * 60)
             .max(60),
         max_transfers_per_tick: args.max_transfers_per_tick,
         surplus_recipients: public_surplus_recipients_from_args(

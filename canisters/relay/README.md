@@ -1,12 +1,14 @@
 # Jupiter Relay
 
-`jupiter-relay` is an ICP-funded cycles allocator and optional surplus router for the Jupiter Faucet Suite. Jupiter Faucet uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and allocates ICP based on recent burn. When raw ICP surplus recipients are configured, top-ups are capped at 1% more than recent burn and remaining production surplus ICP is split equally across those recipients. When no raw ICP surplus recipients are configured, Relay routes ICP as cycles through CMC using burn-weighted allocations once the all-cycles batch is fee-efficient for every positive-burn managed canister.
+`jupiter-relay` is an ICP-funded cycles allocator and optional surplus router for the Jupiter Faucet Suite. Jupiter Faucet uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and allocates ICP based on recent burn. When raw ICP surplus recipients are configured, top-ups are capped at 1% more than recent burn and remaining production surplus ICP is split equally across those recipients. When no raw ICP surplus recipients are configured, Relay routes ICP as cycles through CMC using burn-weighted allocations once the all-cycles batch is fee-efficient for every positive-burn managed canister. Relay also checks its own subaccount 1 on each main tick and forwards qualifying Jupiter Faucet commitments from that subaccount independently of the default-account allocation job.
 
 It spends ICP from the relay canister default ICP ledger account:
 
 ```text
 Account { owner = <relay_canister_id>, subaccount = null }
 ```
+
+This default account remains the only source for managed-canister CMC top-ups and configured surplus transfers.
 
 Fund it through the existing faucet raw-ICP memo route with:
 
@@ -44,6 +46,14 @@ u2qkp-aqaaa-aaaar-qb7ea-cai.
 ```
 
 Start with a small funding amount, observe one baseline tick and one allocation tick, and only then increase funding.
+
+Relay subaccount 1 is reserved for direct Jupiter Faucet commitment forwarding. The subaccount is exactly 32 bytes, with 31 zero bytes followed by `0x01`. On each main tick, Relay checks:
+
+```text
+Account { owner = <relay_canister_id>, subaccount = opt blob "\00...\01" }
+```
+
+If that account holds more than the current ledger fee and the net transferable amount is at least 1 ICP, Relay transfers `balance - fee` to the Jupiter Faucet neuron staking account under NNS Governance. The destination neuron is `11614578985374291210`, resolved through NNS Governance `list_neurons`. The production transfer memo is derived from the Relay principal as compact text plus `.Relay`; for `u2qkp-aqaaa-aaaar-qb7ea-cai`, it is `u2qkpaqaaaaaaarqb7eacai.Relay`. Balances below `1 ICP + fee` remain in subaccount 1 for a future tick.
 
 ## Managed Canisters
 
@@ -84,14 +94,15 @@ CONFIG relay_canister_id=...
 RELAY_SUMMARY mode=<BaselineOnly|TopUpThenSurplus|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> total_burn_cycles=<nat> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32> conversion_cycles_per_e8=<nat-or-null> surplus_e8s_before_fees=<nat64> skipped_surplus_reason=<escaped-text-or-null>
 RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> relay_minted_cycles=<nat> burn_cycles=<nat> target_topup_cycles=<nat> planned_topup_e8s=<nat64> actual_topup_e8s=<nat64> actual_minted_cycles=<nat> skipped_reason=<escaped-text-or-null>
 RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null> memo_len=<nat32-or-null>
+RELAY_FAUCET_COMMITMENT source_owner=<principal> source_subaccount=<hex> destination_owner=<principal> destination_subaccount=<hex-or-null> balance_start_e8s=<nat64> amount_e8s=<nat64> fee_e8s=<nat64> memo_len=<nat32> skipped_reason=<escaped-text-or-null>
 RELAY_PROBE_FAILURE canister_id=<principal> error=<escaped-text>
 ```
 
-`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, the mode-specific top-up target, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes.
+`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, the mode-specific top-up target, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_FAUCET_COMMITMENT` logs show subaccount-1 forwarding attempts and skips without printing raw memo bytes. Skip reasons include `subaccount_1_no_funds`, `subaccount_1_below_1_icp_net`, `subaccount_1_fee_read_failed`, `subaccount_1_balance_read_failed`, `subaccount_1_neuron_resolution_failed`, `subaccount_1_memo_invalid`, `subaccount_1_transfer_ambiguous`, and `subaccount_1_transfer_failed`.
 
 ## Tick Behavior
 
-The default main interval is seven days and timer intervals are clamped to at least 60 seconds. After upgrade, an active job schedules an immediate forced resume.
+The default main interval is one day and timer intervals are clamped to at least 60 seconds. After upgrade, an active job schedules an immediate forced resume.
 
 The first successful complete probe is baseline-only. It stores current cycles and does not spend ICP. Later ticks compare the previous completed sample, relay-minted cycles since that sample, and the current probe:
 
@@ -101,7 +112,7 @@ estimated_burn_cycles = max(previous_cycles + relay_minted_cycles_since_previous
 
 Relay-minted cycles come from successful CMC `notify_top_up` responses. This prevents relay top-ups from hiding real burn when a canister's net cycles balance increases.
 
-`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the relay starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped.
+`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the default-account allocation job starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped. Subaccount-1 Jupiter Faucet commitment forwarding is a separate operation with its own at-most-one-transfer-per-run behavior so it can proceed even when the default account has no funds, is degraded, or is blocked by allocation-job state.
 
 ## Upgrade Args
 
@@ -208,6 +219,8 @@ Example upgrade args to set the production surplus recipients:
 ## Retry Safety
 
 Each pending transfer stores a stable `created_at_time` and memo. Immediate ledger retries reuse the same identity, and ledger `Duplicate` is treated as an accepted transfer using the duplicate block index. Once a ledger transfer is accepted, CMC `Processing` and transport-like notify failures are retried once inline. Repeated uncertainty is recorded as ambiguous rather than blindly retried with a changed transfer identity.
+
+Subaccount-1 Jupiter Faucet commitment forwarding uses the same stable transfer identity and ledger duplicate handling. After a ledger-accepted transfer to the Jupiter Faucet neuron staking account, Relay marks the transfer complete and schedules NNS Governance `claim_or_refresh_neuron` on a zero-delay timer; a refresh failure is logged as a follow-up failure and does not roll back or duplicate the accepted ledger transfer.
 
 ## Operational Warning
 

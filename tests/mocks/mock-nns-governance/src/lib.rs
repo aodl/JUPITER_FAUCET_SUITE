@@ -14,6 +14,7 @@ struct GovState {
     manage_calls: u64,
     refresh_calls: u64,
     claim_or_refresh_calls: u64,
+    claim_or_refresh_fails: bool,
 }
 
 thread_local! {
@@ -106,11 +107,18 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
             ))
         }
         Some(ManageNeuronCommandRequest::ClaimOrRefresh(_)) => {
-            Some(manage_neuron_response::Command::ClaimOrRefresh(
-                manage_neuron_response::ClaimOrRefreshResponse {
-                    refreshed_neuron_id,
-                },
-            ))
+            if ST.with(|s| s.borrow().claim_or_refresh_fails) {
+                Some(manage_neuron_response::Command::Error(GovernanceError {
+                    error_message: "injected claim_or_refresh failure".to_string(),
+                    error_type: -2,
+                }))
+            } else {
+                Some(manage_neuron_response::Command::ClaimOrRefresh(
+                    manage_neuron_response::ClaimOrRefreshResponse {
+                        refreshed_neuron_id,
+                    },
+                ))
+            }
         }
         _ => Some(manage_neuron_response::Command::Error(GovernanceError {
             error_message: "unsupported".to_string(),
@@ -158,6 +166,11 @@ fn debug_set_in_flight(v: bool) {
 #[ic_cdk::update]
 fn debug_set_aging_since(ts: u64) {
     ST.with(|s| s.borrow_mut().aging_since = ts);
+}
+
+#[ic_cdk::update]
+fn debug_set_claim_or_refresh_fails(v: bool) {
+    ST.with(|s| s.borrow_mut().claim_or_refresh_fails = v);
 }
 
 #[ic_cdk::query]

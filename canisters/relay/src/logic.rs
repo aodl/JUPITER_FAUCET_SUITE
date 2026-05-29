@@ -13,6 +13,7 @@ pub(crate) const TOPUP_HEADROOM_NUMERATOR: u128 = 101;
 pub(crate) const TOPUP_HEADROOM_DENOMINATOR: u128 = 100;
 pub(crate) const CONVERSION_ESTIMATE_MAX_AGE_NANOS: u64 = 14 * 24 * 60 * 60 * 1_000_000_000;
 pub(crate) const MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S: u64 = 100_000_000;
+pub(crate) const JUPITER_FAUCET_NEURON_ID: u64 = 11_614_578_985_374_291_210;
 pub(crate) const ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD: &str =
     "all_cycles_batch_below_fee_efficient_threshold";
 const BOOTSTRAP_CYCLES_PER_E8: u128 = 100_000;
@@ -45,6 +46,16 @@ pub(crate) struct AllocationPlan {
     pub skipped_surplus_reason: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FaucetCommitmentPlan {
+    pub source_account: Account,
+    pub destination_account: Account,
+    pub balance_start_e8s: u64,
+    pub fee_e8s: u64,
+    pub amount_e8s: u64,
+    pub memo: Vec<u8>,
+}
+
 pub(crate) fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     let bytes = principal.as_slice();
     let mut out = [0u8; 32];
@@ -66,6 +77,63 @@ pub(crate) fn default_account(self_id: Principal) -> Account {
         owner: self_id,
         subaccount: None,
     }
+}
+
+pub(crate) fn relay_subaccount_one() -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[31] = 1;
+    out
+}
+
+pub(crate) fn relay_subaccount_one_account(self_id: Principal) -> Account {
+    Account {
+        owner: self_id,
+        subaccount: Some(relay_subaccount_one()),
+    }
+}
+
+pub(crate) fn relay_faucet_commitment_memo(self_id: Principal) -> Result<Vec<u8>, String> {
+    let memo = format!("{}.Relay", self_id.to_text().replace('-', ""));
+    if !memo.is_ascii() {
+        return Err("relay faucet commitment memo must be ASCII".to_string());
+    }
+    if memo.len() > 32 {
+        return Err(format!(
+            "relay faucet commitment memo is {} bytes; maximum is 32",
+            memo.len()
+        ));
+    }
+    Ok(memo.into_bytes())
+}
+
+pub(crate) fn build_faucet_commitment_plan(
+    relay_id: Principal,
+    governance_id: Principal,
+    staking_subaccount: [u8; 32],
+    balance_start_e8s: u64,
+    fee_e8s: u64,
+) -> Result<FaucetCommitmentPlan, &'static str> {
+    if balance_start_e8s == 0 {
+        return Err("subaccount_1_no_funds");
+    }
+    if balance_start_e8s <= fee_e8s {
+        return Err("subaccount_1_below_1_icp_net");
+    }
+    let amount_e8s = balance_start_e8s - fee_e8s;
+    if amount_e8s < MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S {
+        return Err("subaccount_1_below_1_icp_net");
+    }
+    Ok(FaucetCommitmentPlan {
+        source_account: relay_subaccount_one_account(relay_id),
+        destination_account: Account {
+            owner: governance_id,
+            subaccount: Some(staking_subaccount),
+        },
+        balance_start_e8s,
+        fee_e8s,
+        amount_e8s,
+        memo: relay_faucet_commitment_memo(relay_id).map_err(|_| "subaccount_1_memo_invalid")?,
+    })
 }
 
 pub(crate) fn compute_burn(previous: u128, relay_minted_cycles: u128, current: u128) -> u128 {
@@ -617,6 +685,93 @@ mod tests {
         let sub = principal_to_subaccount(p);
         assert_eq!(sub[0] as usize, p.as_slice().len());
         assert_eq!(&sub[1..1 + p.as_slice().len()], p.as_slice());
+    }
+
+    #[test]
+    fn relay_subaccount_one_is_31_zero_bytes_plus_one() {
+        let subaccount = relay_subaccount_one();
+        assert_eq!(&subaccount[..31], [0u8; 31].as_slice());
+        assert_eq!(subaccount[31], 1);
+    }
+
+    #[test]
+    fn relay_faucet_commitment_memo_uses_compact_self_principal() {
+        let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        let memo = relay_faucet_commitment_memo(relay).unwrap();
+
+        assert_eq!(memo, b"u2qkpaqaaaaaaarqb7eacai.Relay");
+        assert!(memo.is_ascii());
+        assert_eq!(memo.len(), 29);
+        assert!(memo.len() <= 32);
+    }
+
+    #[test]
+    fn subaccount_1_plan_skips_zero_balance() {
+        let err =
+            build_faucet_commitment_plan(canister_a(), canister_b(), [7u8; 32], 0, 10).unwrap_err();
+
+        assert_eq!(err, "subaccount_1_no_funds");
+    }
+
+    #[test]
+    fn subaccount_1_plan_skips_when_net_below_one_icp() {
+        let err = build_faucet_commitment_plan(
+            canister_a(),
+            canister_b(),
+            [7u8; 32],
+            MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S + 10 - 1,
+            10,
+        )
+        .unwrap_err();
+
+        assert_eq!(err, "subaccount_1_below_1_icp_net");
+    }
+
+    #[test]
+    fn subaccount_1_plan_allows_exactly_one_icp_net() {
+        let plan = build_faucet_commitment_plan(
+            canister_a(),
+            canister_b(),
+            [7u8; 32],
+            MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S + 10,
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(plan.amount_e8s, MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S);
+        assert_eq!(plan.fee_e8s, 10);
+        assert_eq!(
+            plan.balance_start_e8s,
+            MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S + 10
+        );
+        assert_eq!(
+            plan.source_account,
+            Account {
+                owner: canister_a(),
+                subaccount: Some(relay_subaccount_one()),
+            }
+        );
+        assert_eq!(
+            plan.destination_account,
+            Account {
+                owner: canister_b(),
+                subaccount: Some([7u8; 32]),
+            }
+        );
+    }
+
+    #[test]
+    fn subaccount_1_plan_sends_balance_minus_fee_when_above_threshold() {
+        let plan = build_faucet_commitment_plan(
+            canister_a(),
+            canister_b(),
+            [7u8; 32],
+            250_000_000,
+            10_000,
+        )
+        .unwrap();
+
+        assert_eq!(plan.amount_e8s, 249_990_000);
     }
 
     #[test]
