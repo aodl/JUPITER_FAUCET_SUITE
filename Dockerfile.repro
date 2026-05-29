@@ -41,8 +41,8 @@ RUN cargo install ic-wasm --version 0.9.7 --locked --root /opt/ic-wasm
 
 WORKDIR /build
 COPY . /build
-RUN chmod +x /build/scripts/build-canister
-RUN /build/scripts/build-canister
+RUN chmod +x /build/tools/scripts/build-canister
+RUN /build/tools/scripts/build-canister
 
 FROM scratch AS artifact
 COPY --from=builder /build/release-artifacts/ /release-artifacts/

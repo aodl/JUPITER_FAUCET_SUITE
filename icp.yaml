@@ -4,49 +4,49 @@ canisters:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-disburser
+            - ./tools/scripts/build-canister jupiter-disburser
             - cp release-artifacts/jupiter_disburser.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: jupiter_lifeline
     build:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-lifeline
+            - ./tools/scripts/build-canister jupiter-lifeline
             - cp release-artifacts/jupiter_lifeline.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: jupiter_faucet
     build:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-faucet
+            - ./tools/scripts/build-canister jupiter-faucet
             - cp release-artifacts/jupiter_faucet.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: jupiter_sns_rewards
     build:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-sns-rewards
+            - ./tools/scripts/build-canister jupiter-sns-rewards
             - cp release-artifacts/jupiter_sns_rewards.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: jupiter_faucet_frontend
     build:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-faucet-frontend
+            - ./tools/scripts/build-canister jupiter-faucet-frontend
             - cp release-artifacts/jupiter_faucet_frontend.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: jupiter_historian
     build:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-historian
+            - ./tools/scripts/build-canister jupiter-historian
             - cp release-artifacts/jupiter_historian.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: jupiter_relay
     build:
       steps:
         - type: script
           commands:
-            - ./scripts/build-canister jupiter-relay
+            - ./tools/scripts/build-canister jupiter-relay
             - cp release-artifacts/jupiter_relay.wasm "$ICP_WASM_OUTPUT_PATH"
   - name: mock_icrc_ledger
     build:

@@ -1,0 +1,306 @@
+# xtask
+
+`xtask` is the preferred entry point for local orchestration and test execution in this repository.
+
+It wraps four different layers of validation:
+
+- fast Rust unit tests
+- browser/data-loader frontend unit tests
+- local `icp-cli` integration scenarios against debug canisters and mocks
+- PocketIC integration / end-to-end suites
+
+Using `xtask` keeps the command surface stable and avoids having to remember which mocks, features, identities, and ignored tests need to be wired together manually.
+
+The long-running PocketIC suites are intentionally marked `#[ignore]` so a plain `cargo test` stays fast during inner-loop development. Repository entry points such as `cargo run -p xtask -- test_all` explicitly invoke those ignored suites, so the annotation is deliberate rather than an oversight.
+
+## Frontend coverage in `xtask`
+
+`xtask` now includes the checked-in frontend Node tests as a first-class component:
+
+```bash
+cargo run -p xtask -- frontend_setup
+cargo run -p xtask -- frontend_unit
+cargo run -p xtask -- frontend_local_integration
+cargo run -p xtask -- frontend_all
+```
+
+The frontend `xtask` commands auto-install or refresh repo-root Node dependencies when they are missing or stale, and `frontend_setup` lets you do that preflight explicitly.
+
+The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every `frontend-src/test/*.test.mjs` file):
+
+```bash
+npm run setup:frontend
+npm run test:frontend-unit
+npm run test:frontend-dashboard-local
+```
+
+## Prerequisites
+
+Commonly useful tools for `xtask` workflows are:
+
+- Rust / Cargo
+- `icp`
+- `didc` for local integration calls; `xtask` encodes canister call arguments against the target DID and submits them as hex
+- Node.js / npm for frontend unit tests and local frontend scripts
+- `make` and `nix-build` for historian and suite-level PocketIC paths that build the vendored real blackhole canister reproducibly
+
+## What `setup` does
+
+```bash
+cargo run -p xtask -- setup
+```
+
+`setup` prepares the local `icp` environment by:
+
+- creating a dedicated non-interactive identity named `xtask-dev` if needed
+- starting the local replica
+- deploying the mock canisters used by the integration scenarios:
+  - `mock_icrc_ledger`
+  - `mock_nns_governance`
+  - `mock_icp_index`
+  - `mock_cmc`
+  - `mock_blackhole`
+  - `mock_sns_wasm`
+  - `mock_sns_root`
+- deploying the debug builds of:
+  - `jupiter_disburser_dbg`
+  - `jupiter_faucet_dbg`
+  - `jupiter_historian_dbg`
+- wiring those debug canisters to the local mocks with the expected init args
+- adding each debug canister as a controller of itself so local controller-transition tests can run cleanly
+
+The deployed debug canisters intentionally use long timer intervals in most local scenarios so tests can drive the runtime explicitly through debug methods instead of waiting for ambient timers.
+
+In normal use you usually do **not** need to call `setup` directly because the scoped `icp` commands do it automatically.
+
+## What `teardown` does
+
+```bash
+cargo run -p xtask -- teardown
+```
+
+`teardown` stops the local `icp` environment created for xtask-driven scenarios.
+
+## Command matrix
+
+### Utility commands
+
+```bash
+cargo run -p xtask -- setup
+cargo run -p xtask -- teardown
+cargo run -p xtask -- frontend_setup
+```
+
+### Disburser commands
+
+```bash
+cargo run -p xtask -- disburser_unit
+cargo run -p xtask -- disburser_local_integration
+cargo run -p xtask -- disburser_pocketic_integration
+cargo run -p xtask -- disburser_all
+```
+
+### Faucet commands
+
+```bash
+cargo run -p xtask -- faucet_unit
+cargo run -p xtask -- faucet_local_integration
+cargo run -p xtask -- faucet_pocketic_integration
+cargo run -p xtask -- faucet_all
+```
+
+### Historian commands
+
+```bash
+cargo run -p xtask -- historian_unit
+cargo run -p xtask -- historian_local_integration
+cargo run -p xtask -- historian_pocketic_integration
+cargo run -p xtask -- historian_all
+```
+
+### Relay commands
+
+```bash
+cargo run -p xtask -- relay_unit
+cargo run -p xtask -- relay_local_integration
+cargo run -p xtask -- relay_pocketic_integration
+cargo run -p xtask -- relay_all
+```
+
+### End-to-end commands
+
+```bash
+cargo run -p xtask -- e2e_pocketic_integration
+cargo run -p xtask -- e2e_all
+```
+
+There is intentionally **no** `e2e_local_integration` command.
+
+### Whole-suite commands
+
+```bash
+cargo run -p xtask -- test_unit
+cargo run -p xtask -- test_local_integration
+cargo run -p xtask -- test_pocketic_integration
+cargo run -p xtask -- test_all
+```
+
+## What each layer means
+
+### `*_unit`
+
+Runs the regular Rust unit tests for the relevant crate(s).
+
+Use this when iterating on pure logic and state transitions.
+
+### `*_local_integration`
+
+Runs scenario-based integration checks against the local `icp-cli` managed replica using the mock canisters declared in `icp.yaml`.
+
+These scenarios are especially useful for validating:
+
+- install-time configuration wiring
+- local debug endpoints
+- ledger / governance / index / CMC interactions through mocks
+- controller-change behavior against a local management canister
+
+Examples currently covered include:
+
+- disburser in-flight disbursement no-op behavior
+- disburser bonus split math and payout-plan rebuild on `BadFee`
+- faucet full-history replay on each new payout job
+- faucet notify retry without duplicate transfer
+- faucet rescue invariants before first success and after broken / healthy controller transitions
+- historian indexing, protocol output/rewards tracking, SNS discovery, and frontend-facing public-read-model behavior
+- relay install/config wiring, cycle probes, CMC top-ups, and surplus-routing safety
+
+### `*_pocketic_integration`
+
+Runs the heavier PocketIC suites.
+
+These exercise real canister execution more deeply and are where the repo currently validates many of its strongest behavioral guarantees.
+
+PocketIC-backed suites use the workspace `pocket-ic` crate version. The harness requires a local PocketIC server `13.0.0` binary before starting the Rust tests. Developers and CI may set `POCKET_IC_BIN=/absolute/path/to/pocket-ic` to force a specific compatible PocketIC server binary; otherwise xtask looks in the user-local `icp-cli` network-launcher package cache and exports the matching binary for the child test process.
+
+PocketIC server and Rust client versions must be compatible. If you set `POCKET_IC_BIN`, ensure it points to an executable binary whose `--version` output is exactly `pocket-ic-server 13.0.0`.
+
+The heavier suites live under `tests/pocketic/`:
+
+- `jupiter_disburser_integration.rs`
+- `jupiter_faucet_integration.rs`
+- `jupiter_historian_integration.rs`
+- `jupiter_relay_integration.rs`
+- `e2e.rs`
+
+The mock canisters used by the local-`icp-cli` scenarios live under `tests/mocks/`.
+
+Examples covered by the current PocketIC suites include:
+
+- disburser upgrade mid-flight preserving state
+- duplicate-proof transfer completion after partial execution
+- blackhole timer-only progression
+- blackhole / rescue-controller round-trips
+- age-bonus behavior at multiple neuron ages
+- faucet retry persistence across upgrades
+- bounded faucet state footprint under repeated replays
+- forced rescue latching for index-anchor, latest-tx invariant, and zero-success CMC runs
+- historian public-read-model assertions for:
+  - `get_public_counts`
+  - `get_public_status`
+  - `list_registered_canister_summaries`
+  - `list_recent_commitments`
+
+### PocketIC maturity and reward caveats
+
+Several PocketIC tests in this repo compare round-to-round maturity and payout behavior. A few nuances matter enough that they are easy to forget:
+
+- **Constant stake does not imply constant payout.** A beneficiary payout depends on the round pot as well as the denominator. Even if stake is unchanged, the round pot can drift because the reward environment is not a perfectly flat APY stream in these synthetic tests.
+- **Round-to-round maturity can vary for real reasons.** The reward pool, total voting power, proposal settlement timing, reward rollover when no proposals settle, and proposal mix / weights can all change the maturity earned in a given synthetic round.
+- **PocketIC background state matters.** Preconfigured NNS / genesis neurons can make the total voting-power environment noisy. The existing whale-background tests create a very large anonymous whale neuron specifically to dominate that background and make comparisons more stable.
+- **Seed the whale directly with the computed target amount.** The helper now computes the intended stabilization stake up front from the anonymous balance and reserve logic, then claims the whale directly at that amount. The tests still log and assert the whale's final cached stake so the runtime amount is explicit in `--nocapture` output.
+- **Warm up and drain first.** Helpers such as `ensure_maturity_ge_1_icp(...)` intentionally leave the neuron with accumulated maturity. Any round-to-round economics comparison should drain that backlog before establishing a baseline.
+- **Prefer timing-isolated comparisons.** For the current faucet mitigation, the sharpest protocol-level check is that a very late valid top-up raises the live stake but does not reduce the existing beneficiary's payout in that affected round because the faucet now weights in-round stake conservatively instead of trusting the raw live denominator.
+- **Whales reduce noise, not signal.** A large whale neuron helps stabilize network-wide voting-power effects, but it should not remove the actual economic effect under test, such as a denominator step from a late top-up.
+- **The faucet mitigation is now timing-aware.** The live faucet code no longer relies only on the raw live staking balance at payout time. It carries a round-start snapshot forward, clamps the current round by tx id, and applies a conservative recognition delay before weighting valid in-round commitments into the effective denominator. The delay is faucet-side accounting only and does not change NNS maturity accrual, maturity spawning, or disburser timing. Short-delay PocketIC tests prove the mechanism quickly; production-policy coverage must also exercise the 7-day `604800` second delay.
+
+The funding cursor and staking-history scan are separate in these tests: the funding cursor selects consumed payout-account funding tranches, while staking-account history remains replayable so older commitments continue contributing according to the recognition-delay and round-weighting rules. Deployments that introduce new tranche semantics should ensure cursor/config alignment before opening multi-user participation.
+
+The PocketIC tests named around `faucet_late_valid_top_up_*`, `faucet_baseline_round_accounting_*`, `faucet_warmup_drain_*`, and `age_bonus_baseline_matches_age0_with_whale_background` are the main reference points for these caveats.
+
+### `e2e_pocketic_integration`
+
+Runs the suite-level PocketIC end-to-end tests across the disburser and faucet together.
+
+The current E2E coverage includes:
+
+- disburser paying faucet and faucet topping up a declared canister
+- repeated disburser payouts feeding faucet full-history replay
+- a real-ICP PocketIC diagnostic probe for the CMC top-up flow that logs the exact deposit account, memo bytes, ledger transfer block, and raw `notify_top_up` result for comparison against a manual top-up flow
+- retry safety across the disburser → faucet → CMC boundary
+- faucet upgrade during retry-state recovery
+
+To run just the diagnostic probe and print the transfer / notify details:
+
+```bash
+cargo test -p xtask --test e2e probe_real_cmc_topup_flow_diagnostics -- --ignored --exact --nocapture
+```
+
+## Reproducible blackhole requirement in historian / E2E suites
+
+Historian and E2E PocketIC coverage build the vendored `vendor/ic-blackhole` source through its pinned reproducible build path:
+
+```bash
+cd vendor/ic-blackhole
+make repro-build
+```
+
+So those commands require `make` and `nix-build` to be available.
+
+If you want to exercise the reproducibility / hash check directly, the historian PocketIC suite runs the ignored real-blackhole verification test via:
+
+```bash
+cargo test -p jupiter-historian --test jupiter_historian_integration -- --ignored --nocapture
+```
+
+## Recommended usage
+
+### Fast pre-commit pass
+
+```bash
+cargo run -p xtask -- test_unit
+cargo run -p xtask -- test_local_integration
+```
+
+### Strong local confidence pass
+
+```bash
+cargo run -p xtask -- test_all
+```
+
+### When working on only one component
+
+```bash
+cargo run -p xtask -- disburser_all
+cargo run -p xtask -- faucet_all
+cargo run -p xtask -- historian_all
+```
+
+## Relationship to raw `cargo test`
+
+You can still run crate-level tests directly, for example:
+
+```bash
+cargo test -p jupiter-disburser --lib
+cargo test -p jupiter-faucet --lib
+cargo test -p jupiter-historian --lib
+```
+
+But once you need mocks, debug canisters, local replica setup, or the ignored PocketIC suites, `xtask` is the intended abstraction.
+
+## Related docs
+
+- suite overview: [`../../README.md`](../../README.md)
+- disburser details: [`../../canisters/disburser/README.md`](../../canisters/disburser/README.md)
+- faucet details: [`../../canisters/faucet/README.md`](../../canisters/faucet/README.md)
+- historian details: [`../../canisters/historian/README.md`](../../canisters/historian/README.md)
+- frontend details: [`../../canisters/frontend/README.md`](../../canisters/frontend/README.md)

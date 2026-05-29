@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+cd "$REPO_ROOT"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required to verify reproducible release artifacts" >&2
+  exit 1
+fi
+
+workdir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$workdir"
+}
+trap cleanup EXIT
+
+docker build --no-cache --file Dockerfile.repro --target artifact --output "type=local,dest=$workdir/run-a" .
+
+docker build --no-cache --file Dockerfile.repro --target artifact --output "type=local,dest=$workdir/run-b" .
+
+(
+  cd "$workdir/run-a"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) > "$workdir/run-a.sha256"
+(
+  cd "$workdir/run-b"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) > "$workdir/run-b.sha256"
+
+if ! diff -u "$workdir/run-a.sha256" "$workdir/run-b.sha256"; then
+  echo "release artifacts are not reproducible" >&2
+  exit 1
+fi
+
+echo "release artifacts are reproducible"

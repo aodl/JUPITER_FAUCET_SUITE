@@ -3,14 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:frontend": "node jupiter-faucet-frontend/frontend-src/build-frontend.mjs",
+    "build:frontend": "node canisters/frontend/web/build-frontend.mjs",
     "setup:frontend": "npm ci --no-fund --no-audit --silent",
-    "test:frontend-dashboard": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.test.mjs",
-    "test:frontend-neuron": "node --test jupiter-faucet-frontend/frontend-src/test/neuron-details-controller.test.mjs",
-    "test:frontend-unit": "node --test jupiter-faucet-frontend/frontend-src/test/*.test.mjs",
-    "test:frontend-dashboard-local": "node --test jupiter-faucet-frontend/frontend-src/test/dashboard-data.local-replica.test.mjs",
-    "lint:frontend-exports": "node scripts/check-frontend-exports.mjs",
-    "verify:reproducible-artifacts": "bash ./scripts/verify-reproducible-artifacts"
+    "test:frontend-dashboard": "node --test canisters/frontend/web/test/dashboard-data.test.mjs",
+    "test:frontend-neuron": "node --test canisters/frontend/web/test/neuron-details-controller.test.mjs",
+    "test:frontend-unit": "node --test canisters/frontend/web/test/*.test.mjs",
+    "test:frontend-dashboard-local": "node --test canisters/frontend/web/test/dashboard-data.local-replica.test.mjs",
+    "lint:frontend-exports": "node tools/scripts/check-frontend-exports.mjs",
+    "verify:reproducible-artifacts": "bash ./tools/scripts/verify-reproducible-artifacts"
   },
   "dependencies": {
     "@icp-sdk/core": "5.0.0",

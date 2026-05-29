@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+cd "$REPO_ROOT"
+
+export TZ=UTC
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --pretty=%ct)}"
+else
+  export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1700000000}"
+fi
+
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${REPO_ROOT}=/build"
+
+mkdir -p release-artifacts
+
+emit_build_info() {
+  python3 - <<'PY' > release-artifacts/build-info.json
+from pathlib import Path
+import hashlib
+import json
+import os
+import subprocess
+
+
+def sha256(path: str) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def version(cmd):
+    return subprocess.check_output(cmd, text=True).strip()
+
+info = {
+    "source_date_epoch": os.environ.get("SOURCE_DATE_EPOCH"),
+    "toolchain": {
+        "rustc": version(["rustc", "-V"]),
+        "cargo": version(["cargo", "-V"]),
+        "node": version(["node", "-v"]),
+        "npm": version(["npm", "-v"]),
+        "ic-wasm": version(["ic-wasm", "--version"]),
+    },
+    "inputs": {
+        "Cargo.lock": sha256("Cargo.lock"),
+        "package-lock.json": sha256("package-lock.json"),
+        "rust-toolchain.toml": sha256("rust-toolchain.toml"),
+        ".icp/data/mappings/ic.ids.json": sha256(".icp/data/mappings/ic.ids.json"),
+        "tools/scripts/build-canister": sha256("tools/scripts/build-canister"),
+        "package.json": sha256("package.json"),
+    },
+}
+print(json.dumps(info, sort_keys=True, indent=2))
+PY
+}
+
+FRONTEND_ASSET_TOKEN="__ASSET_VERSION__"
+FRONTEND_BUNDLE_TOKEN="__APP_BUNDLE_PATH__"
+FRONTEND_BUNDLE_MANIFEST="canisters/frontend/public/generated/frontend-bundle.json"
+FRONTEND_RENDER_TMP=""
+declare -a FRONTEND_RENDERED_FILES=()
+
+ensure_frontend_node_modules() {
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to build the frontend bundle" >&2
+    exit 1
+  fi
+
+  if [[ ! -f package-lock.json ]]; then
+    echo "package-lock.json is required for reproducible frontend builds" >&2
+    exit 1
+  fi
+
+  local needs_install=0
+  if [[ ! -d node_modules ]]; then
+    needs_install=1
+  elif ! npm ls --depth=0 @icp-sdk/core @noble/hashes esbuild >/dev/null 2>&1; then
+    needs_install=1
+  fi
+
+  if [[ "$needs_install" -eq 1 ]]; then
+    npm ci --no-fund --no-audit
+  fi
+}
+
+build_frontend_bundle() {
+  ensure_frontend_node_modules
+  npm run build:frontend
+}
+
+compute_asset_version() {
+  if [[ -n "${ASSET_VERSION:-}" ]]; then
+    printf '%s\n' "$ASSET_VERSION"
+    return
+  fi
+
+  python3 - <<'PY'
+from pathlib import Path
+import hashlib
+
+# This is a single frontend-wide cache-busting token, not a per-file hash.
+# We intentionally version all static asset URLs together so any relevant
+# frontend/build input change forces clients onto a coherent asset set.
+# The generated JS bundle is additionally content-addressed by filename.
+# Note: test and build-script changes are included on purpose as part of
+# this coarse-grained invalidation strategy.
+roots = [
+    Path('canisters/frontend/public'),
+    Path('canisters/frontend/public/generated'),
+    Path('canisters/frontend/web/src'),
+    Path('canisters/frontend/web/test'),
+    Path('canisters/frontend/web/build-frontend.mjs'),
+    Path('tools/scripts/build-canister'),
+]
+
+h = hashlib.sha256()
+for root in roots:
+    if not root.exists():
+        continue
+    paths = sorted(root.rglob('*')) if root.is_dir() else [root]
+    for path in paths:
+        if not path.is_file():
+            continue
+        rel = path.as_posix().encode('utf-8')
+        h.update(rel)
+        h.update(b'\0')
+        h.update(path.read_bytes())
+        h.update(b'\0')
+
+print(f"frontend-{h.hexdigest()[:12]}")
+PY
+}
+
+render_frontend_assets() {
+  local asset_version bundle_path
+  asset_version="$(compute_asset_version)"
+
+  if [[ ! -f "$FRONTEND_BUNDLE_MANIFEST" ]]; then
+    echo "missing frontend bundle manifest: $FRONTEND_BUNDLE_MANIFEST" >&2
+    exit 1
+  fi
+
+  bundle_path="$(python3 - <<'PY'
+from pathlib import Path
+import json
+manifest = json.loads(Path('canisters/frontend/public/generated/frontend-bundle.json').read_text())
+print(manifest['bundlePath'])
+PY
+)"
+
+  echo "Using jupiter-faucet-frontend asset version: ${asset_version}"
+  echo "Using jupiter-faucet-frontend bundle path: ${bundle_path}"
+
+  FRONTEND_RENDER_TMP="$(mktemp -d)"
+  mapfile -t FRONTEND_RENDERED_FILES < <(python3 - <<'PY'
+from pathlib import Path
+
+tokens = ["__ASSET_VERSION__", "__APP_BUNDLE_PATH__"]
+for path in sorted(Path("canisters/frontend/public").rglob("*")):
+    if not path.is_file():
+        continue
+    try:
+        text = path.read_text()
+    except UnicodeDecodeError:
+        continue
+    if any(token in text for token in tokens):
+        print(path.as_posix())
+PY
+)
+
+  local file backup_path backup_dir
+  for file in "${FRONTEND_RENDERED_FILES[@]}"; do
+    backup_path="${FRONTEND_RENDER_TMP}/${file}"
+    backup_dir="$(dirname "$backup_path")"
+    mkdir -p "$backup_dir"
+    cp "$file" "$backup_path"
+    python3 - "$file" "$FRONTEND_ASSET_TOKEN" "$asset_version" "$FRONTEND_BUNDLE_TOKEN" "$bundle_path" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+asset_token = sys.argv[2]
+asset_value = sys.argv[3]
+bundle_token = sys.argv[4]
+bundle_value = sys.argv[5]
+text = path.read_text()
+text = text.replace(asset_token, asset_value).replace(bundle_token, bundle_value)
+path.write_text(text)
+PY
+  done
+}
+
+restore_frontend_assets() {
+  if [[ -n "$FRONTEND_RENDER_TMP" && -d "$FRONTEND_RENDER_TMP" ]]; then
+    local file backup_path
+    for file in "${FRONTEND_RENDERED_FILES[@]:-}"; do
+      backup_path="${FRONTEND_RENDER_TMP}/${file}"
+      if [[ -f "$backup_path" ]]; then
+        cp "$backup_path" "$file"
+      fi
+    done
+
+    rm -rf "$FRONTEND_RENDER_TMP"
+  fi
+
+  FRONTEND_RENDER_TMP=""
+  FRONTEND_RENDERED_FILES=()
+}
+
+trap restore_frontend_assets EXIT
+
+load_prod_canister_id() {
+  local canister_json_key="$1"
+
+  python3 - "$canister_json_key" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+key = sys.argv[1]
+data = json.loads(Path('.icp/data/mappings/ic.ids.json').read_text())
+print(data[key])
+PY
+}
+
+build_one() {
+  local target_name="$1"
+  local cargo_package="$2"
+  local raw_name="$3"
+  local candid_path="$4"
+  local artifact_stem="$5"
+  local prod_canister_env_name="${6:-}"
+  local prod_canister_json_key="${7:-}"
+
+  if [[ -n "$prod_canister_env_name" || -n "$prod_canister_json_key" ]]; then
+    if [[ -z "$prod_canister_env_name" || -z "$prod_canister_json_key" ]]; then
+      echo "both prod canister env name and json key are required" >&2
+      exit 1
+    fi
+    local prod_canister_id
+    prod_canister_id="$(load_prod_canister_id "$prod_canister_json_key")"
+    export "$prod_canister_env_name=$prod_canister_id"
+    echo "Embedding production canister id for ${target_name}: ${prod_canister_id}"
+  fi
+
+  cargo build --locked --target wasm32-unknown-unknown --release -p "$cargo_package"
+
+  local raw_in="target/wasm32-unknown-unknown/release/${raw_name}.wasm"
+  local raw_out="release-artifacts/${artifact_stem}.wasm"
+  local gz_out="release-artifacts/${artifact_stem}.wasm.gz"
+
+  ic-wasm "$raw_in" -o "$raw_out" metadata candid:service -f "$candid_path" -v public
+  ic-wasm "$raw_out" -o "$raw_out" shrink
+
+  gzip -n -9 -c "$raw_out" > "$gz_out"
+
+  sha256sum "$raw_out" > "${raw_out}.sha256"
+  sha256sum "$gz_out" > "${gz_out}.sha256"
+
+  echo "Built ${target_name}: ${raw_out} ${gz_out}"
+}
+
+build_selected() {
+  case "$1" in
+    jupiter-disburser)
+      build_one "jupiter-disburser" "jupiter-disburser" "jupiter_disburser" "canisters/disburser/jupiter_disburser.did" "jupiter_disburser" "JUPITER_DISBURSER_PROD_CANISTER_ID" "jupiter_disburser"
+      ;;
+    jupiter-lifeline)
+      build_one "jupiter-lifeline" "jupiter-lifeline" "jupiter_lifeline" "canisters/lifeline/jupiter_lifeline.did" "jupiter_lifeline"
+      ;;
+    jupiter-faucet)
+      build_one "jupiter-faucet" "jupiter-faucet" "jupiter_faucet" "canisters/faucet/jupiter_faucet.did" "jupiter_faucet" "JUPITER_FAUCET_PROD_CANISTER_ID" "jupiter_faucet"
+      ;;
+    jupiter-historian)
+      build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+      ;;
+    jupiter-relay)
+      build_one "jupiter-relay" "jupiter-relay" "jupiter_relay" "canisters/relay/jupiter_relay.did" "jupiter_relay" "JUPITER_RELAY_PROD_CANISTER_ID" "jupiter_relay"
+      ;;
+    jupiter-sns-rewards)
+      build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "canisters/sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards"
+      ;;
+    jupiter-faucet-frontend)
+      build_frontend_bundle
+      render_frontend_assets
+      build_one "jupiter-faucet-frontend" "jupiter-faucet-frontend" "jupiter_faucet_frontend" "canisters/frontend/jupiter_faucet_frontend.did" "jupiter_faucet_frontend"
+      restore_frontend_assets
+      ;;
+    all)
+      build_selected jupiter-disburser
+      build_selected jupiter-lifeline
+      build_selected jupiter-faucet
+      build_selected jupiter-historian
+      build_selected jupiter-relay
+      build_selected jupiter-sns-rewards
+      build_selected jupiter-faucet-frontend
+      ;;
+    *)
+      echo "unknown build target: $1" >&2
+      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-relay, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
+      exit 1
+      ;;
+  esac
+}
+
+emit_build_info
+
+TARGET="${1:-all}"
+build_selected "$TARGET"

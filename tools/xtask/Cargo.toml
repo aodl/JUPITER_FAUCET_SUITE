@@ -1,0 +1,33 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+candid = { workspace = true }
+hex = { workspace = true }
+num-traits = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+icrc-ledger-types = { workspace = true }
+sha2 = { workspace = true }
+jupiter-ic-clients = { path = "../../crates/ic-clients" }
+jupiter-nns-types = { path = "../../crates/nns-types" }
+
+[dev-dependencies]
+pocket-ic = { workspace = true }
+slog = { workspace = true }
+tokio = { workspace = true }
+
+[[test]]
+name = "jupiter_faucet_integration"
+path = "../../tests/pocketic/jupiter_faucet_integration.rs"
+
+[[test]]
+name = "jupiter_disburser_integration"
+path = "../../tests/pocketic/jupiter_disburser_integration.rs"
+
+[[test]]
+name = "e2e"
+path = "../../tests/pocketic/e2e.rs"

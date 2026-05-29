@@ -28,11 +28,11 @@ dist/
 
 release-artifacts/
 
-!jupiter-faucet-frontend/frontend-src/declarations/
-!jupiter-faucet-frontend/frontend-src/declarations/**
+!canisters/frontend/web/declarations/
+!canisters/frontend/web/declarations/**
 
 # frontend build artifacts
-jupiter-faucet-frontend/assets/generated/
+canisters/frontend/public/generated/
 # python cache
 __pycache__/
 *.pyc

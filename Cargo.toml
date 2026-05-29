@@ -1,27 +1,30 @@
 [workspace]
 resolver = "2"
 members = [
-  "jupiter-disburser",
-  "jupiter-lifeline",
-  "jupiter-faucet",
-  "jupiter-build-support",
-  "jupiter-historian",
-  "jupiter-relay",
-  "jupiter-ic-clients",
-  "jupiter-persistence-batch",
-  "jupiter-memo-policy",
-  "jupiter-sns-rewards",
-  "jupiter-faucet-frontend",
-  "xtask",
-  "xtask/src/mocks/mock_icrc_ledger",
-  "xtask/src/mocks/mock_nns_governance",
-  "xtask/src/mocks/mock_icp_index",
-  "xtask/src/mocks/mock_cmc",
-  "xtask/src/mocks/mock_xrc",
-  "xtask/src/mocks/mock_blackhole",
-  "xtask/src/mocks/mock_sns_wasm",
-  "xtask/src/mocks/mock_sns_root",
-  "jupiter-nns-types",
+  "canisters/disburser",
+  "canisters/lifeline",
+  "canisters/faucet",
+  "canisters/historian",
+  "canisters/relay",
+  "canisters/sns-rewards",
+  "canisters/frontend",
+
+  "crates/build-support",
+  "crates/ic-clients",
+  "crates/memo-policy",
+  "crates/nns-types",
+  "crates/persistence-batch",
+
+  "tools/xtask",
+
+  "tests/mocks/mock-blackhole",
+  "tests/mocks/mock-cmc",
+  "tests/mocks/mock-icp-index",
+  "tests/mocks/mock-icrc-ledger",
+  "tests/mocks/mock-nns-governance",
+  "tests/mocks/mock-sns-root",
+  "tests/mocks/mock-sns-wasm",
+  "tests/mocks/mock-xrc",
 ]
 
 [workspace.dependencies]
