@@ -1,18 +1,19 @@
 use super::*;
+use std::ops::Bound::{Excluded, Unbounded};
+
 #[ic_cdk::query]
 pub(super) fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
     state::with_state(|st| {
         let limit = clamp_public_limit(args.limit, 50);
         let mut items = Vec::new();
         let mut next = None;
-        let mut started = args.start_after.is_none();
-        for canister_id in st.distinct_canisters.iter().copied() {
-            if !started {
-                if Some(canister_id) == args.start_after {
-                    started = true;
-                }
-                continue;
+        let iter: Box<dyn Iterator<Item = &Principal>> = match args.start_after {
+            Some(start_after) => {
+                Box::new(st.distinct_canisters.range((Excluded(start_after), Unbounded)))
             }
+            None => Box::new(st.distinct_canisters.range(..)),
+        };
+        for canister_id in iter.copied() {
             let Some(sources) = visible_sources_for_canister(st, &canister_id) else {
                 continue;
             };
@@ -344,6 +345,10 @@ pub(super) fn list_registered_canister_summaries(
         if let Some(response) = registered_canister_summaries_total_desc_page(st, page, page_size) {
             return response;
         }
+        // Slow compatibility fallback for states whose derived ranking cache is
+        // missing or drifted. Normal init/upgrade/timer paths rebuild and refresh
+        // this cache; a future maintenance pass should repair drift outside public
+        // queries before removing this full sort.
         let mut items = registered_canister_summaries(st);
         items.sort_by_key(registered_canister_summary_total_desc_key);
         let total = items.len() as u64;

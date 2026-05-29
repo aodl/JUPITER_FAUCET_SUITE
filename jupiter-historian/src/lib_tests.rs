@@ -1388,6 +1388,110 @@ mod tests {
     }
 
     #[test]
+    fn list_canisters_cursor_excludes_start_after_and_seeks_after_unknown_cursor() {
+        let mut principal_pool: Vec<_> = (0..220)
+            .map(|idx| Principal::self_authenticating(&[idx]))
+            .collect();
+        principal_pool.sort();
+        let expected: Vec<_> = principal_pool.iter().step_by(2).take(105).copied().collect();
+        let between_third_and_fourth = principal_pool[5];
+        assert!(
+            expected[2] < between_third_and_fourth && between_third_and_fourth < expected[3]
+        );
+        let canisters = expected.clone();
+
+        let mut st = base_state();
+        for canister in canisters.iter().copied() {
+            st.distinct_canisters.insert(canister);
+            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.commitment_history.insert(
+                canister,
+                vec![CommitmentSample {
+                    tx_id: canister.as_slice()[0] as u64,
+                    timestamp_nanos: Some(canister.as_slice()[0] as u64),
+                    amount_e8s: 100_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+        }
+        state::set_state(st);
+
+        let first = list_canisters(ListCanistersArgs {
+            start_after: None,
+            limit: Some(5_000),
+            source_filter: None,
+        });
+        assert_eq!(first.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
+        assert_eq!(
+            first.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            expected[..MAX_PUBLIC_QUERY_LIMIT as usize].to_vec(),
+        );
+        assert_eq!(
+            first.next_start_after,
+            Some(expected[MAX_PUBLIC_QUERY_LIMIT as usize - 1])
+        );
+
+        let after_first = list_canisters(ListCanistersArgs {
+            start_after: Some(expected[0]),
+            limit: Some(10),
+            source_filter: None,
+        });
+        assert_eq!(
+            after_first.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            expected[1..11].to_vec(),
+        );
+        assert!(!after_first.items.iter().any(|item| item.canister_id == expected[0]));
+        assert_eq!(after_first.next_start_after, Some(expected[10]));
+
+        let after_synthetic_cursor = list_canisters(ListCanistersArgs {
+            start_after: Some(between_third_and_fourth),
+            limit: Some(1),
+            source_filter: None,
+        });
+        assert_eq!(
+            after_synthetic_cursor.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            vec![expected[3]],
+        );
+        assert_eq!(after_synthetic_cursor.next_start_after, Some(expected[3]));
+    }
+
+    #[test]
+    fn list_canisters_limit_clamp_keeps_deterministic_order() {
+        let canisters: Vec<_> = (0..105).map(|idx| Principal::self_authenticating(&[idx])).collect();
+        let mut expected = canisters.clone();
+        expected.sort();
+
+        let mut st = base_state();
+        for canister in canisters {
+            st.distinct_canisters.insert(canister);
+            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.commitment_history.insert(
+                canister,
+                vec![CommitmentSample {
+                    tx_id: canister.as_slice()[0] as u64,
+                    timestamp_nanos: Some(canister.as_slice()[0] as u64),
+                    amount_e8s: 100_000_000,
+                    counts_toward_faucet: true,
+                }],
+            );
+        }
+        state::set_state(st);
+
+        let response = list_canisters(ListCanistersArgs {
+            start_after: None,
+            limit: Some(5_000),
+            source_filter: None,
+        });
+
+        assert_eq!(response.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
+        assert_eq!(
+            response.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            expected[..MAX_PUBLIC_QUERY_LIMIT as usize].to_vec(),
+        );
+        assert_eq!(response.next_start_after, Some(expected[MAX_PUBLIC_QUERY_LIMIT as usize - 1]));
+    }
+
+    #[test]
     fn cycles_history_pagination_round_trips_without_skips_in_both_directions() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
