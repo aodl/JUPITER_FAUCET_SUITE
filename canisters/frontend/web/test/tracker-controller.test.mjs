@@ -408,7 +408,7 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
           rawTransfer(3, relayAccountId, 300_000_000n, false),
           rawTransfer(2, protocolAccountId, 200_000_000n, false),
           rawTransfer(1, otherAccountId, 100_000_000n, true),
-        ] },
+        ], truncated: true, limit: 10_000 },
         candidates: { items: [] },
         errors: {},
       }),
@@ -430,6 +430,65 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
     assert.match(html, /Visible Jupiter Faucet transfers matching the outgoing memo: 1 · 5 ICP/);
     assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
     assert.match(html, /Jupiter Faucet · other memo 4 ICP across 1 transfer/);
+    assert.match(html, /Chart display is limited to the newest 10,000 incoming ICP transfers/);
+  });
+});
+
+test('raw ICP tracker renders incoming transfers while index pages are still loading', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+  let progressHtml = '';
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async ({ onTransfersProgress }) => {
+        onTransfersProgress({
+          status: { output_account: [faucetAccount] },
+          transfers: {
+            items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)],
+            loading: true,
+            truncated: false,
+            limit: 10_000,
+            pages_loaded: 1,
+          },
+          candidates: { items: [], truncated: false, loading: true },
+          errors: {},
+        });
+        progressHtml = nodeMap.get('tracker-result').innerHTML;
+        return {
+          status: { output_account: [faucetAccount] },
+          transfers: {
+            items: [
+              rawTransfer(5, faucetAccountId, 500_000_000n, true),
+              rawTransfer(4, faucetAccountId, 400_000_000n, false),
+            ],
+            loading: false,
+            truncated: false,
+            limit: 10_000,
+          },
+          candidates: { items: [], truncated: false },
+          errors: {},
+        };
+      },
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+
+    assert.match(progressHtml, /Chart still loading incoming ICP history/);
+    assert.match(progressHtml, /1 transfers loaded across 1 index pages/);
+    assert.match(progressHtml, /data-tracker-range="month"[^>]* disabled aria-disabled="true"/);
+    assert.match(progressHtml, /Matching tracked canisters are still loading/);
+    const finalHtml = nodeMap.get('tracker-result').innerHTML;
+    assert.doesNotMatch(finalHtml, /Chart still loading incoming ICP history/);
+    assert.match(finalHtml, /Incoming transfers shown<\/dt><dd class="pane-detail-value">2<\/dd>/);
   });
 });
 

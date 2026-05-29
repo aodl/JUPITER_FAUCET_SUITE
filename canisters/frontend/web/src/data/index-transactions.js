@@ -9,6 +9,7 @@ import {
 
 const RECENT_ROUTE_TRANSFER_PAGE_SIZE = 100;
 const RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES = 10;
+const RAW_ICP_TRANSFER_PAGE_SIZE = 100;
 
 function routeTransferTimestampOpt(transaction) {
   const timestamp = readOptional(transaction?.timestamp) || readOptional(transaction?.created_at_time);
@@ -264,10 +265,11 @@ export async function loadIncomingIcpTransfersFromIndex({
   index,
   account,
   limit = RECENT_ROUTE_TRANSFER_LIMIT,
-  pageSize = RECENT_ROUTE_TRANSFER_PAGE_SIZE,
-  maxPages = RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES,
+  pageSize = RAW_ICP_TRANSFER_PAGE_SIZE,
+  maxPages = Math.ceil(Math.max(1, limit) / Math.max(1, pageSize)),
   sourceAccountIdentifiers = [],
   memoText = null,
+  onProgress = null,
 } = {}) {
   if (!index || typeof index.get_account_identifier_transactions !== 'function') {
     throw new Error('ICP index actor is unavailable');
@@ -280,6 +282,18 @@ export async function loadIncomingIcpTransfersFromIndex({
   const items = [];
   const seen = new Set();
   let start = null;
+  let truncated = false;
+  const notifyProgress = async ({ loading, pagesLoaded }) => {
+    if (typeof onProgress !== 'function') return;
+    await onProgress({
+      items: normalizeRouteTransferItems(items, limit),
+      truncated,
+      limit,
+      page_size: pageSize,
+      loading,
+      pages_loaded: pagesLoaded,
+    });
+  };
 
   for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
     const response = await getAccountIdentifierTransactions(index, accountIdentifier, start, pageSize);
@@ -293,8 +307,16 @@ export async function loadIncomingIcpTransfersFromIndex({
           items.push(item);
         }
       }
-      if (items.length >= limit) break;
+      if (items.length >= limit) {
+        truncated = true;
+        break;
+      }
     }
+
+    if (!truncated && page + 1 >= Math.max(1, maxPages) && transactions.length >= pageSize) {
+      truncated = true;
+    }
+    await notifyProgress({ loading: !truncated, pagesLoaded: page + 1 });
 
     if (transactions.length < pageSize) break;
     const lastId = transactions[transactions.length - 1]?.id;
@@ -304,7 +326,9 @@ export async function loadIncomingIcpTransfersFromIndex({
     const nextStart = lastIdBigInt - 1n;
     if (start !== null && nextStart >= BigInt(start)) break;
     start = nextStart;
+
+    if (page + 1 >= Math.max(1, maxPages)) break;
   }
 
-  return { items: normalizeRouteTransferItems(items, limit) };
+  return { items: normalizeRouteTransferItems(items, limit), truncated, limit, page_size: pageSize, loading: false };
 }

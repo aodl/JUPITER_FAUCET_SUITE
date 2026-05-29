@@ -11,12 +11,14 @@ import {
   loadRegisteredCanisterSummaryPage,
   loadCanisterLogs,
   loadTrackerData,
+  loadRawIcpCanisterTrackerData,
   loadCmcTopUpTransfersFromIndex,
   cmcDepositAccount,
   dquorumStakingAccount,
   hasCanisterSource,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
+  RAW_ICP_TRACKER_TRANSFER_LIMIT,
   REGISTERED_SUMMARY_PAGE_SIZE,
   RECENT_COMMITMENT_LIMIT,
   RECENT_ROUTE_TRANSFER_LIMIT,
@@ -1000,6 +1002,44 @@ test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries'
   assert.equal(data.isCommitmentBeneficiary, false);
   assert.deepEqual(data.commitments.items, []);
   assert.deepEqual(data.cycles.items, []);
+});
+
+test('loadRawIcpCanisterTrackerData uses the large raw ICP transfer limit by default', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const targetAccountId = accountIdentifierHex({ owner: target, subaccount: [] });
+  let indexCall = null;
+
+  const data = await loadRawIcpCanisterTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    outgoingMemoText: 'memo',
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async find_canisters_by_memo_prefix() {
+        return { items: [], truncated: false };
+      },
+    },
+    indexActorFactory: (canisterId, options) => {
+      assert.equal(canisterId, 'qhbym-qaaaa-aaaaa-aaafq-cai');
+      assert.deepEqual(options, { agent: { test: true } });
+      return {
+        async get_account_identifier_transactions(args) {
+          indexCall = args;
+          return { Ok: { balance: 0n, oldest_tx_id: [], transactions: [] } };
+        },
+      };
+    },
+  });
+
+  assert.equal(indexCall.account_identifier, targetAccountId);
+  assert.equal(indexCall.max_results, 100n);
+  assert.equal(data.transfers.limit, RAW_ICP_TRACKER_TRANSFER_LIMIT);
 });
 
 test('loadCmcTopUpTransfersFromIndex builds the CMC deposit account and filters matching transfers', async () => {

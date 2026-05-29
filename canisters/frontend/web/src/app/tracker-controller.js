@@ -518,10 +518,14 @@ export function createTrackerController({
 
   const trackerRangeLabel = (range = state.range) => TRACKER_RANGE_LABELS[range] || TRACKER_RANGE_LABELS.month;
 
+  const rawTransfersLoading = () => (state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake')
+    && Boolean(state.data?.transfers?.loading);
+
   const renderTrackerRangeControls = () => {
+    const disabled = rawTransfersLoading();
     const button = (range, label) => {
       const active = state.range === range;
-      return `<button class="pane-page-button${active ? ' is-active' : ''}" type="button" data-tracker-range="${range}" aria-pressed="${active ? 'true' : 'false'}">${label}</button>`;
+      return `<button class="pane-page-button${active ? ' is-active' : ''}" type="button" data-tracker-range="${range}" aria-pressed="${active ? 'true' : 'false'}"${disabled ? ' disabled aria-disabled="true"' : ''}>${label}</button>`;
     };
     return `
       <div class="tracker-controls tracker-controls--charts" aria-label="Tracker chart range">
@@ -850,6 +854,9 @@ export function createTrackerController({
     if (prefix.length < 4) {
       return '<p class="pane-status-note tracker-status-note">Prefix matching is skipped for short outgoing memos; use at least four compact-principal characters for candidate search.</p>';
     }
+    if (data?.candidates?.loading) {
+      return '<p class="pane-status-note tracker-status-note">Matching tracked canisters are still loading.</p>';
+    }
     const items = data?.candidates?.items || [];
     if (items.length === 0) {
       return '<p class="pane-status-note tracker-status-note">If the right-hand side of the memo identifies another canister then it is not yet known to Jupiter Faucet through a direct cycle top-up memo commitment. You can track that canister directly by committing 1 ICP with that canister&#39;s full ID in the memo (see <a class="pane-external-link" href="#how-it-works">How it Works</a>).</p>';
@@ -888,9 +895,15 @@ export function createTrackerController({
     const hasOutgoingMemo = parsed.outgoingMemoText !== null && parsed.outgoingMemoText !== undefined;
     const sourceSegments = hasOutgoingMemo ? RAW_SOURCE_SEGMENTS : SOURCE_SEGMENTS;
     const buckets = aggregateRawTransfers(visibleItems, state.range);
+    const transferLoadingNote = classified.transfers?.loading
+      ? `<p class="pane-status-note tracker-status-note tracker-status-note--loading tracker-chart-note">Chart still loading incoming ICP history… ${escapeHtml(formatInteger((classified.transfers.items || []).length))} transfers loaded${classified.transfers.pages_loaded ? ` across ${escapeHtml(formatInteger(classified.transfers.pages_loaded))} index pages` : ''}. The bars update as records arrive.</p>`
+      : '';
     const matchingNote = !hasOutgoingMemo
       ? ''
       : `<p class="pane-status-note tracker-status-note">Visible Jupiter Faucet transfers matching the outgoing memo: ${escapeHtml(formatInteger(summary.faucetMatchingMemoTransferCount))} · ${escapeHtml(formatIcpE8s(summary.faucetMatchingMemoIcpE8s))}. If no transfers match, the top-up may not have been indexed yet, may be outside the loaded range, or may not have been paid through Jupiter Faucet yet.</p>`;
+    const transferLimitNote = classified.transfers?.truncated
+      ? `<p class="pane-status-note tracker-status-note tracker-status-note--info tracker-chart-note">Chart display is limited to the newest ${escapeHtml(formatInteger(classified.transfers.limit || (classified.transfers.items || []).length))} incoming ICP transfers loaded for this tracker view. Older transfers are omitted from the chart and summary.</p>`
+      : '';
     result.innerHTML = `
       ${renderTrackerRangeControls()}
       <div class="tracker-chart-wrapper" id="tracker-chart-wrapper">
@@ -899,10 +912,14 @@ export function createTrackerController({
             <h3>${escapeHtml(title)}</h3>
             <span>Observed incoming ICP transfers into the ${isNeuron ? 'staking' : 'canister'} account, colour-coded by source.</span>
           </div>
+          ${transferLoadingNote}
+          ${transferLimitNote}
           ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), segments: sourceSegments, buckets })}
           ${renderRawIcpChart({
             buckets,
-            emptyMessage: `No dated incoming ICP transfers are available in ${trackerRangeLabel()}.`,
+            emptyMessage: classified.transfers?.loading
+              ? 'Loading incoming ICP transfer history…'
+              : `No dated incoming ICP transfers are available in ${trackerRangeLabel()}.`,
             ariaLabel: `${title} incoming transfers in ${trackerRangeLabel()}`,
             segments: sourceSegments,
           })}
@@ -987,22 +1004,31 @@ export function createTrackerController({
       result.innerHTML = '<div class="tracker-empty-state"><p>Loading…</p></div>';
     }
 
+    const progressRequestId = `${Date.now()}-${Math.random()}`;
+    state.progressRequestId = progressRequestId;
     try {
       const common = {
         historianCanisterId: frontendConfig?.historianCanisterId,
         host: window.location.origin,
         local: isLocalHost(),
       };
+      const onTransfersProgress = (partialData) => {
+        if (state.progressRequestId !== progressRequestId || state.viewMode !== parsed.kind) return;
+        state.data = partialData;
+        renderRawIcpData(partialData, parsed);
+      };
       const data = parsed.kind === 'cyclesTopUp'
         ? await loadData({ ...common, canisterId: parsed.canisterId })
         : parsed.kind === 'rawIcpCanister'
-          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText })
-          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText });
+          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText, onTransfersProgress })
+          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText, onTransfersProgress });
+      if (state.progressRequestId !== progressRequestId) return;
       state.data = data;
       setStatus('', '');
       if (parsed.kind === 'cyclesTopUp') renderData(data, parsed.canisterText);
       else renderRawIcpData(data, parsed);
     } catch (error) {
+      if (state.progressRequestId !== progressRequestId) return;
       state.data = null;
       state.error = normalizeLoadError(error);
       setStatus(`Tracker unavailable: ${state.error}`, 'error');
@@ -1010,7 +1036,9 @@ export function createTrackerController({
         result.innerHTML = '<div class="tracker-empty-state"><p>Tracker data could not be loaded right now.</p></div>';
       }
     } finally {
-      setLoading(false);
+      if (state.progressRequestId === progressRequestId) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1120,6 +1148,7 @@ export function createTrackerController({
         const button = event.target instanceof Element ? event.target.closest('[data-tracker-range]') : null;
         if (!button || !result.contains(button)) return;
         event.preventDefault();
+        if (button.disabled || button.getAttribute('aria-disabled') === 'true' || rawTransfersLoading()) return;
         setRange(button.getAttribute('data-tracker-range') || 'month');
       });
     }

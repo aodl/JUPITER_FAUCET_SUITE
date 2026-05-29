@@ -15,6 +15,7 @@ import {
 } from './dashboard-transforms.js';
 
 const TRACKER_HISTORY_PAGE_SIZE = 100;
+export const RAW_ICP_TRACKER_TRANSFER_LIMIT = 10_000;
 
 function buildGetCyclesHistoryArgs({ canisterId, startAfter = null, limit = TRACKER_HISTORY_PAGE_SIZE, descending = false } = {}) {
   return {
@@ -69,7 +70,7 @@ async function loadTrackerCmcTransfers({ historian, status = null, agent, indexA
   });
 }
 
-async function loadRawIncomingTransfers({ historian, status = null, agent, indexActorFactory, account, memoText, historyLimit }) {
+async function loadRawIncomingTransfers({ historian, status = null, agent, indexActorFactory, account, memoText, historyLimit, onProgress = null }) {
   const resolvedStatus = status || await historian.get_public_status();
   const indexCanisterId = principalToText(resolvedStatus?.index_canister_id);
   if (!indexCanisterId) {
@@ -81,6 +82,7 @@ async function loadRawIncomingTransfers({ historian, status = null, agent, index
     account,
     memoText,
     limit: historyLimit,
+    onProgress,
   });
 }
 
@@ -191,7 +193,8 @@ export async function loadRawIcpCanisterTrackerData({
   canisterId,
   outgoingMemoText = null,
   prefixLimit = 10,
-  historyLimit = TRACKER_HISTORY_PAGE_SIZE,
+  historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
+  onTransfersProgress = null,
 } = {}) {
   if (!canisterId) throw new Error('A canister ID is required');
   const { agent: resolvedAgent, historian } = await createHistorianClient({
@@ -211,6 +214,15 @@ export async function loadRawIcpCanisterTrackerData({
     account: { owner: canisterId, subaccount: [] },
     memoText: outgoingMemoText,
     historyLimit,
+    onProgress: typeof onTransfersProgress === 'function'
+      ? (transfers) => onTransfersProgress({
+          canisterId,
+          status,
+          transfers,
+          candidates: { items: [], truncated: false, loading: true },
+          errors: { transfers: null, candidates: null },
+        })
+      : null,
   }));
   const prefix = String(outgoingMemoText || '');
   const candidatesPromise = prefix.length >= 4 && typeof historian.find_canisters_by_memo_prefix === 'function'
@@ -249,7 +261,8 @@ export async function loadNeuronStakeTrackerData({
   governanceCanisterId = GOVERNANCE_CANISTER_ID,
   neuronId,
   outgoingMemoText = null,
-  historyLimit = TRACKER_HISTORY_PAGE_SIZE,
+  historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
+  onTransfersProgress = null,
 } = {}) {
   if (neuronId === null || neuronId === undefined) throw new Error('A neuron ID is required');
   const { agent: resolvedAgent, historian } = await createHistorianClient({
@@ -275,6 +288,15 @@ export async function loadNeuronStakeTrackerData({
     account: stakingAccount,
     memoText: outgoingMemoText,
     historyLimit,
+    onProgress: typeof onTransfersProgress === 'function'
+      ? (progressTransfers) => onTransfersProgress({
+          neuronId,
+          stakingAccount,
+          status,
+          transfers: progressTransfers,
+          errors: { transfers: null },
+        })
+      : null,
   });
   return {
     neuronId,
