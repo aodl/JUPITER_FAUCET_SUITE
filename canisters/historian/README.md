@@ -213,7 +213,14 @@ Optional:
 
 Upgrades can change:
 
+- `staking_account`
+- `ledger_canister_id`
+- `index_canister_id`
 - `enable_sns_tracking`
+- `clear_commitment_index_fault`
+- `output_source_account`
+- `output_account`
+- `rewards_account`
 - `scan_interval_seconds`
 - `cycles_interval_seconds`
 - `min_tx_e8s`
@@ -223,8 +230,11 @@ Upgrades can change:
 - `max_canisters_per_cycles_tick`
 - `blackhole_canister_id`
 - `sns_wasm_canister_id`
+- `xrc_canister_id`
 - `cmc_canister_id`
 - `faucet_canister_id`
+
+Inspect the current `UpgradeArgs` definition in [`src/lifecycle.rs`](src/lifecycle.rs), its imported API type in [`src/api.rs`](src/api.rs), and the exported DID [`jupiter_historian.did`](jupiter_historian.did) before preparing any upgrade-time argument file.
 
 ### Mainnet install args committed in this repo
 
@@ -314,19 +324,59 @@ It produces the canonical release artifacts under `release-artifacts/`, includin
 Fresh install:
 
 ```bash
-icp canister install jupiter_historian \
-  --environment ic \
+icp canister install j5gs6-uiaaa-aaaar-qb5cq-cai \
+  --network ic \
+  --mode install \
   --wasm release-artifacts/jupiter_historian.wasm.gz \
   --args-file canisters/historian/mainnet-install-args.did
 ```
 
-Routine upgrade:
+### Production upgrades
+
+`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
+
+Normal production upgrades preserve stable state and must use the historian `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
+
+For a production upgrade with no config change, pass no args:
 
 ```bash
-icp deploy jupiter_historian --environment ic
+icp canister install j5gs6-uiaaa-aaaar-qb5cq-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_historian.wasm.gz
 ```
 
-Routine upgrades preserve existing state and do not pass install args. Use optional `UpgradeArgs` only for an intentional manual config patch; [`mainnet-install-args.did`](mainnet-install-args.did) is for fresh install/reinstall only.
+For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
+
+```bash
+cat > /tmp/historian-upgrade-args.did <<'EOF'
+(
+  opt record {
+    // Fill in only the UpgradeArgs fields intentionally changed by this deployment.
+    // Set unchanged optional fields to null, or omit them if the UpgradeArgs type
+    // and Candid tooling allow omission.
+    //
+    // Example shape only:
+    // field_to_change = opt <new value>;
+    // field_to_leave_unchanged = null;
+  }
+)
+EOF
+```
+
+```bash
+icp canister install j5gs6-uiaaa-aaaar-qb5cq-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_historian.wasm.gz \
+  --args-file /tmp/historian-upgrade-args.did
+```
+
+After upgrade, verify the runtime config from public logs:
+
+```bash
+icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
+```
 
 ## Debug interface
 

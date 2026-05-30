@@ -39,6 +39,7 @@ Fresh install:
 ```bash
 icp canister install jupiter_lifeline \
   --environment ic \
+  --mode install \
   --wasm release-artifacts/jupiter_lifeline.wasm.gz
 ```
 

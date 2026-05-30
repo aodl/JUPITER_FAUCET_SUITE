@@ -21,4 +21,26 @@ Build release artifacts with [`tools/scripts/build-canister`](../../tools/script
 ./tools/scripts/build-canister all
 ```
 
+## Fresh installs vs upgrades
+
+`mainnet-install-args.did` files are fresh-install `InitArgs`. Do not use those files for ordinary production upgrades.
+
+> Warning:
+> Do not pass `canisters/<name>/mainnet-install-args.did` to `--mode upgrade`
+> for stateful production canisters. Those files are fresh-install `InitArgs`
+> and may be intentionally rejected during `post_upgrade`.
+
+For no-config-change production upgrades, pass no args. This preserves stable state and lets the canister decode the omitted upgrade argument as no config change.
+
+For config-changing production upgrades, create a temporary local `UpgradeArgs` file for that specific deployment and pass it with `--args-file`. Do not check in example upgrade-args files; realistic examples are easy to copy later for the wrong deployment.
+
+Canister-specific README sections define the correct production canister ID, artifact name, `UpgradeArgs` shape, and verification commands:
+
+- [`canisters/disburser/README.md`](../../canisters/disburser/README.md)
+- [`canisters/faucet/README.md`](../../canisters/faucet/README.md)
+- [`canisters/historian/README.md`](../../canisters/historian/README.md)
+- [`canisters/relay/README.md`](../../canisters/relay/README.md)
+
+A failed upgrade with an error such as `received InitArgs in post_upgrade` means the canister rejected the wrong argument shape. Rebuild the command using the canister's current `UpgradeArgs` shape instead of the fresh-install `InitArgs` file.
+
 For module-hash verification and deterministic rebuild checks, see [reproducible builds](reproducible-builds.md).

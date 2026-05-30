@@ -134,6 +134,8 @@ Relay-minted cycles come from successful CMC `notify_top_up` responses. This pre
 
 ## Upgrade Args
 
+Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before preparing any upgrade-time argument file.
+
 Optional upgrade fields use Candid tri-state values where supported:
 
 ```text
@@ -142,7 +144,15 @@ opt null        = clear the existing optional value
 opt opt <value> = set the value
 ```
 
-This applies to `max_transfers_per_tick`. Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, `surplus_canister_recipients`, and `surplus_neuron_recipients` use `null` to leave unchanged and `opt <value>` to set. For surplus recipient fields, `opt vec {}` clears that recipient group.
+This applies to `max_transfers_per_tick : opt opt nat32`:
+
+```text
+null            = leave unchanged
+opt null        = clear
+opt opt <value> = set
+```
+
+Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, `surplus_canister_recipients`, and `surplus_neuron_recipients` use `null` to leave unchanged and `opt <value>` to set. For surplus recipient fields, `opt vec {}` clears that recipient group.
 
 ## Relay Allocation Modes
 
@@ -207,32 +217,7 @@ Production surplus is split 50/50 between two public NNS neuron recipients:
 
 The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. This preserves the existing memo convention while separating immediate IO stake growth from compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
 
-Example upgrade args to set the production surplus recipients:
-
-```candid
-(
-  opt record {
-    managed_canisters = null;
-    ledger_canister_id = null;
-    cmc_canister_id = null;
-    governance_canister_id = null;
-    blackhole_canister_id = null;
-    main_interval_seconds = null;
-    max_transfers_per_tick = null;
-    surplus_canister_recipients = null;
-    surplus_neuron_recipients = opt vec {
-      record {
-        neuron_id = 6_345_890_886_899_317_159 : nat64;
-        memo = blob "";
-      };
-      record {
-        neuron_id = 11_614_578_985_374_291_210 : nat64;
-        memo = blob "6345890886899317159";
-      };
-    };
-  }
-)
-```
+When changing surplus recipients, create a temporary local `UpgradeArgs` file using the production upgrade pattern below and fill in only the recipient group being intentionally changed. Do not commit a realistic full upgrade-args file; it is too easy to copy into a later deployment with the wrong intent.
 
 ## Retry Safety
 
@@ -256,13 +241,63 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
-Routine production upgrades preserve existing state and should use normal deploy with no args:
+## Production upgrades
+
+`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
+
+Fresh install/reinstall is a deliberate separate path. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly only for that install/reinstall operation:
 
 ```bash
-icp deploy jupiter_relay --environment ic
+icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
+  --network ic \
+  --mode install \
+  --wasm release-artifacts/jupiter_relay.wasm.gz \
+  --args-file canisters/relay/mainnet-install-args.did
 ```
 
-Fresh install/reinstall is a deliberate separate path. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly only for that install/reinstall operation, not for routine upgrades.
+Normal production upgrades preserve stable state and must use the relay `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
+
+For a production upgrade with no config change, pass no args:
+
+```bash
+icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_relay.wasm.gz
+```
+
+For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
+
+```bash
+cat > /tmp/relay-upgrade-args.did <<'EOF'
+(
+  opt record {
+    // Fill in only the UpgradeArgs fields intentionally changed by this deployment.
+    // Set unchanged optional fields to null, or omit them if the UpgradeArgs type
+    // and Candid tooling allow omission.
+    //
+    // Example shape only:
+    // field_to_change = opt <new value>;
+    // field_to_leave_unchanged = null;
+  }
+)
+EOF
+```
+
+```bash
+icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_relay.wasm.gz \
+  --args-file /tmp/relay-upgrade-args.did
+```
+
+Post-upgrade verification:
+
+```bash
+./tools/scripts/smoke-relay-mainnet
+icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
+```
 
 Exact settings update command:
 

@@ -412,19 +412,50 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 
 A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-install-args.did`](mainnet-install-args.did). It is for fresh install/reinstall only, not routine upgrades.
 
-### Production upgrade checklist
+### Production upgrades
 
 The current production faucet has already completed a payout. Use upgrade for the current production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
 
-Do not pass [`mainnet-install-args.did`](mainnet-install-args.did) to `--mode upgrade`; that file is the init/install shape and does not describe the upgrade-time config patch.
+`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
 
-Routine production upgrades with no config change should use normal deploy:
+Normal production upgrades preserve stable state and must use the faucet `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
+
+For a production upgrade with no config change, pass no args:
 
 ```bash
-icp deploy jupiter_faucet --environment ic
+icp canister install acjuz-liaaa-aaaar-qb4qq-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_faucet.wasm.gz
 ```
 
-Omitted upgrade args are decoded as no config change. Use optional `UpgradeArgs` only for an intentional DAO-approved upgrade-time config patch; they are a different Candid shape from `InitArgs`, and the faucet upgrade decoder rejects install args.
+For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
+
+```bash
+cat > /tmp/faucet-upgrade-args.did <<'EOF'
+(
+  opt record {
+    // Fill in only the UpgradeArgs fields intentionally changed by this deployment.
+    // Set unchanged optional fields to null, or omit them if the UpgradeArgs type
+    // and Candid tooling allow omission.
+    //
+    // Example shape only:
+    // field_to_change = opt <new value>;
+    // field_to_leave_unchanged = null;
+  }
+)
+EOF
+```
+
+```bash
+icp canister install acjuz-liaaa-aaaar-qb4qq-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_faucet.wasm.gz \
+  --args-file /tmp/faucet-upgrade-args.did
+```
+
+Omitted upgrade args are decoded as no config change. Use optional `UpgradeArgs` only for an intentional DAO-approved upgrade-time config patch; they are a different Candid shape from `InitArgs`, and the faucet upgrade decoder rejects install args. Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before filling the temporary args file.
 
 Before upgrade:
 
@@ -439,6 +470,12 @@ After upgrade:
 - Verify config checks from runtime output such as the `CONFIG` log line, not merely from the committed install args.
 - Monitor the next payout summary and confirm the strict-tranche payout shape: `pot_start_e8s` must equal the funding tranche amount, and `effective_denom_e8s` must come from indexed staking history bounded by the funding transfer.
 - Verify via ICP Index that outgoing top-up transfers correspond to the expected tranche.
+
+Use public logs for post-upgrade verification:
+
+```bash
+icp canister logs acjuz-liaaa-aaaar-qb4qq-cai -n ic
+```
 
 ### Fresh-only reinstall checklist
 
@@ -489,7 +526,7 @@ Upgrade args currently support:
 - `clear_forced_rescue`
 - `stake_recognition_delay_seconds`
 
-There is no committed canonical production upgrade args file. Upgrade args are exceptional deployment-time inputs; routine production upgrades with no config change should use `icp deploy jupiter_faucet --environment ic`.
+There is no committed canonical production upgrade args file. Upgrade args are exceptional deployment-time inputs; routine production upgrades with no config change should pass no args as shown in the production upgrades section.
 
 Every upgrade also clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional and intentionally conservative: skip ranges are treated as disposable replay hints rather than durable truth, and upgrades are expected to be exceptional enough that paying the re-scan cost is preferable to risking stale cache semantics.
 

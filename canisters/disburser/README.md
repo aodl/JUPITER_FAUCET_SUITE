@@ -235,6 +235,8 @@ Upgrades currently support:
 
 `clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. When used while blackhole mode remains armed, the disburser also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the self-reconciliation policy is only defined for armed mode.
 
+Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before preparing any upgrade-time argument file.
+
 ### Current production wiring recorded in this repo
 
 The committed mainnet install args currently wire:
@@ -322,53 +324,61 @@ chmod +x tools/scripts/docker-build tools/scripts/build-canister
 
 ### Install release artifact
 
+Fresh installs use the committed `InitArgs` file:
+
 ```bash
-icp canister install jupiter_disburser \
-  --environment ic \
+icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
+  --network ic \
+  --mode install \
   --wasm release-artifacts/jupiter_disburser.wasm.gz \
   --args-file canisters/disburser/mainnet-install-args.did
 ```
 
-### Routine production upgrade
+### Production upgrades
 
-Routine upgrades preserve existing state and should normally pass no args. Use optional `UpgradeArgs` only when intentionally toggling upgrade-only settings.
+`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
 
-```bash
-icp deploy jupiter_disburser --environment ic
-```
+Normal production upgrades preserve stable state and must use the disburser `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
 
-### Toggle blackhole arming via upgrade args
-
-Use direct upgrade args only for an intentional manual config patch.
-
-Arm:
+For a production upgrade with no config change, pass no args:
 
 ```bash
-icp canister install jupiter_disburser \
-  --environment ic \
+icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
+  --network ic \
   --mode upgrade \
-  --args '(opt record { blackhole_armed = opt true; })' \
   --wasm release-artifacts/jupiter_disburser.wasm.gz
 ```
 
-Disarm:
+For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
 
 ```bash
-icp canister install jupiter_disburser \
-  --environment ic \
-  --mode upgrade \
-  --args '(opt record { blackhole_armed = opt false; })' \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz
+cat > /tmp/disburser-upgrade-args.did <<'EOF'
+(
+  opt record {
+    // Fill in only the UpgradeArgs fields intentionally changed by this deployment.
+    // Set unchanged optional fields to null, or omit them if the UpgradeArgs type
+    // and Candid tooling allow omission.
+    //
+    // Example shape only:
+    // field_to_change = opt <new value>;
+    // field_to_leave_unchanged = null;
+  }
+)
+EOF
 ```
 
-Clear a latched forced-rescue reason:
+```bash
+icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
+  --network ic \
+  --mode upgrade \
+  --wasm release-artifacts/jupiter_disburser.wasm.gz \
+  --args-file /tmp/disburser-upgrade-args.did
+```
+
+After upgrade, verify the runtime config from public logs:
 
 ```bash
-icp canister install jupiter_disburser \
-  --environment ic \
-  --mode upgrade \
-  --args '(opt record { clear_forced_rescue = opt true; })' \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz
+icp canister logs uccpi-cqaaa-aaaar-qby3q-cai -n ic
 ```
 
 ### Controller handoff notes
