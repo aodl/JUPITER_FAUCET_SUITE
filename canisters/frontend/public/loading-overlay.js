@@ -5,6 +5,25 @@
 
   overlay.classList.add("is-active");
 
+  function enableFullBackgroundAfterOverlayPaint() {
+    const enable = function () {
+      if (document.body) {
+        document.body.classList.add("background-orbit-enhanced");
+      }
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(enable);
+      });
+      return;
+    }
+
+    window.setTimeout(enable, 0);
+  }
+
+  enableFullBackgroundAfterOverlayPaint();
+
   const phrases = [
     "Infinite Cycles Begin Here",
     "Autonomous top-ups for unstoppable software",

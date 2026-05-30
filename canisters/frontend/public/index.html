@@ -20,6 +20,7 @@
   <meta name="twitter:image" content="https://jupiter-faucet.com/og/preview-20260520.jpg" />
 
   <link rel="icon" href="/favicon.ico?v=__ASSET_VERSION__">
+  <link rel="preload" as="image" href="/jupiter_faucet_token_logo.svg?v=__ASSET_VERSION__" type="image/svg+xml" fetchpriority="high">
 
 
   <style>
@@ -29,13 +30,22 @@
     }
 
     body {
+      --orbit-background-full: url("background-orbit/background-orbit.jpg?v=__ASSET_VERSION__");
+      --orbit-background-firstpaint: url("background-orbit/background-orbit-firstpaint.jpg?v=__ASSET_VERSION__");
+      --orbit-background-lqip: url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDACAWGBwYFCAcGhwkIiAmMFA0MCwsMGJGSjpQdGZ6eHJmcG6AkLicgIiuim5woNqirr7EztDOfJri8uDI8LjKzsb/2wBDASIkJDAqMF40NF7GhHCExsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsb/wgARCAA+ACADASIAAhEBAxEB/8QAGAAAAwEBAAAAAAAAAAAAAAAAAAEDBAL/xAAWAQEBAQAAAAAAAAAAAAAAAAAAAQL/2gAMAwEAAhADEAAAAcHTpmxLyp2jqUy3zZpeS3nkfKAADR//xAAfEAEAAQQBBQAAAAAAAAAAAAABAgAQESEDEiIwMUH/2gAIAQEAAQUCrF4mWS9TGxJKJueSvkSkMMu1c0bZurR0+/H/AP/EABgRAAMBAQAAAAAAAAAAAAAAAAABESAh/9oACAEDAQE/AYNHRzP/xAAYEQEBAQEBAAAAAAAAAAAAAAABABESIP/aAAgBAgEBPwHYduRgfP8A/8QAGxAAAQUBAQAAAAAAAAAAAAAAAAEQESExIED/2gAIAQEABj8C5hC2ot5XDCNaPB//xAAdEAEAAgICAwAAAAAAAAAAAAABABEQMSFBMIHx/9oACAEBAAE/IZbKkEBpB1Ky1THEkhfE1gc2An1QBNIBZgBRaVU9ZZY9RbW+P//aAAwDAQACAAMAAAAQrqoEatcl/8QAGREAAwEBAQAAAAAAAAAAAAAAAAERIRAx/9oACAEDAQE/EFisYhNFRvRMhJ3/xAAZEQADAQEBAAAAAAAAAAAAAAAAARExECH/2gAIAQIBAT8QfqIRgowUUZYXv//EAB0QAQACAgMBAQAAAAAAAAAAAAEAESExEEFRYXH/2gAIAQEAAT8QCCFgpKlQCtsSAooHcphUZNwBrMdtUyp62r9gpPTkrUyLV0RY1Bqja8jpJ8GpX0S+1H8AaDRGSoLV+RchVwz1wlRJuGP2MqZlhrcW5bBZmZ4JcZ//2Q==");
       background: #0C0C14;
       background-image:
-        url("background-orbit/background-orbit.jpg?v=__ASSET_VERSION__"),
-        url("background-orbit/background-orbit-firstpaint.jpg?v=__ASSET_VERSION__"),
-        url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDACAWGBwYFCAcGhwkIiAmMFA0MCwsMGJGSjpQdGZ6eHJmcG6AkLicgIiuim5woNqirr7EztDOfJri8uDI8LjKzsb/2wBDASIkJDAqMF40NF7GhHCExsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsb/wgARCAA+ACADASIAAhEBAxEB/8QAGAAAAwEBAAAAAAAAAAAAAAAAAAEDBAL/xAAWAQEBAQAAAAAAAAAAAAAAAAAAAQL/2gAMAwEAAhADEAAAAcHTpmxLyp2jqUy3zZpeS3nkfKAADR//xAAfEAEAAQQBBQAAAAAAAAAAAAABAgAQESEDEiIwMUH/2gAIAQEAAQUCrF4mWS9TGxJKJueSvkSkMMu1c0bZurR0+/H/AP/EABgRAAMBAQAAAAAAAAAAAAAAAAABESAh/9oACAEDAQE/AYNHRzP/xAAYEQEBAQEBAAAAAAAAAAAAAAABABESIP/aAAgBAgEBPwHYduRgfP8A/8QAGxAAAQUBAQAAAAAAAAAAAAAAAAEQESExIED/2gAIAQEABj8C5hC2ot5XDCNaPB//xAAdEAEAAgICAwAAAAAAAAAAAAABABEQMSFBMIHx/9oACAEBAAE/IZbKkEBpB1Ky1THEkhfE1gc2An1QBNIBZgBRaVU9ZZY9RbW+P//aAAwDAQACAAMAAAAQrqoEatcl/8QAGREAAwEBAQAAAAAAAAAAAAAAAAERIRAx/9oACAEDAQE/EFisYhNFRvRMhJ3/xAAZEQADAQEBAAAAAAAAAAAAAAAAARExECH/2gAIAQIBAT8QfqIRgowUUZYXv//EAB0QAQACAgMBAQAAAAAAAAAAAAEAESExEEFRYXH/2gAIAQEAAT8QCCFgpKlQCtsSAooHcphUZNwBrMdtUyp62r9gpPTkrUyLV0RY1Bqja8jpJ8GpX0S+1H8AaDRGSoLV+RchVwz1wlRJuGP2MqZlhrcW5bBZmZ4JcZ//2Q==");
-      background-size: 100% auto, 100% auto, 100% auto;
-      background-repeat: repeat-y, repeat-y, repeat-y;
+        var(--orbit-background-firstpaint),
+        var(--orbit-background-lqip);
+      background-size: 100% auto;
+      background-repeat: repeat-y;
+    }
+
+    body.background-orbit-enhanced {
+      background-image:
+        var(--orbit-background-full),
+        var(--orbit-background-firstpaint),
+        var(--orbit-background-lqip);
     }
 
 
@@ -136,10 +146,9 @@
 
     @media (max-width: 1024px) {
       body {
-        background-image:
-          url("background-orbit/background-orbit-mobile.jpg?v=__ASSET_VERSION__"),
-          url("background-orbit/background-orbit-mobile-firstpaint.jpg?v=__ASSET_VERSION__"),
-          url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDACAWGBwYFCAcGhwkIiAmMFA0MCwsMGJGSjpQdGZ6eHJmcG6AkLicgIiuim5woNqirr7EztDOfJri8uDI8LjKzsb/2wBDASIkJDAqMF40NF7GhHCExsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsb/wgARCAA+ACADASIAAhEBAxEB/8QAGAAAAwEBAAAAAAAAAAAAAAAAAAMEAQL/xAAWAQEBAQAAAAAAAAAAAAAAAAAAAQL/2gAMAwEAAhADEAAAAYOuu81JQmtaqpSZ82blCc3nk3lAADQ//8QAHhAAAgICAgMAAAAAAAAAAAAAAQIAERASITEiMEH/2gAIAQEAAQUClZUWWvYrgMRNzHnxRCBRfxJg5jnjC99+v//EABgRAQADAQAAAAAAAAAAAAAAAAEAEBEg/9oACAEDAQE/AciUpz//xAAYEQEBAQEBAAAAAAAAAAAAAAABABESIP/aAAgBAgEBPwHYduRgfP8A/8QAGxAAAQUBAQAAAAAAAAAAAAAAAAEQESExIED/2gAIAQEABj8C5hC2otXlcMIW2jwf/8QAHxABAQEAAQMFAAAAAAAAAAAAAREAMRAhQTBRYYGh/9oACAEBAAE/IcJ4NOimGXamHBolcc72lhUe1uHez40BI0wTwv3AJw0NFMKK0o+urCnxlqvp/wD/2gAMAwEAAgADAAAAEM5iMDrXAf/EABkRAAMBAQEAAAAAAAAAAAAAAAABESEQMf/aAAgBAwEBPxBYrICbStPQTISd/8QAGREAAwEBAQAAAAAAAAAAAAAAAAERIRAx/9oACAECAQE/EHqIQKPBTGWF7//EAB4QAQADAAMBAAMAAAAAAAAAAAEAESExUXEQQWGx/9oACAEBAAE/EAg1onkxKhBcsIwEoJXBo0C4C80ilqHkDavuELbNFZH3JCti01JVfldRyk5UHEIyNYfqPmgDgOCNjBavqJoVSm7XxKnRtZ7GdN/ksPYty2CzZsqEv5//2Q==");
+        --orbit-background-full: url("background-orbit/background-orbit-mobile.jpg?v=__ASSET_VERSION__");
+        --orbit-background-firstpaint: url("background-orbit/background-orbit-mobile-firstpaint.jpg?v=__ASSET_VERSION__");
+        --orbit-background-lqip: url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDACAWGBwYFCAcGhwkIiAmMFA0MCwsMGJGSjpQdGZ6eHJmcG6AkLicgIiuim5woNqirr7EztDOfJri8uDI8LjKzsb/2wBDASIkJDAqMF40NF7GhHCExsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsb/wgARCAA+ACADASIAAhEBAxEB/8QAGAAAAwEBAAAAAAAAAAAAAAAAAAMEAQL/xAAWAQEBAQAAAAAAAAAAAAAAAAAAAQL/2gAMAwEAAhADEAAAAYOuu81JQmtaqpSZ82blCc3nk3lAADQ//8QAHhAAAgICAgMAAAAAAAAAAAAAAQIAERASITEiMEH/2gAIAQEAAQUClZUWWvYrgMRNzHnxRCBRfxJg5jnjC99+v//EABgRAQADAQAAAAAAAAAAAAAAAAEAEBEg/9oACAEDAQE/AciUpz//xAAYEQEBAQEBAAAAAAAAAAAAAAABABESIP/aAAgBAgEBPwHYduRgfP8A/8QAGxAAAQUBAQAAAAAAAAAAAAAAAAEQESExIED/2gAIAQEABj8C5hC2otXlcMIW2jwf/8QAHxABAQEAAQMFAAAAAAAAAAAAAREAMRAhQTBRYYGh/9oACAEBAAE/IcJ4NOimGXamHBolcc72lhUe1uHez40BI0wTwv3AJw0NFMKK0o+urCnxlqvp/wD/2gAMAwEAAgADAAAAEM5iMDrXAf/EABkRAAMBAQEAAAAAAAAAAAAAAAABESEQMf/aAAgBAwEBPxBYrICbStPQTISd/8QAGREAAwEBAQAAAAAAAAAAAAAAAAERIRAx/9oACAECAQE/EHqIQKPBTGWF7//EAB4QAQADAAMBAAMAAAAAAAAAAAEAESExUXEQQWGx/9oACAEBAAE/EAg1onkxKhBcsIwEoJXBo0C4C80ilqHkDavuELbNFZH3JCti01JVfldRyk5UHEIyNYfqPmgDgOCNjBavqJoVSm7XxKnRtZ7GdN/ksPYty2CzZsqEv5//2Q==");
       }
     }
 
@@ -228,7 +237,7 @@
       position: fixed;
       inset: 0;
       z-index: 30000;
-      display: none;
+      display: grid;
       place-items: center;
       padding: 24px;
       box-sizing: border-box;
@@ -525,7 +534,7 @@
   <div class="page-loading-overlay" id="page-loading-overlay" aria-label="Jupiter Faucet is loading">
     <div class="page-loading-pane">
       <div class="page-loading-content">
-        <img class="page-loading-logo" src="/jupiter_faucet_token_logo.svg?v=__ASSET_VERSION__" alt="" width="142" height="142" decoding="async" />
+        <img class="page-loading-logo" src="/jupiter_faucet_token_logo.svg?v=__ASSET_VERSION__" alt="" width="142" height="142" decoding="sync" fetchpriority="high" />
         <p class="page-loading-title" id="page-loading-title" aria-hidden="true">Infinite Cycles Begin Here</p>
         <p class="page-loading-status" role="status" aria-live="polite">Loading<span aria-hidden="true"><span class="page-loading-dot">.</span><span class="page-loading-dot">.</span><span class="page-loading-dot">.</span></span></p>
       </div>
@@ -1362,8 +1371,8 @@
   </div>
 
   <!-- Visor + glow -->
-  <img id="visor" src="background-orbit/visor.webp?v=__ASSET_VERSION__" alt="" decoding="async" fetchpriority="high">
-  <img id="visor_glow" src="background-orbit/visor-glow.webp?v=__ASSET_VERSION__" alt="" decoding="async" fetchpriority="high">
+  <img id="visor" src="background-orbit/visor.webp?v=__ASSET_VERSION__" alt="" decoding="async" fetchpriority="low">
+  <img id="visor_glow" src="background-orbit/visor-glow.webp?v=__ASSET_VERSION__" alt="" decoding="async" fetchpriority="low">
 
   <!-- Neon “TOP UPS” labels -->
   <div class="neon neon-label neon-top">TOP</div>
