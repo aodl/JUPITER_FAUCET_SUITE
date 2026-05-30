@@ -106,6 +106,8 @@ type CanisterOverview = record {
 };
 type PublicCounts = record {
   registered_canister_count : nat64;
+  raw_icp_declared_canister_count : opt nat64;
+  declared_neuron_count : opt nat64;
   qualifying_commitment_count : nat64;
   sns_discovered_canister_count : nat64;
   total_output_e8s : nat64;

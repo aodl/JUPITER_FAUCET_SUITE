@@ -82,6 +82,8 @@ export const idlFactory = ({ IDL }) => {
   });
   const PublicCounts = IDL.Record({
     registered_canister_count: IDL.Nat64,
+    raw_icp_declared_canister_count: IDL.Opt(IDL.Nat64),
+    declared_neuron_count: IDL.Opt(IDL.Nat64),
     qualifying_commitment_count: IDL.Nat64,
     sns_discovered_canister_count: IDL.Nat64,
     total_output_e8s: IDL.Nat64,

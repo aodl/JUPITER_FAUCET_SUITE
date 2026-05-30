@@ -690,6 +690,8 @@ mod tests {
 
         let counts = get_public_counts();
         assert_eq!(counts.registered_canister_count, 1);
+        assert_eq!(counts.raw_icp_declared_canister_count, Some(0));
+        assert_eq!(counts.declared_neuron_count, Some(0));
         assert_eq!(counts.qualifying_commitment_count, 1);
         assert_eq!(counts.sns_discovered_canister_count, 1);
         assert_eq!(counts.total_output_e8s, 0);
@@ -714,8 +716,61 @@ mod tests {
 
         let counts = get_public_counts();
         assert_eq!(counts.registered_canister_count, 0);
+        assert_eq!(counts.raw_icp_declared_canister_count, Some(0));
+        assert_eq!(counts.declared_neuron_count, Some(0));
         assert_eq!(counts.qualifying_commitment_count, 0);
         assert_eq!(counts.sns_discovered_canister_count, 0);
+    }
+
+    #[test]
+    fn get_public_counts_surfaces_raw_icp_and_neuron_target_counts() {
+        let raw_a = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let raw_b = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
+        let mut st = base_state();
+        st.raw_icp_commitment_history.insert(
+            raw_a,
+            vec![CommitmentSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 100_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            raw_b,
+            vec![CommitmentSample {
+                tx_id: 2,
+                timestamp_nanos: Some(2_000_000_000),
+                amount_e8s: 200_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            42,
+            vec![CommitmentSample {
+                tx_id: 3,
+                timestamp_nanos: Some(3_000_000_000),
+                amount_e8s: 300_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            77,
+            vec![CommitmentSample {
+                tx_id: 4,
+                timestamp_nanos: Some(4_000_000_000),
+                amount_e8s: 400_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.qualifying_commitment_count = None;
+        state::set_state(st);
+
+        let counts = get_public_counts();
+        assert_eq!(counts.registered_canister_count, 0);
+        assert_eq!(counts.raw_icp_declared_canister_count, Some(2));
+        assert_eq!(counts.declared_neuron_count, Some(2));
+        assert_eq!(counts.qualifying_commitment_count, 4);
     }
 
     #[test]

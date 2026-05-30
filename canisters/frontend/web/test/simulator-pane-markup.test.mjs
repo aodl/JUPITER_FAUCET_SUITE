@@ -657,13 +657,19 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
   assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters<\/h3>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons<\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters <span id="commitments-raw-canister-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
   assert.doesNotMatch(commitments, /<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
   assert.match(mainJs, /const registeredCount = data\?\.counts\?\.registered_canister_count;/);
-  assert.match(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);
+  assert.match(mainJs, /setText\('commitments-pane-subtitle', subtitle\);/);
+  assert.doesNotMatch(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);
   assert.match(mainJs, /setText\('commitments-canister-count', commitmentsCanisterCount\);/);
+  assert.match(mainJs, /const optionalCountValue = \(value\) => \(Array\.isArray\(value\) \? value\[0\] : value\);/);
+  assert.match(mainJs, /const rawIcpDeclaredCanisterCount = optionalCountValue\(data\?\.counts\?\.raw_icp_declared_canister_count\);/);
+  assert.match(mainJs, /const declaredNeuronCount = optionalCountValue\(data\?\.counts\?\.declared_neuron_count\);/);
+  assert.match(mainJs, /setText\('commitments-raw-canister-count', commitmentsRawCanisterCount\);/);
+  assert.match(mainJs, /setText\('commitments-neuron-count', commitmentsNeuronCount\);/);
   assert.doesNotMatch(commitments, /private neurons cannot be refreshed by the faucet top-up process/);
   assert.doesNotMatch(commitments, /<th>Category<\/th>/);
   assert.match(commitments, /<td colspan="3" class="empty-cell">Loading…<\/td>/);

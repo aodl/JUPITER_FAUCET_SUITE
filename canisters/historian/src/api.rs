@@ -106,6 +106,8 @@ pub struct CanisterOverview {
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct PublicCounts {
     pub registered_canister_count: u64,
+    pub raw_icp_declared_canister_count: Option<u64>,
+    pub declared_neuron_count: Option<u64>,
     pub qualifying_commitment_count: u64,
     pub sns_discovered_canister_count: u64,
     pub total_output_e8s: u64,

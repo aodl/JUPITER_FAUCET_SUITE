@@ -64,6 +64,8 @@ function historianStatus(overrides = {}) {
 function historianCounts(overrides = {}) {
   return {
     registered_canister_count: 2n,
+    raw_icp_declared_canister_count: [1n],
+    declared_neuron_count: [1n],
     qualifying_commitment_count: 3n,
     sns_discovered_canister_count: 4n,
     total_output_e8s: 400_000_000n,

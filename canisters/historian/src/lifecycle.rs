@@ -98,6 +98,24 @@ pub(super) fn count_registered_canisters(st: &State) -> u64 {
         .count() as u64
 }
 
+pub(super) fn count_raw_icp_declared_canisters(st: &State) -> u64 {
+    st.raw_icp_commitment_history
+        .keys()
+        .copied()
+        .chain(state::stable_raw_icp_commitment_history_keys())
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
+pub(super) fn count_declared_neurons(st: &State) -> u64 {
+    st.neuron_commitment_history
+        .keys()
+        .copied()
+        .chain(state::stable_neuron_commitment_history_keys())
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
 pub(super) fn count_sns_discovered_canisters(st: &State) -> u64 {
     st.canister_sources
         .values()

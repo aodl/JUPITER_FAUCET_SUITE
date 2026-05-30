@@ -160,16 +160,24 @@ function renderHistorianFaultBanner(data) {
 function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
   const registeredCount = data?.counts?.registered_canister_count;
-  const commitmentsSubtitle = registeredCount === undefined || registeredCount === null
-    ? subtitle
-    : `${subtitle} ${formatInteger(registeredCount)} declared canisters.`;
+  const optionalCountValue = (value) => (Array.isArray(value) ? value[0] : value);
+  const rawIcpDeclaredCanisterCount = optionalCountValue(data?.counts?.raw_icp_declared_canister_count);
+  const declaredNeuronCount = optionalCountValue(data?.counts?.declared_neuron_count);
   const commitmentsCanisterCount = registeredCount === undefined || registeredCount === null
     ? ''
     : `(${formatInteger(registeredCount)})`;
+  const commitmentsRawCanisterCount = rawIcpDeclaredCanisterCount === undefined || rawIcpDeclaredCanisterCount === null
+    ? ''
+    : `(${formatInteger(rawIcpDeclaredCanisterCount)})`;
+  const commitmentsNeuronCount = declaredNeuronCount === undefined || declaredNeuronCount === null
+    ? ''
+    : `(${formatInteger(declaredNeuronCount)})`;
   setText('landing-next-run', subtitle);
   setText('registered-pane-subtitle', subtitle);
-  setText('commitments-pane-subtitle', commitmentsSubtitle);
+  setText('commitments-pane-subtitle', subtitle);
   setText('commitments-canister-count', commitmentsCanisterCount);
+  setText('commitments-raw-canister-count', commitmentsRawCanisterCount);
+  setText('commitments-neuron-count', commitmentsNeuronCount);
   setText('output-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
   setText('rewards-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');
   setText('dquorum-pane-subtitle', 'Recent rows are queried live from the ICP index canister.');

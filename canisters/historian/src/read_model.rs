@@ -136,6 +136,8 @@ pub(super) fn get_canister_overview(canister_id: Principal) -> Option<CanisterOv
 pub(super) fn get_public_counts() -> PublicCounts {
     state::with_state(|st| PublicCounts {
         registered_canister_count: count_registered_canisters(st),
+        raw_icp_declared_canister_count: Some(count_raw_icp_declared_canisters(st)),
+        declared_neuron_count: Some(count_declared_neurons(st)),
         qualifying_commitment_count: st
             .qualifying_commitment_count
             .unwrap_or_else(|| fallback_qualifying_commitment_count(st)),
