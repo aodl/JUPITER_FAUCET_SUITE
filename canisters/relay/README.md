@@ -20,21 +20,22 @@ The trailing dot is required. In `jupiter-memo-policy`, `canister_id.memo` means
 
 ## Role in the Suite
 
-The production relay is intended to top up all Jupiter-operated solution canisters plus the canonical blackhole canister. The relay itself is automatically included at runtime; operators should not include the relay principal in `managed_canisters`.
+The production relay is intended to top up all Jupiter-operated solution canisters plus the managed blackhole canisters. The relay itself is automatically included at runtime; operators should not include the relay principal in `managed_canisters`.
 
 System and dependency canisters are intentionally excluded from the managed set. The relay should not manage the ICP ledger, CMC, NNS governance, ICP index, SNS-WASM, SNS roots, XRC, or other external dependencies.
 
 ## Production Managed Set
 
 ```text
-jupiter_disburser       uccpi-cqaaa-aaaar-qby3q-cai
-jupiter_lifeline        afisn-gqaaa-aaaar-qb4qa-cai
-jupiter_faucet          acjuz-liaaa-aaaar-qb4qq-cai
-jupiter_sns_rewards     alk7f-5aaaa-aaaar-qb4ra-cai
-jupiter_faucet_frontend jufzc-caaaa-aaaar-qb5da-cai
-jupiter_historian       j5gs6-uiaaa-aaaar-qb5cq-cai
-blackhole               77deu-baaaa-aaaar-qb6za-cai
-relay, auto-included    u2qkp-aqaaa-aaaar-qb7ea-cai
+jupiter_disburser          uccpi-cqaaa-aaaar-qby3q-cai
+jupiter_lifeline           afisn-gqaaa-aaaar-qb4qa-cai
+jupiter_faucet             acjuz-liaaa-aaaar-qb4qq-cai
+jupiter_sns_rewards        alk7f-5aaaa-aaaar-qb4ra-cai
+jupiter_faucet_frontend    jufzc-caaaa-aaaar-qb5da-cai
+jupiter_historian          j5gs6-uiaaa-aaaar-qb5cq-cai
+blackhole_fiduciary_subnet 77deu-baaaa-aaaar-qb6za-cai
+blackhole_13_node_subnet   e3mmv-5qaaa-aaaah-aadma-cai
+relay, auto-included       u2qkp-aqaaa-aaaar-qb7ea-cai
 ```
 
 ## Funding
@@ -53,13 +54,30 @@ Relay subaccount 1 is reserved for direct Jupiter Faucet commitment forwarding. 
 Account { owner = <relay_canister_id>, subaccount = opt blob "\00...\01" }
 ```
 
-If that account holds more than the current ledger fee and the net transferable amount is at least 1 ICP, Relay transfers `balance - fee` to the Jupiter Faucet neuron staking account under NNS Governance. The destination neuron is `11614578985374291210`, resolved through NNS Governance `list_neurons`. The production transfer memo is derived from the Relay principal as compact text plus `.Relay`; for `u2qkp-aqaaa-aaaar-qb7ea-cai`, it is `u2qkpaqaaaaaaarqb7eacai.Relay`. Balances below `1 ICP + fee` remain in subaccount 1 for a future tick.
+Relay subaccount 1 supports memo-free perpetual funding of the Relay canister, and therefore all Relay-managed canisters. It is useful when the funding source cannot, or should not, attach an ICP ledger memo. A concrete example is minting maturity directly into a Jupiter Faucet funding flow.
+
+The production ICRC textual account is:
+
+```text
+u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
+```
+
+Its equivalent explicit ICRC account fields are:
+
+```text
+owner = u2qkp-aqaaa-aaaar-qb7ea-cai
+subaccount = 0000000000000000000000000000000000000000000000000000000000000001
+```
+
+The Relay default account remains for normal managed-canister CMC top-ups and configured surplus routing. Relay subaccount 1 is only for memo-free Jupiter Faucet commitment forwarding. Funds sent to subaccount 1 accumulate until the account can make a qualifying commitment.
+
+Once the account holds more than the current ledger fee and the net transferable amount is at least 1 ICP, Relay transfers `balance - fee` to the Jupiter Faucet neuron staking account under NNS Governance. The destination neuron is `11614578985374291210`, resolved through NNS Governance `list_neurons`. The production transfer memo is derived from the Relay principal as compact text plus `.Relay`; for `u2qkp-aqaaa-aaaar-qb7ea-cai`, it is `u2qkpaqaaaaaaarqb7eacai.Relay`. Balances below `1 ICP + fee` remain in subaccount 1 for a future tick.
 
 ## Managed Canisters
 
 Install args include `managed_canisters : vec principal`. The runtime set is the sorted unique union of that list and the relay canister itself. The relay is always included even when omitted from config.
 
-Anonymous and management canister principals are rejected. Duplicate configured managed canisters are rejected. The relay probes its own cycles directly with `canister_cycle_balance`; every non-self managed canister must be readable through the configured blackhole canister.
+Anonymous and management canister principals are rejected. Duplicate configured managed canisters are rejected. The relay probes its own cycles directly with `canister_cycle_balance`; ordinary non-self managed canisters must be readable through the configured blackhole canister. Known managed blackhole canisters are probed through themselves by calling their own `canister_status` endpoint with their own principal as the target.
 
 If any required probe fails, the relay fails closed: it records a degraded summary and spends no ICP.
 

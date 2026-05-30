@@ -10,7 +10,7 @@ use ic_stable_structures::{
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
 
-const PRODUCTION_JUPITER_MANAGED_CANISTERS: [&str; 7] = [
+const PRODUCTION_JUPITER_MANAGED_CANISTERS: [&str; 8] = [
     "uccpi-cqaaa-aaaar-qby3q-cai",
     "afisn-gqaaa-aaaar-qb4qa-cai",
     "acjuz-liaaa-aaaar-qb4qq-cai",
@@ -18,6 +18,7 @@ const PRODUCTION_JUPITER_MANAGED_CANISTERS: [&str; 7] = [
     "jufzc-caaaa-aaaar-qb5da-cai",
     "j5gs6-uiaaa-aaaar-qb5cq-cai",
     "77deu-baaaa-aaaar-qb6za-cai",
+    "e3mmv-5qaaa-aaaah-aadma-cai",
 ];
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -607,6 +608,7 @@ mod tests {
                 principal("jufzc-caaaa-aaaar-qb5da-cai"),
                 principal("j5gs6-uiaaa-aaaar-qb5cq-cai"),
                 principal("77deu-baaaa-aaaar-qb6za-cai"),
+                principal("e3mmv-5qaaa-aaaah-aadma-cai"),
             ],
             ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),

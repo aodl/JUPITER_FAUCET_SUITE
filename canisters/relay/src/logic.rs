@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
@@ -17,6 +18,8 @@ pub(crate) const JUPITER_FAUCET_NEURON_ID: u64 = 11_614_578_985_374_291_210;
 pub(crate) const ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD: &str =
     "all_cycles_batch_below_fee_efficient_threshold";
 const BOOTSTRAP_CYCLES_PER_E8: u128 = 100_000;
+const KNOWN_BLACKHOLE_CANISTERS: [&str; 2] =
+    ["77deu-baaaa-aaaar-qb6za-cai", "e3mmv-5qaaa-aaaah-aadma-cai"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BurnPlan {
@@ -207,6 +210,33 @@ pub(crate) fn effective_managed_canisters(
     set.extend(configured.iter().copied());
     set.insert(self_id);
     set.into_iter().collect()
+}
+
+fn known_blackhole_canisters() -> &'static [Principal; 2] {
+    static KNOWN_BLACKHOLE_CANISTERS_PARSED: OnceLock<[Principal; 2]> = OnceLock::new();
+    KNOWN_BLACKHOLE_CANISTERS_PARSED.get_or_init(|| {
+        KNOWN_BLACKHOLE_CANISTERS.map(|id| {
+            Principal::from_text(id).expect("invalid hardcoded blackhole canister id")
+        })
+    })
+}
+
+pub(crate) fn is_known_blackhole_canister(canister_id: Principal) -> bool {
+    known_blackhole_canisters().contains(&canister_id)
+}
+
+pub(crate) fn probe_canister_for(
+    managed_canister_id: Principal,
+    self_id: Principal,
+    configured_blackhole_canister_id: Principal,
+) -> Principal {
+    if managed_canister_id == self_id {
+        self_id
+    } else if is_known_blackhole_canister(managed_canister_id) {
+        managed_canister_id
+    } else {
+        configured_blackhole_canister_id
+    }
 }
 
 pub(crate) fn validate_config(cfg: &Config, self_id: Principal) -> Result<(), String> {
@@ -775,6 +805,56 @@ mod tests {
     }
 
     #[test]
+    fn probe_canister_for_routes_known_blackholes_through_themselves() {
+        let configured_blackhole = canister_b();
+        let relay = canister_c();
+        let fiduciary_blackhole = principal("77deu-baaaa-aaaar-qb6za-cai");
+        let thirteen_node_blackhole = principal("e3mmv-5qaaa-aaaah-aadma-cai");
+
+        assert_eq!(
+            probe_canister_for(fiduciary_blackhole, relay, configured_blackhole),
+            fiduciary_blackhole
+        );
+        assert_eq!(
+            probe_canister_for(thirteen_node_blackhole, relay, configured_blackhole),
+            thirteen_node_blackhole
+        );
+    }
+
+    #[test]
+    fn is_known_blackhole_canister_matches_only_known_blackholes() {
+        assert!(is_known_blackhole_canister(principal(
+            "77deu-baaaa-aaaar-qb6za-cai"
+        )));
+        assert!(is_known_blackhole_canister(principal(
+            "e3mmv-5qaaa-aaaah-aadma-cai"
+        )));
+        assert!(!is_known_blackhole_canister(canister_a()));
+    }
+
+    #[test]
+    fn probe_canister_for_routes_ordinary_managed_canister_through_configured_blackhole() {
+        let configured_blackhole = canister_b();
+        let relay = canister_c();
+
+        assert_eq!(
+            probe_canister_for(canister_a(), relay, configured_blackhole),
+            configured_blackhole
+        );
+    }
+
+    #[test]
+    fn probe_canister_for_keeps_relay_self_on_direct_probe_path() {
+        let configured_blackhole = canister_b();
+        let relay = canister_c();
+
+        assert_eq!(
+            probe_canister_for(relay, relay, configured_blackhole),
+            relay
+        );
+    }
+
+    #[test]
     fn config_validation_accepts_typed_surplus_targets_and_rejects_bad_values() {
         let self_id = canister_b();
         let mut cfg = config();
@@ -805,6 +885,18 @@ mod tests {
         assert!(validate_config(&cfg, self_id)
             .unwrap_err()
             .contains("anonymous"));
+    }
+
+    #[test]
+    fn config_validation_rejects_duplicate_managed_canisters() {
+        let self_id = canister_b();
+        let duplicate = canister_a();
+        let mut cfg = config();
+        cfg.managed_canisters = vec![duplicate, duplicate];
+
+        assert!(validate_config(&cfg, self_id)
+            .unwrap_err()
+            .contains("duplicate managed canister"));
     }
 
     #[test]

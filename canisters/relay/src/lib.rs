@@ -582,6 +582,12 @@ mod tests {
             decode_args(&bytes).expect("mainnet install args should decode into Rust InitArgs");
 
         assert!(!args.managed_canisters.is_empty());
+        assert!(args
+            .managed_canisters
+            .contains(&Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()));
+        assert!(args
+            .managed_canisters
+            .contains(&Principal::from_text("e3mmv-5qaaa-aaaah-aadma-cai").unwrap()));
         assert!(args.surplus_canister_recipients.is_none());
         assert_eq!(args.surplus_neuron_recipients.len(), 2);
         assert_eq!(

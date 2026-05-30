@@ -327,8 +327,14 @@ async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
     let cfg = state::with_state(|st| st.config.clone());
     let self_id = ic_cdk::api::canister_self();
     let managed = logic::effective_managed_canisters(&cfg.managed_canisters, self_id);
-    let (current_cycles, probe_failures) =
-        probe_cycles(&managed, self_id, now_nanos, blackhole).await;
+    let (current_cycles, probe_failures) = probe_cycles(
+        &managed,
+        self_id,
+        cfg.blackhole_canister_id,
+        now_nanos,
+        blackhole,
+    )
+    .await;
     let min_cycles = current_cycles
         .values()
         .map(|snapshot| snapshot.cycles)

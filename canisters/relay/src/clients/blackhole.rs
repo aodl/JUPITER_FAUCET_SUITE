@@ -23,13 +23,15 @@ impl BlackholeCanister {
     pub(crate) fn new(canister_id: Principal) -> Self {
         Self { canister_id }
     }
-}
 
-#[async_trait]
-impl BlackholeClient for BlackholeCanister {
-    async fn cycles_balance(&self, canister_id: Principal) -> Result<u128, ClientError> {
-        let resp = Call::bounded_wait(self.canister_id, "canister_status")
-            .with_arg(BlackholeCanisterStatusArgs { canister_id })
+    async fn cycles_balance_from(
+        probe_canister_id: Principal,
+        target_canister_id: Principal,
+    ) -> Result<u128, ClientError> {
+        let resp = Call::bounded_wait(probe_canister_id, "canister_status")
+            .with_arg(BlackholeCanisterStatusArgs {
+                canister_id: target_canister_id,
+            })
             .change_timeout(60)
             .await
             .map_err(|e| ClientError::Call(format!("blackhole canister_status failed: {e:?}")))?;
@@ -37,5 +39,20 @@ impl BlackholeClient for BlackholeCanister {
             ClientError::Call(format!("decode blackhole canister_status failed: {e:?}"))
         })?;
         nat_to_u128(&status.cycles)
+    }
+}
+
+#[async_trait]
+impl BlackholeClient for BlackholeCanister {
+    async fn cycles_balance(&self, canister_id: Principal) -> Result<u128, ClientError> {
+        Self::cycles_balance_from(self.canister_id, canister_id).await
+    }
+
+    async fn cycles_balance_via(
+        &self,
+        probe_canister_id: Principal,
+        target_canister_id: Principal,
+    ) -> Result<u128, ClientError> {
+        Self::cycles_balance_from(probe_canister_id, target_canister_id).await
     }
 }

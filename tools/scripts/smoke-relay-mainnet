@@ -13,6 +13,7 @@ EXPECTED_MANAGED_CANISTERS=(
   "jufzc-caaaa-aaaar-qb5da-cai"
   "j5gs6-uiaaa-aaaar-qb5cq-cai"
   "77deu-baaaa-aaaar-qb6za-cai"
+  "e3mmv-5qaaa-aaaah-aadma-cai"
 )
 
 require_contains() {
@@ -88,7 +89,7 @@ Manual confirmations:
 - canister logs are public;
 - log memory limit is 2MiB;
 - the operational/admin controller is retained until intentional handoff;
-- managed_canisters are the Jupiter production suite set plus blackhole, excluding relay self;
+- managed_canisters are the Jupiter production suite set plus both managed blackholes, excluding relay self;
 - effective managed canisters include relay self u2qkp-aqaaa-aaaar-qb7ea-cai;
 - first successful tick is BaselineOnly and spends no ICP;
 - first funded allocation tick is observed before larger funding.

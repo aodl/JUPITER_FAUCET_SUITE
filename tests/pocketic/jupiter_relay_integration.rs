@@ -17,6 +17,10 @@ fn require_ignored_flag() -> Result<()> {
     support::assertions::require_ignored_flag()
 }
 
+fn principal(text: &str) -> Principal {
+    Principal::from_text(text).unwrap()
+}
+
 fn build_wasm_cached(
     cache: &OnceLock<Vec<u8>>,
     package: &str,
@@ -254,6 +258,85 @@ impl RelayEnv {
             surplus_neuron_recipients,
         };
         pic.install_canister(relay, relay_wasm()?, encode_one(init)?, None);
+        Ok(Self {
+            pic,
+            ledger,
+            cmc,
+            governance,
+            blackhole,
+            relay,
+        })
+    }
+
+    fn new_with_production_blackholes_managed() -> Result<Self> {
+        let pic = support::pocketic::builder()
+            .with_application_subnet()
+            .build();
+        let ledger = pic.create_canister();
+        let cmc = pic.create_canister();
+        let governance = pic.create_canister();
+        let blackhole = pic.create_canister();
+        let relay = pic.create_canister();
+        let fiduciary_blackhole = principal("77deu-baaaa-aaaar-qb6za-cai");
+        let thirteen_node_blackhole = principal("e3mmv-5qaaa-aaaah-aadma-cai");
+        pic.create_canister_with_id(None, None, fiduciary_blackhole)
+            .map_err(anyhow::Error::msg)?;
+        pic.create_canister_with_id(None, None, thirteen_node_blackhole)
+            .map_err(anyhow::Error::msg)?;
+
+        for canister in [
+            ledger,
+            cmc,
+            governance,
+            blackhole,
+            relay,
+            fiduciary_blackhole,
+            thirteen_node_blackhole,
+        ] {
+            pic.add_cycles(canister, 5_000_000_000_000);
+        }
+        pic.install_canister(ledger, ledger_wasm()?, vec![], None);
+        pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(governance, governance_wasm()?, vec![], None);
+        pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
+        pic.install_canister(fiduciary_blackhole, blackhole_wasm()?, vec![], None);
+        pic.install_canister(thirteen_node_blackhole, blackhole_wasm()?, vec![], None);
+
+        let init = RelayInitArg {
+            managed_canisters: vec![cmc, fiduciary_blackhole, thirteen_node_blackhole],
+            ledger_canister_id: Some(ledger),
+            cmc_canister_id: Some(cmc),
+            governance_canister_id: Some(governance),
+            blackhole_canister_id: Some(blackhole),
+            main_interval_seconds: Some(31_536_000),
+            max_transfers_per_tick: None,
+            surplus_canister_recipients: None,
+            surplus_neuron_recipients: Vec::new(),
+        };
+        pic.install_canister(relay, relay_wasm()?, encode_one(init)?, None);
+
+        for (probe, target, cycles) in [
+            (blackhole, cmc, 10_000_000_000_000_u128),
+            (
+                fiduciary_blackhole,
+                fiduciary_blackhole,
+                20_000_000_000_000_u128,
+            ),
+            (
+                thirteen_node_blackhole,
+                thirteen_node_blackhole,
+                30_000_000_000_000_u128,
+            ),
+        ] {
+            let _: () = update_bytes(
+                &pic,
+                probe,
+                Principal::anonymous(),
+                "debug_set_status",
+                encode_args((target, Some(Nat::from(cycles)), vec![probe]))?,
+            )?;
+        }
+
         Ok(Self {
             pic,
             ledger,
@@ -1231,6 +1314,19 @@ fn fail_closed_blackhole_probe_failure_spends_nothing() -> Result<()> {
     let logs = env.logs_text()?;
     if !logs.contains("RELAY_SUMMARY mode=Degraded") || !logs.contains("RELAY_PROBE_FAILURE ") {
         bail!("expected public degraded probe failure logs, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn relay_tick_succeeds_when_both_production_blackholes_are_managed() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new_with_production_blackholes_managed()?;
+
+    let summary = env.tick_relay()?;
+    if summary.mode != RelayMode::BaselineOnly || !summary.probe_failures.is_empty() {
+        bail!("expected complete baseline tick with both managed blackholes, got {summary:?}");
     }
     Ok(())
 }

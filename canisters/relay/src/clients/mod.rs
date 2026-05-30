@@ -59,6 +59,15 @@ pub(crate) trait CmcClient: Send + Sync {
 #[async_trait]
 pub(crate) trait BlackholeClient: Send + Sync {
     async fn cycles_balance(&self, canister_id: Principal) -> Result<u128, ClientError>;
+
+    async fn cycles_balance_via(
+        &self,
+        probe_canister_id: Principal,
+        target_canister_id: Principal,
+    ) -> Result<u128, ClientError> {
+        let _ = probe_canister_id;
+        self.cycles_balance(target_canister_id).await
+    }
 }
 
 #[async_trait]

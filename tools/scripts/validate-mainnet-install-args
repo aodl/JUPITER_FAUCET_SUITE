@@ -13,6 +13,7 @@ MAINNET = {
     "governance": "rrkah-fqaaa-aaaaa-aaaaq-cai",
     "cmc": "rkp4c-7iaaa-aaaaa-aaaca-cai",
     "blackhole": "77deu-baaaa-aaaar-qb6za-cai",
+    "blackhole_13_node_subnet": "e3mmv-5qaaa-aaaah-aadma-cai",
     "sns_wasm": "qaa6y-5yaaa-aaaaa-aaafa-cai",
 }
 
@@ -41,6 +42,7 @@ EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_faucet_frontend"],
     PROD["jupiter_historian"],
     MAINNET["blackhole"],
+    MAINNET["blackhole_13_node_subnet"],
 }
 FORBIDDEN_RELAY_MANAGED = {
     MAINNET["ledger"],
@@ -312,6 +314,24 @@ def validate_relay_docs_and_smoke_are_log_only() -> None:
         for token in forbidden:
             if token in text:
                 fail(f"{path} still mentions removed relay production endpoint `{token}`")
+
+    relay_readme = (REPO_ROOT / "canisters" / "relay" / "README.md").read_text()
+    require_contains(relay_readme, "blackhole_fiduciary_subnet", "canisters/relay/README.md")
+    require_contains(relay_readme, MAINNET["blackhole"], "canisters/relay/README.md")
+    require_contains(relay_readme, "blackhole_13_node_subnet", "canisters/relay/README.md")
+    require_contains(
+        relay_readme,
+        MAINNET["blackhole_13_node_subnet"],
+        "canisters/relay/README.md",
+    )
+
+    smoke = (REPO_ROOT / "tools" / "scripts" / "smoke-relay-mainnet").read_text()
+    require_contains(smoke, MAINNET["blackhole"], "tools/scripts/smoke-relay-mainnet")
+    require_contains(
+        smoke,
+        MAINNET["blackhole_13_node_subnet"],
+        "tools/scripts/smoke-relay-mainnet",
+    )
 
 
 def validate_disburser() -> None:

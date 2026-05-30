@@ -7,7 +7,8 @@
       principal "alk7f-5aaaa-aaaar-qb4ra-cai"; // jupiter_sns_rewards
       principal "jufzc-caaaa-aaaar-qb5da-cai"; // jupiter_faucet_frontend
       principal "j5gs6-uiaaa-aaaar-qb5cq-cai"; // jupiter_historian
-      principal "77deu-baaaa-aaaar-qb6za-cai"; // blackhole
+      principal "77deu-baaaa-aaaar-qb6za-cai"; // blackhole_fiduciary_subnet
+      principal "e3mmv-5qaaa-aaaah-aadma-cai"; // blackhole_13_node_subnet
     };
 
     ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
