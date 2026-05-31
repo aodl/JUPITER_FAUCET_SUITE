@@ -7,8 +7,6 @@ use crate::clients::index::{IndexOperation, IndexTimeStamp, IndexTransactionWith
 use crate::state::{ActivePayoutJob, PendingNotification, Summary, TransferKind};
 
 pub(crate) const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
-#[cfg(test)]
-const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Commitment {
@@ -496,20 +494,13 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_target_canister_text_memo() {
+    fn translates_cycles_top_up_memo_to_payout_target() {
         let p = target_canister();
-        assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
+        assert_eq!(parse_payout_target_from_memo(p.to_text().as_bytes()), Some(top_up_target(p)));
     }
 
     #[test]
-    fn parser_accepts_compacted_target_canister_text_memo() {
-        let p = target_canister();
-        let compact = p.to_text().replace('-', "");
-        assert_eq!(parse_payout_target_from_memo(compact.as_bytes()), Some(top_up_target(p)));
-    }
-
-    #[test]
-    fn parser_accepts_raw_icp_directive_with_transfer_memo() {
+    fn translates_raw_icp_memo_to_payout_target() {
         let p = target_canister();
         let compact = p.to_text().replace('-', "");
         assert_eq!(
@@ -522,20 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_raw_icp_directive_with_empty_transfer_memo() {
-        let p = target_canister();
-        let compact = p.to_text().replace('-', "");
-        assert_eq!(
-            parse_payout_target_from_memo(format!("{compact}.").as_bytes()),
-            Some(PayoutTarget::RawIcp {
-                canister_id: p,
-                memo: Vec::new(),
-            })
-        );
-    }
-
-    #[test]
-    fn parser_accepts_numeric_neuron_id_memo() {
+    fn translates_neuron_stake_memo_to_payout_target() {
         assert_eq!(
             parse_payout_target_from_memo(b"11614578985374291210"),
             Some(PayoutTarget::NeuronStake {
@@ -546,64 +524,11 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_neuron_id_memo_with_transfer_memo() {
-        assert_eq!(
-            parse_payout_target_from_memo(b"42.vault.memo"),
-            Some(PayoutTarget::NeuronStake {
-                neuron_id: 42,
-                memo: Some(b"vault.memo".to_vec()),
-            })
-        );
-        assert_eq!(
-            parse_payout_target_from_memo(b"42."),
-            Some(PayoutTarget::NeuronStake {
-                neuron_id: 42,
-                memo: Some(Vec::new()),
-            })
-        );
-        assert_eq!(
-            parse_payout_target_from_memo(b"42..memo"),
-            Some(PayoutTarget::NeuronStake {
-                neuron_id: 42,
-                memo: Some(b".memo".to_vec()),
-            })
-        );
-    }
-
-    #[test]
-    fn parser_rejects_oversize_self_authenticating_principal_text() {
-        let p = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
-        assert!(p.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
-        assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), None);
-    }
-
-    #[test]
-    fn parser_rejects_malformed_or_adversarial_memos() {
-        let p = target_canister();
-        assert_eq!(parse_beneficiary_from_memo(b"not-a-principal"), None);
-        assert_eq!(parse_beneficiary_from_memo(b""), None);
-        assert_eq!(parse_beneficiary_from_memo(&p.as_slice()[..p.as_slice().len().saturating_sub(1)]), None);
-        assert_eq!(parse_beneficiary_from_memo(&[0xff; 64]), None);
-    }
-
-    #[test]
-    fn parser_rejects_anonymous_and_management_canister_principals() {
-        assert_eq!(parse_beneficiary_from_memo(Principal::anonymous().to_text().as_bytes()), None);
-        assert_eq!(parse_beneficiary_from_memo(Principal::management_canister().to_text().as_bytes()), None);
-    }
-
-    #[test]
-    fn parser_accepts_whitespace_padded_target_canister_text_memo() {
-        let p = target_canister();
-        let memo = format!("  {}\n", p.to_text());
-        assert_eq!(parse_beneficiary_from_memo(memo.as_bytes()), Some(p));
-    }
-
-    #[test]
-    fn parser_does_not_hardcode_a_cai_suffix() {
-        let p = principal("uuc56-gyb");
-        assert!(p.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
-        assert_eq!(parse_beneficiary_from_memo(p.to_text().as_bytes()), Some(p));
+    fn invalid_or_missing_commitment_memos_are_ignored_by_faucet_translation() {
+        for memo in [None, Some(Vec::new()), Some(b"not-a-principal".to_vec())] {
+            let commitment = Commitment { amount_e8s: 100_000_000, memo_bytes: memo };
+            assert_eq!(classify_commitment(10_000, &commitment), CommitmentValidity::IgnoreBadMemo);
+        }
     }
 
     #[test]

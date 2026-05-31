@@ -112,6 +112,60 @@ fn update_certified_data(root_hash: &[u8]) {
     let _ = root_hash;
 }
 
+fn cache_control_header(cache_control: &str) -> Vec<HeaderField> {
+    vec![("cache-control".to_string(), cache_control.to_string())]
+}
+
+fn immutable_asset_pattern(
+    pattern: &str,
+    content_type: &str,
+    encodings: Vec<(AssetEncoding, String)>,
+) -> AssetConfig {
+    AssetConfig::Pattern {
+        pattern: pattern.to_string(),
+        content_type: Some(content_type.to_string()),
+        headers: get_asset_headers_with_corp(
+            "same-origin",
+            cache_control_header(IMMUTABLE_ASSET_CACHE_CONTROL),
+        ),
+        encodings,
+    }
+}
+
+fn immutable_asset_file(path: &str, content_type: &str) -> AssetConfig {
+    AssetConfig::File {
+        path: path.to_string(),
+        content_type: Some(content_type.to_string()),
+        headers: get_asset_headers_for_path(
+            path,
+            cache_control_header(IMMUTABLE_ASSET_CACHE_CONTROL),
+        ),
+        fallback_for: vec![],
+        aliased_by: vec![],
+        encodings: vec![],
+    }
+}
+
+fn no_cache_asset_file(
+    path: &str,
+    content_type: &str,
+    aliases: Vec<&str>,
+    fallback_for: Vec<AssetFallbackConfig>,
+    encodings: Vec<(AssetEncoding, String)>,
+) -> AssetConfig {
+    AssetConfig::File {
+        path: path.to_string(),
+        content_type: Some(content_type.to_string()),
+        headers: get_asset_headers_with_corp(
+            "same-origin",
+            cache_control_header(NO_CACHE_ASSET_CACHE_CONTROL),
+        ),
+        fallback_for,
+        aliased_by: aliases.into_iter().map(str::to_string).collect(),
+        encodings,
+    }
+}
+
 fn certify_all_assets() {
     let compressed_encodings = vec![
         AssetEncoding::Brotli.default_config(),
@@ -119,153 +173,26 @@ fn certify_all_assets() {
     ];
 
     let asset_configs = vec![
-        AssetConfig::File {
-            path: "index.html".to_string(),
-            content_type: Some("text/html".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            fallback_for: vec![],
-            aliased_by: vec!["/".to_string()],
-            encodings: compressed_encodings.clone(),
-        },
-        AssetConfig::File {
-            path: "404.html".to_string(),
-            content_type: Some("text/html".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            fallback_for: vec![AssetFallbackConfig {
+        no_cache_asset_file("index.html", "text/html", vec!["/"], vec![], compressed_encodings.clone()),
+        no_cache_asset_file(
+            "404.html",
+            "text/html",
+            vec!["/404", "/404/", "/404.html"],
+            vec![AssetFallbackConfig {
                 scope: "/".to_string(),
                 status_code: Some(StatusCode::NOT_FOUND),
             }],
-            aliased_by: vec![
-                "/404".to_string(),
-                "/404/".to_string(),
-                "/404.html".to_string(),
-            ],
-            encodings: compressed_encodings.clone(),
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.js".to_string(),
-            content_type: Some("text/javascript".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: compressed_encodings.clone(),
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.css".to_string(),
-            content_type: Some("text/css".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: compressed_encodings,
-        },
-        AssetConfig::File {
-            path: "og/preview-20260520.jpg".to_string(),
-            content_type: Some("image/jpeg".to_string()),
-            headers: get_asset_headers_for_path(
-                "og/preview-20260520.jpg",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            fallback_for: vec![],
-            aliased_by: vec![],
-            encodings: vec![],
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.ico".to_string(),
-            content_type: Some("image/x-icon".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: vec![],
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.png".to_string(),
-            content_type: Some("image/png".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: vec![],
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.{jpg,jpeg}".to_string(),
-            content_type: Some("image/jpeg".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: vec![],
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.webp".to_string(),
-            content_type: Some("image/webp".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: vec![],
-        },
-        AssetConfig::Pattern {
-            pattern: "**/*.svg".to_string(),
-            content_type: Some("image/svg+xml".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    IMMUTABLE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            encodings: vec![],
-        },
-        AssetConfig::File {
-            path: ".well-known/ic-domains".to_string(),
-            content_type: Some("text/plain".to_string()),
-            headers: get_asset_headers_with_corp(
-                "same-origin",
-                vec![(
-                    "cache-control".to_string(),
-                    NO_CACHE_ASSET_CACHE_CONTROL.to_string(),
-                )],
-            ),
-            fallback_for: vec![],
-            aliased_by: vec![],
-            encodings: vec![],
-        },
+            compressed_encodings.clone(),
+        ),
+        immutable_asset_pattern("**/*.js", "text/javascript", compressed_encodings.clone()),
+        immutable_asset_pattern("**/*.css", "text/css", compressed_encodings),
+        immutable_asset_file("og/preview-20260520.jpg", "image/jpeg"),
+        immutable_asset_pattern("**/*.ico", "image/x-icon", vec![]),
+        immutable_asset_pattern("**/*.png", "image/png", vec![]),
+        immutable_asset_pattern("**/*.{jpg,jpeg}", "image/jpeg", vec![]),
+        immutable_asset_pattern("**/*.webp", "image/webp", vec![]),
+        immutable_asset_pattern("**/*.svg", "image/svg+xml", vec![]),
+        no_cache_asset_file(".well-known/ic-domains", "text/plain", vec![], vec![], vec![]),
     ];
 
     let mut assets = Vec::new();
@@ -659,67 +586,31 @@ mod tests {
     }
 
     #[test]
-    fn generated_frontend_bundle_manifest_is_not_routable() {
+    fn private_build_and_metrics_routes_are_not_public_endpoints() {
         certify_all_assets();
 
-        let request = HttpRequest::get(format!("/{PRIVATE_BUILD_MANIFEST_PATH}")).build();
-        let response = serve_asset_with_certificate(b"test-certificate", &request);
+        for (method, path) in [
+            (Method::GET, format!("/{PRIVATE_BUILD_MANIFEST_PATH}")),
+            (Method::HEAD, format!("/{PRIVATE_BUILD_MANIFEST_PATH}")),
+            (Method::GET, "/metrics".to_string()),
+            (Method::HEAD, "/metrics".to_string()),
+        ] {
+            let request = HttpRequest::builder()
+                .with_method(method.clone())
+                .with_url(path.clone())
+                .build();
+            let response = serve_asset_with_certificate(b"test-certificate", &request);
 
-        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
-        assert_ne!(
-            header_value(&response, "content-type"),
-            Some("application/json")
-        );
-    }
-
-    #[test]
-    fn generated_frontend_bundle_manifest_head_is_not_routable() {
-        certify_all_assets();
-
-        let request = HttpRequest::builder()
-            .with_method(Method::HEAD)
-            .with_url(format!("/{PRIVATE_BUILD_MANIFEST_PATH}"))
-            .build();
-        let response = serve_asset_with_certificate(b"test-certificate", &request);
-
-        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(response.body(), b"");
-        assert_ne!(
-            header_value(&response, "content-type"),
-            Some("application/json")
-        );
-    }
-
-    #[test]
-    fn metrics_path_is_not_public_get_endpoint() {
-        certify_all_assets();
-
-        let request = HttpRequest::get("/metrics").build();
-        let response = serve_asset_with_certificate(b"test-certificate", &request);
-
-        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
-        assert_ne!(
-            header_value(&response, "content-type"),
-            Some("application/json")
-        );
-    }
-
-    #[test]
-    fn metrics_path_is_not_public_head_endpoint() {
-        certify_all_assets();
-
-        let request = HttpRequest::builder()
-            .with_method(Method::HEAD)
-            .with_url("/metrics")
-            .build();
-        let response = serve_asset_with_certificate(b"test-certificate", &request);
-
-        assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(response.body(), b"");
-        assert_ne!(
-            header_value(&response, "content-type"),
-            Some("application/json")
-        );
+            assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{method:?} {path}");
+            if method == Method::HEAD {
+                assert_eq!(response.body(), b"", "{method:?} {path}");
+            }
+            assert_ne!(
+                header_value(&response, "content-type"),
+                Some("application/json"),
+                "{method:?} {path}"
+            );
+        }
     }
 
     #[test]

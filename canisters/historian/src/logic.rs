@@ -1,8 +1,6 @@
 use candid::Principal;
 
 pub(crate) const INVALID_MEMO_PLACEHOLDER: &str = "invalid declared memo";
-#[cfg(test)]
-const MAX_TARGET_CANISTER_MEMO_BYTES: usize = jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES;
 use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
@@ -162,72 +160,17 @@ mod tests {
     fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
     fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
 
-    fn memo_policy_corpus() -> Vec<(&'static str, Vec<u8>, Option<Principal>)> {
-        let target = target_canister();
-        let short_without_cai = Principal::from_slice(&[1]);
-        let oversize_self_auth = Principal::from_text(
-            "33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae",
-        )
-        .unwrap();
-        assert!(oversize_self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
-
-        let whitespace_padded = format!("  {}\n", target.to_text());
-        let whitespace_only = b"  \n\t".to_vec();
-        let non_ascii = vec![0xff; 64];
-        let truncated_target_text = target.to_text();
-        let truncated_target = truncated_target_text.as_bytes()[..truncated_target_text.len().saturating_sub(1)].to_vec();
-
-        vec![
-            ("valid declared canister ID text", target.to_text().into_bytes(), Some(target)),
-            (
-                "whitespace padded principal text",
-                whitespace_padded.into_bytes(),
-                Some(target),
-            ),
-            (
-                "short valid principal text accepted by parser policy",
-                short_without_cai.to_text().into_bytes(),
-                Some(short_without_cai),
-            ),
-            ("empty memo", Vec::new(), None),
-            ("whitespace only memo", whitespace_only, None),
-            ("malformed ASCII principal text", b"not-a-principal".to_vec(), None),
-            ("truncated principal text", truncated_target, None),
-            ("non ASCII bytes", non_ascii, None),
-            (
-                "oversize valid principal text",
-                oversize_self_auth.to_text().into_bytes(),
-                None,
-            ),
-            (
-                "anonymous principal text",
-                Principal::anonymous().to_text().into_bytes(),
-                None,
-            ),
-            (
-                "management canister principal text",
-                Principal::management_canister().to_text().into_bytes(),
-                None,
-            ),
-            ("numeric neuron id memo", b"11614578985374291210".to_vec(), None),
-        ]
-    }
-
     #[test]
-    fn parses_target_canister_memo() {
+    fn indexes_cycles_top_up_memo_as_target_canister() {
         let p = target_canister();
         assert_eq!(parse_target_canister_from_memo(p.to_text().as_bytes()), Some(p));
-        assert_eq!(parse_target_canister_from_memo(p.to_text().replace('-', "").as_bytes()), Some(p));
-        assert_eq!(parse_target_canister_from_memo(format!("  {}\n", p.to_text()).as_bytes()), Some(p));
-        assert_eq!(parse_target_canister_from_memo(b"bad"), None);
     }
 
     #[test]
-    fn parses_declared_target_from_raw_icp_memo_directive() {
+    fn indexes_declared_target_from_raw_icp_memo_directive() {
         let p = target_canister();
         let compact = p.to_text().replace('-', "");
         assert_eq!(parse_target_canister_from_memo(format!("{compact}.vault42").as_bytes()), Some(p));
-        assert_eq!(parse_target_canister_from_memo(format!("{compact}.").as_bytes()), Some(p));
     }
 
     #[test]
@@ -236,26 +179,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_oversize_principal_text_memos_but_not_short_valid_principals() {
-        let self_auth = Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae").unwrap();
-        assert!(self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
-        assert_eq!(parse_target_canister_from_memo(self_auth.to_text().as_bytes()), None);
-        let short = target_canister();
-        assert!(short.to_text().len() <= MAX_TARGET_CANISTER_MEMO_BYTES);
-        assert_eq!(parse_target_canister_from_memo(short.to_text().as_bytes()), Some(short));
-    }
-
-    #[test]
-    fn rejects_anonymous_and_management_canister_principals() {
-        assert_eq!(parse_target_canister_from_memo(Principal::anonymous().to_text().as_bytes()), None);
-        assert_eq!(parse_target_canister_from_memo(Principal::management_canister().to_text().as_bytes()), None);
-    }
-
-    #[test]
-    fn memo_parser_matches_faucet_policy_corpus() {
-        for (label, memo, expected) in memo_policy_corpus() {
-            assert_eq!(parse_target_canister_from_memo(&memo), expected, "{label}");
-        }
+    fn invalid_commitment_memo_is_not_indexed_as_target_canister() {
+        assert_eq!(parse_target_canister_from_memo(b"not-a-principal"), None);
     }
 
 

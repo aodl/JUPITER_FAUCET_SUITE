@@ -1516,7 +1516,7 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 
 #[test]
 #[ignore]
-fn full_pipeline_maturity_to_transfers_real_ledger() -> Result<()> {
+fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -1666,7 +1666,7 @@ let st = debug_state(&pic, disburser_canister)?;
 
 #[test]
 #[ignore]
-fn inflight_idempotency_no_double_initiation() -> Result<()> {
+fn repeated_ticks_while_governance_inflight_do_not_start_second_disbursement() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -1739,7 +1739,7 @@ fn inflight_idempotency_no_double_initiation() -> Result<()> {
 
 #[test]
 #[ignore]
-fn upgrade_mid_inflight_preserves_state_and_completes() -> Result<()> {
+fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2481,7 +2481,9 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
 
 #[test]
 #[ignore]
-fn maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
+fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> Result<()> {
+    // Unique invariant: once ICP is already staged, payout-only debug ticks must
+    // route that balance without depending on another governance disbursement.
     require_ignored_flag()?;
 
     let pic = build_pic();
@@ -2640,7 +2642,7 @@ fn maturity_to_staging_then_transfers_real_ledger() -> Result<()> {
 
 #[test]
 #[ignore]
-fn partial_execution_retry_duplicate_proof() -> Result<()> {
+fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();

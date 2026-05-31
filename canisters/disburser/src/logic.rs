@@ -267,49 +267,26 @@ mod tests {
     }
     
     #[test]
-    fn plan_deterministic_for_same_inputs() {
+    fn plan_memos_and_timestamps_are_stable_monotonic_transfer_sequence() {
         let a = acct();
-    
         let payout_id = 42u64;
         let created_at = 1_000_000u64;
         let balance = 987_654_321u64;
         let fee = 10_000u64;
         let age = 2 * SECS_PER_YEAR;
-    
-        let (g1, p1) = plan_payout_transfers(
-            payout_id,
-            created_at,
-            balance,
-            fee,
-            age,
-            &a,
-            &a,
-            &a,
-        );
-    
-        let (g2, p2) = plan_payout_transfers(
-            payout_id,
-            created_at,
-            balance,
-            fee,
-            age,
-            &a,
-            &a,
-            &a,
-        );
-    
-        assert_eq!(g1.base_e8s, g2.base_e8s);
-        assert_eq!(g1.bonus_recipient_1_e8s, g2.bonus_recipient_1_e8s);
-        assert_eq!(g1.bonus_recipient_2_e8s, g2.bonus_recipient_2_e8s);
-    
-        assert_eq!(p1.len(), p2.len());
-        for (x, y) in p1.iter().zip(p2.iter()) {
-            assert_eq!(x.to.owner, y.to.owner);
-            assert_eq!(x.to.subaccount, y.to.subaccount);
-            assert_eq!(x.gross_share_e8s, y.gross_share_e8s);
-            assert_eq!(x.amount_e8s, y.amount_e8s);
-            assert_eq!(x.memo, y.memo);
-            assert_eq!(x.created_at_time_nanos, y.created_at_time_nanos);
+
+        let (_gross, plan) = plan_payout_transfers(payout_id, created_at, balance, fee, age, &a, &a, &a);
+
+        assert!(plan.len() <= 3);
+        for (idx, transfer) in plan.iter().enumerate() {
+            let expected_idx = idx as u64;
+            assert_eq!(transfer.memo, build_memo(payout_id, expected_idx));
+            assert_eq!(transfer.created_at_time_nanos, created_at + expected_idx);
+            assert!(
+                transfer.gross_share_e8s > fee,
+                "planned transfer should always clear the ledger fee threshold"
+            );
+            assert_eq!(transfer.amount_e8s, transfer.gross_share_e8s - fee);
         }
     }
 

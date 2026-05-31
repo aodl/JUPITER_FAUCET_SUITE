@@ -11,27 +11,27 @@ use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use jupiter_ic_clients::constants;
+use jupiter_ic_clients::constants as ic_constants;
 use num_traits::ToPrimitive;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
+use std::path::Path;
+use std::process::Command;
 use std::time::Instant;
 
-const LOCAL_IDENTITY: &str = "xtask-dev";
-const LOCAL_ENVIRONMENT: &str = "local";
-const POCKET_IC_SERVER_VERSION: &str = "13.0.0";
+mod cli;
+mod constants;
+mod process;
+mod test_runner;
 
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const GREEN: &str = "\x1b[32m";
-const RED: &str = "\x1b[31m";
-const DIM: &str = "\x1b[2m";
+use cli::{parse_scoped_command, TestComponent, TestScope};
+use constants::*;
+use process::{
+    local_replica_host, pocketic_test_env, principal_of_identity, run_icp, run_icp_with_identity,
+    stop_local_network_best_effort,
+};
+use test_runner::run_cargo_test_suite;
 
 #[derive(Debug)]
 struct ScenarioOutcome {
@@ -98,59 +98,6 @@ fn short_test_principal() -> Principal {
     Principal::from_slice(&[1])
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TestComponent {
-    Test,
-    Disburser,
-    Faucet,
-    Historian,
-    Relay,
-    Frontend,
-    E2e,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TestScope {
-    Unit,
-    LocalIntegration,
-    PocketicIntegration,
-    All,
-}
-
-fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
-    use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Relay, Test};
-    use TestScope::{All, LocalIntegration, PocketicIntegration, Unit};
-
-    match cmd {
-        "disburser_unit" => Some((Disburser, Unit)),
-        "disburser_local_integration" => Some((Disburser, LocalIntegration)),
-        "disburser_pocketic_integration" => Some((Disburser, PocketicIntegration)),
-        "disburser_all" => Some((Disburser, All)),
-        "faucet_unit" => Some((Faucet, Unit)),
-        "faucet_local_integration" => Some((Faucet, LocalIntegration)),
-        "faucet_pocketic_integration" => Some((Faucet, PocketicIntegration)),
-        "faucet_all" => Some((Faucet, All)),
-        "historian_unit" => Some((Historian, Unit)),
-        "historian_local_integration" => Some((Historian, LocalIntegration)),
-        "historian_pocketic_integration" => Some((Historian, PocketicIntegration)),
-        "historian_all" => Some((Historian, All)),
-        "relay_unit" => Some((Relay, Unit)),
-        "relay_local_integration" => Some((Relay, LocalIntegration)),
-        "relay_pocketic_integration" => Some((Relay, PocketicIntegration)),
-        "relay_all" => Some((Relay, All)),
-        "frontend_unit" => Some((Frontend, Unit)),
-        "frontend_local_integration" => Some((Frontend, LocalIntegration)),
-        "frontend_all" => Some((Frontend, All)),
-        "e2e_all" => Some((E2e, All)),
-        "e2e_pocketic_integration" => Some((E2e, PocketicIntegration)),
-        "test_unit" => Some((Test, Unit)),
-        "test_local_integration" => Some((Test, LocalIntegration)),
-        "test_pocketic_integration" => Some((Test, PocketicIntegration)),
-        "test_all" => Some((Test, All)),
-        _ => None,
-    }
-}
-
 fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
     let passed = outcomes.iter().filter(|o| o.passed).count();
     let failed = outcomes.len().saturating_sub(passed);
@@ -191,97 +138,6 @@ fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
     failed == 0
 }
 
-
-fn is_suppressed_icp_success_stderr_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.is_empty()
-        || trimmed.contains("] Cycles: ")
-        || (trimmed.contains(" UTC: [Canister ") && trimmed.contains("] "))
-        || trimmed.contains(" canister created with canister id:")
-        || trimmed.starts_with("Installed code for canister ")
-        || trimmed.starts_with("Reinstalled code for canister ")
-}
-
-fn run_icp(args: &[&str]) -> Result<String> {
-    let root = repo_root();
-    let mut cmd = Command::new("icp");
-
-    cmd.args(["--project-root-override", &root]);
-    cmd.args(args);
-
-    let rendered_cmd = format!(
-        "icp {}",
-        cmd.get_args()
-            .map(|s| s.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-    let verbose = env::var("VERBOSE_ICP")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if verbose {
-        eprintln!("▶ {rendered_cmd}");
-    }
-
-    let output = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .context("failed to spawn icp")?;
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.success() {
-        for line in stderr.lines() {
-            if is_suppressed_icp_success_stderr_line(line) {
-                continue;
-            }
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                eprintln!("{trimmed}");
-            }
-        }
-    } else if !stderr.trim().is_empty() {
-        eprint!("{stderr}");
-    }
-
-    if !output.status.success() {
-        eprintln!("▶ {rendered_cmd}");
-        bail!("icp {:?} failed", args);
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn run_icp_with_identity(args: &[&str]) -> Result<String> {
-    let mut owned = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
-    owned.push("--identity".to_string());
-    owned.push(LOCAL_IDENTITY.to_string());
-    let refs = owned.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
-    run_icp(&refs)
-}
-
-fn stop_local_network_best_effort(project_root: &str) -> Result<()> {
-    let output = Command::new("icp")
-        .args([
-            "--project-root-override",
-            project_root,
-            "network",
-            "stop",
-            LOCAL_ENVIRONMENT,
-        ])
-        .output()
-        .context("failed to run icp network stop local")?;
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let text = format!("{stdout}\n{stderr}");
-
-    if !output.status.success() && !text.contains("network 'local' is not running") {
-        bail!("failed to stop local network: {text}");
-    }
-
-    Ok(())
-}
 
 fn run_cargo_build(package: &str, features: &[&str]) -> Result<()> {
     let root = repo_root();
@@ -475,22 +331,6 @@ fn ensure_canister_exists(canister: &str) -> Result<()> {
         create_canister(canister)?;
     }
     Ok(())
-}
-
-fn local_replica_host() -> String {
-    if let Ok(host) = env::var("ICP_LOCAL_HOST") {
-        let trimmed = host.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    "http://localhost:4943".to_string()
-}
-
-fn principal_of_identity() -> Result<Principal> {
-    let p = run_icp(&["identity", "principal", "--identity", LOCAL_IDENTITY])?;
-    Ok(Principal::from_text(p.trim())?)
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -1130,27 +970,27 @@ fn faucet_staking_account() -> Account {
 }
 
 fn mainnet_governance_principal() -> Principal {
-    constants::nns_governance_id()
+    ic_constants::nns_governance_id()
 }
 
 fn mainnet_ledger_principal() -> Principal {
-    constants::icp_ledger_id()
+    ic_constants::icp_ledger_id()
 }
 
 fn mainnet_index_principal() -> Principal {
-    constants::icp_index_id()
+    ic_constants::icp_index_id()
 }
 
 fn mainnet_cmc_principal() -> Principal {
-    constants::cycles_minting_canister_id()
+    ic_constants::cycles_minting_canister_id()
 }
 
 fn mainnet_blackhole_principal() -> Principal {
-    constants::blackhole_canister_id()
+    ic_constants::blackhole_canister_id()
 }
 
 fn mainnet_sns_wasm_principal() -> Principal {
-    constants::sns_wasm_id()
+    ic_constants::sns_wasm_id()
 }
 
 fn mainnet_xrc_principal() -> Principal {
@@ -4477,67 +4317,6 @@ fn run_frontend_local_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_local_frontend_scenarios(outcomes)
 }
 
-fn validate_pocketic_binary(path: &Path) -> Result<()> {
-    let metadata = fs::metadata(path)
-        .with_context(|| format!("failed to inspect PocketIC binary at {}", path.display()))?;
-    if !metadata.is_file() || metadata.len() == 0 {
-        bail!("PocketIC binary at {} is missing or empty", path.display());
-    }
-    let output = Command::new(path)
-        .arg("--version")
-        .output()
-        .with_context(|| format!("failed to run {} --version", path.display()))?;
-    if !output.status.success() {
-        bail!("{} --version failed", path.display());
-    }
-    let version = String::from_utf8_lossy(&output.stdout);
-    let expected = format!("pocket-ic-server {POCKET_IC_SERVER_VERSION}");
-    if version.trim() != expected {
-        bail!(
-            "PocketIC binary at {} reports `{}`; expected `{expected}`",
-            path.display(),
-            version.trim()
-        );
-    }
-    Ok(())
-}
-
-fn discover_pocketic_binary() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
-    let root = PathBuf::from(home).join(".local/share/icp-cli/pkg/network-launcher");
-    let entries = fs::read_dir(root).ok()?;
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("pocket-ic"))
-        .find(|path| validate_pocketic_binary(path).is_ok())
-}
-
-fn ensure_pocketic_bin_env() -> Result<()> {
-    if let Some(path) = env::var_os("POCKET_IC_BIN") {
-        validate_pocketic_binary(Path::new(&path))?;
-        return Ok(());
-    }
-    if let Some(path) = discover_pocketic_binary() {
-        eprintln!(
-            "{DIM}Using PocketIC server {} at {}{RESET}",
-            POCKET_IC_SERVER_VERSION,
-            path.display()
-        );
-        env::set_var("POCKET_IC_BIN", path);
-        return Ok(());
-    }
-    bail!(
-        "could not find a local PocketIC server {POCKET_IC_SERVER_VERSION} binary; \
-         install one or set POCKET_IC_BIN to an executable \
-         `pocket-ic-server {POCKET_IC_SERVER_VERSION}` binary"
-    );
-}
-
-fn pocketic_test_env() -> Result<[(&'static str, &'static str); 2]> {
-    ensure_pocketic_bin_env()?;
-    Ok([("POCKET_IC_MUTE_SERVER", "1"), ("RUST_TEST_THREADS", "1")])
-}
-
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     let common_env = pocketic_test_env()?;
@@ -4797,235 +4576,6 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
         }
     }
 }
-
-
-fn truncate_error(msg: &str, max_chars: usize) -> String {
-    let flat = msg.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= max_chars {
-        flat
-    } else {
-        let mut out = flat.chars().take(max_chars).collect::<String>();
-        out.push_str("...");
-        out
-    }
-}
-
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '' {
-            if matches!(chars.peek(), Some('[')) {
-                let _ = chars.next();
-                while let Some(c) = chars.next() {
-                    if ('@'..='~').contains(&c) {
-                        break;
-                    }
-                }
-                continue;
-            }
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn should_live_print_rust_test_line(line: &str) -> bool {
-    let stripped = strip_ansi(line);
-    let trimmed = stripped.trim();
-    trimmed.starts_with("running ")
-        || trimmed.starts_with("test ")
-        || trimmed == "failures:"
-        || trimmed.starts_with("test result:")
-        || trimmed.starts_with("error[")
-        || trimmed.starts_with("error:")
-        || trimmed.starts_with("warning:")
-}
-
-fn parse_failed_rust_test_details(output: &str) -> Vec<(String, String)> {
-    let lines: Vec<&str> = output.lines().collect();
-    let mut blocks: BTreeMap<String, String> = BTreeMap::new();
-    let mut i = 0usize;
-
-    while i < lines.len() {
-        let stripped = strip_ansi(lines[i]);
-        let trimmed = stripped.trim();
-        if let Some(name) = trimmed
-            .strip_prefix("---- ")
-            .and_then(|s| s.strip_suffix(" stdout ----"))
-            .or_else(|| trimmed.strip_prefix("---- ").and_then(|s| s.strip_suffix(" stderr ----")))
-        {
-            let test_name = name.to_string();
-            i += 1;
-            let mut body: Vec<String> = Vec::new();
-            while i < lines.len() {
-                let inner_stripped = strip_ansi(lines[i]);
-                let inner = inner_stripped.trim();
-                let starts_next = inner.starts_with("---- ")
-                    && (inner.ends_with(" stdout ----") || inner.ends_with(" stderr ----"));
-                if starts_next || inner == "failures:" || inner.starts_with("test result:") {
-                    break;
-                }
-                body.push(strip_ansi(lines[i]));
-                i += 1;
-            }
-            let body_str = body.join("\n").trim().to_string();
-            blocks.entry(test_name).or_insert(body_str);
-            continue;
-        }
-        i += 1;
-    }
-
-    let mut ordered_names: BTreeSet<String> = BTreeSet::new();
-    for line in output.lines() {
-        let stripped = strip_ansi(line);
-        let trimmed = stripped.trim();
-        if let Some(rest) = trimmed.strip_prefix("test ") {
-            if let Some(name) = rest.strip_suffix(" ... FAILED") {
-                ordered_names.insert(name.to_string());
-            }
-        }
-    }
-    for name in blocks.keys() {
-        ordered_names.insert(name.clone());
-    }
-
-    ordered_names
-        .into_iter()
-        .map(|name| {
-            let detail = blocks
-                .get(&name)
-                .cloned()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "see cargo output above".to_string());
-            (name, detail)
-        })
-        .collect()
-}
-
-fn suite_scope_label(layer: &str, component: &str) -> String {
-    if component.is_empty() {
-        format!("[{layer}]")
-    } else {
-        format!("[{layer}/{component}]")
-    }
-}
-
-fn run_cargo_test_suite(
-    outcomes: &mut Vec<ScenarioOutcome>,
-    suite_label: &str,
-    component: &str,
-    cmd: &str,
-    args: &[&str],
-    workdir: &str,
-    envs: &[(&str, &str)],
-) -> Result<()> {
-    let scope = suite_scope_label(suite_label, component);
-    let full_label = format!("{scope} {} {}", cmd, args.join(" "));
-    eprintln!("\n{BOLD}=== {full_label} ==={RESET}");
-    let t0 = Instant::now();
-
-    let mut c = Command::new(cmd);
-    c.args(args)
-        .current_dir(workdir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (k, v) in envs {
-        c.env(k, v);
-    }
-
-    let mut child = c.spawn().with_context(|| format!("failed to spawn {cmd}"))?;
-    let stdout = child.stdout.take().context("failed to capture child stdout")?;
-    let stderr = child.stderr.take().context("failed to capture child stderr")?;
-
-    let (tx, rx) = mpsc::channel::<(bool, String)>();
-    let tx_out = tx.clone();
-    let stdout_handle = thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
-                    let _ = tx_out.send((false, line));
-                }
-                Err(_) => break,
-            }
-        }
-    });
-    let tx_err = tx.clone();
-    let stderr_handle = thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
-                    let _ = tx_err.send((true, line));
-                }
-                Err(_) => break,
-            }
-        }
-    });
-    drop(tx);
-
-    let mut stdout_buf = String::new();
-    let mut stderr_buf = String::new();
-    let mut last_live_printed: Option<String> = None;
-    for (is_err, line) in rx {
-        if is_err {
-            stderr_buf.push_str(&line);
-            stderr_buf.push('\n');
-        } else {
-            stdout_buf.push_str(&line);
-            stdout_buf.push('\n');
-        }
-        if should_live_print_rust_test_line(&line) {
-            let dedupe_key = strip_ansi(&line).trim().to_string();
-            if last_live_printed.as_deref() != Some(dedupe_key.as_str()) {
-                eprintln!("{line}");
-                last_live_printed = Some(dedupe_key);
-            }
-        }
-    }
-
-    let status = child.wait().with_context(|| format!("failed waiting for {cmd}"))?;
-    let _ = stdout_handle.join();
-    let _ = stderr_handle.join();
-
-    let ms = t0.elapsed().as_millis();
-    if status.success() {
-        outcomes.push(ScenarioOutcome {
-            name: format!("{scope} suite passed"),
-            ms,
-            passed: true,
-            error: None,
-        });
-        eprintln!("{GREEN}✓{RESET} {scope} suite passed {DIM}({ms}ms){RESET}");
-        return Ok(());
-    }
-
-    let combined = format!("{}\n{}", stdout_buf, stderr_buf);
-    let failed_tests = parse_failed_rust_test_details(&combined);
-    if failed_tests.is_empty() {
-        outcomes.push(ScenarioOutcome {
-            name: format!("{scope} test command failed"),
-            ms,
-            passed: false,
-            error: Some(strip_ansi(combined.trim())),
-        });
-    } else {
-        for (test_name, detail) in failed_tests {
-            let short = truncate_error(&strip_ansi(&detail), 140);
-            eprintln!("{RED}↳{RESET} {scope} {test_name}: {DIM}{short}{RESET}");
-            outcomes.push(ScenarioOutcome {
-                name: format!("{scope} {test_name}"),
-                ms,
-                passed: false,
-                error: Some(detail),
-            });
-        }
-    }
-    eprintln!("{RED}✗{RESET} {scope} suite failed {DIM}({ms}ms){RESET}");
-    Ok(())
-}
-
 
 
 fn main() -> Result<()> {
