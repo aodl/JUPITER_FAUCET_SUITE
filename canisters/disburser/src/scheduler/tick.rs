@@ -1,44 +1,37 @@
 use super::*;
+use jupiter_ic_clients::timer_guard::{LeaseFinish, TimerLeaseGuard};
 pub(super) struct MainGuard {
-    active: bool,
-    lease_expires_at_ts: u64,
+    inner: TimerLeaseGuard,
 }
 
 impl MainGuard {
     fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            let lock_expires_at_ts = st.main_lock_state_ts.unwrap_or(0);
-            if lock_expires_at_ts > now_secs {
-                return None;
-            }
-            let lease_expires_at_ts = now_secs.saturating_add(MAIN_TICK_LEASE_SECONDS);
+            let inner = TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
+            let lease_expires_at_ts = inner.lease_expires_at_ts();
             st.main_lock_state_ts = Some(lease_expires_at_ts);
-            Some(Self { active: true, lease_expires_at_ts })
+            Some(Self { inner })
         })
     }
 
     fn release(&mut self) {
-        if !self.active {
+        if !self.inner.is_active() {
             return;
         }
-        let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
-            if st.main_lock_state_ts == Some(lease_expires_at_ts) {
+            if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
                 st.main_lock_state_ts = Some(0);
             }
         });
-        self.active = false;
     }
 
     fn finish(mut self, now_secs: u64, err: Option<u32>, log_config: bool) {
-        let lease_expires_at_ts = self.lease_expires_at_ts;
         state::with_state_mut(|st| {
             st.last_main_run_ts = now_secs;
-            if st.main_lock_state_ts == Some(lease_expires_at_ts) {
+            if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
                 st.main_lock_state_ts = Some(0);
             }
         });
-        self.active = false;
 
         if let Some(code) = err {
             log_error(code);

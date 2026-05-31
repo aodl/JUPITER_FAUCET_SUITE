@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = { workspace = true }
 candid = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
 ic-cdk = { workspace = true }
 icrc-ledger-types = { workspace = true }
+jupiter-nns-types = { path = "../nns-types" }
 
 crc32fast = { workspace = true }
 hex = { workspace = true }

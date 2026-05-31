@@ -416,7 +416,7 @@ A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-i
 
 The current production faucet has already completed a payout. Use upgrade for the current production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
 
-`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
+The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
 Normal production upgrades preserve stable state and must use the faucet `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
 

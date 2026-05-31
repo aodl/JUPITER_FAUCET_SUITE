@@ -3211,11 +3211,13 @@ dependencies = [
 name = "jupiter-ic-clients"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "candid",
  "crc32fast",
  "hex",
  "ic-cdk",
  "icrc-ledger-types 0.1.12",
+ "jupiter-nns-types",
  "serde",
  "sha2",
  "thiserror 1.0.69",

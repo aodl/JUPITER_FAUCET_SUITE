@@ -241,9 +241,7 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
-## Production upgrades
-
-`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
+## Fresh install/reinstall
 
 Fresh install/reinstall is a deliberate separate path. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly only for that install/reinstall operation:
 
@@ -254,6 +252,10 @@ icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
   --wasm release-artifacts/jupiter_relay.wasm.gz \
   --args-file canisters/relay/mainnet-install-args.did
 ```
+
+## Production upgrades
+
+The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
 Normal production upgrades preserve stable state and must use the relay `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
 

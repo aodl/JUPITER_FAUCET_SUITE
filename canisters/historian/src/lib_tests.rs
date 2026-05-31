@@ -58,29 +58,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_post_upgrade_args_treats_empty_as_none() {
-        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_treats_zero_args_as_none() {
-        let raw = encode_args(()).unwrap();
-        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_treats_null_as_none() {
-        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
-        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_wrapper_decodes_valid_none() {
-        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
-        assert!(decode_post_upgrade_args(raw).is_none());
-    }
-
-    #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
             staking_account: Some(alternate_account()),
@@ -118,12 +95,6 @@ mod tests {
         let raw = encode_args((sample_init_args(),)).unwrap();
         let err = expect_decode_err(&raw);
         assert!(err.contains("received InitArgs in historian post_upgrade"));
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_rejects_malformed_bytes() {
-        let err = expect_decode_err(b"not candid");
-        assert!(err.contains("failed to decode historian UpgradeArgs"));
     }
 
     fn base_state() -> State {

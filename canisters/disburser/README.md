@@ -336,7 +336,7 @@ icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
 
 ### Production upgrades
 
-`mainnet-install-args.did` is for fresh installs. Do not pass it to `--mode upgrade`.
+The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
 Normal production upgrades preserve stable state and must use the disburser `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
 

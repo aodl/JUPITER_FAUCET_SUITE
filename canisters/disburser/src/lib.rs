@@ -4,7 +4,7 @@ mod policy;
 mod scheduler;
 mod state;
 
-use candid::{decode_one, CandidType, Deserialize, Principal};
+use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::constants;
 
@@ -176,17 +176,7 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
 }
 
 fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
-    let zero_args = candid::encode_args(()).expect("failed to encode Candid zero args");
-    if raw.is_empty() || raw == zero_args.as_slice() {
-        return Ok(None);
-    }
-    if decode_one::<InitArgs>(raw).is_ok() {
-        return Err(
-            "received InitArgs in disburser post_upgrade; do not pass install args to upgrade"
-                .to_string(),
-        );
-    }
-    decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode disburser UpgradeArgs: {err}"))
+    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>("disburser", raw)
 }
 
 fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
@@ -447,29 +437,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_post_upgrade_args_treats_empty_as_none() {
-        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_treats_zero_args_as_none() {
-        let raw = encode_args(()).unwrap();
-        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_treats_null_as_none() {
-        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
-        assert!(decode_post_upgrade_args_from_bytes(&raw).unwrap().is_none());
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_wrapper_decodes_valid_none() {
-        let raw = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
-        assert!(decode_post_upgrade_args(raw).is_none());
-    }
-
-    #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
             blackhole_controller: Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai")),
@@ -488,12 +455,6 @@ mod tests {
         let raw = encode_args((sample_init_args(),)).unwrap();
         let err = expect_decode_err(&raw);
         assert!(err.contains("received InitArgs in disburser post_upgrade"));
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_rejects_malformed_bytes() {
-        let err = expect_decode_err(b"not candid");
-        assert!(err.contains("failed to decode disburser UpgradeArgs"));
     }
 
     #[test]

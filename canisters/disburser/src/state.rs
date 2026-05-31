@@ -242,21 +242,13 @@ pub(crate) fn persist_dirty_state() {
 }
 
 #[cfg(test)]
-/// A synchronous persistence-batch guard.
-///
-/// Do not hold this guard across an `await` point. While it is live, mutations are
-/// only marked dirty and are not durably flushed until the batch ends or an
-/// explicit `persist_dirty_state()` call occurs.
-pub(crate) struct PersistenceBatch {
-    active: bool,
-}
+pub(crate) type PersistenceBatch = jupiter_persistence_batch::PersistenceBatch;
 
 #[cfg(test)]
-impl Drop for PersistenceBatch {
-    fn drop(&mut self) {
-        if !self.active {
-            return;
-        }
+#[must_use]
+pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
+    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
+    PersistenceBatch::new(|| {
         let should_flush = PERSISTENCE_BATCH_DEPTH.with(|depth| {
             let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
             let (next_depth, should_flush) = jupiter_persistence_batch::finish_depth(depth.get(), dirty);
@@ -266,15 +258,7 @@ impl Drop for PersistenceBatch {
         if should_flush {
             persist_dirty_state();
         }
-        self.active = false;
-    }
-}
-
-#[cfg(test)]
-#[must_use]
-pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
-    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
-    PersistenceBatch { active: true }
+    })
 }
 
 pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {

@@ -1,5 +1,4 @@
 use super::*;
-use candid::decode_one;
 pub(super) fn mainnet_ledger_id() -> Principal {
     jupiter_ic_clients::constants::icp_ledger_id()
 }
@@ -562,17 +561,7 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
 }
 
 pub(super) fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
-    let zero_args = candid::encode_args(()).expect("failed to encode Candid zero args");
-    if raw.is_empty() || raw == zero_args.as_slice() {
-        return Ok(None);
-    }
-    if decode_one::<InitArgs>(raw).is_ok() {
-        return Err(
-            "received InitArgs in historian post_upgrade; do not pass install args to upgrade"
-                .to_string(),
-        );
-    }
-    decode_one::<Option<UpgradeArgs>>(raw).map_err(|err| format!("failed to decode historian UpgradeArgs: {err}"))
+    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>("historian", raw)
 }
 
 pub(super) fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {

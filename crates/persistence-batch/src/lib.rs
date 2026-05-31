@@ -16,9 +16,37 @@ pub fn finish_depth(depth: u32, dirty: bool) -> (u32, bool) {
     (next_depth, next_depth == 0 && dirty)
 }
 
+pub struct PersistenceBatch {
+    active: bool,
+    on_drop: Option<Box<dyn FnMut()>>,
+}
+
+impl PersistenceBatch {
+    pub fn new(on_drop: impl FnMut() + 'static) -> Self {
+        Self {
+            active: true,
+            on_drop: Some(Box::new(on_drop)),
+        }
+    }
+}
+
+impl Drop for PersistenceBatch {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        if let Some(on_drop) = self.on_drop.as_mut() {
+            on_drop();
+        }
+        self.active = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     #[test]
     fn active_reflects_nonzero_depth() {
@@ -31,5 +59,15 @@ mod tests {
         assert_eq!(finish_depth(2, true), (1, false));
         assert_eq!(finish_depth(1, false), (0, false));
         assert_eq!(finish_depth(1, true), (0, true));
+    }
+
+    #[test]
+    fn batch_runs_drop_callback_once() {
+        let count = Rc::new(Cell::new(0));
+        {
+            let count = Rc::clone(&count);
+            let _batch = PersistenceBatch::new(move || count.set(count.get() + 1));
+        }
+        assert_eq!(count.get(), 1);
     }
 }
