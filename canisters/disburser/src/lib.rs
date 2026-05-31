@@ -6,6 +6,7 @@ mod state;
 
 use candid::{decode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_ic_clients::constants;
 
 use crate::state::State;
 
@@ -43,15 +44,15 @@ pub struct UpgradeArgs {
 }
 
 fn mainnet_ledger_id() -> Principal {
-    Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("invalid hardcoded ledger principal")
+    constants::icp_ledger_id()
 }
 
 fn mainnet_governance_id() -> Principal {
-    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("invalid hardcoded governance principal")
+    constants::nns_governance_id()
 }
 
 fn mainnet_blackhole_id() -> Principal {
-    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("invalid hardcoded blackhole principal")
+    constants::blackhole_canister_id()
 }
 
 #[cfg(any(test, feature = "debug_api"))]

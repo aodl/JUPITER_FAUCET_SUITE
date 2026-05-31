@@ -1,20 +1,37 @@
 use candid::Principal;
 
-pub const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
-pub const ICP_INDEX_ID: &str = "qhbym-qaaaa-aaaaa-aaafq-cai";
-pub const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
-pub const CYCLES_MINTING_CANISTER_ID: &str = "rkp4c-7iaaa-aaaaa-aaaca-cai";
+#[allow(unused_imports)]
+pub use jupiter_ic_clients::constants::{
+    BLACKHOLE_CANISTER_ID, CYCLES_MINTING_CANISTER_ID, ICP_INDEX_ID, ICP_LEDGER_ID,
+    NNS_GOVERNANCE_ID, NNS_ROOT_ID, SNS_WASM_ID,
+};
 
 pub fn icp_ledger() -> Principal {
-    Principal::from_text(ICP_LEDGER_ID).expect("valid ICP ledger principal")
+    jupiter_ic_clients::constants::icp_ledger_id()
 }
 
 pub fn icp_index() -> Principal {
-    Principal::from_text(ICP_INDEX_ID).expect("valid ICP index principal")
+    jupiter_ic_clients::constants::icp_index_id()
 }
 
 pub fn nns_governance() -> Principal {
-    Principal::from_text(NNS_GOVERNANCE_ID).expect("valid NNS governance principal")
+    jupiter_ic_clients::constants::nns_governance_id()
+}
+
+pub fn cycles_minting_canister() -> Principal {
+    jupiter_ic_clients::constants::cycles_minting_canister_id()
+}
+
+pub fn blackhole_canister() -> Principal {
+    jupiter_ic_clients::constants::blackhole_canister_id()
+}
+
+pub fn nns_root() -> Principal {
+    jupiter_ic_clients::constants::nns_root_id()
+}
+
+pub fn sns_wasm() -> Principal {
+    jupiter_ic_clients::constants::sns_wasm_id()
 }
 
 pub fn fixture_principal() -> Principal {

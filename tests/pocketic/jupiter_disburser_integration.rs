@@ -30,9 +30,8 @@ use support::calls::{query_one as query_call, tick_n, update_bytes, update_noarg
 use support::governance::{set_controllers_exact, start_canister_as, stop_canister_as};
 
 // ----- Mainnet IDs (PocketIC bootstraps system canisters at mainnet IDs) -----
-const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
-const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
-const NNS_ROOT_ID: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
+const ICP_LEDGER_ID: &str = support::principals::ICP_LEDGER_ID;
+const NNS_GOVERNANCE_ID: &str = support::principals::NNS_GOVERNANCE_ID;
 
 // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
 // Repository entry points such as `cargo run -p xtask -- test_all` invoke them explicitly.
@@ -101,11 +100,11 @@ macro_rules! e2e_log {
 
 
 fn nns_root() -> Principal {
-    Principal::from_text(NNS_ROOT_ID).expect("valid NNS root principal")
+    support::principals::nns_root()
 }
 
 fn fixture_principal() -> Principal {
-    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid fixture principal")
+    support::principals::fixture_principal()
 }
 
 fn run_faucet_round(pic: &PocketIc, faucet: Principal, phase: &str) -> Result<FaucetSummary> {

@@ -12,6 +12,7 @@ use pocket_ic::PocketIc;
 mod support;
 
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
+use support::account_identifier::principal_to_subaccount;
 
 fn require_ignored_flag() -> Result<()> {
     support::assertions::require_ignored_flag()
@@ -21,15 +22,6 @@ fn principal(text: &str) -> Principal {
     Principal::from_text(text).unwrap()
 }
 
-fn build_wasm_cached(
-    cache: &OnceLock<Vec<u8>>,
-    package: &str,
-    features: Option<&str>,
-) -> Result<Vec<u8>> {
-    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    support::wasm::build_wasm_cached(&workspace_root, cache, package, features, None, false)
-}
-
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -37,19 +29,19 @@ static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn ledger_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&LEDGER_WASM, "mock-icrc-ledger", None)
+    support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
 }
 fn cmc_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&CMC_WASM, "mock-cmc", None)
+    support::wasm::build_wasm_cached_for_test(&CMC_WASM, "mock-cmc", None)
 }
 fn governance_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&GOVERNANCE_WASM, "mock-nns-governance", None)
+    support::wasm::build_wasm_cached_for_test(&GOVERNANCE_WASM, "mock-nns-governance", None)
 }
 fn blackhole_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&BLACKHOLE_WASM, "mock-blackhole", None)
+    support::wasm::build_wasm_cached_for_test(&BLACKHOLE_WASM, "mock-blackhole", None)
 }
 fn relay_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&RELAY_WASM, "jupiter-relay", Some("debug_api"))
+    support::wasm::build_wasm_cached_for_test(&RELAY_WASM, "jupiter-relay", Some("debug_api"))
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -558,15 +550,6 @@ impl RelayEnv {
 
 fn nat_to_u64(value: &Nat) -> u64 {
     value.0.to_string().parse().unwrap_or(u64::MAX)
-}
-
-fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
-    let bytes = principal.as_slice();
-    let mut out = [0u8; 32];
-    out[0] = bytes.len() as u8;
-    let len = bytes.len().min(31);
-    out[1..1 + len].copy_from_slice(&bytes[..len]);
-    out
 }
 
 fn neuron_subaccount(neuron_id: u64) -> [u8; 32] {

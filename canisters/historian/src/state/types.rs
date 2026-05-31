@@ -5,10 +5,10 @@ pub(super) use ic_stable_structures::{
     DefaultMemoryImpl, StableBTreeMap, StableCell, Storable,
 };
 pub(super) use icrc_ledger_types::icrc1::account::Account;
+pub(super) use jupiter_ic_clients::account::account_text;
 pub(super) use serde::{Deserialize, Serialize};
 pub(super) use std::borrow::Cow;
 pub(super) use std::collections::{BTreeMap, BTreeSet};
-pub(super) use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) struct Config {
@@ -33,25 +33,6 @@ pub(crate) struct Config {
     pub max_commitment_entries_per_canister: u32,
     pub max_index_pages_per_tick: u32,
     pub max_canisters_per_cycles_tick: u32,
-}
-
-fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
-    let Some(bytes) = subaccount else {
-        return "none".to_string();
-    };
-    let mut out = String::with_capacity(64);
-    for byte in bytes {
-        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    out
-}
-
-fn account_text(account: &Account) -> String {
-    format!(
-        "{}:{}",
-        account.owner.to_text(),
-        subaccount_text(&account.subaccount)
-    )
 }
 
 fn opt_principal_text(principal: Option<Principal>) -> String {

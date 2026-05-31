@@ -9,7 +9,6 @@ use jupiter_nns_types::{
     list_neurons, manage_neuron, manage_neuron_response, ListNeurons, ListNeuronsResponse,
     ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
 };
-use jupiter_ic_clients::account_identifier::account_identifier_text;
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig};
 use pocket_ic::PocketIc;
 use sha2::Digest;
@@ -20,8 +19,6 @@ use std::time::Duration;
 #[path = "support/mod.rs"]
 mod support;
 
-const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
-const NNS_GOVERNANCE_ID: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
 const ICP_LEDGER_FEE_E8S: u64 = support::ledger::ICP_LEDGER_FEE_E8S;
 
 fn require_ignored_flag() -> Result<()> {
@@ -29,11 +26,6 @@ fn require_ignored_flag() -> Result<()> {
     // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
     // invoke them explicitly with `--ignored`.
     support::assertions::require_ignored_flag()
-}
-
-fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<&str>) -> Result<Vec<u8>> {
-    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    support::wasm::build_wasm_cached(&workspace_root, cache, package, features, None, false)
 }
 
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -45,28 +37,29 @@ static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn ledger_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&LEDGER_WASM, "mock-icrc-ledger", None)
+    support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
 }
 fn index_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&INDEX_WASM, "mock-icp-index", None)
+    support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
 }
 fn cmc_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&CMC_WASM, "mock-cmc", None)
+    support::wasm::build_wasm_cached_for_test(&CMC_WASM, "mock-cmc", None)
 }
 fn governance_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&GOVERNANCE_WASM, "mock-nns-governance", None)
+    support::wasm::build_wasm_cached_for_test(&GOVERNANCE_WASM, "mock-nns-governance", None)
 }
 fn blackhole_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&BLACKHOLE_WASM, "mock-blackhole", None)
+    support::wasm::build_wasm_cached_for_test(&BLACKHOLE_WASM, "mock-blackhole", None)
 }
 fn faucet_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&FAUCET_WASM, "jupiter-faucet", Some("debug_api"))
+    support::wasm::build_wasm_cached_for_test(&FAUCET_WASM, "jupiter-faucet", Some("debug_api"))
 }
 fn lifeline_wasm() -> Result<Vec<u8>> {
-    build_wasm_cached(&LIFELINE_WASM, "jupiter-lifeline", None)
+    support::wasm::build_wasm_cached_for_test(&LIFELINE_WASM, "jupiter-lifeline", None)
 }
 
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
+use support::account_identifier::account_identifier_text;
 
 fn nat_to_u64(n: &Nat) -> u64 {
     n.0.to_u64_digits().get(0).copied().unwrap_or(0)
@@ -608,8 +601,8 @@ impl FaucetEnv {
             self.pic.advance_time(Duration::from_secs(2));
             tick_n(&self.pic, 2);
         }
-        let funding_source_id = account_id_for(&self.funding_source_account);
-        let payout_id = account_id_for(&self.accounts.payout);
+        let funding_source_id = support::account_identifier::account_id_for(&self.funding_source_account);
+        let payout_id = support::account_identifier::account_id_for(&self.accounts.payout);
         for amount_e8s in pending {
             self.append_index_transfer_from_to_account_id(
                 funding_source_id.clone(),
@@ -690,8 +683,8 @@ struct RealNnsFaucetEnv {
 impl RealNnsFaucetEnv {
     fn new() -> Result<Self> {
         let pic = real_nns_pic();
-        let ledger = Principal::from_text(ICP_LEDGER_ID)?;
-        let governance = Principal::from_text(NNS_GOVERNANCE_ID)?;
+        let ledger = support::principals::icp_ledger();
+        let governance = support::principals::nns_governance();
 
         let index = pic.create_canister();
         let cmc = pic.create_canister();
@@ -803,8 +796,8 @@ impl RealNnsFaucetEnv {
             self.pic.advance_time(Duration::from_secs(2));
             tick_n(&self.pic, 2);
         }
-        let funding_source_id = account_id_for(&self.funding_source_account);
-        let payout_id = account_id_for(&self.accounts.payout);
+        let funding_source_id = support::account_identifier::account_id_for(&self.funding_source_account);
+        let payout_id = support::account_identifier::account_id_for(&self.accounts.payout);
         for amount_e8s in pending {
             self.append_index_transfer_from_to_account_id(
                 funding_source_id.clone(),
@@ -938,13 +931,9 @@ fn strict_funding_source_account() -> Result<Account> {
     })
 }
 
-fn account_id_for(account: &Account) -> String {
-    account_identifier_text(account.owner, account.subaccount)
-}
-
 fn append_funding_tranche(env: &FaucetEnv, funding_source: &Account, amount_e8s: u64) -> Result<u64> {
-    let funding_source_id = account_id_for(funding_source);
-    let payout_id = account_id_for(&env.accounts.payout);
+    let funding_source_id = support::account_identifier::account_id_for(funding_source);
+    let payout_id = support::account_identifier::account_id_for(&env.accounts.payout);
     env.pic.advance_time(Duration::from_secs(2));
     tick_n(&env.pic, 2);
     env.credit_payout_balance_only(amount_e8s)?;

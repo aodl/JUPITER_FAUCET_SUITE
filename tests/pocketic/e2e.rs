@@ -1,11 +1,10 @@
 // PocketIC integration fixtures keep literal conversions/copies for readable scenario setup.
 #![allow(clippy::clone_on_copy, clippy::unnecessary_cast)]
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
-use jupiter_ic_clients::account_identifier::account_identifier_text;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
 use pocket_ic::PocketIc;
 
 #[path = "real_blackhole.rs"]
@@ -13,15 +12,12 @@ mod real_blackhole;
 #[path = "support/mod.rs"]
 mod support;
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
+use support::account_identifier::account_identifier_text;
 use support::governance::set_controllers_exact;
 use support::ledger::build_pic_with_real_icp;
 use support::principals::fixture_principal;
-use std::process::Command;
+use std::sync::OnceLock;
 use std::time::Duration;
-
-const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
-
-const CYCLES_MINTING_CANISTER_ID: &str = "rkp4c-7iaaa-aaaaa-aaaca-cai";
 
 fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
@@ -29,21 +25,27 @@ fn require_ignored_flag() -> Result<()> {
     // invoke them explicitly with `--ignored`.
     support::assertions::require_ignored_flag()
 }
+
+static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static DISBURSER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+
 fn build_wasm(package: &str, features: Option<&str>) -> Result<Vec<u8>> {
-    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    let mut cmd = Command::new("cargo");
-    cmd.args(["build", "--target", "wasm32-unknown-unknown", "--release", "-p", package, "--locked"])
-        .current_dir(&workspace_root);
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
-    }
-    let status = cmd.status().with_context(|| format!("failed to build {package}"))?;
-    if !status.success() {
-        bail!("cargo build failed for {package}");
-    }
-    let raw_name = package.replace('-', "_");
-    let path = workspace_root.join(format!("target/wasm32-unknown-unknown/release/{raw_name}.wasm"));
-    std::fs::read(&path).with_context(|| format!("failed to read wasm for {package} at {}", path.display()))
+    let cache = match package {
+        "mock-icrc-ledger" => &LEDGER_WASM,
+        "mock-nns-governance" => &GOVERNANCE_WASM,
+        "mock-icp-index" => &INDEX_WASM,
+        "mock-cmc" => &CMC_WASM,
+        "jupiter-faucet" => &FAUCET_WASM,
+        "jupiter-disburser" => &DISBURSER_WASM,
+        "jupiter-historian" => &HISTORIAN_WASM,
+        other => bail!("no E2E wasm cache configured for {other}"),
+    };
+    support::wasm::build_wasm_cached_for_test(cache, package, features)
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -158,50 +160,27 @@ enum DebugNotifyBehavior {
     Other { error_code: u64, error_message: String },
 }
 
-fn nat_to_u64(n: &Nat) -> Result<u64> {
-    u64::try_from(n.0.clone()).map_err(|_| anyhow!("Nat does not fit into u64: {n}"))
-}
-
 fn icrc1_balance(pic: &PocketIc, ledger: Principal, acct: &Account) -> Result<u64> {
-    let n: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_balance_of", acct.clone())?;
-    nat_to_u64(&n)
+    support::ledger::icrc1_balance(pic, ledger, acct)
 }
 
 fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
-    let fee: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_fee", ())?;
-    nat_to_u64(&fee)
+    support::ledger::icrc1_fee(pic, ledger)
 }
 
 fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: TransferArg) -> Result<u64> {
-    let result: Result<Nat, TransferError> = update_one(pic, ledger, from, "icrc1_transfer", arg)?;
-    match result {
-        Ok(block_index) => nat_to_u64(&block_index),
-        Err(err) => bail!("icrc1_transfer failed: {err:?}"),
-    }
+    support::ledger::icrc1_transfer(pic, ledger, from, arg)
 }
 
 fn test_blackhole_controller() -> Principal {
     Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()
 }
 
-fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
-    let bytes = principal.as_slice();
-    let mut out = [0u8; 32];
-    out[0] = bytes.len() as u8;
-    let len = bytes.len().min(31);
-    out[1..1 + len].copy_from_slice(&bytes[..len]);
-    out
-}
-
 fn cmc_deposit_account(cmc: Principal, target: Principal) -> Account {
     Account {
         owner: cmc,
-        subaccount: Some(principal_to_subaccount(target)),
+        subaccount: Some(support::account_identifier::principal_to_subaccount(target)),
     }
-}
-
-fn account_id_for(account: &Account) -> String {
-    account_identifier_text(account.owner, account.subaccount)
 }
 
 fn disburser_funding_source(disburser: Principal) -> Account {
@@ -226,8 +205,8 @@ fn append_faucet_funding_tranche(
         Principal::anonymous(),
         "debug_append_transfer_from_with_timestamp",
         encode_args((
-            account_id_for(funding_source),
-            account_id_for(payout),
+            support::account_identifier::account_id_for(funding_source),
+            support::account_identifier::account_id_for(payout),
             amount_e8s,
             Option::<Vec<u8>>::None,
             timestamp_nanos,
@@ -1010,8 +989,8 @@ fn describe_account(account: &Account) -> String {
 fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
     require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
-    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
-    let cmc = Principal::from_text(CYCLES_MINTING_CANISTER_ID)?;
+    let ledger = support::principals::icp_ledger();
+    let cmc = support::principals::cycles_minting_canister();
     let blackhole_wasm = real_blackhole::real_blackhole_wasm()?;
 
     let target = pic.create_canister();
@@ -1035,7 +1014,7 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
     println!("cmc_canister={}", cmc);
     println!("anonymous_default_account={}", describe_account(&anon_default));
     println!("deposit_account={}", describe_account(&deposit_account));
-    println!("principal_to_subaccount_hex={}", hex::encode(principal_to_subaccount(target)));
+    println!("principal_to_subaccount_hex={}", hex::encode(support::account_identifier::principal_to_subaccount(target)));
     println!("top_up_memo_u64={}", memo_u64);
     println!("top_up_memo_hex={}", hex::encode(&memo_bytes));
     println!("top_up_memo_ascii={:?}", memo_bytes);

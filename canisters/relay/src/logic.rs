@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_ic_clients::account::principal_to_subaccount;
 
 use crate::state::{
     CanisterBurnSample, Config, ConversionEstimate, CyclesSampleSource, CyclesSnapshot,
@@ -68,15 +69,6 @@ pub(crate) struct FaucetCommitmentPlan {
     pub fee_e8s: u64,
     pub amount_e8s: u64,
     pub memo: Vec<u8>,
-}
-
-pub(crate) fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
-    let bytes = principal.as_slice();
-    let mut out = [0u8; 32];
-    out[0] = bytes.len() as u8;
-    let len = bytes.len().min(31);
-    out[1..1 + len].copy_from_slice(&bytes[..len]);
-    out
 }
 
 pub(crate) fn cmc_deposit_account(cmc_id: Principal, canister_id: Principal) -> Account {

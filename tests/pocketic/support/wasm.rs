@@ -66,3 +66,12 @@ pub fn build_wasm_cached(
     let _ = cache.set(bytes.clone());
     Ok(bytes)
 }
+
+pub fn build_wasm_cached_for_test(
+    cache: &OnceLock<Vec<u8>>,
+    package: &str,
+    features: Option<&str>,
+) -> Result<Vec<u8>> {
+    let workspace_root = workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    build_wasm_cached(&workspace_root, cache, package, features, None, false)
+}

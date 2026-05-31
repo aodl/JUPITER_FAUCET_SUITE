@@ -4,7 +4,7 @@
 use anyhow::{anyhow, bail, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
@@ -25,16 +25,8 @@ fn require_ignored_flag() -> Result<()> {
     // invoke them explicitly with `--ignored`.
     support::assertions::require_ignored_flag()
 }
-const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
-const ICP_INDEX_ID: &str = "qhbym-qaaaa-aaaaa-aaafq-cai";
-
 fn build_pic_with_real_icp() -> PocketIc {
     support::ledger::build_pic_with_real_icp()
-}
-
-fn build_wasm_cached(cache: &OnceLock<Vec<u8>>, package: &str, features: Option<&str>) -> Result<Vec<u8>> {
-    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    support::wasm::build_wasm_cached(&workspace_root, cache, package, features, None, false)
 }
 
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -43,11 +35,11 @@ static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
-fn index_wasm() -> Result<Vec<u8>> { build_wasm_cached(&INDEX_WASM, "mock-icp-index", None) }
-fn sns_wasm_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_WASM_WASM, "mock-sns-wasm", None) }
-fn sns_root_wasm() -> Result<Vec<u8>> { build_wasm_cached(&SNS_ROOT_WASM, "mock-sns-root", None) }
-fn xrc_wasm() -> Result<Vec<u8>> { build_wasm_cached(&XRC_WASM, "mock-xrc", None) }
-fn historian_wasm() -> Result<Vec<u8>> { build_wasm_cached(&HISTORIAN_WASM, "jupiter-historian", Some("debug_api")) }
+fn index_wasm() -> Result<Vec<u8>> { support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None) }
+fn sns_wasm_wasm() -> Result<Vec<u8>> { support::wasm::build_wasm_cached_for_test(&SNS_WASM_WASM, "mock-sns-wasm", None) }
+fn sns_root_wasm() -> Result<Vec<u8>> { support::wasm::build_wasm_cached_for_test(&SNS_ROOT_WASM, "mock-sns-root", None) }
+fn xrc_wasm() -> Result<Vec<u8>> { support::wasm::build_wasm_cached_for_test(&XRC_WASM, "mock-xrc", None) }
+fn historian_wasm() -> Result<Vec<u8>> { support::wasm::build_wasm_cached_for_test(&HISTORIAN_WASM, "jupiter-historian", Some("debug_api")) }
 
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 use support::governance::set_controllers_exact;
@@ -307,28 +299,19 @@ struct ListRecentCommitmentsResponse {
 
 
 fn real_icp_ledger_principal() -> Principal {
-    Principal::from_text(ICP_LEDGER_ID).expect("valid ICP ledger principal")
+    support::principals::icp_ledger()
 }
 
 fn real_icp_index_principal() -> Principal {
-    Principal::from_text(ICP_INDEX_ID).expect("valid ICP index principal")
-}
-
-fn nat_to_u64(n: &Nat) -> Result<u64> {
-    u64::try_from(n.0.clone()).map_err(|_| anyhow!("Nat does not fit into u64: {n}"))
+    support::principals::icp_index()
 }
 
 fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
-    let fee: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_fee", ())?;
-    nat_to_u64(&fee)
+    support::ledger::icrc1_fee(pic, ledger)
 }
 
 fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: TransferArg) -> Result<u64> {
-    let result: Result<Nat, TransferError> = update_one(pic, ledger, from, "icrc1_transfer", arg)?;
-    match result {
-        Ok(block_index) => nat_to_u64(&block_index),
-        Err(err) => bail!("icrc1_transfer failed: {err:?}"),
-    }
+    support::ledger::icrc1_transfer(pic, ledger, from, arg)
 }
 
 fn index_account_transactions(

@@ -1,15 +1,15 @@
 use super::*;
 use candid::decode_one;
 pub(super) fn mainnet_ledger_id() -> Principal {
-    Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("invalid hardcoded ledger principal")
+    jupiter_ic_clients::constants::icp_ledger_id()
 }
 
 pub(super) fn mainnet_index_id() -> Principal {
-    Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").expect("invalid hardcoded index principal")
+    jupiter_ic_clients::constants::icp_index_id()
 }
 
 pub(super) fn mainnet_blackhole_id() -> Principal {
-    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("invalid hardcoded blackhole principal")
+    jupiter_ic_clients::constants::blackhole_canister_id()
 }
 
 pub(crate) fn mainnet_disburser_id() -> Principal {
@@ -33,7 +33,7 @@ pub(crate) fn mainnet_rewards_account() -> Account {
 }
 
 pub(crate) fn mainnet_cmc_id() -> Principal {
-    Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").expect("invalid hardcoded cmc principal")
+    jupiter_ic_clients::constants::cycles_minting_canister_id()
 }
 
 pub(crate) fn mainnet_faucet_id() -> Principal {
@@ -41,7 +41,7 @@ pub(crate) fn mainnet_faucet_id() -> Principal {
 }
 
 pub(super) fn mainnet_sns_wasm_id() -> Principal {
-    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("invalid hardcoded sns-wasm principal")
+    jupiter_ic_clients::constants::sns_wasm_id()
 }
 
 pub(crate) fn mainnet_xrc_id() -> Principal {

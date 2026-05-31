@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::constants;
 use num_traits::ToPrimitive;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -1129,27 +1130,27 @@ fn faucet_staking_account() -> Account {
 }
 
 fn mainnet_governance_principal() -> Principal {
-    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("valid governance principal")
+    constants::nns_governance_id()
 }
 
 fn mainnet_ledger_principal() -> Principal {
-    Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("valid ledger principal")
+    constants::icp_ledger_id()
 }
 
 fn mainnet_index_principal() -> Principal {
-    Principal::from_text("qhbym-qaaaa-aaaaa-aaafq-cai").expect("valid index principal")
+    constants::icp_index_id()
 }
 
 fn mainnet_cmc_principal() -> Principal {
-    Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").expect("valid cmc principal")
+    constants::cycles_minting_canister_id()
 }
 
 fn mainnet_blackhole_principal() -> Principal {
-    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").expect("valid blackhole principal")
+    constants::blackhole_canister_id()
 }
 
 fn mainnet_sns_wasm_principal() -> Principal {
-    Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid sns wasm principal")
+    constants::sns_wasm_id()
 }
 
 fn mainnet_xrc_principal() -> Principal {

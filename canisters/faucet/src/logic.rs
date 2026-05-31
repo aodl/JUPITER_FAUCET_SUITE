@@ -1,5 +1,6 @@
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_ic_clients::account::principal_to_subaccount;
 use jupiter_memo_policy::MemoDirective;
 
 use crate::clients::index::{IndexOperation, IndexTimeStamp, IndexTransactionWithId};
@@ -73,15 +74,6 @@ pub(crate) fn memo_bytes_from_index_tx(tx: &IndexTransactionWithId, staking_acco
         }
         _ => None,
     }
-}
-
-fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
-    let bytes = principal.as_slice();
-    let mut out = [0u8; 32];
-    out[0] = bytes.len() as u8;
-    let len = bytes.len().min(31);
-    out[1..1 + len].copy_from_slice(&bytes[..len]);
-    out
 }
 
 pub(crate) fn cmc_deposit_account(cmc_id: Principal, canister_id: Principal) -> Account {

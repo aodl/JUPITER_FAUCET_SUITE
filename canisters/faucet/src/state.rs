@@ -5,9 +5,9 @@ use ic_stable_structures::{
     DefaultMemoryImpl, StableBTreeMap, StableCell, Storable,
 };
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_ic_clients::account::{account_text, subaccount_text};
 use serde::Serialize;
 use std::borrow::Cow;
-use std::fmt::Write;
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) struct Config {
@@ -28,25 +28,6 @@ pub(crate) struct Config {
     pub min_tx_e8s: u64,
     #[serde(default)]
     pub stake_recognition_delay_seconds: Option<u64>,
-}
-
-fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
-    let Some(bytes) = subaccount else {
-        return "none".to_string();
-    };
-    let mut out = String::with_capacity(64);
-    for byte in bytes {
-        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    out
-}
-
-fn account_text(account: &Account) -> String {
-    format!(
-        "{}:{}",
-        account.owner.to_text(),
-        subaccount_text(&account.subaccount)
-    )
 }
 
 fn opt_principal_text(principal: Option<Principal>) -> String {
