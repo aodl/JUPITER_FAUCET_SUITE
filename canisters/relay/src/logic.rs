@@ -15,6 +15,17 @@ pub(crate) const TOPUP_HEADROOM_DENOMINATOR: u128 = 100;
 pub(crate) const CONVERSION_ESTIMATE_MAX_AGE_NANOS: u64 = 14 * 24 * 60 * 60 * 1_000_000_000;
 pub(crate) const MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S: u64 = 100_000_000;
 pub(crate) const JUPITER_FAUCET_NEURON_ID: u64 = 11_614_578_985_374_291_210;
+pub(crate) const SKIP_REASON_ZERO_BURN: &str = "zero_burn";
+pub(crate) const SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE: &str =
+    "gross_share_does_not_exceed_fee";
+pub(crate) const SKIP_REASON_INSUFFICIENT_BALANCE_FOR_TOPUPS: &str =
+    "insufficient_balance_for_topups";
+pub(crate) const SKIP_REASON_NO_POSITIVE_BURN: &str = "no_positive_burn";
+pub(crate) const SKIP_REASON_NO_RAW_ICP_RECIPIENTS: &str = "no_raw_icp_recipients";
+pub(crate) const SKIP_REASON_MISSING_CONVERSION_ESTIMATE: &str = "missing_conversion_estimate";
+pub(crate) const SKIP_REASON_NO_SURPLUS_RECIPIENTS: &str = "no_surplus_recipients";
+pub(crate) const SKIP_REASON_NO_SURPLUS: &str = "no_surplus";
+pub(crate) const SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP: &str = "raw_icp_share_below_1_icp";
 pub(crate) const ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD: &str =
     "all_cycles_batch_below_fee_efficient_threshold";
 const BOOTSTRAP_CYCLES_PER_E8: u128 = 100_000;
@@ -321,12 +332,12 @@ pub(crate) fn build_allocation_plan(
             let gross = topup_gross_e8s(plan.target_topup_cycles, estimate, fee_e8s);
             if gross == 0 {
                 if plan.target_topup_cycles == 0 {
-                    plan.skipped_reason = Some("zero_burn".to_string());
+                    plan.skipped_reason = Some(SKIP_REASON_ZERO_BURN.to_string());
                 }
                 return 0;
             }
             if gross <= fee_e8s {
-                plan.skipped_reason = Some("gross_share_does_not_exceed_fee".to_string());
+                plan.skipped_reason = Some(SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE.to_string());
                 return 0;
             }
             gross
@@ -354,7 +365,7 @@ pub(crate) fn build_allocation_plan(
                 plan.gross_share_e8s = gross;
                 plan.amount_e8s = gross - fee_e8s;
             } else if plan.skipped_reason.is_none() {
-                plan.skipped_reason = Some("gross_share_does_not_exceed_fee".to_string());
+                plan.skipped_reason = Some(SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE.to_string());
             }
         }
     }
@@ -362,7 +373,7 @@ pub(crate) fn build_allocation_plan(
     if !topup_phase_fully_funded {
         for (plan, desired) in topups.iter_mut().zip(desired_gross) {
             if desired > 0 && plan.amount_e8s == 0 && plan.skipped_reason.is_none() {
-                plan.skipped_reason = Some("insufficient_balance_for_topups".to_string());
+                plan.skipped_reason = Some(SKIP_REASON_INSUFFICIENT_BALANCE_FOR_TOPUPS.to_string());
             }
         }
     }
@@ -373,7 +384,7 @@ pub(crate) fn build_allocation_plan(
         skipped_surplus_reason: if topup_phase_fully_funded {
             None
         } else {
-            Some("insufficient_balance_for_topups".to_string())
+            Some(SKIP_REASON_INSUFFICIENT_BALANCE_FOR_TOPUPS.to_string())
         },
     }
 }
@@ -395,12 +406,12 @@ pub(crate) fn build_spend_all_cycles_plan(
 
     if total_positive_burn == 0 {
         for plan in &mut topups {
-            plan.skipped_reason = Some("no_positive_burn".to_string());
+            plan.skipped_reason = Some(SKIP_REASON_NO_POSITIVE_BURN.to_string());
         }
         return AllocationPlan {
             topups,
             topup_phase_fully_funded: true,
-            skipped_surplus_reason: Some("no_positive_burn".to_string()),
+            skipped_surplus_reason: Some(SKIP_REASON_NO_POSITIVE_BURN.to_string()),
         };
     }
 
@@ -429,7 +440,7 @@ pub(crate) fn build_spend_all_cycles_plan(
         for (plan, gross) in topups.iter_mut().zip(gross_shares) {
             plan.gross_share_e8s = gross;
             plan.skipped_reason = Some(if plan.burn_cycles == 0 {
-                "zero_burn".to_string()
+                SKIP_REASON_ZERO_BURN.to_string()
             } else {
                 ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD.to_string()
             });
@@ -445,7 +456,7 @@ pub(crate) fn build_spend_all_cycles_plan(
 
     for (plan, gross) in topups.iter_mut().zip(gross_shares) {
         if plan.burn_cycles == 0 {
-            plan.skipped_reason = Some("zero_burn".to_string());
+            plan.skipped_reason = Some(SKIP_REASON_ZERO_BURN.to_string());
             continue;
         }
         plan.gross_share_e8s = gross;
@@ -455,7 +466,7 @@ pub(crate) fn build_spend_all_cycles_plan(
     AllocationPlan {
         topups,
         topup_phase_fully_funded: true,
-        skipped_surplus_reason: Some("no_raw_icp_recipients".to_string()),
+        skipped_surplus_reason: Some(SKIP_REASON_NO_RAW_ICP_RECIPIENTS.to_string()),
     }
 }
 
@@ -558,20 +569,20 @@ pub(crate) fn build_surplus_plan(
         return (
             Vec::new(),
             0,
-            Some("missing_conversion_estimate".to_string()),
+            Some(SKIP_REASON_MISSING_CONVERSION_ESTIMATE.to_string()),
         );
     }
 
     let surplus = allocate_equal_surplus_shares(recipients, available_balance_e8s, fee_e8s);
     let skipped_surplus_reason = if recipients.is_empty() {
-        Some("no_surplus_recipients".to_string())
+        Some(SKIP_REASON_NO_SURPLUS_RECIPIENTS.to_string())
     } else if available_balance_e8s == 0 {
-        Some("no_surplus".to_string())
+        Some(SKIP_REASON_NO_SURPLUS.to_string())
     } else if surplus.iter().all(|plan| plan.amount_e8s == 0) {
         surplus
             .iter()
             .find_map(|plan| plan.skipped_reason.clone())
-            .or_else(|| Some("gross_share_does_not_exceed_fee".to_string()))
+            .or_else(|| Some(SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE.to_string()))
     } else {
         None
     };
@@ -589,11 +600,14 @@ pub(crate) fn allocate_equal_surplus_shares(
     }
     let gross = available_balance_e8s / recipients.len() as u64;
     let (amount_e8s, skipped_reason) = if gross <= fee_e8s {
-        (0, Some("gross_share_does_not_exceed_fee".to_string()))
+        (
+            0,
+            Some(SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE.to_string()),
+        )
     } else {
         let candidate_amount = gross - fee_e8s;
         if candidate_amount < MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S {
-            (0, Some("raw_icp_share_below_1_icp".to_string()))
+            (0, Some(SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP.to_string()))
         } else {
             (candidate_amount, None)
         }
@@ -707,6 +721,35 @@ mod tests {
             max_transfers_per_tick: None,
             surplus_recipients: Vec::new(),
         }
+    }
+
+    #[test]
+    fn skip_reason_constants_preserve_external_strings() {
+        assert_eq!(SKIP_REASON_ZERO_BURN, "zero_burn");
+        assert_eq!(
+            SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE,
+            "gross_share_does_not_exceed_fee"
+        );
+        assert_eq!(
+            SKIP_REASON_INSUFFICIENT_BALANCE_FOR_TOPUPS,
+            "insufficient_balance_for_topups"
+        );
+        assert_eq!(SKIP_REASON_NO_POSITIVE_BURN, "no_positive_burn");
+        assert_eq!(SKIP_REASON_NO_RAW_ICP_RECIPIENTS, "no_raw_icp_recipients");
+        assert_eq!(
+            SKIP_REASON_MISSING_CONVERSION_ESTIMATE,
+            "missing_conversion_estimate"
+        );
+        assert_eq!(SKIP_REASON_NO_SURPLUS_RECIPIENTS, "no_surplus_recipients");
+        assert_eq!(SKIP_REASON_NO_SURPLUS, "no_surplus");
+        assert_eq!(
+            SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP,
+            "raw_icp_share_below_1_icp"
+        );
+        assert_eq!(
+            ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD,
+            "all_cycles_batch_below_fee_efficient_threshold"
+        );
     }
 
     #[test]
@@ -986,7 +1029,7 @@ mod tests {
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
-            Some("insufficient_balance_for_topups")
+            Some(SKIP_REASON_INSUFFICIENT_BALANCE_FOR_TOPUPS)
         );
         assert!(!plan.topup_phase_fully_funded);
     }
@@ -1018,7 +1061,7 @@ mod tests {
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
-            Some("no_raw_icp_recipients")
+            Some(SKIP_REASON_NO_RAW_ICP_RECIPIENTS)
         );
         assert!(plan.topup_phase_fully_funded);
         assert!(plan.topups.iter().all(|sample| sample.amount_e8s > 0));
@@ -1165,11 +1208,11 @@ mod tests {
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
-            Some("no_raw_icp_recipients")
+            Some(SKIP_REASON_NO_RAW_ICP_RECIPIENTS)
         );
         assert_eq!(c.gross_share_e8s, 0);
         assert_eq!(c.amount_e8s, 0);
-        assert_eq!(c.skipped_reason.as_deref(), Some("zero_burn"));
+        assert_eq!(c.skipped_reason.as_deref(), Some(SKIP_REASON_ZERO_BURN));
         assert!(plan
             .topups
             .iter()
@@ -1209,13 +1252,12 @@ mod tests {
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
-            Some("no_positive_burn")
+            Some(SKIP_REASON_NO_POSITIVE_BURN)
         );
         assert!(plan.topups.iter().all(|sample| sample.amount_e8s == 0));
-        assert!(plan
-            .topups
-            .iter()
-            .all(|sample| { sample.skipped_reason.as_deref() == Some("no_positive_burn") }));
+        assert!(plan.topups.iter().all(|sample| {
+            sample.skipped_reason.as_deref() == Some(SKIP_REASON_NO_POSITIVE_BURN)
+        }));
     }
 
     #[test]
@@ -1224,7 +1266,10 @@ mod tests {
 
         assert!(surplus.is_empty());
         assert_eq!(e8s, 0);
-        assert_eq!(reason.as_deref(), Some("missing_conversion_estimate"));
+        assert_eq!(
+            reason.as_deref(),
+            Some(SKIP_REASON_MISSING_CONVERSION_ESTIMATE)
+        );
     }
 
     #[test]
@@ -1301,11 +1346,15 @@ mod tests {
             1,
         );
 
-        assert_eq!(reason.as_deref(), Some("raw_icp_share_below_1_icp"));
+        assert_eq!(
+            reason.as_deref(),
+            Some(SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP)
+        );
         assert!(surplus.iter().all(|plan| plan.amount_e8s == 0));
         assert!(surplus
             .iter()
-            .all(|plan| plan.skipped_reason.as_deref() == Some("raw_icp_share_below_1_icp")));
+            .all(|plan| plan.skipped_reason.as_deref()
+                == Some(SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP)));
     }
 
     #[test]
@@ -1374,11 +1423,14 @@ mod tests {
             1,
         );
 
-        assert_eq!(reason.as_deref(), Some("raw_icp_share_below_1_icp"));
+        assert_eq!(
+            reason.as_deref(),
+            Some(SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP)
+        );
         assert_eq!(surplus[0].amount_e8s, 0);
         assert_eq!(
             surplus[0].skipped_reason.as_deref(),
-            Some("raw_icp_share_below_1_icp")
+            Some(SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP)
         );
     }
 
