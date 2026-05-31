@@ -1,3 +1,8 @@
+//! Canonical mainnet canister principal constants.
+//!
+//! This module owns shared principal text and constructors. Canister-specific
+//! install defaults and validation policy should stay with each canister.
+
 use candid::Principal;
 
 pub const ICP_LEDGER_ID: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";

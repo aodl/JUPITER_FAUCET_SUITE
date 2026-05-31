@@ -1,20 +1,26 @@
+//! Shared CMC call plumbing and response classification.
+//!
+//! This module owns Candid DTOs and low-level `notify_top_up` classification.
+//! Canister-specific retry, accounting, and transfer-finality policy should stay
+//! in the calling canister.
+
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-pub struct NotifyTopUpArg {
+struct NotifyTopUpArg {
     pub canister_id: Principal,
     pub block_index: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-pub enum NotifyTopUpResult {
+enum NotifyTopUpResult {
     Ok(Nat),
     Err(NotifyError),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-pub enum NotifyError {
+enum NotifyError {
     Refunded {
         reason: String,
         block_index: Option<u64>,
@@ -56,11 +62,11 @@ pub enum NotifyTerminalError {
     InvalidTransaction(String),
 }
 
-pub fn nat_to_u128(n: &Nat) -> Result<u128, String> {
+fn nat_to_u128(n: &Nat) -> Result<u128, String> {
     u128::try_from(n.0.clone()).map_err(|_| format!("Nat does not fit u128: {n}"))
 }
 
-pub fn classify_notify_top_up_result(result: NotifyTopUpResult) -> Result<u128, NotifyTopUpError> {
+fn classify_notify_top_up_result(result: NotifyTopUpResult) -> Result<u128, NotifyTopUpError> {
     match result {
         NotifyTopUpResult::Ok(cycles) => nat_to_u128(&cycles).map_err(NotifyTopUpError::Convert),
         NotifyTopUpResult::Err(NotifyError::Processing) => Err(NotifyTopUpError::Retryable(

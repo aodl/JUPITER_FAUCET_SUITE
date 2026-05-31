@@ -1,3 +1,9 @@
+//! Shared account formatting and deterministic subaccount helpers.
+//!
+//! This module owns reusable account text formatting and principal-derived
+//! subaccount encoding. Canister-specific account selection and payout policy
+//! should remain local to each canister.
+
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 

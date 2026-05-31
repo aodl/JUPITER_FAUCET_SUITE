@@ -1,3 +1,8 @@
+//! Shared post-upgrade argument decoding.
+//!
+//! Fresh-install `InitArgs` must be rejected during `post_upgrade`. Empty args
+//! and Candid zero-arg encodings are accepted as no-op upgrades.
+
 use serde::de::DeserializeOwned;
 
 pub fn decode_post_upgrade_args<InitArgs, UpgradeArgs>(

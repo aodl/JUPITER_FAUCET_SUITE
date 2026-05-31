@@ -16,7 +16,6 @@ use num_traits::ToPrimitive;
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
@@ -24,6 +23,7 @@ mod cli;
 mod constants;
 mod process;
 mod test_runner;
+mod workspace;
 
 use cli::{parse_scoped_command, TestComponent, TestScope};
 use constants::*;
@@ -32,6 +32,7 @@ use process::{
     stop_local_network_best_effort,
 };
 use test_runner::run_cargo_test_suite;
+use workspace::repo_root;
 
 #[derive(Debug)]
 struct ScenarioOutcome {
@@ -39,16 +40,6 @@ struct ScenarioOutcome {
     ms: u128,
     passed: bool,
     error: Option<String>,
-}
-
-fn repo_root() -> String {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .ancestors()
-        .find(|dir| dir.join("Cargo.toml").is_file() && dir.join("icp.yaml").is_file())
-        .expect("xtask should live under a repository root containing Cargo.toml and icp.yaml")
-        .to_string_lossy()
-        .to_string()
 }
 
 fn run_scenario<F, N>(outcomes: &mut Vec<ScenarioOutcome>, name: N, f: F)

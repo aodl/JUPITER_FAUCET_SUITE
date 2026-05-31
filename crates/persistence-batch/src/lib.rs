@@ -1,3 +1,8 @@
+//! RAII helper for synchronous persistence batching.
+//!
+//! Do not hold a batch guard across await points. The caller owns dirty flags,
+//! batch-depth storage, and the actual persistence function.
+
 /// Returns true when a persistence batch is active for the supplied nesting depth.
 pub fn is_active(depth: u32) -> bool {
     depth > 0

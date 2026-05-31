@@ -1,5 +1,5 @@
 use crate::constants::{DIM, LOCAL_ENVIRONMENT, LOCAL_IDENTITY, POCKET_IC_SERVER_VERSION, RESET};
-use crate::repo_root;
+use crate::workspace::repo_root;
 use anyhow::{bail, Context, Result};
 use candid::Principal;
 use std::env;

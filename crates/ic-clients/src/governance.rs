@@ -1,3 +1,9 @@
+//! Shared NNS governance request/response plumbing.
+//!
+//! This module owns common request construction and response classification used
+//! by faucet/relay neuron-stake flows. Canister-specific maturity and
+//! disbursement policy remains local to the relevant canister.
+
 use candid::Principal;
 use ic_cdk::call::Call;
 use jupiter_nns_types::{
@@ -7,7 +13,7 @@ use jupiter_nns_types::{
 
 use crate::ClientError;
 
-pub fn list_neurons_request(neuron_id: u64) -> ListNeurons {
+fn list_neurons_request(neuron_id: u64) -> ListNeurons {
     ListNeurons {
         neuron_ids: vec![neuron_id],
         include_neurons_readable_by_caller: false,
@@ -19,7 +25,7 @@ pub fn list_neurons_request(neuron_id: u64) -> ListNeurons {
     }
 }
 
-pub fn claim_or_refresh_request(neuron_id: u64) -> ManageNeuronRequest {
+fn claim_or_refresh_request(neuron_id: u64) -> ManageNeuronRequest {
     ManageNeuronRequest {
         id: None,
         neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
@@ -35,7 +41,7 @@ pub fn claim_or_refresh_request(neuron_id: u64) -> ManageNeuronRequest {
     }
 }
 
-pub fn staking_subaccount_from_list_neurons_response(
+fn staking_subaccount_from_list_neurons_response(
     neuron_id: u64,
     decoded: ListNeuronsResponse,
 ) -> Result<[u8; 32], ClientError> {
@@ -60,9 +66,7 @@ pub fn staking_subaccount_from_list_neurons_response(
     Ok(out)
 }
 
-pub fn classify_claim_or_refresh_response(
-    decoded: ManageNeuronResponse,
-) -> Result<(), ClientError> {
+fn classify_claim_or_refresh_response(decoded: ManageNeuronResponse) -> Result<(), ClientError> {
     match decoded.command {
         Some(manage_neuron_response::Command::ClaimOrRefresh(_)) => Ok(()),
         Some(manage_neuron_response::Command::Error(err)) => Err(ClientError::Call(format!(

@@ -1,3 +1,8 @@
+//! Small reusable lease guard for timer reentrancy protection.
+//!
+//! The guard only models lease acquisition/release semantics. State mutation
+//! and logging remain owned by each canister.
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeaseFinish {
     Released,
