@@ -35,10 +35,7 @@ crc32fast = "1"
 hex = "0.4"
 ic-cdk = "0.19"
 ic-cdk-timers = "1.0.0"
-ic-base-types = { version = "0.9.0", git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }
 ic-stable-structures = "0.6"
-ic-nns-common = { version = "0.9.0", git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }
-ic-nns-governance-api = { version = "0.9.0", git = "https://github.com/dfinity/ic", rev = "b4b0230aa1ed1c94d3674a9a27d60b724edb5cd4" }
 icrc-ledger-types = "0.1.12"
 num-traits = "0.2"
 pocket-ic = "13"
