@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: rsa 0.9.10 is transitive through DFINITY SEV
+    # attestation types. Jupiter canisters do not perform network-observable
+    # RSA private-key operations with this crate; no patched rsa release exists.
+    # Keep this aligned with the documented exception in deny.toml and remove it
+    # when DFINITY IC or RustCrypto RSA provides a patched path.
+    "RUSTSEC-2023-0071",
+]

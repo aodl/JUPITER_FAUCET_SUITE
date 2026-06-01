@@ -2,6 +2,7 @@
 name = "jupiter-ic-clients"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 candid = { workspace = true }
@@ -10,7 +11,7 @@ thiserror = { workspace = true }
 
 ic-cdk = { workspace = true }
 icrc-ledger-types = { workspace = true }
-jupiter-nns-types = { path = "../nns-types" }
+jupiter-nns-types = { version = "0.1.0", path = "../nns-types" }
 
 crc32fast = { workspace = true }
 hex = { workspace = true }

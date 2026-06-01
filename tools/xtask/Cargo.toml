@@ -2,6 +2,7 @@
 name = "xtask"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 anyhow = { workspace = true }
@@ -12,8 +13,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 icrc-ledger-types = { workspace = true }
 sha2 = { workspace = true }
-jupiter-ic-clients = { path = "../../crates/ic-clients" }
-jupiter-nns-types = { path = "../../crates/nns-types" }
+jupiter-ic-clients = { version = "0.1.0", path = "../../crates/ic-clients" }
+jupiter-nns-types = { version = "0.1.0", path = "../../crates/nns-types" }
 
 [dev-dependencies]
 pocket-ic = { workspace = true }

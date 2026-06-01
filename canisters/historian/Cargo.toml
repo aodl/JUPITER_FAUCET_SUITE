@@ -3,6 +3,7 @@ build = "build.rs"
 name = "jupiter-historian"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [[test]]
 name = "jupiter_historian_integration"
@@ -25,10 +26,10 @@ ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
 icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
-jupiter-ic-clients = { path = "../../crates/ic-clients" }
-jupiter-persistence-batch = { path = "../../crates/persistence-batch" }
-jupiter-memo-policy = { path = "../../crates/memo-policy" }
-jupiter-nns-types = { path = "../../crates/nns-types" }
+jupiter-ic-clients = { version = "0.1.0", path = "../../crates/ic-clients" }
+jupiter-persistence-batch = { version = "0.1.0", path = "../../crates/persistence-batch" }
+jupiter-memo-policy = { version = "0.1.0", path = "../../crates/memo-policy" }
+jupiter-nns-types = { version = "0.1.0", path = "../../crates/nns-types" }
 
 [features]
 debug_api = []
@@ -46,4 +47,4 @@ slog = { workspace = true }
 tokio = { workspace = true }
 
 [build-dependencies]
-jupiter-build-support = { path = "../../crates/build-support" }
+jupiter-build-support = { version = "0.1.0", path = "../../crates/build-support" }

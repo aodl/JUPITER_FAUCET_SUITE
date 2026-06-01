@@ -2,6 +2,7 @@
 name = "mock-nns-governance"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
@@ -10,4 +11,4 @@ crate-type = ["cdylib"]
 candid = { workspace = true }
 serde = { workspace = true }
 ic-cdk = { workspace = true }
-jupiter-nns-types = { path = "../../../crates/nns-types" }
+jupiter-nns-types = { version = "0.1.0", path = "../../../crates/nns-types" }

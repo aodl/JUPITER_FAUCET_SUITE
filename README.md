@@ -72,6 +72,7 @@ python3 ./tools/scripts/validate-mainnet-install-args
 
 - [Canister roles](docs/architecture/canister-roles.md)
 - [Testing](docs/development/testing.md)
+- [Dependency scanning](docs/security/dependency-scanning.md)
 - [Deployment](docs/operations/deployment.md)
 - [Reproducible builds](docs/operations/reproducible-builds.md)
 

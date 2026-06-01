@@ -10,6 +10,8 @@
     "test:frontend-unit": "node --test canisters/frontend/web/test/*.test.mjs",
     "test:frontend-dashboard-local": "node --test canisters/frontend/web/test/dashboard-data.local-replica.test.mjs",
     "lint:frontend-exports": "node tools/scripts/check-frontend-exports.mjs",
+    "security:scan": "./tools/scripts/security-scan",
+    "sbom": "./tools/scripts/security-scan",
     "verify:reproducible-artifacts": "bash ./tools/scripts/verify-reproducible-artifacts"
   },
   "dependencies": {

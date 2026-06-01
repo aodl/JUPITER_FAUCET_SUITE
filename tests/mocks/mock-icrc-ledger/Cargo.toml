@@ -2,6 +2,7 @@
 name = "mock-icrc-ledger"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
@@ -12,4 +13,4 @@ serde = { workspace = true }
 ic-cdk = { workspace = true }
 icrc-ledger-types = { workspace = true }
 num-traits = { workspace = true }
-jupiter-ic-clients = { path = "../../../crates/ic-clients" }
+jupiter-ic-clients = { version = "0.1.0", path = "../../../crates/ic-clients" }

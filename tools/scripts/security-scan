@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$repo_root" ]; then
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+  repo_root="$(CDPATH= cd -- "$script_dir/../.." && pwd)"
+fi
+cd "$repo_root"
+
+print_version() {
+  name="$1"
+  shift
+  if command -v "$1" >/dev/null 2>&1; then
+    printf '%s: ' "$name"
+    "$@" 2>&1 | sed -n '1p'
+  else
+    printf '%s: not found\n' "$name"
+  fi
+}
+
+print_version "rustc" rustc --version
+print_version "cargo" cargo --version
+print_version "node" node --version
+print_version "npm" npm --version
+print_version "cargo audit" cargo audit --version
+print_version "cargo deny" cargo deny --version
+print_version "osv-scanner" osv-scanner --version
+print_version "cargo cyclonedx" cargo cyclonedx --version
+print_version "cyclonedx-npm" npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --version
+
+cargo audit
+cargo deny check advisories licenses bans sources
+npm audit --omit=dev
+osv-scanner scan -L Cargo.lock -L package-lock.json
+
+mkdir -p release-artifacts/sbom
+npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --version >/dev/null
+
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+  SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+  export SOURCE_DATE_EPOCH
+fi
+
+cargo_cdx_prefix="jupiter-faucet-suite-cargo-cdx"
+cargo_cdx_parts="$(mktemp)"
+cleanup_cargo_cdx_parts() {
+  if [ -f "${cargo_cdx_parts}" ]; then
+    while IFS= read -r part; do
+      [ -n "${part}" ] && rm -f "${part}"
+    done < "${cargo_cdx_parts}"
+    rm -f "${cargo_cdx_parts}"
+  fi
+}
+trap cleanup_cargo_cdx_parts EXIT
+
+cargo cyclonedx --manifest-path Cargo.toml --format json --override-filename "${cargo_cdx_prefix}"
+find . -path ./target -prune -o -name "${cargo_cdx_prefix}.json" -type f -print | sort > "${cargo_cdx_parts}"
+if [ ! -s "${cargo_cdx_parts}" ]; then
+  echo "cargo cyclonedx did not produce any ${cargo_cdx_prefix}.json files" >&2
+  exit 1
+fi
+
+OUT="release-artifacts/sbom/cargo.cdx.json" node - "${cargo_cdx_parts}" <<'NODE'
+const fs = require("fs");
+const crypto = require("crypto");
+
+const listPath = process.argv[2];
+const outPath = process.env.OUT;
+const files = fs.readFileSync(listPath, "utf8").trim().split(/\n+/).filter(Boolean);
+const sourceDateEpoch = Number.parseInt(process.env.SOURCE_DATE_EPOCH || "0", 10);
+if (!Number.isFinite(sourceDateEpoch) || sourceDateEpoch < 0) {
+  throw new Error(`invalid SOURCE_DATE_EPOCH: ${process.env.SOURCE_DATE_EPOCH}`);
+}
+const timestamp = new Date(sourceDateEpoch * 1000).toISOString();
+
+function deterministicUuid(input) {
+  const bytes = crypto.createHash("sha256").update(input).digest();
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+const componentMap = new Map();
+const dependencyMap = new Map();
+let specVersion = "1.5";
+
+for (const file of files) {
+  const bom = JSON.parse(fs.readFileSync(file, "utf8"));
+  specVersion = bom.specVersion || specVersion;
+
+  for (const component of bom.components || []) {
+    const key = component["bom-ref"] || `${component.type}:${component.name}:${component.version || ""}`;
+    if (!componentMap.has(key)) componentMap.set(key, component);
+  }
+
+  for (const dependency of bom.dependencies || []) {
+    if (!dependency.ref) continue;
+    const dependsOn = dependencyMap.get(dependency.ref) || new Set();
+    for (const ref of dependency.dependsOn || []) dependsOn.add(ref);
+    dependencyMap.set(dependency.ref, dependsOn);
+  }
+}
+
+const dependencies = Array.from(dependencyMap, ([ref, dependsOn]) => ({
+  ref,
+  dependsOn: Array.from(dependsOn).sort(),
+})).sort((a, b) => a.ref.localeCompare(b.ref));
+
+const merged = {
+  bomFormat: "CycloneDX",
+  specVersion,
+  serialNumber: `urn:uuid:${deterministicUuid(`cargo:${sourceDateEpoch}:${files.join("\n")}`)}`,
+  version: 1,
+  metadata: {
+    timestamp,
+    component: {
+      type: "application",
+      name: "Jupiter_Faucet_Suite",
+      "bom-ref": "pkg:generic/Jupiter_Faucet_Suite",
+    },
+  },
+  components: Array.from(componentMap.values()).sort((a, b) => {
+    const left = `${a.name || ""}@${a.version || ""}`;
+    const right = `${b.name || ""}@${b.version || ""}`;
+    return left.localeCompare(right);
+  }),
+  dependencies,
+};
+
+fs.writeFileSync(outPath, `${JSON.stringify(merged, null, 2)}\n`);
+NODE
+cleanup_cargo_cdx_parts
+npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --package-lock-only --output-file release-artifacts/sbom/npm.cdx.json
+OUT="release-artifacts/sbom/npm.cdx.json" node - <<'NODE'
+const fs = require("fs");
+const crypto = require("crypto");
+
+const outPath = process.env.OUT;
+const sourceDateEpoch = Number.parseInt(process.env.SOURCE_DATE_EPOCH || "0", 10);
+if (!Number.isFinite(sourceDateEpoch) || sourceDateEpoch < 0) {
+  throw new Error(`invalid SOURCE_DATE_EPOCH: ${process.env.SOURCE_DATE_EPOCH}`);
+}
+
+function deterministicUuid(input) {
+  const bytes = crypto.createHash("sha256").update(input).digest();
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+const bom = JSON.parse(fs.readFileSync(outPath, "utf8"));
+bom.serialNumber = `urn:uuid:${deterministicUuid(`npm:${sourceDateEpoch}:package-lock.json`)}`;
+bom.metadata = bom.metadata || {};
+bom.metadata.timestamp = new Date(sourceDateEpoch * 1000).toISOString();
+fs.writeFileSync(outPath, `${JSON.stringify(bom, null, 2)}\n`);
+NODE
+sha256sum release-artifacts/sbom/*.json > release-artifacts/sbom/SHA256SUMS

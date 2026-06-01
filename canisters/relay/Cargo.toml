@@ -3,6 +3,7 @@ build = "build.rs"
 name = "jupiter-relay"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [[test]]
 name = "jupiter_relay_integration"
@@ -18,8 +19,8 @@ ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
 ic-stable-structures = { workspace = true }
 icrc-ledger-types = { workspace = true }
-jupiter-ic-clients = { path = "../../crates/ic-clients" }
-jupiter-nns-types = { path = "../../crates/nns-types" }
+jupiter-ic-clients = { version = "0.1.0", path = "../../crates/ic-clients" }
+jupiter-nns-types = { version = "0.1.0", path = "../../crates/nns-types" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
@@ -36,4 +37,4 @@ slog = { workspace = true }
 tokio = { workspace = true }
 
 [build-dependencies]
-jupiter-build-support = { path = "../../crates/build-support" }
+jupiter-build-support = { version = "0.1.0", path = "../../crates/build-support" }

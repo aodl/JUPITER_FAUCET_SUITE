@@ -1,0 +1,35 @@
+# OSV Scanner exceptions for no-safe-upgrade RustSec findings.
+# Keep these aligned with deny.toml and remove each entry when the upstream
+# dependency path provides a safe upgrade.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0012"
+reason = "backoff 0.4.0 is pulled only through pocket-ic 13.0.0 dev/test tooling; no safe upgrade exists in the current PocketIC release."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+reason = "bincode 1.3.3 is transitive through pinned DFINITY NNS/governance crates and build-info; no safe upgrade exists without upstream DFINITY/build-info changes."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0388"
+reason = "derivative 2.2.0 is transitive through pinned DFINITY SNS governance crates; no safe upgrade exists without changing the DFINITY IC revision."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+reason = "instant 0.1.13 is pulled only through pocket-ic/backoff dev/test tooling; no safe upgrade exists in the current PocketIC release."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste 1.0.15 is transitive through candid and pinned DFINITY IC crates; no safe upgrade exists without upstream candid or DFINITY changes."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+reason = "proc-macro-error 1.0.4 is transitive proc-macro/build-time support through DFINITY/candid-derived crates; no safe upgrade exists without upstream changes."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2023-0071"
+reason = "rsa 0.9.10 is transitive through DFINITY SEV attestation types. Jupiter canisters do not perform network-observable RSA private-key operations with this crate; no patched rsa release exists."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2021-0127"
+reason = "serde_cbor 0.11.2 is transitive through pinned DFINITY IC crates, ic-http-certification, and PocketIC support; no safe upgrade exists for those upstream paths."
