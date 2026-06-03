@@ -93,7 +93,6 @@ pub struct CommitmentHistoryPage {
     pub next_start_after_tx_id: Option<u64>,
 }
 
-
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct CanisterOverview {
     pub canister_id: Principal,

@@ -54,7 +54,11 @@ pub(crate) trait IndexClient: Send + Sync {
 
 #[async_trait]
 pub(crate) trait CmcClient: Send + Sync {
-    async fn notify_top_up(&self, canister_id: Principal, block_index: u64) -> Result<(), ClientError>;
+    async fn notify_top_up(
+        &self,
+        canister_id: Principal,
+        block_index: u64,
+    ) -> Result<(), ClientError>;
 }
 
 #[async_trait]

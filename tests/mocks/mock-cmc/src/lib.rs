@@ -66,7 +66,6 @@ thread_local! {
 #[ic_cdk::init]
 fn init() {}
 
-
 #[ic_cdk::update]
 async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
     let scripted = ST.with(|s| {
@@ -90,21 +89,26 @@ async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
                     NotifyTopUpResult::Ok(Nat::from(MOCK_MINTED_CYCLES))
                 }
                 DebugNotifyBehavior::Processing => NotifyTopUpResult::Err(NotifyError::Processing),
-                DebugNotifyBehavior::Refunded { reason, block_index } => {
-                    NotifyTopUpResult::Err(NotifyError::Refunded { reason, block_index })
-                }
+                DebugNotifyBehavior::Refunded {
+                    reason,
+                    block_index,
+                } => NotifyTopUpResult::Err(NotifyError::Refunded {
+                    reason,
+                    block_index,
+                }),
                 DebugNotifyBehavior::TransactionTooOld(v) => {
                     NotifyTopUpResult::Err(NotifyError::TransactionTooOld(v))
                 }
                 DebugNotifyBehavior::InvalidTransaction(msg) => {
                     NotifyTopUpResult::Err(NotifyError::InvalidTransaction(msg))
                 }
-                DebugNotifyBehavior::Other { error_code, error_message } => {
-                    NotifyTopUpResult::Err(NotifyError::Other {
-                        error_code,
-                        error_message,
-                    })
-                }
+                DebugNotifyBehavior::Other {
+                    error_code,
+                    error_message,
+                } => NotifyTopUpResult::Err(NotifyError::Other {
+                    error_code,
+                    error_message,
+                }),
             }
         });
     }
@@ -112,7 +116,6 @@ async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
     if ST.with(|s| s.borrow().fail) {
         return NotifyTopUpResult::Err(NotifyError::Processing);
     }
-
 
     ST.with(|s| {
         let mut st = s.borrow_mut();

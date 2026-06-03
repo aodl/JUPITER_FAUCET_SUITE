@@ -58,8 +58,8 @@ fn lifeline_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LIFELINE_WASM, "jupiter-lifeline", None)
 }
 
-use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 use support::account_identifier::account_identifier_text;
+use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 
 fn nat_to_u64(n: &Nat) -> u64 {
     n.0.to_u64_digits().get(0).copied().unwrap_or(0)
@@ -210,11 +210,23 @@ type NeuronMinimal = Neuron;
 const NNS_NEURON_VISIBILITY_PUBLIC: i32 = 2;
 
 fn icrc1_balance(pic: &PocketIc, ledger: Principal, account: &Account) -> Result<u64> {
-    let balance: Nat = query_one(pic, ledger, Principal::anonymous(), "icrc1_balance_of", account.clone())?;
+    let balance: Nat = query_one(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        "icrc1_balance_of",
+        account.clone(),
+    )?;
     Ok(nat_to_u64(&balance))
 }
 
-fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, to: Account, amount_e8s: u64) -> Result<()> {
+fn icrc1_transfer(
+    pic: &PocketIc,
+    ledger: Principal,
+    from: Principal,
+    to: Account,
+    amount_e8s: u64,
+) -> Result<()> {
     let result: std::result::Result<Nat, TransferError> = update_one(
         pic,
         ledger,
@@ -235,7 +247,12 @@ fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, to: Accoun
     }
 }
 
-fn list_public_neuron(pic: &PocketIc, governance: Principal, sender: Principal, neuron_id: u64) -> Result<NeuronMinimal> {
+fn list_public_neuron(
+    pic: &PocketIc,
+    governance: Principal,
+    sender: Principal,
+    neuron_id: u64,
+) -> Result<NeuronMinimal> {
     let result: ListNeuronsResponse = query_one(
         pic,
         governance,
@@ -261,7 +278,10 @@ fn list_public_neuron(pic: &PocketIc, governance: Principal, sender: Principal, 
 fn neuron_staking_subaccount_from_neuron(neuron: &NeuronMinimal) -> Result<[u8; 32]> {
     let bytes: &[u8] = neuron.account.as_ref();
     if bytes.len() != 32 {
-        bail!("expected 32-byte neuron staking subaccount, got {}", bytes.len());
+        bail!(
+            "expected 32-byte neuron staking subaccount, got {}",
+            bytes.len()
+        );
     }
     let mut subaccount = [0u8; 32];
     subaccount.copy_from_slice(bytes);
@@ -305,9 +325,11 @@ fn stake_and_claim_neuron(
         ManageNeuronRequest {
             id: None,
             neuron_id_or_subaccount: None,
-            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
-                by: Some(manage_neuron::claim_or_refresh::By::Memo(memo)),
-            })),
+            command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(
+                manage_neuron::ClaimOrRefresh {
+                    by: Some(manage_neuron::claim_or_refresh::By::Memo(memo)),
+                },
+            )),
         },
     )?;
     match response.command {
@@ -337,16 +359,22 @@ fn set_neuron_visibility_public(
         "manage_neuron",
         ManageNeuronRequest {
             id: None,
-            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-            command: Some(ManageNeuronCommandRequest::Configure(manage_neuron::Configure {
-                operation: Some(manage_neuron::configure::Operation::SetVisibility(manage_neuron::SetVisibility {
-                    visibility: Some(NNS_NEURON_VISIBILITY_PUBLIC),
-                })),
-            })),
+            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(
+                NeuronId { id: neuron_id },
+            )),
+            command: Some(ManageNeuronCommandRequest::Configure(
+                manage_neuron::Configure {
+                    operation: Some(manage_neuron::configure::Operation::SetVisibility(
+                        manage_neuron::SetVisibility {
+                            visibility: Some(NNS_NEURON_VISIBILITY_PUBLIC),
+                        },
+                    )),
+                },
+            )),
         },
     )?;
     match response.command {
-        Some(manage_neuron_response::Command::Configure(_)) => Ok(()),
+        Some(manage_neuron_response::Command::Configure {}) => Ok(()),
         Some(manage_neuron_response::Command::Error(err)) => bail!(
             "set_visibility public failed: type={} message={}",
             err.error_type,
@@ -358,7 +386,6 @@ fn set_neuron_visibility_public(
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum DebugNextTransferError {
-
     TemporarilyUnavailable,
     TooOld,
     CreatedInFuture { ledger_time: u64 },
@@ -369,10 +396,16 @@ enum DebugNextTransferError {
 enum DebugNotifyBehavior {
     Ok,
     Processing,
-    Refunded { reason: String, block_index: Option<u64> },
+    Refunded {
+        reason: String,
+        block_index: Option<u64>,
+    },
     TransactionTooOld(u64),
     InvalidTransaction(String),
-    Other { error_code: u64, error_message: String },
+    Other {
+        error_code: u64,
+        error_message: String,
+    },
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -407,7 +440,9 @@ impl FaucetEnv {
     where
         F: FnOnce(&mut FaucetInitArg),
     {
-        let pic = support::pocketic::builder().with_application_subnet().build();
+        let pic = support::pocketic::builder()
+            .with_application_subnet()
+            .build();
         let ledger = pic.create_canister();
         let index = pic.create_canister();
         let cmc = pic.create_canister();
@@ -454,7 +489,8 @@ impl FaucetEnv {
         edit_init(&mut init);
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
 
-        let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+        let accounts: DebugAccounts =
+            query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
         let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
 
         Ok(Self {
@@ -482,15 +518,33 @@ impl FaucetEnv {
     }
 
     fn credit_payout_balance_only(&self, amount_e8s: u64) -> Result<()> {
-        update_bytes::<()>(&self.pic, self.ledger, Principal::anonymous(), "debug_credit", encode_args((self.accounts.payout.clone(), amount_e8s))?)
+        update_bytes::<()>(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_credit",
+            encode_args((self.accounts.payout.clone(), amount_e8s))?,
+        )
     }
 
     fn credit_staking(&self, amount_e8s: u64) -> Result<()> {
-        update_bytes::<()>(&self.pic, self.ledger, Principal::anonymous(), "debug_credit", encode_args((self.staking_account.clone(), amount_e8s))?)
+        update_bytes::<()>(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_credit",
+            encode_args((self.staking_account.clone(), amount_e8s))?,
+        )
     }
 
     fn append_transfer(&self, amount_e8s: u64, memo: Option<Vec<u8>>) -> Result<u64> {
-        update_bytes(&self.pic, self.index, Principal::anonymous(), "debug_append_transfer", encode_args((self.staking_id.clone(), amount_e8s, memo))?)
+        update_bytes(
+            &self.pic,
+            self.index,
+            Principal::anonymous(),
+            "debug_append_transfer",
+            encode_args((self.staking_id.clone(), amount_e8s, memo))?,
+        )
     }
 
     fn append_index_transfer_from_to_account_id(
@@ -505,65 +559,157 @@ impl FaucetEnv {
             self.index,
             Principal::anonymous(),
             "debug_append_transfer_from",
-            encode_args((from_account_identifier, to_account_identifier, amount_e8s, memo))?,
+            encode_args((
+                from_account_identifier,
+                to_account_identifier,
+                amount_e8s,
+                memo,
+            ))?,
         )
     }
 
-    fn append_repeated_transfer(&self, count: u64, amount_e8s: u64, memo: Option<Vec<u8>>) -> Result<u64> {
-        update_bytes(&self.pic, self.index, Principal::anonymous(), "debug_append_repeated_transfer", encode_args((self.staking_id.clone(), count, amount_e8s, memo))?)
+    fn append_repeated_transfer(
+        &self,
+        count: u64,
+        amount_e8s: u64,
+        memo: Option<Vec<u8>>,
+    ) -> Result<u64> {
+        update_bytes(
+            &self.pic,
+            self.index,
+            Principal::anonymous(),
+            "debug_append_repeated_transfer",
+            encode_args((self.staking_id.clone(), count, amount_e8s, memo))?,
+        )
     }
 
     fn set_cmc_fail(&self, fail: bool) -> Result<()> {
-        update_one(&self.pic, self.cmc, Principal::anonymous(), "debug_set_fail", fail)
+        update_one(
+            &self.pic,
+            self.cmc,
+            Principal::anonymous(),
+            "debug_set_fail",
+            fail,
+        )
     }
 
     fn set_cmc_script(&self, script: Vec<DebugNotifyBehavior>) -> Result<()> {
-        update_one(&self.pic, self.cmc, Principal::anonymous(), "debug_set_script", script)
+        update_one(
+            &self.pic,
+            self.cmc,
+            Principal::anonymous(),
+            "debug_set_script",
+            script,
+        )
     }
 
-
     fn set_ledger_next_error(&self, err: Option<DebugNextTransferError>) -> Result<()> {
-        update_one(&self.pic, self.ledger, Principal::anonymous(), "debug_set_next_error", err)
+        update_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_set_next_error",
+            err,
+        )
     }
 
     fn set_ledger_error_script(&self, errs: Vec<DebugNextTransferError>) -> Result<()> {
-        update_one(&self.pic, self.ledger, Principal::anonymous(), "debug_set_error_script", errs)
+        update_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_set_error_script",
+            errs,
+        )
     }
 
     fn set_index_get_script(&self, script: Vec<DebugIndexGetBehavior>) -> Result<()> {
-        update_one(&self.pic, self.index, Principal::anonymous(), "debug_set_get_script", script)
+        update_one(
+            &self.pic,
+            self.index,
+            Principal::anonymous(),
+            "debug_set_get_script",
+            script,
+        )
     }
 
     fn set_last_successful_transfer_ts(&self, ts: Option<u64>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_last_successful_transfer_ts", ts)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_last_successful_transfer_ts",
+            ts,
+        )
     }
 
     fn set_blackhole_armed(&self, v: Option<bool>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_blackhole_armed", v)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_blackhole_armed",
+            v,
+        )
     }
 
     fn set_blackhole_armed_since_ts(&self, ts: Option<u64>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_blackhole_armed_since_ts", ts)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_blackhole_armed_since_ts",
+            ts,
+        )
     }
 
     fn set_expected_first_staking_tx_id(&self, v: Option<u64>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_expected_first_staking_tx_id", v)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_expected_first_staking_tx_id",
+            v,
+        )
     }
 
     fn set_main_lock_expires_at_ts(&self, ts: Option<u64>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_main_lock_expires_at_ts", ts)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_main_lock_expires_at_ts",
+            ts,
+        )
     }
 
     fn set_trap_after_successful_transfers(&self, n: Option<u32>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_trap_after_successful_transfers", n)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_trap_after_successful_transfers",
+            n,
+        )
     }
 
     fn set_real_trap_after_successful_transfers(&self, n: Option<u32>) -> Result<()> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_set_real_trap_after_successful_transfers", n)
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_real_trap_after_successful_transfers",
+            n,
+        )
     }
 
     fn rescue_tick(&self) -> Result<()> {
-        update_noargs::<()>(&self.pic, self.faucet, Principal::anonymous(), "debug_rescue_tick")?;
+        update_noargs::<()>(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_rescue_tick",
+        )?;
         tick_n(&self.pic, 10);
         Ok(())
     }
@@ -576,7 +722,11 @@ impl FaucetEnv {
         let current = self.pic.get_controllers(self.faucet);
         let sender = current.first().copied().unwrap_or(self.faucet);
         self.pic
-            .set_controllers(self.faucet, Some(sender), vec![self.blackhole_controller, self.faucet])
+            .set_controllers(
+                self.faucet,
+                Some(sender),
+                vec![self.blackhole_controller, self.faucet],
+            )
             .map_err(|e| anyhow!("set_controllers reject: {e:?}"))?;
         Ok(())
     }
@@ -590,7 +740,12 @@ impl FaucetEnv {
 
     fn main_tick(&self) -> Result<()> {
         self.append_pending_funding_tranches()?;
-        update_noargs::<()>(&self.pic, self.faucet, Principal::anonymous(), "debug_main_tick")?;
+        update_noargs::<()>(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         tick_n(&self.pic, 10);
         Ok(())
     }
@@ -601,7 +756,8 @@ impl FaucetEnv {
             self.pic.advance_time(Duration::from_secs(2));
             tick_n(&self.pic, 2);
         }
-        let funding_source_id = support::account_identifier::account_id_for(&self.funding_source_account);
+        let funding_source_id =
+            support::account_identifier::account_id_for(&self.funding_source_account);
         let payout_id = support::account_identifier::account_id_for(&self.accounts.payout);
         for amount_e8s in pending {
             self.append_index_transfer_from_to_account_id(
@@ -615,37 +771,88 @@ impl FaucetEnv {
     }
 
     fn state(&self) -> Result<DebugState> {
-        query_one(&self.pic, self.faucet, Principal::anonymous(), "debug_state", ())
+        query_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )
     }
 
     fn footprint(&self) -> Result<DebugFootprint> {
-        query_one(&self.pic, self.faucet, Principal::anonymous(), "debug_footprint", ())
+        query_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_footprint",
+            (),
+        )
     }
 
     fn summary(&self) -> Result<FaucetSummary> {
-        let summary: Option<FaucetSummary> = query_one(&self.pic, self.faucet, Principal::anonymous(), "debug_last_summary", ())?;
+        let summary: Option<FaucetSummary> = query_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_last_summary",
+            (),
+        )?;
         summary.ok_or_else(|| anyhow!("expected faucet summary"))
     }
 
     fn notifications(&self) -> Result<Vec<NotifyRecord>> {
-        query_one(&self.pic, self.cmc, Principal::anonymous(), "debug_notifications", ())
+        query_one(
+            &self.pic,
+            self.cmc,
+            Principal::anonymous(),
+            "debug_notifications",
+            (),
+        )
     }
 
     fn ledger_transfers(&self) -> Result<Vec<TransferRecord>> {
-        query_one(&self.pic, self.ledger, Principal::anonymous(), "debug_transfers", ())
+        query_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_transfers",
+            (),
+        )
     }
 
     fn ledger_fee_e8s(&self) -> Result<u64> {
-        let fee: Nat = query_one(&self.pic, self.ledger, Principal::anonymous(), "icrc1_fee", ())?;
+        let fee: Nat = query_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "icrc1_fee",
+            (),
+        )?;
         Ok(nat_to_u64(&fee))
     }
 
-    fn debug_canister_info_probe(&self, canister_id: Principal) -> Result<DebugCanisterInfoProbeResult> {
-        update_one(&self.pic, self.faucet, Principal::anonymous(), "debug_canister_info_probe", canister_id)
+    fn debug_canister_info_probe(
+        &self,
+        canister_id: Principal,
+    ) -> Result<DebugCanisterInfoProbeResult> {
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_canister_info_probe",
+            canister_id,
+        )
     }
 
     fn index_get_calls(&self) -> Result<Vec<DebugGetCall>> {
-        query_one(&self.pic, self.index, Principal::anonymous(), "debug_get_calls", ())
+        query_one(
+            &self.pic,
+            self.index,
+            Principal::anonymous(),
+            "debug_get_calls",
+            (),
+        )
     }
 
     fn upgrade(&self) -> Result<()> {
@@ -657,9 +864,19 @@ impl FaucetEnv {
     }
 
     fn upgrade_with_args(&self, args: FaucetUpgradeArg) -> Result<()> {
-        let sender = self.pic.get_controllers(self.faucet).first().copied().unwrap_or(self.faucet);
+        let sender = self
+            .pic
+            .get_controllers(self.faucet)
+            .first()
+            .copied()
+            .unwrap_or(self.faucet);
         self.pic
-            .upgrade_canister(self.faucet, faucet_wasm()?, encode_one(Some(args))?, Some(sender))
+            .upgrade_canister(
+                self.faucet,
+                faucet_wasm()?,
+                encode_one(Some(args))?,
+                Some(sender),
+            )
             .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
         tick_n(&self.pic, 5);
         Ok(())
@@ -725,7 +942,8 @@ impl RealNnsFaucetEnv {
         };
         pic.install_canister(faucet, faucet_wasm()?, encode_one(init)?, None);
 
-        let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+        let accounts: DebugAccounts =
+            query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
         let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
 
         Ok(Self {
@@ -750,11 +968,23 @@ impl RealNnsFaucetEnv {
     }
 
     fn credit_payout_balance_only(&self, amount_e8s: u64) -> Result<()> {
-        icrc1_transfer(&self.pic, self.ledger, Principal::anonymous(), self.accounts.payout.clone(), amount_e8s)
+        icrc1_transfer(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            self.accounts.payout.clone(),
+            amount_e8s,
+        )
     }
 
     fn credit_staking(&self, amount_e8s: u64) -> Result<()> {
-        icrc1_transfer(&self.pic, self.ledger, Principal::anonymous(), self.staking_account.clone(), amount_e8s)
+        icrc1_transfer(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            self.staking_account.clone(),
+            amount_e8s,
+        )
     }
 
     fn append_transfer(&self, amount_e8s: u64, memo: Option<Vec<u8>>) -> Result<u64> {
@@ -779,13 +1009,23 @@ impl RealNnsFaucetEnv {
             self.index,
             Principal::anonymous(),
             "debug_append_transfer_from",
-            encode_args((from_account_identifier, to_account_identifier, amount_e8s, memo))?,
+            encode_args((
+                from_account_identifier,
+                to_account_identifier,
+                amount_e8s,
+                memo,
+            ))?,
         )
     }
 
     fn main_tick(&self) -> Result<()> {
         self.append_pending_funding_tranches()?;
-        update_noargs::<()>(&self.pic, self.faucet, Principal::anonymous(), "debug_main_tick")?;
+        update_noargs::<()>(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         tick_n(&self.pic, 20);
         Ok(())
     }
@@ -796,7 +1036,8 @@ impl RealNnsFaucetEnv {
             self.pic.advance_time(Duration::from_secs(2));
             tick_n(&self.pic, 2);
         }
-        let funding_source_id = support::account_identifier::account_id_for(&self.funding_source_account);
+        let funding_source_id =
+            support::account_identifier::account_id_for(&self.funding_source_account);
         let payout_id = support::account_identifier::account_id_for(&self.accounts.payout);
         for amount_e8s in pending {
             self.append_index_transfer_from_to_account_id(
@@ -810,12 +1051,24 @@ impl RealNnsFaucetEnv {
     }
 
     fn summary(&self) -> Result<FaucetSummary> {
-        let summary: Option<FaucetSummary> = query_one(&self.pic, self.faucet, Principal::anonymous(), "debug_last_summary", ())?;
+        let summary: Option<FaucetSummary> = query_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_last_summary",
+            (),
+        )?;
         summary.ok_or_else(|| anyhow!("expected faucet summary"))
     }
 
     fn notifications(&self) -> Result<Vec<NotifyRecord>> {
-        query_one(&self.pic, self.cmc, Principal::anonymous(), "debug_notifications", ())
+        query_one(
+            &self.pic,
+            self.cmc,
+            Principal::anonymous(),
+            "debug_notifications",
+            (),
+        )
     }
 }
 
@@ -830,7 +1083,10 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
-    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
+    env.set_cmc_script(vec![
+        DebugNotifyBehavior::Processing,
+        DebugNotifyBehavior::Ok,
+    ])?;
     env.main_tick()?;
 
     let st = env.state()?;
@@ -857,28 +1113,51 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(format!("{compact_target}.vault42").into_bytes()))?;
+    env.append_transfer(
+        100_000_000,
+        Some(format!("{compact_target}.vault42").into_bytes()),
+    )?;
     env.main_tick()?;
 
     let transfers = env.ledger_transfers()?;
     if transfers.len() != 1 {
-        bail!("expected exactly one raw ICP transfer and no remainder, got {}", transfers.len());
+        bail!(
+            "expected exactly one raw ICP transfer and no remainder, got {}",
+            transfers.len()
+        );
     }
     let transfer = &transfers[0];
-    if transfer.to != (Account { owner: target, subaccount: None }) {
-        bail!("expected raw ICP transfer to target default account, got {:?}", transfer.to);
+    if transfer.to
+        != (Account {
+            owner: target,
+            subaccount: None,
+        })
+    {
+        bail!(
+            "expected raw ICP transfer to target default account, got {:?}",
+            transfer.to
+        );
     }
     if transfer.memo.as_deref() != Some(b"vault42".as_slice()) {
-        bail!("expected raw ICP transfer memo vault42, got {:?}", transfer.memo);
+        bail!(
+            "expected raw ICP transfer memo vault42, got {:?}",
+            transfer.memo
+        );
     }
     if nat_to_u64(&transfer.amount) != 99_990_000 {
-        bail!("expected raw ICP net amount 99990000 e8s, got {}", nat_to_u64(&transfer.amount));
+        bail!(
+            "expected raw ICP net amount 99990000 e8s, got {}",
+            nat_to_u64(&transfer.amount)
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("expected raw ICP directive not to call notify_top_up");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != 99_990_000
+        || summary.remainder_to_self_e8s != 0
+    {
         bail!("unexpected raw ICP summary: {summary:?}");
     }
 
@@ -887,7 +1166,8 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
 
 #[test]
 #[ignore]
-fn faucet_numeric_neuron_id_memo_routes_to_resolved_staking_account_without_cmc_notify() -> Result<()> {
+fn faucet_numeric_neuron_id_memo_routes_to_resolved_staking_account_without_cmc_notify(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let neuron_id = 42_u64;
@@ -899,25 +1179,45 @@ fn faucet_numeric_neuron_id_memo_routes_to_resolved_staking_account_without_cmc_
 
     let transfers = env.ledger_transfers()?;
     if transfers.len() != 1 {
-        bail!("expected exactly one neuron stake transfer and no remainder, got {}", transfers.len());
+        bail!(
+            "expected exactly one neuron stake transfer and no remainder, got {}",
+            transfers.len()
+        );
     }
     let mut expected_subaccount = [0u8; 32];
     expected_subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
     let transfer = &transfers[0];
-    if transfer.to != (Account { owner: env.governance, subaccount: Some(expected_subaccount) }) {
-        bail!("expected neuron stake transfer to governance staking account, got {:?}", transfer.to);
+    if transfer.to
+        != (Account {
+            owner: env.governance,
+            subaccount: Some(expected_subaccount),
+        })
+    {
+        bail!(
+            "expected neuron stake transfer to governance staking account, got {:?}",
+            transfer.to
+        );
     }
     if transfer.memo.as_deref() != Some(top_up_transfer_memo().as_slice()) {
-        bail!("expected neuron stake transfer to use top-up transfer memo, got {:?}", transfer.memo);
+        bail!(
+            "expected neuron stake transfer to use top-up transfer memo, got {:?}",
+            transfer.memo
+        );
     }
     if nat_to_u64(&transfer.amount) != 99_990_000 {
-        bail!("expected neuron stake net amount 99990000 e8s, got {}", nat_to_u64(&transfer.amount));
+        bail!(
+            "expected neuron stake net amount 99990000 e8s, got {}",
+            nat_to_u64(&transfer.amount)
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("expected neuron stake payout not to call notify_top_up");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != 99_990_000
+        || summary.remainder_to_self_e8s != 0
+    {
         bail!("unexpected neuron stake summary: {summary:?}");
     }
 
@@ -931,7 +1231,11 @@ fn strict_funding_source_account() -> Result<Account> {
     })
 }
 
-fn append_funding_tranche(env: &FaucetEnv, funding_source: &Account, amount_e8s: u64) -> Result<u64> {
+fn append_funding_tranche(
+    env: &FaucetEnv,
+    funding_source: &Account,
+    amount_e8s: u64,
+) -> Result<u64> {
     let funding_source_id = support::account_identifier::account_id_for(funding_source);
     let payout_id = support::account_identifier::account_id_for(&env.accounts.payout);
     env.pic.advance_time(Duration::from_secs(2));
@@ -966,15 +1270,25 @@ fn faucet_excludes_post_funding_commitment_even_after_recognition_delay() -> Res
 
     let summary = env.summary()?;
     if summary.pot_start_e8s != 200_000_000 {
-        bail!("expected second tranche pot of 200000000 e8s, got {}", summary.pot_start_e8s);
+        bail!(
+            "expected second tranche pot of 200000000 e8s, got {}",
+            summary.pot_start_e8s
+        );
     }
     if summary.topped_up_count != 1 {
         bail!("post-funding commitment must not participate in already-funded faucet pot; summary={summary:?}");
     }
     if summary.effective_denom_staking_balance_e8s != Some(100_000_000) {
-        bail!("expected effective denominator to exclude post-funding commitment, got {:?}", summary.effective_denom_staking_balance_e8s);
+        bail!(
+            "expected effective denominator to exclude post-funding commitment, got {:?}",
+            summary.effective_denom_staking_balance_e8s
+        );
     }
-    if env.notifications()?.iter().any(|notification| notification.canister_id == late_target) {
+    if env
+        .notifications()?
+        .iter()
+        .any(|notification| notification.canister_id == late_target)
+    {
         bail!("late beneficiary received a CMC notification for a pre-existing funding tranche");
     }
 
@@ -1014,7 +1328,10 @@ fn faucet_processes_disburser_funding_transfers_as_chronological_tranches() -> R
     env.main_tick()?;
     let second_summary = env.summary()?;
     if second_summary.pot_start_e8s != 90_000_000 {
-        bail!("expected second run to process tranche #2 only, got pot {}", second_summary.pot_start_e8s);
+        bail!(
+            "expected second run to process tranche #2 only, got pot {}",
+            second_summary.pot_start_e8s
+        );
     }
     if second_summary.topped_up_count < 1 {
         bail!("expected second tranche to produce at least one beneficiary top-up, got {second_summary:?}");
@@ -1025,7 +1342,8 @@ fn faucet_processes_disburser_funding_transfers_as_chronological_tranches() -> R
 
 #[test]
 #[ignore]
-fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_tranche() -> Result<()> {
+fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_tranche(
+) -> Result<()> {
     require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
@@ -1048,7 +1366,10 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
     env.advance_time_and_tick(3 * 24 * 60 * 60, 10);
     append_funding_tranche(&env, &funding_source, 300_000_000)?;
     env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(post_funding_target.to_text().into_bytes()))?;
+    env.append_transfer(
+        100_000_000,
+        Some(post_funding_target.to_text().into_bytes()),
+    )?;
     env.advance_time_and_tick(3 * 24 * 60 * 60, 10);
     append_funding_tranche(&env, &funding_source, 300_000_000)?;
 
@@ -1056,9 +1377,14 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
     let first_summary = env.summary()?;
     let first_notifications = env.notifications()?;
     if first_summary.pot_start_e8s != 300_000_000 {
-        bail!("expected first strict tranche pot of 300000000 e8s, got {}", first_summary.pot_start_e8s);
+        bail!(
+            "expected first strict tranche pot of 300000000 e8s, got {}",
+            first_summary.pot_start_e8s
+        );
     }
-    let first_effective_denom = first_summary.effective_denom_staking_balance_e8s.unwrap_or(0);
+    let first_effective_denom = first_summary
+        .effective_denom_staking_balance_e8s
+        .unwrap_or(0);
     if first_effective_denom <= 100_000_000 || first_effective_denom >= 200_000_000 {
         bail!(
             "expected first strict tranche denominator to include warmup plus weighted pre-funding commitment, but exclude post-funding commitment; got {:?}",
@@ -1082,9 +1408,14 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
     let second_summary = env.summary()?;
     let second_notifications = env.notifications()?;
     if second_summary.pot_start_e8s != 300_000_000 {
-        bail!("expected second strict tranche pot of 300000000 e8s, got {}", second_summary.pot_start_e8s);
+        bail!(
+            "expected second strict tranche pot of 300000000 e8s, got {}",
+            second_summary.pot_start_e8s
+        );
     }
-    let second_effective_denom = second_summary.effective_denom_staking_balance_e8s.unwrap_or(0);
+    let second_effective_denom = second_summary
+        .effective_denom_staking_balance_e8s
+        .unwrap_or(0);
     if second_effective_denom <= first_effective_denom {
         bail!(
             "expected second strict tranche denominator to increase when the post-funding commitment becomes eligible, first={:?} second={:?}",
@@ -1104,7 +1435,8 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
 
 #[test]
 #[ignore]
-fn faucet_dotted_neuron_id_memos_route_to_staking_account_with_right_segment_as_transfer_memo() -> Result<()> {
+fn faucet_dotted_neuron_id_memos_route_to_staking_account_with_right_segment_as_transfer_memo(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let cases = [
@@ -1122,27 +1454,47 @@ fn faucet_dotted_neuron_id_memos_route_to_staking_account_with_right_segment_as_
 
     let transfers = env.ledger_transfers()?;
     if transfers.len() != cases.len() {
-        bail!("expected exactly {} neuron stake transfers and no remainder, got {}", cases.len(), transfers.len());
+        bail!(
+            "expected exactly {} neuron stake transfers and no remainder, got {}",
+            cases.len(),
+            transfers.len()
+        );
     }
     for (neuron_id, _, expected_memo) in cases {
         let mut expected_subaccount = [0u8; 32];
         expected_subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
         let transfer = transfers
             .iter()
-            .find(|transfer| transfer.to == (Account { owner: env.governance, subaccount: Some(expected_subaccount) }))
+            .find(|transfer| {
+                transfer.to
+                    == (Account {
+                        owner: env.governance,
+                        subaccount: Some(expected_subaccount),
+                    })
+            })
             .with_context(|| format!("expected neuron {neuron_id} staking transfer"))?;
         if transfer.memo.as_deref() != Some(expected_memo.as_slice()) {
-            bail!("expected neuron {neuron_id} transfer memo {:?}, got {:?}", expected_memo, transfer.memo);
+            bail!(
+                "expected neuron {neuron_id} transfer memo {:?}, got {:?}",
+                expected_memo,
+                transfer.memo
+            );
         }
         if nat_to_u64(&transfer.amount) != 99_990_000 {
-            bail!("expected neuron {neuron_id} net amount 99990000 e8s, got {}", nat_to_u64(&transfer.amount));
+            bail!(
+                "expected neuron {neuron_id} net amount 99990000 e8s, got {}",
+                nat_to_u64(&transfer.amount)
+            );
         }
     }
     if !env.notifications()?.is_empty() {
         bail!("expected dotted neuron stake payouts not to call notify_top_up");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 3 || summary.topped_up_sum_e8s != 299_970_000 || summary.failed_topups != 0 {
+    if summary.topped_up_count != 3
+        || summary.topped_up_sum_e8s != 299_970_000
+        || summary.failed_topups != 0
+    {
         bail!("unexpected dotted neuron stake summary: {summary:?}");
     }
     Ok(())
@@ -1165,7 +1517,8 @@ fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
     set_neuron_visibility_public(&env.pic, env.governance, controller, neuron_id)?;
 
     let before = list_public_neuron(&env.pic, env.governance, env.faucet, neuron_id)?;
-    let public_view = list_public_neuron(&env.pic, env.governance, Principal::anonymous(), neuron_id)?;
+    let public_view =
+        list_public_neuron(&env.pic, env.governance, Principal::anonymous(), neuron_id)?;
     let staking_subaccount = neuron_staking_subaccount_from_neuron(&before)?;
     let staking_account = Account {
         owner: env.governance,
@@ -1180,7 +1533,9 @@ fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
 
     let staking_account_balance_after = icrc1_balance(&env.pic, env.ledger, &staking_account)?;
     let expected_net_top_up = 100_000_000 - ICP_LEDGER_FEE_E8S;
-    if staking_account_balance_after < staking_account_balance_before.saturating_add(expected_net_top_up) {
+    if staking_account_balance_after
+        < staking_account_balance_before.saturating_add(expected_net_top_up)
+    {
         bail!(
             "expected faucet transfer to land in real NNS staking account: before={} after={} expected_add={}",
             staking_account_balance_before,
@@ -1189,7 +1544,10 @@ fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
         );
     }
     if public_view.id.as_ref().map(|id| id.id) != Some(neuron_id) {
-        bail!("expected anonymous caller to read public neuron {neuron_id}, got {:?}", public_view.id);
+        bail!(
+            "expected anonymous caller to read public neuron {neuron_id}, got {:?}",
+            public_view.id
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("real NNS neuron top-up should not call CMC notify_top_up");
@@ -1221,20 +1579,37 @@ fn faucet_raw_icp_memo_directive_allows_empty_transfer_memo_after_dot() -> Resul
 
     let transfers = env.ledger_transfers()?;
     if transfers.len() != 1 {
-        bail!("expected exactly one raw ICP transfer and no remainder, got {}", transfers.len());
+        bail!(
+            "expected exactly one raw ICP transfer and no remainder, got {}",
+            transfers.len()
+        );
     }
     let transfer = &transfers[0];
-    if transfer.to != (Account { owner: target, subaccount: None }) {
-        bail!("expected raw ICP transfer to target default account, got {:?}", transfer.to);
+    if transfer.to
+        != (Account {
+            owner: target,
+            subaccount: None,
+        })
+    {
+        bail!(
+            "expected raw ICP transfer to target default account, got {:?}",
+            transfer.to
+        );
     }
     if !transfer.memo.as_deref().unwrap_or_default().is_empty() {
-        bail!("expected raw ICP transfer to carry no non-empty memo, got {:?}", transfer.memo);
+        bail!(
+            "expected raw ICP transfer to carry no non-empty memo, got {:?}",
+            transfer.memo
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("expected empty-memo raw ICP directive not to call notify_top_up");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != 99_990_000 || summary.remainder_to_self_e8s != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != 99_990_000
+        || summary.remainder_to_self_e8s != 0
+    {
         bail!("unexpected empty-memo raw ICP summary: {summary:?}");
     }
 
@@ -1254,7 +1629,10 @@ fn faucet_raw_icp_upgrade_recovery_preserves_transfer_memo_and_skips_cmc_notify(
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(format!("{compact_target}.vault42").into_bytes()))?;
+    env.append_transfer(
+        100_000_000,
+        Some(format!("{compact_target}.vault42").into_bytes()),
+    )?;
 
     env.set_trap_after_successful_transfers(Some(1))?;
     env.main_tick()?;
@@ -1265,13 +1643,27 @@ fn faucet_raw_icp_upgrade_recovery_preserves_transfer_memo_and_skips_cmc_notify(
     }
     let transfers_mid = env.ledger_transfers()?;
     if transfers_mid.len() != 1 {
-        bail!("expected exactly one raw ICP ledger transfer to land before upgrade, got {}", transfers_mid.len());
+        bail!(
+            "expected exactly one raw ICP ledger transfer to land before upgrade, got {}",
+            transfers_mid.len()
+        );
     }
-    if transfers_mid[0].to != (Account { owner: target, subaccount: None }) {
-        bail!("expected raw ICP transfer to target default account before upgrade, got {:?}", transfers_mid[0].to);
+    if transfers_mid[0].to
+        != (Account {
+            owner: target,
+            subaccount: None,
+        })
+    {
+        bail!(
+            "expected raw ICP transfer to target default account before upgrade, got {:?}",
+            transfers_mid[0].to
+        );
     }
     if transfers_mid[0].memo.as_deref() != Some(b"vault42".as_slice()) {
-        bail!("expected raw ICP transfer memo vault42 before upgrade, got {:?}", transfers_mid[0].memo);
+        bail!(
+            "expected raw ICP transfer memo vault42 before upgrade, got {:?}",
+            transfers_mid[0].memo
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("expected interrupted raw ICP payout not to call notify_top_up before upgrade");
@@ -1295,7 +1687,11 @@ fn faucet_raw_icp_upgrade_recovery_preserves_transfer_memo_and_skips_cmc_notify(
     }
     let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 || summary.ambiguous_topups != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
+        || summary.failed_topups != 0
+        || summary.ambiguous_topups != 0
+    {
         bail!("unexpected summary after raw ICP upgrade recovery: {summary:?}");
     }
 
@@ -1318,7 +1714,10 @@ fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
-    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
+    env.set_cmc_script(vec![
+        DebugNotifyBehavior::Processing,
+        DebugNotifyBehavior::Ok,
+    ])?;
     env.main_tick()?;
     env.main_tick()?;
     env.main_tick()?;
@@ -1344,7 +1743,10 @@ fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> 
     env.credit_payout(90_000_000)?;
     env.credit_staking(90_000_000)?;
     env.append_transfer(90_000_000, Some(target.to_text().into_bytes()))?;
-    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
+    env.set_cmc_script(vec![
+        DebugNotifyBehavior::Processing,
+        DebugNotifyBehavior::Ok,
+    ])?;
 
     env.main_tick()?;
 
@@ -1354,7 +1756,10 @@ fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> 
     }
     let transfers_before = env.ledger_transfers()?;
     if transfers_before.len() != 1 {
-        bail!("expected a single beneficiary ledger transfer before upgrade, got {}", transfers_before.len());
+        bail!(
+            "expected a single beneficiary ledger transfer before upgrade, got {}",
+            transfers_before.len()
+        );
     }
     if env.notifications()?.len() != 1 {
         bail!("expected one completed notification before upgrade");
@@ -1369,7 +1774,10 @@ fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> 
 
     let transfers_after = env.ledger_transfers()?;
     if transfers_after.len() != 1 {
-        bail!("expected upgrade not to duplicate beneficiary transfer, got {}", transfers_after.len());
+        bail!(
+            "expected upgrade not to duplicate beneficiary transfer, got {}",
+            transfers_after.len()
+        );
     }
     if env.notifications()?.len() != 1 {
         bail!("expected exactly one notification to remain after upgrade");
@@ -1394,7 +1802,10 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 
     let first_summary = env.summary()?;
     if first_summary.topped_up_count != 3 {
-        bail!("expected first payout job to top up three separate historical commitments, got {}", first_summary.topped_up_count);
+        bail!(
+            "expected first payout job to top up three separate historical commitments, got {}",
+            first_summary.topped_up_count
+        );
     }
     let first_calls = env.index_get_calls()?;
     let first_starts: Vec<Option<u64>> = first_calls
@@ -1403,7 +1814,9 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
         .map(|c| c.start)
         .collect();
     if first_starts != vec![None, None] {
-        bail!("expected first payout job to begin scanning from start, got starts {first_starts:?}");
+        bail!(
+            "expected first payout job to begin scanning from start, got starts {first_starts:?}"
+        );
     }
 
     env.credit_payout(60_000_000)?;
@@ -1411,10 +1824,16 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 
     let second_summary = env.summary()?;
     if second_summary.topped_up_count != 3 {
-        bail!("expected second payout job to replay the same three commitments, got {}", second_summary.topped_up_count);
+        bail!(
+            "expected second payout job to replay the same three commitments, got {}",
+            second_summary.topped_up_count
+        );
     }
     let notifications = env.notifications()?;
-    let beneficiary_notes = notifications.iter().filter(|n| n.canister_id == target).count();
+    let beneficiary_notes = notifications
+        .iter()
+        .filter(|n| n.canister_id == target)
+        .count();
     if beneficiary_notes != 6 {
         bail!("expected replay semantics to notify the same beneficiary three times per run, got {beneficiary_notes}");
     }
@@ -1433,7 +1852,8 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 
 #[test]
 #[ignore]
-fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoning_run() -> Result<()> {
+fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoning_run(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let good_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -1451,17 +1871,29 @@ fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoni
 
     let summary = env.summary()?;
     if summary.topped_up_count != 1 {
-        bail!("expected exactly one qualifying commitment across many pages, got {}", summary.topped_up_count);
+        bail!(
+            "expected exactly one qualifying commitment across many pages, got {}",
+            summary.topped_up_count
+        );
     }
     if summary.ignored_under_threshold != 1000 {
-        bail!("expected 1000 under-threshold commitments to be counted, got {}", summary.ignored_under_threshold);
+        bail!(
+            "expected 1000 under-threshold commitments to be counted, got {}",
+            summary.ignored_under_threshold
+        );
     }
     if summary.ignored_bad_memo != 1 {
-        bail!("expected one bad memo to be skipped, got {}", summary.ignored_bad_memo);
+        bail!(
+            "expected one bad memo to be skipped, got {}",
+            summary.ignored_bad_memo
+        );
     }
     let calls = env.index_get_calls()?;
     if calls.len() < 3 {
-        bail!("expected many-page scan to require multiple index calls, got {}", calls.len());
+        bail!(
+            "expected many-page scan to require multiple index calls, got {}",
+            calls.len()
+        );
     }
     if calls.first().and_then(|c| c.start).is_some() {
         bail!("expected the first page scan to start from the beginning");
@@ -1492,7 +1924,10 @@ fn faucet_characterizes_short_valid_principal_text_without_hardcoded_suffix() ->
         bail!("expected parser-accepted short principal text not to count as ignored_bad_memo, got {}", summary.ignored_bad_memo);
     }
     let notifies = env.notifications()?;
-    let matching: Vec<_> = notifies.iter().filter(|n| n.canister_id == target).collect();
+    let matching: Vec<_> = notifies
+        .iter()
+        .filter(|n| n.canister_id == target)
+        .collect();
     if matching.len() != 1 {
         bail!("expected exactly one CMC notification for parser-accepted short principal text target {target}, got {notifies:?}");
     }
@@ -1502,7 +1937,8 @@ fn faucet_characterizes_short_valid_principal_text_without_hardcoded_suffix() ->
 
 #[test]
 #[ignore]
-fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_work() -> Result<()> {
+fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_work() -> Result<()>
+{
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -1529,10 +1965,20 @@ fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_w
         bail!("expected partial progress with an active job cursor and no final summary after mid-scan index failure");
     }
     let notifications_before = env.notifications()?;
-    if notifications_before.iter().filter(|n| n.canister_id == first).count() != 1 {
+    if notifications_before
+        .iter()
+        .filter(|n| n.canister_id == first)
+        .count()
+        != 1
+    {
         bail!("expected first beneficiary to be fully processed before upgrade");
     }
-    if notifications_before.iter().filter(|n| n.canister_id == second).count() != 0 {
+    if notifications_before
+        .iter()
+        .filter(|n| n.canister_id == second)
+        .count()
+        != 0
+    {
         bail!("expected second beneficiary not to be processed before upgrade");
     }
 
@@ -1540,15 +1986,28 @@ fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_w
     env.main_tick()?;
 
     let notifications_after = env.notifications()?;
-    if notifications_after.iter().filter(|n| n.canister_id == first).count() != 1 {
+    if notifications_after
+        .iter()
+        .filter(|n| n.canister_id == first)
+        .count()
+        != 1
+    {
         bail!("expected first beneficiary not to be replayed within the same active job after upgrade");
     }
-    if notifications_after.iter().filter(|n| n.canister_id == second).count() != 1 {
+    if notifications_after
+        .iter()
+        .filter(|n| n.canister_id == second)
+        .count()
+        != 1
+    {
         bail!("expected second beneficiary to complete exactly once after upgrade resume");
     }
     let summary = env.summary()?;
     if summary.topped_up_count != 2 {
-        bail!("expected two completed beneficiary top-ups after resume, got {}", summary.topped_up_count);
+        bail!(
+            "expected two completed beneficiary top-ups after resume, got {}",
+            summary.topped_up_count
+        );
     }
 
     Ok(())
@@ -1556,7 +2015,8 @@ fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_w
 
 #[test]
 #[ignore]
-fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_for_main_interval() -> Result<()> {
+fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_for_main_interval(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
@@ -1594,10 +2054,20 @@ fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_fo
     env.advance_time_and_tick(1, 20);
 
     let notifications_after = env.notifications()?;
-    if notifications_after.iter().filter(|n| n.canister_id == first).count() != 1 {
+    if notifications_after
+        .iter()
+        .filter(|n| n.canister_id == first)
+        .count()
+        != 1
+    {
         bail!("expected first beneficiary not to be replayed by the automatic post-upgrade resume tick");
     }
-    if notifications_after.iter().filter(|n| n.canister_id == second).count() != 1 {
+    if notifications_after
+        .iter()
+        .filter(|n| n.canister_id == second)
+        .count()
+        != 1
+    {
         bail!("expected second beneficiary to complete exactly once via the automatic post-upgrade resume tick");
     }
     let summary = env.summary()?;
@@ -1610,7 +2080,8 @@ fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_fo
 
 #[test]
 #[ignore]
-fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_transfer() -> Result<()> {
+fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_transfer() -> Result<()>
+{
     require_ignored_flag()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
@@ -1631,7 +2102,10 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
     }
     let transfers_mid = env.ledger_transfers()?;
     if transfers_mid.len() != 1 {
-        bail!("expected exactly one beneficiary ledger transfer to land before upgrade, got {}", transfers_mid.len());
+        bail!(
+            "expected exactly one beneficiary ledger transfer to land before upgrade, got {}",
+            transfers_mid.len()
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("expected interruption before notify_top_up to leave no CMC notifications before upgrade");
@@ -1657,7 +2131,10 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
 
     let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
+        || summary.failed_topups != 0
+    {
         bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
@@ -1665,7 +2142,6 @@ fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_tra
     if st_done.active_payout_job_present || !st_done.last_summary_present {
         bail!("expected post-upgrade recovery to finalize the interrupted payout job");
     }
-
 
     Ok(())
 }
@@ -1693,7 +2169,10 @@ fn faucet_upgrade_clears_stale_lock_and_auto_resumes_interrupted_payout_job() ->
     }
     let transfers_mid = env.ledger_transfers()?;
     if transfers_mid.len() != 1 {
-        bail!("expected exactly one beneficiary ledger transfer to land before upgrade, got {}", transfers_mid.len());
+        bail!(
+            "expected exactly one beneficiary ledger transfer to land before upgrade, got {}",
+            transfers_mid.len()
+        );
     }
     if !env.notifications()?.is_empty() {
         bail!("expected interruption before notify_top_up to leave no CMC notifications before upgrade");
@@ -1722,7 +2201,10 @@ fn faucet_upgrade_clears_stale_lock_and_auto_resumes_interrupted_payout_job() ->
 
     let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
+        || summary.failed_topups != 0
+    {
         bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
@@ -1736,7 +2218,8 @@ fn faucet_upgrade_clears_stale_lock_and_auto_resumes_interrupted_payout_job() ->
 
 #[test]
 #[ignore]
-fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_transfer() -> Result<()> {
+fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_transfer(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
@@ -1750,7 +2233,12 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
 
     env.set_real_trap_after_successful_transfers(Some(1))?;
     env.append_pending_funding_tranches()?;
-    let trapped = update_noargs::<()>(&env.pic, env.faucet, Principal::anonymous(), "debug_main_tick");
+    let trapped = update_noargs::<()>(
+        &env.pic,
+        env.faucet,
+        Principal::anonymous(),
+        "debug_main_tick",
+    );
     if trapped.is_ok() {
         bail!("expected debug_main_tick to reject after injected real trap");
     }
@@ -1758,14 +2246,21 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
 
     let st_mid = env.state()?;
     if !st_mid.active_payout_job_present || st_mid.last_summary_present {
-        bail!("expected real trap to leave an active payout job without final summary before upgrade");
+        bail!(
+            "expected real trap to leave an active payout job without final summary before upgrade"
+        );
     }
     let transfers_mid = env.ledger_transfers()?;
     if transfers_mid.len() != 1 {
-        bail!("expected exactly one beneficiary ledger transfer to land before upgrade, got {}", transfers_mid.len());
+        bail!(
+            "expected exactly one beneficiary ledger transfer to land before upgrade, got {}",
+            transfers_mid.len()
+        );
     }
     if !env.notifications()?.is_empty() {
-        bail!("expected real trap before notify_top_up to leave no CMC notifications before upgrade");
+        bail!(
+            "expected real trap before notify_top_up to leave no CMC notifications before upgrade"
+        );
     }
 
     env.upgrade()?;
@@ -1788,7 +2283,10 @@ fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_t
 
     let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s || summary.failed_topups != 0 {
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
+        || summary.failed_topups != 0
+    {
         bail!("unexpected summary after post-upgrade real-trap recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
     }
 
@@ -1837,7 +2335,6 @@ fn faucet_large_history_repeated_runs_keep_state_footprint_bounded() -> Result<(
     Ok(())
 }
 
-
 #[test]
 #[ignore]
 fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() -> Result<()> {
@@ -1861,7 +2358,10 @@ fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() ->
     env.advance_time_and_tick(31, 20);
     let summary = env.summary()?;
     if summary.topped_up_count != 1 {
-        bail!("expected automatic timer run to complete one beneficiary top-up, got {}", summary.topped_up_count);
+        bail!(
+            "expected automatic timer run to complete one beneficiary top-up, got {}",
+            summary.topped_up_count
+        );
     }
 
     Ok(())
@@ -1882,7 +2382,11 @@ fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()
     let notes_after_first = env.notifications()?;
     let transfers_after_first = env.ledger_transfers()?;
     if notes_after_first.len() != 1 || transfers_after_first.len() != 1 {
-        bail!("expected one completed top-up after first run, got notes={} transfers={}", notes_after_first.len(), transfers_after_first.len());
+        bail!(
+            "expected one completed top-up after first run, got notes={} transfers={}",
+            notes_after_first.len(),
+            transfers_after_first.len()
+        );
     }
 
     env.main_tick()?;
@@ -1910,7 +2414,10 @@ fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
 
-    env.set_cmc_script(vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok])?;
+    env.set_cmc_script(vec![
+        DebugNotifyBehavior::Processing,
+        DebugNotifyBehavior::Ok,
+    ])?;
     env.main_tick()?;
 
     let after_run = env.footprint()?;
@@ -1987,7 +2494,8 @@ fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfe
 
 #[test]
 #[ignore]
-fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extra_transfer() -> Result<()> {
+fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extra_transfer(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -2012,11 +2520,21 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
     let notes = env.notifications()?;
     let beneficiary_count = notes.iter().filter(|n| n.canister_id == target).count();
     let self_count = notes.iter().filter(|n| n.canister_id == env.faucet).count();
-    if beneficiary_count != 1 || self_count != 0 || notes.iter().find(|n| n.canister_id == target).map(|n| n.block_index) != Some(56) {
+    if beneficiary_count != 1
+        || self_count != 0
+        || notes
+            .iter()
+            .find(|n| n.canister_id == target)
+            .map(|n| n.block_index)
+            != Some(56)
+    {
         bail!("expected one beneficiary notification with duplicate block index 56 and no self notification in the full-pot case, got {notes:?}");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.failed_topups != 0 || summary.remainder_to_self_e8s != 0 {
+    if summary.topped_up_count != 1
+        || summary.failed_topups != 0
+        || summary.remainder_to_self_e8s != 0
+    {
         bail!(
             "expected duplicate-on-inline-retry path to count as success with no remainder in the full-pot case, got topped_up_count={} failed_topups={} remainder_to_self_e8s={}",
             summary.topped_up_count,
@@ -2027,7 +2545,6 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
 
     Ok(())
 }
-
 
 #[test]
 #[ignore]
@@ -2044,7 +2561,10 @@ fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Resul
             },
             DebugNotifyBehavior::Ok,
         ],
-        vec![DebugNotifyBehavior::TransactionTooOld(99), DebugNotifyBehavior::Ok],
+        vec![
+            DebugNotifyBehavior::TransactionTooOld(99),
+            DebugNotifyBehavior::Ok,
+        ],
         vec![
             DebugNotifyBehavior::InvalidTransaction("bad block".to_string()),
             DebugNotifyBehavior::Ok,
@@ -2053,7 +2573,12 @@ fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Resul
         update_noargs::<()>(&env.pic, env.ledger, Principal::anonymous(), "debug_reset")?;
         update_noargs::<()>(&env.pic, env.index, Principal::anonymous(), "debug_reset")?;
         update_noargs::<()>(&env.pic, env.cmc, Principal::anonymous(), "debug_reset")?;
-        update_noargs::<()>(&env.pic, env.faucet, Principal::anonymous(), "debug_reset_runtime_state")?;
+        update_noargs::<()>(
+            &env.pic,
+            env.faucet,
+            Principal::anonymous(),
+            "debug_reset_runtime_state",
+        )?;
 
         env.credit_payout(100_000_000)?;
         env.credit_staking(100_000_000)?;
@@ -2071,7 +2596,10 @@ fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Resul
             bail!("expected terminal typed CMC path to avoid duplicate transfer and recover with exactly one completed notify, got transfers={} notifications={}", transfers.len(), notes.len());
         }
         let summary = env.summary()?;
-        if summary.failed_topups != 0 || summary.ambiguous_topups != 0 || summary.topped_up_count != 1 {
+        if summary.failed_topups != 0
+            || summary.ambiguous_topups != 0
+            || summary.topped_up_count != 1
+        {
             bail!(
                 "expected terminal typed CMC path to recover as a success after one safe retry, got failed_topups={} ambiguous_topups={} topped_up_count={}",
                 summary.failed_topups,
@@ -2086,7 +2614,8 @@ fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Resul
 
 #[test]
 #[ignore]
-fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transfer_retry() -> Result<()> {
+fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transfer_retry(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -2114,7 +2643,12 @@ fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transf
         update_noargs::<()>(&env.pic, env.ledger, Principal::anonymous(), "debug_reset")?;
         update_noargs::<()>(&env.pic, env.index, Principal::anonymous(), "debug_reset")?;
         update_noargs::<()>(&env.pic, env.cmc, Principal::anonymous(), "debug_reset")?;
-        update_noargs::<()>(&env.pic, env.faucet, Principal::anonymous(), "debug_reset_runtime_state")?;
+        update_noargs::<()>(
+            &env.pic,
+            env.faucet,
+            Principal::anonymous(),
+            "debug_reset_runtime_state",
+        )?;
 
         env.credit_payout(100_000_000)?;
         env.credit_staking(100_000_000)?;
@@ -2132,7 +2666,10 @@ fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transf
             bail!("expected exhausted terminal typed CMC path to avoid duplicate transfer and leave no completed notify, got transfers={} notifications={}", transfers.len(), notes.len());
         }
         let summary = env.summary()?;
-        if summary.failed_topups != 1 || summary.ambiguous_topups != 0 || summary.topped_up_count != 0 {
+        if summary.failed_topups != 1
+            || summary.ambiguous_topups != 0
+            || summary.topped_up_count != 0
+        {
             bail!(
                 "expected exhausted terminal typed CMC path to count as deterministic failure, got failed_topups={} ambiguous_topups={} topped_up_count={}",
                 summary.failed_topups,
@@ -2196,7 +2733,8 @@ fn faucet_retry_exhaustion_skips_commitment_and_finishes_with_remainder_accounti
 
 #[test]
 #[ignore]
-fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_same_job() -> Result<()> {
+fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_same_job() -> Result<()>
+{
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let failed_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
@@ -2227,11 +2765,20 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
         );
     }
     if summary.remainder_to_self_e8s != 49_990_000 {
-        bail!("expected remaining half of the pot to be returned to self, got {}", summary.remainder_to_self_e8s);
+        bail!(
+            "expected remaining half of the pot to be returned to self, got {}",
+            summary.remainder_to_self_e8s
+        );
     }
     let notes = env.notifications()?;
-    let success_count = notes.iter().filter(|n| n.canister_id == success_target).count();
-    let failed_count = notes.iter().filter(|n| n.canister_id == failed_target).count();
+    let success_count = notes
+        .iter()
+        .filter(|n| n.canister_id == success_target)
+        .count();
+    let failed_count = notes
+        .iter()
+        .filter(|n| n.canister_id == failed_target)
+        .count();
     let self_count = notes.iter().filter(|n| n.canister_id == faucet_id).count();
     if success_count != 1 || failed_count != 0 || self_count != 1 {
         bail!(
@@ -2273,11 +2820,19 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
     env.main_tick()?;
     let st1 = env.state()?;
     if !st1.active_payout_job_present || st1.last_summary_present {
-        bail!("expected mid-scan index failure to preserve partial job state without a final summary");
+        bail!(
+            "expected mid-scan index failure to preserve partial job state without a final summary"
+        );
     }
     let notes_after_first = env.notifications()?;
-    let first_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == first_target).count();
-    let second_count_after_first = notes_after_first.iter().filter(|n| n.canister_id == second_target).count();
+    let first_count_after_first = notes_after_first
+        .iter()
+        .filter(|n| n.canister_id == first_target)
+        .count();
+    let second_count_after_first = notes_after_first
+        .iter()
+        .filter(|n| n.canister_id == second_target)
+        .count();
     if first_count_after_first != 1 || second_count_after_first != 0 {
         bail!(
             "expected first page work to complete before index failure, got first_count={} second_count={}",
@@ -2300,8 +2855,14 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
         );
     }
     let notes = env.notifications()?;
-    let first_count = notes.iter().filter(|n| n.canister_id == first_target).count();
-    let second_count = notes.iter().filter(|n| n.canister_id == second_target).count();
+    let first_count = notes
+        .iter()
+        .filter(|n| n.canister_id == first_target)
+        .count();
+    let second_count = notes
+        .iter()
+        .filter(|n| n.canister_id == second_target)
+        .count();
     if first_count != 1 || second_count != 1 {
         bail!(
             "expected resumed scan not to duplicate first-page work and to complete the later commitment, got first_count={} second_count={}",
@@ -2314,7 +2875,11 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
         .iter()
         .filter(|c| c.account_identifier == env.staking_id)
         .collect();
-    if calls.len() < 5 || calls[2].start.is_some() || calls[3].start.is_none() || calls[4].start != calls[3].start {
+    if calls.len() < 5
+        || calls[2].start.is_some()
+        || calls[3].start.is_none()
+        || calls[4].start != calls[3].start
+    {
         bail!("expected resume after failure to retry the same later-page cursor, got calls {all_calls:?}");
     }
 
@@ -2346,11 +2911,20 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
     env.main_tick()?;
     let st_after_failure = env.state()?;
     if !st_after_failure.active_payout_job_present || st_after_failure.last_summary_present {
-        bail!("expected interrupted payout job to remain active after mid-scan failure, got {:?}", st_after_failure);
+        bail!(
+            "expected interrupted payout job to remain active after mid-scan failure, got {:?}",
+            st_after_failure
+        );
     }
     let notes_after_failure = env.notifications()?;
-    let first_count_after_failure = notes_after_failure.iter().filter(|n| n.canister_id == first_target).count();
-    let second_count_after_failure = notes_after_failure.iter().filter(|n| n.canister_id == second_target).count();
+    let first_count_after_failure = notes_after_failure
+        .iter()
+        .filter(|n| n.canister_id == first_target)
+        .count();
+    let second_count_after_failure = notes_after_failure
+        .iter()
+        .filter(|n| n.canister_id == second_target)
+        .count();
     if first_count_after_failure != 1 || second_count_after_failure != 0 {
         bail!(
             "expected only first-page work before failure, got first_count={} second_count={}",
@@ -2362,8 +2936,13 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
     env.rescue_tick()?;
 
     let st_after_rescue_resume = env.state()?;
-    if st_after_rescue_resume.active_payout_job_present || !st_after_rescue_resume.last_summary_present {
-        bail!("expected daily rescue tick to force-resume and finish the interrupted job, got {:?}", st_after_rescue_resume);
+    if st_after_rescue_resume.active_payout_job_present
+        || !st_after_rescue_resume.last_summary_present
+    {
+        bail!(
+            "expected daily rescue tick to force-resume and finish the interrupted job, got {:?}",
+            st_after_rescue_resume
+        );
     }
     let summary = env.summary()?;
     if summary.topped_up_count != 2 || summary.ignored_under_threshold != 499 {
@@ -2374,8 +2953,14 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
         );
     }
     let notes_after_rescue_resume = env.notifications()?;
-    let first_count = notes_after_rescue_resume.iter().filter(|n| n.canister_id == first_target).count();
-    let second_count = notes_after_rescue_resume.iter().filter(|n| n.canister_id == second_target).count();
+    let first_count = notes_after_rescue_resume
+        .iter()
+        .filter(|n| n.canister_id == first_target)
+        .count();
+    let second_count = notes_after_rescue_resume
+        .iter()
+        .filter(|n| n.canister_id == second_target)
+        .count();
     if first_count != 1 || second_count != 1 {
         bail!(
             "expected rescue-driven resume not to duplicate first-page work and to complete the later commitment, got first_count={} second_count={}",
@@ -2388,7 +2973,11 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
         .iter()
         .filter(|c| c.account_identifier == env.staking_id)
         .collect();
-    if calls.len() < 5 || calls[2].start.is_some() || calls[3].start.is_none() || calls[4].start != calls[3].start {
+    if calls.len() < 5
+        || calls[2].start.is_some()
+        || calls[3].start.is_none()
+        || calls[4].start != calls[3].start
+    {
         bail!("expected rescue-driven resume to retry the interrupted later-page cursor, got calls {all_calls:?}");
     }
 
@@ -2424,7 +3013,10 @@ fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<(
     env.rescue_tick()?;
 
     let recovered = env.controllers();
-    if !(recovered.contains(&env.faucet) && recovered.contains(&env.blackhole_controller) && recovered.len() == 2) {
+    if !(recovered.contains(&env.faucet)
+        && recovered.contains(&env.blackhole_controller)
+        && recovered.len() == 2)
+    {
         bail!("expected healthy rescue path to converge back to blackhole+self, got {recovered:?}");
     }
 
@@ -2449,7 +3041,10 @@ fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> 
         env.main_tick()?;
         let summary = env.summary()?;
         if summary.topped_up_count != 5 {
-            bail!("expected replay {run} to top up the same 5 qualifying entries, got {}", summary.topped_up_count);
+            bail!(
+                "expected replay {run} to top up the same 5 qualifying entries, got {}",
+                summary.topped_up_count
+            );
         }
         let footprint = env.footprint()?;
         if footprint.active_payout_job_candid_bytes != 0 {
@@ -2467,7 +3062,6 @@ fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> 
     Ok(())
 }
 
-
 #[test]
 #[ignore]
 fn faucet_unarmed_rescue_broken_conditions_do_not_change_controllers() -> Result<()> {
@@ -2482,12 +3076,19 @@ fn faucet_unarmed_rescue_broken_conditions_do_not_change_controllers() -> Result
     env.rescue_tick()?;
 
     let after = env.controllers();
-    if after != before || !(after.contains(&env.faucet) && after.contains(&env.blackhole_controller) && after.len() == 2) {
+    if after != before
+        || !(after.contains(&env.faucet)
+            && after.contains(&env.blackhole_controller)
+            && after.len() == 2)
+    {
         bail!("expected unarmed rescue tick under broken conditions to leave controllers unchanged, before={before:?} after={after:?}");
     }
     let st = env.state()?;
     if st.rescue_triggered || st.forced_rescue_reason.is_some() {
-        bail!("expected unarmed broken-path rescue tick not to latch rescue state, got {:?}", st);
+        bail!(
+            "expected unarmed broken-path rescue tick not to latch rescue state, got {:?}",
+            st
+        );
     }
 
     Ok(())
@@ -2512,19 +3113,30 @@ fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<(
         bail!("expected missing anchor twice to latch forced rescue reason even while unarmed, got {:?}", st_after_latch);
     }
     let after_latch = env.controllers();
-    if after_latch != before || !(after_latch.contains(&env.faucet) && after_latch.contains(&env.blackhole_controller) && after_latch.len() == 2) {
+    if after_latch != before
+        || !(after_latch.contains(&env.faucet)
+            && after_latch.contains(&env.blackhole_controller)
+            && after_latch.len() == 2)
+    {
         bail!("expected forced rescue reason while unarmed not to change controllers, before={before:?} after_latch={after_latch:?}");
     }
 
     env.rescue_tick()?;
 
     let after_tick = env.controllers();
-    if after_tick != before || !(after_tick.contains(&env.faucet) && after_tick.contains(&env.blackhole_controller) && after_tick.len() == 2) {
+    if after_tick != before
+        || !(after_tick.contains(&env.faucet)
+            && after_tick.contains(&env.blackhole_controller)
+            && after_tick.len() == 2)
+    {
         bail!("expected explicit rescue tick while unarmed and forced to leave controllers unchanged, before={before:?} after_tick={after_tick:?}");
     }
     let st_after_tick = env.state()?;
     if st_after_tick.rescue_triggered {
-        bail!("expected unarmed forced rescue not to mark rescue_triggered, got {:?}", st_after_tick);
+        bail!(
+            "expected unarmed forced rescue not to mark rescue_triggered, got {:?}",
+            st_after_tick
+        );
     }
 
     Ok(())
@@ -2544,7 +3156,9 @@ fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
     env.rescue_tick()?;
 
     let st = env.state()?;
-    if !st.rescue_triggered || st.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
+    if !st.rescue_triggered
+        || st.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess)
+    {
         bail!("expected bootstrap forced rescue to latch, got {:?}", st);
     }
     let mut controllers = env.controllers();
@@ -2568,7 +3182,10 @@ fn faucet_init_args_preserve_expected_first_staking_tx_id() -> Result<()> {
 
     let st = env.state()?;
     if st.expected_first_staking_tx_id != Some(42) {
-        bail!("expected install arg expected_first_staking_tx_id to round-trip into state, got {:?}", st);
+        bail!(
+            "expected install arg expected_first_staking_tx_id to round-trip into state, got {:?}",
+            st
+        );
     }
 
     Ok(())
@@ -2588,7 +3205,8 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
     env.set_blackholed_controllers()?;
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
-    let observed_first_tx_id = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    let observed_first_tx_id =
+        env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     if observed_first_tx_id != expected_first_tx_id {
         bail!("expected first mocked staking tx id {expected_first_tx_id}, got {observed_first_tx_id}");
     }
@@ -2596,10 +3214,16 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
     env.main_tick()?;
     let st = env.state()?;
     if st.forced_rescue_reason.is_some() || st.consecutive_index_anchor_failures != 0 {
-        bail!("expected matching first tx anchor to stay healthy, got {:?}", st);
+        bail!(
+            "expected matching first tx anchor to stay healthy, got {:?}",
+            st
+        );
     }
     if st.last_successful_transfer_ts.is_none() {
-        bail!("expected matching first tx anchor scenario to complete a successful top-up, got {:?}", st);
+        bail!(
+            "expected matching first tx anchor scenario to complete a successful top-up, got {:?}",
+            st
+        );
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
@@ -2625,7 +3249,8 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
     env.set_blackholed_controllers()?;
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
-    let observed_first_tx_id = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    let observed_first_tx_id =
+        env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     if observed_first_tx_id != 1 {
         bail!("expected first mocked staking tx id 1, got {observed_first_tx_id}");
     }
@@ -2666,7 +3291,10 @@ fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Re
     env.main_tick()?;
     let st1 = env.state()?;
     if st1.consecutive_index_anchor_failures != 1 || st1.forced_rescue_reason.is_some() {
-        bail!("expected first missing-anchor observation before any transfer to count once, got {:?}", st1);
+        bail!(
+            "expected first missing-anchor observation before any transfer to count once, got {:?}",
+            st1
+        );
     }
 
     env.credit_payout(100_000_000)?;
@@ -2682,7 +3310,10 @@ fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Re
         bail!("expected anchor failure counter to reset once the observed oldest tx matches before latching rescue, got {:?}", st2);
     }
     if st2.last_successful_transfer_ts.is_none() {
-        bail!("expected healed anchor scenario to complete a successful top-up, got {:?}", st2);
+        bail!(
+            "expected healed anchor scenario to complete a successful top-up, got {:?}",
+            st2
+        );
     }
 
     Ok(())
@@ -2701,13 +3332,19 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
     env.main_tick()?;
     let st1 = env.state()?;
     if st1.consecutive_index_anchor_failures != 1 || st1.forced_rescue_reason.is_some() {
-        bail!("expected first missing-anchor observation to count once, got {:?}", st1);
+        bail!(
+            "expected first missing-anchor observation to count once, got {:?}",
+            st1
+        );
     }
 
     env.main_tick()?;
     let st2 = env.state()?;
     if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
-        bail!("expected missing anchor twice to latch forced rescue, got {:?}", st2);
+        bail!(
+            "expected missing anchor twice to latch forced rescue, got {:?}",
+            st2
+        );
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
@@ -2737,13 +3374,19 @@ fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> 
     env.main_tick()?;
     let st1 = env.state()?;
     if st1.consecutive_index_latest_invariant_failures != 1 || st1.forced_rescue_reason.is_some() {
-        bail!("expected first latest-invariant failure to count once, got {:?}", st1);
+        bail!(
+            "expected first latest-invariant failure to count once, got {:?}",
+            st1
+        );
     }
 
     env.main_tick()?;
     let st2 = env.state()?;
     if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexLatestInvariantBroken) {
-        bail!("expected second latest-invariant failure to latch forced rescue, got {:?}", st2);
+        bail!(
+            "expected second latest-invariant failure to latch forced rescue, got {:?}",
+            st2
+        );
     }
 
     Ok(())
@@ -2770,8 +3413,13 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     }
 
     let st = env.state()?;
-    if st.forced_rescue_reason != Some(ForcedRescueReason::CmcZeroSuccessRuns) || st.consecutive_cmc_zero_success_runs < 2 {
-        bail!("expected two zero-success CMC runs to latch forced rescue, got {:?}", st);
+    if st.forced_rescue_reason != Some(ForcedRescueReason::CmcZeroSuccessRuns)
+        || st.consecutive_cmc_zero_success_runs < 2
+    {
+        bail!(
+            "expected two zero-success CMC runs to latch forced rescue, got {:?}",
+            st
+        );
     }
 
     Ok(())
@@ -2790,7 +3438,10 @@ fn faucet_zero_success_runs_for_non_canister_targets_do_not_latch_forced_rescue(
     for _ in 0..3 {
         env.credit_payout(100_000_000)?;
         env.credit_staking(100_000_000)?;
-        env.append_transfer(100_000_000, Some(Principal::from_text("uuc56-gyb")?.to_text().into_bytes()))?;
+        env.append_transfer(
+            100_000_000,
+            Some(Principal::from_text("uuc56-gyb")?.to_text().into_bytes()),
+        )?;
         env.main_tick()?;
         env.advance_time_and_tick(61, 20);
         env.main_tick()?;
@@ -2918,7 +3569,8 @@ fn faucet_canister_info_characterization_matrix_records_observed_wording() -> Re
 
 #[test]
 #[ignore]
-fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_rescue() -> Result<()> {
+fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_rescue() -> Result<()>
+{
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
@@ -2974,7 +3626,10 @@ fn faucet_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 
     let st_before = env.state()?;
     if st_before.last_summary_present || st_before.active_payout_job_present {
-        bail!("expected active lease to suppress the first main tick, got {:?}", st_before);
+        bail!(
+            "expected active lease to suppress the first main tick, got {:?}",
+            st_before
+        );
     }
     if !env.ledger_transfers()?.is_empty() || !env.notifications()?.is_empty() {
         bail!("expected no payout-side activity while the main lease is still active");
@@ -3032,7 +3687,10 @@ fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
         || st3.consecutive_index_latest_invariant_failures != 0
         || st3.consecutive_cmc_zero_success_runs != 0
     {
-        bail!("expected forced rescue clear path to reset counters, got {:?}", st3);
+        bail!(
+            "expected forced rescue clear path to reset counters, got {:?}",
+            st3
+        );
     }
 
     Ok(())

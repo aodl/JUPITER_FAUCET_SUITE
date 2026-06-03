@@ -211,7 +211,6 @@ pub(super) fn debug_reset_derived_state() {
     });
 }
 
-
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
 pub(super) fn debug_set_icp_xdr_rate_fetched_at_ts(ts: Option<u64>) {

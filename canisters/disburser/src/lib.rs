@@ -57,7 +57,8 @@ fn mainnet_blackhole_id() -> Principal {
 
 #[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
-    Principal::from_text(env!("JUPITER_DISBURSER_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
+    Principal::from_text(env!("JUPITER_DISBURSER_PROD_CANISTER_ID"))
+        .expect("invalid embedded production canister principal")
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -86,7 +87,10 @@ fn self_canister_principal_for_validation() -> Principal {
 }
 
 fn assert_non_anonymous_principal(name: &str, principal: Principal) {
-    assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
+    assert!(
+        principal != Principal::anonymous(),
+        "{name} must not be the anonymous principal"
+    );
 }
 
 fn validate_config(cfg: &crate::state::Config) {
@@ -95,29 +99,68 @@ fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("governance_canister_id", cfg.governance_canister_id);
     let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
-    assert!(cfg.rescue_controller != self_id, "rescue_controller must not equal the disburser canister principal");
+    assert!(
+        cfg.rescue_controller != self_id,
+        "rescue_controller must not equal the disburser canister principal"
+    );
     if let Some(blackhole_controller) = cfg.blackhole_controller {
         assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
-        assert!(blackhole_controller != self_id, "blackhole_controller must not equal the disburser canister principal");
-        assert!(blackhole_controller != cfg.rescue_controller, "blackhole_controller and rescue_controller must be distinct");
+        assert!(
+            blackhole_controller != self_id,
+            "blackhole_controller must not equal the disburser canister principal"
+        );
+        assert!(
+            blackhole_controller != cfg.rescue_controller,
+            "blackhole_controller and rescue_controller must be distinct"
+        );
     }
-    assert!(cfg.main_interval_seconds > 0, "main_interval_seconds must be greater than 0");
-    assert!(cfg.rescue_interval_seconds > 0, "rescue_interval_seconds must be greater than 0");
+    assert!(
+        cfg.main_interval_seconds > 0,
+        "main_interval_seconds must be greater than 0"
+    );
+    assert!(
+        cfg.rescue_interval_seconds > 0,
+        "rescue_interval_seconds must be greater than 0"
+    );
 
     let staging_account = Account {
         owner: self_id,
         subaccount: None,
     };
     assert_non_anonymous_principal("normal_recipient.owner", cfg.normal_recipient.owner);
-    assert_non_anonymous_principal("age_bonus_recipient_1.owner", cfg.age_bonus_recipient_1.owner);
-    assert_non_anonymous_principal("age_bonus_recipient_2.owner", cfg.age_bonus_recipient_2.owner);
-    assert!(cfg.normal_recipient != staging_account, "normal_recipient must not equal the disburser staging account");
-    assert!(cfg.age_bonus_recipient_1 != staging_account, "age_bonus_recipient_1 must not equal the disburser staging account");
-    assert!(cfg.age_bonus_recipient_2 != staging_account, "age_bonus_recipient_2 must not equal the disburser staging account");
+    assert_non_anonymous_principal(
+        "age_bonus_recipient_1.owner",
+        cfg.age_bonus_recipient_1.owner,
+    );
+    assert_non_anonymous_principal(
+        "age_bonus_recipient_2.owner",
+        cfg.age_bonus_recipient_2.owner,
+    );
+    assert!(
+        cfg.normal_recipient != staging_account,
+        "normal_recipient must not equal the disburser staging account"
+    );
+    assert!(
+        cfg.age_bonus_recipient_1 != staging_account,
+        "age_bonus_recipient_1 must not equal the disburser staging account"
+    );
+    assert!(
+        cfg.age_bonus_recipient_2 != staging_account,
+        "age_bonus_recipient_2 must not equal the disburser staging account"
+    );
 
-    assert!(cfg.normal_recipient != cfg.age_bonus_recipient_1, "normal_recipient and age_bonus_recipient_1 must be distinct");
-    assert!(cfg.normal_recipient != cfg.age_bonus_recipient_2, "normal_recipient and age_bonus_recipient_2 must be distinct");
-    assert!(cfg.age_bonus_recipient_1 != cfg.age_bonus_recipient_2, "age_bonus_recipient_1 and age_bonus_recipient_2 must be distinct");
+    assert!(
+        cfg.normal_recipient != cfg.age_bonus_recipient_1,
+        "normal_recipient and age_bonus_recipient_1 must be distinct"
+    );
+    assert!(
+        cfg.normal_recipient != cfg.age_bonus_recipient_2,
+        "normal_recipient and age_bonus_recipient_2 must be distinct"
+    );
+    assert!(
+        cfg.age_bonus_recipient_1 != cfg.age_bonus_recipient_2,
+        "age_bonus_recipient_1 and age_bonus_recipient_2 must be distinct"
+    );
 }
 
 #[ic_cdk::init]
@@ -130,9 +173,14 @@ fn init(args: InitArgs) {
         age_bonus_recipient_1: args.age_bonus_recipient_1,
         age_bonus_recipient_2: args.age_bonus_recipient_2,
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
-        governance_canister_id: args.governance_canister_id.unwrap_or_else(mainnet_governance_id),
+        governance_canister_id: args
+            .governance_canister_id
+            .unwrap_or_else(mainnet_governance_id),
         rescue_controller: args.rescue_controller,
-        blackhole_controller: Some(args.blackhole_controller.unwrap_or_else(mainnet_blackhole_id)),
+        blackhole_controller: Some(
+            args.blackhole_controller
+                .unwrap_or_else(mainnet_blackhole_id),
+        ),
         blackhole_armed: args.blackhole_armed,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(86_400),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(86_400),
@@ -145,7 +193,11 @@ fn init(args: InitArgs) {
     crate::scheduler::install_timers();
 }
 
-pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) -> PostUpgradeActions {
+pub(crate) fn apply_upgrade_args_to_state(
+    st: &mut State,
+    args: Option<UpgradeArgs>,
+    now_secs: u64,
+) -> PostUpgradeActions {
     let mut actions = PostUpgradeActions::default();
     if let Some(args) = args {
         if let Some(blackhole_controller) = args.blackhole_controller {
@@ -176,7 +228,10 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
 }
 
 fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
-    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>("disburser", raw)
+    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>(
+        "disburser",
+        raw,
+    )
 }
 
 fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
@@ -187,7 +242,8 @@ fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
 fn post_upgrade(args: Option<UpgradeArgs>) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
-    let mut st = crate::state::restore_state_from_stable().expect("stable state missing during disburser post_upgrade");
+    let mut st = crate::state::restore_state_from_stable()
+        .expect("stable state missing during disburser post_upgrade");
     let actions = apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
@@ -239,7 +295,11 @@ fn debug_state() -> DebugState {
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
         payout_plan_present: st.payout_plan.is_some(),
-        payout_plan_transfer_count: st.payout_plan.as_ref().map(|p| p.transfers.len() as u64).unwrap_or(0),
+        payout_plan_transfer_count: st
+            .payout_plan
+            .as_ref()
+            .map(|p| p.transfers.len() as u64)
+            .unwrap_or(0),
         last_main_run_ts: st.last_main_run_ts,
         main_lock_state_ts: st.main_lock_state_ts,
         blackhole_controller: st.config.blackhole_controller,
@@ -383,7 +443,6 @@ async fn debug_execute_payout_plan() -> bool {
     crate::scheduler::debug_execute_payout_plan_impl().await
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,7 +461,10 @@ mod tests {
             neuron_id: 1,
             normal_recipient: account(principal("ryjl3-tyaaa-aaaaa-aaaba-cai"), None),
             age_bonus_recipient_1: account(principal("qhbym-qaaaa-aaaaa-aaafq-cai"), None),
-            age_bonus_recipient_2: account(principal("rrkah-fqaaa-aaaaa-aaaaq-cai"), Some([7u8; 32])),
+            age_bonus_recipient_2: account(
+                principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+                Some([7u8; 32]),
+            ),
             ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             rescue_controller: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
@@ -418,7 +480,10 @@ mod tests {
             neuron_id: 1,
             normal_recipient: account(principal("ryjl3-tyaaa-aaaaa-aaaba-cai"), None),
             age_bonus_recipient_1: account(principal("qhbym-qaaaa-aaaaa-aaafq-cai"), None),
-            age_bonus_recipient_2: account(principal("rrkah-fqaaa-aaaaa-aaaaq-cai"), Some([7u8; 32])),
+            age_bonus_recipient_2: account(
+                principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+                Some([7u8; 32]),
+            ),
             ledger_canister_id: None,
             governance_canister_id: None,
             rescue_controller: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
@@ -445,7 +510,10 @@ mod tests {
         }),))
         .unwrap();
         let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
-        assert_eq!(decoded.blackhole_controller, Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai")));
+        assert_eq!(
+            decoded.blackhole_controller,
+            Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai"))
+        );
         assert_eq!(decoded.blackhole_armed, Some(true));
         assert_eq!(decoded.clear_forced_rescue, Some(false));
     }
@@ -474,13 +542,17 @@ mod tests {
     #[should_panic(expected = "must not equal the disburser staging account")]
     fn validate_config_rejects_staging_account_recipient() {
         let mut cfg = sample_config();
-        cfg.normal_recipient = Account { owner: Principal::management_canister(), subaccount: None };
+        cfg.normal_recipient = Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        };
         validate_config(&cfg);
     }
 
-
     #[test]
-    #[should_panic(expected = "blackhole_controller must not equal the disburser canister principal")]
+    #[should_panic(
+        expected = "blackhole_controller must not equal the disburser canister principal"
+    )]
     fn validate_config_rejects_blackhole_controller_equal_to_self() {
         let mut cfg = sample_config();
         cfg.blackhole_controller = Some(Principal::management_canister());
@@ -540,10 +612,18 @@ mod tests {
             }),
             now_secs,
         );
-        assert_eq!(st.config.blackhole_controller, Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai")));
+        assert_eq!(
+            st.config.blackhole_controller,
+            Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai"))
+        );
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
         assert_eq!(st.main_lock_state_ts, Some(0));
-        assert_eq!(actions, PostUpgradeActions { schedule_immediate_controller_reconcile: true });
+        assert_eq!(
+            actions,
+            PostUpgradeActions {
+                schedule_immediate_controller_reconcile: true
+            }
+        );
     }
 
     #[test]
@@ -562,7 +642,6 @@ mod tests {
         );
         assert_eq!(actions, PostUpgradeActions::default());
     }
-
 
     #[test]
     fn production_canister_detection_matches_expected_id() {

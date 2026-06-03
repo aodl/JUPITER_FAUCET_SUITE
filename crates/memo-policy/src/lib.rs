@@ -5,9 +5,17 @@ pub const MAX_NEURON_ID_MEMO_BYTES: usize = 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoDirective {
-    TopUp { canister_id: Principal },
-    RawIcp { canister_id: Principal, memo: Vec<u8> },
-    NeuronStake { neuron_id: u64, memo: Option<Vec<u8>> },
+    TopUp {
+        canister_id: Principal,
+    },
+    RawIcp {
+        canister_id: Principal,
+        memo: Vec<u8>,
+    },
+    NeuronStake {
+        neuron_id: u64,
+        memo: Option<Vec<u8>>,
+    },
 }
 
 fn principal_text_with_group_separators(text: &str) -> String {
@@ -70,7 +78,10 @@ pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
         });
     }
     if let Some(neuron_id) = parse_neuron_id_text(trimmed) {
-        return Some(MemoDirective::NeuronStake { neuron_id, memo: None });
+        return Some(MemoDirective::NeuronStake {
+            neuron_id,
+            memo: None,
+        });
     }
     Some(MemoDirective::TopUp {
         canister_id: parse_declared_principal_text(memo_text)?,
@@ -94,8 +105,12 @@ mod tests {
     use candid::Principal;
     use serde::Deserialize;
 
-    fn principal(s: &str) -> Principal { Principal::from_text(s).unwrap() }
-    fn target_canister() -> Principal { principal("22255-zqaaa-aaaas-qf6uq-cai") }
+    fn principal(s: &str) -> Principal {
+        Principal::from_text(s).unwrap()
+    }
+    fn target_canister() -> Principal {
+        principal("22255-zqaaa-aaaas-qf6uq-cai")
+    }
 
     #[derive(Debug, Deserialize)]
     struct FixtureCase {
@@ -108,16 +123,28 @@ mod tests {
     #[derive(Debug, Deserialize)]
     #[serde(tag = "kind", rename_all = "snake_case")]
     enum ExpectedDirective {
-        TopUp { canister_id: String },
-        RawIcp { canister_id: String, memo_text: String },
-        NeuronStake { neuron_id: u64, memo_text: Option<String> },
+        TopUp {
+            canister_id: String,
+        },
+        RawIcp {
+            canister_id: String,
+            memo_text: String,
+        },
+        NeuronStake {
+            neuron_id: u64,
+            memo_text: Option<String>,
+        },
     }
 
     fn fixture_memo(case: &FixtureCase) -> Vec<u8> {
         if let Some(hex) = &case.memo_hex {
             return hex::decode(hex).expect("valid memo_hex fixture");
         }
-        case.memo_text.as_deref().unwrap_or_default().as_bytes().to_vec()
+        case.memo_text
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec()
     }
 
     fn expected_directive(directive: &Option<ExpectedDirective>) -> Option<MemoDirective> {
@@ -125,11 +152,17 @@ mod tests {
             Some(ExpectedDirective::TopUp { canister_id }) => Some(MemoDirective::TopUp {
                 canister_id: principal(canister_id),
             }),
-            Some(ExpectedDirective::RawIcp { canister_id, memo_text }) => Some(MemoDirective::RawIcp {
+            Some(ExpectedDirective::RawIcp {
+                canister_id,
+                memo_text,
+            }) => Some(MemoDirective::RawIcp {
                 canister_id: principal(canister_id),
                 memo: memo_text.as_bytes().to_vec(),
             }),
-            Some(ExpectedDirective::NeuronStake { neuron_id, memo_text }) => Some(MemoDirective::NeuronStake {
+            Some(ExpectedDirective::NeuronStake {
+                neuron_id,
+                memo_text,
+            }) => Some(MemoDirective::NeuronStake {
                 neuron_id: *neuron_id,
                 memo: memo_text.as_ref().map(|text| text.as_bytes().to_vec()),
             }),
@@ -139,8 +172,9 @@ mod tests {
 
     #[test]
     fn parser_matches_canonical_fixture_corpus() {
-        let cases: Vec<FixtureCase> = serde_json::from_str(include_str!("../fixtures/memo-policy-cases.json"))
-            .expect("valid memo policy fixture corpus");
+        let cases: Vec<FixtureCase> =
+            serde_json::from_str(include_str!("../fixtures/memo-policy-cases.json"))
+                .expect("valid memo policy fixture corpus");
         for case in cases {
             assert_eq!(
                 parse_memo_directive(&fixture_memo(&case)),
@@ -155,10 +189,9 @@ mod tests {
     fn parser_policy_corpus() {
         let target = target_canister();
         let short_without_cai = Principal::from_slice(&[1]);
-        let oversize_self_auth = Principal::from_text(
-            "33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae",
-        )
-        .unwrap();
+        let oversize_self_auth =
+            Principal::from_text("33mql-r6bnm-7mzbp-gqvmp-iv6qr-5j3pw-tnwsf-f2az7-zppun-yb4lf-zae")
+                .unwrap();
         assert!(oversize_self_auth.to_text().len() > MAX_TARGET_CANISTER_MEMO_BYTES);
 
         let whitespace_padded = format!("  {}\n", target.to_text());
@@ -167,11 +200,16 @@ mod tests {
         let whitespace_only = b"  \n\t".to_vec();
         let non_ascii = vec![0xff; 64];
         let truncated_target_text = target.to_text();
-        let truncated_target =
-            truncated_target_text.as_bytes()[..truncated_target_text.len().saturating_sub(1)].to_vec();
+        let truncated_target = truncated_target_text.as_bytes()
+            [..truncated_target_text.len().saturating_sub(1)]
+            .to_vec();
 
         let cases: Vec<(&str, Vec<u8>, Option<Principal>)> = vec![
-            ("valid declared canister ID text", target.to_text().into_bytes(), Some(target)),
+            (
+                "valid declared canister ID text",
+                target.to_text().into_bytes(),
+                Some(target),
+            ),
             (
                 "whitespace padded principal text",
                 whitespace_padded.into_bytes(),
@@ -194,7 +232,11 @@ mod tests {
             ),
             ("empty memo", Vec::new(), None),
             ("whitespace only memo", whitespace_only, None),
-            ("malformed ASCII principal text", b"not-a-principal".to_vec(), None),
+            (
+                "malformed ASCII principal text",
+                b"not-a-principal".to_vec(),
+                None,
+            ),
             ("truncated principal text", truncated_target, None),
             ("non ASCII bytes", non_ascii, None),
             (
@@ -216,7 +258,11 @@ mod tests {
         ];
 
         for (label, memo, expected) in cases {
-            assert_eq!(parse_target_canister_principal_from_memo(&memo), expected, "{label}");
+            assert_eq!(
+                parse_target_canister_principal_from_memo(&memo),
+                expected,
+                "{label}"
+            );
         }
     }
 
@@ -313,7 +359,10 @@ mod tests {
         );
         assert_eq!(
             parse_memo_directive(b" 42\n"),
-            Some(MemoDirective::NeuronStake { neuron_id: 42, memo: None })
+            Some(MemoDirective::NeuronStake {
+                neuron_id: 42,
+                memo: None
+            })
         );
     }
 

@@ -187,7 +187,12 @@ fn debug_append_transfer(to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> 
 }
 
 #[ic_cdk::update]
-fn debug_append_transfer_from(from: String, to: String, amount_e8s: u64, memo: Option<Vec<u8>>) -> u64 {
+fn debug_append_transfer_from(
+    from: String,
+    to: String,
+    amount_e8s: u64,
+    memo: Option<Vec<u8>>,
+) -> u64 {
     debug_append_transfer_from_with_timestamp(from, to, amount_e8s, memo, ic_cdk::api::time())
 }
 
@@ -216,9 +221,7 @@ fn debug_append_transfer_from_with_timestamp(
                     spender: None,
                 },
                 created_at_time: None,
-                timestamp: Some(IndexTimeStamp {
-                    timestamp_nanos,
-                }),
+                timestamp: Some(IndexTimeStamp { timestamp_nanos }),
             },
         });
         id
@@ -280,7 +283,12 @@ fn debug_append_burn(from: String, amount_e8s: u64) -> u64 {
 }
 
 #[ic_cdk::update]
-fn debug_append_repeated_transfer(to: String, count: u64, amount_e8s: u64, memo: Option<Vec<u8>>) -> u64 {
+fn debug_append_repeated_transfer(
+    to: String,
+    count: u64,
+    amount_e8s: u64,
+    memo: Option<Vec<u8>>,
+) -> u64 {
     ST.with(|s| {
         let mut st = s.borrow_mut();
         let mut last_id = 0;
@@ -321,7 +329,6 @@ fn debug_set_get_script(behaviors: Vec<DebugGetBehavior>) {
 }
 
 ic_cdk::export_candid!();
-
 
 #[cfg(test)]
 mod tests {

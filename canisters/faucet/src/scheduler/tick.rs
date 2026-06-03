@@ -7,7 +7,8 @@ pub(super) struct MainGuard {
 impl MainGuard {
     fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            let inner = TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
+            let inner =
+                TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
             let lease_expires_at_ts = inner.lease_expires_at_ts();
             st.main_lock_state_ts = Some(lease_expires_at_ts);
             Some(Self { inner })
@@ -32,7 +33,9 @@ impl MainGuard {
                 st.main_lock_state_ts = Some(0);
             }
         });
-        if let Some(code) = err { log_error(code); }
+        if let Some(code) = err {
+            log_error(code);
+        }
         log_cycles();
         log_current_config();
     }
@@ -45,9 +48,18 @@ impl Drop for MainGuard {
 }
 
 pub(crate) fn install_timers() {
-    let (main_s, rescue_s) = state::with_state(|st| (st.config.main_interval_seconds, st.config.rescue_interval_seconds));
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async { main_tick(false).await; });
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async { rescue_tick().await; });
+    let (main_s, rescue_s) = state::with_state(|st| {
+        (
+            st.config.main_interval_seconds,
+            st.config.rescue_interval_seconds,
+        )
+    });
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async {
+        main_tick(false).await;
+    });
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async {
+        rescue_tick().await;
+    });
 }
 
 pub(crate) fn schedule_immediate_resume_if_needed() {
@@ -73,14 +85,33 @@ pub(super) async fn main_tick(force: bool) {
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let index = IcpIndexCanister::new(cfg.index_canister_id);
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
-    let governance = NnsGovernanceCanister::new(cfg.governance_canister_id.expect("governance_canister_id configured"));
+    let governance = NnsGovernanceCanister::new(
+        cfg.governance_canister_id
+            .expect("governance_canister_id configured"),
+    );
     let status_client = ManagementCanisterInfoClient;
-    run_main_tick_with_clients(force, now_nanos, now_secs, &ledger, &index, &cmc, &governance, &status_client).await;
+    run_main_tick_with_clients(
+        force,
+        now_nanos,
+        now_secs,
+        &ledger,
+        &index,
+        &cmc,
+        &governance,
+        &status_client,
+    )
+    .await;
 }
 
 // The scheduler takes explicit clients so tests can verify async/state invariants without canister calls.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, C: CmcClient, G: GovernanceClient, S: CanisterStatusClient>(
+pub(super) async fn run_main_tick_with_clients<
+    L: LedgerClient,
+    I: IndexClient,
+    C: CmcClient,
+    G: GovernanceClient,
+    S: CanisterStatusClient,
+>(
     force: bool,
     now_nanos: u64,
     now_secs: u64,
@@ -90,17 +121,29 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, I: IndexClient, 
     governance: &G,
     status_client: &S,
 ) {
-    let Some(guard) = MainGuard::acquire(now_secs) else { return; };
+    let Some(guard) = MainGuard::acquire(now_secs) else {
+        return;
+    };
     debug_reset_successful_transfer_counter();
     if !force {
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
+        let recently_ran =
+            state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
             guard.finish(now_secs, None);
             return;
         }
     }
-    let ok = process_payout(ledger, index, cmc, governance, status_client, now_nanos, now_secs).await;
+    let ok = process_payout(
+        ledger,
+        index,
+        cmc,
+        governance,
+        status_client,
+        now_nanos,
+        now_secs,
+    )
+    .await;
     if ok {
         attempt_rescue(now_secs).await;
     }
@@ -120,5 +163,8 @@ pub(super) fn self_canister_principal() -> Principal {
 
 pub(super) fn payout_account() -> Account {
     let payout_subaccount = state::with_state(|st| st.config.payout_subaccount);
-    Account { owner: self_canister_principal(), subaccount: payout_subaccount }
+    Account {
+        owner: self_canister_principal(),
+        subaccount: payout_subaccount,
+    }
 }

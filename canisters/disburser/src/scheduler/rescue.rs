@@ -13,13 +13,23 @@ pub(super) async fn rescue_tick() {
 
     state::with_state_mut(|st| {
         if st.forced_rescue_reason.is_none()
-            && policy::bootstrap_rescue_due(now_secs, st.blackhole_armed_since_ts, st.last_successful_transfer_ts)
+            && policy::bootstrap_rescue_due(
+                now_secs,
+                st.blackhole_armed_since_ts,
+                st.last_successful_transfer_ts,
+            )
         {
             st.forced_rescue_reason = Some(state::ForcedRescueReason::BootstrapNoSuccess);
         }
     });
 
-    let (blackhole_armed, blackhole_controller, last_xfer_opt, rescue_controller, forced_rescue_reason) = state::with_state(|st| {
+    let (
+        blackhole_armed,
+        blackhole_controller,
+        last_xfer_opt,
+        rescue_controller,
+        forced_rescue_reason,
+    ) = state::with_state(|st| {
         (
             st.config.blackhole_armed.unwrap_or(false),
             st.config.blackhole_controller,
@@ -42,7 +52,13 @@ pub(super) async fn rescue_tick() {
     let mut desired = if forced_rescue_reason.is_some() {
         vec![blackhole_controller, rescue_controller, self_id]
     } else {
-        let Some(desired) = policy::desired_controllers(now_secs, last_xfer_opt, self_id, Some(blackhole_controller), rescue_controller) else {
+        let Some(desired) = policy::desired_controllers(
+            now_secs,
+            last_xfer_opt,
+            self_id,
+            Some(blackhole_controller),
+            rescue_controller,
+        ) else {
             return;
         };
         desired

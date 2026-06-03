@@ -59,7 +59,11 @@ fn parse_failed_rust_test_details(output: &str) -> Vec<(String, String)> {
         if let Some(name) = trimmed
             .strip_prefix("---- ")
             .and_then(|s| s.strip_suffix(" stdout ----"))
-            .or_else(|| trimmed.strip_prefix("---- ").and_then(|s| s.strip_suffix(" stderr ----")))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("---- ")
+                    .and_then(|s| s.strip_suffix(" stderr ----"))
+            })
         {
             let test_name = name.to_string();
             i += 1;
@@ -140,9 +144,17 @@ pub(crate) fn run_cargo_test_suite(
         c.env(k, v);
     }
 
-    let mut child = c.spawn().with_context(|| format!("failed to spawn {cmd}"))?;
-    let stdout = child.stdout.take().context("failed to capture child stdout")?;
-    let stderr = child.stderr.take().context("failed to capture child stderr")?;
+    let mut child = c
+        .spawn()
+        .with_context(|| format!("failed to spawn {cmd}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to capture child stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("failed to capture child stderr")?;
 
     let (tx, rx) = mpsc::channel::<(bool, String)>();
     let tx_out = tx.clone();
@@ -191,7 +203,9 @@ pub(crate) fn run_cargo_test_suite(
         }
     }
 
-    let status = child.wait().with_context(|| format!("failed waiting for {cmd}"))?;
+    let status = child
+        .wait()
+        .with_context(|| format!("failed waiting for {cmd}"))?;
     let _ = stdout_handle.join();
     let _ = stderr_handle.join();
 

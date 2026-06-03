@@ -11,13 +11,13 @@ use pocket_ic::PocketIc;
 mod real_blackhole;
 #[path = "support/mod.rs"]
 mod support;
-use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
+use std::sync::OnceLock;
+use std::time::Duration;
 use support::account_identifier::account_identifier_text;
+use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 use support::governance::set_controllers_exact;
 use support::ledger::build_pic_with_real_icp;
 use support::principals::fixture_principal;
-use std::sync::OnceLock;
-use std::time::Duration;
 
 fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
@@ -154,10 +154,16 @@ struct NotifyRecord {
 enum DebugNotifyBehavior {
     Ok,
     Processing,
-    Refunded { reason: String, block_index: Option<u64> },
+    Refunded {
+        reason: String,
+        block_index: Option<u64>,
+    },
     TransactionTooOld(u64),
     InvalidTransaction(String),
-    Other { error_code: u64, error_message: String },
+    Other {
+        error_code: u64,
+        error_message: String,
+    },
 }
 
 fn icrc1_balance(pic: &PocketIc, ledger: Principal, acct: &Account) -> Result<u64> {
@@ -168,7 +174,12 @@ fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
     support::ledger::icrc1_fee(pic, ledger)
 }
 
-fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: TransferArg) -> Result<u64> {
+fn icrc1_transfer(
+    pic: &PocketIc,
+    ledger: Principal,
+    from: Principal,
+    arg: TransferArg,
+) -> Result<u64> {
     support::ledger::icrc1_transfer(pic, ledger, from, arg)
 }
 
@@ -197,8 +208,8 @@ fn append_faucet_funding_tranche(
     payout: &Account,
     amount_e8s: u64,
 ) -> Result<u64> {
-    let timestamp_nanos = (pic.get_time().as_nanos_since_unix_epoch() as u64)
-        .saturating_add(2_000_000_000);
+    let timestamp_nanos =
+        (pic.get_time().as_nanos_since_unix_epoch() as u64).saturating_add(2_000_000_000);
     update_bytes(
         pic,
         index,
@@ -218,7 +229,9 @@ fn append_faucet_funding_tranche(
 #[ignore]
 fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     require_ignored_flag()?;
-    let pic = support::pocketic::builder().with_application_subnet().build();
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -264,12 +277,19 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
-    let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let accounts: DebugAccounts =
+        query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let disburser_init = DisburserInitArg {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -299,7 +319,10 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         "debug_append_transfer",
         encode_args((staking_id, denom_e8s, Some(target.to_text().into_bytes())))?,
     )?;
-    let disburser_staging = Account { owner: disburser, subaccount: None };
+    let disburser_staging = Account {
+        owner: disburser,
+        subaccount: None,
+    };
     let _: () = update_bytes(
         &pic,
         ledger,
@@ -331,10 +354,20 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
-    let summary: Option<FaucetSummary> = query_one(&pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
-    let summary = summary.ok_or_else(|| anyhow!("expected faucet summary after successful tick"))?;
+    let summary: Option<FaucetSummary> = query_one(
+        &pic,
+        faucet,
+        Principal::anonymous(),
+        "debug_last_summary",
+        (),
+    )?;
+    let summary =
+        summary.ok_or_else(|| anyhow!("expected faucet summary after successful tick"))?;
     if summary.topped_up_count != 1 {
-        bail!("expected one beneficiary top-up, got {}", summary.topped_up_count);
+        bail!(
+            "expected one beneficiary top-up, got {}",
+            summary.topped_up_count
+        );
     }
     if summary.ignored_bad_memo != 0 || summary.ignored_under_threshold != 0 {
         bail!(
@@ -344,7 +377,8 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         );
     }
 
-    let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+    let notes: Vec<NotifyRecord> =
+        query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if !notes.iter().any(|n| n.canister_id == target) {
         bail!("expected mock CMC to record a top-up notification for target canister {target}");
     }
@@ -356,7 +390,9 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
 #[ignore]
 fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<()> {
     require_ignored_flag()?;
-    let pic = support::pocketic::builder().with_application_subnet().build();
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -402,7 +438,8 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
-    let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let accounts: DebugAccounts =
+        query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let disburser_init = DisburserInitArg {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
@@ -440,7 +477,12 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         index,
         Principal::anonymous(),
         "debug_append_repeated_transfer",
-        encode_args((staking_id, 3u64, 100_000_000u64, Some(target.to_text().into_bytes())))?,
+        encode_args((
+            staking_id,
+            3u64,
+            100_000_000u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
     )?;
 
     for (i, pot_e8s) in [90_000_000u64, 60_000_000u64].into_iter().enumerate() {
@@ -452,7 +494,10 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
             tick_n(&pic, 1);
         }
 
-        let disburser_staging = Account { owner: disburser, subaccount: None };
+        let disburser_staging = Account {
+            owner: disburser,
+            subaccount: None,
+        };
         let _: () = update_bytes(
             &pic,
             ledger,
@@ -481,16 +526,33 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         // payout cycles. The mock governance marks a disbursement as in-flight after a
         // successful initiation and keeps it there until explicitly cleared, which would
         // otherwise cause the next disburser tick to skip its payout stage entirely.
-        let _: () = update_one(&pic, gov, Principal::anonymous(), "debug_set_in_flight", false)?;
+        let _: () = update_one(
+            &pic,
+            gov,
+            Principal::anonymous(),
+            "debug_set_in_flight",
+            false,
+        )?;
 
-        let summary: Option<FaucetSummary> = query_one(&pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
-        let summary = summary.ok_or_else(|| anyhow!("expected faucet summary after payout cycle"))?;
+        let summary: Option<FaucetSummary> = query_one(
+            &pic,
+            faucet,
+            Principal::anonymous(),
+            "debug_last_summary",
+            (),
+        )?;
+        let summary =
+            summary.ok_or_else(|| anyhow!("expected faucet summary after payout cycle"))?;
         if summary.topped_up_count != 3 {
-            bail!("expected each payout cycle to replay the same three commitments, got {}", summary.topped_up_count);
+            bail!(
+                "expected each payout cycle to replay the same three commitments, got {}",
+                summary.topped_up_count
+            );
         }
     }
 
-    let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+    let notes: Vec<NotifyRecord> =
+        query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     let beneficiary_notes = notes.iter().filter(|n| n.canister_id == target).count();
     if beneficiary_notes != 6 {
         bail!("expected repeated suite payouts to re-notify the same beneficiary three times per cycle, got {beneficiary_notes}");
@@ -499,12 +561,14 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
     Ok(())
 }
 
-
 #[test]
 #[ignore]
-fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_transfer() -> Result<()> {
+fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_transfer(
+) -> Result<()> {
     require_ignored_flag()?;
-    let pic = support::pocketic::builder().with_application_subnet().build();
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -550,12 +614,19 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     };
     pic.install_canister(faucet, faucet_wasm, encode_one(faucet_init)?, None);
 
-    let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let accounts: DebugAccounts =
+        query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let disburser_init = DisburserInitArg {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -580,9 +651,16 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?,
+        encode_args((
+            staking_id,
+            100_000_000u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
     )?;
-    let disburser_staging = Account { owner: disburser, subaccount: None };
+    let disburser_staging = Account {
+        owner: disburser,
+        subaccount: None,
+    };
     let _: () = update_bytes(
         &pic,
         ledger,
@@ -613,7 +691,8 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         "debug_set_script",
         vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok],
     )?;
-    let transfers_before_faucet: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    let transfers_before_faucet: Vec<TransferRecord> =
+        query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
@@ -621,7 +700,8 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     if st.active_payout_job_present || !st.last_summary_present {
         bail!("expected faucet inline retry path to complete within one suite tick");
     }
-    let transfers_after: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    let transfers_after: Vec<TransferRecord> =
+        query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     if transfers_after.len() != transfers_before_faucet.len().saturating_add(1) {
         bail!(
             "expected exactly one additional faucet beneficiary transfer after inline retry; before={} after={}",
@@ -629,7 +709,8 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
             transfers_after.len()
         );
     }
-    let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+    let notes: Vec<NotifyRecord> =
+        query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {
         bail!("expected one eventual target notification after suite inline retry recovery, got {notes:?}");
     }
@@ -637,12 +718,13 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
     Ok(())
 }
 
-
 #[test]
 #[ignore]
 fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<()> {
     require_ignored_flag()?;
-    let pic = support::pocketic::builder().with_application_subnet().build();
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -688,12 +770,19 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
     };
     pic.install_canister(faucet, faucet_wasm.clone(), encode_one(faucet_init)?, None);
 
-    let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let accounts: DebugAccounts =
+        query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let disburser_init = DisburserInitArg {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -718,9 +807,16 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?,
+        encode_args((
+            staking_id,
+            100_000_000u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
     )?;
-    let disburser_staging = Account { owner: disburser, subaccount: None };
+    let disburser_staging = Account {
+        owner: disburser,
+        subaccount: None,
+    };
     let _: () = update_bytes(
         &pic,
         ledger,
@@ -751,7 +847,8 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         "debug_set_script",
         vec![DebugNotifyBehavior::Processing, DebugNotifyBehavior::Ok],
     )?;
-    let transfers_before_faucet: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    let transfers_before_faucet: Vec<TransferRecord> =
+        query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
     tick_n(&pic, 10);
 
@@ -759,25 +856,37 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
     if st1.active_payout_job_present || !st1.last_summary_present {
         bail!("expected inline retry path to complete before faucet upgrade in suite path");
     }
-    let transfers_after_first: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    let transfers_after_first: Vec<TransferRecord> =
+        query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     if transfers_after_first.len() != transfers_before_faucet.len().saturating_add(1) {
         bail!("expected exactly one faucet beneficiary transfer before upgrade");
     }
 
-    let faucet_upgrade_sender = pic.get_controllers(faucet).first().copied().unwrap_or(faucet);
-    pic.upgrade_canister(faucet, faucet_wasm, encode_one(())?, Some(faucet_upgrade_sender))
-        .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
+    let faucet_upgrade_sender = pic
+        .get_controllers(faucet)
+        .first()
+        .copied()
+        .unwrap_or(faucet);
+    pic.upgrade_canister(
+        faucet,
+        faucet_wasm,
+        encode_one(())?,
+        Some(faucet_upgrade_sender),
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
     tick_n(&pic, 10);
 
     let st2: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
     if st2.active_payout_job_present || !st2.last_summary_present {
         bail!("expected completed inline retry recovery to remain quiescent after upgrade");
     }
-    let transfers_after_upgrade: Vec<TransferRecord> = query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    let transfers_after_upgrade: Vec<TransferRecord> =
+        query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
     if transfers_after_upgrade.len() != transfers_after_first.len() {
         bail!("expected suite upgrade path not to duplicate faucet beneficiary transfer");
     }
-    let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+    let notes: Vec<NotifyRecord> =
+        query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {
         bail!("expected exactly one beneficiary notification to remain after post-upgrade check, got {notes:?}");
     }
@@ -901,7 +1010,6 @@ struct HistorianPublicStatus {
     total_memory_bytes: Option<u64>,
 }
 
-
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
 struct HistorianListRegisteredCanisterSummariesArgs {
     page: Option<u32>,
@@ -949,7 +1057,6 @@ struct HistorianListRecentCommitmentsResponse {
     items: Vec<HistorianRecentCommitmentListItem>,
 }
 
-
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RealNotifyTopUpArg {
     canister_id: Principal,
@@ -964,11 +1071,17 @@ enum RealNotifyTopUpResult {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum RealNotifyError {
-    Refunded { reason: String, block_index: Option<u64> },
+    Refunded {
+        reason: String,
+        block_index: Option<u64>,
+    },
     Processing,
     TransactionTooOld(u64),
     InvalidTransaction(String),
-    Other { error_code: u64, error_message: String },
+    Other {
+        error_code: u64,
+        error_message: String,
+    },
 }
 
 fn describe_account(account: &Account) -> String {
@@ -1004,7 +1117,10 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
     let deposit_account = cmc_deposit_account(cmc, target);
     let amount_e8s = 500_000_000u64;
 
-    let anon_default = Account { owner: Principal::anonymous(), subaccount: None };
+    let anon_default = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
     let deposit_before = icrc1_balance(&pic, ledger, &deposit_account)?;
     let anon_before = icrc1_balance(&pic, ledger, &anon_default)?;
 
@@ -1012,9 +1128,15 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
     println!("target_canister={}", target);
     println!("ledger_canister={}", ledger);
     println!("cmc_canister={}", cmc);
-    println!("anonymous_default_account={}", describe_account(&anon_default));
+    println!(
+        "anonymous_default_account={}",
+        describe_account(&anon_default)
+    );
     println!("deposit_account={}", describe_account(&deposit_account));
-    println!("principal_to_subaccount_hex={}", hex::encode(support::account_identifier::principal_to_subaccount(target)));
+    println!(
+        "principal_to_subaccount_hex={}",
+        hex::encode(support::account_identifier::principal_to_subaccount(target))
+    );
     println!("top_up_memo_u64={}", memo_u64);
     println!("top_up_memo_hex={}", hex::encode(&memo_bytes));
     println!("top_up_memo_ascii={:?}", memo_bytes);
@@ -1040,15 +1162,24 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
     let deposit_after_transfer = icrc1_balance(&pic, ledger, &deposit_account)?;
     let anon_after_transfer = icrc1_balance(&pic, ledger, &anon_default)?;
     println!("transfer_block_index={}", block_index);
-    println!("deposit_balance_after_transfer_e8s={}", deposit_after_transfer);
-    println!("anonymous_balance_after_transfer_e8s={}", anon_after_transfer);
+    println!(
+        "deposit_balance_after_transfer_e8s={}",
+        deposit_after_transfer
+    );
+    println!(
+        "anonymous_balance_after_transfer_e8s={}",
+        anon_after_transfer
+    );
 
     let notify_result: RealNotifyTopUpResult = update_one(
         &pic,
         cmc,
         Principal::anonymous(),
         "notify_top_up",
-        RealNotifyTopUpArg { canister_id: target, block_index },
+        RealNotifyTopUpArg {
+            canister_id: target,
+            block_index,
+        },
     )?;
     println!("notify_top_up_result={notify_result:?}");
 
@@ -1065,7 +1196,9 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
 #[ignore]
 fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     require_ignored_flag()?;
-    let pic = support::pocketic::builder().with_application_subnet().build();
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -1084,7 +1217,9 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let disburser = pic.create_canister();
     let historian = pic.create_canister();
 
-    for c in [ledger, gov, index, cmc, blackhole, faucet, disburser, historian] {
+    for c in [
+        ledger, gov, index, cmc, blackhole, faucet, disburser, historian,
+    ] {
         pic.add_cycles(c, 5_000_000_000_000);
     }
 
@@ -1095,7 +1230,10 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     pic.install_canister(blackhole, blackhole_wasm, vec![], None);
     set_controllers_exact(&pic, blackhole, vec![blackhole])?;
 
-    let staking_account = Account { owner: Principal::management_canister(), subaccount: Some([11u8; 32]) };
+    let staking_account = Account {
+        owner: Principal::management_canister(),
+        subaccount: Some([11u8; 32]),
+    };
     let faucet_init = FaucetInitArg {
         staking_account: staking_account.clone(),
         payout_subaccount: None,
@@ -1133,12 +1271,19 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     };
     pic.install_canister(historian, historian_wasm, encode_one(historian_init)?, None);
 
-    let accounts: DebugAccounts = query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let accounts: DebugAccounts =
+        query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let disburser_init = DisburserInitArg {
         neuron_id: 1,
         normal_recipient: accounts.payout.clone(),
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -1151,11 +1296,36 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
 
     let target = blackhole;
     let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
-    let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((staking_account.clone(), 100_000_000u64))?)?;
-    let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id, 100_000_000u64, Some(target.to_text().into_bytes())))?)?;
+    let _: () = update_bytes(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((staking_account.clone(), 100_000_000u64))?,
+    )?;
+    let _: u64 = update_bytes(
+        &pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((
+            staking_id,
+            100_000_000u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
+    )?;
 
-    let disburser_staging = Account { owner: disburser, subaccount: None };
-    let _: () = update_bytes(&pic, ledger, Principal::anonymous(), "debug_credit", encode_args((disburser_staging, 100_000_000u64))?)?;
+    let disburser_staging = Account {
+        owner: disburser,
+        subaccount: None,
+    };
+    let _: () = update_bytes(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((disburser_staging, 100_000_000u64))?,
+    )?;
 
     let faucet_balance_before = icrc1_balance(&pic, ledger, &accounts.payout)?;
     let _: () = update_noargs(&pic, disburser, Principal::anonymous(), "debug_main_tick")?;
@@ -1176,29 +1346,76 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
     tick_n(&pic, 10);
 
-    let listed: HistorianListCanistersResponse = query_one(&pic, historian, Principal::anonymous(), "list_canisters", HistorianListCanistersArgs { start_after: None, limit: Some(10), source_filter: None })?;
+    let listed: HistorianListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        HistorianListCanistersArgs {
+            start_after: None,
+            limit: Some(10),
+            source_filter: None,
+        },
+    )?;
     assert_eq!(listed.items.len(), 1);
     assert_eq!(listed.items[0].canister_id, target);
 
-    let commitments: HistorianCommitmentHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_commitment_history", HistorianGetCommitmentHistoryArgs { canister_id: target, start_after_tx_id: None, limit: Some(10), descending: Some(false) })?;
+    let commitments: HistorianCommitmentHistoryPage = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_commitment_history",
+        HistorianGetCommitmentHistoryArgs {
+            canister_id: target,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
     assert_eq!(commitments.items.len(), 1);
     assert!(commitments.items[0].counts_toward_faucet);
 
-    let cycles: HistorianCyclesHistoryPage = query_one(&pic, historian, Principal::anonymous(), "get_cycles_history", HistorianGetCyclesHistoryArgs { canister_id: target, start_after_ts: None, limit: Some(10), descending: Some(false) })?;
+    let cycles: HistorianCyclesHistoryPage = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_cycles_history",
+        HistorianGetCyclesHistoryArgs {
+            canister_id: target,
+            start_after_ts: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
     assert_eq!(cycles.items.len(), 1);
     assert!(cycles.items[0].cycles > 0);
-    assert!(matches!(cycles.items[0].source, HistorianCyclesSampleSource::BlackholeStatus));
+    assert!(matches!(
+        cycles.items[0].source,
+        HistorianCyclesSampleSource::BlackholeStatus
+    ));
 
     let expected_output_e8s = 0u64;
 
-    let counts: HistorianPublicCounts = query_one(&pic, historian, Principal::anonymous(), "get_public_counts", ())?;
+    let counts: HistorianPublicCounts = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
     assert_eq!(counts.registered_canister_count, 1);
     assert_eq!(counts.qualifying_commitment_count, 1);
     assert_eq!(counts.total_output_e8s, expected_output_e8s);
     assert_eq!(counts.total_rewards_e8s, 0);
     assert_eq!(counts.sns_discovered_canister_count, 0);
 
-    let status: HistorianPublicStatus = query_one(&pic, historian, Principal::anonymous(), "get_public_status", ())?;
+    let status: HistorianPublicStatus = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_public_status",
+        (),
+    )?;
     assert_eq!(status.staking_account, staking_account);
     assert_eq!(status.ledger_canister_id, ledger);
     assert_eq!(status.index_interval_seconds, 60);
@@ -1223,7 +1440,10 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(registered.items.len(), 1);
     assert_eq!(registered.items[0].canister_id, target);
     assert_eq!(registered.items[0].qualifying_commitment_count, 1);
-    assert_eq!(registered.items[0].total_qualifying_committed_e8s, 100_000_000);
+    assert_eq!(
+        registered.items[0].total_qualifying_committed_e8s,
+        100_000_000
+    );
     assert!(registered.items[0].last_commitment_ts.is_some());
     assert!(registered.items[0].latest_cycles.unwrap_or_default() > 0);
     assert!(registered.items[0].last_cycles_probe_ts.is_some());
@@ -1244,7 +1464,8 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert_eq!(recent.items[0].amount_e8s, 100_000_000);
     assert!(recent.items[0].counts_toward_faucet);
 
-    let notes: Vec<NotifyRecord> = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+    let notes: Vec<NotifyRecord> =
+        query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
     if notes.len() != 1 || notes[0].canister_id != target {
         bail!("expected faucet notify_top_up for target, got {notes:?}");
     }

@@ -22,14 +22,20 @@ fn genesis_round_amount_for_commitment_e8s(
     round_end_time_nanos: u64,
     recognition_delay_seconds: u64,
 ) -> Option<u64> {
-    if round_end_latest_tx_id.map(|end| tx_id > end).unwrap_or(false) {
+    if round_end_latest_tx_id
+        .map(|end| tx_id > end)
+        .unwrap_or(false)
+    {
         return None;
     }
     // A missing commitment timestamp affects only that commitment's recognition
     // status. Treat it as unrecognized rather than making the whole tranche
     // unreadable.
     let recognized = tx_timestamp_nanos
-        .map(|timestamp| logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds) <= round_end_time_nanos)
+        .map(|timestamp| {
+            logic::conservative_effective_timestamp_nanos(timestamp, recognition_delay_seconds)
+                <= round_end_time_nanos
+        })
         .unwrap_or(false);
     Some(if recognized { commitment.amount_e8s } else { 0 })
 }
@@ -147,7 +153,9 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
                 candidate: None,
             });
         }
-        st.active_funding_scan.clone().expect("funding scan state should exist")
+        st.active_funding_scan
+            .clone()
+            .expect("funding scan state should exist")
     });
     let mut pages_scanned = 0u64;
     loop {
@@ -158,7 +166,11 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
         pages_scanned = pages_scanned.saturating_add(1);
         assert_no_persistence_batch_for_async();
         let resp = index
-            .get_account_identifier_transactions(payout_account_identifier.clone(), scan.cursor, PAGE_SIZE)
+            .get_account_identifier_transactions(
+                payout_account_identifier.clone(),
+                scan.cursor,
+                PAGE_SIZE,
+            )
             .await
             .ok();
         let Some(resp) = resp else {
@@ -170,7 +182,10 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
             if !tx_is_after_cursor_for_page(tx.id, scan.cursor, descending) {
                 continue;
             }
-            if last_processed_funding_tx_id.map(|last| tx.id <= last).unwrap_or(false) {
+            if last_processed_funding_tx_id
+                .map(|last| tx.id <= last)
+                .unwrap_or(false)
+            {
                 if descending {
                     state::with_state_mut(|st| st.active_funding_scan = None);
                     return scan
@@ -180,7 +195,10 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche(
                 }
                 continue;
             }
-            let IndexOperation::Transfer { from, to, amount, .. } = &tx.transaction.operation else {
+            let IndexOperation::Transfer {
+                from, to, amount, ..
+            } = &tx.transaction.operation
+            else {
                 continue;
             };
             if from == &funding_source_account_identifier
@@ -239,11 +257,20 @@ pub(super) async fn process_payout(
 
     if state::with_state(|st| st.active_payout_job.is_none()) {
         assert_no_persistence_batch_for_async();
-        let fee_e8s = match ledger.fee_e8s().await { Ok(v) => v, Err(_) => return false };
+        let fee_e8s = match ledger.fee_e8s().await {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         assert_no_persistence_batch_for_async();
-        let payout_balance_e8s = match ledger.balance_of_e8s(payout_account()).await { Ok(v) => v, Err(_) => return false };
+        let payout_balance_e8s = match ledger.balance_of_e8s(payout_account()).await {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         assert_no_persistence_batch_for_async();
-        let denom_e8s = match ledger.balance_of_e8s(cfg.staking_account).await { Ok(v) => v, Err(_) => return false };
+        let denom_e8s = match ledger.balance_of_e8s(cfg.staking_account).await {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         if payout_balance_e8s <= fee_e8s || denom_e8s == 0 {
             assert_no_persistence_batch_for_async();
             probe_index_health(index, &staking_id, denom_e8s).await;
@@ -261,7 +288,8 @@ pub(super) async fn process_payout(
             last_processed,
             fee_e8s,
         )
-        .await {
+        .await
+        {
             FundingDiscovery::Found(tranche) => tranche,
             FundingDiscovery::InProgress | FundingDiscovery::Empty => {
                 assert_no_persistence_batch_for_async();
@@ -269,8 +297,12 @@ pub(super) async fn process_payout(
                 maybe_latch_bootstrap_rescue(now_secs);
                 return true;
             }
-            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::IndexReadFailed) => return false,
-            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::QualifyingFundingTransferMissingTimestamp) => {
+            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::IndexReadFailed) => {
+                return false
+            }
+            FundingDiscovery::Unreadable(
+                FundingDiscoveryUnreadableReason::QualifyingFundingTransferMissingTimestamp,
+            ) => {
                 state::latch_forced_rescue_reason(ForcedRescueReason::FundingDiscoveryUnreadable);
                 return true;
             }
@@ -304,10 +336,23 @@ pub(super) async fn process_payout(
 
     loop {
         let job = state::with_state(|st| st.active_payout_job.clone());
-        let Some(job) = job else { maybe_latch_bootstrap_rescue(now_secs); return true; };
+        let Some(job) = job else {
+            maybe_latch_bootstrap_rescue(now_secs);
+            return true;
+        };
         if job.pending_transfer.is_some() {
             assert_no_persistence_batch_for_async();
-            if !drive_pending_transfer(ledger, cmc, governance, cfg.cmc_canister_id, job.fee_e8s, now_nanos, now_secs).await {
+            if !drive_pending_transfer(
+                ledger,
+                cmc,
+                governance,
+                cfg.cmc_canister_id,
+                job.fee_e8s,
+                now_nanos,
+                now_secs,
+            )
+            .await
+            {
                 return true;
             }
             continue;
@@ -315,7 +360,10 @@ pub(super) async fn process_payout(
 
         if !effective_denom_scan_complete(&job) {
             assert_no_persistence_batch_for_async();
-            let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
+            let resp = match index
+                .get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE)
+                .await
+            {
                 Ok(v) => v,
                 Err(_) => return false,
             };
@@ -333,7 +381,11 @@ pub(super) async fn process_payout(
                     continue;
                 }
                 page_next_start = Some(tx.id);
-                if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
+                if job
+                    .round_end_latest_tx_id
+                    .map(|end| tx.id > end)
+                    .unwrap_or(false)
+                {
                     if descending {
                         continue;
                     }
@@ -343,7 +395,10 @@ pub(super) async fn process_payout(
                 let Some(commitment) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
                     continue;
                 };
-                if !matches!(logic::classify_commitment(min_tx_e8s, &commitment), logic::CommitmentValidity::Valid { .. }) {
+                if !matches!(
+                    logic::classify_commitment(min_tx_e8s, &commitment),
+                    logic::CommitmentValidity::Valid { .. }
+                ) {
                     continue;
                 }
                 // ICP Index TransactionWithId.id is the ICP ledger block index / global
@@ -358,7 +413,8 @@ pub(super) async fn process_payout(
                     tx_timestamp_nanos,
                     now_nanos,
                     recognition_delay_seconds,
-                ).unwrap_or(0);
+                )
+                .unwrap_or(0);
                 denom_delta_e8s = denom_delta_e8s.saturating_add(weighted_amount_e8s);
                 round_end_staking_delta_e8s = round_end_staking_delta_e8s.saturating_add(
                     commitment_round_end_staking_delta_for_job_e8s(
@@ -368,24 +424,35 @@ pub(super) async fn process_payout(
                         tx_timestamp_nanos,
                         now_nanos,
                         recognition_delay_seconds,
-                    ).unwrap_or(0)
+                    )
+                    .unwrap_or(0),
                 );
             }
 
-            let scan_complete = reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty();
+            let scan_complete = reached_round_end
+                || resp.transactions.len() < PAGE_SIZE as usize
+                || resp.transactions.is_empty();
             state::with_state_mut(|st| {
                 if let Some(active_job) = st.active_payout_job.as_mut() {
                     active_job.effective_denom_staking_balance_e8s = Some(
                         active_job
                             .effective_denom_staking_balance_e8s
-                            .unwrap_or(active_job.round_start_staking_balance_e8s.unwrap_or(active_job.denom_staking_balance_e8s))
-                            .saturating_add(denom_delta_e8s)
+                            .unwrap_or(
+                                active_job
+                                    .round_start_staking_balance_e8s
+                                    .unwrap_or(active_job.denom_staking_balance_e8s),
+                            )
+                            .saturating_add(denom_delta_e8s),
                     );
                     active_job.round_end_staking_balance_e8s = Some(
                         active_job
                             .round_end_staking_balance_e8s
-                            .unwrap_or(active_job.round_start_staking_balance_e8s.unwrap_or(active_job.denom_staking_balance_e8s))
-                            .saturating_add(round_end_staking_delta_e8s)
+                            .unwrap_or(
+                                active_job
+                                    .round_start_staking_balance_e8s
+                                    .unwrap_or(active_job.denom_staking_balance_e8s),
+                            )
+                            .saturating_add(round_end_staking_delta_e8s),
                     );
                     if scan_complete {
                         active_job.effective_denom_scan_complete = Some(true);
@@ -412,9 +479,30 @@ pub(super) async fn process_payout(
             let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
             if remainder_gross_e8s > job.fee_e8s && job.remainder_to_self_e8s == 0 {
                 let self_id = self_canister_principal();
-                let pending = PendingNotification { kind: TransferKind::RemainderToSelf, beneficiary: self_id, gross_share_e8s: remainder_gross_e8s, amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s), block_index: 0, next_start: None, transfer_memo: None, destination_subaccount: None, neuron_id: None };
+                let pending = PendingNotification {
+                    kind: TransferKind::RemainderToSelf,
+                    beneficiary: self_id,
+                    gross_share_e8s: remainder_gross_e8s,
+                    amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s),
+                    block_index: 0,
+                    next_start: None,
+                    transfer_memo: None,
+                    destination_subaccount: None,
+                    neuron_id: None,
+                };
                 assert_no_persistence_batch_for_async();
-                if !send_and_notify(ledger, cmc, governance, pending, job.fee_e8s, now_nanos, now_secs, cfg.cmc_canister_id).await {
+                if !send_and_notify(
+                    ledger,
+                    cmc,
+                    governance,
+                    pending,
+                    job.fee_e8s,
+                    now_nanos,
+                    now_secs,
+                    cfg.cmc_canister_id,
+                )
+                .await
+                {
                     return true;
                 }
             }
@@ -424,12 +512,19 @@ pub(super) async fn process_payout(
             return true;
         }
 
-
-        if let Some(skip_to) = next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx) {
-            if job.round_end_latest_tx_id.map(|end| skip_to >= end).unwrap_or(false) {
-                state::with_state_mut(|st| if let Some(active_job) = st.active_payout_job.as_mut() {
-                    active_job.scan_complete = true;
-                    active_job.next_start = active_job.round_end_latest_tx_id;
+        if let Some(skip_to) =
+            next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx)
+        {
+            if job
+                .round_end_latest_tx_id
+                .map(|end| skip_to >= end)
+                .unwrap_or(false)
+            {
+                state::with_state_mut(|st| {
+                    if let Some(active_job) = st.active_payout_job.as_mut() {
+                        active_job.scan_complete = true;
+                        active_job.next_start = active_job.round_end_latest_tx_id;
+                    }
                 });
             } else {
                 state::with_state_mut(|st| {
@@ -442,16 +537,27 @@ pub(super) async fn process_payout(
         }
 
         assert_no_persistence_batch_for_async();
-        let resp = match index.get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE).await {
+        let resp = match index
+            .get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE)
+            .await
+        {
             Ok(v) => v,
             Err(_) => return false,
         };
         pages_scanned = pages_scanned.saturating_add(1);
         let descending = index_page_descending_from_cursor(&resp.transactions, job.next_start);
         let last_id = index_page_next_cursor(&resp.transactions);
-        let cursor_invariant_broken = job.next_start.zip(last_id).map(|(prev, latest)| {
-            if descending { latest >= prev } else { latest <= prev }
-        }).unwrap_or(false);
+        let cursor_invariant_broken = job
+            .next_start
+            .zip(last_id)
+            .map(|(prev, latest)| {
+                if descending {
+                    latest >= prev
+                } else {
+                    latest <= prev
+                }
+            })
+            .unwrap_or(false);
         if cursor_invariant_broken {
             state::with_state_mut(|st| {
                 if let Some(active_job) = st.active_payout_job.as_mut() {
@@ -500,7 +606,11 @@ pub(super) async fn process_payout(
             if !tx_is_after_cursor_for_page(tx.id, page_start, descending) {
                 continue;
             }
-            if job.round_end_latest_tx_id.map(|end| tx.id > end).unwrap_or(false) {
+            if job
+                .round_end_latest_tx_id
+                .map(|end| tx.id > end)
+                .unwrap_or(false)
+            {
                 if descending {
                     continue;
                 }
@@ -513,7 +623,10 @@ pub(super) async fn process_payout(
                 continue;
             };
             let snapshot = state::with_state(|st| {
-                let job = st.active_payout_job.as_ref().expect("active payout job missing");
+                let job = st
+                    .active_payout_job
+                    .as_ref()
+                    .expect("active payout job missing");
                 (
                     job.pot_start_e8s,
                     effective_denom_e8s(job),
@@ -539,14 +652,18 @@ pub(super) async fn process_payout(
                         logic::index_tx_timestamp_nanos(tx),
                         now_nanos,
                         recognition_delay_seconds(),
-                    ).unwrap_or(0);
-                    let gross_share_e8s = logic::compute_raw_share_e8s(amount_for_round_e8s, snapshot.0, snapshot.1);
+                    )
+                    .unwrap_or(0);
+                    let gross_share_e8s =
+                        logic::compute_raw_share_e8s(amount_for_round_e8s, snapshot.0, snapshot.1);
                     if gross_share_e8s <= snapshot.2 {
                         record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                         continue;
                     }
                     if snapshot.4.gross_outflow_e8s.saturating_add(gross_share_e8s) > snapshot.0 {
-                        state::latch_forced_rescue_reason(ForcedRescueReason::AccountingInvariantBroken);
+                        state::latch_forced_rescue_reason(
+                            ForcedRescueReason::AccountingInvariantBroken,
+                        );
                         return true;
                     }
                     record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
@@ -559,58 +676,101 @@ pub(super) async fn process_payout(
                             &skip_candidate,
                         );
                     }
-                    if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
+                    if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err()
+                    {
                         latch_skip_range_invariant_rescue();
                         return true;
                     }
-                    let (kind, beneficiary, transfer_memo, destination_subaccount, neuron_id) = match target {
-                        logic::PayoutTarget::CyclesTopUp { canister_id } => (TransferKind::Beneficiary, canister_id, None, None, None),
-                        logic::PayoutTarget::RawIcp { canister_id, memo } => (TransferKind::RawIcp, canister_id, Some(memo), None, None),
-                        logic::PayoutTarget::NeuronStake { neuron_id, memo } => {
-                            let subaccount = match neuron_staking_subaccount_retry_once(governance, neuron_id).await {
-                                Ok(subaccount) => subaccount,
-                                Err(_) => {
-                                    state::with_state_mut(|st| {
-                                        if let Some(job) = st.active_payout_job.as_mut() {
-                                            job.failed_topups = job.failed_topups.saturating_add(1);
-                                        }
-                                    });
-                                    continue;
-                                }
-                            };
-                            (
-                                TransferKind::NeuronStake,
-                                cfg.governance_canister_id.expect("governance_canister_id configured"),
-                                memo,
-                                Some(subaccount),
-                                Some(neuron_id),
-                            )
-                        }
+                    let (kind, beneficiary, transfer_memo, destination_subaccount, neuron_id) =
+                        match target {
+                            logic::PayoutTarget::CyclesTopUp { canister_id } => {
+                                (TransferKind::Beneficiary, canister_id, None, None, None)
+                            }
+                            logic::PayoutTarget::RawIcp { canister_id, memo } => {
+                                (TransferKind::RawIcp, canister_id, Some(memo), None, None)
+                            }
+                            logic::PayoutTarget::NeuronStake { neuron_id, memo } => {
+                                let subaccount = match neuron_staking_subaccount_retry_once(
+                                    governance, neuron_id,
+                                )
+                                .await
+                                {
+                                    Ok(subaccount) => subaccount,
+                                    Err(_) => {
+                                        state::with_state_mut(|st| {
+                                            if let Some(job) = st.active_payout_job.as_mut() {
+                                                job.failed_topups =
+                                                    job.failed_topups.saturating_add(1);
+                                            }
+                                        });
+                                        continue;
+                                    }
+                                };
+                                (
+                                    TransferKind::NeuronStake,
+                                    cfg.governance_canister_id
+                                        .expect("governance_canister_id configured"),
+                                    memo,
+                                    Some(subaccount),
+                                    Some(neuron_id),
+                                )
+                            }
+                        };
+                    let pending = PendingNotification {
+                        kind,
+                        beneficiary,
+                        gross_share_e8s,
+                        amount_e8s: gross_share_e8s.saturating_sub(snapshot.2),
+                        block_index: 0,
+                        next_start: Some(tx.id),
+                        transfer_memo,
+                        destination_subaccount,
+                        neuron_id,
                     };
-                    let pending = PendingNotification { kind, beneficiary, gross_share_e8s, amount_e8s: gross_share_e8s.saturating_sub(snapshot.2), block_index: 0, next_start: Some(tx.id), transfer_memo, destination_subaccount, neuron_id };
                     assert_no_persistence_batch_for_async();
-                    if !send_and_notify(ledger, cmc, governance, pending, snapshot.2, now_nanos, now_secs, cfg.cmc_canister_id).await {
+                    if !send_and_notify(
+                        ledger,
+                        cmc,
+                        governance,
+                        pending,
+                        snapshot.2,
+                        now_nanos,
+                        now_secs,
+                        cfg.cmc_canister_id,
+                    )
+                    .await
+                    {
                         return true;
                     }
                 }
             }
         }
-        let scan_complete = reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none();
+        let scan_complete =
+            reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none();
         if scan_complete {
             record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
         }
         {
             let _batch = state::begin_persistence_batch();
-            state::with_state_mut(|st| if let Some(job) = st.active_payout_job.as_mut() {
-                job.ignored_under_threshold = job.ignored_under_threshold.saturating_add(ignored_under_threshold_delta);
-                job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(ignored_bad_memo_delta);
-                if let Some(next_start) = page_next_start {
-                    job.next_start = Some(next_start);
+            state::with_state_mut(|st| {
+                if let Some(job) = st.active_payout_job.as_mut() {
+                    job.ignored_under_threshold = job
+                        .ignored_under_threshold
+                        .saturating_add(ignored_under_threshold_delta);
+                    job.ignored_bad_memo =
+                        job.ignored_bad_memo.saturating_add(ignored_bad_memo_delta);
+                    if let Some(next_start) = page_next_start {
+                        job.next_start = Some(next_start);
+                    }
+                    job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+                    job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+                    job.skip_candidate_tx_count = skip_candidate.tx_count;
+                    if scan_complete {
+                        job.scan_complete = true;
+                    } else if !reached_round_end {
+                        job.next_start = last_id;
+                    }
                 }
-                job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
-                job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
-                job.skip_candidate_tx_count = skip_candidate.tx_count;
-                if scan_complete { job.scan_complete = true; } else if !reached_round_end { job.next_start = last_id; }
             });
         }
         if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {

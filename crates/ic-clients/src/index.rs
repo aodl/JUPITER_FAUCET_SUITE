@@ -112,15 +112,21 @@ impl IcpIndexCanister {
         start: Option<u64>,
         max_results: u64,
     ) -> Result<GetAccountIdentifierTransactionsResponse, ClientError> {
-        let args = GetAccountIdentifierTransactionsArgs { max_results, start, account_identifier };
+        let args = GetAccountIdentifierTransactionsArgs {
+            max_results,
+            start,
+            account_identifier,
+        };
         let resp = Call::bounded_wait(self.index_id, "get_account_identifier_transactions")
             .with_arg(args)
             .change_timeout(60)
             .await
             .map_err(|e| ClientError::Call(format!("{e:?}")))?;
-        let decoded: GetAccountIdentifierTransactionsResult = resp
-            .candid()
-            .map_err(|e| ClientError::Call(format!("decode get_account_identifier_transactions failed: {e:?}")))?;
+        let decoded: GetAccountIdentifierTransactionsResult = resp.candid().map_err(|e| {
+            ClientError::Call(format!(
+                "decode get_account_identifier_transactions failed: {e:?}"
+            ))
+        })?;
         match decoded {
             GetAccountIdentifierTransactionsResult::Ok(r) => Ok(r),
             GetAccountIdentifierTransactionsResult::Err(e) => Err(ClientError::Call(e.message)),
@@ -150,8 +156,12 @@ mod tests {
                             amount: Tokens::new(123_456),
                             spender: "spender-account".to_string(),
                         },
-                        created_at_time: Some(IndexTimeStamp { timestamp_nanos: 123 }),
-                        timestamp: Some(IndexTimeStamp { timestamp_nanos: 456 }),
+                        created_at_time: Some(IndexTimeStamp {
+                            timestamp_nanos: 123,
+                        }),
+                        timestamp: Some(IndexTimeStamp {
+                            timestamp_nanos: 456,
+                        }),
                     },
                 }],
             },
@@ -161,13 +171,17 @@ mod tests {
         let decoded: GetAccountIdentifierTransactionsResult =
             candid::decode_one(&encoded).expect("decoding should succeed");
         match decoded {
-            GetAccountIdentifierTransactionsResult::Ok(resp) => match &resp.transactions[0].transaction.operation {
-                IndexOperation::TransferFrom { spender, amount, .. } => {
-                    assert_eq!(spender, "spender-account");
-                    assert_eq!(amount.e8s(), 123_456);
+            GetAccountIdentifierTransactionsResult::Ok(resp) => {
+                match &resp.transactions[0].transaction.operation {
+                    IndexOperation::TransferFrom {
+                        spender, amount, ..
+                    } => {
+                        assert_eq!(spender, "spender-account");
+                        assert_eq!(amount.e8s(), 123_456);
+                    }
+                    other => panic!("expected TransferFrom, got {other:?}"),
                 }
-                other => panic!("expected TransferFrom, got {other:?}"),
-            },
+            }
             other => panic!("expected Ok result, got {other:?}"),
         }
     }

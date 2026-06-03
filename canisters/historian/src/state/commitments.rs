@@ -58,14 +58,18 @@ pub(super) fn stable_cycles_history_keys_internal() -> BTreeSet<Principal> {
 }
 
 pub(super) fn stable_raw_icp_commitment_history_keys_internal() -> BTreeSet<Principal> {
-    with_raw_icp_commitment_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
+    with_raw_icp_commitment_history_index_map(|map| {
+        map.iter().map(|(key, _)| key.to_principal()).collect()
+    })
 }
 
 pub(super) fn stable_neuron_commitment_history_keys_internal() -> BTreeSet<u64> {
     with_neuron_commitment_history_index_map(|map| map.iter().map(|(key, _)| key).collect())
 }
 
-pub(super) fn load_stable_commitment_history_internal(canister_id: Principal) -> Vec<CommitmentSample> {
+pub(super) fn load_stable_commitment_history_internal(
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
     with_commitment_history_index_map(|index_map| {
         index_map
             .get(&PrincipalKey::from(canister_id))
@@ -83,7 +87,9 @@ pub(super) fn load_stable_commitment_history_internal(canister_id: Principal) ->
     })
 }
 
-pub(super) fn load_stable_raw_icp_commitment_history_internal(canister_id: Principal) -> Vec<CommitmentSample> {
+pub(super) fn load_stable_raw_icp_commitment_history_internal(
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
     with_raw_icp_commitment_history_index_map(|index_map| {
         index_map
             .get(&PrincipalKey::from(canister_id))
@@ -101,7 +107,9 @@ pub(super) fn load_stable_raw_icp_commitment_history_internal(canister_id: Princ
     })
 }
 
-pub(super) fn load_stable_neuron_commitment_history_internal(neuron_id: u64) -> Vec<CommitmentSample> {
+pub(super) fn load_stable_neuron_commitment_history_internal(
+    neuron_id: u64,
+) -> Vec<CommitmentSample> {
     with_neuron_commitment_history_index_map(|index_map| {
         index_map
             .get(&neuron_id)
@@ -136,4 +144,3 @@ pub(super) fn load_stable_cycles_history_internal(canister_id: Principal) -> Vec
             .unwrap_or_default()
     })
 }
-

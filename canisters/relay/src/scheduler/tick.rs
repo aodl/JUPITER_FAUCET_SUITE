@@ -13,7 +13,9 @@ use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::probe_cycles;
 use crate::scheduler::guards::MainGuard;
 use crate::scheduler::logging::{log_cycles_and_config, log_error, log_info, log_summary};
-use crate::scheduler::transfer::{drive_pending_faucet_commitment_transfer, drive_pending_transfer};
+use crate::scheduler::transfer::{
+    drive_pending_faucet_commitment_transfer, drive_pending_transfer,
+};
 use crate::state::{
     self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingFaucetCommitmentTransfer,
     PendingTransfer, PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary,

@@ -1,5 +1,11 @@
 use super::*;
-pub(super) fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_at_time_nanos: u64, memo_bytes: Vec<u8>) -> TransferArg {
+pub(super) fn transfer_arg(
+    to: Account,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    created_at_time_nanos: u64,
+    memo_bytes: Vec<u8>,
+) -> TransferArg {
     TransferArg {
         from_subaccount: state::with_state(|st| st.config.payout_subaccount),
         to,
@@ -10,14 +16,26 @@ pub(super) fn transfer_arg(to: Account, amount_e8s: u64, fee_e8s: u64, created_a
     }
 }
 
-pub(super) fn deposit_account_for_pending(cmc_id: candid::Principal, pending: &PendingNotification) -> Account {
+pub(super) fn deposit_account_for_pending(
+    cmc_id: candid::Principal,
+    pending: &PendingNotification,
+) -> Account {
     match pending.kind {
-        TransferKind::RawIcp => Account { owner: pending.beneficiary, subaccount: None },
+        TransferKind::RawIcp => Account {
+            owner: pending.beneficiary,
+            subaccount: None,
+        },
         TransferKind::NeuronStake => Account {
             owner: pending.beneficiary,
-            subaccount: Some(pending.destination_subaccount.expect("neuron stake pending transfer must include staking subaccount")),
+            subaccount: Some(
+                pending
+                    .destination_subaccount
+                    .expect("neuron stake pending transfer must include staking subaccount"),
+            ),
         },
-        TransferKind::Beneficiary | TransferKind::RemainderToSelf => logic::cmc_deposit_account(cmc_id, pending.beneficiary),
+        TransferKind::Beneficiary | TransferKind::RemainderToSelf => {
+            logic::cmc_deposit_account(cmc_id, pending.beneficiary)
+        }
     }
 }
 
@@ -37,7 +55,9 @@ pub(super) async fn drive_pending_transfer(
     now_nanos: u64,
     now_secs: u64,
 ) -> bool {
-    let Some(staged) = current_pending_transfer() else { return true; };
+    let Some(staged) = current_pending_transfer() else {
+        return true;
+    };
 
     let accepted = match staged.phase {
         PendingTransferPhase::AwaitingTransfer => {
@@ -67,13 +87,16 @@ pub(super) async fn drive_pending_transfer(
 
             let block_index = match transfer_once(ledger, first_arg).await {
                 TransferAttemptOutcome::Accepted(v) => v,
-                TransferAttemptOutcome::ImmediateRetryable => match transfer_once(ledger, second_arg).await {
-                    TransferAttemptOutcome::Accepted(v) => v,
-                    TransferAttemptOutcome::ImmediateRetryable | TransferAttemptOutcome::Failed => {
-                        clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
-                        return true;
+                TransferAttemptOutcome::ImmediateRetryable => {
+                    match transfer_once(ledger, second_arg).await {
+                        TransferAttemptOutcome::Accepted(v) => v,
+                        TransferAttemptOutcome::ImmediateRetryable
+                        | TransferAttemptOutcome::Failed => {
+                            clear_pending_transfer(PendingTransferTerminalStatus::Ambiguous);
+                            return true;
+                        }
                     }
-                },
+                }
                 TransferAttemptOutcome::Failed => {
                     clear_pending_transfer(PendingTransferTerminalStatus::Failed);
                     return true;
@@ -85,7 +108,9 @@ pub(super) async fn drive_pending_transfer(
                 #[cfg(feature = "debug_api")]
                 DebugSuccessfulTransferInjection::Abort => return false,
                 #[cfg(feature = "debug_api")]
-                DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful faucet transfer"),
+                DebugSuccessfulTransferInjection::Trap => {
+                    ic_cdk::trap("debug trap after successful faucet transfer")
+                }
             };
 
             match mark_pending_transfer_accepted(block_index) {
@@ -126,7 +151,9 @@ pub(super) async fn drive_pending_transfer(
                     record_completed_transfer(now_secs, &accepted);
                     true
                 }
-                NotifyAttemptOutcome::Terminal if matches!(first_notify, NotifyAttemptOutcome::Terminal) => {
+                NotifyAttemptOutcome::Terminal
+                    if matches!(first_notify, NotifyAttemptOutcome::Terminal) =>
+                {
                     clear_pending_transfer(PendingTransferTerminalStatus::Failed);
                     true
                 }
@@ -154,7 +181,11 @@ pub(super) async fn send_and_notify(
     let invariant_broken = state::with_state(|st| {
         st.active_payout_job
             .as_ref()
-            .map(|job| job.gross_outflow_e8s.saturating_add(pending.gross_share_e8s) > job.pot_start_e8s)
+            .map(|job| {
+                job.gross_outflow_e8s
+                    .saturating_add(pending.gross_share_e8s)
+                    > job.pot_start_e8s
+            })
             .unwrap_or(false)
     });
     if invariant_broken {
@@ -163,5 +194,8 @@ pub(super) async fn send_and_notify(
     }
     let created_at_time_nanos = allocate_created_at_time_nanos(now_nanos);
     stage_pending_transfer(pending, created_at_time_nanos);
-    drive_pending_transfer(ledger, cmc, governance, cmc_id, fee_e8s, now_nanos, now_secs).await
+    drive_pending_transfer(
+        ledger, cmc, governance, cmc_id, fee_e8s, now_nanos, now_secs,
+    )
+    .await
 }

@@ -12,23 +12,34 @@ pub(super) fn mainnet_blackhole_id() -> Principal {
 }
 
 pub(crate) fn mainnet_disburser_id() -> Principal {
-    Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai").expect("invalid hardcoded disburser principal")
+    Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai")
+        .expect("invalid hardcoded disburser principal")
 }
 
 pub(crate) fn mainnet_rewards_id() -> Principal {
-    Principal::from_text("alk7f-5aaaa-aaaar-qb4ra-cai").expect("invalid hardcoded rewards principal")
+    Principal::from_text("alk7f-5aaaa-aaaar-qb4ra-cai")
+        .expect("invalid hardcoded rewards principal")
 }
 
 pub(crate) fn mainnet_disburser_staging_account() -> Account {
-    Account { owner: mainnet_disburser_id(), subaccount: None }
+    Account {
+        owner: mainnet_disburser_id(),
+        subaccount: None,
+    }
 }
 
 pub(crate) fn mainnet_output_account() -> Account {
-    Account { owner: mainnet_faucet_id(), subaccount: None }
+    Account {
+        owner: mainnet_faucet_id(),
+        subaccount: None,
+    }
 }
 
 pub(crate) fn mainnet_rewards_account() -> Account {
-    Account { owner: mainnet_rewards_id(), subaccount: None }
+    Account {
+        owner: mainnet_rewards_id(),
+        subaccount: None,
+    }
 }
 
 pub(crate) fn mainnet_cmc_id() -> Principal {
@@ -49,7 +60,8 @@ pub(crate) fn mainnet_xrc_id() -> Principal {
 
 #[cfg(any(test, feature = "debug_api"))]
 pub(super) fn production_canister_id() -> Principal {
-    Principal::from_text(env!("JUPITER_HISTORIAN_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
+    Principal::from_text(env!("JUPITER_HISTORIAN_PROD_CANISTER_ID"))
+        .expect("invalid embedded production canister principal")
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -67,24 +79,38 @@ pub(super) fn guard_debug_api_not_production() {
 pub(super) fn config_from_init_args(args: InitArgs) -> Config {
     let cfg = Config {
         staking_account: args.staking_account,
-        output_source_account: args.output_source_account.unwrap_or_else(mainnet_disburser_staging_account),
+        output_source_account: args
+            .output_source_account
+            .unwrap_or_else(mainnet_disburser_staging_account),
         output_account: args.output_account.unwrap_or_else(mainnet_output_account),
         rewards_account: args.rewards_account.unwrap_or_else(mainnet_rewards_account),
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: Some(args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id)),
         faucet_canister_id: Some(args.faucet_canister_id.unwrap_or_else(mainnet_faucet_id)),
-        blackhole_canister_id: args.blackhole_canister_id.unwrap_or_else(mainnet_blackhole_id),
-        sns_wasm_canister_id: args.sns_wasm_canister_id.unwrap_or_else(mainnet_sns_wasm_id),
+        blackhole_canister_id: args
+            .blackhole_canister_id
+            .unwrap_or_else(mainnet_blackhole_id),
+        sns_wasm_canister_id: args
+            .sns_wasm_canister_id
+            .unwrap_or_else(mainnet_sns_wasm_id),
         xrc_canister_id: args.xrc_canister_id.unwrap_or_else(mainnet_xrc_id),
         enable_sns_tracking: args.enable_sns_tracking.unwrap_or(false),
         scan_interval_seconds: args.scan_interval_seconds.unwrap_or(10 * 60),
         cycles_interval_seconds: args.cycles_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
-        max_cycles_entries_per_canister: clamp_cycles_entries_per_canister(args.max_cycles_entries_per_canister.unwrap_or(100)),
-        max_commitment_entries_per_canister: clamp_commitment_entries_per_canister(args.max_commitment_entries_per_canister.unwrap_or(100)),
-        max_index_pages_per_tick: clamp_index_pages_per_tick(args.max_index_pages_per_tick.unwrap_or(10)),
-        max_canisters_per_cycles_tick: clamp_canisters_per_cycles_tick(args.max_canisters_per_cycles_tick.unwrap_or(25)),
+        max_cycles_entries_per_canister: clamp_cycles_entries_per_canister(
+            args.max_cycles_entries_per_canister.unwrap_or(100),
+        ),
+        max_commitment_entries_per_canister: clamp_commitment_entries_per_canister(
+            args.max_commitment_entries_per_canister.unwrap_or(100),
+        ),
+        max_index_pages_per_tick: clamp_index_pages_per_tick(
+            args.max_index_pages_per_tick.unwrap_or(10),
+        ),
+        max_canisters_per_cycles_tick: clamp_canisters_per_cycles_tick(
+            args.max_canisters_per_cycles_tick.unwrap_or(25),
+        ),
     };
     validate_config(&cfg);
     cfg
@@ -122,9 +148,10 @@ pub(super) fn count_sns_discovered_canisters(st: &State) -> u64 {
         .count() as u64
 }
 
-
 pub(super) fn effective_faucet_canister_id(st: &State) -> Principal {
-    st.config.faucet_canister_id.unwrap_or_else(mainnet_faucet_id)
+    st.config
+        .faucet_canister_id
+        .unwrap_or_else(mainnet_faucet_id)
 }
 
 pub(super) fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Option<u64>) {
@@ -140,7 +167,10 @@ pub(super) fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Opti
 }
 
 pub(super) fn latest_cycles(history: &[CyclesSample]) -> Option<u128> {
-    history.iter().max_by_key(|item| item.timestamp_nanos).map(|item| item.cycles)
+    history
+        .iter()
+        .max_by_key(|item| item.timestamp_nanos)
+        .map(|item| item.cycles)
 }
 
 pub(super) fn commitment_history_canister_ids(st: &State) -> BTreeSet<Principal> {
@@ -159,7 +189,10 @@ pub(super) fn cycles_history_canister_ids(st: &State) -> BTreeSet<Principal> {
         .collect()
 }
 
-pub(super) fn commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
+pub(super) fn commitment_history_snapshot(
+    st: &State,
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
     st.commitment_history
         .get(&canister_id)
         .cloned()
@@ -173,14 +206,20 @@ pub(super) fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec
         .unwrap_or_else(|| state::stable_cycles_history_for(canister_id))
 }
 
-pub(super) fn raw_icp_commitment_history_snapshot(st: &State, canister_id: Principal) -> Vec<CommitmentSample> {
+pub(super) fn raw_icp_commitment_history_snapshot(
+    st: &State,
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
     st.raw_icp_commitment_history
         .get(&canister_id)
         .cloned()
         .unwrap_or_else(|| state::stable_raw_icp_commitment_history_for(canister_id))
 }
 
-pub(super) fn neuron_commitment_history_snapshot(st: &State, neuron_id: u64) -> Vec<CommitmentSample> {
+pub(super) fn neuron_commitment_history_snapshot(
+    st: &State,
+    neuron_id: u64,
+) -> Vec<CommitmentSample> {
     st.neuron_commitment_history
         .get(&neuron_id)
         .cloned()
@@ -239,7 +278,9 @@ pub(super) fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<Re
     items
 }
 
-pub(super) fn fallback_recent_under_threshold_commitments_state(st: &State) -> Vec<RecentCommitment> {
+pub(super) fn fallback_recent_under_threshold_commitments_state(
+    st: &State,
+) -> Vec<RecentCommitment> {
     let mut items: Vec<_> = commitment_history_canister_ids(st)
         .into_iter()
         .flat_map(|canister_id| {
@@ -293,25 +334,34 @@ pub(super) fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentLis
             }),
     );
     if let Some(invalid) = &st.recent_invalid_commitments {
-        items.extend(invalid.iter().cloned().map(|item| RecentCommitmentListItem {
-            canister_id: None,
-            neuron_id: None,
-            raw_icp_memo_text: None,
-            neuron_memo_text: None,
-            memo_text: Some(item.memo_text),
-            tx_id: item.tx_id,
-            timestamp_nanos: item.timestamp_nanos,
-            amount_e8s: item.amount_e8s,
-            counts_toward_faucet: false,
-            outcome_category: RecentCommitmentOutcomeCategory::InvalidTargetMemo,
-        }));
+        items.extend(
+            invalid
+                .iter()
+                .cloned()
+                .map(|item| RecentCommitmentListItem {
+                    canister_id: None,
+                    neuron_id: None,
+                    raw_icp_memo_text: None,
+                    neuron_memo_text: None,
+                    memo_text: Some(item.memo_text),
+                    tx_id: item.tx_id,
+                    timestamp_nanos: item.timestamp_nanos,
+                    amount_e8s: item.amount_e8s,
+                    counts_toward_faucet: false,
+                    outcome_category: RecentCommitmentOutcomeCategory::InvalidTargetMemo,
+                }),
+        );
     }
     items.sort_by(|a, b| {
         let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
         let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
         b_key.cmp(&a_key)
     });
-    items.truncate(MAX_RECENT_QUALIFYING_COMMITMENTS + MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS + MAX_RECENT_INVALID_COMMITMENTS);
+    items.truncate(
+        MAX_RECENT_QUALIFYING_COMMITMENTS
+            + MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS
+            + MAX_RECENT_INVALID_COMMITMENTS,
+    );
     items
 }
 
@@ -341,7 +391,8 @@ pub(super) fn initialize_derived_state_if_missing(st: &mut State) {
         st.recent_commitments = Some(fallback_recent_qualifying_commitments_state(st));
     }
     if st.recent_under_threshold_commitments.is_none() {
-        st.recent_under_threshold_commitments = Some(fallback_recent_under_threshold_commitments_state(st));
+        st.recent_under_threshold_commitments =
+            Some(fallback_recent_under_threshold_commitments_state(st));
     }
     if st.recent_neuron_commitments.is_none() {
         st.recent_neuron_commitments = Some(Vec::new());
@@ -362,14 +413,22 @@ pub(super) fn initialize_derived_state_if_missing(st: &mut State) {
     }
 }
 
-pub(super) fn registered_canister_summary_for(st: &State, canister_id: Principal) -> Option<RegisteredCanisterSummary> {
+pub(super) fn registered_canister_summary_for(
+    st: &State,
+    canister_id: Principal,
+) -> Option<RegisteredCanisterSummary> {
     let sources = visible_sources_for_canister(st, &canister_id)?;
     let history = commitment_history_snapshot(st, canister_id);
     if history.is_empty() {
         return None;
     }
-    let (qualifying_commitment_count, total_qualifying_committed_e8s, rollup_last_ts) = qualifying_rollup(&history);
-    let meta = st.per_canister_meta.get(&canister_id).cloned().unwrap_or_default();
+    let (qualifying_commitment_count, total_qualifying_committed_e8s, rollup_last_ts) =
+        qualifying_rollup(&history);
+    let meta = st
+        .per_canister_meta
+        .get(&canister_id)
+        .cloned()
+        .unwrap_or_default();
     let cycles_history = cycles_history_snapshot(st, canister_id);
     Some(RegisteredCanisterSummary {
         canister_id,
@@ -382,11 +441,19 @@ pub(super) fn registered_canister_summary_for(st: &State, canister_id: Principal
     })
 }
 
-pub(super) fn registered_canister_summary_total_desc_key(item: &RegisteredCanisterSummary) -> (Reverse<u64>, Principal) {
-    (Reverse(item.total_qualifying_committed_e8s), item.canister_id)
+pub(super) fn registered_canister_summary_total_desc_key(
+    item: &RegisteredCanisterSummary,
+) -> (Reverse<u64>, Principal) {
+    (
+        Reverse(item.total_qualifying_committed_e8s),
+        item.canister_id,
+    )
 }
 
-pub(super) fn remove_registered_canister_from_total_desc_index(index: &mut Vec<Principal>, canister_id: Principal) {
+pub(super) fn remove_registered_canister_from_total_desc_index(
+    index: &mut Vec<Principal>,
+    canister_id: Principal,
+) {
     index.retain(|existing| *existing != canister_id);
 }
 
@@ -418,7 +485,11 @@ pub(super) fn registered_canister_summaries_total_desc_page(
 ) -> Option<ListRegisteredCanisterSummariesResponse> {
     let cache = st.registered_canister_summaries_cache.as_ref()?;
     let index = st.registered_canister_summaries_total_desc_index.as_ref()?;
-    if index.len() != cache.len() || index.iter().any(|canister_id| !cache.contains_key(canister_id)) {
+    if index.len() != cache.len()
+        || index
+            .iter()
+            .any(|canister_id| !cache.contains_key(canister_id))
+    {
         return None;
     }
     let total = index.len() as u64;
@@ -448,7 +519,8 @@ pub(crate) fn refresh_registered_canister_summary(st: &mut State, canister_id: P
         ..
     } = st;
     let cache = registered_canister_summaries_cache.get_or_insert_with(BTreeMap::new);
-    let total_desc_index = registered_canister_summaries_total_desc_index.get_or_insert_with(Vec::new);
+    let total_desc_index =
+        registered_canister_summaries_total_desc_index.get_or_insert_with(Vec::new);
     remove_registered_canister_from_total_desc_index(total_desc_index, canister_id);
     if let Some(summary) = summary {
         cache.insert(canister_id, summary);
@@ -518,7 +590,8 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
             st.config.max_cycles_entries_per_canister = clamp_cycles_entries_per_canister(v);
         }
         if let Some(v) = args.max_commitment_entries_per_canister {
-            st.config.max_commitment_entries_per_canister = clamp_commitment_entries_per_canister(v);
+            st.config.max_commitment_entries_per_canister =
+                clamp_commitment_entries_per_canister(v);
         }
         if let Some(v) = args.max_index_pages_per_tick {
             st.config.max_index_pages_per_tick = clamp_index_pages_per_tick(v);
@@ -560,8 +633,13 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     st.main_lock_state_ts = Some(0);
 }
 
-pub(super) fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
-    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>("historian", raw)
+pub(super) fn decode_post_upgrade_args_from_bytes(
+    raw: &[u8],
+) -> Result<Option<UpgradeArgs>, String> {
+    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>(
+        "historian",
+        raw,
+    )
 }
 
 pub(super) fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
@@ -571,7 +649,8 @@ pub(super) fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
 #[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
 pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
     state::init_stable_storage();
-    let mut st: State = state::restore_state_from_stable().expect("stable state missing during historian post_upgrade");
+    let mut st: State = state::restore_state_from_stable()
+        .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
     // Persist only the historian root on upgrade. Commitment/cycles histories are

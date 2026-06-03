@@ -61,7 +61,9 @@ pub(crate) const DIRTY_ALL: u8 = DIRTY_ROOT
     | DIRTY_RAW_ICP_COMMITMENTS
     | DIRTY_NEURON_COMMITMENTS;
 
-pub(super) fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R) -> R {
+pub(super) fn with_root_stable_cell<R>(
+    f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R,
+) -> R {
     STABLE_ROOT_STATE.with(|cell| {
         if cell.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
@@ -72,13 +74,11 @@ pub(super) fn with_root_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedS
             });
         }
         let mut borrow = cell.borrow_mut();
-        f(borrow.as_mut().expect("historian root stable cell not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian root stable cell not initialized"))
     })
 }
-
-
-
-
 
 pub(super) fn with_canister_sources_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableSourceSet, Memory>) -> R,
@@ -92,7 +92,9 @@ pub(super) fn with_canister_sources_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian canister-sources stable map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian canister-sources stable map not initialized"))
     })
 }
 
@@ -108,11 +110,11 @@ pub(super) fn with_canister_meta_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian canister-meta stable map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian canister-meta stable map not initialized"))
     })
 }
-
-
 
 pub(super) fn with_commitment_history_index_map<R>(
     f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableU64List, Memory>) -> R,
@@ -126,7 +128,9 @@ pub(super) fn with_commitment_history_index_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian commitment-history index map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian commitment-history index map not initialized"))
     })
 }
 
@@ -142,7 +146,9 @@ pub(super) fn with_cycles_history_index_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian cycles-history index map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian cycles-history index map not initialized"))
     })
 }
 
@@ -158,7 +164,9 @@ pub(super) fn with_commitment_entry_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian commitment entry map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian commitment entry map not initialized"))
     })
 }
 
@@ -174,7 +182,9 @@ pub(super) fn with_cycles_entry_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian cycles entry map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian cycles entry map not initialized"))
     })
 }
 
@@ -190,7 +200,9 @@ pub(super) fn with_raw_icp_commitment_history_index_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian raw ICP commitment-history index map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian raw ICP commitment-history index map not initialized"))
     })
 }
 
@@ -206,7 +218,9 @@ pub(super) fn with_raw_icp_commitment_entry_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian raw ICP commitment entry map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian raw ICP commitment entry map not initialized"))
     })
 }
 
@@ -222,7 +236,9 @@ pub(super) fn with_neuron_commitment_history_index_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian neuron commitment-history index map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian neuron commitment-history index map not initialized"))
     })
 }
 
@@ -238,6 +254,8 @@ pub(super) fn with_neuron_commitment_entry_map<R>(
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("historian neuron commitment entry map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("historian neuron commitment entry map not initialized"))
     })
 }

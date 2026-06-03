@@ -10,13 +10,9 @@ all-features = false
 # dependencies provide a safe upgrade path.
 ignore = [
     { id = "RUSTSEC-2025-0012", reason = "backoff 0.4.0 is pulled only through pocket-ic 13.0.0 dev/test tooling; no safe upgrade exists in the current PocketIC release. Track with PocketIC dependency updates and remove when pocket-ic drops backoff." },
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.3.3 is transitive through pinned DFINITY NNS/governance crates and build-info; the advisory is unmaintained with no safe upgrade. Runtime exposure is limited to upstream IC type/support code rather than Jupiter-owned serialization policy. Track with DFINITY IC revision updates." },
-    { id = "RUSTSEC-2024-0388", reason = "derivative 2.2.0 is transitive through pinned DFINITY SNS governance crates; no safe upgrade is available without changing the DFINITY IC revision. Track with DFINITY IC revision updates." },
     { id = "RUSTSEC-2024-0384", reason = "instant 0.1.13 is pulled only through pocket-ic/backoff dev/test tooling; no safe upgrade exists in the current PocketIC release. Track with PocketIC dependency updates." },
-    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 is transitive through candid and pinned DFINITY IC crates; no safe upgrade is available without upstream changes. Runtime use is macro expansion/build-time support. Track with candid and DFINITY IC updates." },
-    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error 1.0.4 is transitive proc-macro/build-time support through DFINITY/candid-derived crates; no safe upgrade is available without upstream changes. Track with DFINITY IC and candid updates." },
-    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9.10 is transitive through DFINITY SEV attestation types. Jupiter canisters do not perform network-observable RSA private-key operations with this crate; no patched rsa release exists. Track with DFINITY IC and RustCrypto RSA updates." },
-    { id = "RUSTSEC-2021-0127", reason = "serde_cbor 0.11.2 is transitive through pinned DFINITY IC crates, ic-http-certification, and PocketIC support; no safe upgrade exists for those upstream paths. Track with DFINITY IC, ic-http-certification, and PocketIC updates." },
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 is transitive through candid and ic-cdk macros; no safe upgrade is available without upstream candid/ic-cdk changes. Runtime use is macro expansion/build-time support. Track with candid and ic-cdk updates." },
+    { id = "RUSTSEC-2021-0127", reason = "serde_cbor 0.11.2 is transitive through ic-http-certification and PocketIC support; no safe upgrade exists for those upstream paths. Track with ic-http-certification and PocketIC updates." },
 ]
 
 [licenses]
@@ -37,19 +33,7 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# DFINITY IC crates are pinned from the upstream IC repository for NNS,
-# governance, ledger, and Internet Computer type compatibility. Many upstream
-# manifests omit SPDX license fields. The nearest upstream LICENSE file is used
-# as the source of truth for each clarification below. Custom DFINITY license
-# refs are intentionally not allowed globally; they are allowed only where the
-# current pinned IC source tree places a package under that LICENSE file.
-exceptions = [
-    { crate = "ic-crypto-internal-types", allow = ["LicenseRef-DFINITY-IC-shared-1.0"] },
-    { crate = "ic-crypto-tree-hash", allow = ["LicenseRef-DFINITY-IC-1.0"] },
-    { crate = "ic-registry-canister-api", allow = ["LicenseRef-DFINITY-IC-1.0"] },
-    { crate = "ic-registry-keys", allow = ["LicenseRef-DFINITY-IC-1.0"] },
-    { crate = "ic-registry-transport", allow = ["LicenseRef-DFINITY-IC-1.0"] },
-]
+exceptions = []
 
 [licenses.private]
 # Workspace crates are private protocol canisters, mocks, support crates, and xtask.
@@ -382,9 +366,4 @@ allow-workspace = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# DFINITY IC git crates are pinned in Cargo.toml for NNS/governance/ledger type compatibility.
-# build-info is a transitive pinned git dependency of the same DFINITY IC source graph.
-allow-git = [
-    "https://github.com/dfinity/ic",
-    "https://github.com/dfinity-lab/build-info",
-]
+allow-git = []

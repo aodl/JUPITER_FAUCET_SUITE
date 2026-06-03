@@ -314,7 +314,13 @@ pub(crate) struct ActivePayoutJob {
 }
 
 impl ActivePayoutJob {
-    pub(crate) fn new(id: u64, fee_e8s: u64, pot_start_e8s: u64, denom_staking_balance_e8s: u64, created_at_time_nanos: u64) -> Self {
+    pub(crate) fn new(
+        id: u64,
+        fee_e8s: u64,
+        pot_start_e8s: u64,
+        denom_staking_balance_e8s: u64,
+        created_at_time_nanos: u64,
+    ) -> Self {
         Self {
             id,
             fee_e8s,
@@ -378,7 +384,12 @@ impl ActivePayoutJob {
         self.round_end_staking_balance_e8s = Some(effective_denom_staking_balance_e8s);
     }
 
-    pub(crate) fn configure_funding_tranche(&mut self, tx_id: u64, timestamp_nanos: u64, amount_e8s: u64) {
+    pub(crate) fn configure_funding_tranche(
+        &mut self,
+        tx_id: u64,
+        timestamp_nanos: u64,
+        amount_e8s: u64,
+    ) {
         self.funding_tx_id = Some(tx_id);
         self.funding_tx_timestamp_nanos = Some(timestamp_nanos);
         self.funding_amount_e8s = Some(amount_e8s);
@@ -519,7 +530,9 @@ fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, M
             });
         }
         let mut borrow = map.borrow_mut();
-        f(borrow.as_mut().expect("faucet skip-range stable map not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("faucet skip-range stable map not initialized"))
     })
 }
 
@@ -538,11 +551,17 @@ pub(crate) fn list_skip_ranges() -> Vec<SkipRange> {
     })
 }
 
-pub(crate) fn validate_skip_range_insertion(existing: &[SkipRange], range: &SkipRange) -> Result<(), SkipRangeInsertError> {
+pub(crate) fn validate_skip_range_insertion(
+    existing: &[SkipRange],
+    range: &SkipRange,
+) -> Result<(), SkipRangeInsertError> {
     if range.start_tx_id > range.end_tx_id {
         return Err(SkipRangeInsertError::InvalidRange);
     }
-    if existing.iter().any(|candidate| candidate.start_tx_id == range.start_tx_id) {
+    if existing
+        .iter()
+        .any(|candidate| candidate.start_tx_id == range.start_tx_id)
+    {
         return Err(SkipRangeInsertError::DuplicateStart);
     }
     if let Some(previous) = existing
@@ -573,7 +592,10 @@ pub(crate) fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertE
     let existing = list_skip_ranges();
     validate_skip_range_insertion(&existing, &range)?;
     with_skip_range_map(|map| {
-        map.insert(U64Key::from(range.start_tx_id), U64Value::from(range.end_tx_id));
+        map.insert(
+            U64Key::from(range.start_tx_id),
+            U64Value::from(range.end_tx_id),
+        );
     });
     Ok(())
 }
@@ -619,7 +641,9 @@ pub(crate) fn set_state(st: State) {
 }
 
 pub(crate) fn get_state() -> State {
-    STATE.with(|s| s.borrow().clone()).expect("state not initialized")
+    STATE
+        .with(|s| s.borrow().clone())
+        .expect("state not initialized")
 }
 
 pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
@@ -652,11 +676,13 @@ pub(crate) type PersistenceBatch = jupiter_persistence_batch::PersistenceBatch;
 
 #[must_use]
 pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
-    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
+    PERSISTENCE_BATCH_DEPTH
+        .with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch::new(|| {
         let should_flush = PERSISTENCE_BATCH_DEPTH.with(|depth| {
             let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
-            let (next_depth, should_flush) = jupiter_persistence_batch::finish_depth(depth.get(), dirty);
+            let (next_depth, should_flush) =
+                jupiter_persistence_batch::finish_depth(depth.get(), dirty);
             depth.set(next_depth);
             should_flush
         });
@@ -684,7 +710,6 @@ pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,13 +731,19 @@ mod tests {
 
     fn sample_config() -> Config {
         Config {
-            staking_account: Account { owner: principal(&[1]), subaccount: None },
+            staking_account: Account {
+                owner: principal(&[1]),
+                subaccount: None,
+            },
             payout_subaccount: Some([7; 32]),
             ledger_canister_id: principal(&[2]),
             index_canister_id: principal(&[3]),
             cmc_canister_id: principal(&[4]),
             governance_canister_id: Some(principal(&[9])),
-            funding_source_account: Account { owner: principal(&[8]), subaccount: None },
+            funding_source_account: Account {
+                owner: principal(&[8]),
+                subaccount: None,
+            },
             rescue_controller: principal(&[5]),
             blackhole_controller: Some(principal(&[6])),
             blackhole_armed: Some(false),
@@ -729,7 +760,9 @@ mod tests {
         let line = runtime_config_log_line(&sample_config());
         assert!(line.starts_with("CONFIG "));
         assert!(line.contains("staking_account="));
-        assert!(line.contains("payout_subaccount=0707070707070707070707070707070707070707070707070707070707070707"));
+        assert!(line.contains(
+            "payout_subaccount=0707070707070707070707070707070707070707070707070707070707070707"
+        ));
         assert!(line.contains("ledger_canister_id="));
         assert!(line.contains("index_canister_id="));
         assert!(line.contains("cmc_canister_id="));
@@ -811,7 +844,8 @@ mod tests {
             next_start: Some(10),
         };
         let bytes = candid::encode_one(legacy).expect("encode legacy pending notification");
-        let decoded: PendingNotification = candid::decode_one(&bytes).expect("decode legacy pending notification");
+        let decoded: PendingNotification =
+            candid::decode_one(&bytes).expect("decode legacy pending notification");
         assert_eq!(decoded.kind, TransferKind::Beneficiary);
         assert_eq!(decoded.beneficiary, principal(&[8]));
         assert_eq!(decoded.transfer_memo, None);
@@ -892,7 +926,8 @@ mod tests {
             last_main_run_ts: 66,
         });
         let bytes = candid::encode_one(legacy).expect("encode legacy faucet shape");
-        let decoded: VersionedStableState = candid::decode_one(&bytes).expect("decode legacy faucet shape");
+        let decoded: VersionedStableState =
+            candid::decode_one(&bytes).expect("decode legacy faucet shape");
 
         let VersionedStableState::V1(restored) = decoded else {
             panic!("expected V1 faucet state");
@@ -931,7 +966,8 @@ mod tests {
             cmc_success_count: Some(2),
         };
         let job_bytes = candid::encode_one(legacy_job).expect("encode legacy active job shape");
-        let job: ActivePayoutJob = candid::decode_one(&job_bytes).expect("decode legacy active job shape");
+        let job: ActivePayoutJob =
+            candid::decode_one(&job_bytes).expect("decode legacy active job shape");
         assert_eq!(job.id, 9);
         assert_eq!(job.ambiguous_topups, 0);
         assert_eq!(job.pending_transfer, None);
@@ -950,7 +986,8 @@ mod tests {
             st.main_lock_state_ts = Some(99);
         });
 
-        let restored = restore_state_from_stable().expect("expected persisted faucet state after mutation");
+        let restored =
+            restore_state_from_stable().expect("expected persisted faucet state after mutation");
         assert_eq!(restored.last_observed_staking_balance_e8s, Some(555));
         assert_eq!(restored.main_lock_state_ts, Some(99));
     }
@@ -966,13 +1003,15 @@ mod tests {
                 st.last_observed_staking_balance_e8s = Some(777);
                 st.main_lock_state_ts = Some(123);
             });
-            let restored_mid = restore_state_from_stable().expect("expected persisted state before batch mutation");
+            let restored_mid = restore_state_from_stable()
+                .expect("expected persisted state before batch mutation");
             assert_ne!(restored_mid.last_observed_staking_balance_e8s, Some(777));
             assert_ne!(restored_mid.main_lock_state_ts, Some(123));
             persist_dirty_state();
         }
 
-        let restored = restore_state_from_stable().expect("expected persisted state after batch flush");
+        let restored =
+            restore_state_from_stable().expect("expected persisted state after batch flush");
         assert_eq!(restored.last_observed_staking_balance_e8s, Some(777));
         assert_eq!(restored.main_lock_state_ts, Some(123));
     }
@@ -980,14 +1019,28 @@ mod tests {
     #[test]
     fn skip_ranges_round_trip_through_dedicated_stable_map() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 25 }).expect("first skip range should persist");
-        insert_skip_range(SkipRange { start_tx_id: 40, end_tx_id: 60 }).expect("second skip range should persist");
+        insert_skip_range(SkipRange {
+            start_tx_id: 10,
+            end_tx_id: 25,
+        })
+        .expect("first skip range should persist");
+        insert_skip_range(SkipRange {
+            start_tx_id: 40,
+            end_tx_id: 60,
+        })
+        .expect("second skip range should persist");
 
         assert_eq!(
             list_skip_ranges(),
             vec![
-                SkipRange { start_tx_id: 10, end_tx_id: 25 },
-                SkipRange { start_tx_id: 40, end_tx_id: 60 },
+                SkipRange {
+                    start_tx_id: 10,
+                    end_tx_id: 25
+                },
+                SkipRange {
+                    start_tx_id: 40,
+                    end_tx_id: 60
+                },
             ]
         );
     }
@@ -995,8 +1048,16 @@ mod tests {
     #[test]
     fn clear_skip_ranges_removes_all_entries() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 100, end_tx_id: 200 }).expect("first skip range should persist");
-        insert_skip_range(SkipRange { start_tx_id: 400, end_tx_id: 800 }).expect("second skip range should persist");
+        insert_skip_range(SkipRange {
+            start_tx_id: 100,
+            end_tx_id: 200,
+        })
+        .expect("first skip range should persist");
+        insert_skip_range(SkipRange {
+            start_tx_id: 400,
+            end_tx_id: 800,
+        })
+        .expect("second skip range should persist");
 
         clear_skip_ranges();
 
@@ -1006,18 +1067,34 @@ mod tests {
     #[test]
     fn skip_range_insertion_rejects_adjacent_ranges() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 }).expect("baseline range should persist");
+        insert_skip_range(SkipRange {
+            start_tx_id: 10,
+            end_tx_id: 20,
+        })
+        .expect("baseline range should persist");
 
-        let err = insert_skip_range(SkipRange { start_tx_id: 21, end_tx_id: 30 }).expect_err("adjacent skip range should be rejected");
+        let err = insert_skip_range(SkipRange {
+            start_tx_id: 21,
+            end_tx_id: 30,
+        })
+        .expect_err("adjacent skip range should be rejected");
         assert_eq!(err, SkipRangeInsertError::OverlapsOrAbutsPredecessor);
     }
 
     #[test]
     fn skip_range_insertion_rejects_same_start_as_existing_range() {
         reset_test_storage();
-        insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 20 }).expect("baseline range should persist");
+        insert_skip_range(SkipRange {
+            start_tx_id: 10,
+            end_tx_id: 20,
+        })
+        .expect("baseline range should persist");
 
-        let err = insert_skip_range(SkipRange { start_tx_id: 10, end_tx_id: 30 }).expect_err("duplicate-start skip range should be rejected");
+        let err = insert_skip_range(SkipRange {
+            start_tx_id: 10,
+            end_tx_id: 30,
+        })
+        .expect_err("duplicate-start skip range should be rejected");
         assert_eq!(err, SkipRangeInsertError::DuplicateStart);
     }
 
@@ -1044,5 +1121,4 @@ mod tests {
         let fault = with_state(|st| st.skip_range_invariant_fault);
         assert_eq!(fault, Some(true));
     }
-
 }

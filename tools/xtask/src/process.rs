@@ -68,7 +68,10 @@ pub(crate) fn run_icp(args: &[&str]) -> Result<String> {
 }
 
 pub(crate) fn run_icp_with_identity(args: &[&str]) -> Result<String> {
-    let mut owned = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    let mut owned = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
     owned.push("--identity".to_string());
     owned.push(LOCAL_IDENTITY.to_string());
     let refs = owned.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();

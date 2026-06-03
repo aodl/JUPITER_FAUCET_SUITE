@@ -10,7 +10,8 @@ pub(super) struct MainGuard {
 impl MainGuard {
     pub(super) fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            let inner = TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
+            let inner =
+                TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
             let lease_expires_at_ts = inner.lease_expires_at_ts();
             st.main_lock_state_ts = Some(lease_expires_at_ts);
             Some(Self { inner })

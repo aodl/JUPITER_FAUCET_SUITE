@@ -60,5 +60,6 @@ impl IcrcLedgerCanister {
 }
 
 fn nat_to_u64(n: &Nat) -> Result<u64, ClientError> {
-    u64::try_from(n.0.clone()).map_err(|_| ClientError::Convert(format!("Nat does not fit u64: {n}")))
+    u64::try_from(n.0.clone())
+        .map_err(|_| ClientError::Convert(format!("Nat does not fit u64: {n}")))
 }

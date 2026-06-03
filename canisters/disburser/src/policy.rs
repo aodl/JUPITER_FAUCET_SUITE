@@ -72,7 +72,13 @@ mod tests {
         let now = 2_000_000u64;
         let last = now - HEALTHY_WINDOW_SECS;
         assert_eq!(
-            desired_controllers(now, Some(last), self_id(), Some(blackhole_id()), rescue_id()),
+            desired_controllers(
+                now,
+                Some(last),
+                self_id(),
+                Some(blackhole_id()),
+                rescue_id()
+            ),
             Some(vec![blackhole_id(), self_id()])
         );
     }
@@ -82,7 +88,13 @@ mod tests {
         let now = 2_000_000u64;
         let last = now - 10 * SECS_PER_DAY;
         assert_eq!(
-            desired_controllers(now, Some(last), self_id(), Some(blackhole_id()), rescue_id()),
+            desired_controllers(
+                now,
+                Some(last),
+                self_id(),
+                Some(blackhole_id()),
+                rescue_id()
+            ),
             None
         );
     }
@@ -92,7 +104,13 @@ mod tests {
         let now = 2_000_000u64;
         let last = now - (BROKEN_WINDOW_SECS + 1);
         assert_eq!(
-            desired_controllers(now, Some(last), self_id(), Some(blackhole_id()), rescue_id()),
+            desired_controllers(
+                now,
+                Some(last),
+                self_id(),
+                Some(blackhole_id()),
+                rescue_id()
+            ),
             Some(vec![blackhole_id(), rescue_id(), self_id()])
         );
     }
@@ -111,14 +129,38 @@ mod tests {
         );
 
         let last = now - (HEALTHY_WINDOW_SECS + 1);
-        assert_eq!(desired_controllers(now, Some(last), self_principal, Some(blackhole_id()), rescue_id()), None);
+        assert_eq!(
+            desired_controllers(
+                now,
+                Some(last),
+                self_principal,
+                Some(blackhole_id()),
+                rescue_id()
+            ),
+            None
+        );
 
         let last = now - BROKEN_WINDOW_SECS;
-        assert_eq!(desired_controllers(now, Some(last), self_principal, Some(blackhole_id()), rescue_id()), None);
+        assert_eq!(
+            desired_controllers(
+                now,
+                Some(last),
+                self_principal,
+                Some(blackhole_id()),
+                rescue_id()
+            ),
+            None
+        );
 
         let last = now - (BROKEN_WINDOW_SECS + 1);
         assert_eq!(
-            desired_controllers(now, Some(last), self_principal, Some(blackhole_id()), rescue_id()),
+            desired_controllers(
+                now,
+                Some(last),
+                self_principal,
+                Some(blackhole_id()),
+                rescue_id()
+            ),
             Some(vec![blackhole_id(), rescue_id(), self_id()])
         );
     }
@@ -126,7 +168,15 @@ mod tests {
     #[test]
     fn bootstrap_rescue_requires_elapsed_time_and_no_success() {
         assert!(!bootstrap_rescue_due(100, Some(100), None));
-        assert!(bootstrap_rescue_due(100 + BOOTSTRAP_RESCUE_WINDOW_SECS + 1, Some(100), None));
-        assert!(!bootstrap_rescue_due(100 + BOOTSTRAP_RESCUE_WINDOW_SECS + 1, Some(100), Some(123)));
+        assert!(bootstrap_rescue_due(
+            100 + BOOTSTRAP_RESCUE_WINDOW_SECS + 1,
+            Some(100),
+            None
+        ));
+        assert!(!bootstrap_rescue_due(
+            100 + BOOTSTRAP_RESCUE_WINDOW_SECS + 1,
+            Some(100),
+            Some(123)
+        ));
     }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "nns-bindgen-check"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+candid_parser = "=0.2.4"

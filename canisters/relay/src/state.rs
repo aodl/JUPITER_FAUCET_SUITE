@@ -766,7 +766,8 @@ mod tests {
                 source: CyclesSampleSource::BlackholeStatus,
             },
         );
-        st.relay_minted_cycles_since_sample.insert(canister_id, 50_000);
+        st.relay_minted_cycles_since_sample
+            .insert(canister_id, 50_000);
         st.conversion_estimate = Some(ConversionEstimate {
             cycles_per_e8: 7_000_000_000,
             timestamp_nanos: 124_000_000_000,
@@ -781,10 +782,18 @@ mod tests {
         assert_eq!(decoded_state.last_main_run_ts, 9_900);
         assert_eq!(decoded_state.next_job_id, 12);
         assert_eq!(
-            decoded_state.last_completed_cycles.get(&canister_id).map(|sample| sample.cycles),
+            decoded_state
+                .last_completed_cycles
+                .get(&canister_id)
+                .map(|sample| sample.cycles),
             Some(1_000_000_000_000)
         );
-        assert_eq!(decoded_state.relay_minted_cycles_since_sample.get(&canister_id), Some(&50_000));
+        assert_eq!(
+            decoded_state
+                .relay_minted_cycles_since_sample
+                .get(&canister_id),
+            Some(&50_000)
+        );
 
         let restored = restore_state_from_stable().expect("expected restored relay state");
         assert_eq!(restored.config, st.config);
@@ -792,7 +801,10 @@ mod tests {
         assert_eq!(restored.last_summary, None);
         assert_eq!(restored.conversion_estimate, st.conversion_estimate);
         assert_eq!(
-            restored.last_completed_cycles.get(&canister_id).map(|sample| sample.timestamp_nanos),
+            restored
+                .last_completed_cycles
+                .get(&canister_id)
+                .map(|sample| sample.timestamp_nanos),
             Some(123_000_000_000)
         );
     }

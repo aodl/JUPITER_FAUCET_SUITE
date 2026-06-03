@@ -1,5 +1,7 @@
 pub(super) use candid::{Nat, Principal};
-pub(super) use ic_cdk::management_canister::{update_settings, CanisterSettings, UpdateSettingsArgs};
+pub(super) use ic_cdk::management_canister::{
+    update_settings, CanisterSettings, UpdateSettingsArgs,
+};
 pub(super) use icrc_ledger_types::icrc1::account::Account;
 pub(super) use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 pub(super) use std::time::Duration;
@@ -14,13 +16,14 @@ pub(super) use crate::clients::index::{
     IcpIndexCanister, IndexOperation, IndexTransactionWithId,
 };
 pub(super) use crate::clients::ledger::IcrcLedgerCanister;
-pub(super) use crate::clients::{CanisterStatusClient, CmcClient, GovernanceClient, IndexClient, LedgerClient};
+pub(super) use crate::clients::{
+    CanisterStatusClient, CmcClient, GovernanceClient, IndexClient, LedgerClient,
+};
 pub(super) use crate::state::{
-    ActivePayoutJob, ForcedRescueReason, PendingNotification, PendingTransfer, PendingTransferPhase,
-    SkipRange, TransferKind,
+    ActivePayoutJob, ForcedRescueReason, PendingNotification, PendingTransfer,
+    PendingTransferPhase, SkipRange, TransferKind,
 };
 pub(super) use crate::{logic, policy, state};
-
 
 pub(super) const PAGE_SIZE: u64 = 500;
 pub(super) const MAX_INDEX_PAGES_PER_PAYOUT_TICK: u64 = 64;

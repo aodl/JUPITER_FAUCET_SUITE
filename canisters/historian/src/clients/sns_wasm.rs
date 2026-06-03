@@ -22,7 +22,9 @@ pub(crate) struct SnsWasmCanister {
     canister_id: Principal,
 }
 impl SnsWasmCanister {
-    pub(crate) fn new(canister_id: Principal) -> Self { Self { canister_id } }
+    pub(crate) fn new(canister_id: Principal) -> Self {
+        Self { canister_id }
+    }
 }
 
 #[async_trait]
@@ -33,6 +35,7 @@ impl SnsWasmClient for SnsWasmCanister {
             .change_timeout(60)
             .await
             .map_err(|e| ClientError::Call(format!("{e:?}")))?;
-        resp.candid().map_err(|e| ClientError::Call(format!("decode list_deployed_snses failed: {e:?}")))
+        resp.candid()
+            .map_err(|e| ClientError::Call(format!("decode list_deployed_snses failed: {e:?}")))
     }
 }

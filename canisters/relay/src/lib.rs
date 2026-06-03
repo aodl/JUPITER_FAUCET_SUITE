@@ -283,10 +283,7 @@ fn init(args: InitArgs) {
         blackhole_canister_id: args
             .blackhole_canister_id
             .unwrap_or_else(mainnet_blackhole_id),
-        main_interval_seconds: args
-            .main_interval_seconds
-            .unwrap_or(24 * 60 * 60)
-            .max(60),
+        main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60).max(60),
         max_transfers_per_tick: args.max_transfers_per_tick,
         surplus_recipients: public_surplus_recipients_from_args(
             args.surplus_canister_recipients,
@@ -462,7 +459,10 @@ mod tests {
             main_interval_seconds: Some(60),
             max_transfers_per_tick: Some(3),
             surplus_canister_recipients: None,
-            surplus_neuron_recipients: vec![SurplusNeuronRecipient { neuron_id: 42, memo: Vec::new() }],
+            surplus_neuron_recipients: vec![SurplusNeuronRecipient {
+                neuron_id: 42,
+                memo: Vec::new(),
+            }],
         }
     }
 
@@ -484,14 +484,23 @@ mod tests {
             main_interval_seconds: Some(120),
             max_transfers_per_tick: Some(Some(2)),
             surplus_canister_recipients: Some(Vec::new()),
-            surplus_neuron_recipients: Some(vec![SurplusNeuronRecipient { neuron_id: 7, memo: vec![7] }]),
+            surplus_neuron_recipients: Some(vec![SurplusNeuronRecipient {
+                neuron_id: 7,
+                memo: vec![7],
+            }]),
         }),))
         .unwrap();
         let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
-        assert_eq!(decoded.managed_canisters, Some(vec![principal("22255-zqaaa-aaaas-qf6uq-cai")]));
+        assert_eq!(
+            decoded.managed_canisters,
+            Some(vec![principal("22255-zqaaa-aaaas-qf6uq-cai")])
+        );
         assert_eq!(decoded.main_interval_seconds, Some(120));
         assert_eq!(decoded.max_transfers_per_tick, Some(Some(2)));
-        assert_eq!(decoded.surplus_canister_recipients.as_ref().map(Vec::len), Some(0));
+        assert_eq!(
+            decoded.surplus_canister_recipients.as_ref().map(Vec::len),
+            Some(0)
+        );
         let neuron_recipients = decoded.surplus_neuron_recipients.unwrap();
         assert_eq!(neuron_recipients.len(), 1);
         assert_eq!(neuron_recipients[0].neuron_id, 7);

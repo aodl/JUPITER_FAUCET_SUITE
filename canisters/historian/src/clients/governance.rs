@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use candid::Principal;
 use ic_cdk::call::Call;
 use jupiter_nns_types::{
-    manage_neuron, manage_neuron_response, Empty, ManageNeuronCommandRequest, ManageNeuronRequest,
+    manage_neuron, manage_neuron_response, ManageNeuronCommandRequest, ManageNeuronRequest,
     ManageNeuronResponse,
 };
 
@@ -30,9 +30,7 @@ impl GovernanceClient for NnsGovernanceCanister {
             )),
             command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(
                 manage_neuron::ClaimOrRefresh {
-                    by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount(
-                        Empty {},
-                    )),
+                    by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount {}),
                 },
             )),
             id: None,

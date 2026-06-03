@@ -133,7 +133,9 @@ fn get_exchange_rate(req: GetExchangeRateRequest) -> GetExchangeRateResult {
         }
         GetExchangeRateResult::Ok(ExchangeRate {
             rate: st.rate,
-            metadata: ExchangeRateMetadata { decimals: st.decimals },
+            metadata: ExchangeRateMetadata {
+                decimals: st.decimals,
+            },
             timestamp: req.timestamp.unwrap_or(st.timestamp),
         })
     })

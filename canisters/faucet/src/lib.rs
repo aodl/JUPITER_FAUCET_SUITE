@@ -67,7 +67,8 @@ fn mainnet_blackhole_id() -> Principal {
 
 #[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
-    Principal::from_text(env!("JUPITER_FAUCET_PROD_CANISTER_ID")).expect("invalid embedded production canister principal")
+    Principal::from_text(env!("JUPITER_FAUCET_PROD_CANISTER_ID"))
+        .expect("invalid embedded production canister principal")
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -85,7 +86,10 @@ fn guard_debug_api_not_production() {
 pub(crate) const MIN_MIN_TX_E8S: u64 = 10_000_000;
 
 fn assert_non_anonymous_principal(name: &str, principal: Principal) {
-    assert!(principal != Principal::anonymous(), "{name} must not be the anonymous principal");
+    assert!(
+        principal != Principal::anonymous(),
+        "{name} must not be the anonymous principal"
+    );
 }
 
 fn self_canister_principal_for_validation() -> Principal {
@@ -104,26 +108,60 @@ fn validate_config(cfg: &crate::state::Config) {
     assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
     assert_non_anonymous_principal("cmc_canister_id", cfg.cmc_canister_id);
-    assert_non_anonymous_principal("governance_canister_id", cfg.governance_canister_id.expect("governance_canister_id must be configured"));
-    assert_non_anonymous_principal("funding_source_account.owner", cfg.funding_source_account.owner);
+    assert_non_anonymous_principal(
+        "governance_canister_id",
+        cfg.governance_canister_id
+            .expect("governance_canister_id must be configured"),
+    );
+    assert_non_anonymous_principal(
+        "funding_source_account.owner",
+        cfg.funding_source_account.owner,
+    );
     let self_id = self_canister_principal_for_validation();
     assert_non_anonymous_principal("rescue_controller", cfg.rescue_controller);
-    assert!(cfg.rescue_controller != self_id, "rescue_controller must not equal the faucet canister principal");
+    assert!(
+        cfg.rescue_controller != self_id,
+        "rescue_controller must not equal the faucet canister principal"
+    );
     let payout_account = Account {
         owner: self_id,
         subaccount: cfg.payout_subaccount,
     };
-    assert!(cfg.staking_account != payout_account, "staking_account must not equal the faucet payout account");
-    assert!(cfg.funding_source_account != payout_account, "funding_source_account must not equal the faucet payout account");
-    assert!(cfg.funding_source_account != cfg.staking_account, "funding_source_account must not equal staking_account");
+    assert!(
+        cfg.staking_account != payout_account,
+        "staking_account must not equal the faucet payout account"
+    );
+    assert!(
+        cfg.funding_source_account != payout_account,
+        "funding_source_account must not equal the faucet payout account"
+    );
+    assert!(
+        cfg.funding_source_account != cfg.staking_account,
+        "funding_source_account must not equal staking_account"
+    );
     if let Some(blackhole_controller) = cfg.blackhole_controller {
         assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
-        assert!(blackhole_controller != self_id, "blackhole_controller must not equal the faucet canister principal");
-        assert!(blackhole_controller != cfg.rescue_controller, "blackhole_controller and rescue_controller must be distinct");
+        assert!(
+            blackhole_controller != self_id,
+            "blackhole_controller must not equal the faucet canister principal"
+        );
+        assert!(
+            blackhole_controller != cfg.rescue_controller,
+            "blackhole_controller and rescue_controller must be distinct"
+        );
     }
-    assert!(cfg.main_interval_seconds > 0, "main_interval_seconds must be greater than 0");
-    assert!(cfg.rescue_interval_seconds > 0, "rescue_interval_seconds must be greater than 0");
-    assert!(cfg.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60) > 0, "stake_recognition_delay_seconds must be greater than 0");
+    assert!(
+        cfg.main_interval_seconds > 0,
+        "main_interval_seconds must be greater than 0"
+    );
+    assert!(
+        cfg.rescue_interval_seconds > 0,
+        "rescue_interval_seconds must be greater than 0"
+    );
+    assert!(
+        cfg.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60) > 0,
+        "stake_recognition_delay_seconds must be greater than 0"
+    );
     assert!(
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
@@ -135,7 +173,10 @@ fn decode_subaccount_opt(v: Option<Vec<u8>>) -> Result<Option<[u8; 32]>, String>
         None => Ok(None),
         Some(bytes) => {
             if bytes.len() != 32 {
-                return Err(format!("expected 32-byte subaccount, got {} bytes", bytes.len()));
+                return Err(format!(
+                    "expected 32-byte subaccount, got {} bytes",
+                    bytes.len()
+                ));
             }
             let mut out = [0u8; 32];
             out.copy_from_slice(&bytes);
@@ -150,20 +191,29 @@ fn init(args: InitArgs) {
 
     let cfg = crate::state::Config {
         staking_account: args.staking_account,
-        payout_subaccount: decode_subaccount_opt(args.payout_subaccount).expect("invalid payout_subaccount"),
+        payout_subaccount: decode_subaccount_opt(args.payout_subaccount)
+            .expect("invalid payout_subaccount"),
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
-        governance_canister_id: Some(args.governance_canister_id.unwrap_or_else(mainnet_governance_id)),
+        governance_canister_id: Some(
+            args.governance_canister_id
+                .unwrap_or_else(mainnet_governance_id),
+        ),
         funding_source_account: args.funding_source_account,
         rescue_controller: args.rescue_controller,
-        blackhole_controller: Some(args.blackhole_controller.unwrap_or_else(mainnet_blackhole_id)),
+        blackhole_controller: Some(
+            args.blackhole_controller
+                .unwrap_or_else(mainnet_blackhole_id),
+        ),
         blackhole_armed: args.blackhole_armed,
         expected_first_staking_tx_id: args.expected_first_staking_tx_id,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
-        stake_recognition_delay_seconds: Some(args.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60)),
+        stake_recognition_delay_seconds: Some(
+            args.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60),
+        ),
     };
 
     validate_config(&cfg);
@@ -173,7 +223,11 @@ fn init(args: InitArgs) {
     crate::scheduler::install_timers();
 }
 
-pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeArgs>, now_secs: u64) -> PostUpgradeActions {
+pub(crate) fn apply_upgrade_args_to_state(
+    st: &mut State,
+    args: Option<UpgradeArgs>,
+    now_secs: u64,
+) -> PostUpgradeActions {
     let mut actions = PostUpgradeActions::default();
     if let Some(args) = args {
         if let Some(blackhole_controller) = args.blackhole_controller {
@@ -203,7 +257,10 @@ pub(crate) fn apply_upgrade_args_to_state(st: &mut State, args: Option<UpgradeAr
             st.consecutive_cmc_zero_success_runs = Some(0);
         }
         if let Some(delay) = args.stake_recognition_delay_seconds {
-            assert!(delay > 0, "stake_recognition_delay_seconds must be greater than 0");
+            assert!(
+                delay > 0,
+                "stake_recognition_delay_seconds must be greater than 0"
+            );
             st.config.stake_recognition_delay_seconds = Some(delay);
         }
     }
@@ -230,7 +287,8 @@ fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
 fn post_upgrade(args: Option<UpgradeArgs>) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
-    let mut st = crate::state::restore_state_from_stable().expect("stable state missing during faucet post_upgrade");
+    let mut st = crate::state::restore_state_from_stable()
+        .expect("stable state missing during faucet post_upgrade");
     let actions = apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
@@ -320,8 +378,12 @@ fn debug_state() -> DebugState {
         forced_rescue_reason: st.forced_rescue_reason.clone(),
         skip_range_invariant_fault: st.skip_range_invariant_fault.unwrap_or(false),
         consecutive_index_anchor_failures: st.consecutive_index_anchor_failures.unwrap_or(0),
-        consecutive_index_latest_invariant_failures: st.consecutive_index_latest_invariant_failures.unwrap_or(0),
-        consecutive_index_latest_unreadable_failures: st.consecutive_index_latest_unreadable_failures.unwrap_or(0),
+        consecutive_index_latest_invariant_failures: st
+            .consecutive_index_latest_invariant_failures
+            .unwrap_or(0),
+        consecutive_index_latest_unreadable_failures: st
+            .consecutive_index_latest_unreadable_failures
+            .unwrap_or(0),
         consecutive_cmc_zero_success_runs: st.consecutive_cmc_zero_success_runs.unwrap_or(0),
         last_observed_staking_balance_e8s: st.last_observed_staking_balance_e8s,
         last_observed_latest_tx_id: st.last_observed_latest_tx_id,
@@ -340,9 +402,18 @@ fn debug_state() -> DebugState {
             .active_funding_scan
             .as_ref()
             .and_then(|scan| scan.anchor_last_processed_funding_tx_id),
-        active_payout_funding_tx_id: st.active_payout_job.as_ref().and_then(|job| job.funding_tx_id),
-        active_payout_funding_amount_e8s: st.active_payout_job.as_ref().and_then(|job| job.funding_amount_e8s),
-        active_payout_round_end_latest_tx_id: st.active_payout_job.as_ref().and_then(|job| job.round_end_latest_tx_id),
+        active_payout_funding_tx_id: st
+            .active_payout_job
+            .as_ref()
+            .and_then(|job| job.funding_tx_id),
+        active_payout_funding_amount_e8s: st
+            .active_payout_job
+            .as_ref()
+            .and_then(|job| job.funding_amount_e8s),
+        active_payout_round_end_latest_tx_id: st
+            .active_payout_job
+            .as_ref()
+            .and_then(|job| job.round_end_latest_tx_id),
         active_payout_effective_denom_scan_complete: st
             .active_payout_job
             .as_ref()
@@ -380,7 +451,10 @@ fn debug_config() -> DebugConfig {
         ledger_canister_id: st.config.ledger_canister_id,
         index_canister_id: st.config.index_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
-        governance_canister_id: st.config.governance_canister_id.expect("governance_canister_id configured"),
+        governance_canister_id: st
+            .config
+            .governance_canister_id
+            .expect("governance_canister_id configured"),
         funding_source_account: st.config.funding_source_account,
         rescue_controller: st.config.rescue_controller,
         blackhole_controller: st.config.blackhole_controller,
@@ -389,7 +463,10 @@ fn debug_config() -> DebugConfig {
         main_interval_seconds: st.config.main_interval_seconds,
         rescue_interval_seconds: st.config.rescue_interval_seconds,
         min_tx_e8s: st.config.min_tx_e8s,
-        stake_recognition_delay_seconds: st.config.stake_recognition_delay_seconds.unwrap_or(24 * 60 * 60),
+        stake_recognition_delay_seconds: st
+            .config
+            .stake_recognition_delay_seconds
+            .unwrap_or(24 * 60 * 60),
     })
 }
 
@@ -402,7 +479,11 @@ fn debug_footprint() -> DebugFootprint {
         active_payout_job_candid_bytes: st
             .active_payout_job
             .as_ref()
-            .map(|job| candid::encode_one(job).expect("encode active payout job").len() as u64)
+            .map(|job| {
+                candid::encode_one(job)
+                    .expect("encode active payout job")
+                    .len() as u64
+            })
             .unwrap_or(0),
         last_summary_candid_bytes: st
             .last_summary
@@ -422,7 +503,11 @@ fn debug_reset_runtime_state() {
         st.last_successful_transfer_ts = None;
         st.last_rescue_check_ts = 0;
         st.rescue_triggered = false;
-        st.blackhole_armed_since_ts = st.config.blackhole_armed.unwrap_or(false).then_some(now_secs);
+        st.blackhole_armed_since_ts = st
+            .config
+            .blackhole_armed
+            .unwrap_or(false)
+            .then_some(now_secs);
         st.forced_rescue_reason = None;
         st.skip_range_invariant_fault = Some(false);
         st.consecutive_index_anchor_failures = Some(0);
@@ -554,7 +639,6 @@ async fn debug_rescue_tick() {
     crate::scheduler::debug_rescue_tick_impl().await;
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,7 +663,10 @@ mod tests {
             index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: Some(principal("rrkah-fqaaa-aaaaa-aaaaq-cai")),
-            funding_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
+            funding_source_account: Account {
+                owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+                subaccount: None,
+            },
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
             blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
             blackhole_armed: Some(false),
@@ -599,7 +686,10 @@ mod tests {
             index_canister_id: None,
             cmc_canister_id: None,
             governance_canister_id: None,
-            funding_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
+            funding_source_account: Account {
+                owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+                subaccount: None,
+            },
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
             blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
             blackhole_armed: Some(false),
@@ -628,7 +718,10 @@ mod tests {
         }),))
         .unwrap();
         let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
-        assert_eq!(decoded.blackhole_controller, Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")));
+        assert_eq!(
+            decoded.blackhole_controller,
+            Some(principal("qoctq-giaaa-aaaaa-aaaea-cai"))
+        );
         assert_eq!(decoded.blackhole_armed, Some(true));
         assert_eq!(decoded.clear_forced_rescue, Some(false));
         assert_eq!(decoded.stake_recognition_delay_seconds, Some(604_800));
@@ -669,7 +762,6 @@ mod tests {
         cfg.main_interval_seconds = 0;
         validate_config(&cfg);
     }
-
 
     #[test]
     #[should_panic(expected = "blackhole_controller must not equal the faucet canister principal")]
@@ -740,8 +832,11 @@ mod tests {
         let now_secs = 123;
         crate::state::init_stable_storage();
         crate::state::clear_skip_ranges();
-        crate::state::insert_skip_range(crate::state::SkipRange { start_tx_id: 10, end_tx_id: 20 })
-            .expect("test skip range should persist before upgrade");
+        crate::state::insert_skip_range(crate::state::SkipRange {
+            start_tx_id: 10,
+            end_tx_id: 20,
+        })
+        .expect("test skip range should persist before upgrade");
         let mut st = State::new(sample_config(), now_secs);
         st.main_lock_state_ts = Some(99);
         let actions = apply_upgrade_args_to_state(
@@ -754,12 +849,20 @@ mod tests {
             }),
             now_secs,
         );
-        assert_eq!(st.config.blackhole_controller, Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")));
+        assert_eq!(
+            st.config.blackhole_controller,
+            Some(principal("qoctq-giaaa-aaaaa-aaaea-cai"))
+        );
         assert_eq!(st.config.blackhole_armed, Some(true));
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
         assert_eq!(st.main_lock_state_ts, Some(0));
         assert!(crate::state::list_skip_ranges().is_empty());
-        assert_eq!(actions, PostUpgradeActions { schedule_immediate_controller_reconcile: true });
+        assert_eq!(
+            actions,
+            PostUpgradeActions {
+                schedule_immediate_controller_reconcile: true
+            }
+        );
     }
 
     #[test]
@@ -785,7 +888,8 @@ mod tests {
         let now_secs = 789;
         let mut st = State::new(sample_config(), now_secs);
         st.config.blackhole_armed = Some(true);
-        st.forced_rescue_reason = Some(crate::state::ForcedRescueReason::IndexLatestInvariantBroken);
+        st.forced_rescue_reason =
+            Some(crate::state::ForcedRescueReason::IndexLatestInvariantBroken);
         st.skip_range_invariant_fault = Some(true);
         st.consecutive_index_anchor_failures = Some(2);
         st.consecutive_index_latest_invariant_failures = Some(3);
@@ -809,7 +913,12 @@ mod tests {
         assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
         assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
         assert_eq!(st.consecutive_cmc_zero_success_runs, Some(0));
-        assert_eq!(actions, PostUpgradeActions { schedule_immediate_controller_reconcile: true });
+        assert_eq!(
+            actions,
+            PostUpgradeActions {
+                schedule_immediate_controller_reconcile: true
+            }
+        );
     }
 
     #[test]
@@ -871,6 +980,5 @@ mod tests {
         );
     }
 }
-
 
 ic_cdk::export_candid!();
