@@ -2,13 +2,6 @@
   xmlns="http://www.w3.org/2000/svg"
   viewBox="-20 -20 320 100">
 
-  <style>
-    /* Slight blur to soften the neon text edges */
-    .immutable-text{
-      filter: blur(0.8px);
-    }
-  </style>
-
   <defs>
     <!-- Orange-to-yellow neon gradient for the text -->
     <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -47,7 +40,6 @@
 
   <!-- Curved neon "IMMUTABLE" label -->
   <text
-    class="immutable-text"
     fill="url(#textGradient)"
     font-family="sans-serif"
     font-weight="bold"

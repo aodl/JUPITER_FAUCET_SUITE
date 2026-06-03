@@ -6,7 +6,11 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(resolve(__dirname, '../../public/index.html'), 'utf8');
+const indexCss = readFileSync(resolve(__dirname, '../../public/index.css'), 'utf8');
 const notFoundHtml = readFileSync(resolve(__dirname, '../../public/404.html'), 'utf8');
+const notFoundCss = readFileSync(resolve(__dirname, '../../public/404.css'), 'utf8');
+const noscriptCss = readFileSync(resolve(__dirname, '../../public/noscript.css'), 'utf8');
+const immutableLabelSvg = readFileSync(resolve(__dirname, '../../public/immutable-label/immutable-label.svg'), 'utf8');
 const loadingOverlayJs = readFileSync(resolve(__dirname, '../../public/loading-overlay.js'), 'utf8');
 const metricsCss = readFileSync(resolve(__dirname, '../../public/metrics.css'), 'utf8');
 const bootstrapJs = readFileSync(resolve(__dirname, '../src/app/bootstrap.js'), 'utf8');
@@ -78,6 +82,17 @@ test('hero How link opens the maturity and rewards page', () => {
   assert.match(indexHtml, /<a href="#how-it-works:3"[^>]*data-panel="how-it-works"[^>]*>How\?<\/a>/);
 });
 
+test('static frontend markup does not depend on inline CSS', () => {
+  for (const [label, body] of [
+    ['index.html', indexHtml],
+    ['404.html', notFoundHtml],
+    ['immutable-label.svg', immutableLabelSvg],
+  ]) {
+    assert.doesNotMatch(body, /<style\b/i, `${label} should not embed style blocks`);
+    assert.doesNotMatch(body, /\sstyle=/i, `${label} should not use style attributes`);
+  }
+});
+
 test('first-load overlay uses the token logo and rotating cycle phrases', () => {
   const overlayTag = elementById(indexHtml, 'page-loading-overlay');
   const titleTag = elementById(indexHtml, 'page-loading-title');
@@ -92,24 +107,26 @@ test('first-load overlay uses the token logo and rotating cycle phrases', () => 
   assert.match(indexHtml, /<link rel="preload" as="image" href="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__" type="image\/svg\+xml" fetchpriority="high">/);
   assert.match(indexHtml, /class="page-loading-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
   assert.match(indexHtml, /class="page-loading-logo"[^>]*decoding="sync"[^>]*fetchpriority="high"/);
-  assert.match(indexHtml, /\.page-loading-overlay \{[^}]*display: grid;/);
-  assert.doesNotMatch(indexHtml, /\.page-loading-overlay \{[^}]*display: none;/);
-  assert.match(indexHtml, /\.page-loading-overlay\.is-active \{[^}]*display: grid;/);
-  assert.match(indexHtml, /body \{[\s\S]*background-image:\s*var\(--orbit-background-firstpaint\),\s*var\(--orbit-background-lqip\);/);
-  assert.match(indexHtml, /body\.background-orbit-enhanced \{[\s\S]*background-image:\s*var\(--orbit-background-full\),\s*var\(--orbit-background-firstpaint\),\s*var\(--orbit-background-lqip\);/);
-  assert.match(indexHtml, /@media \(max-width: 1024px\) \{[\s\S]*--orbit-background-full: url\("background-orbit\/background-orbit-mobile\.jpg\?v=__ASSET_VERSION__"\);[\s\S]*--orbit-background-firstpaint: url\("background-orbit\/background-orbit-mobile-firstpaint\.jpg\?v=__ASSET_VERSION__"\);/);
-  assert.doesNotMatch(indexHtml, /@media \(max-width: 1024px\) \{[\s\S]*background-image:\s*url\("background-orbit\/background-orbit-mobile\.jpg/);
+  assert.match(indexHtml, /<link rel="stylesheet" href="\/index\.css\?v=__ASSET_VERSION__" \/>/);
+  assert.match(indexHtml, /<noscript>\s*<link rel="stylesheet" href="\/noscript\.css\?v=__ASSET_VERSION__" \/>\s*<\/noscript>/);
+  assert.match(indexCss, /\.page-loading-overlay \{[^}]*display: grid;/);
+  assert.doesNotMatch(indexCss, /\.page-loading-overlay \{[^}]*display: none;/);
+  assert.match(indexCss, /\.page-loading-overlay\.is-active \{[^}]*display: grid;/);
+  assert.match(indexCss, /body \{[\s\S]*background-image:\s*var\(--orbit-background-firstpaint\),\s*var\(--orbit-background-lqip\);/);
+  assert.match(indexCss, /body\.background-orbit-enhanced \{[\s\S]*background-image:\s*var\(--orbit-background-full\),\s*var\(--orbit-background-firstpaint\),\s*var\(--orbit-background-lqip\);/);
+  assert.match(indexCss, /@media \(max-width: 1024px\) \{[\s\S]*--orbit-background-full: url\("background-orbit\/background-orbit-mobile\.jpg\?v=__ASSET_VERSION__"\);[\s\S]*--orbit-background-firstpaint: url\("background-orbit\/background-orbit-mobile-firstpaint\.jpg\?v=__ASSET_VERSION__"\);/);
+  assert.doesNotMatch(indexCss, /@media \(max-width: 1024px\) \{[\s\S]*background-image:\s*url\("background-orbit\/background-orbit-mobile\.jpg/);
   assert.match(indexHtml, /id="visor"[^>]*fetchpriority="low"/);
   assert.match(indexHtml, /id="visor_glow"[^>]*fetchpriority="low"/);
-  assert.match(indexHtml, /<noscript>[\s\S]*#page-loading-overlay \{[\s\S]*display: none !important;[\s\S]*<\/noscript>/);
+  assert.match(noscriptCss, /#page-loading-overlay \{[\s\S]*display: none !important;[\s\S]*\}/);
   assert.equal(attrValue(titleTag, 'aria-hidden'), 'true');
   assert.match(indexHtml, /class="page-loading-title" id="page-loading-title" aria-hidden="true">Infinite Cycles Begin Here<\/p>/);
   assert.match(indexHtml, /class="page-loading-status" role="status" aria-live="polite">Loading<span aria-hidden="true">/);
-  assert.match(indexHtml, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-overlay,[\s\S]*\.page-loading-overlay::before,[\s\S]*\.page-loading-pane,[\s\S]*\.page-loading-pane::before \{[\s\S]*transition: none;/);
-  assert.match(indexHtml, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-title\.is-swiping-out,[\s\S]*\.page-loading-title\.is-swiping-in \{[\s\S]*animation: none;/);
-  assert.match(indexHtml, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-dot \{[\s\S]*animation: none;[\s\S]*opacity: 1;/);
-  assert.match(indexHtml, /--loader-progress/);
-  assert.match(indexHtml, /conic-gradient\(/);
+  assert.match(indexCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-overlay,[\s\S]*\.page-loading-overlay::before,[\s\S]*\.page-loading-pane,[\s\S]*\.page-loading-pane::before \{[\s\S]*transition: none;/);
+  assert.match(indexCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-title\.is-swiping-out,[\s\S]*\.page-loading-title\.is-swiping-in \{[\s\S]*animation: none;/);
+  assert.match(indexCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.page-loading-dot \{[\s\S]*animation: none;[\s\S]*opacity: 1;/);
+  assert.match(indexCss, /--loader-progress/);
+  assert.match(indexCss, /conic-gradient\(/);
   assert.match(loadingOverlayJs, /overlay\.classList\.add\("is-active"\);/);
   assert.match(loadingOverlayJs, /Cycles keep canisters alive/);
   assert.match(loadingOverlayJs, /Keep every canister fueled/);
@@ -137,7 +154,8 @@ test('first-load overlay uses the token logo and rotating cycle phrases', () => 
 
 test('not found page displays the Jupiter Faucet token logo', () => {
   assert.match(notFoundHtml, /class="not-found-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
-  assert.match(notFoundHtml, /\.not-found-logo \{[\s\S]*width: clamp\(112px, 24vw, 172px\);[\s\S]*height: clamp\(112px, 24vw, 172px\);/);
+  assert.match(notFoundHtml, /<link rel="stylesheet" href="\/404\.css\?v=__ASSET_VERSION__" \/>/);
+  assert.match(notFoundCss, /\.not-found-logo \{[\s\S]*width: clamp\(112px, 24vw, 172px\);[\s\S]*height: clamp\(112px, 24vw, 172px\);/);
   assert.match(notFoundHtml, /<h1>Not Found<\/h1>/);
 });
 
@@ -313,7 +331,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /how-it-works-guide-card is-optional/);
   assert.match(howItWorks, /href="https:\/\/nns\.ic0\.app\/address-book"[^>]*>[\s\S]*how-it-works-edit-address\.png/);
   assert.match(howItWorks, /with a nickname to make future commitments easier/);
-  assert.match(indexHtml, /\.how-it-works-guide-card\.is-send-step \{[\s\S]*grid-row: 1 \/ span 2;[\s\S]*\}/);
+  assert.match(indexCss, /\.how-it-works-guide-card\.is-send-step \{[\s\S]*grid-row: 1 \/ span 2;[\s\S]*\}/);
   assert.match(howItWorks, /set the transaction memo to your declared canister ID/);
   assert.doesNotMatch(howItWorks, /Transfer ICP to the long-form ICRC-1 staking account address displayed above/);
   assert.doesNotMatch(howItWorks, /While stake commitments can be made today/);
