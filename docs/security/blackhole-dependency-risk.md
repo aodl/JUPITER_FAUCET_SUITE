@@ -55,14 +55,23 @@ python3 ./tools/scripts/validate-mainnet-install-args
 `jupiter-nns-types` provides the minimal Candid-compatible NNS Governance wire
 DTOs used by Jupiter canisters and tests from the pinned subset DID under
 `candid/nns-governance/`. The DTO file is committed and verified by the
-dev-only `nns-bindgen-check` tool, which uses `candid_parser` directly. Production
-canister builds include plain Rust source; they do not run bindgen, depend on
-`ic-cdk-bindgen`, expose generated call stubs, or rely on generated marker
-extraction.
+dev-only `nns-bindgen-check` tool, which uses `candid_parser` directly.
+`jupiter-nns-types` remains DTO-only and has no `ic-cdk` dependency.
+
+`jupiter-ic-clients` contains the committed generated raw NNS Governance
+transport. That crate already owns shared inter-canister client code and already
+depends on `ic-cdk`, so the generated transport does not add `ic-cdk` to the
+DTO crate. The raw transport is generated from the same pinned subset and
+returns raw `ic_cdk::call::Response` values to Jupiter-owned adapters for
+decode and error classification.
+
+Production canister builds include plain Rust source and do not run bindgen,
+depend on `ic-cdk-bindgen`, or rely on generated marker extraction.
 
 This keeps the broad DFINITY NNS graph out of disburser, faucet, relay, and
 historian production trees, including `rsa`, `bincode`, `proc-macro-error`, and
-`derivative`. The production public `.did` files remain unchanged.
+`derivative`. The refactor also does not reintroduce broad `dfinity/ic` git
+crates. The production public `.did` files remain unchanged.
 
 Scanner exception files currently exclude advisories for dependencies that are
 not present in the production NNS DTO graph:

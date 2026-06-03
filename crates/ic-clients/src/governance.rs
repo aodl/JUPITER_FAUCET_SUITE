@@ -5,12 +5,12 @@
 //! disbursement policy remains local to the relevant canister.
 
 use candid::Principal;
-use ic_cdk::call::Call;
 use jupiter_nns_types::{
     list_neurons, manage_neuron, manage_neuron_response, ListNeurons, ListNeuronsResponse,
     ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, NeuronId,
 };
 
+use crate::generated::nns_governance_transport::{self, GovernanceCallWait};
 use crate::ClientError;
 
 fn list_neurons_request(neuron_id: u64) -> ListNeurons {
@@ -90,10 +90,14 @@ impl NnsGovernanceCanister {
     }
 
     pub async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], ClientError> {
-        let resp = Call::bounded_wait(self.governance_id, "list_neurons")
-            .with_arg(list_neurons_request(neuron_id))
-            .await
-            .map_err(|e| ClientError::Call(format!("list_neurons transport failed: {e:?}")))?;
+        let req = list_neurons_request(neuron_id);
+        let resp = nns_governance_transport::list_neurons(
+            self.governance_id,
+            &req,
+            GovernanceCallWait::bounded_default(),
+        )
+        .await
+        .map_err(|e| ClientError::Call(format!("list_neurons transport failed: {e:?}")))?;
         let decoded: ListNeuronsResponse = resp
             .candid()
             .map_err(|e| ClientError::Call(format!("decode list_neurons failed: {e:?}")))?;
@@ -101,10 +105,14 @@ impl NnsGovernanceCanister {
     }
 
     pub async fn claim_or_refresh_neuron(&self, neuron_id: u64) -> Result<(), ClientError> {
-        let resp = Call::bounded_wait(self.governance_id, "manage_neuron")
-            .with_arg(claim_or_refresh_request(neuron_id))
-            .await
-            .map_err(|e| ClientError::Call(format!("claim_or_refresh transport failed: {e:?}")))?;
+        let req = claim_or_refresh_request(neuron_id);
+        let resp = nns_governance_transport::manage_neuron(
+            self.governance_id,
+            &req,
+            GovernanceCallWait::bounded_default(),
+        )
+        .await
+        .map_err(|e| ClientError::Call(format!("claim_or_refresh transport failed: {e:?}")))?;
         let decoded: ManageNeuronResponse = resp.candid().map_err(|e| {
             ClientError::Call(format!("decode manage_neuron ClaimOrRefresh failed: {e:?}"))
         })?;

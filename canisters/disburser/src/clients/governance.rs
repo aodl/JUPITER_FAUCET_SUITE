@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use candid::Principal;
-use ic_cdk::call::Call;
+use jupiter_ic_clients::generated::nns_governance_transport::{self, GovernanceCallWait};
 use jupiter_nns_types::{
     manage_neuron, manage_neuron_response, Account, GovernanceError, ManageNeuronCommandRequest,
     ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId, PrincipalId,
@@ -21,14 +21,16 @@ impl NnsGovernanceCanister {
 #[async_trait]
 impl GovernanceClient for NnsGovernanceCanister {
     async fn get_full_neuron(&self, neuron_id: u64) -> Result<Neuron, GovernanceError> {
-        let resp = Call::bounded_wait(self.gov_id, "get_full_neuron")
-            .with_arg(neuron_id)
-            .change_timeout(20)
-            .await
-            .map_err(|e| GovernanceError {
-                error_message: format!("call failed: {e:?}"),
-                error_type: -1,
-            })?;
+        let resp = nns_governance_transport::get_full_neuron(
+            self.gov_id,
+            &neuron_id,
+            GovernanceCallWait::bounded_seconds(20),
+        )
+        .await
+        .map_err(|e| GovernanceError {
+            error_message: format!("call failed: {e:?}"),
+            error_type: -1,
+        })?;
 
         let res: Result<Neuron, GovernanceError> = resp.candid().map_err(|e| GovernanceError {
             error_message: format!("decode failed: {e:?}"),
@@ -62,14 +64,16 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::bounded_wait(self.gov_id, "manage_neuron")
-            .with_arg(req)
-            .change_timeout(60)
-            .await
-            .map_err(|e| GovernanceError {
-                error_message: format!("call failed: {e:?}"),
-                error_type: -1,
-            })?;
+        let resp = nns_governance_transport::manage_neuron(
+            self.gov_id,
+            &req,
+            GovernanceCallWait::bounded_seconds(60),
+        )
+        .await
+        .map_err(|e| GovernanceError {
+            error_message: format!("call failed: {e:?}"),
+            error_type: -1,
+        })?;
 
         let decoded: ManageNeuronResponse = resp.candid().map_err(|e| GovernanceError {
             error_message: format!("decode failed: {e:?}"),
@@ -99,14 +103,16 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::bounded_wait(self.gov_id, "manage_neuron")
-            .with_arg(req)
-            .change_timeout(60)
-            .await
-            .map_err(|e| GovernanceError {
-                error_message: format!("call failed: {e:?}"),
-                error_type: -1,
-            })?;
+        let resp = nns_governance_transport::manage_neuron(
+            self.gov_id,
+            &req,
+            GovernanceCallWait::bounded_seconds(60),
+        )
+        .await
+        .map_err(|e| GovernanceError {
+            error_message: format!("call failed: {e:?}"),
+            error_type: -1,
+        })?;
 
         let decoded: ManageNeuronResponse = resp.candid().map_err(|e| GovernanceError {
             error_message: format!("decode failed: {e:?}"),
@@ -136,14 +142,16 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::bounded_wait(self.gov_id, "manage_neuron")
-            .with_arg(req)
-            .change_timeout(60)
-            .await
-            .map_err(|e| GovernanceError {
-                error_message: format!("call failed: {e:?}"),
-                error_type: -1,
-            })?;
+        let resp = nns_governance_transport::manage_neuron(
+            self.gov_id,
+            &req,
+            GovernanceCallWait::bounded_seconds(60),
+        )
+        .await
+        .map_err(|e| GovernanceError {
+            error_message: format!("call failed: {e:?}"),
+            error_type: -1,
+        })?;
 
         let decoded: ManageNeuronResponse = resp.candid().map_err(|e| GovernanceError {
             error_message: format!("decode failed: {e:?}"),
