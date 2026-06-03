@@ -595,11 +595,11 @@ pub struct DebugCanisterInfoProbeResult {
 #[ic_cdk::update]
 async fn debug_canister_info_probe(canister_id: Principal) -> DebugCanisterInfoProbeResult {
     guard_debug_api_not_production();
-    let request = ic_cdk::management_canister::CanisterInfoArgs {
+    let request = jupiter_ic_clients::management::CanisterInfoArgs {
         canister_id,
         num_requested_changes: Some(0),
     };
-    match ic_cdk::management_canister::canister_info(&request).await {
+    match jupiter_ic_clients::management::canister_info(&request).await {
         Ok(_) => DebugCanisterInfoProbeResult {
             exists: true,
             observed_reject: None,

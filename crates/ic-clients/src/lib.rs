@@ -7,6 +7,7 @@ pub mod governance;
 pub mod index;
 pub mod ledger;
 pub mod lifecycle;
+pub mod management;
 pub mod timer_guard;
 pub mod xrc;
 

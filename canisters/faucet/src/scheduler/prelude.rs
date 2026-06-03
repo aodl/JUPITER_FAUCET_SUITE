@@ -1,9 +1,9 @@
 pub(super) use candid::{Nat, Principal};
-pub(super) use ic_cdk::management_canister::{
-    update_settings, CanisterSettings, UpdateSettingsArgs,
-};
 pub(super) use icrc_ledger_types::icrc1::account::Account;
 pub(super) use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+pub(super) use jupiter_ic_clients::management::{
+    update_settings, CanisterSettings, UpdateSettingsArgs,
+};
 pub(super) use std::time::Duration;
 
 pub(super) const MAIN_TICK_LEASE_SECONDS: u64 = 15 * 60;

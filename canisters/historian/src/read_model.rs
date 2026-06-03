@@ -235,12 +235,12 @@ async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let blackhole = clients::blackhole::BlackholeCanister::new(mainnet_blackhole_id());
     let mut hashes = Vec::with_capacity(canister_ids.len());
     for canister_id in canister_ids {
-        let request = ic_cdk::management_canister::CanisterInfoArgs {
+        let request = jupiter_ic_clients::management::CanisterInfoArgs {
             canister_id,
             num_requested_changes: Some(0),
         };
         let (module_hash_hex, controllers) =
-            match ic_cdk::management_canister::canister_info(&request).await {
+            match jupiter_ic_clients::management::canister_info(&request).await {
                 Ok(result) => (
                     result
                         .module_hash
