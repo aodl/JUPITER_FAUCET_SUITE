@@ -46,9 +46,15 @@ The script fails non-zero if any of these steps fails:
 
 - `cargo audit`
 - `cargo deny check advisories licenses bans sources`
+- `node tools/scripts/check-npm-lock-hermetic.mjs`
 - `npm audit --omit=dev`
 - `osv-scanner scan -L Cargo.lock -L package-lock.json`
 - Rust or npm SBOM generation
+
+The npm lockfile gate requires every package entry to include both an integrity
+hash and the exact `https://registry.npmjs.org/...tgz` tarball URL. This still
+trusts the npm registry when dependencies must be fetched, but it prevents a
+future lockfile refresh from silently dropping tarball origin pins.
 
 The script derives deterministic SBOM timestamps and serial numbers from
 `SOURCE_DATE_EPOCH`. If `SOURCE_DATE_EPOCH` is unset, it uses the Unix timestamp

@@ -27,6 +27,7 @@ print_version "cargo audit" cargo audit --version
 print_version "cargo deny" cargo deny --version
 print_version "osv-scanner" osv-scanner --version
 print_version "cargo cyclonedx" cargo cyclonedx --version
+node tools/scripts/check-npm-lock-hermetic.mjs
 print_version "cyclonedx-npm" npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --version
 
 cargo run -p nns-bindgen-check -- --check
