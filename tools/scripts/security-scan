@@ -29,6 +29,7 @@ print_version "osv-scanner" osv-scanner --version
 print_version "cargo cyclonedx" cargo cyclonedx --version
 print_version "cyclonedx-npm" npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --version
 
+cargo run -p nns-bindgen-check -- --check
 cargo audit
 cargo deny check advisories licenses bans sources
 npm audit --omit=dev

@@ -734,7 +734,7 @@ fn refresh_neuron_stake(
         id: None,
         neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
         command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
-            by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount(jupiter_nns_types::Empty::default())),
+            by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount {}),
         })),
     };
 
@@ -842,14 +842,14 @@ fn make_and_settle_motion_proposal(
     let req = ManageNeuronRequest {
         id: None,
         neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::MakeProposal(Box::new(MakeProposalRequest {
+        command: Some(ManageNeuronCommandRequest::MakeProposal(MakeProposalRequest {
             url,
             title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
             summary: "Trigger reward distribution in PocketIC".to_string(),
             action: Some(ProposalActionRequest::Motion(Motion {
                 motion_text: motion_text.to_string(),
             })),
-        }))),
+        })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -902,14 +902,14 @@ fn make_motion_proposal(
     let req = ManageNeuronRequest {
         id: None,
         neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::MakeProposal(Box::new(MakeProposalRequest {
+        command: Some(ManageNeuronCommandRequest::MakeProposal(MakeProposalRequest {
             url,
             title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
             summary: "Trigger reward distribution in PocketIC".to_string(),
             action: Some(ProposalActionRequest::Motion(Motion {
                 motion_text: motion_text.to_string(),
             })),
-        }))),
+        })),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;

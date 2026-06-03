@@ -40,7 +40,7 @@ cargo tree -p jupiter-lifeline --target wasm32-unknown-unknown --edges normal,bu
 cargo tree -p jupiter-sns-rewards --target wasm32-unknown-unknown --edges normal,build
 ```
 
-Required validation after the reduction:
+Required validation for this dependency posture:
 
 ```bash
 cargo check --workspace --locked
@@ -50,20 +50,22 @@ python3 ./tools/scripts/validate-mainnet-install-args
 ./tools/scripts/security-scan
 ```
 
-## Reduction Performed
+## Current NNS Dependency Posture
 
-The broad DFINITY NNS dependency path was removed from `jupiter-nns-types`.
-Before this change, `jupiter-nns-types` re-exported small subsets from
-`ic-base-types`, `ic-nns-common`, and `ic-nns-governance-api`. That pulled a
-large upstream graph into disburser, faucet, relay, and historian production
-trees, including `rsa`, `serde_cbor`, `bincode`, `proc-macro-error`, and
-`derivative`.
+`jupiter-nns-types` provides the minimal Candid-compatible NNS Governance wire
+DTOs used by Jupiter canisters and tests from the pinned subset DID under
+`candid/nns-governance/`. The DTO file is committed and verified by the
+dev-only `nns-bindgen-check` tool, which uses `candid_parser` directly. Production
+canister builds include plain Rust source; they do not run bindgen, depend on
+`ic-cdk-bindgen`, expose generated call stubs, or rely on generated marker
+extraction.
 
-`jupiter-nns-types` now defines the minimal local Candid-compatible types used by
-Jupiter canisters and tests. This avoids a broad DFINITY IC revision upgrade and
-keeps the production public `.did` files unchanged.
+This keeps the broad DFINITY NNS graph out of disburser, faucet, relay, and
+historian production trees, including `rsa`, `bincode`, `proc-macro-error`, and
+`derivative`. The production public `.did` files remain unchanged.
 
-Scanner exception files were narrowed after the dependency graph changed:
+Scanner exception files currently exclude advisories for dependencies that are
+not present in the production NNS DTO graph:
 
 - Removed ignores for `RUSTSEC-2023-0071` / `rsa`.
 - Removed ignores for `RUSTSEC-2025-0141` / `bincode`.
@@ -106,10 +108,10 @@ production canister wasm-target normal/build trees.
 
 | Crate | Status | Production canisters affected | Reason remaining or removal evidence |
 | --- | --- | --- | --- |
-| `rsa` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i rsa --workspace --edges normal,build,dev` now reports no matching package. |
-| `bincode` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i bincode --workspace --edges normal,build,dev` now reports no matching package. |
-| `proc-macro-error` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i proc-macro-error --workspace --edges normal,build,dev` now reports no matching package. |
-| `derivative` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i derivative --workspace --edges normal,build,dev` now reports no matching package. |
+| `rsa` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i rsa --workspace --edges normal,build,dev` reports no matching package. |
+| `bincode` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i bincode --workspace --edges normal,build,dev` reports no matching package. |
+| `proc-macro-error` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i proc-macro-error --workspace --edges normal,build,dev` reports no matching package. |
+| `derivative` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i derivative --workspace --edges normal,build,dev` reports no matching package. |
 | `paste` | Still present, build-time only | All production canisters | `cargo tree` marks `paste v1.0.15 (proc-macro)`. It is pulled by upstream `candid` / `ic-cdk` macro paths and expands at build time. Removing it requires upstream macro dependency changes. |
 | `serde_cbor` | Still present through unavoidable upstream runtime dependency | `jupiter-faucet-frontend` | `serde_cbor -> ic-http-certification -> ic-asset-certification -> jupiter-faucet-frontend`. Current `ic-http-certification 3.2.0` has a direct `serde_cbor` dependency; current `ic-asset-certification` depends on it with `default-features = false`, so no local feature flag removes it. |
 | `serde_cbor` | Still present, dev/test-only | Test and PocketIC tooling for backend crates | `serde_cbor` also appears through `pocket-ic` / `ic-transport-types` dev dependency paths. These paths are absent from production wasm-target normal/build trees for disburser, faucet, relay, historian, lifeline, and sns-rewards. |
@@ -149,7 +151,7 @@ aa607f9ab2f4824efefc1e70edf4a289bf1cd102cf2d2ec47ba79fc8d1084adf  release-artifa
 ```
 
 There is no tracked pre-change artifact baseline in this branch, so this
-document records the regenerated after hashes rather than claiming unchanged
+document records the regenerated artifact hashes rather than claiming unchanged
 Wasm.
 
 No production `.did`, debug `.did`, `dfx.json`, `canister_ids.json`, or
@@ -162,7 +164,7 @@ python3 ./tools/scripts/validate-mainnet-install-args
 
 ## Remaining Owner Acceptance
 
-Owner acceptance is now limited to:
+Owner acceptance covers:
 
 - `paste` as a build-time upstream proc-macro dependency in all production
   canister build trees.

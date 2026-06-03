@@ -15,6 +15,7 @@ members = [
   "crates/nns-types",
   "crates/persistence-batch",
 
+  "tools/nns-bindgen-check",
   "tools/xtask",
 
   "tests/mocks/mock-blackhole",

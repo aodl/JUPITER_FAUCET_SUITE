@@ -346,7 +346,7 @@ fn set_neuron_visibility_public(
         },
     )?;
     match response.command {
-        Some(manage_neuron_response::Command::Configure(_)) => Ok(()),
+        Some(manage_neuron_response::Command::Configure {}) => Ok(()),
         Some(manage_neuron_response::Command::Error(err)) => bail!(
             "set_visibility public failed: type={} message={}",
             err.error_type,

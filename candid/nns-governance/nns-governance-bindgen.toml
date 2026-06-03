@@ -1,0 +1,4 @@
+[rust]
+visibility = "pub"
+attributes = "#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq)]"
+blob.use_type = "Vec<u8>"
