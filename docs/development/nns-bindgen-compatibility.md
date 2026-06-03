@@ -1,8 +1,9 @@
 # NNS Governance Bindgen Architecture
 
 `jupiter-nns-types` uses a checked-in generated Rust file for Jupiter's NNS
-Governance wire DTOs. The file is regenerated and verified from a pinned Candid
-subset by `nns-bindgen-check`.
+Governance wire DTOs. `jupiter-ic-clients` uses a second checked-in generated
+Rust file for the raw NNS Governance transport surface. Both files are
+regenerated and verified from a pinned Candid subset by `nns-bindgen-check`.
 
 ## Pinned Input
 
@@ -28,14 +29,19 @@ the committed generated DTO file:
 
 - `crates/nns-types/src/generated/nns_governance_types.rs`
 
-That file is generated from the pinned DID and reviewed in git. The verification
-command is:
+`crates/ic-clients/src/generated/mod.rs` includes the committed generated raw
+transport file:
+
+- `crates/ic-clients/src/generated/nns_governance_transport.rs`
+
+Those files are generated from the pinned DID and reviewed in git. The
+verification command is:
 
 ```bash
 cargo run -p nns-bindgen-check -- --check
 ```
 
-To refresh the committed generated file after an intentional DID/config update,
+To refresh the committed generated files after an intentional DID/config update,
 run:
 
 ```bash
@@ -44,25 +50,48 @@ cargo run -p nns-bindgen-check -- --update
 
 Then review the generated diff.
 
-The checker uses `candid_parser = 0.2.4` directly and writes
-`emit_bindgen(...).type_defs` plus an audit header. `ic-cdk-bindgen` is not run
-to produce the committed DTO file.
+The checker uses `candid_parser = 0.2.4` directly. It writes
+`emit_bindgen(...).type_defs` plus an audit header for DTOs, and renders
+`emit_bindgen(...).methods` through a Jupiter-owned raw transport template for
+the low-level NNS Governance call surface. `ic-cdk-bindgen` is not used directly
+for either committed output.
 
 This is structured bindgen output, not marker extraction from a generated source
-file. It keeps generated NNS wire DTOs auditable while avoiding unused generated
-call stubs in `jupiter-nns-types`.
+file. It keeps generated NNS wire DTOs and method-name transport auditable while
+avoiding unused generated call stubs.
 
 ## Current Architecture
 
-`jupiter-nns-types` is a DTO-only crate. Its normal dependencies stay limited to
-`candid` and `serde`; the dev-only verifier owns the `candid_parser` dependency.
-The crate does not depend on `ic-cdk`, does not expose generated call stubs, and
-does not make generated transport code part of runtime behavior.
+`jupiter-nns-types` remains a DTO-only crate. Its normal dependencies stay
+limited to `candid` and `serde`; the dev-only verifier owns the `candid_parser`
+dependency. The crate does not depend on `ic-cdk`, does not expose generated call
+stubs, and does not make generated transport code part of its runtime behavior.
 
-Governance clients remain hand-owned traits in the calling crates. Those traits
-own timeouts, response classification, retries, deterministic mocks, and
-scheduler test boundaries. Tests and mocks construct DTOs directly instead of
-mocking a generated inter-canister transport surface.
+`jupiter-ic-clients` owns the generated raw NNS Governance transport because it
+already owns shared inter-canister client code and depends on `ic-cdk`. The
+generated transport accepts dynamic `Principal` callees, supports
+`GovernanceCallWait` for bounded default, bounded explicit-timeout, and
+unbounded waits, and returns raw `ic_cdk::call::Response` values.
+
+The generator still validates that each generated runtime method has the pinned
+Candid return arity. That check is intentional: generated raw transport verifies
+the method shape, while Jupiter-owned adapters keep response decoding and error
+classification.
+
+Governance clients remain hand-owned traits and adapters in the calling crates.
+Those traits and adapters own timeout selection, response decoding, error
+classification, retries, deterministic mocks, and scheduler test boundaries.
+Tests and mocks construct DTOs directly instead of mocking the generated
+low-level transport surface.
+
+Only production-used runtime methods are generated:
+
+- `get_full_neuron`
+- `list_neurons`
+- `manage_neuron`
+
+The pinned Candid subset may include additional methods for DTO compatibility
+and future verification, but unused runtime transport stubs are not committed.
 
 Architecture validation includes `nns-bindgen-check`, dependency inverse
 checks, workspace checks, full xtask validation, canister builds, and the
@@ -116,8 +145,8 @@ Command::Configure {}
 production normal dependency surface remains `candid` plus `serde`.
 
 The dev-only `nns-bindgen-check` tool pins `candid_parser = "=0.2.4"` to verify
-that the committed generated DTO file remains in sync with the pinned DID and
-type selector config.
+that the committed generated DTO and raw transport files remain in sync with the
+pinned DID and type selector config.
 
 This architecture must not reintroduce broad DFINITY NNS dependencies such as:
 
@@ -132,3 +161,8 @@ This architecture must not reintroduce broad DFINITY NNS dependencies such as:
 
 Validate this with the dependency-tree commands documented in the task or
 release checklist before considering dependency-sensitive work complete.
+
+Public canister `.did` files, debug `.did` files, `mainnet-install-args.did`,
+`dfx.json`, and `canister_ids.json` are not part of this generated transport
+path and should remain unchanged unless a separate public interface or
+deployment-wiring change explicitly requires it.

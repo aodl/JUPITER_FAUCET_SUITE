@@ -4,16 +4,16 @@
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0012"
-reason = "backoff 0.4.0 is pulled only through pocket-ic 13.0.0 dev/test tooling; no safe upgrade exists in the current PocketIC release."
+reason = "backoff 0.4.0 via pocket-ic 13.0.0 dev/test dependencies only: canisters/{disburser,faucet,historian,relay} dev-dependencies and xtask. Not present in production wasm normal/build trees. pocket-ic 14.0.0 still depends on backoff, so no safe upstream-removal upgrade is available now. Mitigation: keep PocketIC confined to dev/test dependencies and verify wasm trees. Owner: protocol-maintainers. Review/expiry: 2026-09-03."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0384"
-reason = "instant 0.1.13 is pulled only through pocket-ic/backoff dev/test tooling; no safe upgrade exists in the current PocketIC release."
+reason = "instant 0.1.13 via backoff 0.4.0 -> pocket-ic 13.0.0 dev/test dependencies only: canisters/{disburser,faucet,historian,relay} dev-dependencies and xtask. Not present in production wasm normal/build trees. pocket-ic 14.0.0 still depends on backoff/instant, so no safe upstream-removal upgrade is available now. Mitigation: keep PocketIC confined to dev/test dependencies and verify wasm trees. Owner: protocol-maintainers. Review/expiry: 2026-09-03."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
-reason = "paste 1.0.15 is transitive through candid and ic-cdk macros; no safe upgrade exists without upstream candid/ic-cdk changes."
+reason = "paste 1.0.15 via candid 0.10.29, including production Candid derive/build paths for canisters/{disburser,faucet,historian,relay}; it appears in wasm normal/build trees as a proc-macro dependency, not runtime code. Latest candid 0.10.29 still depends on paste, and ic-cdk was upgraded to 0.20.1 where compatible. Mitigation: keep dependency direct and current, track candid removal, and verify wasm trees. Owner: protocol-maintainers. Review/expiry: 2026-09-03."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2021-0127"
-reason = "serde_cbor 0.11.2 is transitive through ic-http-certification and PocketIC support; no safe upgrade exists for those upstream paths."
+reason = "serde_cbor 0.11.2 via ic-http-certification 3.2.0/ic-asset-certification 3.2.0 frontend production path and via pocket-ic 13.0.0 dev/test tooling. Not present in canisters/{disburser,faucet,historian,relay} production wasm normal/build trees. No newer ic-http-certification/ic-asset-certification exists, and pocket-ic 14.0.0 still depends on serde_cbor. Mitigation: confine PocketIC to dev/test, keep frontend certification dependency pinned/current, and verify value-moving wasm trees. Owner: protocol-maintainers. Review/expiry: 2026-09-03."

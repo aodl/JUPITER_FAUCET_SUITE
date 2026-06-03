@@ -75,6 +75,8 @@ ensure_frontend_node_modules() {
     exit 1
   fi
 
+  node tools/scripts/check-npm-lock-hermetic.mjs
+
   local needs_install=0
   if [[ ! -d node_modules ]]; then
     needs_install=1

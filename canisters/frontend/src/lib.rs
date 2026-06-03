@@ -492,7 +492,7 @@ fn get_asset_headers_with_corp(
         ("x-content-type-options".to_string(), "nosniff".to_string()),
         (
             "content-security-policy".to_string(),
-            "default-src 'self';              connect-src 'self' https://icp0.io https://*.icp0.io;              base-uri 'self';              script-src 'self';              img-src 'self' data:;              style-src 'self' 'unsafe-inline';              style-src-attr 'unsafe-inline';              worker-src 'none';              child-src 'none';              frame-src 'none';              manifest-src 'self';              form-action 'self';              object-src 'none';              frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com;              upgrade-insecure-requests"
+            "default-src 'self';              connect-src 'self' https://icp0.io https://*.icp0.io;              base-uri 'self';              script-src 'self';              img-src 'self' data:;              style-src 'self';              style-src-attr 'none';              worker-src 'none';              child-src 'none';              frame-src 'none';              manifest-src 'self';              form-action 'self';              object-src 'none';              frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com;              upgrade-insecure-requests"
                 .to_string(),
         ),
         ("referrer-policy".to_string(), "no-referrer".to_string()),
@@ -870,8 +870,8 @@ mod tests {
             "child-src 'none'",
             "frame-src 'none'",
             "manifest-src 'self'",
-            "style-src 'self' 'unsafe-inline'",
-            "style-src-attr 'unsafe-inline'",
+            "style-src 'self'",
+            "style-src-attr 'none'",
             "frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com",
         ] {
             assert!(
@@ -879,5 +879,7 @@ mod tests {
                 "expected CSP to contain {directive:?}, got {csp:?}"
             );
         }
+
+        assert!(!csp.contains("'unsafe-inline'"));
     }
 }

@@ -150,7 +150,7 @@ ASSET_VERSION=2026-03-19 ./tools/scripts/build-canister jupiter-faucet-frontend
 
 The frontend CSP currently keeps `frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com`. These origins are intentional for the current deployment model so the custom domain and its `www` host can frame same-site frontend content when needed. Any future tightening of this directive should be handled as a separate policy decision.
 
-Longer-term CSP hardening task: move remaining inline styles and style attributes into stylesheet files, then reduce or remove the current `style-src 'unsafe-inline'` and `style-src-attr 'unsafe-inline'` allowances after the frontend no longer depends on them.
+Inline JavaScript and inline CSS are not allowed by the frontend CSP. Page and fallback styles live in static stylesheet assets so the policy can keep `script-src 'self'`, `style-src 'self'`, and `style-src-attr 'none'`.
 
 ## Declarations
 

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use candid::Principal;
-use ic_cdk::call::Call;
+use jupiter_ic_clients::generated::nns_governance_transport::{self, GovernanceCallWait};
 use jupiter_nns_types::{
     manage_neuron, manage_neuron_response, ManageNeuronCommandRequest, ManageNeuronRequest,
     ManageNeuronResponse,
@@ -36,11 +36,13 @@ impl GovernanceClient for NnsGovernanceCanister {
             id: None,
         };
 
-        let resp = Call::bounded_wait(self.canister_id, "manage_neuron")
-            .with_arg(req)
-            .change_timeout(60)
-            .await
-            .map_err(|e| ClientError::Call(format!("claim_or_refresh call failed: {e:?}")))?;
+        let resp = nns_governance_transport::manage_neuron(
+            self.canister_id,
+            &req,
+            GovernanceCallWait::bounded_seconds(60),
+        )
+        .await
+        .map_err(|e| ClientError::Call(format!("claim_or_refresh call failed: {e:?}")))?;
 
         let decoded: ManageNeuronResponse = resp
             .candid()

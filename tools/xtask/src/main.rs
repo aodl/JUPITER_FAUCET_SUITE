@@ -5036,6 +5036,23 @@ fn ensure_frontend_node_modules() -> Result<()> {
         }
     }
 
+    let lock_check = Command::new("node")
+        .arg("tools/scripts/check-npm-lock-hermetic.mjs")
+        .current_dir(&root)
+        .output()
+        .context("failed to run npm lockfile hermeticity check")?;
+    if !lock_check.status.success() {
+        let stdout = String::from_utf8_lossy(&lock_check.stdout);
+        let stderr = String::from_utf8_lossy(&lock_check.stderr);
+        if !stdout.trim().is_empty() {
+            eprintln!("{}", stdout.trim_end());
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim_end());
+        }
+        bail!("npm lockfile hermeticity check failed");
+    }
+
     let npm_args = if package_lock.exists() {
         vec!["ci", "--no-fund", "--no-audit", "--silent"]
     } else {

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use candid::Principal;
 use ic_cdk::call::{CallRejected, Error as CallError, RejectCode};
-use ic_cdk::management_canister::{canister_info, CanisterInfoArgs};
+use jupiter_ic_clients::management::{canister_info, CanisterInfoArgs};
 
 use crate::clients::{CanisterStatusClient, ClientError};
 

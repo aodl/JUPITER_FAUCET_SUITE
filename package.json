@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build:frontend": "node canisters/frontend/web/build-frontend.mjs",
-    "setup:frontend": "npm ci --no-fund --no-audit --silent",
+    "check:npm-lock-hermetic": "node tools/scripts/check-npm-lock-hermetic.mjs",
+    "setup:frontend": "npm run check:npm-lock-hermetic --silent && npm ci --no-fund --no-audit --silent",
     "test:frontend-dashboard": "node --test canisters/frontend/web/test/dashboard-data.test.mjs",
     "test:frontend-neuron": "node --test canisters/frontend/web/test/neuron-details-controller.test.mjs",
     "test:frontend-unit": "node --test canisters/frontend/web/test/*.test.mjs",
