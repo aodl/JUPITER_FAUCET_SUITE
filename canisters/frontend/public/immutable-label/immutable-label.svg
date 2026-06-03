@@ -10,15 +10,9 @@
       <stop offset="100%" stop-color="#F60"/>
     </linearGradient>
 
-    <!-- Glow filter: layered blurs to create a neon halo -->
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="3" result="blur1"/>
-      <feGaussianBlur stdDeviation="8" result="blur2"/>
-      <feMerge>
-        <feMergeNode in="blur2"/>
-        <feMergeNode in="blur1"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <!-- Slight blur to soften the neon text edges without an inline style block. -->
+    <filter id="immutableTextSoften" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="0.8"/>
     </filter>
 
     <!-- Radial gradient for moving spotlights: bright center, fading edges -->
@@ -44,7 +38,7 @@
     font-family="sans-serif"
     font-weight="bold"
     font-size="15"
-    filter="url(#glow)">
+    filter="url(#immutableTextSoften)">
     <textPath href="#textPath" startOffset="25%">I  M  M  U  T  A  B  L  E</textPath>
   </text>
 

@@ -934,10 +934,15 @@
     <!-- Curved path for particles to follow -->
     <path id="swirl-1" class="guide"
       d="M833 497C846 478 851 472 860 443 871.6667 398 849 394 838 384 773 356.3333 700 387 647 361 590 330 611 290 526 247 499 237 388 200 299 294 216 382 267 477 157 525 62 582 276 600 534 519" />
+
+    <!-- Softly glowing particles that travel along the swirl path. -->
+    <filter id="particle-soften" x="-200%" y="-200%" width="500%" height="500%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1"/>
+    </filter>
   
     <!-- Base particle shape -->
     <g id="p">
-      <circle r="2" fill="#FFF9A9" class="particle" />
+      <circle r="2" fill="#FFF9A9" class="particle" opacity="0.8" filter="url(#particle-soften)" />
     </g>
     </defs>
   
