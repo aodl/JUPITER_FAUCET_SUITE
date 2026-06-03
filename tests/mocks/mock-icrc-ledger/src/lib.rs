@@ -68,7 +68,6 @@ fn nat_u64(n: &Nat) -> u64 {
     n.0.to_u64().unwrap_or(u64::MAX)
 }
 
-
 #[derive(CandidType, Deserialize, Clone, Debug)]
 pub struct BinaryAccountBalanceArgs {
     pub account: Vec<u8>,
@@ -89,7 +88,6 @@ fn account_identifier_bytes(a: &Account) -> [u8; 32] {
     }
     bytes
 }
-
 
 #[ic_cdk::init]
 fn init() {}
@@ -133,7 +131,9 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
     // Inject scripted error if set, otherwise a one-shot next error.
     if let Some(err) = ST.with(|s| {
         let mut st = s.borrow_mut();
-        st.next_error_script.pop_front().or_else(|| st.next_error.take())
+        st.next_error_script
+            .pop_front()
+            .or_else(|| st.next_error.take())
     }) {
         return Err(match err {
             DebugNextTransferError::TemporarilyUnavailable => TransferError::TemporarilyUnavailable,

@@ -11,22 +11,24 @@ use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_nns_types::{
     manage_neuron, manage_neuron_response, neuron, Account as GovAccount, GovernanceError,
     MakeProposalRequest, ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse,
     Motion, Neuron, NeuronId, PrincipalId, ProposalActionRequest, ProposalId,
 };
-use jupiter_ic_clients::account_identifier::account_identifier_text;
-use slog::Level;
 use pocket_ic::PocketIc;
 use sha2::{Digest, Sha256};
-use std::time::Duration;
+use slog::Level;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::calls::{query_one as query_call, tick_n, update_bytes, update_noargs, update_one as update_call};
+use support::calls::{
+    query_one as query_call, tick_n, update_bytes, update_noargs, update_one as update_call,
+};
 use support::governance::{set_controllers_exact, start_canister_as, stop_canister_as};
 
 // ----- Mainnet IDs (PocketIC bootstraps system canisters at mainnet IDs) -----
@@ -41,7 +43,6 @@ fn require_ignored_flag() -> Result<()> {
 }
 
 // ------------------------- Test harness helpers -------------------------
-
 
 fn pic_log_level() -> Level {
     match std::env::var("E2E_PIC_LOG_LEVEL").ok().as_deref() {
@@ -84,8 +85,6 @@ fn advance_days(pic: &PocketIc, days: u64) {
     advance_time_steps(pic, days * DAY_SECS, 6 * 60 * 60, 10);
 }
 
-
-
 fn trace_enabled() -> bool {
     std::env::var_os("E2E_TRACE").is_some()
 }
@@ -97,7 +96,6 @@ macro_rules! e2e_log {
         }
     }};
 }
-
 
 fn nns_root() -> Principal {
     support::principals::nns_root()
@@ -111,8 +109,13 @@ fn run_faucet_round(pic: &PocketIc, faucet: Principal, phase: &str) -> Result<Fa
     let _: () = update_noargs(pic, faucet, Principal::anonymous(), "debug_main_tick")
         .with_context(|| format!("{phase}: faucet debug_main_tick failed"))?;
     tick_n(pic, 20);
-    let summary: Option<FaucetSummary> =
-        query_call(pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
+    let summary: Option<FaucetSummary> = query_call(
+        pic,
+        faucet,
+        Principal::anonymous(),
+        "debug_last_summary",
+        (),
+    )?;
     summary.ok_or_else(|| anyhow!("{phase}: expected faucet summary after payout round"))
 }
 
@@ -203,8 +206,6 @@ struct DebugState {
     blackhole_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
 }
-
-
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct FaucetInitArg {
@@ -309,7 +310,12 @@ fn debug_state(pic: &PocketIc, canister: Principal) -> Result<DebugState> {
 }
 
 fn debug_build_payout_plan(pic: &PocketIc, canister: Principal) -> Result<bool> {
-    update_noargs(pic, canister, Principal::anonymous(), "debug_build_payout_plan")
+    update_noargs(
+        pic,
+        canister,
+        Principal::anonymous(),
+        "debug_build_payout_plan",
+    )
 }
 
 fn payout_plan_failure_context(
@@ -345,8 +351,11 @@ fn debug_set_prev_age_seconds(pic: &PocketIc, canister: Principal, age_seconds: 
     Ok(())
 }
 
-
-fn debug_set_main_lock_expires_at_ts(pic: &PocketIc, canister: Principal, ts: Option<u64>) -> Result<()> {
+fn debug_set_main_lock_expires_at_ts(
+    pic: &PocketIc,
+    canister: Principal,
+    ts: Option<u64>,
+) -> Result<()> {
     let _: () = update_call(
         pic,
         canister,
@@ -414,7 +423,13 @@ fn debug_set_skip_maturity_initiation(
 }
 
 fn debug_state_size_bytes(pic: &PocketIc, canister: Principal) -> Result<u64> {
-    query_call(pic, canister, Principal::anonymous(), "debug_state_size_bytes", ())
+    query_call(
+        pic,
+        canister,
+        Principal::anonymous(),
+        "debug_state_size_bytes",
+        (),
+    )
 }
 
 #[allow(dead_code)]
@@ -502,7 +517,6 @@ fn get_full_neuron(
     }
 }
 
-
 fn neuron_snapshot(
     pic: &PocketIc,
     gov: Principal,
@@ -540,12 +554,22 @@ fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
 }
 
 fn icrc1_balance(pic: &PocketIc, ledger: Principal, acct: &Account) -> Result<u64> {
-    let bal_nat: candid::Nat =
-        query_call(pic, ledger, Principal::anonymous(), "icrc1_balance_of", acct.clone())?;
+    let bal_nat: candid::Nat = query_call(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        "icrc1_balance_of",
+        acct.clone(),
+    )?;
     Ok(nat_to_u64(&bal_nat))
 }
 
-fn icrc1_transfer(pic: &PocketIc, ledger: Principal, from: Principal, arg: TransferArg) -> Result<()> {
+fn icrc1_transfer(
+    pic: &PocketIc,
+    ledger: Principal,
+    from: Principal,
+    arg: TransferArg,
+) -> Result<()> {
     let res: std::result::Result<candid::Nat, TransferError> =
         update_call(pic, ledger, from, "icrc1_transfer", arg)?;
     match &res {
@@ -613,9 +637,11 @@ fn stake_and_claim_neuron(
     let req = ManageNeuronRequest {
         id: None,
         neuron_id_or_subaccount: None,
-        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
-            by: Some(manage_neuron::claim_or_refresh::By::Memo(memo)),
-        })),
+        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(
+            manage_neuron::ClaimOrRefresh {
+                by: Some(manage_neuron::claim_or_refresh::By::Memo(memo)),
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -628,7 +654,9 @@ fn stake_and_claim_neuron(
             e2e_log!("created neuron_id={nid} controller={controller}");
             Ok(nid)
         }
-        Some(manage_neuron_response::Command::Error(e)) => bail!("claim_or_refresh failed: {:?}", e),
+        Some(manage_neuron_response::Command::Error(e)) => {
+            bail!("claim_or_refresh failed: {:?}", e)
+        }
         other => bail!("unexpected claim_or_refresh response: {:?}", other),
     }
 }
@@ -642,12 +670,18 @@ fn add_hotkey(
 ) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::Configure(manage_neuron::Configure {
-            operation: Some(manage_neuron::configure::Operation::AddHotKey(manage_neuron::AddHotKey {
-                new_hot_key: Some(PrincipalId::from(hotkey)),
-            })),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::Configure(
+            manage_neuron::Configure {
+                operation: Some(manage_neuron::configure::Operation::AddHotKey(
+                    manage_neuron::AddHotKey {
+                        new_hot_key: Some(PrincipalId::from(hotkey)),
+                    },
+                )),
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -668,12 +702,18 @@ fn increase_dissolve_delay(
 ) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::Configure(manage_neuron::Configure {
-            operation: Some(manage_neuron::configure::Operation::IncreaseDissolveDelay(manage_neuron::IncreaseDissolveDelay {
-                additional_dissolve_delay_seconds: additional_seconds,
-            })),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::Configure(
+            manage_neuron::Configure {
+                operation: Some(manage_neuron::configure::Operation::IncreaseDissolveDelay(
+                    manage_neuron::IncreaseDissolveDelay {
+                        additional_dissolve_delay_seconds: additional_seconds,
+                    },
+                )),
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -682,8 +722,6 @@ fn increase_dissolve_delay(
     }
     Ok(())
 }
-
-
 
 fn transfer_to_neuron_staking_subaccount(
     pic: &PocketIc,
@@ -732,10 +770,14 @@ fn refresh_neuron_stake(
 ) -> Result<()> {
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(manage_neuron::ClaimOrRefresh {
-            by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount {}),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::ClaimOrRefresh(
+            manage_neuron::ClaimOrRefresh {
+                by: Some(manage_neuron::claim_or_refresh::By::NeuronIdOrSubaccount {}),
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -783,7 +825,11 @@ fn apply_top_up(
         index,
         Principal::anonymous(),
         "debug_append_transfer",
-        encode_args((staking_id.to_string(), amount_e8s, Some(memo_bytes.to_vec())))?,
+        encode_args((
+            staking_id.to_string(),
+            amount_e8s,
+            Some(memo_bytes.to_vec()),
+        ))?,
     )?;
     Ok(())
 }
@@ -841,15 +887,19 @@ fn make_and_settle_motion_proposal(
 
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::MakeProposal(MakeProposalRequest {
-            url,
-            title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
-            summary: "Trigger reward distribution in PocketIC".to_string(),
-            action: Some(ProposalActionRequest::Motion(Motion {
-                motion_text: motion_text.to_string(),
-            })),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::MakeProposal(
+            MakeProposalRequest {
+                url,
+                title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
+                summary: "Trigger reward distribution in PocketIC".to_string(),
+                action: Some(ProposalActionRequest::Motion(Motion {
+                    motion_text: motion_text.to_string(),
+                })),
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -866,14 +916,19 @@ fn make_and_settle_motion_proposal(
     // Try to vote YES. Some NNS versions auto-cast a vote for the proposer; tolerate "already voted".
     let vote_req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::RegisterVote(manage_neuron::RegisterVote {
-            proposal: Some(pid.clone()),
-            vote: 1,
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::RegisterVote(
+            manage_neuron::RegisterVote {
+                proposal: Some(pid.clone()),
+                vote: 1,
+            },
+        )),
     };
 
-    let vote_resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", vote_req)?;
+    let vote_resp: ManageNeuronResponse =
+        update_call(pic, gov, controller, "manage_neuron", vote_req)?;
     if let Some(manage_neuron_response::Command::Error(e)) = vote_resp.command {
         // Observed: error_type=19, "Neuron already voted on proposal."
         if e.error_type != 19 {
@@ -886,7 +941,6 @@ fn make_and_settle_motion_proposal(
 
     Ok(pid)
 }
-
 
 fn make_motion_proposal(
     pic: &PocketIc,
@@ -901,15 +955,19 @@ fn make_motion_proposal(
 
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::MakeProposal(MakeProposalRequest {
-            url,
-            title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
-            summary: "Trigger reward distribution in PocketIC".to_string(),
-            action: Some(ProposalActionRequest::Motion(Motion {
-                motion_text: motion_text.to_string(),
-            })),
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::MakeProposal(
+            MakeProposalRequest {
+                url,
+                title: Some(format!("PocketIC E2E Motion #{proposal_seq}")),
+                summary: "Trigger reward distribution in PocketIC".to_string(),
+                action: Some(ProposalActionRequest::Motion(Motion {
+                    motion_text: motion_text.to_string(),
+                })),
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
@@ -933,14 +991,19 @@ fn register_vote_yes(
 ) -> Result<()> {
     let vote_req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::RegisterVote(manage_neuron::RegisterVote {
-            proposal: Some(pid.clone()),
-            vote: 1,
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::RegisterVote(
+            manage_neuron::RegisterVote {
+                proposal: Some(pid.clone()),
+                vote: 1,
+            },
+        )),
     };
 
-    let vote_resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", vote_req)?;
+    let vote_resp: ManageNeuronResponse =
+        update_call(pic, gov, controller, "manage_neuron", vote_req)?;
     if let Some(manage_neuron_response::Command::Error(e)) = vote_resp.command {
         // Observed: error_type=19, "Neuron already voted on proposal."
         if e.error_type != 19 {
@@ -951,7 +1014,6 @@ fn register_vote_yes(
     Ok(())
 }
 
-
 #[derive(Clone, Copy, Debug)]
 struct WhaleBackground {
     neuron_id: u64,
@@ -959,7 +1021,11 @@ struct WhaleBackground {
     final_stake_e8s: u64,
 }
 
-fn install_whale_background(pic: &PocketIc, ledger: Principal, gov: Principal) -> Result<WhaleBackground> {
+fn install_whale_background(
+    pic: &PocketIc,
+    ledger: Principal,
+    gov: Principal,
+) -> Result<WhaleBackground> {
     // Create a huge whale neuron to dominate the background voting power.
     // This reduces sensitivity to the preconfigured PocketIC NNS neurons and
     // makes the reward environment much more stable for round-to-round comparisons.
@@ -967,15 +1033,23 @@ fn install_whale_background(pic: &PocketIc, ledger: Principal, gov: Principal) -
     // Compute the intended whale size up front, then seed the neuron directly
     // with that amount so later test output cannot confuse an initial seed with
     // the effective stabilization stake.
-    let anon_acct = Account { owner: Principal::anonymous(), subaccount: None };
+    let anon_acct = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
     let anon_bal = icrc1_balance(pic, ledger, &anon_acct)?;
     let desired_whale_e8s: u64 = WHALE_BACKGROUND_DESIRED_ICP * E8S_PER_ICP;
     let fee_e8s = icrc1_fee(pic, ledger)?;
     let reserve_e8s: u64 = WHALE_BACKGROUND_RESERVE_ICP * E8S_PER_ICP + 100 * fee_e8s;
     let safe_cap = anon_bal.saturating_sub(reserve_e8s);
-    let target_stake_e8s: u64 = desired_whale_e8s.min(safe_cap / 2).saturating_sub(10 * fee_e8s);
+    let target_stake_e8s: u64 = desired_whale_e8s
+        .min(safe_cap / 2)
+        .saturating_sub(10 * fee_e8s);
     if target_stake_e8s < WHALE_BACKGROUND_MIN_ICP * E8S_PER_ICP {
-        bail!("insufficient anonymous balance for whale background: anon_bal={} e8s", anon_bal);
+        bail!(
+            "insufficient anonymous balance for whale background: anon_bal={} e8s",
+            anon_bal
+        );
     }
 
     let whale_id = stake_and_claim_neuron(
@@ -988,8 +1062,8 @@ fn install_whale_background(pic: &PocketIc, ledger: Principal, gov: Principal) -
     )?;
     increase_dissolve_delay(pic, gov, Principal::anonymous(), whale_id, 31_557_600)?;
 
-    let final_stake_e8s = get_full_neuron(pic, gov, Principal::anonymous(), whale_id)?
-        .cached_neuron_stake_e8s;
+    let final_stake_e8s =
+        get_full_neuron(pic, gov, Principal::anonymous(), whale_id)?.cached_neuron_stake_e8s;
     if final_stake_e8s < target_stake_e8s {
         bail!(
             "whale direct seed did not fully materialize in cached stake: target_stake_e8s={} final_stake_e8s={}",
@@ -1000,9 +1074,7 @@ fn install_whale_background(pic: &PocketIc, ledger: Principal, gov: Principal) -
 
     eprintln!(
         "installed_whale_background neuron_id={} target_stake_e8s={} final_stake_e8s={}",
-        whale_id,
-        target_stake_e8s,
-        final_stake_e8s,
+        whale_id, target_stake_e8s, final_stake_e8s,
     );
 
     Ok(WhaleBackground {
@@ -1063,18 +1135,24 @@ fn disburse_maturity_to_account(
 
     let req = ManageNeuronRequest {
         id: None,
-        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId { id: neuron_id })),
-        command: Some(ManageNeuronCommandRequest::DisburseMaturity(manage_neuron::DisburseMaturity {
-            percentage_to_disburse: 100,
-            to_account: Some(to_acc),
-            to_account_identifier: None,
+        neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(NeuronId {
+            id: neuron_id,
         })),
+        command: Some(ManageNeuronCommandRequest::DisburseMaturity(
+            manage_neuron::DisburseMaturity {
+                percentage_to_disburse: 100,
+                to_account: Some(to_acc),
+                to_account_identifier: None,
+            },
+        )),
     };
 
     let resp: ManageNeuronResponse = update_call(pic, gov, controller, "manage_neuron", req)?;
     match resp.command {
         Some(manage_neuron_response::Command::DisburseMaturity(_)) => Ok(()),
-        Some(manage_neuron_response::Command::Error(e)) => bail!("disburse_maturity failed: {:?}", e),
+        Some(manage_neuron_response::Command::Error(e)) => {
+            bail!("disburse_maturity failed: {:?}", e)
+        }
         other => bail!("unexpected disburse_maturity response: {:?}", other),
     }
 }
@@ -1174,7 +1252,14 @@ fn ensure_maturity_ge_1_icp(
     let target = 200_000_000u64; // 2 ICP in e8s (>= 1 ICP after worst-case -5% maturity modulation)
 
     // Make the neuron big so rewards become non-trivial.
-    top_up_neuron_stake_and_refresh(pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?; // 5,000,000 ICP
+    top_up_neuron_stake_and_refresh(
+        pic,
+        ledger,
+        gov,
+        controller,
+        neuron_id,
+        5_000_000 * 100_000_000,
+    )?; // 5,000,000 ICP
 
     ensure_current_maturity_ge(pic, gov, controller, neuron_id, target)
 }
@@ -1217,16 +1302,25 @@ fn stage_existing_maturity_to_faucet(
 ) -> Result<(u64, u64, u64)> {
     let neuron_before = get_full_neuron(pic, gov, controller, neuron_id)?;
     if neuron_before.maturity_e8s_equivalent == 0 {
-        bail!("{phase}: expected non-zero maturity before staging to faucet; neuron={:?}", neuron_before);
+        bail!(
+            "{phase}: expected non-zero maturity before staging to faucet; neuron={:?}",
+            neuron_before
+        );
     }
 
     let payout_before = icrc1_balance(pic, ledger, payout)?;
-    let staging = Account { owner: disburser, subaccount: None };
+    let staging = Account {
+        owner: disburser,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(pic, ledger, &staging)?;
 
     let _: () = update_noargs(pic, disburser, Principal::anonymous(), "debug_main_tick")
-        .with_context(|| format!("{phase}: debug_main_tick failed while initiating maturity disbursement"))?;
-    let (inflight_seen, neuron_after_tick) = wait_for_inflight_disbursement(pic, gov, controller, neuron_id)?;
+        .with_context(|| {
+            format!("{phase}: debug_main_tick failed while initiating maturity disbursement")
+        })?;
+    let (inflight_seen, neuron_after_tick) =
+        wait_for_inflight_disbursement(pic, gov, controller, neuron_id)?;
     if !inflight_seen {
         bail!(
             "{phase}: expected in-flight maturity disbursement after initiation; neuron_after_tick={:?}",
@@ -1236,7 +1330,9 @@ fn stage_existing_maturity_to_faucet(
 
     advance_days(pic, 8);
     let staging_after_credit = wait_for_staging_credit(pic, ledger, &staging, staging_before)
-        .with_context(|| format!("{phase}: staging account never increased after maturity disbursement"))?;
+        .with_context(|| {
+            format!("{phase}: staging account never increased after maturity disbursement")
+        })?;
 
     debug_set_prev_age_seconds(pic, disburser, 0)?;
     debug_set_skip_maturity_initiation(pic, disburser, true)?;
@@ -1268,7 +1364,6 @@ fn stage_existing_maturity_to_faucet(
     ))
 }
 
-
 fn wait_for_staging_credit(
     pic: &PocketIc,
     ledger: Principal,
@@ -1291,9 +1386,13 @@ fn wait_for_staging_credit(
     }
 
     let after = icrc1_balance(pic, ledger, staging)?;
-    bail!("staging not credited within {}s: before={} after={}", MAX_WAIT_SECS, before, after)
+    bail!(
+        "staging not credited within {}s: before={} after={}",
+        MAX_WAIT_SECS,
+        before,
+        after
+    )
 }
-
 
 fn wait_for_cached_stake_increase(
     pic: &PocketIc,
@@ -1322,8 +1421,6 @@ fn wait_for_cached_stake_increase(
         last.cached_neuron_stake_e8s
     )
 }
-
-
 
 fn build_pic() -> PocketIc {
     support::ledger::build_pic_with_real_icp_and_nns_governance(Some(pic_log_level()))
@@ -1358,7 +1455,8 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
     let controller = disburser_canister;
 
     // Stake+claim a neuron controlled by the disburser canister.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 42, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 42, 10_000 * 100_000_000)?;
 
     // Make it eligible for rewards by ensuring dissolve delay >= ~6 months.
     // We add 1 year worth of seconds for margin.
@@ -1372,9 +1470,18 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         // Rescue controller is explicit in all test installs.
@@ -1393,16 +1500,25 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 
     // NOTE: no hotkey needed because the disburser canister is the neuron controller.
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let before = icrc1_balance(&pic, ledger, &staging)?;
     e2e_log!("staging before={before}");
 
     // Trigger your canister's logic.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     // Give PocketIC a chance to surface in-flight disbursement state (REQUIRED).
     // This is a critical observability signal used by the scheduler to decide whether to no-op.
-    let (inflight_seen, n_after_start) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
+    let (inflight_seen, n_after_start) =
+        wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !inflight_seen {
         bail!(
             "expected in-flight maturity disbursement to be observable, but it was not; maturity={} stake={} disbursements={:?}",
@@ -1413,7 +1529,10 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
     }
     e2e_log!(
         "inflight detected: disbursements={:?}",
-        n_after_start.maturity_disbursements_in_progress.as_ref().map(|v| v.len())
+        n_after_start
+            .maturity_disbursements_in_progress
+            .as_ref()
+            .map(|v| v.len())
     );
 
     // On NNS, maturity disbursement finalizes ~7 days after initiation.
@@ -1440,8 +1559,6 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
     Ok(())
 }
 
-
-
 // ------------------------- Additional E2E scenarios -------------------------
 
 #[test]
@@ -1457,16 +1574,26 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
     let controller = disburser_canister;
 
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 4242, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 4242, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -1481,11 +1608,19 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 
     let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
     debug_set_main_lock_expires_at_ts(&pic, disburser_canister, Some(now_secs + 30))?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     let st_before = debug_state(&pic, disburser_canister)?;
     if st_before.payout_plan_present {
-        bail!("expected active lease to suppress the first main tick, got {:?}", st_before);
+        bail!(
+            "expected active lease to suppress the first main tick, got {:?}",
+            st_before
+        );
     }
     let n_before = get_full_neuron(&pic, gov, controller, neuron_id)?;
     if n_before
@@ -1498,9 +1633,15 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
     }
 
     advance_and_tick(&pic, 31, 5);
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
-    let (inflight_seen, n_after_start) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
+    let (inflight_seen, n_after_start) =
+        wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !inflight_seen {
         bail!(
             "expected stale-lease retry to start maturity disbursement, but it did not; maturity={} stake={} disbursements={:?}",
@@ -1512,7 +1653,6 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 
     Ok(())
 }
-
 
 #[test]
 #[ignore]
@@ -1529,7 +1669,8 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
     let controller = disburser_canister;
 
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 42, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 42, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -1540,9 +1681,18 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
     let bonus1_owner = pic.create_canister();
     let bonus2_owner = pic.create_canister();
 
-    let normal = Account { owner: normal_owner, subaccount: None };
-    let bonus1 = Account { owner: bonus1_owner, subaccount: None };
-    let bonus2 = Account { owner: bonus2_owner, subaccount: None };
+    let normal = Account {
+        owner: normal_owner,
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: bonus1_owner,
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: bonus2_owner,
+        subaccount: None,
+    };
 
     let init = InitArg {
         neuron_id,
@@ -1563,7 +1713,10 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
     // Production posture: blackhole+self controller.
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
     // Recipients before.
@@ -1572,9 +1725,15 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
     let b2_before = icrc1_balance(&pic, ledger, &bonus2)?;
 
     // 1) Initiate maturity disbursement.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
-    let (inflight_seen, n_after_start) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
+    let (inflight_seen, n_after_start) =
+        wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !inflight_seen {
         bail!(
             "expected in-flight maturity disbursement to be observable, but it was not; maturity={} stake={} disbursements={:?}",
@@ -1610,13 +1769,21 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
         &bonus2,
     );
     if planned.len() != 3 {
-        bail!("expected 3 planned transfers at max age and large staging, got {}", planned.len());
+        bail!(
+            "expected 3 planned transfers at max age and large staging, got {}",
+            planned.len()
+        );
     }
 
     // Run payout (and wait until the ledger reflects the transfers).
     let mut paid = false;
     for _ in 0..50 {
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         tick_n(&pic, 25);
 
         let b0_after = icrc1_balance(&pic, ledger, &normal)?;
@@ -1656,7 +1823,7 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
         );
     }
 
-let st = debug_state(&pic, disburser_canister)?;
+    let st = debug_state(&pic, disburser_canister)?;
     if st.payout_plan_present {
         bail!("expected payout plan to be cleared after successful payout");
     }
@@ -1685,9 +1852,18 @@ fn repeated_ticks_while_governance_inflight_do_not_start_second_disbursement() -
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -1700,11 +1876,19 @@ fn repeated_ticks_while_governance_inflight_do_not_start_second_disbursement() -
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
     // Initiate once.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     // Require in-flight is visible.
     let (inflight_seen, _) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
@@ -1714,7 +1898,12 @@ fn repeated_ticks_while_governance_inflight_do_not_start_second_disbursement() -
 
     // Call main tick repeatedly while in-flight.
     for _ in 0..10 {
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         // Keep time advance below 60s so timers don't fire implicitly.
         advance_and_tick(&pic, 1, 1);
         let n = get_full_neuron(&pic, gov, controller, neuron_id)?;
@@ -1751,16 +1940,26 @@ fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Res
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
     let controller = disburser_canister;
 
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 99, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 99, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -1776,7 +1975,12 @@ fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Res
     set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Initiate.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     let (inflight_seen, _) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !inflight_seen {
@@ -1787,16 +1991,27 @@ fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Res
     debug_set_prev_age_seconds(&pic, disburser_canister, 1_234_567)?;
     let st0 = debug_state(&pic, disburser_canister)?;
     if st0.prev_age_seconds != 1_234_567 {
-        bail!("expected sentinel prev_age_seconds to be set, got {}", st0.prev_age_seconds);
+        bail!(
+            "expected sentinel prev_age_seconds to be set, got {}",
+            st0.prev_age_seconds
+        );
     }
 
     // Upgrade with same WASM (arg is empty; post_upgrade ignores args).
-    pic.upgrade_canister(disburser_canister, wasm, encode_one(())?, Some(disburser_canister))
-        .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
+    pic.upgrade_canister(
+        disburser_canister,
+        wasm,
+        encode_one(())?,
+        Some(disburser_canister),
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
 
     let st1 = debug_state(&pic, disburser_canister)?;
     if st1.prev_age_seconds != 1_234_567 {
-        bail!("expected prev_age_seconds to survive upgrade, got {}", st1.prev_age_seconds);
+        bail!(
+            "expected prev_age_seconds to survive upgrade, got {}",
+            st1.prev_age_seconds
+        );
     }
 
     // Still in-flight.
@@ -1811,7 +2026,10 @@ fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Res
     }
 
     // Completion still works.
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let before = icrc1_balance(&pic, ledger, &staging)?;
     stop_canister_as(&pic, disburser_canister, disburser_canister)?;
     advance_days(&pic, 8);
@@ -1837,7 +2055,8 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
     let controller = disburser_canister;
 
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 555, 1_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 555, 1_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
     let wasm = build_disburser_wasm()?;
@@ -1846,9 +2065,18 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     let bonus1_owner = pic.create_canister();
     let bonus2_owner = pic.create_canister();
 
-    let normal = Account { owner: normal_owner, subaccount: None };
-    let bonus1 = Account { owner: bonus1_owner, subaccount: None };
-    let bonus2 = Account { owner: bonus2_owner, subaccount: None };
+    let normal = Account {
+        owner: normal_owner,
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: bonus1_owner,
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: bonus2_owner,
+        subaccount: None,
+    };
 
     let init = InitArg {
         neuron_id,
@@ -1869,7 +2097,10 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
 
     // Fund staging with a known amount that guarantees 3 transfers at max bonus.
     let fee_e8s = icrc1_fee(&pic, ledger)?;
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
 
     // total > 100*fee ensures even the 5%-of-bonus share is > fee at max bonus
     // (max bonus is 20% of total, and recipient 2 receives 5% of that bonus).
@@ -1900,7 +2131,10 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
         &bonus2,
     );
     if planned.len() != 3 {
-        bail!("expected 3 planned transfers for staging_fund={staging_fund} fee={fee_e8s}, got {}", planned.len());
+        bail!(
+            "expected 3 planned transfers for staging_fund={staging_fund} fee={fee_e8s}, got {}",
+            planned.len()
+        );
     }
 
     let b0_before = icrc1_balance(&pic, ledger, &normal)?;
@@ -1910,7 +2144,12 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     // Build the payout plan while the ledger is running (so fee/balance queries succeed),
     // but do not execute it yet. This lets us later simulate a ledger outage *after* planning,
     // and confirm the persisted plan survives the outage and completes on resume.
-    let built: bool = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_build_payout_plan")?;
+    let built: bool = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_build_payout_plan",
+    )?;
     if !built {
         bail!("expected debug_build_payout_plan to succeed");
     }
@@ -1923,7 +2162,12 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     // Stop the ledger before attempting payout so the balance/transfer calls reject deterministically.
     stop_canister_as(&pic, ledger, nns_root())?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 20);
 
     // IMPORTANT: Don't query the ledger while it's stopped — PocketIC rejects calls to a stopped
@@ -1949,7 +2193,12 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
 
     let mut completed = false;
     for _ in 0..30 {
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         tick_n(&pic, 20);
 
         let b0_after = icrc1_balance(&pic, ledger, &normal)?;
@@ -1989,7 +2238,6 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     }
 
     Ok(())
-
 }
 
 #[test]
@@ -2007,7 +2255,8 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
 
     // Neuron controller is *not* the disburser.
     let controller = fixture_principal();
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 4242, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 4242, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -2017,9 +2266,18 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -2031,11 +2289,19 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let before = icrc1_balance(&pic, ledger, &staging)?;
 
     // Attempt initiation.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     // Should not observe in-flight since DisburseMaturity should be rejected.
     let (seen, _) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
@@ -2067,7 +2333,8 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
     let controller = disburser_canister;
 
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 9090, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 9090, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -2077,9 +2344,18 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
     let bonus1_owner = pic.create_canister();
     let bonus2_owner = pic.create_canister();
 
-    let normal = Account { owner: normal_owner, subaccount: None };
-    let bonus1 = Account { owner: bonus1_owner, subaccount: None };
-    let bonus2 = Account { owner: bonus2_owner, subaccount: None };
+    let normal = Account {
+        owner: normal_owner,
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: bonus1_owner,
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: bonus2_owner,
+        subaccount: None,
+    };
 
     let init = InitArg {
         neuron_id,
@@ -2103,7 +2379,10 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
 
     // (Do not force prev_age here; it is overwritten on initiation.)
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
     let b0_before = icrc1_balance(&pic, ledger, &normal)?;
@@ -2142,16 +2421,13 @@ fn blackhole_timers_only_progresses_pipeline() -> Result<()> {
     // 3) Wait for payout transfers (timers only).
     start_canister_as(&pic, disburser_canister, disburser_canister)?;
     let fee_e8s = icrc1_fee(&pic, ledger)?;
-    let (_gross, planned) = expected_plan_payout_transfers(
-        staging_after,
-        fee_e8s,
-        plan_age,
-        &normal,
-        &bonus1,
-        &bonus2,
-    );
+    let (_gross, planned) =
+        expected_plan_payout_transfers(staging_after, fee_e8s, plan_age, &normal, &bonus1, &bonus2);
     if planned.len() != 3 {
-        bail!("expected 3 planned transfers for timer-driven payout, got {}", planned.len());
+        bail!(
+            "expected 3 planned transfers for timer-driven payout, got {}",
+            planned.len()
+        );
     }
 
     let mut paid = false;
@@ -2208,9 +2484,18 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
 
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2226,7 +2511,10 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
     // Start fully blackholed (blackhole+self controller).
     set_blackholed_controllers(&pic, disburser_canister)?;
     let c0 = pic.get_controllers(disburser_canister);
-    if !(c0.contains(&disburser_canister) && c0.contains(&test_blackhole_controller()) && c0.len() == 2) {
+    if !(c0.contains(&disburser_canister)
+        && c0.contains(&test_blackhole_controller())
+        && c0.len() == 2)
+    {
         bail!("expected blackhole+self controller at start, got {:?}", c0);
     }
 
@@ -2241,10 +2529,19 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         "debug_set_last_successful_transfer_ts",
         Some(old),
     )?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
 
     let c1 = pic.get_controllers(disburser_canister);
-    if !(c1.contains(&disburser_canister) && c1.contains(&test_blackhole_controller()) && c1.contains(&controller) && c1.len() == 3) {
+    if !(c1.contains(&disburser_canister)
+        && c1.contains(&test_blackhole_controller())
+        && c1.contains(&controller)
+        && c1.len() == 3)
+    {
         bail!("expected controllers=[blackhole,self,rescue], got {:?}", c1);
     }
 
@@ -2256,16 +2553,26 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
         "debug_set_last_successful_transfer_ts",
         Some(now_secs),
     )?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
 
     let c2 = pic.get_controllers(disburser_canister);
-    if !(c2.contains(&disburser_canister) && c2.contains(&test_blackhole_controller()) && c2.len() == 2) {
-        bail!("expected controllers to return to blackhole+self after healthy tick, got {:?}", c2);
+    if !(c2.contains(&disburser_canister)
+        && c2.contains(&test_blackhole_controller())
+        && c2.len() == 2)
+    {
+        bail!(
+            "expected controllers to return to blackhole+self after healthy tick, got {:?}",
+            c2
+        );
     }
 
     Ok(())
 }
-
 
 #[test]
 #[ignore]
@@ -2287,9 +2594,18 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
 
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2301,10 +2617,18 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
 
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
 
-    set_controllers_exact(&pic, disburser_canister, vec![disburser_canister, controller])?;
+    set_controllers_exact(
+        &pic,
+        disburser_canister,
+        vec![disburser_canister, controller],
+    )?;
     let before = pic.get_controllers(disburser_canister);
-    if !(before.contains(&disburser_canister) && before.contains(&controller) && before.len() == 2) {
-        bail!("expected initial controllers to remain [self,rescue] while unarmed, got {:?}", before);
+    if !(before.contains(&disburser_canister) && before.contains(&controller) && before.len() == 2)
+    {
+        bail!(
+            "expected initial controllers to remain [self,rescue] while unarmed, got {:?}",
+            before
+        );
     }
 
     let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
@@ -2316,7 +2640,12 @@ fn blackhole_does_not_reconcile_when_unarmed() -> Result<()> {
         Some(now_secs),
     )?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
 
     let after = pic.get_controllers(disburser_canister);
     if after != before {
@@ -2350,9 +2679,18 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
 
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2366,7 +2704,10 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
 
     set_blackholed_controllers(&pic, disburser_canister)?;
     let c0 = pic.get_controllers(disburser_canister);
-    if !(c0.contains(&disburser_canister) && c0.contains(&test_blackhole_controller()) && c0.len() == 2) {
+    if !(c0.contains(&disburser_canister)
+        && c0.contains(&test_blackhole_controller())
+        && c0.len() == 2)
+    {
         bail!("expected blackhole+self controller at start, got {:?}", c0);
     }
 
@@ -2382,19 +2723,39 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
     pic.advance_time(Duration::from_secs(30 * DAY_SECS));
     pic.tick();
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
 
     let c1 = pic.get_controllers(disburser_canister);
-    if !(c1.contains(&disburser_canister) && c1.contains(&test_blackhole_controller()) && c1.contains(&controller) && c1.len() == 3) {
+    if !(c1.contains(&disburser_canister)
+        && c1.contains(&test_blackhole_controller())
+        && c1.contains(&controller)
+        && c1.len() == 3)
+    {
         bail!(
             "expected bootstrap rescue to widen controllers before first successful payout; got {:?}",
             c1
         );
     }
 
-    let dbg: DebugState = query_call(&pic, disburser_canister, Principal::anonymous(), "debug_state", ())?;
-    if !dbg.rescue_triggered || dbg.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
-        bail!("expected bootstrap forced rescue to latch before first successful payout, got {:?}", dbg);
+    let dbg: DebugState = query_call(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    if !dbg.rescue_triggered
+        || dbg.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess)
+    {
+        bail!(
+            "expected bootstrap forced rescue to latch before first successful payout, got {:?}",
+            dbg
+        );
     }
 
     Ok(())
@@ -2413,7 +2774,8 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = fixture_principal();
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 100, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 100, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
     let normal_recipient = pic.create_canister();
@@ -2423,9 +2785,18 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: normal_recipient, subaccount: None },
-        age_bonus_recipient_1: Account { owner: age_bonus_recipient_1, subaccount: None },
-        age_bonus_recipient_2: Account { owner: age_bonus_recipient_2, subaccount: None },
+        normal_recipient: Account {
+            owner: normal_recipient,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: age_bonus_recipient_1,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: age_bonus_recipient_2,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: controller,
@@ -2441,10 +2812,18 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     pic.advance_time(Duration::from_secs(30 * DAY_SECS));
     pic.tick();
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_rescue_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
     let before_upgrade = debug_state(&pic, disburser_canister)?;
     if before_upgrade.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
-        bail!("expected forced rescue before upgrade, got {:?}", before_upgrade);
+        bail!(
+            "expected forced rescue before upgrade, got {:?}",
+            before_upgrade
+        );
     }
 
     pic.upgrade_canister(
@@ -2458,13 +2837,20 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
 
     let after_upgrade = debug_state(&pic, disburser_canister)?;
     if after_upgrade.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess) {
-        bail!("expected forced rescue to survive upgrade, got {:?}", after_upgrade);
+        bail!(
+            "expected forced rescue to survive upgrade, got {:?}",
+            after_upgrade
+        );
     }
 
     pic.upgrade_canister(
         disburser_canister,
         wasm,
-        encode_one(Some(UpgradeArg { blackhole_controller: None, blackhole_armed: None, clear_forced_rescue: Some(true) }))?,
+        encode_one(Some(UpgradeArg {
+            blackhole_controller: None,
+            blackhole_armed: None,
+            clear_forced_rescue: Some(true),
+        }))?,
         Some(controller),
     )
     .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
@@ -2472,12 +2858,14 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
 
     let after_clear = debug_state(&pic, disburser_canister)?;
     if after_clear.forced_rescue_reason.is_some() {
-        bail!("expected clear_forced_rescue upgrade path to clear forced rescue latch, got {:?}", after_clear);
+        bail!(
+            "expected clear_forced_rescue upgrade path to clear forced rescue latch, got {:?}",
+            after_clear
+        );
     }
 
     Ok(())
 }
-
 
 #[test]
 #[ignore]
@@ -2498,7 +2886,8 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
     let controller = disburser_canister;
 
     // Stake + claim + configure neuron.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 100, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 100, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -2511,9 +2900,18 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
 
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: r_normal, subaccount: None },
-        age_bonus_recipient_1: Account { owner: r_bonus1, subaccount: None },
-        age_bonus_recipient_2: Account { owner: r_bonus2, subaccount: None },
+        normal_recipient: Account {
+            owner: r_normal,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: r_bonus1,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: r_bonus2,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -2528,7 +2926,10 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
     set_blackholed_controllers(&pic, disburser_canister)?;
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
 
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
     let rn_before = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
@@ -2540,7 +2941,12 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
     }
 
     // 1) Initiate maturity disbursement.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     // 2) REQUIRED: observe in-flight disbursement.
     let (seen, n_inflight) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
@@ -2568,7 +2974,10 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
         .map(|v| !v.is_empty())
         .unwrap_or(false);
     if inflight_now {
-        bail!("expected no in-flight disbursement after finalization, got {:?}", n_post.maturity_disbursements_in_progress);
+        bail!(
+            "expected no in-flight disbursement after finalization, got {:?}",
+            n_post.maturity_disbursements_in_progress
+        );
     }
 
     // 4) Deterministic payout split: force prev_age_seconds for plan creation.
@@ -2588,7 +2997,12 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
     let expected_gross_sent: u64 = planned.iter().map(|p| p.gross_share_e8s).sum();
 
     // 5) Run payout stage (and initiate the next maturity disbursement).
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
 
     // 6) Assert ledger effects (real ICP ledger semantics).
@@ -2639,7 +3053,6 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
     Ok(())
 }
 
-
 #[test]
 #[ignore]
 fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() -> Result<()> {
@@ -2654,7 +3067,8 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
 
     let controller = disburser_canister;
 
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 105, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 105, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -2666,9 +3080,18 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: r_normal, subaccount: None },
-        age_bonus_recipient_1: Account { owner: r_bonus1, subaccount: None },
-        age_bonus_recipient_2: Account { owner: r_bonus2, subaccount: None },
+        normal_recipient: Account {
+            owner: r_normal,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: r_bonus1,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: r_bonus2,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -2682,12 +3105,20 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
     set_blackholed_controllers(&pic, disburser_canister)?;
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
 
     // --- Get staging funded via real NNS maturity disbursement ---
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     let (seen, _n) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !seen {
         bail!("expected in-flight maturity disbursement to be observable");
@@ -2745,7 +3176,12 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
     // 2) Execute transfers, but trap after the first successful transfer reply.
     // Execute transfers, but abort after the first successful transfer reply.
     debug_set_trap_after_successful_transfers(&pic, disburser_canister, Some(1))?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
 
     // We should have observed at least one transfer landing (the first one), while the plan remains present.
@@ -2763,7 +3199,12 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
     // and the plan must complete.
     debug_set_trap_after_successful_transfers(&pic, disburser_canister, None)?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
 
     // Assert recipients received exactly once.
@@ -2805,7 +3246,6 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
         bail!("expected payout plan to be cleared after successful retry");
     }
 
-
     Ok(())
 }
 
@@ -2822,16 +3262,26 @@ fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Resu
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 1103, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 1103, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -2841,13 +3291,26 @@ fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Resu
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
-    pic.install_canister(disburser_canister, wasm.clone(), encode_one(init.clone())?, None);
+    pic.install_canister(
+        disburser_canister,
+        wasm.clone(),
+        encode_one(init.clone())?,
+        None,
+    );
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     let (seen, _n) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !seen {
         bail!("expected in-flight disbursement before persisted-plan upgrade test");
@@ -2972,16 +3435,26 @@ fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 103, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 103, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -2991,13 +3464,26 @@ fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
-    pic.install_canister(disburser_canister, wasm.clone(), encode_one(init.clone())?, None);
+    pic.install_canister(
+        disburser_canister,
+        wasm.clone(),
+        encode_one(init.clone())?,
+        None,
+    );
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     let (seen, _n) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !seen {
         bail!("expected in-flight disbursement before staging-credit phase");
@@ -3049,7 +3535,12 @@ fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer
     }
 
     debug_set_real_trap_after_successful_transfers(&pic, disburser_canister, Some(1))?;
-    let trapped = update_noargs::<bool>(&pic, disburser_canister, Principal::anonymous(), "debug_execute_payout_plan");
+    let trapped = update_noargs::<bool>(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_execute_payout_plan",
+    );
     if trapped.is_ok() {
         bail!(
             "expected debug_execute_payout_plan to reject after injected real trap; {}",
@@ -3138,7 +3629,8 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
     let controller = disburser_canister;
 
     // Real neuron so get_full_neuron works.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 77, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 77, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -3148,9 +3640,18 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
     let bonus1_owner = pic.create_canister();
     let bonus2_owner = pic.create_canister();
 
-    let normal = Account { owner: normal_owner, subaccount: None };
-    let bonus1 = Account { owner: bonus1_owner, subaccount: None };
-    let bonus2 = Account { owner: bonus2_owner, subaccount: None };
+    let normal = Account {
+        owner: normal_owner,
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: bonus1_owner,
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: bonus2_owner,
+        subaccount: None,
+    };
 
     let init = InitArg {
         neuron_id,
@@ -3174,11 +3675,19 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
     advance_days(&pic, 60);
     start_canister_as(&pic, disburser_canister, disburser_canister)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before_initiation = icrc1_balance(&pic, ledger, &staging)?;
 
     // First tick should initiate at most one disbursement (no "catch-up loop").
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     let (seen, n1) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !seen {
         bail!(
@@ -3187,18 +3696,33 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
             n1.maturity_disbursements_in_progress
         );
     }
-    let len1 = n1.maturity_disbursements_in_progress.as_ref().map(|v| v.len()).unwrap_or(0);
+    let len1 = n1
+        .maturity_disbursements_in_progress
+        .as_ref()
+        .map(|v| v.len())
+        .unwrap_or(0);
     if len1 > 1 {
         bail!("expected <=1 in-flight disbursement after one tick; got {len1}");
     }
 
     // Second tick must be a no-op (still exactly one in-flight).
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
     let n2 = get_full_neuron(&pic, gov, controller, neuron_id)?;
-    let len2 = n2.maturity_disbursements_in_progress.as_ref().map(|v| v.len()).unwrap_or(0);
+    let len2 = n2
+        .maturity_disbursements_in_progress
+        .as_ref()
+        .map(|v| v.len())
+        .unwrap_or(0);
     if len2 != len1 {
-        bail!("expected in-flight disbursement count stable across ticks; before={len1} after={len2}");
+        bail!(
+            "expected in-flight disbursement count stable across ticks; before={len1} after={len2}"
+        );
     }
 
     // Prevent staging from being drained automatically while we fast-forward finalization.
@@ -3217,7 +3741,12 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
 
     // Run payout.
     tick_n(&pic, 30);
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 50);
 
     let b0_after = icrc1_balance(&pic, ledger, &normal)?;
@@ -3246,7 +3775,8 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
     let controller = disburser_canister;
 
     // Need a real neuron so get_full_neuron succeeds; no maturity accrual needed.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 88, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 88, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
     let wasm = build_disburser_wasm()?;
@@ -3255,9 +3785,18 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
     let bonus1_owner = pic.create_canister();
     let bonus2_owner = pic.create_canister();
 
-    let normal = Account { owner: normal_owner, subaccount: None };
-    let bonus1 = Account { owner: bonus1_owner, subaccount: None };
-    let bonus2 = Account { owner: bonus2_owner, subaccount: None };
+    let normal = Account {
+        owner: normal_owner,
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: bonus1_owner,
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: bonus2_owner,
+        subaccount: None,
+    };
 
     let init = InitArg {
         neuron_id,
@@ -3282,7 +3821,10 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
     // Make sure we produce a 3-transfer plan by setting max age.
     debug_set_prev_age_seconds(&pic, disburser_canister, 4 * 365 * DAY_SECS)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
 
     // Credit staging.
     let fee = icrc1_fee(&pic, ledger)?;
@@ -3305,7 +3847,12 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
 
     // Simulate low cycles: tick must refuse to do anything (fail closed).
     debug_set_simulate_low_cycles(&pic, disburser_canister, true)?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
 
     let staging_after = icrc1_balance(&pic, ledger, &staging)?;
@@ -3319,7 +3866,12 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
     let b1_before = icrc1_balance(&pic, ledger, &bonus1)?;
     let b2_before = icrc1_balance(&pic, ledger, &bonus2)?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 50);
 
     let b0_after = icrc1_balance(&pic, ledger, &normal)?;
@@ -3332,7 +3884,6 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
 
     Ok(())
 }
-
 
 #[test]
 #[ignore]
@@ -3350,14 +3901,24 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 104, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 104, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
-    let normal = Account { owner: pic.create_canister(), subaccount: None };
-    let bonus1 = Account { owner: pic.create_canister(), subaccount: None };
-    let bonus2 = Account { owner: pic.create_canister(), subaccount: None };
+    let normal = Account {
+        owner: pic.create_canister(),
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: pic.create_canister(),
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: pic.create_canister(),
+        subaccount: None,
+    };
     let init = InitArg {
         neuron_id,
         normal_recipient: normal.clone(),
@@ -3378,7 +3939,10 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
     debug_set_skip_maturity_initiation(&pic, disburser_canister, true)?;
     debug_set_prev_age_seconds(&pic, disburser_canister, 4 * 365 * DAY_SECS)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let fee = icrc1_fee(&pic, ledger)?;
     icrc1_transfer(
         &pic,
@@ -3404,7 +3968,10 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
     }
 
     let staging_before_drain = icrc1_balance(&pic, ledger, &staging)?;
-    let drain_target = Account { owner: pic.create_canister(), subaccount: None };
+    let drain_target = Account {
+        owner: pic.create_canister(),
+        subaccount: None,
+    };
     let drain_amount = staging_before_drain.saturating_sub(fee);
     if drain_amount == 0 {
         bail!("expected a positive staging balance to drain");
@@ -3423,7 +3990,12 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
         },
     )?;
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
 
     let after_failure = debug_state(&pic, disburser_canister)?;
@@ -3455,7 +4027,8 @@ fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
     let controller = disburser_canister;
 
     // Real neuron so get_full_neuron succeeds; no maturity accrual needed.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 99, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 99, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
     let wasm = build_disburser_wasm()?;
@@ -3464,9 +4037,18 @@ fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
     let bonus1_owner = pic.create_canister();
     let bonus2_owner = pic.create_canister();
 
-    let normal = Account { owner: normal_owner, subaccount: None };
-    let bonus1 = Account { owner: bonus1_owner, subaccount: None };
-    let bonus2 = Account { owner: bonus2_owner, subaccount: None };
+    let normal = Account {
+        owner: normal_owner,
+        subaccount: None,
+    };
+    let bonus1 = Account {
+        owner: bonus1_owner,
+        subaccount: None,
+    };
+    let bonus2 = Account {
+        owner: bonus2_owner,
+        subaccount: None,
+    };
 
     let init = InitArg {
         neuron_id,
@@ -3489,7 +4071,10 @@ fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
     debug_set_skip_maturity_initiation(&pic, disburser_canister, true)?;
     debug_set_prev_age_seconds(&pic, disburser_canister, 4 * 365 * DAY_SECS)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let fee = icrc1_fee(&pic, ledger)?;
 
     let mut last_size = debug_state_size_bytes(&pic, disburser_canister)?;
@@ -3511,7 +4096,12 @@ fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
             },
         )?;
 
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         tick_n(&pic, 50);
 
         let size = debug_state_size_bytes(&pic, disburser_canister)?;
@@ -3545,16 +4135,26 @@ fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 101, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 101, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -3568,7 +4168,12 @@ fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
     set_blackholed_controllers(&pic, disburser_canister)?;
 
     // Initiate disbursement.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     // Wait until in-flight is observable.
     let (seen, n1) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
@@ -3584,7 +4189,12 @@ fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
 
     // Re-run main tick multiple times while still in-flight.
     for _ in 0..5 {
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         tick_n(&pic, 3);
 
         let n = get_full_neuron(&pic, gov, controller, neuron_id)?;
@@ -3623,16 +4233,26 @@ fn upgrade_persists_inflight() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 102, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 102, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -3647,9 +4267,13 @@ fn upgrade_persists_inflight() -> Result<()> {
     // Self-only controller so we can stop/start using the canister principal.
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-
     // Initiate disbursement.
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     // Wait until in-flight is observable.
     let (seen, n1) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
@@ -3692,7 +4316,12 @@ fn upgrade_persists_inflight() -> Result<()> {
     }
 
     // Re-run main tick; should remain a no-op (still in-flight).
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 3);
     let n3 = get_full_neuron(&pic, gov, controller, neuron_id)?;
     let len3 = n3
@@ -3700,11 +4329,12 @@ fn upgrade_persists_inflight() -> Result<()> {
         .as_ref()
         .map(|v| v.len())
         .unwrap_or(0);
-    if len3 != n1
-        .maturity_disbursements_in_progress
-        .as_ref()
-        .map(|v| v.len())
-        .unwrap_or(0)
+    if len3
+        != n1
+            .maturity_disbursements_in_progress
+            .as_ref()
+            .map(|v| v.len())
+            .unwrap_or(0)
     {
         bail!("expected no change in disbursement count across upgrade+tick");
     }
@@ -3725,7 +4355,8 @@ fn blackhole_smoke_timers_only() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 104, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 104, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -3737,9 +4368,18 @@ fn blackhole_smoke_timers_only() -> Result<()> {
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: r1, subaccount: None },
-        age_bonus_recipient_1: Account { owner: r2, subaccount: None },
-        age_bonus_recipient_2: Account { owner: r3, subaccount: None },
+        normal_recipient: Account {
+            owner: r1,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: r2,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: r3,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -3755,7 +4395,10 @@ fn blackhole_smoke_timers_only() -> Result<()> {
     // Blackhole posture: blackhole+self controllers.
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
 
     // Drive time forward to let the timer fire main_tick.
@@ -3811,12 +4454,20 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
     let controller = disburser_canister;
 
     // Stake + claim + configure neuron.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 909, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 909, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
 
     // Make rewards large enough that rounding noise is negligible.
     // (This is the same magnitude used elsewhere to get deterministic maturity accrual.)
-    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(
+        &pic,
+        ledger,
+        gov,
+        controller,
+        neuron_id,
+        5_000_000 * 100_000_000,
+    )?;
 
     // Recipients.
     let r_normal = pic.create_canister();
@@ -3826,9 +4477,18 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: r_normal, subaccount: None },
-        age_bonus_recipient_1: Account { owner: r_bonus1, subaccount: None },
-        age_bonus_recipient_2: Account { owner: r_bonus2, subaccount: None },
+        normal_recipient: Account {
+            owner: r_normal,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: r_bonus1,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: r_bonus2,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -3843,14 +4503,17 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
     set_blackholed_controllers(&pic, disburser_canister)?;
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
 
     #[derive(Clone, Debug)]
     struct Cycle {
         total_disbursed_e8s: u64,
         age_seconds_used: u64,
-bonus_gross_e8s: u64,
-bonus1_net_e8s: u64,
+        bonus_gross_e8s: u64,
+        bonus1_net_e8s: u64,
         bonus2_net_e8s: u64,
     }
 
@@ -3877,7 +4540,12 @@ bonus1_net_e8s: u64,
         )?;
 
         // Initiate maturity disbursement via the disburser.
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
 
         // REQUIRED: observe in-flight.
         let (seen, _n_inflight) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
@@ -3953,8 +4621,8 @@ bonus1_net_e8s: u64,
 
             out.expect("loop must either produce deltas or bail on final attempt")
         };
-        
-                // Verify the exact split landed on the real ledger.
+
+        // Verify the exact split landed on the real ledger.
         for p in &planned {
             let got = if p.to == init.normal_recipient {
                 normal_delta
@@ -4058,9 +4726,17 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     let controller = disburser_canister;
 
     // Stake + claim + configure neuron.
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 911, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, 911, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
-    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, neuron_id, 5_000_000 * 100_000_000)?;
+    top_up_neuron_stake_and_refresh(
+        &pic,
+        ledger,
+        gov,
+        controller,
+        neuron_id,
+        5_000_000 * 100_000_000,
+    )?;
 
     let r_normal = pic.create_canister();
     let r_bonus1 = pic.create_canister();
@@ -4069,9 +4745,18 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: r_normal, subaccount: None },
-        age_bonus_recipient_1: Account { owner: r_bonus1, subaccount: None },
-        age_bonus_recipient_2: Account { owner: r_bonus2, subaccount: None },
+        normal_recipient: Account {
+            owner: r_normal,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: r_bonus1,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: r_bonus2,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -4082,7 +4767,10 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     };
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
 
     const YEAR_SECS: u64 = 365 * DAY_SECS;
     const TWO_YEARS: u64 = 2 * YEAR_SECS;
@@ -4093,7 +4781,12 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64
     }
 
-    fn neuron_age_secs(pic: &PocketIc, gov: Principal, controller: Principal, neuron_id: u64) -> Result<u64> {
+    fn neuron_age_secs(
+        pic: &PocketIc,
+        gov: Principal,
+        controller: Principal,
+        neuron_id: u64,
+    ) -> Result<u64> {
         let n = get_full_neuron(pic, gov, controller, neuron_id)?;
         let now = now_secs(pic);
         Ok(now.saturating_sub(n.aging_since_timestamp_seconds))
@@ -4136,7 +4829,11 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         if expected == got {
             return Ok(());
         }
-        let diff = if expected > got { expected - got } else { got - expected };
+        let diff = if expected > got {
+            expected - got
+        } else {
+            got - expected
+        };
         let diff_bp = pct_bp(diff, expected.max(1));
         bail!("{label}: expected={expected}, got={got}, diff={diff} e8s ({diff_bp} bp)");
     }
@@ -4148,20 +4845,31 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     // Set age precisely, then initiate disbursement (no time advances between).
     advance_neuron_age_to(&pic, gov, controller, neuron_id, TWO_YEARS)?;
     let age_pre = neuron_age_secs(&pic, gov, controller, neuron_id)?;
-    let pre_diff = if age_pre > TWO_YEARS { age_pre - TWO_YEARS } else { TWO_YEARS - age_pre };
+    let pre_diff = if age_pre > TWO_YEARS {
+        age_pre - TWO_YEARS
+    } else {
+        TWO_YEARS - age_pre
+    };
     if pre_diff > 60 {
-        bail!("2y checkpoint: expected pre-age to be ~2 years; age_pre={age_pre} (diff {pre_diff}s)");
+        bail!(
+            "2y checkpoint: expected pre-age to be ~2 years; age_pre={age_pre} (diff {pre_diff}s)"
+        );
     }
 
     pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
     set_blackholed_controllers(&pic, disburser_canister)?;
-    
+
     // Initiate maturity disbursement via the disburser. In PocketIC, the in-flight entry may take
     // a couple of ticks to surface, so we retry a few times.
     let mut seen = false;
     let mut last = get_full_neuron(&pic, gov, controller, neuron_id)?;
     for _attempt in 1..=3u32 {
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         let (s, l) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
         seen = s;
         last = l;
@@ -4183,7 +4891,11 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     let age_used_2y = dbg.prev_age_seconds;
 
     // Age should be exactly at the target (within a few seconds of stepping).
-    let age_diff = if age_used_2y > age_pre { age_used_2y - age_pre } else { age_pre - age_used_2y };
+    let age_diff = if age_used_2y > age_pre {
+        age_used_2y - age_pre
+    } else {
+        age_pre - age_used_2y
+    };
     if age_diff > 5 {
         bail!("2y checkpoint: expected age_used to match current age; age_pre={age_pre}, age_used={age_used_2y}, diff={age_diff}s");
     }
@@ -4211,14 +4923,22 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         &init.age_bonus_recipient_2,
     );
     if planned2.len() != 3 {
-        bail!("2y checkpoint: expected 3 transfers (normal+bonus1+bonus2), got {}", planned2.len());
+        bail!(
+            "2y checkpoint: expected 3 transfers (normal+bonus1+bonus2), got {}",
+            planned2.len()
+        );
     }
 
     // Execute payout and verify exact on-ledger deltas.
     let rn_before = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
     let rb1_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
     let rb2_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
     let rn_after = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
     let rb1_after = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
@@ -4236,7 +4956,10 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         } else if p.to == init.age_bonus_recipient_2 {
             b2_delta
         } else {
-            bail!("2y checkpoint: planned transfer targets unknown account: {:?}", p.to);
+            bail!(
+                "2y checkpoint: planned transfer targets unknown account: {:?}",
+                p.to
+            );
         };
         if got != p.amount_e8s {
             bail!(
@@ -4270,15 +4993,24 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     advance_neuron_age_to(&pic, gov, controller, neuron_id, FIVE_YEARS)?;
     start_canister_as(&pic, disburser_canister, disburser_canister)?;
     let age_pre5 = neuron_age_secs(&pic, gov, controller, neuron_id)?;
-    let pre5_diff = if age_pre5 > FIVE_YEARS { age_pre5 - FIVE_YEARS } else { FIVE_YEARS - age_pre5 };
+    let pre5_diff = if age_pre5 > FIVE_YEARS {
+        age_pre5 - FIVE_YEARS
+    } else {
+        FIVE_YEARS - age_pre5
+    };
     if pre5_diff > 60 {
         bail!("5y checkpoint: expected pre-age to be ~5 years; age_pre={age_pre5} (diff {pre5_diff}s)");
     }
-    
+
     let mut seen5 = false;
     let mut last5 = get_full_neuron(&pic, gov, controller, neuron_id)?;
     for _attempt in 1..=3u32 {
-        let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+        let _: () = update_noargs(
+            &pic,
+            disburser_canister,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
         let (s, l) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
         seen5 = s;
         last5 = l;
@@ -4350,7 +5082,12 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     let rn_before5 = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
     let rb1_before5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
     let rb2_before5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
     tick_n(&pic, 10);
     let rn_after5 = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
     let rb1_after5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
@@ -4367,7 +5104,10 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         } else if p.to == init.age_bonus_recipient_2 {
             b2_delta5
         } else {
-            bail!("5y checkpoint: planned transfer targets unknown account: {:?}", p.to);
+            bail!(
+                "5y checkpoint: planned transfer targets unknown account: {:?}",
+                p.to
+            );
         };
         if got != p.amount_e8s {
             bail!(
@@ -4381,8 +5121,6 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     }
     Ok(())
 }
-
-
 
 #[test]
 #[ignore]
@@ -4404,7 +5142,12 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
         (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64
     }
 
-    fn neuron_age_secs(pic: &PocketIc, gov: Principal, controller: Principal, neuron_id: u64) -> Result<u64> {
+    fn neuron_age_secs(
+        pic: &PocketIc,
+        gov: Principal,
+        controller: Principal,
+        neuron_id: u64,
+    ) -> Result<u64> {
         let n = get_full_neuron(pic, gov, controller, neuron_id)?;
         Ok(now_secs(pic).saturating_sub(n.aging_since_timestamp_seconds))
     }
@@ -4435,7 +5178,10 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     // Create a huge whale neuron to dominate the background voting power.
     // This reduces sensitivity to any preconfigured genesis neurons and makes the reward environment stable.
     // Compute the target whale size up front and seed it directly to avoid seed-vs-top-up ambiguity.
-    let anon_acct = Account { owner: Principal::anonymous(), subaccount: None };
+    let anon_acct = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
     let anon_bal = icrc1_balance(&pic, ledger, &anon_acct)?;
     let desired_whale: u64 = WHALE_BACKGROUND_DESIRED_ICP * E8S_PER_ICP;
     let fee_e8s = icrc1_fee(&pic, ledger)?;
@@ -4444,7 +5190,10 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     let safe_cap = anon_bal.saturating_sub(reserve);
     let target_whale_stake_e8s: u64 = desired_whale.min(safe_cap / 2).saturating_sub(10 * fee_e8s);
     if target_whale_stake_e8s < WHALE_BACKGROUND_MIN_ICP * E8S_PER_ICP {
-        bail!("insufficient anonymous balance for whale background: anon_bal={} e8s", anon_bal);
+        bail!(
+            "insufficient anonymous balance for whale background: anon_bal={} e8s",
+            anon_bal
+        );
     }
     let whale_id = stake_and_claim_neuron(
         &pic,
@@ -4557,9 +5306,15 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     let post2 = get_full_neuron(&pic, gov, controller, n2)?;
     let post0 = get_full_neuron(&pic, gov, controller, n0)?;
 
-    let delta4 = post4.maturity_e8s_equivalent.saturating_sub(pre4.maturity_e8s_equivalent);
-    let delta2 = post2.maturity_e8s_equivalent.saturating_sub(pre2.maturity_e8s_equivalent);
-    let delta0 = post0.maturity_e8s_equivalent.saturating_sub(pre0.maturity_e8s_equivalent);
+    let delta4 = post4
+        .maturity_e8s_equivalent
+        .saturating_sub(pre4.maturity_e8s_equivalent);
+    let delta2 = post2
+        .maturity_e8s_equivalent
+        .saturating_sub(pre2.maturity_e8s_equivalent);
+    let delta0 = post0
+        .maturity_e8s_equivalent
+        .saturating_sub(pre0.maturity_e8s_equivalent);
 
     if delta4 == 0 || delta2 == 0 || delta0 == 0 {
         bail!(
@@ -4659,7 +5414,10 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
 
     // Use a payout-only stage for the disburser: fund its staging account via a direct governance disbursement,
     // then verify exact ledger deltas from the disburser's split logic.
-    let staging = Account { owner: disburser_canister, subaccount: None };
+    let staging = Account {
+        owner: disburser_canister,
+        subaccount: None,
+    };
     let staging_before = icrc1_balance(&pic, ledger, &staging)?;
     let age_used_4 = neuron_age_secs(&pic, gov, controller, n4)?;
 
@@ -4674,7 +5432,11 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
     let staging_after = wait_for_staging_credit(&pic, ledger, &staging, staging_before)?;
     let minted4 = staging_after.saturating_sub(staging_before);
     if minted4 == 0 {
-        bail!("expected non-zero staging mint for 4y neuron: staging_before={} staging_after={}", staging_before, staging_after);
+        bail!(
+            "expected non-zero staging mint for 4y neuron: staging_before={} staging_after={}",
+            staging_before,
+            staging_after
+        );
     }
 
     let wasm = build_disburser_wasm()?;
@@ -4684,9 +5446,18 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
 
     let init = InitArg {
         neuron_id: n4,
-        normal_recipient: Account { owner: r_normal, subaccount: None },
-        age_bonus_recipient_1: Account { owner: r_bonus1, subaccount: None },
-        age_bonus_recipient_2: Account { owner: r_bonus2, subaccount: None },
+        normal_recipient: Account {
+            owner: r_normal,
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: r_bonus1,
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: r_bonus2,
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -4718,7 +5489,12 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
         let mut out: Option<(u64, u64, u64)> = None;
 
         for attempt in 1..=3u32 {
-            let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+            let _: () = update_noargs(
+                &pic,
+                disburser_canister,
+                Principal::anonymous(),
+                "debug_main_tick",
+            )?;
             tick_n(&pic, 10);
 
             let rn_after = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
@@ -4736,7 +5512,13 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
 
             if attempt == 3 {
                 let dbg_now = debug_state(&pic, disburser_canister)?;
-                let snap_n = neuron_snapshot(&pic, gov, controller, n4, "baseline-payout-no-recipient-delta")?;
+                let snap_n = neuron_snapshot(
+                    &pic,
+                    gov,
+                    controller,
+                    n4,
+                    "baseline-payout-no-recipient-delta",
+                )?;
                 let staging_post = icrc1_balance(&pic, ledger, &staging)?;
                 bail!(
                     "payout did not move any recipient balances after {attempt} manual ticks; expected staged 4y baseline payout to execute; staging_after={} staging_post={} fee={} age_used={}; disburser_dbg={:?}; {snap_n}",
@@ -4801,16 +5583,32 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 8_888_000, 10_000 * 100_000_000)?;
+    let neuron_id = stake_and_claim_neuron(
+        &pic,
+        ledger,
+        gov,
+        controller,
+        8_888_000,
+        10_000 * 100_000_000,
+    )?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -4838,7 +5636,12 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
         );
     }
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     let after = wait_for_cached_stake_increase(&pic, gov, controller, neuron_id, before_stake)?;
     if after.cached_neuron_stake_e8s < before_stake.saturating_add(top_up_e8s) {
@@ -4866,16 +5669,32 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
 
     let controller = disburser_canister;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, 8_888_001, 10_000 * 100_000_000)?;
+    let neuron_id = stake_and_claim_neuron(
+        &pic,
+        ledger,
+        gov,
+        controller,
+        8_888_001,
+        10_000 * 100_000_000,
+    )?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
-        normal_recipient: Account { owner: fixture_principal(), subaccount: None },
-        age_bonus_recipient_1: Account { owner: Principal::management_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -4891,12 +5710,21 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
     let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
     let before_refresh = before
         .voting_power_refreshed_timestamp_seconds
-        .ok_or_else(|| anyhow!("governance did not expose voting_power_refreshed_timestamp_seconds before refresh"))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "governance did not expose voting_power_refreshed_timestamp_seconds before refresh"
+            )
+        })?;
 
     // Force the next refresh to be observably newer if the canister performs it.
     advance_days(&pic, 8);
 
-    let _: () = update_noargs(&pic, disburser_canister, Principal::anonymous(), "debug_main_tick")?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
 
     let (seen, after) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
     if !seen {
@@ -4908,7 +5736,11 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
 
     let after_refresh = after
         .voting_power_refreshed_timestamp_seconds
-        .ok_or_else(|| anyhow!("governance did not expose voting_power_refreshed_timestamp_seconds after refresh"))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "governance did not expose voting_power_refreshed_timestamp_seconds after refresh"
+            )
+        })?;
 
     if after_refresh <= before_refresh {
         bail!(
@@ -4929,7 +5761,9 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
         );
     }
 
-    if let (Some(deciding), Some(potential)) = (after.deciding_voting_power, after.potential_voting_power) {
+    if let (Some(deciding), Some(potential)) =
+        (after.deciding_voting_power, after.potential_voting_power)
+    {
         if deciding != potential {
             bail!(
                 "expected deciding_voting_power == potential_voting_power after refresh; deciding={} potential={}",
@@ -4942,11 +5776,10 @@ fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()>
     Ok(())
 }
 
-
-
 #[test]
 #[ignore]
-fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting() -> Result<()> {
+fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting(
+) -> Result<()> {
     // This is the canonical post-mitigation economics test.
     //
     // Setup:
@@ -5035,14 +5868,7 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         maturity_delta: u64,
     ) -> Result<RoundRec> {
         let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
-            pic,
-            ledger,
-            gov,
-            disburser,
-            controller,
-            neuron_id,
-            phase,
-            payout,
+            pic, ledger, gov, disburser, controller, neuron_id, phase, payout,
         )?;
         append_funding_tx(pic, index, disburser, payout, pot)?;
         let backlog = maturity_before_stage.saturating_sub(maturity_delta);
@@ -5080,8 +5906,15 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         phase: &str,
         proposal_seq: u64,
     ) -> Result<RoundRec> {
-        let maturity_delta =
-            earn_one_reward_cycle_with_whale(pic, gov, controller, neuron_id, whale_id, phase, proposal_seq)?;
+        let maturity_delta = earn_one_reward_cycle_with_whale(
+            pic,
+            gov,
+            controller,
+            neuron_id,
+            whale_id,
+            phase,
+            proposal_seq,
+        )?;
         finish_round_after_reward(
             pic,
             ledger,
@@ -5110,15 +5943,15 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         let disburser = pic.create_canister();
         pic.add_cycles(disburser, 5_000_000_000_000);
         let controller = disburser;
-        let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * E8S_PER_ICP)?;
+        let neuron_id =
+            stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * E8S_PER_ICP)?;
         increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
         ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
         let whale = install_whale_background(&pic, ledger, gov)?;
         let whale_id = whale.neuron_id;
         eprintln!(
             "mitigated_timing_whale_final_stake_e8s={} target_stake_e8s={}",
-            whale.final_stake_e8s,
-            whale.target_stake_e8s,
+            whale.final_stake_e8s, whale.target_stake_e8s,
         );
 
         let index = pic.create_canister();
@@ -5143,7 +5976,10 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             ledger_canister_id: Some(ledger),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
-            funding_source_account: Account { owner: disburser, subaccount: None },
+            funding_source_account: Account {
+                owner: disburser,
+                subaccount: None,
+            },
             rescue_controller: fixture_principal(),
             blackhole_controller: Some(test_blackhole_controller()),
             blackhole_armed: Some(false),
@@ -5162,8 +5998,14 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
         let disburser_init = InitArg {
             neuron_id,
             normal_recipient: payout.clone(),
-            age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-            age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+            age_bonus_recipient_1: Account {
+                owner: pic.create_canister(),
+                subaccount: None,
+            },
+            age_bonus_recipient_2: Account {
+                owner: pic.create_canister(),
+                subaccount: None,
+            },
             ledger_canister_id: Some(ledger),
             governance_canister_id: Some(gov),
             rescue_controller: fixture_principal(),
@@ -5172,7 +6014,12 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             main_interval_seconds: Some(very_long_interval),
             rescue_interval_seconds: Some(very_long_interval),
         };
-        pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+        pic.install_canister(
+            disburser,
+            build_disburser_wasm()?,
+            encode_one(disburser_init)?,
+            None,
+        );
         set_blackholed_controllers(&pic, disburser)?;
 
         let initial_valid_amount_e8s = 4_000 * E8S_PER_ICP;
@@ -5193,7 +6040,8 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             &existing_memo,
         )?;
 
-        let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
+        let preexisting =
+            get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
         if preexisting > 0 {
             let (warmup_pot, _, _) = stage_existing_maturity_to_faucet(
                 &pic,
@@ -5243,16 +6091,17 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 "mitigated-timing-round2-reward",
                 proposal_seq_base + 1,
             )?;
-            let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
-                &pic,
-                ledger,
-                gov,
-                disburser,
-                controller,
-                neuron_id,
-                "mitigated-timing-round2-late-top-up-stage",
-                &payout,
-            )?;
+            let (pot, maturity_before_stage, maturity_after_stage) =
+                stage_existing_maturity_to_faucet(
+                    &pic,
+                    ledger,
+                    gov,
+                    disburser,
+                    controller,
+                    neuron_id,
+                    "mitigated-timing-round2-late-top-up-stage",
+                    &payout,
+                )?;
             append_funding_tx(&pic, index, disburser, &payout, pot)?;
             let backlog = maturity_before_stage.saturating_sub(maturity_delta);
             if backlog > ICP_LEDGER_FEE_E8S * 10 {
@@ -5279,8 +6128,17 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 extra_top_up_e8s,
                 &late_memo,
             )?;
-            advance_time_steps(&pic, recognition_delay_seconds.saturating_add(DAY_SECS), 6 * 60 * 60, 10);
-            let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-post-funding-aged-late-top-up")?;
+            advance_time_steps(
+                &pic,
+                recognition_delay_seconds.saturating_add(DAY_SECS),
+                6 * 60 * 60,
+                10,
+            );
+            let summary = run_faucet_round(
+                &pic,
+                faucet,
+                "mitigated-timing-round2-post-funding-aged-late-top-up",
+            )?;
             if summary.pot_start_e8s != pot {
                 bail!(
                     "mitigated-timing-round2-late-top-up: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
@@ -5299,16 +6157,17 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                 "mitigated-timing-round2-control-reward",
                 proposal_seq_base + 1,
             )?;
-            let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
-                &pic,
-                ledger,
-                gov,
-                disburser,
-                controller,
-                neuron_id,
-                "mitigated-timing-round2-control-stage",
-                &payout,
-            )?;
+            let (pot, maturity_before_stage, maturity_after_stage) =
+                stage_existing_maturity_to_faucet(
+                    &pic,
+                    ledger,
+                    gov,
+                    disburser,
+                    controller,
+                    neuron_id,
+                    "mitigated-timing-round2-control-stage",
+                    &payout,
+                )?;
             append_funding_tx(&pic, index, disburser, &payout, pot)?;
             let backlog = maturity_before_stage.saturating_sub(maturity_delta);
             if backlog > ICP_LEDGER_FEE_E8S * 10 {
@@ -5320,8 +6179,17 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
                     backlog,
                 );
             }
-            advance_time_steps(&pic, recognition_delay_seconds.saturating_add(DAY_SECS), 6 * 60 * 60, 10);
-            let summary = run_faucet_round(&pic, faucet, "mitigated-timing-round2-control-post-funding-wait")?;
+            advance_time_steps(
+                &pic,
+                recognition_delay_seconds.saturating_add(DAY_SECS),
+                6 * 60 * 60,
+                10,
+            );
+            let summary = run_faucet_round(
+                &pic,
+                faucet,
+                "mitigated-timing-round2-control-post-funding-wait",
+            )?;
             if summary.pot_start_e8s != pot {
                 bail!(
                     "mitigated-timing-round2-control: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
@@ -5332,7 +6200,12 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             summary_round(&summary)
         };
 
-        advance_time_steps(&pic, recognition_delay_seconds.saturating_add(DAY_SECS), 6 * 60 * 60, 10);
+        advance_time_steps(
+            &pic,
+            recognition_delay_seconds.saturating_add(DAY_SECS),
+            6 * 60 * 60,
+            10,
+        );
         let round3 = record_clean_round(
             &pic,
             ledger,
@@ -5352,15 +6225,45 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
             proposal_seq_base + 2,
         )?;
 
-        Ok(ScenarioRec { baseline, round2, round3 })
+        Ok(ScenarioRec {
+            baseline,
+            round2,
+            round3,
+        })
     }
 
-    for (label, recognition_delay_seconds, control_memo, treatment_memo, control_seq, treatment_seq) in [
-        ("mechanism-one-day-delay", DAY_SECS, 4747, 4748, 70_001, 80_001),
-        ("production-seven-day-delay", 7 * DAY_SECS, 4749, 4750, 90_001, 100_001),
+    for (
+        label,
+        recognition_delay_seconds,
+        control_memo,
+        treatment_memo,
+        control_seq,
+        treatment_seq,
+    ) in [
+        (
+            "mechanism-one-day-delay",
+            DAY_SECS,
+            4747,
+            4748,
+            70_001,
+            80_001,
+        ),
+        (
+            "production-seven-day-delay",
+            7 * DAY_SECS,
+            4749,
+            4750,
+            90_001,
+            100_001,
+        ),
     ] {
         let control = run_scenario(false, control_memo, control_seq, recognition_delay_seconds)?;
-        let treatment = run_scenario(true, treatment_memo, treatment_seq, recognition_delay_seconds)?;
+        let treatment = run_scenario(
+            true,
+            treatment_memo,
+            treatment_seq,
+            recognition_delay_seconds,
+        )?;
         let round2_gap = if control.round2.gross >= treatment.round2.gross {
             control.round2.gross - treatment.round2.gross
         } else {
@@ -5418,7 +6321,8 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
 
 #[test]
 #[ignore]
-fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting() -> Result<()> {
+fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted_round_accounting(
+) -> Result<()> {
     // This is the invalid-commitment analogue of the canonical post-mitigation economics test.
     //
     // Control vs treatment:
@@ -5507,14 +6411,7 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         maturity_delta: u64,
     ) -> Result<RoundRec> {
         let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
-            pic,
-            ledger,
-            gov,
-            disburser,
-            controller,
-            neuron_id,
-            phase,
-            payout,
+            pic, ledger, gov, disburser, controller, neuron_id, phase, payout,
         )?;
         append_funding_tx(pic, index, disburser, payout, pot)?;
         let backlog = maturity_before_stage.saturating_sub(maturity_delta);
@@ -5552,8 +6449,15 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         phase: &str,
         proposal_seq: u64,
     ) -> Result<RoundRec> {
-        let maturity_delta =
-            earn_one_reward_cycle_with_whale(pic, gov, controller, neuron_id, whale_id, phase, proposal_seq)?;
+        let maturity_delta = earn_one_reward_cycle_with_whale(
+            pic,
+            gov,
+            controller,
+            neuron_id,
+            whale_id,
+            phase,
+            proposal_seq,
+        )?;
         finish_round_after_reward(
             pic,
             ledger,
@@ -5569,7 +6473,11 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         )
     }
 
-    fn run_scenario(with_late_invalid_top_up: bool, memo: u64, proposal_seq_base: u64) -> Result<ScenarioRec> {
+    fn run_scenario(
+        with_late_invalid_top_up: bool,
+        memo: u64,
+        proposal_seq_base: u64,
+    ) -> Result<ScenarioRec> {
         let pic = build_pic();
         let ledger = Principal::from_text(ICP_LEDGER_ID)?;
         let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -5577,15 +6485,15 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         let disburser = pic.create_canister();
         pic.add_cycles(disburser, 5_000_000_000_000);
         let controller = disburser;
-        let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * E8S_PER_ICP)?;
+        let neuron_id =
+            stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * E8S_PER_ICP)?;
         increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
         ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
         let whale = install_whale_background(&pic, ledger, gov)?;
         let whale_id = whale.neuron_id;
         eprintln!(
             "mitigated_invalid_timing_whale_final_stake_e8s={} target_stake_e8s={}",
-            whale.final_stake_e8s,
-            whale.target_stake_e8s,
+            whale.final_stake_e8s, whale.target_stake_e8s,
         );
 
         let index = pic.create_canister();
@@ -5609,7 +6517,10 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             ledger_canister_id: Some(ledger),
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
-            funding_source_account: Account { owner: disburser, subaccount: None },
+            funding_source_account: Account {
+                owner: disburser,
+                subaccount: None,
+            },
             rescue_controller: fixture_principal(),
             blackhole_controller: Some(test_blackhole_controller()),
             blackhole_armed: Some(false),
@@ -5628,8 +6539,14 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
         let disburser_init = InitArg {
             neuron_id,
             normal_recipient: payout.clone(),
-            age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-            age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+            age_bonus_recipient_1: Account {
+                owner: pic.create_canister(),
+                subaccount: None,
+            },
+            age_bonus_recipient_2: Account {
+                owner: pic.create_canister(),
+                subaccount: None,
+            },
             ledger_canister_id: Some(ledger),
             governance_canister_id: Some(gov),
             rescue_controller: fixture_principal(),
@@ -5638,7 +6555,12 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             main_interval_seconds: Some(very_long_interval),
             rescue_interval_seconds: Some(very_long_interval),
         };
-        pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+        pic.install_canister(
+            disburser,
+            build_disburser_wasm()?,
+            encode_one(disburser_init)?,
+            None,
+        );
         set_blackholed_controllers(&pic, disburser)?;
 
         let initial_valid_amount_e8s = 4_000 * E8S_PER_ICP;
@@ -5659,7 +6581,8 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             &existing_memo,
         )?;
 
-        let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
+        let preexisting =
+            get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
         if preexisting > 0 {
             let (warmup_pot, _, _) = stage_existing_maturity_to_faucet(
                 &pic,
@@ -5709,16 +6632,17 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
                 "mitigated-invalid-timing-round2-reward",
                 proposal_seq_base + 1,
             )?;
-            let (pot, maturity_before_stage, maturity_after_stage) = stage_existing_maturity_to_faucet(
-                &pic,
-                ledger,
-                gov,
-                disburser,
-                controller,
-                neuron_id,
-                "mitigated-invalid-timing-round2-late-top-up-stage",
-                &payout,
-            )?;
+            let (pot, maturity_before_stage, maturity_after_stage) =
+                stage_existing_maturity_to_faucet(
+                    &pic,
+                    ledger,
+                    gov,
+                    disburser,
+                    controller,
+                    neuron_id,
+                    "mitigated-invalid-timing-round2-late-top-up-stage",
+                    &payout,
+                )?;
             append_funding_tx(&pic, index, disburser, &payout, pot)?;
             let backlog = maturity_before_stage.saturating_sub(maturity_delta);
             if backlog > ICP_LEDGER_FEE_E8S * 10 {
@@ -5744,7 +6668,8 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
                 extra_top_up_e8s,
                 &invalid_memo,
             )?;
-            let summary = run_faucet_round(&pic, faucet, "mitigated-invalid-timing-round2-late-top-up")?;
+            let summary =
+                run_faucet_round(&pic, faucet, "mitigated-invalid-timing-round2-late-top-up")?;
             if summary.pot_start_e8s != pot {
                 bail!(
                     "mitigated-invalid-timing-round2-late-top-up: expected faucet payout pot to equal the amount staged from the disburser; summary_pot={} staged_to_faucet={}",
@@ -5789,7 +6714,11 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
             proposal_seq_base + 2,
         )?;
 
-        Ok(ScenarioRec { baseline, round2, round3 })
+        Ok(ScenarioRec {
+            baseline,
+            round2,
+            round3,
+        })
     }
 
     let control = run_scenario(false, 5757, 90_001)?;
@@ -5899,7 +6828,6 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
     Ok(())
 }
 
-
 #[test]
 #[ignore]
 fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
@@ -5913,7 +6841,8 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
     pic.add_cycles(disburser, 5_000_000_000_000);
     let controller = disburser;
     let memo = 5555u64;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
@@ -5938,7 +6867,10 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        funding_source_account: Account { owner: disburser, subaccount: None },
+        funding_source_account: Account {
+            owner: disburser,
+            subaccount: None,
+        },
         rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
@@ -5950,14 +6882,21 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
     };
     pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
     set_blackholed_controllers(&pic, faucet)?;
-    let faucet_accounts: FaucetDebugAccounts = query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let faucet_accounts: FaucetDebugAccounts =
+        query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let payout = faucet_accounts.payout;
 
     let disburser_init = InitArg {
         neuron_id,
         normal_recipient: payout.clone(),
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -5966,15 +6905,33 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
         main_interval_seconds: Some(very_long_interval),
         rescue_interval_seconds: Some(very_long_interval),
     };
-    pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+    pic.install_canister(
+        disburser,
+        build_disburser_wasm()?,
+        encode_one(disburser_init)?,
+        None,
+    );
     set_blackholed_controllers(&pic, disburser)?;
 
     let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
     let (warmup_pot, warmup_before_stage, warmup_after_stage) = stage_existing_maturity_to_faucet(
-        &pic, ledger, gov, disburser, controller, neuron_id, "warmup-drain", &payout,
+        &pic,
+        ledger,
+        gov,
+        disburser,
+        controller,
+        neuron_id,
+        "warmup-drain",
+        &payout,
     )?;
     append_faucet_funding_tx(&pic, index, disburser, &payout, warmup_pot)?;
-    let warmup = query_call::<_, Option<FaucetSummary>>(&pic, faucet, Principal::anonymous(), "debug_last_summary", ())?;
+    let warmup = query_call::<_, Option<FaucetSummary>>(
+        &pic,
+        faucet,
+        Principal::anonymous(),
+        "debug_last_summary",
+        (),
+    )?;
     let _ = run_faucet_round(&pic, faucet, "warmup-drain")?;
     let after = get_full_neuron(&pic, gov, controller, neuron_id)?;
 
@@ -6016,12 +6973,16 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
     pic.add_cycles(disburser, 5_000_000_000_000);
     let controller = disburser;
     let memo = 6666u64;
-    let neuron_id = stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * 100_000_000)?;
+    let neuron_id =
+        stake_and_claim_neuron(&pic, ledger, gov, controller, memo, 10_000 * 100_000_000)?;
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
     let whale = install_whale_background(&pic, ledger, gov)?;
     let whale_id = whale.neuron_id;
-    eprintln!("baseline_stability_whale_final_stake_e8s={} target_stake_e8s={}", whale.final_stake_e8s, whale.target_stake_e8s);
+    eprintln!(
+        "baseline_stability_whale_final_stake_e8s={} target_stake_e8s={}",
+        whale.final_stake_e8s, whale.target_stake_e8s
+    );
 
     let index = pic.create_canister();
     let cmc = pic.create_canister();
@@ -6044,7 +7005,10 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
         ledger_canister_id: Some(ledger),
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
-        funding_source_account: Account { owner: disburser, subaccount: None },
+        funding_source_account: Account {
+            owner: disburser,
+            subaccount: None,
+        },
         rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: Some(false),
@@ -6056,14 +7020,21 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
     };
     pic.install_canister(faucet, build_faucet_wasm()?, encode_one(faucet_init)?, None);
     set_blackholed_controllers(&pic, faucet)?;
-    let faucet_accounts: FaucetDebugAccounts = query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
+    let faucet_accounts: FaucetDebugAccounts =
+        query_call(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
     let payout = faucet_accounts.payout;
 
     let disburser_init = InitArg {
         neuron_id,
         normal_recipient: payout.clone(),
-        age_bonus_recipient_1: Account { owner: pic.create_canister(), subaccount: None },
-        age_bonus_recipient_2: Account { owner: pic.create_canister(), subaccount: None },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
@@ -6072,19 +7043,51 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
         main_interval_seconds: Some(very_long_interval),
         rescue_interval_seconds: Some(very_long_interval),
     };
-    pic.install_canister(disburser, build_disburser_wasm()?, encode_one(disburser_init)?, None);
+    pic.install_canister(
+        disburser,
+        build_disburser_wasm()?,
+        encode_one(disburser_init)?,
+        None,
+    );
     set_blackholed_controllers(&pic, disburser)?;
 
     let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let valid_amount_e8s = 4_000 * 100_000_000u64;
     let valid_memo = target.to_text().into_bytes();
-    transfer_to_neuron_staking_subaccount_with_memo(&pic, ledger, gov, controller, neuron_id, valid_amount_e8s, Some(valid_memo.clone()))?;
+    transfer_to_neuron_staking_subaccount_with_memo(
+        &pic,
+        ledger,
+        gov,
+        controller,
+        neuron_id,
+        valid_amount_e8s,
+        Some(valid_memo.clone()),
+    )?;
     refresh_neuron_stake(&pic, gov, controller, neuron_id)?;
-    let _: u64 = update_bytes(&pic, index, Principal::anonymous(), "debug_append_transfer", encode_args((staking_id.clone(), valid_amount_e8s, Some(valid_memo.clone())))?)?;
+    let _: u64 = update_bytes(
+        &pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((
+            staking_id.clone(),
+            valid_amount_e8s,
+            Some(valid_memo.clone()),
+        ))?,
+    )?;
 
     let preexisting = get_full_neuron(&pic, gov, controller, neuron_id)?.maturity_e8s_equivalent;
     if preexisting > 0 {
-        let (pot, _, _) = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, "baseline-stability-warmup", &payout)?;
+        let (pot, _, _) = stage_existing_maturity_to_faucet(
+            &pic,
+            ledger,
+            gov,
+            disburser,
+            controller,
+            neuron_id,
+            "baseline-stability-warmup",
+            &payout,
+        )?;
         append_faucet_funding_tx(&pic, index, disburser, &payout, pot)?;
         let _ = run_faucet_round(&pic, faucet, "baseline-stability-warmup")?;
     }
@@ -6095,9 +7098,19 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
     for (idx, proposal_seq) in [12_001_u64, 12_002, 12_003].into_iter().enumerate() {
         let phase = format!("baseline-stability-round-{}", idx + 1);
         let before = get_full_neuron(&pic, gov, controller, neuron_id)?;
-        let delta = earn_one_reward_cycle_with_whale(&pic, gov, controller, neuron_id, whale_id, &phase, proposal_seq)?;
+        let delta = earn_one_reward_cycle_with_whale(
+            &pic,
+            gov,
+            controller,
+            neuron_id,
+            whale_id,
+            &phase,
+            proposal_seq,
+        )?;
         let after_reward = get_full_neuron(&pic, gov, controller, neuron_id)?;
-        let (pot, before_stage, after_stage) = stage_existing_maturity_to_faucet(&pic, ledger, gov, disburser, controller, neuron_id, &phase, &payout)?;
+        let (pot, before_stage, after_stage) = stage_existing_maturity_to_faucet(
+            &pic, ledger, gov, disburser, controller, neuron_id, &phase, &payout,
+        )?;
         append_faucet_funding_tx(&pic, index, disburser, &payout, pot)?;
         let summary = run_faucet_round(&pic, faucet, &phase)?;
         let gross = effective_gross_beneficiary_e8s(&summary)? as u128;
@@ -6116,7 +7129,13 @@ fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result
             gross,
         ));
         if summary.pot_start_e8s != pot {
-            bail!("{}: faucet pot did not match staged pot; summary_pot={} staged_pot={} logs={:?}", phase, summary.pot_start_e8s, pot, logs);
+            bail!(
+                "{}: faucet pot did not match staged pot; summary_pot={} staged_pot={} logs={:?}",
+                phase,
+                summary.pot_start_e8s,
+                pot,
+                logs
+            );
         }
         if let Some(prev_pot) = prior_pot {
             if summary.pot_start_e8s < prev_pot / 2 || summary.pot_start_e8s > prev_pot * 2 {

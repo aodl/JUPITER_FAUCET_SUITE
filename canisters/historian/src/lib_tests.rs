@@ -4,8 +4,10 @@ use super::*;
 #[allow(clippy::clone_on_copy, clippy::useless_conversion)]
 mod tests {
     use super::*;
+    use crate::state::{
+        CanisterMeta, CyclesSampleSource, InvalidCommitment, RecentNeuronCommitment,
+    };
     use candid::encode_args;
-    use crate::state::{CanisterMeta, CyclesSampleSource, InvalidCommitment, RecentNeuronCommitment};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn principal(text: &str) -> Principal {
@@ -101,9 +103,18 @@ mod tests {
         State {
             config: Config {
                 staking_account: sample_account(),
-                output_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
-                output_account: Account { owner: principal("acjuz-liaaa-aaaar-qb4qq-cai"), subaccount: None },
-                rewards_account: Account { owner: principal("alk7f-5aaaa-aaaar-qb4ra-cai"), subaccount: None },
+                output_source_account: Account {
+                    owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+                    subaccount: None,
+                },
+                output_account: Account {
+                    owner: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
+                    subaccount: None,
+                },
+                rewards_account: Account {
+                    owner: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
+                    subaccount: None,
+                },
                 ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
@@ -171,7 +182,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn config_from_init_args_uses_mainnet_defaults_for_optional_canisters() {
         let cfg = config_from_init_args(InitArgs {
@@ -199,7 +209,10 @@ mod tests {
         assert_eq!(cfg.ledger_canister_id, mainnet_ledger_id());
         assert_eq!(cfg.index_canister_id, mainnet_index_id());
         assert_eq!(cfg.blackhole_canister_id, mainnet_blackhole_id());
-        assert_eq!(cfg.output_source_account, mainnet_disburser_staging_account());
+        assert_eq!(
+            cfg.output_source_account,
+            mainnet_disburser_staging_account()
+        );
         assert_eq!(cfg.output_account, mainnet_output_account());
         assert_eq!(cfg.rewards_account, mainnet_rewards_account());
         assert_eq!(cfg.cmc_canister_id, Some(mainnet_cmc_id()));
@@ -237,7 +250,6 @@ mod tests {
         validate_config(&cfg);
     }
 
-
     #[test]
     fn production_canister_detection_matches_expected_id() {
         assert!(is_production_canister(production_canister_id()));
@@ -248,7 +260,8 @@ mod tests {
     fn refresh_registered_canister_summary_updates_cache_incrementally() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -338,7 +351,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn list_registered_canister_summaries_falls_back_to_slow_path_when_total_desc_index_drifts() {
         let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
@@ -380,7 +392,14 @@ mod tests {
         });
 
         assert_eq!(response.total, 2);
-        assert_eq!(response.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(), vec![second, first]);
+        assert_eq!(
+            response
+                .items
+                .iter()
+                .map(|item| item.canister_id)
+                .collect::<Vec<_>>(),
+            vec![second, first]
+        );
     }
 
     #[test]
@@ -463,7 +482,10 @@ mod tests {
         assert_eq!(st.config.max_commitment_entries_per_canister, 12);
         assert_eq!(st.config.max_index_pages_per_tick, 13);
         assert_eq!(st.config.max_canisters_per_cycles_tick, 14);
-        assert_eq!(st.commitment_history.get(&canister).map(|v| v.len()), Some(1));
+        assert_eq!(
+            st.commitment_history.get(&canister).map(|v| v.len()),
+            Some(1)
+        );
         assert_eq!(st.main_lock_state_ts, Some(0));
     }
 
@@ -478,14 +500,22 @@ mod tests {
 
         let status = get_public_status();
         assert_eq!(status.staking_account, alternate_account());
-        assert_eq!(status.ledger_canister_id, principal("jufzc-caaaa-aaaar-qb5da-cai"));
+        assert_eq!(
+            status.ledger_canister_id,
+            principal("jufzc-caaaa-aaaar-qb5da-cai")
+        );
         assert_eq!(status.last_index_run_ts, Some(777));
         assert_eq!(status.last_completed_cycles_sweep_ts, Some(888));
         assert!(status.heap_memory_bytes.is_some());
         assert!(status.stable_memory_bytes.is_some());
         assert_eq!(
             status.total_memory_bytes,
-            Some(status.heap_memory_bytes.unwrap_or(0).saturating_add(status.stable_memory_bytes.unwrap_or(0))),
+            Some(
+                status
+                    .heap_memory_bytes
+                    .unwrap_or(0)
+                    .saturating_add(status.stable_memory_bytes.unwrap_or(0))
+            ),
         );
     }
 
@@ -585,14 +615,20 @@ mod tests {
 
         finish_canister_module_hash_refresh(9, 20, replacement.clone());
         state::with_state(|st| {
-            assert_eq!(st.canister_module_hash_cache[0].module_hash_hex.as_deref(), Some("old"));
+            assert_eq!(
+                st.canister_module_hash_cache[0].module_hash_hex.as_deref(),
+                Some("old")
+            );
             assert_eq!(st.canister_module_hash_cache_updated_ts, Some(5));
             assert_eq!(st.canister_module_hash_refresh_lock_ts, Some(10));
         });
 
         finish_canister_module_hash_refresh(10, 21, replacement);
         state::with_state(|st| {
-            assert_eq!(st.canister_module_hash_cache[0].module_hash_hex.as_deref(), Some("new"));
+            assert_eq!(
+                st.canister_module_hash_cache[0].module_hash_hex.as_deref(),
+                Some("new")
+            );
             assert_eq!(st.canister_module_hash_cache_updated_ts, Some(21));
             assert_eq!(st.canister_module_hash_refresh_lock_ts, None);
         });
@@ -605,8 +641,10 @@ mod tests {
         let both = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
         let mut st = base_state();
-        st.canister_sources.insert(memo_only, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.canister_sources.insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_sources
+            .insert(memo_only, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
         st.canister_sources.insert(
             both,
             BTreeSet::from([CanisterSource::MemoCommitment, CanisterSource::SnsDiscovery]),
@@ -638,8 +676,12 @@ mod tests {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
-        st.canister_sources.insert(memo_canister, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.canister_sources.insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_sources.insert(
+            memo_canister,
+            BTreeSet::from([CanisterSource::MemoCommitment]),
+        );
+        st.canister_sources
+            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
         st.commitment_history.insert(
             memo_canister,
             vec![
@@ -673,7 +715,10 @@ mod tests {
     fn get_public_counts_excludes_non_qualifying_memo_canisters_from_registered_totals() {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(memo_canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources.insert(
+            memo_canister,
+            BTreeSet::from([CanisterSource::MemoCommitment]),
+        );
         st.commitment_history.insert(
             memo_canister,
             vec![CommitmentSample {
@@ -748,7 +793,8 @@ mod tests {
     fn list_registered_canister_summaries_excludes_sns_only_canisters() {
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
-        st.canister_sources.insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_sources
+            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
         state::set_state(st);
 
         let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
@@ -759,12 +805,12 @@ mod tests {
         assert!(response.items.is_empty());
     }
 
-
     #[test]
     fn list_registered_canister_summaries_excludes_non_qualifying_memo_only_canisters() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -788,7 +834,8 @@ mod tests {
     fn get_canister_overview_hides_non_qualifying_memo_only_canisters() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -842,11 +889,11 @@ mod tests {
         assert!(restored.cycles_history.is_empty());
         state::set_state_root_only(restored);
 
-        let overview = get_canister_overview(canister).expect("registered canister should be visible");
+        let overview =
+            get_canister_overview(canister).expect("registered canister should be visible");
         assert_eq!(overview.commitment_points, 2);
         assert_eq!(overview.cycles_points, 1);
     }
-
 
     #[test]
     fn list_registered_canister_summaries_uses_canister_id_as_tie_breaker_for_stable_pagination() {
@@ -854,7 +901,8 @@ mod tests {
         let b = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
         let mut st = base_state();
         for canister in [a, b] {
-            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -895,7 +943,8 @@ mod tests {
     fn list_registered_canister_summaries_returns_empty_pages_past_the_end() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -921,8 +970,10 @@ mod tests {
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
         st.distinct_canisters.extend([canister, sns_only]);
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.canister_sources.insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -955,7 +1006,10 @@ mod tests {
             assert!(!response.truncated, "prefix {prefix}");
             assert_eq!(response.items.len(), 1, "prefix {prefix}");
             assert_eq!(response.items[0].canister_id, canister, "prefix {prefix}");
-            assert_eq!(response.items[0].matched_prefix, "22255zq", "prefix {prefix}");
+            assert_eq!(
+                response.items[0].matched_prefix, "22255zq",
+                "prefix {prefix}"
+            );
         }
 
         let rejected = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
@@ -974,7 +1028,8 @@ mod tests {
         let mut st = base_state();
         for canister in [a, b] {
             st.distinct_canisters.insert(canister);
-            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1008,26 +1063,22 @@ mod tests {
         let qualifying = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let low_amount = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
-        st.recent_commitments = Some(vec![
-            RecentCommitment {
-                canister_id: qualifying,
-                raw_icp_memo_text: None,
-                tx_id: 11,
-                timestamp_nanos: Some(11),
-                amount_e8s: 20_000_000,
-                counts_toward_faucet: true,
-            },
-        ]);
-        st.recent_under_threshold_commitments = Some(vec![
-            RecentCommitment {
-                canister_id: low_amount,
-                raw_icp_memo_text: None,
-                tx_id: 10,
-                timestamp_nanos: Some(10),
-                amount_e8s: 5_000_000,
-                counts_toward_faucet: false,
-            },
-        ]);
+        st.recent_commitments = Some(vec![RecentCommitment {
+            canister_id: qualifying,
+            raw_icp_memo_text: None,
+            tx_id: 11,
+            timestamp_nanos: Some(11),
+            amount_e8s: 20_000_000,
+            counts_toward_faucet: true,
+        }]);
+        st.recent_under_threshold_commitments = Some(vec![RecentCommitment {
+            canister_id: low_amount,
+            raw_icp_memo_text: None,
+            tx_id: 10,
+            timestamp_nanos: Some(10),
+            amount_e8s: 5_000_000,
+            counts_toward_faucet: false,
+        }]);
         st.recent_invalid_commitments = Some(vec![InvalidCommitment {
             tx_id: 12,
             timestamp_nanos: Some(12),
@@ -1043,17 +1094,29 @@ mod tests {
         assert_eq!(all.items.len(), 3);
         assert_eq!(all.items[0].tx_id, 12);
         assert_eq!(all.items[0].canister_id, None);
-        assert_eq!(all.items[0].memo_text.as_deref(), Some(crate::logic::INVALID_MEMO_PLACEHOLDER));
+        assert_eq!(
+            all.items[0].memo_text.as_deref(),
+            Some(crate::logic::INVALID_MEMO_PLACEHOLDER)
+        );
         assert!(!all.items[0].counts_toward_faucet);
-        assert_eq!(all.items[0].outcome_category, RecentCommitmentOutcomeCategory::InvalidTargetMemo);
+        assert_eq!(
+            all.items[0].outcome_category,
+            RecentCommitmentOutcomeCategory::InvalidTargetMemo
+        );
         assert_eq!(all.items[1].tx_id, 11);
         assert_eq!(all.items[1].canister_id, Some(qualifying));
         assert!(all.items[1].counts_toward_faucet);
-        assert_eq!(all.items[1].outcome_category, RecentCommitmentOutcomeCategory::QualifyingCommitment);
+        assert_eq!(
+            all.items[1].outcome_category,
+            RecentCommitmentOutcomeCategory::QualifyingCommitment
+        );
         assert_eq!(all.items[2].tx_id, 10);
         assert_eq!(all.items[2].canister_id, Some(low_amount));
         assert!(!all.items[2].counts_toward_faucet);
-        assert_eq!(all.items[2].outcome_category, RecentCommitmentOutcomeCategory::UnderThresholdCommitment);
+        assert_eq!(
+            all.items[2].outcome_category,
+            RecentCommitmentOutcomeCategory::UnderThresholdCommitment
+        );
 
         let qualifying_only = list_recent_commitments(ListRecentCommitmentsArgs {
             limit: Some(10),
@@ -1062,7 +1125,10 @@ mod tests {
         assert_eq!(qualifying_only.items.len(), 1);
         assert_eq!(qualifying_only.items[0].tx_id, 11);
         assert!(qualifying_only.items[0].counts_toward_faucet);
-        assert_eq!(qualifying_only.items[0].outcome_category, RecentCommitmentOutcomeCategory::QualifyingCommitment);
+        assert_eq!(
+            qualifying_only.items[0].outcome_category,
+            RecentCommitmentOutcomeCategory::QualifyingCommitment
+        );
     }
 
     #[test]
@@ -1092,13 +1158,21 @@ mod tests {
             qualifying_only: Some(false),
         });
 
-        let neuron = response.items.iter().find(|item| item.neuron_id.is_some()).expect("neuron item");
+        let neuron = response
+            .items
+            .iter()
+            .find(|item| item.neuron_id.is_some())
+            .expect("neuron item");
         assert_eq!(neuron.neuron_id, Some(11_614_578_985_374_291_210));
         assert_eq!(neuron.canister_id, None);
         assert_eq!(neuron.memo_text.as_deref(), Some("11614578985374291210"));
         assert_eq!(neuron.neuron_memo_text.as_deref(), Some("vault.memo"));
 
-        let raw = response.items.iter().find(|item| item.raw_icp_memo_text.is_some()).expect("raw item");
+        let raw = response
+            .items
+            .iter()
+            .find(|item| item.raw_icp_memo_text.is_some())
+            .expect("raw item");
         assert_eq!(raw.canister_id, Some(raw_canister));
         assert_eq!(raw.raw_icp_memo_text.as_deref(), Some("vault42"));
         assert_eq!(raw.neuron_id, None);
@@ -1181,7 +1255,6 @@ mod tests {
         assert_eq!(st.qualifying_commitment_count, Some(3));
     }
 
-
     #[test]
     fn normalize_runtime_state_moves_non_qualifying_commitments_out_of_registered_history() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
@@ -1226,9 +1299,17 @@ mod tests {
         normalize_runtime_state(&mut st);
 
         assert_eq!(st.qualifying_commitment_count, Some(1));
-        assert_eq!(st.commitment_history.get(&canister).map(|items| items.len()), Some(1));
+        assert_eq!(
+            st.commitment_history
+                .get(&canister)
+                .map(|items| items.len()),
+            Some(1)
+        );
         assert_eq!(st.commitment_history.get(&canister).unwrap()[0].tx_id, 2);
-        assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(1));
+        assert_eq!(
+            st.recent_commitments.as_ref().map(|items| items.len()),
+            Some(1)
+        );
         assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 2);
         assert_eq!(
             st.recent_under_threshold_commitments
@@ -1236,7 +1317,12 @@ mod tests {
                 .map(|items| items.iter().map(|item| item.tx_id).collect::<Vec<_>>()),
             Some(vec![1]),
         );
-        assert_eq!(st.per_canister_meta.get(&canister).and_then(|meta| meta.last_commitment_ts), Some(2));
+        assert_eq!(
+            st.per_canister_meta
+                .get(&canister)
+                .and_then(|meta| meta.last_commitment_ts),
+            Some(2)
+        );
         assert_eq!(count_registered_canisters(&st), 1);
     }
 
@@ -1273,12 +1359,12 @@ mod tests {
         );
     }
 
-
     #[test]
     fn normalize_runtime_state_preserves_large_beneficiary_registry() {
         let mut st = base_state();
         for idx in 0..=2_100u32 {
-            let canister = Principal::from_slice(&[((idx % 250) + 1) as u8, ((idx / 250) + 1) as u8]);
+            let canister =
+                Principal::from_slice(&[((idx % 250) + 1) as u8, ((idx / 250) + 1) as u8]);
             st.distinct_canisters.insert(canister);
             st.canister_sources
                 .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
@@ -1314,12 +1400,18 @@ mod tests {
             }),
         );
 
-        assert_eq!(st.config.max_cycles_entries_per_canister, MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP);
+        assert_eq!(
+            st.config.max_cycles_entries_per_canister,
+            MAX_CYCLES_ENTRIES_PER_CANISTER_HARD_CAP
+        );
         assert_eq!(
             st.config.max_commitment_entries_per_canister,
             MAX_COMMITMENT_ENTRIES_PER_CANISTER_HARD_CAP,
         );
-        assert_eq!(st.config.max_index_pages_per_tick, MAX_INDEX_PAGES_PER_TICK_HARD_CAP);
+        assert_eq!(
+            st.config.max_index_pages_per_tick,
+            MAX_INDEX_PAGES_PER_TICK_HARD_CAP
+        );
         assert_eq!(
             st.config.max_canisters_per_cycles_tick,
             MAX_CANISTERS_PER_CYCLES_TICK_HARD_CAP,
@@ -1392,7 +1484,8 @@ mod tests {
         let mut st = base_state();
         for canister in canisters {
             st.distinct_canisters.insert(canister);
-            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1405,9 +1498,22 @@ mod tests {
         }
         state::set_state(st);
 
-        let first = list_canisters(ListCanistersArgs { start_after: None, limit: Some(2), source_filter: None });
-        let second = list_canisters(ListCanistersArgs { start_after: first.next_start_after, limit: Some(2), source_filter: None });
-        let returned: Vec<_> = first.items.into_iter().chain(second.items.into_iter()).map(|item| item.canister_id).collect();
+        let first = list_canisters(ListCanistersArgs {
+            start_after: None,
+            limit: Some(2),
+            source_filter: None,
+        });
+        let second = list_canisters(ListCanistersArgs {
+            start_after: first.next_start_after,
+            limit: Some(2),
+            source_filter: None,
+        });
+        let returned: Vec<_> = first
+            .items
+            .into_iter()
+            .chain(second.items.into_iter())
+            .map(|item| item.canister_id)
+            .collect();
         let mut expected = canisters.to_vec();
         expected.sort();
         assert_eq!(returned, expected);
@@ -1419,17 +1525,21 @@ mod tests {
             .map(|idx| Principal::self_authenticating(&[idx]))
             .collect();
         principal_pool.sort();
-        let expected: Vec<_> = principal_pool.iter().step_by(2).take(105).copied().collect();
+        let expected: Vec<_> = principal_pool
+            .iter()
+            .step_by(2)
+            .take(105)
+            .copied()
+            .collect();
         let between_third_and_fourth = principal_pool[5];
-        assert!(
-            expected[2] < between_third_and_fourth && between_third_and_fourth < expected[3]
-        );
+        assert!(expected[2] < between_third_and_fourth && between_third_and_fourth < expected[3]);
         let canisters = expected.clone();
 
         let mut st = base_state();
         for canister in canisters.iter().copied() {
             st.distinct_canisters.insert(canister);
-            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1449,7 +1559,11 @@ mod tests {
         });
         assert_eq!(first.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
         assert_eq!(
-            first.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            first
+                .items
+                .iter()
+                .map(|item| item.canister_id)
+                .collect::<Vec<_>>(),
             expected[..MAX_PUBLIC_QUERY_LIMIT as usize].to_vec(),
         );
         assert_eq!(
@@ -1463,10 +1577,17 @@ mod tests {
             source_filter: None,
         });
         assert_eq!(
-            after_first.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            after_first
+                .items
+                .iter()
+                .map(|item| item.canister_id)
+                .collect::<Vec<_>>(),
             expected[1..11].to_vec(),
         );
-        assert!(!after_first.items.iter().any(|item| item.canister_id == expected[0]));
+        assert!(!after_first
+            .items
+            .iter()
+            .any(|item| item.canister_id == expected[0]));
         assert_eq!(after_first.next_start_after, Some(expected[10]));
 
         let after_synthetic_cursor = list_canisters(ListCanistersArgs {
@@ -1475,7 +1596,11 @@ mod tests {
             source_filter: None,
         });
         assert_eq!(
-            after_synthetic_cursor.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            after_synthetic_cursor
+                .items
+                .iter()
+                .map(|item| item.canister_id)
+                .collect::<Vec<_>>(),
             vec![expected[3]],
         );
         assert_eq!(after_synthetic_cursor.next_start_after, Some(expected[3]));
@@ -1483,14 +1608,17 @@ mod tests {
 
     #[test]
     fn list_canisters_limit_clamp_keeps_deterministic_order() {
-        let canisters: Vec<_> = (0..105).map(|idx| Principal::self_authenticating(&[idx])).collect();
+        let canisters: Vec<_> = (0..105)
+            .map(|idx| Principal::self_authenticating(&[idx]))
+            .collect();
         let mut expected = canisters.clone();
         expected.sort();
 
         let mut st = base_state();
         for canister in canisters {
             st.distinct_canisters.insert(canister);
-            st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_sources
+                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1511,10 +1639,17 @@ mod tests {
 
         assert_eq!(response.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
         assert_eq!(
-            response.items.iter().map(|item| item.canister_id).collect::<Vec<_>>(),
+            response
+                .items
+                .iter()
+                .map(|item| item.canister_id)
+                .collect::<Vec<_>>(),
             expected[..MAX_PUBLIC_QUERY_LIMIT as usize].to_vec(),
         );
-        assert_eq!(response.next_start_after, Some(expected[MAX_PUBLIC_QUERY_LIMIT as usize - 1]));
+        assert_eq!(
+            response.next_start_after,
+            Some(expected[MAX_PUBLIC_QUERY_LIMIT as usize - 1])
+        );
     }
 
     #[test]
@@ -1522,7 +1657,8 @@ mod tests {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1535,21 +1671,63 @@ mod tests {
         st.cycles_history.insert(
             canister,
             vec![
-                CyclesSample { timestamp_nanos: 10, cycles: 1, source: CyclesSampleSource::BlackholeStatus },
-                CyclesSample { timestamp_nanos: 20, cycles: 2, source: CyclesSampleSource::BlackholeStatus },
-                CyclesSample { timestamp_nanos: 30, cycles: 3, source: CyclesSampleSource::BlackholeStatus },
+                CyclesSample {
+                    timestamp_nanos: 10,
+                    cycles: 1,
+                    source: CyclesSampleSource::BlackholeStatus,
+                },
+                CyclesSample {
+                    timestamp_nanos: 20,
+                    cycles: 2,
+                    source: CyclesSampleSource::BlackholeStatus,
+                },
+                CyclesSample {
+                    timestamp_nanos: 30,
+                    cycles: 3,
+                    source: CyclesSampleSource::BlackholeStatus,
+                },
             ],
         );
         state::set_state(st);
 
-        let first = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: None, limit: Some(2), descending: Some(false) });
-        let second = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: first.next_start_after_ts, limit: Some(2), descending: Some(false) });
-        let asc: Vec<_> = first.items.iter().chain(second.items.iter()).map(|item| item.timestamp_nanos).collect();
+        let first = get_cycles_history(GetCyclesHistoryArgs {
+            canister_id: canister,
+            start_after_ts: None,
+            limit: Some(2),
+            descending: Some(false),
+        });
+        let second = get_cycles_history(GetCyclesHistoryArgs {
+            canister_id: canister,
+            start_after_ts: first.next_start_after_ts,
+            limit: Some(2),
+            descending: Some(false),
+        });
+        let asc: Vec<_> = first
+            .items
+            .iter()
+            .chain(second.items.iter())
+            .map(|item| item.timestamp_nanos)
+            .collect();
         assert_eq!(asc, vec![10, 20, 30]);
 
-        let first_desc = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: None, limit: Some(2), descending: Some(true) });
-        let second_desc = get_cycles_history(GetCyclesHistoryArgs { canister_id: canister, start_after_ts: first_desc.next_start_after_ts, limit: Some(2), descending: Some(true) });
-        let desc: Vec<_> = first_desc.items.iter().chain(second_desc.items.iter()).map(|item| item.timestamp_nanos).collect();
+        let first_desc = get_cycles_history(GetCyclesHistoryArgs {
+            canister_id: canister,
+            start_after_ts: None,
+            limit: Some(2),
+            descending: Some(true),
+        });
+        let second_desc = get_cycles_history(GetCyclesHistoryArgs {
+            canister_id: canister,
+            start_after_ts: first_desc.next_start_after_ts,
+            limit: Some(2),
+            descending: Some(true),
+        });
+        let desc: Vec<_> = first_desc
+            .items
+            .iter()
+            .chain(second_desc.items.iter())
+            .map(|item| item.timestamp_nanos)
+            .collect();
         assert_eq!(desc, vec![30, 20, 10]);
     }
 
@@ -1558,34 +1736,80 @@ mod tests {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![
-                CommitmentSample { tx_id: 10, timestamp_nanos: Some(10), amount_e8s: 1, counts_toward_faucet: true },
-                CommitmentSample { tx_id: 20, timestamp_nanos: Some(20), amount_e8s: 1, counts_toward_faucet: true },
-                CommitmentSample { tx_id: 30, timestamp_nanos: Some(30), amount_e8s: 1, counts_toward_faucet: true },
+                CommitmentSample {
+                    tx_id: 10,
+                    timestamp_nanos: Some(10),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                },
+                CommitmentSample {
+                    tx_id: 20,
+                    timestamp_nanos: Some(20),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                },
+                CommitmentSample {
+                    tx_id: 30,
+                    timestamp_nanos: Some(30),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                },
             ],
         );
         state::set_state(st);
 
-        let first = get_commitment_history(GetCommitmentHistoryArgs { canister_id: canister, start_after_tx_id: None, limit: Some(2), descending: Some(false) });
-        let second = get_commitment_history(GetCommitmentHistoryArgs { canister_id: canister, start_after_tx_id: first.next_start_after_tx_id, limit: Some(2), descending: Some(false) });
-        let asc: Vec<_> = first.items.iter().chain(second.items.iter()).map(|item| item.tx_id).collect();
+        let first = get_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(2),
+            descending: Some(false),
+        });
+        let second = get_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: first.next_start_after_tx_id,
+            limit: Some(2),
+            descending: Some(false),
+        });
+        let asc: Vec<_> = first
+            .items
+            .iter()
+            .chain(second.items.iter())
+            .map(|item| item.tx_id)
+            .collect();
         assert_eq!(asc, vec![10, 20, 30]);
 
-        let first_desc = get_commitment_history(GetCommitmentHistoryArgs { canister_id: canister, start_after_tx_id: None, limit: Some(2), descending: Some(true) });
-        let second_desc = get_commitment_history(GetCommitmentHistoryArgs { canister_id: canister, start_after_tx_id: first_desc.next_start_after_tx_id, limit: Some(2), descending: Some(true) });
-        let desc: Vec<_> = first_desc.items.iter().chain(second_desc.items.iter()).map(|item| item.tx_id).collect();
+        let first_desc = get_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(2),
+            descending: Some(true),
+        });
+        let second_desc = get_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: first_desc.next_start_after_tx_id,
+            limit: Some(2),
+            descending: Some(true),
+        });
+        let desc: Vec<_> = first_desc
+            .items
+            .iter()
+            .chain(second_desc.items.iter())
+            .map(|item| item.tx_id)
+            .collect();
         assert_eq!(desc, vec![30, 20, 10]);
     }
-
 
     #[test]
     fn registered_canister_summaries_roll_up_qualifying_only() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_sources
+            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
         st.commitment_history.insert(
             canister,
             vec![

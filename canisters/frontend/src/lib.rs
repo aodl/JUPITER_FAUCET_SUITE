@@ -3,10 +3,9 @@ use ic_asset_certification::{
 };
 use ic_cdk::{api::data_certificate, init, post_upgrade, query};
 use ic_http_certification::{
-    utils::add_v2_certificate_header, DefaultCelBuilder, DefaultResponseCertification,
-    HeaderField, HttpCertification, HttpCertificationPath, HttpCertificationTree,
-    HttpCertificationTreeEntry, HttpRequest, HttpResponse, Method, StatusCode,
-    CERTIFICATE_EXPRESSION_HEADER_NAME,
+    utils::add_v2_certificate_header, DefaultCelBuilder, DefaultResponseCertification, HeaderField,
+    HttpCertification, HttpCertificationPath, HttpCertificationTree, HttpCertificationTreeEntry,
+    HttpRequest, HttpResponse, Method, StatusCode, CERTIFICATE_EXPRESSION_HEADER_NAME,
 };
 use include_dir::{include_dir, Dir};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -173,7 +172,13 @@ fn certify_all_assets() {
     ];
 
     let asset_configs = vec![
-        no_cache_asset_file("index.html", "text/html", vec!["/"], vec![], compressed_encodings.clone()),
+        no_cache_asset_file(
+            "index.html",
+            "text/html",
+            vec!["/"],
+            vec![],
+            compressed_encodings.clone(),
+        ),
         no_cache_asset_file(
             "404.html",
             "text/html",
@@ -192,7 +197,13 @@ fn certify_all_assets() {
         immutable_asset_pattern("**/*.{jpg,jpeg}", "image/jpeg", vec![]),
         immutable_asset_pattern("**/*.webp", "image/webp", vec![]),
         immutable_asset_pattern("**/*.svg", "image/svg+xml", vec![]),
-        no_cache_asset_file(".well-known/ic-domains", "text/plain", vec![], vec![], vec![]),
+        no_cache_asset_file(
+            ".well-known/ic-domains",
+            "text/plain",
+            vec![],
+            vec![],
+            vec![],
+        ),
     ];
 
     let mut assets = Vec::new();
@@ -601,7 +612,11 @@ mod tests {
                 .build();
             let response = serve_asset_with_certificate(b"test-certificate", &request);
 
-            assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{method:?} {path}");
+            assert_eq!(
+                response.status_code(),
+                StatusCode::NOT_FOUND,
+                "{method:?} {path}"
+            );
             if method == Method::HEAD {
                 assert_eq!(response.body(), b"", "{method:?} {path}");
             }
@@ -661,7 +676,10 @@ mod tests {
         let head_response = serve_asset_with_certificate(b"test-certificate", &head_request);
 
         assert_eq!(head_response.status_code(), StatusCode::OK);
-        assert_eq!(header_value(&head_response, "content-type"), Some("text/html"));
+        assert_eq!(
+            header_value(&head_response, "content-type"),
+            Some("text/html")
+        );
         assert_eq!(
             header_value(&head_response, "cache-control"),
             header_value(&get_response, "cache-control")
@@ -762,8 +780,8 @@ mod tests {
         let index_html = ASSETS_DIR
             .get_file("index.html")
             .expect("index.html should be embedded in frontend assets");
-        let index_html = std::str::from_utf8(index_html.contents())
-            .expect("index.html should be valid utf-8");
+        let index_html =
+            std::str::from_utf8(index_html.contents()).expect("index.html should be valid utf-8");
         let preview_url = "https://jupiter-faucet.com/og/preview-20260520.jpg";
 
         assert!(index_html.contains(&format!(
@@ -862,5 +880,4 @@ mod tests {
             );
         }
     }
-
 }

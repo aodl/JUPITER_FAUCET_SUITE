@@ -36,22 +36,25 @@ pub(super) fn log_error(message: &str) {
     }
 }
 
-pub(super) fn latch_commitment_index_fault(now_secs: u64, last_cursor_tx_id: Option<u64>, offending_tx_id: u64, message: String) -> String {
-    state::with_root_state_mut(|st| {
-        match st.commitment_index_fault.as_mut() {
-            Some(existing) => {
-                existing.last_cursor_tx_id = last_cursor_tx_id;
-                existing.offending_tx_id = offending_tx_id;
-                existing.message = message.clone();
-            }
-            None => {
-                st.commitment_index_fault = Some(CommitmentIndexFault {
-                    observed_at_ts: now_secs,
-                    last_cursor_tx_id,
-                    offending_tx_id,
-                    message: message.clone(),
-                });
-            }
+pub(super) fn latch_commitment_index_fault(
+    now_secs: u64,
+    last_cursor_tx_id: Option<u64>,
+    offending_tx_id: u64,
+    message: String,
+) -> String {
+    state::with_root_state_mut(|st| match st.commitment_index_fault.as_mut() {
+        Some(existing) => {
+            existing.last_cursor_tx_id = last_cursor_tx_id;
+            existing.offending_tx_id = offending_tx_id;
+            existing.message = message.clone();
+        }
+        None => {
+            st.commitment_index_fault = Some(CommitmentIndexFault {
+                observed_at_ts: now_secs,
+                last_cursor_tx_id,
+                offending_tx_id,
+                message: message.clone(),
+            });
         }
     });
     message

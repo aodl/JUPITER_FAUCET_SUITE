@@ -7,7 +7,8 @@ pub(super) struct MainGuard {
 impl MainGuard {
     fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
-            let inner = TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
+            let inner =
+                TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
             let lease_expires_at_ts = inner.lease_expires_at_ts();
             st.main_lock_state_ts = Some(lease_expires_at_ts);
             Some(Self { inner })
@@ -55,8 +56,12 @@ impl Drop for MainGuard {
 /// - main tick (daily by default)
 /// - rescue tick (daily by default)
 pub(crate) fn install_timers() {
-    let (main_s, rescue_s) =
-        state::with_state(|st| (st.config.main_interval_seconds, st.config.rescue_interval_seconds));
+    let (main_s, rescue_s) = state::with_state(|st| {
+        (
+            st.config.main_interval_seconds,
+            st.config.rescue_interval_seconds,
+        )
+    });
 
     ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async {
         main_tick(false).await;
@@ -112,7 +117,8 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
     if !force {
         // duplicate suppression if timer fires twice closely
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
+        let recently_ran =
+            state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
             guard.finish(now_secs, None, false);
             return;

@@ -33,10 +33,22 @@ mod tests {
 
     fn sample_config() -> Config {
         Config {
-            staking_account: Account { owner: principal(&[1]), subaccount: None },
-            output_source_account: Account { owner: principal(&[11]), subaccount: None },
-            output_account: Account { owner: principal(&[12]), subaccount: Some([3u8; 32]) },
-            rewards_account: Account { owner: principal(&[13]), subaccount: None },
+            staking_account: Account {
+                owner: principal(&[1]),
+                subaccount: None,
+            },
+            output_source_account: Account {
+                owner: principal(&[11]),
+                subaccount: None,
+            },
+            output_account: Account {
+                owner: principal(&[12]),
+                subaccount: Some([3u8; 32]),
+            },
+            rewards_account: Account {
+                owner: principal(&[13]),
+                subaccount: None,
+            },
             ledger_canister_id: principal(&[2]),
             index_canister_id: principal(&[3]),
             cmc_canister_id: Some(principal(&[4])),
@@ -287,7 +299,8 @@ mod tests {
             recent_commitments: root.recent_commitments,
             recent_under_threshold_commitments: root.recent_under_threshold_commitments,
             recent_neuron_commitments: root.recent_neuron_commitments,
-            recent_under_threshold_neuron_commitments: root.recent_under_threshold_neuron_commitments,
+            recent_under_threshold_neuron_commitments: root
+                .recent_under_threshold_neuron_commitments,
             recent_invalid_commitments: root.recent_invalid_commitments,
             recent_burns: root.recent_burns,
             last_index_run_ts: root.last_index_run_ts,
@@ -296,10 +309,12 @@ mod tests {
             last_icp_xdr_rate_attempt_ts: root.last_icp_xdr_rate_attempt_ts,
             last_icp_xdr_rate_error: root.last_icp_xdr_rate_error,
         };
-        let bytes = candid::encode_one(VersionedRootWithRemovedLegacyHistoryFields::Current(old_root))
-            .expect("failed to encode root with removed legacy fields");
-        let decoded: VersionedStableState =
-            candid::decode_one(&bytes).expect("cleaned historian root should decode extra legacy fields");
+        let bytes = candid::encode_one(VersionedRootWithRemovedLegacyHistoryFields::Current(
+            old_root,
+        ))
+        .expect("failed to encode root with removed legacy fields");
+        let decoded: VersionedStableState = candid::decode_one(&bytes)
+            .expect("cleaned historian root should decode extra legacy fields");
 
         match decoded {
             VersionedStableState::Current(root) => {
@@ -327,38 +342,55 @@ mod tests {
         let mut sources = BTreeSet::new();
         sources.insert(CanisterSource::MemoCommitment);
         st.canister_sources.insert(canister_id, sources);
-        st.commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 7,
-            timestamp_nanos: Some(77),
-            amount_e8s: 100_000_000,
-            counts_toward_faucet: true,
-        }]);
-        st.raw_icp_commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 8,
-            timestamp_nanos: Some(78),
-            amount_e8s: 200_000_000,
-            counts_toward_faucet: true,
-        }]);
-        st.neuron_commitment_history.insert(42, vec![CommitmentSample {
-            tx_id: 9,
-            timestamp_nanos: Some(79),
-            amount_e8s: 300_000_000,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 88,
-            cycles: 123_456,
-            source: CyclesSampleSource::BlackholeStatus,
-        }]);
-        st.per_canister_meta.insert(canister_id, CanisterMeta {
-            first_seen_ts: Some(1),
-            last_commitment_ts: Some(77),
-            last_cycles_probe_ts: Some(88),
-            last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus)),
-            last_burn_tx_id: Some(11),
-            last_burn_scan_tx_id: Some(12),
-            burned_e8s: 42,
-        });
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 7,
+                timestamp_nanos: Some(77),
+                amount_e8s: 100_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 8,
+                timestamp_nanos: Some(78),
+                amount_e8s: 200_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            42,
+            vec![CommitmentSample {
+                tx_id: 9,
+                timestamp_nanos: Some(79),
+                amount_e8s: 300_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister_id,
+            vec![CyclesSample {
+                timestamp_nanos: 88,
+                cycles: 123_456,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+        st.per_canister_meta.insert(
+            canister_id,
+            CanisterMeta {
+                first_seen_ts: Some(1),
+                last_commitment_ts: Some(77),
+                last_cycles_probe_ts: Some(88),
+                last_cycles_probe_result: Some(CyclesProbeResult::Ok(
+                    CyclesSampleSource::BlackholeStatus,
+                )),
+                last_burn_tx_id: Some(11),
+                last_burn_scan_tx_id: Some(12),
+                burned_e8s: 42,
+            },
+        );
         let mut cache = BTreeMap::new();
         cache.insert(
             canister_id,
@@ -379,26 +411,39 @@ mod tests {
         let root_snapshot = with_root_stable_cell(|cell| cell.get().clone());
         match root_snapshot {
             VersionedStableState::Current(_) => {}
-            VersionedStableState::Uninitialized => panic!("expected persisted historian root state"),
+            VersionedStableState::Uninitialized => {
+                panic!("expected persisted historian root state")
+            }
         }
         let restored = restore_state_from_stable().expect("expected persisted historian state");
         assert_eq!(restored.distinct_canisters.len(), 1);
         assert!(restored.commitment_history.get(&canister_id).is_none());
         assert!(restored.cycles_history.get(&canister_id).is_none());
-        assert!(restored.raw_icp_commitment_history.get(&canister_id).is_none());
+        assert!(restored
+            .raw_icp_commitment_history
+            .get(&canister_id)
+            .is_none());
         assert!(restored.neuron_commitment_history.get(&42).is_none());
         assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 7);
-        assert_eq!(stable_raw_icp_commitment_history_for(canister_id)[0].tx_id, 8);
+        assert_eq!(
+            stable_raw_icp_commitment_history_for(canister_id)[0].tx_id,
+            8
+        );
         assert_eq!(stable_neuron_commitment_history_for(42)[0].tx_id, 9);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 123_456);
-        assert_eq!(restored.per_canister_meta.get(&canister_id).expect("missing canister meta").burned_e8s, 42);
+        assert_eq!(
+            restored
+                .per_canister_meta
+                .get(&canister_id)
+                .expect("missing canister meta")
+                .burned_e8s,
+            42
+        );
         assert!(restored.registered_canister_summaries_cache.is_none());
-        assert!(restored.registered_canister_summaries_total_desc_index.is_none());
+        assert!(restored
+            .registered_canister_summaries_total_desc_index
+            .is_none());
     }
-
-
-
-
 
     #[test]
     fn with_state_mut_persists_recent_feeds_to_stable_storage() {
@@ -422,10 +467,25 @@ mod tests {
             st.main_lock_state_ts = Some(66);
         });
 
-        let restored = restore_state_from_stable().expect("expected persisted historian state after mutation");
+        let restored =
+            restore_state_from_stable().expect("expected persisted historian state after mutation");
         assert_eq!(restored.main_lock_state_ts, Some(66));
-        assert_eq!(restored.recent_invalid_commitments.as_ref().expect("missing invalid commitments")[0].tx_id, 12);
-        assert_eq!(restored.recent_burns.as_ref().expect("missing recent burns")[0].canister_id, canister_id);
+        assert_eq!(
+            restored
+                .recent_invalid_commitments
+                .as_ref()
+                .expect("missing invalid commitments")[0]
+                .tx_id,
+            12
+        );
+        assert_eq!(
+            restored
+                .recent_burns
+                .as_ref()
+                .expect("missing recent burns")[0]
+                .canister_id,
+            canister_id
+        );
     }
 
     #[test]
@@ -439,13 +499,15 @@ mod tests {
                 st.last_indexed_staking_tx_id = Some(88);
                 st.main_lock_state_ts = Some(77);
             });
-            let restored_mid = restore_state_from_stable().expect("expected persisted state before batch mutation");
+            let restored_mid = restore_state_from_stable()
+                .expect("expected persisted state before batch mutation");
             assert_ne!(restored_mid.last_indexed_staking_tx_id, Some(88));
             assert_ne!(restored_mid.main_lock_state_ts, Some(77));
             persist_dirty_state();
         }
 
-        let restored = restore_state_from_stable().expect("expected persisted state after batch flush");
+        let restored =
+            restore_state_from_stable().expect("expected persisted state after batch flush");
         assert_eq!(restored.last_indexed_staking_tx_id, Some(88));
         assert_eq!(restored.main_lock_state_ts, Some(77));
     }
@@ -455,42 +517,63 @@ mod tests {
         reset_test_storage();
         let canister_id = principal(&[12]);
         let mut st = State::new(sample_config(), 9_000);
-        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 31,
-            timestamp_nanos: Some(310),
-            amount_e8s: 500,
-            counts_toward_faucet: true,
-        }]);
-        st.raw_icp_commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 32,
-            timestamp_nanos: Some(315),
-            amount_e8s: 550,
-            counts_toward_faucet: true,
-        }]);
-        st.neuron_commitment_history.insert(77, vec![CommitmentSample {
-            tx_id: 33,
-            timestamp_nanos: Some(318),
-            amount_e8s: 575,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 320,
-            cycles: 600,
-            source: CyclesSampleSource::SelfCanister,
-        }]);
-        st.per_canister_meta.insert(canister_id, CanisterMeta {
-            first_seen_ts: Some(1),
-            last_commitment_ts: Some(2),
-            last_cycles_probe_ts: Some(3),
-            last_cycles_probe_result: Some(CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister)),
-            last_burn_tx_id: Some(4),
-            last_burn_scan_tx_id: Some(5),
-            burned_e8s: 6,
-        });
+        st.canister_sources.insert(
+            canister_id,
+            BTreeSet::from([CanisterSource::MemoCommitment]),
+        );
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 31,
+                timestamp_nanos: Some(310),
+                amount_e8s: 500,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 32,
+                timestamp_nanos: Some(315),
+                amount_e8s: 550,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            77,
+            vec![CommitmentSample {
+                tx_id: 33,
+                timestamp_nanos: Some(318),
+                amount_e8s: 575,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister_id,
+            vec![CyclesSample {
+                timestamp_nanos: 320,
+                cycles: 600,
+                source: CyclesSampleSource::SelfCanister,
+            }],
+        );
+        st.per_canister_meta.insert(
+            canister_id,
+            CanisterMeta {
+                first_seen_ts: Some(1),
+                last_commitment_ts: Some(2),
+                last_cycles_probe_ts: Some(3),
+                last_cycles_probe_result: Some(CyclesProbeResult::Ok(
+                    CyclesSampleSource::SelfCanister,
+                )),
+                last_burn_tx_id: Some(4),
+                last_burn_scan_tx_id: Some(5),
+                burned_e8s: 6,
+            },
+        );
         set_state(st);
 
-        let restored = restore_state_from_stable().expect("expected restored historian state before root-only mutation");
+        let restored = restore_state_from_stable()
+            .expect("expected restored historian state before root-only mutation");
         assert!(restored.raw_icp_commitment_history.is_empty());
         assert!(restored.neuron_commitment_history.is_empty());
         set_state_root_only(restored);
@@ -506,14 +589,21 @@ mod tests {
             st.main_lock_state_ts = Some(1234);
         });
 
-        let restored_after = restore_state_from_stable().expect("expected restored historian state after root-only mutation");
+        let restored_after = restore_state_from_stable()
+            .expect("expected restored historian state after root-only mutation");
         assert_eq!(restored_after.main_lock_state_ts, Some(1234));
         assert_eq!(snapshot_sources_map(), sources_before);
         assert_eq!(snapshot_meta_map(), meta_before);
         assert_eq!(snapshot_commitment_history_map(), commitments_before);
         assert_eq!(snapshot_cycles_history_map(), cycles_before);
-        assert_eq!(snapshot_raw_icp_commitment_history_map(), raw_icp_commitments_before);
-        assert_eq!(snapshot_neuron_commitment_history_map(), neuron_commitments_before);
+        assert_eq!(
+            snapshot_raw_icp_commitment_history_map(),
+            raw_icp_commitments_before
+        );
+        assert_eq!(
+            snapshot_neuron_commitment_history_map(),
+            neuron_commitments_before
+        );
     }
 
     #[test]
@@ -523,29 +613,41 @@ mod tests {
         let raw_canister_id = principal(&[14]);
         let neuron_id = 91;
         let mut st = State::new(sample_config(), 9_100);
-        st.commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 41,
-            timestamp_nanos: Some(410),
-            amount_e8s: 1_000,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 420,
-            cycles: 2_000,
-            source: CyclesSampleSource::BlackholeStatus,
-        }]);
-        st.raw_icp_commitment_history.insert(raw_canister_id, vec![CommitmentSample {
-            tx_id: 43,
-            timestamp_nanos: Some(430),
-            amount_e8s: 3_000,
-            counts_toward_faucet: true,
-        }]);
-        st.neuron_commitment_history.insert(neuron_id, vec![CommitmentSample {
-            tx_id: 44,
-            timestamp_nanos: Some(440),
-            amount_e8s: 4_000,
-            counts_toward_faucet: false,
-        }]);
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 41,
+                timestamp_nanos: Some(410),
+                amount_e8s: 1_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister_id,
+            vec![CyclesSample {
+                timestamp_nanos: 420,
+                cycles: 2_000,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            raw_canister_id,
+            vec![CommitmentSample {
+                tx_id: 43,
+                timestamp_nanos: Some(430),
+                amount_e8s: 3_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            neuron_id,
+            vec![CommitmentSample {
+                tx_id: 44,
+                timestamp_nanos: Some(440),
+                amount_e8s: 4_000,
+                counts_toward_faucet: false,
+            }],
+        );
         set_state(st);
 
         clear_loaded_history_caches_after_flush();
@@ -558,7 +660,10 @@ mod tests {
         });
         assert_eq!(stable_commitment_history_for(canister_id)[0].tx_id, 41);
         assert_eq!(stable_cycles_history_for(canister_id)[0].cycles, 2_000);
-        assert_eq!(stable_raw_icp_commitment_history_for(raw_canister_id)[0].tx_id, 43);
+        assert_eq!(
+            stable_raw_icp_commitment_history_for(raw_canister_id)[0].tx_id,
+            43
+        );
         assert_eq!(stable_neuron_commitment_history_for(neuron_id)[0].tx_id, 44);
     }
 
@@ -569,70 +674,97 @@ mod tests {
         let raw_canister_id = principal(&[16]);
         let neuron_id = 92;
         let mut st = State::new(sample_config(), 9_200);
-        st.commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 51,
-            timestamp_nanos: Some(510),
-            amount_e8s: 1_100,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 520,
-            cycles: 2_100,
-            source: CyclesSampleSource::SelfCanister,
-        }]);
-        st.raw_icp_commitment_history.insert(raw_canister_id, vec![CommitmentSample {
-            tx_id: 53,
-            timestamp_nanos: Some(530),
-            amount_e8s: 3_100,
-            counts_toward_faucet: true,
-        }]);
-        st.neuron_commitment_history.insert(neuron_id, vec![CommitmentSample {
-            tx_id: 54,
-            timestamp_nanos: Some(540),
-            amount_e8s: 4_100,
-            counts_toward_faucet: false,
-        }]);
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 51,
+                timestamp_nanos: Some(510),
+                amount_e8s: 1_100,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister_id,
+            vec![CyclesSample {
+                timestamp_nanos: 520,
+                cycles: 2_100,
+                source: CyclesSampleSource::SelfCanister,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            raw_canister_id,
+            vec![CommitmentSample {
+                tx_id: 53,
+                timestamp_nanos: Some(530),
+                amount_e8s: 3_100,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            neuron_id,
+            vec![CommitmentSample {
+                tx_id: 54,
+                timestamp_nanos: Some(540),
+                amount_e8s: 4_100,
+                counts_toward_faucet: false,
+            }],
+        );
         set_state(st);
         clear_loaded_history_caches_after_flush();
 
         with_root_registry_and_commitments_canister_state_mut(canister_id, |st| {
             ensure_commitment_history_loaded(st, canister_id);
-            st.commitment_history.entry(canister_id).or_default().push(CommitmentSample {
-                tx_id: 55,
-                timestamp_nanos: Some(550),
-                amount_e8s: 1_200,
-                counts_toward_faucet: true,
-            });
+            st.commitment_history
+                .entry(canister_id)
+                .or_default()
+                .push(CommitmentSample {
+                    tx_id: 55,
+                    timestamp_nanos: Some(550),
+                    amount_e8s: 1_200,
+                    counts_toward_faucet: true,
+                });
         });
         with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
             ensure_cycles_history_loaded(st, canister_id);
-            st.cycles_history.entry(canister_id).or_default().push(CyclesSample {
-                timestamp_nanos: 560,
-                cycles: 2_200,
-                source: CyclesSampleSource::BlackholeStatus,
-            });
+            st.cycles_history
+                .entry(canister_id)
+                .or_default()
+                .push(CyclesSample {
+                    timestamp_nanos: 560,
+                    cycles: 2_200,
+                    source: CyclesSampleSource::BlackholeStatus,
+                });
         });
         with_root_and_raw_icp_commitments_state_mut(raw_canister_id, |st| {
             ensure_raw_icp_commitment_history_loaded(st, raw_canister_id);
-            st.raw_icp_commitment_history.entry(raw_canister_id).or_default().push(CommitmentSample {
-                tx_id: 57,
-                timestamp_nanos: Some(570),
-                amount_e8s: 3_200,
-                counts_toward_faucet: true,
-            });
+            st.raw_icp_commitment_history
+                .entry(raw_canister_id)
+                .or_default()
+                .push(CommitmentSample {
+                    tx_id: 57,
+                    timestamp_nanos: Some(570),
+                    amount_e8s: 3_200,
+                    counts_toward_faucet: true,
+                });
         });
         with_root_and_neuron_commitments_state_mut(neuron_id, |st| {
             ensure_neuron_commitment_history_loaded(st, neuron_id);
-            st.neuron_commitment_history.entry(neuron_id).or_default().push(CommitmentSample {
-                tx_id: 58,
-                timestamp_nanos: Some(580),
-                amount_e8s: 4_200,
-                counts_toward_faucet: true,
-            });
+            st.neuron_commitment_history
+                .entry(neuron_id)
+                .or_default()
+                .push(CommitmentSample {
+                    tx_id: 58,
+                    timestamp_nanos: Some(580),
+                    amount_e8s: 4_200,
+                    counts_toward_faucet: true,
+                });
         });
 
         assert_eq!(
-            stable_commitment_history_for(canister_id).iter().map(|sample| sample.tx_id).collect::<Vec<_>>(),
+            stable_commitment_history_for(canister_id)
+                .iter()
+                .map(|sample| sample.tx_id)
+                .collect::<Vec<_>>(),
             vec![51, 55]
         );
         assert_eq!(
@@ -665,29 +797,41 @@ mod tests {
         let raw_canister_id = principal(&[18]);
         let neuron_id = 93;
         let mut st = State::new(sample_config(), 9_300);
-        st.commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 61,
-            timestamp_nanos: Some(610),
-            amount_e8s: 1_300,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 620,
-            cycles: 2_300,
-            source: CyclesSampleSource::BlackholeStatus,
-        }]);
-        st.raw_icp_commitment_history.insert(raw_canister_id, vec![CommitmentSample {
-            tx_id: 63,
-            timestamp_nanos: Some(630),
-            amount_e8s: 3_300,
-            counts_toward_faucet: true,
-        }]);
-        st.neuron_commitment_history.insert(neuron_id, vec![CommitmentSample {
-            tx_id: 64,
-            timestamp_nanos: Some(640),
-            amount_e8s: 4_300,
-            counts_toward_faucet: false,
-        }]);
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 61,
+                timestamp_nanos: Some(610),
+                amount_e8s: 1_300,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister_id,
+            vec![CyclesSample {
+                timestamp_nanos: 620,
+                cycles: 2_300,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            raw_canister_id,
+            vec![CommitmentSample {
+                tx_id: 63,
+                timestamp_nanos: Some(630),
+                amount_e8s: 3_300,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.neuron_commitment_history.insert(
+            neuron_id,
+            vec![CommitmentSample {
+                tx_id: 64,
+                timestamp_nanos: Some(640),
+                amount_e8s: 4_300,
+                counts_toward_faucet: false,
+            }],
+        );
         set_state(st);
 
         let commitments_before = snapshot_commitment_history_map();
@@ -699,8 +843,14 @@ mod tests {
 
         assert_eq!(snapshot_commitment_history_map(), commitments_before);
         assert_eq!(snapshot_cycles_history_map(), cycles_before);
-        assert_eq!(snapshot_raw_icp_commitment_history_map(), raw_icp_commitments_before);
-        assert_eq!(snapshot_neuron_commitment_history_map(), neuron_commitments_before);
+        assert_eq!(
+            snapshot_raw_icp_commitment_history_map(),
+            raw_icp_commitments_before
+        );
+        assert_eq!(
+            snapshot_neuron_commitment_history_map(),
+            neuron_commitments_before
+        );
     }
 
     #[test]
@@ -720,18 +870,27 @@ mod tests {
         reset_test_storage();
         let canister_id = principal(&[31]);
         let mut st = State::new(sample_config(), 10_000);
-        st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.commitment_history.insert(canister_id, vec![CommitmentSample {
-            tx_id: 91,
-            timestamp_nanos: Some(910),
-            amount_e8s: 111,
-            counts_toward_faucet: true,
-        }]);
-        st.cycles_history.insert(canister_id, vec![CyclesSample {
-            timestamp_nanos: 920,
-            cycles: 222,
-            source: CyclesSampleSource::SelfCanister,
-        }]);
+        st.canister_sources.insert(
+            canister_id,
+            BTreeSet::from([CanisterSource::MemoCommitment]),
+        );
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id: 91,
+                timestamp_nanos: Some(910),
+                amount_e8s: 111,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.cycles_history.insert(
+            canister_id,
+            vec![CyclesSample {
+                timestamp_nanos: 920,
+                cycles: 222,
+                source: CyclesSampleSource::SelfCanister,
+            }],
+        );
         set_state(st);
 
         let restored = restore_state_from_stable().expect("expected restored historian state");
@@ -748,8 +907,12 @@ mod tests {
         let canister_b = principal(&[22]);
         let mut st = State::new(sample_config(), 9_500);
         for canister_id in [canister_a, canister_b] {
-            st.canister_sources.insert(canister_id, BTreeSet::from([CanisterSource::MemoCommitment]));
-            st.per_canister_meta.insert(canister_id, CanisterMeta::default());
+            st.canister_sources.insert(
+                canister_id,
+                BTreeSet::from([CanisterSource::MemoCommitment]),
+            );
+            st.per_canister_meta
+                .insert(canister_id, CanisterMeta::default());
         }
         st.commitment_history.insert(
             canister_a,
@@ -775,19 +938,27 @@ mod tests {
         assert_eq!(commitments_before.get(&canister_b).unwrap()[0].tx_id, 2);
 
         with_root_registry_and_commitments_canister_state_mut(canister_a, |st| {
-            st.commitment_history.get_mut(&canister_a).unwrap().push(CommitmentSample {
-                tx_id: 3,
-                timestamp_nanos: Some(30),
-                amount_e8s: 300,
-                counts_toward_faucet: true,
-            });
-            st.per_canister_meta.entry(canister_a).or_default().last_commitment_ts = Some(30);
+            st.commitment_history
+                .get_mut(&canister_a)
+                .unwrap()
+                .push(CommitmentSample {
+                    tx_id: 3,
+                    timestamp_nanos: Some(30),
+                    amount_e8s: 300,
+                    counts_toward_faucet: true,
+                });
+            st.per_canister_meta
+                .entry(canister_a)
+                .or_default()
+                .last_commitment_ts = Some(30);
         });
 
         let commitments_after = snapshot_commitment_history_map();
         assert_eq!(commitments_after.get(&canister_a).unwrap().len(), 2);
         assert_eq!(commitments_after.get(&canister_a).unwrap()[1].tx_id, 3);
-        assert_eq!(commitments_after.get(&canister_b), commitments_before.get(&canister_b));
+        assert_eq!(
+            commitments_after.get(&canister_b),
+            commitments_before.get(&canister_b)
+        );
     }
-
 }

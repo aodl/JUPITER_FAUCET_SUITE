@@ -1,5 +1,9 @@
 use super::*;
-pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: u64, now_secs: u64, index: &I) -> Result<(), String> {
+pub(super) async fn process_route_indexing<I: IndexClient>(
+    started_at_ts_nanos: u64,
+    now_secs: u64,
+    index: &I,
+) -> Result<(), String> {
     let cfg = state::with_state(|st| st.config.clone());
     let routes = indexed_route_kinds();
     let active = state::with_root_state_mut(|st| {
@@ -21,21 +25,26 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
 
     let kind = &routes[active.next_index as usize];
     let source_id = account_identifier_text_for_account(&cfg.output_source_account);
-    let route_id = { let account = indexed_route_account(&cfg, kind); account_identifier_text_for_account(&account) };
-    let (mut latest_cursor, mut oldest_cursor, order_descending, mut backfill_complete) = state::with_state(|st| {
-        (
-            indexed_route_cursor(st, kind),
-            indexed_route_oldest_cursor(st, kind),
-            indexed_route_order_descending(st, kind),
-            indexed_route_backfill_complete(st, kind),
-        )
-    });
+    let route_id = {
+        let account = indexed_route_account(&cfg, kind);
+        account_identifier_text_for_account(&account)
+    };
+    let (mut latest_cursor, mut oldest_cursor, order_descending, mut backfill_complete) =
+        state::with_state(|st| {
+            (
+                indexed_route_cursor(st, kind),
+                indexed_route_oldest_cursor(st, kind),
+                indexed_route_order_descending(st, kind),
+                indexed_route_backfill_complete(st, kind),
+            )
+        });
     if latest_cursor.is_some() && oldest_cursor.is_none() {
         oldest_cursor = latest_cursor;
     }
 
     let mut completed_route = false;
-    let mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse> = None;
+    let mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse> =
+        None;
     // Route indexing uses the same two-cursor model as commitment indexing in
     // descending mode: the latest cursor detects newer routed transfers, and the
     // oldest cursor continues the historical backfill through newest-first pages.
@@ -46,7 +55,9 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
             let page = index
                 .get_account_identifier_transactions(route_id.clone(), None, PAGE_SIZE)
                 .await
-                .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?;
+                .map_err(|e| {
+                    format!("{} route index call failed: {e}", indexed_route_name(kind))
+                })?;
             let detected = infer_initial_page_order(&page, latest_cursor, oldest_cursor);
             first_page = Some(page);
             detected
@@ -62,7 +73,9 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                     None => index
                         .get_account_identifier_transactions(route_id.clone(), cursor, PAGE_SIZE)
                         .await
-                        .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?,
+                        .map_err(|e| {
+                            format!("{} route index call failed: {e}", indexed_route_name(kind))
+                        })?,
                 };
                 if page.transactions.is_empty() {
                     completed_route = true;
@@ -84,8 +97,12 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                                 ));
                             }
                         }
-                        if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
-                            state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                        if let Some(amount_e8s) =
+                            indexed_route_amount_from_tx(tx, &source_id, &route_id)
+                        {
+                            state::with_root_state_mut(|st| {
+                                add_indexed_route_amount(st, kind, amount_e8s)
+                            });
                         }
                         cursor = Some(tx.id);
                         state::with_root_state_mut(|st| {
@@ -120,16 +137,23 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                     let page = match first_page.take() {
                         Some(page) => page,
                         None => index
-                            .get_account_identifier_transactions(route_id.clone(), page_start, PAGE_SIZE)
+                            .get_account_identifier_transactions(
+                                route_id.clone(),
+                                page_start,
+                                PAGE_SIZE,
+                            )
                             .await
-                            .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?,
+                            .map_err(|e| {
+                                format!("{} route index call failed: {e}", indexed_route_name(kind))
+                            })?,
                     };
                     remaining_pages = remaining_pages.saturating_sub(1);
                     if page.transactions.is_empty() {
                         completed_route = true;
                         break;
                     }
-                    let latest = latest_cursor.expect("latest cursor present in completed descending route scan");
+                    let latest = latest_cursor
+                        .expect("latest cursor present in completed descending route scan");
                     let mut new_items = Vec::new();
                     let mut reached_boundary = false;
                     for tx in page.transactions.iter() {
@@ -143,14 +167,30 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                     if !new_items.is_empty() {
                         let _batch = state::begin_persistence_batch();
                         for tx in new_items.iter().rev() {
-                            if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
-                                state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                            if let Some(amount_e8s) =
+                                indexed_route_amount_from_tx(tx, &source_id, &route_id)
+                            {
+                                state::with_root_state_mut(|st| {
+                                    add_indexed_route_amount(st, kind, amount_e8s)
+                                });
                             }
                         }
                         if let Some(max_seen) = new_items.iter().map(|tx| tx.id).max() {
-                            latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
+                            latest_cursor = Some(
+                                latest_cursor
+                                    .map(|existing| existing.max(max_seen))
+                                    .unwrap_or(max_seen),
+                            );
                         }
-                        state::with_root_state_mut(|st| set_indexed_route_descending_progress(st, kind, latest_cursor, oldest_cursor, true));
+                        state::with_root_state_mut(|st| {
+                            set_indexed_route_descending_progress(
+                                st,
+                                kind,
+                                latest_cursor,
+                                oldest_cursor,
+                                true,
+                            )
+                        });
                     }
                     if reached_boundary || page.transactions.len() < PAGE_SIZE as usize {
                         completed_route = true;
@@ -163,9 +203,15 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                     let page = match first_page.take() {
                         Some(page) => page,
                         None => index
-                            .get_account_identifier_transactions(route_id.clone(), oldest_cursor, PAGE_SIZE)
+                            .get_account_identifier_transactions(
+                                route_id.clone(),
+                                oldest_cursor,
+                                PAGE_SIZE,
+                            )
                             .await
-                            .map_err(|e| format!("{} route index call failed: {e}", indexed_route_name(kind)))?,
+                            .map_err(|e| {
+                                format!("{} route index call failed: {e}", indexed_route_name(kind))
+                            })?,
                     };
                     remaining_pages = remaining_pages.saturating_sub(1);
                     if page.transactions.is_empty() {
@@ -174,7 +220,12 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                         break;
                     }
                     let older_items: Vec<_> = match oldest_cursor {
-                        Some(oldest) => page.transactions.iter().filter(|tx| tx.id < oldest).cloned().collect(),
+                        Some(oldest) => page
+                            .transactions
+                            .iter()
+                            .filter(|tx| tx.id < oldest)
+                            .cloned()
+                            .collect(),
                         None => page.transactions.clone(),
                     };
                     if older_items.is_empty() {
@@ -185,17 +236,37 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                     {
                         let _batch = state::begin_persistence_batch();
                         for tx in older_items.iter().rev() {
-                            if let Some(amount_e8s) = indexed_route_amount_from_tx(tx, &source_id, &route_id) {
-                                state::with_root_state_mut(|st| add_indexed_route_amount(st, kind, amount_e8s));
+                            if let Some(amount_e8s) =
+                                indexed_route_amount_from_tx(tx, &source_id, &route_id)
+                            {
+                                state::with_root_state_mut(|st| {
+                                    add_indexed_route_amount(st, kind, amount_e8s)
+                                });
                             }
                         }
                         if let Some(max_seen) = older_items.iter().map(|tx| tx.id).max() {
-                            latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
+                            latest_cursor = Some(
+                                latest_cursor
+                                    .map(|existing| existing.max(max_seen))
+                                    .unwrap_or(max_seen),
+                            );
                         }
                         if let Some(min_seen) = older_items.iter().map(|tx| tx.id).min() {
-                            oldest_cursor = Some(oldest_cursor.map(|existing| existing.min(min_seen)).unwrap_or(min_seen));
+                            oldest_cursor = Some(
+                                oldest_cursor
+                                    .map(|existing| existing.min(min_seen))
+                                    .unwrap_or(min_seen),
+                            );
                         }
-                        state::with_root_state_mut(|st| set_indexed_route_descending_progress(st, kind, latest_cursor, oldest_cursor, backfill_complete));
+                        state::with_root_state_mut(|st| {
+                            set_indexed_route_descending_progress(
+                                st,
+                                kind,
+                                latest_cursor,
+                                oldest_cursor,
+                                backfill_complete,
+                            )
+                        });
                     }
                     if page.transactions.len() < PAGE_SIZE as usize {
                         backfill_complete = true;
@@ -203,7 +274,15 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
                         break;
                     }
                 }
-                state::with_root_state_mut(|st| set_indexed_route_descending_progress(st, kind, latest_cursor, oldest_cursor, backfill_complete));
+                state::with_root_state_mut(|st| {
+                    set_indexed_route_descending_progress(
+                        st,
+                        kind,
+                        latest_cursor,
+                        oldest_cursor,
+                        backfill_complete,
+                    )
+                });
             }
         }
     }
@@ -221,4 +300,3 @@ pub(super) async fn process_route_indexing<I: IndexClient>(started_at_ts_nanos: 
     }
     Ok(())
 }
-

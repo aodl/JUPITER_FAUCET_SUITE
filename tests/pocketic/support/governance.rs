@@ -12,7 +12,11 @@ pub fn start_canister_as(pic: &PocketIc, canister: Principal, sender: Principal)
         .map_err(|r| anyhow!("start_canister({canister}) reject: {r:?}"))
 }
 
-pub fn set_controllers_exact(pic: &PocketIc, canister: Principal, controllers: Vec<Principal>) -> Result<()> {
+pub fn set_controllers_exact(
+    pic: &PocketIc,
+    canister: Principal,
+    controllers: Vec<Principal>,
+) -> Result<()> {
     let sender = pic
         .get_controllers(canister)
         .first()

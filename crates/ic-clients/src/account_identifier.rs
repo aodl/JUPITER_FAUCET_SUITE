@@ -51,7 +51,10 @@ mod tests {
     #[test]
     fn renders_account_identifier_from_account() {
         let owner = Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").expect("valid principal");
-        let account = Account { owner, subaccount: None };
+        let account = Account {
+            owner,
+            subaccount: None,
+        };
 
         assert_eq!(
             account_identifier_text_for_account(&account),

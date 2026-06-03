@@ -41,7 +41,9 @@ impl LocalSkipCandidate {
 }
 
 pub(super) fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option<u64>) -> usize {
-    let Some(last_seen) = cursor else { return 0; };
+    let Some(last_seen) = cursor else {
+        return 0;
+    };
     for (idx, range) in skip_ranges.iter().enumerate() {
         if range.end_tx_id > last_seen {
             return idx;
@@ -50,7 +52,11 @@ pub(super) fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option
     skip_ranges.len()
 }
 
-pub(super) fn next_skip_jump_target(cursor: Option<u64>, skip_ranges: &[SkipRange], skip_range_idx: &mut usize) -> Option<u64> {
+pub(super) fn next_skip_jump_target(
+    cursor: Option<u64>,
+    skip_ranges: &[SkipRange],
+    skip_range_idx: &mut usize,
+) -> Option<u64> {
     let last_seen = cursor?;
     while let Some(range) = skip_ranges.get(*skip_range_idx) {
         if last_seen >= range.end_tx_id {
@@ -82,12 +88,14 @@ pub(super) fn persist_new_skip_ranges(
     let mut simulated = skip_ranges.clone();
     for range in pending_skip_ranges.iter() {
         state::validate_skip_range_insertion(&simulated, range)?;
-        let insert_pos = simulated.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
+        let insert_pos =
+            simulated.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
         simulated.insert(insert_pos, range.clone());
     }
     for range in pending_skip_ranges.drain(..) {
         state::insert_skip_range(range.clone())?;
-        let insert_pos = skip_ranges.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
+        let insert_pos =
+            skip_ranges.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
         skip_ranges.insert(insert_pos, range);
     }
     Ok(())
@@ -115,9 +123,7 @@ pub(super) fn flush_scan_progress(
             job.ignored_under_threshold = job
                 .ignored_under_threshold
                 .saturating_add(*ignored_under_threshold_delta);
-            job.ignored_bad_memo = job
-                .ignored_bad_memo
-                .saturating_add(*ignored_bad_memo_delta);
+            job.ignored_bad_memo = job.ignored_bad_memo.saturating_add(*ignored_bad_memo_delta);
             if next_start.is_some() {
                 job.next_start = next_start;
             }

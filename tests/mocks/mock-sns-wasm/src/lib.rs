@@ -24,12 +24,23 @@ struct Args {}
 #[ic_cdk::update]
 fn list_deployed_snses(_: Args) -> ListDeployedSnsesResponse {
     ROOTS.with(|r| ListDeployedSnsesResponse {
-        instances: r.borrow().iter().copied().map(|root_canister_id| DeployedSns { root_canister_id: Some(root_canister_id) }).collect(),
+        instances: r
+            .borrow()
+            .iter()
+            .copied()
+            .map(|root_canister_id| DeployedSns {
+                root_canister_id: Some(root_canister_id),
+            })
+            .collect(),
     })
 }
 
 #[ic_cdk::update]
-fn debug_reset() { ROOTS.with(|r| r.borrow_mut().clear()); }
+fn debug_reset() {
+    ROOTS.with(|r| r.borrow_mut().clear());
+}
 
 #[ic_cdk::update]
-fn debug_set_roots(roots: Vec<Principal>) { ROOTS.with(|r| *r.borrow_mut() = roots); }
+fn debug_set_roots(roots: Vec<Principal>) {
+    ROOTS.with(|r| *r.borrow_mut() = roots);
+}

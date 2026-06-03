@@ -29,9 +29,15 @@ impl From<StableConfig> for Config {
     fn from(value: StableConfig) -> Self {
         Self {
             staking_account: value.staking_account,
-            output_source_account: value.output_source_account.unwrap_or_else(crate::mainnet_disburser_staging_account),
-            output_account: value.output_account.unwrap_or_else(crate::mainnet_output_account),
-            rewards_account: value.rewards_account.unwrap_or_else(crate::mainnet_rewards_account),
+            output_source_account: value
+                .output_source_account
+                .unwrap_or_else(crate::mainnet_disburser_staging_account),
+            output_account: value
+                .output_account
+                .unwrap_or_else(crate::mainnet_output_account),
+            rewards_account: value
+                .rewards_account
+                .unwrap_or_else(crate::mainnet_rewards_account),
             ledger_canister_id: value.ledger_canister_id,
             index_canister_id: value.index_canister_id,
             cmc_canister_id: value.cmc_canister_id,
@@ -78,5 +84,3 @@ impl From<StableCanisterMeta> for CanisterMeta {
         }
     }
 }
-
-

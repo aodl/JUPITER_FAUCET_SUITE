@@ -21,8 +21,13 @@ impl IndexClient for IcpIndexCanister {
         start: Option<u64>,
         max_results: u64,
     ) -> Result<GetAccountIdentifierTransactionsResponse, ClientError> {
-        IcpIndexCanister::get_account_identifier_transactions(self, account_identifier, start, max_results)
-            .await
-            .map_err(Into::into)
+        IcpIndexCanister::get_account_identifier_transactions(
+            self,
+            account_identifier,
+            start,
+            max_results,
+        )
+        .await
+        .map_err(Into::into)
     }
 }

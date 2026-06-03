@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use candid::Principal;
 use ic_cdk::call::Call;
 use jupiter_nns_types::{
-    manage_neuron, manage_neuron_response, Account, GovernanceError,
-    ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
-    PrincipalId,
+    manage_neuron, manage_neuron_response, Account, GovernanceError, ManageNeuronCommandRequest,
+    ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId, PrincipalId,
 };
 
 use crate::clients::GovernanceClient;

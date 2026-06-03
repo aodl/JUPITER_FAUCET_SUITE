@@ -1,5 +1,9 @@
 use super::*;
-pub(super) async fn probe_index_health(index: &impl IndexClient, staking_id: &str, denom_balance_e8s: u64) {
+pub(super) async fn probe_index_health(
+    index: &impl IndexClient,
+    staking_id: &str,
+    denom_balance_e8s: u64,
+) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
     let prev_latest = state::with_state(|st| st.last_observed_latest_tx_id);
     let first_page = match index
@@ -60,7 +64,9 @@ pub(super) fn record_latest_unreadable_failure(st: &mut state::State) {
             .unwrap_or(0)
             .saturating_add(1),
     );
-    if st.consecutive_index_latest_unreadable_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+    if st.consecutive_index_latest_unreadable_failures.unwrap_or(0) >= 2
+        && st.forced_rescue_reason.is_none()
+    {
         st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestUnreadable);
     }
 }
@@ -72,17 +78,24 @@ pub(super) fn record_latest_invariant_failure(st: &mut state::State) {
             .unwrap_or(0)
             .saturating_add(1),
     );
-    if st.consecutive_index_latest_invariant_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
+    if st.consecutive_index_latest_invariant_failures.unwrap_or(0) >= 2
+        && st.forced_rescue_reason.is_none()
+    {
         st.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestInvariantBroken);
     }
 }
 
-
 pub(super) fn index_page_descending(txs: &[IndexTransactionWithId]) -> bool {
-    txs.first().zip(txs.last()).map(|(first, last)| first.id > last.id).unwrap_or(false)
+    txs.first()
+        .zip(txs.last())
+        .map(|(first, last)| first.id > last.id)
+        .unwrap_or(false)
 }
 
-pub(super) fn index_page_descending_from_cursor(txs: &[IndexTransactionWithId], cursor: Option<u64>) -> bool {
+pub(super) fn index_page_descending_from_cursor(
+    txs: &[IndexTransactionWithId],
+    cursor: Option<u64>,
+) -> bool {
     if txs.len() >= 2 {
         return index_page_descending(txs);
     }
@@ -104,7 +117,11 @@ pub(super) fn index_page_next_cursor(txs: &[IndexTransactionWithId]) -> Option<u
     txs.last().map(|tx| tx.id)
 }
 
-pub(super) fn tx_is_after_cursor_for_page(tx_id: u64, cursor: Option<u64>, descending: bool) -> bool {
+pub(super) fn tx_is_after_cursor_for_page(
+    tx_id: u64,
+    cursor: Option<u64>,
+    descending: bool,
+) -> bool {
     match cursor {
         None => true,
         Some(last_seen) if descending => tx_id < last_seen,
@@ -112,7 +129,11 @@ pub(super) fn tx_is_after_cursor_for_page(tx_id: u64, cursor: Option<u64>, desce
     }
 }
 
-pub(super) async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: String, start: Option<u64>) -> LatestScan {
+pub(super) async fn scan_latest_tx_id(
+    index: &impl IndexClient,
+    staking_id: String,
+    start: Option<u64>,
+) -> LatestScan {
     let mut cursor = start;
     let mut latest = start;
     let mut pages_scanned = 0u64;
@@ -141,7 +162,11 @@ pub(super) async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: Stri
             };
             return LatestScan::Read(latest);
         }
-        if cursor.zip(page_latest).map(|(prev, next)| next <= prev).unwrap_or(false) {
+        if cursor
+            .zip(page_latest)
+            .map(|(prev, next)| next <= prev)
+            .unwrap_or(false)
+        {
             return LatestScan::InvariantBroken;
         }
         latest = page_latest;
@@ -153,19 +178,32 @@ pub(super) async fn scan_latest_tx_id(index: &impl IndexClient, staking_id: Stri
 }
 
 pub(super) fn apply_anchor_observation(st: &mut state::State, observed_oldest: Option<u64>) {
-    let Some(expected_first) = st.config.expected_first_staking_tx_id else { return; };
+    let Some(expected_first) = st.config.expected_first_staking_tx_id else {
+        return;
+    };
     if observed_oldest == Some(expected_first) {
         st.consecutive_index_anchor_failures = Some(0);
         return;
     }
-    st.consecutive_index_anchor_failures = Some(st.consecutive_index_anchor_failures.unwrap_or(0).saturating_add(1));
+    st.consecutive_index_anchor_failures = Some(
+        st.consecutive_index_anchor_failures
+            .unwrap_or(0)
+            .saturating_add(1),
+    );
     if st.consecutive_index_anchor_failures.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
         st.forced_rescue_reason = Some(ForcedRescueReason::IndexAnchorMissing);
     }
 }
 
-pub(super) fn apply_latest_observation(st: &mut state::State, denom_balance_e8s: u64, latest_scan: LatestScan) {
-    match (st.last_observed_staking_balance_e8s, st.last_observed_latest_tx_id) {
+pub(super) fn apply_latest_observation(
+    st: &mut state::State,
+    denom_balance_e8s: u64,
+    latest_scan: LatestScan,
+) {
+    match (
+        st.last_observed_staking_balance_e8s,
+        st.last_observed_latest_tx_id,
+    ) {
         (None, _) => {
             st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
             st.last_observed_latest_tx_id = match latest_scan {
@@ -194,11 +232,16 @@ pub(super) fn apply_latest_observation(st: &mut state::State, denom_balance_e8s:
                     record_latest_invariant_failure(st);
                 }
             }
-        }
+        },
     }
 }
 
-pub(super) fn apply_cmc_run_result(st: &mut state::State, attempts: u64, successes: u64, zero_success_run_counts: bool) {
+pub(super) fn apply_cmc_run_result(
+    st: &mut state::State,
+    attempts: u64,
+    successes: u64,
+    zero_success_run_counts: bool,
+) {
     if attempts == 0 {
         return;
     }
@@ -209,7 +252,11 @@ pub(super) fn apply_cmc_run_result(st: &mut state::State, attempts: u64, success
     if !zero_success_run_counts {
         return;
     }
-    st.consecutive_cmc_zero_success_runs = Some(st.consecutive_cmc_zero_success_runs.unwrap_or(0).saturating_add(1));
+    st.consecutive_cmc_zero_success_runs = Some(
+        st.consecutive_cmc_zero_success_runs
+            .unwrap_or(0)
+            .saturating_add(1),
+    );
     if st.consecutive_cmc_zero_success_runs.unwrap_or(0) >= 2 && st.forced_rescue_reason.is_none() {
         st.forced_rescue_reason = Some(ForcedRescueReason::CmcZeroSuccessRuns);
     }
@@ -231,9 +278,17 @@ pub(super) async fn zero_success_run_counts_toward_rescue(
     false
 }
 
-pub(super) fn apply_job_health_observations(st: &mut state::State, job: &ActivePayoutJob, zero_success_run_counts: bool) {
+pub(super) fn apply_job_health_observations(
+    st: &mut state::State,
+    job: &ActivePayoutJob,
+    zero_success_run_counts: bool,
+) {
     apply_anchor_observation(st, job.observed_oldest_tx_id);
-    apply_latest_observation(st, job.denom_staking_balance_e8s, LatestScan::Read(job.observed_latest_tx_id));
+    apply_latest_observation(
+        st,
+        job.denom_staking_balance_e8s,
+        LatestScan::Read(job.observed_latest_tx_id),
+    );
     apply_cmc_run_result(
         st,
         job.cmc_attempt_count.unwrap_or(0),
@@ -245,10 +300,13 @@ pub(super) fn apply_job_health_observations(st: &mut state::State, job: &ActiveP
 pub(super) fn maybe_latch_bootstrap_rescue(now_secs: u64) {
     state::with_state_mut(|st| {
         if st.forced_rescue_reason.is_none()
-            && policy::bootstrap_rescue_due(now_secs, st.blackhole_armed_since_ts, st.last_successful_transfer_ts)
+            && policy::bootstrap_rescue_due(
+                now_secs,
+                st.blackhole_armed_since_ts,
+                st.last_successful_transfer_ts,
+            )
         {
             st.forced_rescue_reason = Some(ForcedRescueReason::BootstrapNoSuccess);
         }
     });
 }
-

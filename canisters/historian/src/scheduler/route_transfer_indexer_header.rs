@@ -10,7 +10,10 @@ pub(super) fn indexed_route_name(kind: &IndexedRouteKind) -> &'static str {
     }
 }
 
-pub(super) fn indexed_route_account(cfg: &state::Config, kind: &IndexedRouteKind) -> icrc_ledger_types::icrc1::account::Account {
+pub(super) fn indexed_route_account(
+    cfg: &state::Config,
+    kind: &IndexedRouteKind,
+) -> icrc_ledger_types::icrc1::account::Account {
     match kind {
         IndexedRouteKind::Output => cfg.output_account,
         IndexedRouteKind::Rewards => cfg.rewards_account,
@@ -24,21 +27,31 @@ pub(super) fn indexed_route_cursor(st: &state::State, kind: &IndexedRouteKind) -
     }
 }
 
-pub(super) fn set_indexed_route_cursor(st: &mut state::State, kind: &IndexedRouteKind, cursor: Option<u64>) {
+pub(super) fn set_indexed_route_cursor(
+    st: &mut state::State,
+    kind: &IndexedRouteKind,
+    cursor: Option<u64>,
+) {
     match kind {
         IndexedRouteKind::Output => st.last_indexed_output_tx_id = cursor,
         IndexedRouteKind::Rewards => st.last_indexed_rewards_tx_id = cursor,
     }
 }
 
-pub(super) fn indexed_route_oldest_cursor(st: &state::State, kind: &IndexedRouteKind) -> Option<u64> {
+pub(super) fn indexed_route_oldest_cursor(
+    st: &state::State,
+    kind: &IndexedRouteKind,
+) -> Option<u64> {
     match kind {
         IndexedRouteKind::Output => st.oldest_indexed_output_tx_id,
         IndexedRouteKind::Rewards => st.oldest_indexed_rewards_tx_id,
     }
 }
 
-pub(super) fn indexed_route_order_descending(st: &state::State, kind: &IndexedRouteKind) -> Option<bool> {
+pub(super) fn indexed_route_order_descending(
+    st: &state::State,
+    kind: &IndexedRouteKind,
+) -> Option<bool> {
     match kind {
         IndexedRouteKind::Output => st.output_route_index_descending,
         IndexedRouteKind::Rewards => st.rewards_route_index_descending,
@@ -75,7 +88,11 @@ pub(super) fn set_indexed_route_descending_progress(
     }
 }
 
-pub(super) fn add_indexed_route_amount(st: &mut state::State, kind: &IndexedRouteKind, amount_e8s: u64) {
+pub(super) fn add_indexed_route_amount(
+    st: &mut state::State,
+    kind: &IndexedRouteKind,
+    amount_e8s: u64,
+) {
     match kind {
         IndexedRouteKind::Output => {
             let total = st.total_output_e8s.get_or_insert(0);
@@ -94,10 +111,12 @@ pub(super) fn indexed_route_amount_from_tx(
     expected_to: &str,
 ) -> Option<u64> {
     match &tx.transaction.operation {
-        crate::clients::index::IndexOperation::Transfer { from, to, amount, .. }
-            if from == expected_from && to == expected_to => Some(amount.e8s()),
-        crate::clients::index::IndexOperation::TransferFrom { from, to, amount, .. }
-            if from == expected_from && to == expected_to => Some(amount.e8s()),
+        crate::clients::index::IndexOperation::Transfer {
+            from, to, amount, ..
+        } if from == expected_from && to == expected_to => Some(amount.e8s()),
+        crate::clients::index::IndexOperation::TransferFrom {
+            from, to, amount, ..
+        } if from == expected_from && to == expected_to => Some(amount.e8s()),
         _ => None,
     }
 }

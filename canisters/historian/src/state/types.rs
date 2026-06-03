@@ -360,7 +360,6 @@ impl Storable for StableSourceSet {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-
 #[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 pub(super) struct StableU64List(pub Vec<u64>);
 
@@ -403,7 +402,10 @@ impl Storable for CommitmentEntryKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let bytes = bytes.as_ref();
         let len = bytes.first().copied().unwrap_or(0) as usize;
-        assert!(bytes.len() == 1 + len + 8, "invalid historian commitment entry key length");
+        assert!(
+            bytes.len() == 1 + len + 8,
+            "invalid historian commitment entry key length"
+        );
         let canister = PrincipalKey(bytes[1..1 + len].to_vec());
         let mut tx_id = [0u8; 8];
         tx_id.copy_from_slice(&bytes[1 + len..]);
@@ -441,7 +443,10 @@ impl Storable for NeuronCommitmentEntryKey {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let bytes = bytes.as_ref();
-        assert!(bytes.len() == 16, "invalid historian neuron commitment entry key length");
+        assert!(
+            bytes.len() == 16,
+            "invalid historian neuron commitment entry key length"
+        );
         let mut neuron_id = [0u8; 8];
         neuron_id.copy_from_slice(&bytes[..8]);
         let mut tx_id = [0u8; 8];
@@ -485,7 +490,10 @@ impl Storable for CyclesEntryKey {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let bytes = bytes.as_ref();
         let len = bytes.first().copied().unwrap_or(0) as usize;
-        assert!(bytes.len() == 1 + len + 8, "invalid historian cycles entry key length");
+        assert!(
+            bytes.len() == 1 + len + 8,
+            "invalid historian cycles entry key length"
+        );
         let canister = PrincipalKey(bytes[1..1 + len].to_vec());
         let mut timestamp_nanos = [0u8; 8];
         timestamp_nanos.copy_from_slice(&bytes[1 + len..]);
@@ -527,7 +535,9 @@ impl Storable for CyclesSample {
 
 impl Storable for StableCanisterMeta {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian stable canister meta"))
+        Cow::Owned(
+            candid::encode_one(self).expect("failed to encode historian stable canister meta"),
+        )
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -546,7 +556,8 @@ pub(crate) struct State {
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
     #[serde(default)]
-    pub registered_canister_summaries_cache: Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
+    pub registered_canister_summaries_cache:
+        Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
     #[serde(default)]
     pub registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
     pub last_indexed_staking_tx_id: Option<u64>,

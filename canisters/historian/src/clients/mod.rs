@@ -42,12 +42,18 @@ pub(crate) trait IndexClient: Send + Sync {
 
 #[async_trait]
 pub(crate) trait BlackholeClient: Send + Sync {
-    async fn canister_status(&self, canister_id: Principal) -> Result<BlackholeCanisterStatus, ClientError>;
+    async fn canister_status(
+        &self,
+        canister_id: Principal,
+    ) -> Result<BlackholeCanisterStatus, ClientError>;
 }
 
 #[async_trait]
 pub(crate) trait GovernanceClient: Send + Sync {
-    async fn claim_or_refresh_neuron_by_subaccount(&self, subaccount: [u8; 32]) -> Result<(), ClientError>;
+    async fn claim_or_refresh_neuron_by_subaccount(
+        &self,
+        subaccount: [u8; 32],
+    ) -> Result<(), ClientError>;
 }
 
 #[async_trait]
@@ -57,7 +63,10 @@ pub(crate) trait SnsWasmClient: Send + Sync {
 
 #[async_trait]
 pub(crate) trait SnsRootClient: Send + Sync {
-    async fn get_sns_canisters_summary(&self, root_id: Principal) -> Result<GetSnsCanistersSummaryResponse, ClientError>;
+    async fn get_sns_canisters_summary(
+        &self,
+        root_id: Principal,
+    ) -> Result<GetSnsCanistersSummaryResponse, ClientError>;
 }
 
 #[async_trait]

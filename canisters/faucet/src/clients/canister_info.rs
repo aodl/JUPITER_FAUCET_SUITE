@@ -50,7 +50,6 @@ impl CanisterStatusClient for NoopCanisterStatusClient {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{definitely_not_a_canister, is_destination_invalid};

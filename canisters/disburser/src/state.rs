@@ -167,7 +167,9 @@ fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memo
             });
         }
         let mut borrow = cell.borrow_mut();
-        f(borrow.as_mut().expect("disburser stable cell not initialized"))
+        f(borrow
+            .as_mut()
+            .expect("disburser stable cell not initialized"))
     })
 }
 
@@ -197,7 +199,9 @@ pub(crate) fn set_state(st: State) {
 
 #[cfg(any(test, feature = "debug_api"))]
 pub(crate) fn get_state() -> State {
-    STATE.with(|s| s.borrow().clone()).expect("state not initialized")
+    STATE
+        .with(|s| s.borrow().clone())
+        .expect("state not initialized")
 }
 
 pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
@@ -247,11 +251,13 @@ pub(crate) type PersistenceBatch = jupiter_persistence_batch::PersistenceBatch;
 #[cfg(test)]
 #[must_use]
 pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
-    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
+    PERSISTENCE_BATCH_DEPTH
+        .with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch::new(|| {
         let should_flush = PERSISTENCE_BATCH_DEPTH.with(|depth| {
             let dirty = PERSISTENCE_DIRTY.with(|flag| flag.get());
-            let (next_depth, should_flush) = jupiter_persistence_batch::finish_depth(depth.get(), dirty);
+            let (next_depth, should_flush) =
+                jupiter_persistence_batch::finish_depth(depth.get(), dirty);
             depth.set(next_depth);
             should_flush
         });
@@ -279,7 +285,6 @@ pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,9 +306,18 @@ mod tests {
     fn sample_config() -> Config {
         Config {
             neuron_id: 42,
-            normal_recipient: Account { owner: principal(&[1]), subaccount: None },
-            age_bonus_recipient_1: Account { owner: principal(&[2]), subaccount: None },
-            age_bonus_recipient_2: Account { owner: principal(&[3]), subaccount: None },
+            normal_recipient: Account {
+                owner: principal(&[1]),
+                subaccount: None,
+            },
+            age_bonus_recipient_1: Account {
+                owner: principal(&[2]),
+                subaccount: None,
+            },
+            age_bonus_recipient_2: Account {
+                owner: principal(&[3]),
+                subaccount: None,
+            },
             ledger_canister_id: principal(&[4]),
             governance_canister_id: principal(&[5]),
             rescue_controller: principal(&[6]),
@@ -361,7 +375,8 @@ mod tests {
             st.main_lock_state_ts = Some(55);
         });
 
-        let restored = restore_state_from_stable().expect("expected persisted disburser state after mutation");
+        let restored =
+            restore_state_from_stable().expect("expected persisted disburser state after mutation");
         assert_eq!(restored.last_successful_transfer_ts, Some(888));
         assert_eq!(restored.main_lock_state_ts, Some(55));
     }
@@ -377,13 +392,15 @@ mod tests {
                 st.last_successful_transfer_ts = Some(999);
                 st.main_lock_state_ts = Some(77);
             });
-            let restored_mid = restore_state_from_stable().expect("expected persisted state before batch mutation");
+            let restored_mid = restore_state_from_stable()
+                .expect("expected persisted state before batch mutation");
             assert_ne!(restored_mid.last_successful_transfer_ts, Some(999));
             assert_ne!(restored_mid.main_lock_state_ts, Some(77));
             persist_dirty_state();
         }
 
-        let restored = restore_state_from_stable().expect("expected persisted state after batch flush");
+        let restored =
+            restore_state_from_stable().expect("expected persisted state after batch flush");
         assert_eq!(restored.last_successful_transfer_ts, Some(999));
         assert_eq!(restored.main_lock_state_ts, Some(77));
     }

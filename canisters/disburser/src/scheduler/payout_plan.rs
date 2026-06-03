@@ -116,13 +116,17 @@ pub(super) async fn process_payout<L: LedgerClient>(
                 match debug_successful_transfer_injection() {
                     DebugSuccessfulTransferInjection::None => {}
                     DebugSuccessfulTransferInjection::Abort => return false,
-                    DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful disburser transfer"),
+                    DebugSuccessfulTransferInjection::Trap => {
+                        ic_cdk::trap("debug trap after successful disburser transfer")
+                    }
                 };
                 let block_str = block.to_string();
                 state::with_state_mut(|st| {
                     if let Some(p) = st.payout_plan.as_mut() {
                         if let Some(tt) = p.transfers.get_mut(i) {
-                            tt.status = state::TransferStatus::Sent { block_index: block_str };
+                            tt.status = state::TransferStatus::Sent {
+                                block_index: block_str,
+                            };
                         }
                     }
                     st.last_successful_transfer_ts = Some(now_secs);
@@ -133,13 +137,17 @@ pub(super) async fn process_payout<L: LedgerClient>(
                 match debug_successful_transfer_injection() {
                     DebugSuccessfulTransferInjection::None => {}
                     DebugSuccessfulTransferInjection::Abort => return false,
-                    DebugSuccessfulTransferInjection::Trap => ic_cdk::trap("debug trap after successful disburser transfer"),
+                    DebugSuccessfulTransferInjection::Trap => {
+                        ic_cdk::trap("debug trap after successful disburser transfer")
+                    }
                 };
                 let block_str = duplicate_of.to_string();
                 state::with_state_mut(|st| {
                     if let Some(p) = st.payout_plan.as_mut() {
                         if let Some(tt) = p.transfers.get_mut(i) {
-                            tt.status = state::TransferStatus::Sent { block_index: block_str };
+                            tt.status = state::TransferStatus::Sent {
+                                block_index: block_str,
+                            };
                         }
                     }
                     st.last_successful_transfer_ts = Some(now_secs);

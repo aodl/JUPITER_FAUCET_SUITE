@@ -12,7 +12,9 @@ pub(crate) fn set_state_root_only(st: State) {
 }
 
 pub(crate) fn get_state() -> State {
-    STATE.with(|s| s.borrow().clone()).expect("state not initialized")
+    STATE
+        .with(|s| s.borrow().clone())
+        .expect("state not initialized")
 }
 
 pub(crate) fn with_state<R>(f: impl FnOnce(&State) -> R) -> R {
@@ -63,7 +65,8 @@ pub(crate) type PersistenceBatch = jupiter_persistence_batch::PersistenceBatch;
 
 #[must_use]
 pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
-    PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
+    PERSISTENCE_BATCH_DEPTH
+        .with(|depth| depth.set(jupiter_persistence_batch::begin_depth(depth.get())));
     PersistenceBatch::new(|| {
         let should_flush = PERSISTENCE_BATCH_DEPTH.with(|depth| {
             let dirty_sections = PERSISTENCE_DIRTY_SECTIONS.with(|flag| flag.get());
@@ -98,7 +101,9 @@ pub(super) fn with_state_mut_sections_scoped<R>(
             let registry_scope = registry_principal.into_iter().collect::<BTreeSet<_>>();
             let commitment_scope = commitment_principal.into_iter().collect::<BTreeSet<_>>();
             let cycles_scope = cycles_principal.into_iter().collect::<BTreeSet<_>>();
-            let raw_icp_commitment_scope = raw_icp_commitment_principal.into_iter().collect::<BTreeSet<_>>();
+            let raw_icp_commitment_scope = raw_icp_commitment_principal
+                .into_iter()
+                .collect::<BTreeSet<_>>();
             let neuron_commitment_scope = neuron_commitment_id.into_iter().collect::<BTreeSet<_>>();
             persist_snapshot_sections_scoped(
                 &snapshot,
@@ -189,7 +194,9 @@ pub(crate) fn stable_cycles_history_for(canister_id: Principal) -> Vec<CyclesSam
     load_stable_cycles_history_internal(canister_id)
 }
 
-pub(crate) fn stable_raw_icp_commitment_history_for(canister_id: Principal) -> Vec<CommitmentSample> {
+pub(crate) fn stable_raw_icp_commitment_history_for(
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
     load_stable_raw_icp_commitment_history_internal(canister_id)
 }
 
@@ -237,8 +244,19 @@ pub(crate) fn ensure_cycles_history_loaded(st: &mut State, canister_id: Principa
     }
 }
 
-pub(crate) fn with_root_and_registry_canister_state_mut<R>(canister_id: Principal, f: impl FnOnce(&mut State) -> R) -> R {
-    with_state_mut_sections_scoped(DIRTY_ROOT | DIRTY_REGISTRY, Some(canister_id), None, None, None, None, f)
+pub(crate) fn with_root_and_registry_canister_state_mut<R>(
+    canister_id: Principal,
+    f: impl FnOnce(&mut State) -> R,
+) -> R {
+    with_state_mut_sections_scoped(
+        DIRTY_ROOT | DIRTY_REGISTRY,
+        Some(canister_id),
+        None,
+        None,
+        None,
+        None,
+        f,
+    )
 }
 
 pub(crate) fn with_root_and_raw_icp_commitments_state_mut<R>(

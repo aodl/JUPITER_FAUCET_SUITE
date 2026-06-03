@@ -12,13 +12,17 @@ impl LedgerClient for IcrcLedgerCanister {
     }
 
     async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
-        IcrcLedgerCanister::balance_of_e8s(self, account).await.map_err(Into::into)
+        IcrcLedgerCanister::balance_of_e8s(self, account)
+            .await
+            .map_err(Into::into)
     }
 
     async fn transfer(
         &self,
         arg: TransferArg,
     ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
-        IcrcLedgerCanister::transfer(self, arg).await.map_err(Into::into)
+        IcrcLedgerCanister::transfer(self, arg)
+            .await
+            .map_err(Into::into)
     }
 }

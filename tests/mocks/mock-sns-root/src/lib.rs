@@ -31,7 +31,9 @@ thread_local! {
 fn init() {}
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct Args { update_canister_list: Option<bool> }
+struct Args {
+    update_canister_list: Option<bool>,
+}
 
 #[ic_cdk::update]
 fn get_sns_canisters_summary(_: Args) -> GetSnsCanistersSummaryResponse {

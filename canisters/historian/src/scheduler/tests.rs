@@ -4,7 +4,10 @@ use super::*;
 #[allow(clippy::clone_on_copy, clippy::module_inception)]
 mod tests {
     use super::*;
-    use crate::clients::index::{GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction, IndexTransactionWithId, Tokens};
+    use crate::clients::index::{
+        GetAccountIdentifierTransactionsResponse, IndexOperation, IndexTimeStamp, IndexTransaction,
+        IndexTransactionWithId, Tokens,
+    };
     use crate::state::{ActiveCyclesSweep, Config, State};
     use async_trait::async_trait;
     use candid::Principal;
@@ -18,7 +21,10 @@ mod tests {
     }
 
     fn sample_account() -> Account {
-        Account { owner: principal("aaaaa-aa"), subaccount: None }
+        Account {
+            owner: principal("aaaaa-aa"),
+            subaccount: None,
+        }
     }
 
     fn configure_state(max_index_pages_per_tick: u32) -> String {
@@ -27,9 +33,18 @@ mod tests {
         state::set_state(State::new(
             Config {
                 staking_account: account,
-                output_source_account: Account { owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"), subaccount: None },
-                output_account: Account { owner: principal("acjuz-liaaa-aaaar-qb4qq-cai"), subaccount: None },
-                rewards_account: Account { owner: principal("alk7f-5aaaa-aaaar-qb4ra-cai"), subaccount: None },
+                output_source_account: Account {
+                    owner: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+                    subaccount: None,
+                },
+                output_account: Account {
+                    owner: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
+                    subaccount: None,
+                },
+                rewards_account: Account {
+                    owner: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
+                    subaccount: None,
+                },
                 ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
@@ -51,7 +66,13 @@ mod tests {
         staking_id
     }
 
-    fn transfer_to_staking_memo_tx(id: u64, staking_id: &str, memo: Vec<u8>, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+    fn transfer_to_staking_memo_tx(
+        id: u64,
+        staking_id: &str,
+        memo: Vec<u8>,
+        amount_e8s: u64,
+        timestamp_nanos: u64,
+    ) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -70,7 +91,13 @@ mod tests {
         }
     }
 
-    fn transfer_to_staking_tx(id: u64, staking_id: &str, beneficiary: candid::Principal, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+    fn transfer_to_staking_tx(
+        id: u64,
+        staking_id: &str,
+        beneficiary: candid::Principal,
+        amount_e8s: u64,
+        timestamp_nanos: u64,
+    ) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -89,8 +116,13 @@ mod tests {
         }
     }
 
-
-    fn transfer_between_accounts_tx(id: u64, from: &str, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+    fn transfer_between_accounts_tx(
+        id: u64,
+        from: &str,
+        to: &str,
+        amount_e8s: u64,
+        timestamp_nanos: u64,
+    ) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -109,7 +141,13 @@ mod tests {
         }
     }
 
-    fn transfer_from_between_accounts_tx(id: u64, from: &str, to: &str, amount_e8s: u64, timestamp_nanos: u64) -> IndexTransactionWithId {
+    fn transfer_from_between_accounts_tx(
+        id: u64,
+        from: &str,
+        to: &str,
+        amount_e8s: u64,
+        timestamp_nanos: u64,
+    ) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
@@ -153,28 +191,41 @@ mod tests {
             start: Option<u64>,
             max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
-            self.calls.lock().unwrap().push((account_identifier, start, max_results));
-            Ok(self
-                .pages
+            self.calls
                 .lock()
                 .unwrap()
-                .pop_front()
-                .unwrap_or(GetAccountIdentifierTransactionsResponse {
+                .push((account_identifier, start, max_results));
+            Ok(self.pages.lock().unwrap().pop_front().unwrap_or(
+                GetAccountIdentifierTransactionsResponse {
                     balance: 0,
                     transactions: Vec::new(),
                     oldest_tx_id: None,
-                }))
+                },
+            ))
         }
     }
 
-
     struct MockSnsWasmClient {
-        responses: Mutex<VecDeque<Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError>>>,
+        responses: Mutex<
+            VecDeque<
+                Result<
+                    crate::clients::sns_wasm::ListDeployedSnsesResponse,
+                    crate::clients::ClientError,
+                >,
+            >,
+        >,
         calls: Mutex<u32>,
     }
 
     impl MockSnsWasmClient {
-        fn new(responses: Vec<Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError>>) -> Self {
+        fn new(
+            responses: Vec<
+                Result<
+                    crate::clients::sns_wasm::ListDeployedSnsesResponse,
+                    crate::clients::ClientError,
+                >,
+            >,
+        ) -> Self {
             Self {
                 responses: Mutex::new(responses.into()),
                 calls: Mutex::new(0),
@@ -188,23 +239,36 @@ mod tests {
 
     #[async_trait]
     impl SnsWasmClient for MockSnsWasmClient {
-        async fn list_deployed_snses(&self) -> Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError> {
+        async fn list_deployed_snses(
+            &self,
+        ) -> Result<crate::clients::sns_wasm::ListDeployedSnsesResponse, crate::clients::ClientError>
+        {
             *self.calls.lock().unwrap() += 1;
             self.responses
                 .lock()
                 .unwrap()
                 .pop_front()
-                .unwrap_or_else(|| Ok(crate::clients::sns_wasm::ListDeployedSnsesResponse { instances: Vec::new() }))
+                .unwrap_or_else(|| {
+                    Ok(crate::clients::sns_wasm::ListDeployedSnsesResponse {
+                        instances: Vec::new(),
+                    })
+                })
         }
     }
 
     struct MockSnsRootClient {
-        responses: Mutex<BTreeMap<Principal, crate::clients::sns_root::GetSnsCanistersSummaryResponse>>,
+        responses:
+            Mutex<BTreeMap<Principal, crate::clients::sns_root::GetSnsCanistersSummaryResponse>>,
         calls: Mutex<Vec<Principal>>,
     }
 
     impl MockSnsRootClient {
-        fn new(responses: BTreeMap<Principal, crate::clients::sns_root::GetSnsCanistersSummaryResponse>) -> Self {
+        fn new(
+            responses: BTreeMap<
+                Principal,
+                crate::clients::sns_root::GetSnsCanistersSummaryResponse,
+            >,
+        ) -> Self {
             Self {
                 responses: Mutex::new(responses),
                 calls: Mutex::new(Vec::new()),
@@ -218,33 +282,48 @@ mod tests {
 
     #[async_trait]
     impl SnsRootClient for MockSnsRootClient {
-        async fn get_sns_canisters_summary(&self, root_id: Principal) -> Result<crate::clients::sns_root::GetSnsCanistersSummaryResponse, crate::clients::ClientError> {
+        async fn get_sns_canisters_summary(
+            &self,
+            root_id: Principal,
+        ) -> Result<
+            crate::clients::sns_root::GetSnsCanistersSummaryResponse,
+            crate::clients::ClientError,
+        > {
             self.calls.lock().unwrap().push(root_id);
             self.responses
                 .lock()
                 .unwrap()
                 .get(&root_id)
                 .cloned()
-                .ok_or_else(|| crate::clients::ClientError::Call(format!("missing summary for {}", root_id)))
+                .ok_or_else(|| {
+                    crate::clients::ClientError::Call(format!("missing summary for {}", root_id))
+                })
         }
     }
 
     fn sns_summary(canister_id: Principal, cycles: u64) -> SnsCanisterSummary {
         SnsCanisterSummary {
             canister_id: Some(canister_id),
-            status: Some(crate::clients::sns_root::SnsCanisterStatus { cycles: Some(Nat::from(cycles)) }),
+            status: Some(crate::clients::sns_root::SnsCanisterStatus {
+                cycles: Some(Nat::from(cycles)),
+            }),
         }
     }
-
 
     struct MockBlackholeClient;
 
     #[async_trait]
     impl BlackholeClient for MockBlackholeClient {
-        async fn canister_status(&self, canister_id: Principal) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError> {
+        async fn canister_status(
+            &self,
+            canister_id: Principal,
+        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError>
+        {
             Ok(crate::clients::blackhole::BlackholeCanisterStatus {
                 cycles: Nat::from(0u64),
-                settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
+                settings: crate::clients::blackhole::BlackholeSettings {
+                    controllers: vec![canister_id],
+                },
                 memory_size: None,
                 memory_metrics: None,
             })
@@ -258,7 +337,10 @@ mod tests {
 
     impl RecordingBlackholeClient {
         fn new(cycles: u64) -> Self {
-            Self { cycles, calls: Mutex::new(Vec::new()) }
+            Self {
+                cycles,
+                calls: Mutex::new(Vec::new()),
+            }
         }
 
         fn calls(&self) -> Vec<Principal> {
@@ -268,11 +350,17 @@ mod tests {
 
     #[async_trait]
     impl BlackholeClient for RecordingBlackholeClient {
-        async fn canister_status(&self, canister_id: Principal) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError> {
+        async fn canister_status(
+            &self,
+            canister_id: Principal,
+        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError>
+        {
             self.calls.lock().unwrap().push(canister_id);
             Ok(crate::clients::blackhole::BlackholeCanisterStatus {
                 cycles: Nat::from(self.cycles),
-                settings: crate::clients::blackhole::BlackholeSettings { controllers: vec![canister_id] },
+                settings: crate::clients::blackhole::BlackholeSettings {
+                    controllers: vec![canister_id],
+                },
                 memory_size: None,
                 memory_metrics: None,
             })
@@ -285,7 +373,9 @@ mod tests {
 
     impl FailingBlackholeClient {
         fn new() -> Self {
-            Self { calls: Mutex::new(Vec::new()) }
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
         }
 
         fn calls(&self) -> Vec<Principal> {
@@ -298,9 +388,12 @@ mod tests {
         async fn canister_status(
             &self,
             canister_id: Principal,
-        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError> {
+        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError>
+        {
             self.calls.lock().unwrap().push(canister_id);
-            Err(crate::clients::ClientError::Call("blackhole status unavailable".into()))
+            Err(crate::clients::ClientError::Call(
+                "blackhole status unavailable".into(),
+            ))
         }
     }
 
@@ -310,7 +403,9 @@ mod tests {
 
     impl RecordingGovernanceClient {
         fn new() -> Self {
-            Self { calls: Mutex::new(Vec::new()) }
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
         }
 
         fn calls(&self) -> Vec<[u8; 32]> {
@@ -320,7 +415,10 @@ mod tests {
 
     #[async_trait]
     impl GovernanceClient for RecordingGovernanceClient {
-        async fn claim_or_refresh_neuron_by_subaccount(&self, subaccount: [u8; 32]) -> Result<(), crate::clients::ClientError> {
+        async fn claim_or_refresh_neuron_by_subaccount(
+            &self,
+            subaccount: [u8; 32],
+        ) -> Result<(), crate::clients::ClientError> {
             self.calls.lock().unwrap().push(subaccount);
             Ok(())
         }
@@ -332,32 +430,60 @@ mod tests {
     }
 
     impl MockXrcClient {
-        fn new(responses: Vec<Result<crate::clients::IcpXdrRate, crate::clients::ClientError>>) -> Self {
-            Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(0) }
+        fn new(
+            responses: Vec<Result<crate::clients::IcpXdrRate, crate::clients::ClientError>>,
+        ) -> Self {
+            Self {
+                responses: Mutex::new(VecDeque::from(responses)),
+                calls: Mutex::new(0),
+            }
         }
 
         fn success(rate: u64, decimals: u32, timestamp: u64) -> Self {
-            Self::new(vec![Ok(crate::clients::IcpXdrRate { rate, decimals, timestamp })])
+            Self::new(vec![Ok(crate::clients::IcpXdrRate {
+                rate,
+                decimals,
+                timestamp,
+            })])
         }
 
-        fn calls(&self) -> u32 { *self.calls.lock().unwrap() }
+        fn calls(&self) -> u32 {
+            *self.calls.lock().unwrap()
+        }
     }
 
     #[async_trait]
     impl ExchangeRateClient for MockXrcClient {
-        async fn get_icp_xdr_rate(&self) -> Result<crate::clients::IcpXdrRate, crate::clients::ClientError> {
+        async fn get_icp_xdr_rate(
+            &self,
+        ) -> Result<crate::clients::IcpXdrRate, crate::clients::ClientError> {
             *self.calls.lock().unwrap() += 1;
-            self.responses.lock().unwrap().pop_front().unwrap_or_else(|| Err(crate::clients::ClientError::Call("missing XRC mock response".into())))
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(crate::clients::ClientError::Call(
+                        "missing XRC mock response".into(),
+                    ))
+                })
         }
     }
-
 
     #[test]
     fn icp_xdr_rate_refresh_caches_success_for_one_day() {
         configure_state(10);
         let xrc = MockXrcClient::new(vec![
-            Ok(crate::clients::IcpXdrRate { rate: 720_000_000, decimals: 8, timestamp: 1_000 }),
-            Ok(crate::clients::IcpXdrRate { rate: 735_000_000, decimals: 8, timestamp: 2_000 }),
+            Ok(crate::clients::IcpXdrRate {
+                rate: 720_000_000,
+                decimals: 8,
+                timestamp: 1_000,
+            }),
+            Ok(crate::clients::IcpXdrRate {
+                rate: 735_000_000,
+                decimals: 8,
+                timestamp: 2_000,
+            }),
         ]);
 
         block_on(refresh_icp_xdr_rate_if_due(10_000, &xrc)).unwrap();
@@ -371,15 +497,30 @@ mod tests {
         });
         assert_eq!(xrc.calls(), 1);
 
-        block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS - 1, &xrc)).unwrap();
-        assert_eq!(xrc.calls(), 1, "fresh daily cache should suppress another XRC call");
+        block_on(refresh_icp_xdr_rate_if_due(
+            10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS - 1,
+            &xrc,
+        ))
+        .unwrap();
+        assert_eq!(
+            xrc.calls(),
+            1,
+            "fresh daily cache should suppress another XRC call"
+        );
 
-        block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS, &xrc)).unwrap();
+        block_on(refresh_icp_xdr_rate_if_due(
+            10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS,
+            &xrc,
+        ))
+        .unwrap();
         state::with_state(|st| {
             let snapshot = st.icp_xdr_rate.as_ref().expect("rate should be refreshed");
             assert_eq!(snapshot.rate, 735_000_000);
             assert_eq!(snapshot.timestamp, 2_000);
-            assert_eq!(snapshot.fetched_at_ts, 10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS);
+            assert_eq!(
+                snapshot.fetched_at_ts,
+                10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS
+            );
         });
         assert_eq!(xrc.calls(), 2);
     }
@@ -388,25 +529,55 @@ mod tests {
     fn icp_xdr_rate_refresh_records_errors_without_clearing_last_good_rate() {
         configure_state(10);
         let xrc = MockXrcClient::new(vec![
-            Ok(crate::clients::IcpXdrRate { rate: 720_000_000, decimals: 8, timestamp: 1_000 }),
+            Ok(crate::clients::IcpXdrRate {
+                rate: 720_000_000,
+                decimals: 8,
+                timestamp: 1_000,
+            }),
             Err(crate::clients::ClientError::Call("NotEnoughCycles".into())),
         ]);
 
         block_on(refresh_icp_xdr_rate_if_due(10_000, &xrc)).unwrap();
-        let err = block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS, &xrc)).unwrap_err();
+        let err = block_on(refresh_icp_xdr_rate_if_due(
+            10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS,
+            &xrc,
+        ))
+        .unwrap_err();
         assert!(err.contains("NotEnoughCycles"));
         state::with_state(|st| {
-            let snapshot = st.icp_xdr_rate.as_ref().expect("last good rate should remain cached");
+            let snapshot = st
+                .icp_xdr_rate
+                .as_ref()
+                .expect("last good rate should remain cached");
             assert_eq!(snapshot.rate, 720_000_000);
-            assert_eq!(st.last_icp_xdr_rate_error.as_deref(), Some("inter-canister call failed: NotEnoughCycles"));
+            assert_eq!(
+                st.last_icp_xdr_rate_error.as_deref(),
+                Some("inter-canister call failed: NotEnoughCycles")
+            );
         });
         assert_eq!(xrc.calls(), 2);
 
-        block_on(refresh_icp_xdr_rate_if_due(10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS + 1, &xrc)).unwrap();
-        assert_eq!(xrc.calls(), 2, "failed XRC refresh should be throttled for one day to prevent a cycle drain");
+        block_on(refresh_icp_xdr_rate_if_due(
+            10_000 + ICP_XDR_RATE_CACHE_TTL_SECONDS + 1,
+            &xrc,
+        ))
+        .unwrap();
+        assert_eq!(
+            xrc.calls(),
+            2,
+            "failed XRC refresh should be throttled for one day to prevent a cycle drain"
+        );
 
-        block_on(refresh_icp_xdr_rate_if_due(10_000 + (2 * ICP_XDR_RATE_CACHE_TTL_SECONDS), &xrc)).unwrap_err();
-        assert_eq!(xrc.calls(), 3, "retry should only happen after failed-attempt TTL expires");
+        block_on(refresh_icp_xdr_rate_if_due(
+            10_000 + (2 * ICP_XDR_RATE_CACHE_TTL_SECONDS),
+            &xrc,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            xrc.calls(),
+            3,
+            "retry should only happen after failed-attempt TTL expires"
+        );
     }
 
     #[test]
@@ -422,24 +593,73 @@ mod tests {
             st.last_sns_discovery_ts = 0;
             st.active_sns_discovery = None;
         });
-        let sns_wasm = MockSnsWasmClient::new(vec![Ok(crate::clients::sns_wasm::ListDeployedSnsesResponse {
-            instances: vec![
-                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_b.clone()) },
-                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_a.clone()) },
-                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_b.clone()) },
-                crate::clients::sns_wasm::DeployedSns { root_canister_id: Some(root_c.clone()) },
-            ],
-        })]);
+        let sns_wasm = MockSnsWasmClient::new(vec![Ok(
+            crate::clients::sns_wasm::ListDeployedSnsesResponse {
+                instances: vec![
+                    crate::clients::sns_wasm::DeployedSns {
+                        root_canister_id: Some(root_b.clone()),
+                    },
+                    crate::clients::sns_wasm::DeployedSns {
+                        root_canister_id: Some(root_a.clone()),
+                    },
+                    crate::clients::sns_wasm::DeployedSns {
+                        root_canister_id: Some(root_b.clone()),
+                    },
+                    crate::clients::sns_wasm::DeployedSns {
+                        root_canister_id: Some(root_c.clone()),
+                    },
+                ],
+            },
+        )]);
         let mut summaries = BTreeMap::new();
-        summaries.insert(root_a.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_a.clone(), 10)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
-        summaries.insert(root_b.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_b.clone(), 20)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
-        summaries.insert(root_c.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_c.clone(), 30)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
+        summaries.insert(
+            root_a.clone(),
+            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
+                root: Some(sns_summary(root_a.clone(), 10)),
+                governance: None,
+                ledger: None,
+                swap: None,
+                index: None,
+                dapps: Vec::new(),
+                archives: Vec::new(),
+            },
+        );
+        summaries.insert(
+            root_b.clone(),
+            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
+                root: Some(sns_summary(root_b.clone(), 20)),
+                governance: None,
+                ledger: None,
+                swap: None,
+                index: None,
+                dapps: Vec::new(),
+                archives: Vec::new(),
+            },
+        );
+        summaries.insert(
+            root_c.clone(),
+            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
+                root: Some(sns_summary(root_c.clone(), 30)),
+                governance: None,
+                ledger: None,
+                swap: None,
+                index: None,
+                dapps: Vec::new(),
+                archives: Vec::new(),
+            },
+        );
         let sns_root = MockSnsRootClient::new(summaries);
 
         block_on(process_sns_discovery(123, 100, &sns_wasm, &sns_root)).unwrap();
         state::with_state(|st| {
-            let active = st.active_sns_discovery.as_ref().expect("discovery should remain in progress after first batch");
-            assert_eq!(active.root_canister_ids, vec![root_a.clone(), root_b.clone(), root_c.clone()]);
+            let active = st
+                .active_sns_discovery
+                .as_ref()
+                .expect("discovery should remain in progress after first batch");
+            assert_eq!(
+                active.root_canister_ids,
+                vec![root_a.clone(), root_b.clone(), root_c.clone()]
+            );
             assert_eq!(active.next_index, 2);
             assert_eq!(st.last_sns_discovery_ts, 0);
             assert!(st.distinct_canisters.contains(&root_a));
@@ -454,11 +674,21 @@ mod tests {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 101);
             assert!(st.distinct_canisters.contains(&root_c));
-            let history = st.cycles_history.get(&root_c).expect("cycles history for final root");
+            let history = st
+                .cycles_history
+                .get(&root_c)
+                .expect("cycles history for final root");
             assert_eq!(history.last().map(|sample| sample.cycles), Some(30));
         });
-        assert_eq!(sns_wasm.calls(), 1, "deployed SNS roots should be fetched only once per discovery sweep");
-        assert_eq!(sns_root.calls(), vec![root_a.clone(), root_b.clone(), root_c.clone()]);
+        assert_eq!(
+            sns_wasm.calls(),
+            1,
+            "deployed SNS roots should be fetched only once per discovery sweep"
+        );
+        assert_eq!(
+            sns_root.calls(),
+            vec![root_a.clone(), root_b.clone(), root_c.clone()]
+        );
     }
 
     #[test]
@@ -478,22 +708,51 @@ mod tests {
             });
             st.last_completed_cycles_sweep_ts = 10_000;
         });
-        let index = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse { balance: 0, transactions: Vec::new(), oldest_tx_id: None }]);
+        let index = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            transactions: Vec::new(),
+            oldest_tx_id: None,
+        }]);
         let blackhole = MockBlackholeClient;
         let sns_wasm = MockSnsWasmClient::new(vec![]);
         let mut summaries = BTreeMap::new();
-        summaries.insert(root_b.clone(), crate::clients::sns_root::GetSnsCanistersSummaryResponse { root: Some(sns_summary(root_b.clone(), 44)), governance: None, ledger: None, swap: None, index: None, dapps: Vec::new(), archives: Vec::new() });
+        summaries.insert(
+            root_b.clone(),
+            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
+                root: Some(sns_summary(root_b.clone(), 44)),
+                governance: None,
+                ledger: None,
+                swap: None,
+                index: None,
+                dapps: Vec::new(),
+                archives: Vec::new(),
+            },
+        );
         let sns_root = MockSnsRootClient::new(summaries);
         let governance = RecordingGovernanceClient::new();
 
         let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
-        block_on(run_main_tick_with_clients(999, 10_000, &index, &blackhole, &sns_wasm, &sns_root, &governance, &xrc)).unwrap();
+        block_on(run_main_tick_with_clients(
+            999,
+            10_000,
+            &index,
+            &blackhole,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+        ))
+        .unwrap();
         state::with_state(|st| {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 10_000);
             assert!(st.distinct_canisters.contains(&root_b));
         });
-        assert_eq!(sns_wasm.calls(), 0, "resumed discovery should not refetch deployed SNS roots");
+        assert_eq!(
+            sns_wasm.calls(),
+            0,
+            "resumed discovery should not refetch deployed SNS roots"
+        );
         assert_eq!(sns_root.calls(), vec![root_b.clone()]);
     }
 
@@ -503,7 +762,13 @@ mod tests {
         let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
             balance: 150,
-            transactions: vec![transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000)],
+            transactions: vec![transfer_to_staking_tx(
+                42,
+                &staking_id,
+                beneficiary,
+                150,
+                123_000_000_000,
+            )],
             oldest_tx_id: Some(42),
         }]);
 
@@ -515,7 +780,11 @@ mod tests {
             assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.last_index_run_ts, Some(200));
-            assert!(st.canister_sources.get(&beneficiary).unwrap().contains(&CanisterSource::MemoCommitment));
+            assert!(st
+                .canister_sources
+                .get(&beneficiary)
+                .unwrap()
+                .contains(&CanisterSource::MemoCommitment));
         });
     }
 
@@ -535,14 +804,23 @@ mod tests {
         });
         let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
             balance: 150,
-            transactions: vec![transfer_to_staking_tx(42, &staking_id, beneficiary, 150, 123_000_000_000)],
+            transactions: vec![transfer_to_staking_tx(
+                42,
+                &staking_id,
+                beneficiary,
+                150,
+                123_000_000_000,
+            )],
             oldest_tx_id: Some(42),
         }]);
 
         block_on(process_commitment_indexing(&mock, 20_000)).unwrap();
 
         state::with_state(|st| {
-            let active = st.active_cycles_sweep.as_ref().expect("active sweep should not be reset");
+            let active = st
+                .active_cycles_sweep
+                .as_ref()
+                .expect("active sweep should not be reset");
             assert_eq!(active.started_at_ts_nanos, 55);
             assert_eq!(active.canisters, vec![existing]);
             assert_eq!(active.next_index, 0);
@@ -585,14 +863,23 @@ mod tests {
         let blackhole = RecordingBlackholeClient::new(777);
         let governance = RecordingGovernanceClient::new();
 
-        block_on(process_initial_cycles_probe_queue(999_000_000_000, 999, &blackhole, &governance)).unwrap();
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &blackhole,
+            &governance,
+        ))
+        .unwrap();
 
         state::with_state(|st| {
             assert_eq!(blackhole.calls(), vec![beneficiary]);
             assert_eq!(governance.calls(), vec![staking_subaccount], "targeted registration probe should refresh the staking neuron directly via NNS governance");
             assert!(st.initial_cycles_probe_queue.is_empty());
             assert_eq!(st.last_completed_cycles_sweep_ts, 10_000);
-            assert!(st.active_cycles_sweep.is_some(), "targeted first probe should not disturb active full sweep");
+            assert!(
+                st.active_cycles_sweep.is_some(),
+                "targeted first probe should not disturb active full sweep"
+            );
             assert_eq!(
                 st.cycles_history
                     .get(&beneficiary)
@@ -631,7 +918,10 @@ mod tests {
                     .map(|sample| sample.cycles),
                 Some(888)
             );
-            let meta = st.per_canister_meta.get(&canister_id).expect("probe metadata should be recorded");
+            let meta = st
+                .per_canister_meta
+                .get(&canister_id)
+                .expect("probe metadata should be recorded");
             assert_eq!(
                 meta.last_cycles_probe_result,
                 Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus))
@@ -679,7 +969,10 @@ mod tests {
         state::set_state_root_only(restored);
 
         state::with_state(|st| {
-            assert_eq!(build_cycles_sweep_canisters(st, self_id), vec![self_id, beneficiary]);
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id),
+                vec![self_id, beneficiary]
+            );
         });
     }
 
@@ -715,8 +1008,20 @@ mod tests {
         let staking_id = configure_state(10);
         let raw_canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let raw_memo = format!("{}.vault42", raw_canister.to_text().replace('-', ""));
-        let raw_tx = transfer_to_staking_memo_tx(42, &staking_id, raw_memo.into_bytes(), 150, 123_000_000_000);
-        let neuron_tx = transfer_to_staking_memo_tx(43, &staking_id, b"42.local.memo".to_vec(), 160, 124_000_000_000);
+        let raw_tx = transfer_to_staking_memo_tx(
+            42,
+            &staking_id,
+            raw_memo.into_bytes(),
+            150,
+            123_000_000_000,
+        );
+        let neuron_tx = transfer_to_staking_memo_tx(
+            43,
+            &staking_id,
+            b"42.local.memo".to_vec(),
+            160,
+            124_000_000_000,
+        );
 
         apply_indexed_commitment_tx(&raw_tx, &staking_id, 100, 200);
         apply_indexed_commitment_tx(&neuron_tx, &staking_id, 100, 200);
@@ -727,7 +1032,13 @@ mod tests {
             assert_eq!(st.qualifying_commitment_count, Some(2));
             assert_eq!(st.recent_commitments.as_ref().unwrap().len(), 1);
             assert_eq!(st.recent_neuron_commitments.as_ref().unwrap().len(), 1);
-            assert_eq!(st.raw_icp_commitment_history.get(&raw_canister).unwrap().len(), 1);
+            assert_eq!(
+                st.raw_icp_commitment_history
+                    .get(&raw_canister)
+                    .unwrap()
+                    .len(),
+                1
+            );
             assert_eq!(st.neuron_commitment_history.get(&42).unwrap().len(), 1);
         });
 
@@ -741,7 +1052,13 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(st.qualifying_commitment_count, Some(2));
-            assert_eq!(st.raw_icp_commitment_history.get(&raw_canister).unwrap().len(), 1);
+            assert_eq!(
+                st.raw_icp_commitment_history
+                    .get(&raw_canister)
+                    .unwrap()
+                    .len(),
+                1
+            );
             assert_eq!(st.neuron_commitment_history.get(&42).unwrap().len(), 1);
         });
     }
@@ -754,12 +1071,24 @@ mod tests {
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
                 balance: 300,
-                transactions: vec![transfer_to_staking_tx(10, &staking_id, first_canister, 100, 100_000_000_000)],
+                transactions: vec![transfer_to_staking_tx(
+                    10,
+                    &staking_id,
+                    first_canister,
+                    100,
+                    100_000_000_000,
+                )],
                 oldest_tx_id: Some(10),
             },
             GetAccountIdentifierTransactionsResponse {
                 balance: 300,
-                transactions: vec![transfer_to_staking_tx(11, &staking_id, second_canister, 200, 300_000_000_000)],
+                transactions: vec![transfer_to_staking_tx(
+                    11,
+                    &staking_id,
+                    second_canister,
+                    200,
+                    300_000_000_000,
+                )],
                 oldest_tx_id: Some(11),
             },
         ]);
@@ -784,11 +1113,13 @@ mod tests {
     #[test]
     fn route_indexing_counts_only_protocol_routed_output_and_rewards_and_resumes_across_ticks() {
         let _staking_id = configure_state(10);
-        let (source, output, rewards) = state::with_state(|st| (
-            st.config.output_source_account.clone(),
-            st.config.output_account.clone(),
-            st.config.rewards_account.clone(),
-        ));
+        let (source, output, rewards) = state::with_state(|st| {
+            (
+                st.config.output_source_account.clone(),
+                st.config.output_account.clone(),
+                st.config.rewards_account.clone(),
+            )
+        });
         let source_id = account_identifier_text_for_account(&source);
         let output_id = account_identifier_text_for_account(&output);
         let rewards_id = account_identifier_text_for_account(&rewards);
@@ -817,7 +1148,10 @@ mod tests {
             assert_eq!(st.total_rewards_e8s, Some(0));
             assert_eq!(st.last_indexed_output_tx_id, Some(11));
             assert_eq!(st.last_indexed_rewards_tx_id, None);
-            let active = st.active_route_sweep.as_ref().expect("route sweep should continue to rewards");
+            let active = st
+                .active_route_sweep
+                .as_ref()
+                .expect("route sweep should continue to rewards");
             assert_eq!(active.next_index, 1);
         });
 
@@ -840,18 +1174,26 @@ mod tests {
     #[test]
     fn route_indexing_counts_transfer_from_and_skips_repeated_cursor_without_double_counting() {
         let _staking_id = configure_state(1);
-        let (source, output, rewards) = state::with_state(|st| (
-            st.config.output_source_account.clone(),
-            st.config.output_account.clone(),
-            st.config.rewards_account.clone(),
-        ));
+        let (source, output, rewards) = state::with_state(|st| {
+            (
+                st.config.output_source_account.clone(),
+                st.config.output_account.clone(),
+                st.config.rewards_account.clone(),
+            )
+        });
         let source_id = account_identifier_text_for_account(&source);
         let output_id = account_identifier_text_for_account(&output);
         let rewards_id = account_identifier_text_for_account(&rewards);
         let filler: Vec<_> = (11..(10 + PAGE_SIZE))
             .map(|id| transfer_between_accounts_tx(id, "third-party", &output_id, 1_000, id))
             .collect();
-        let mut first_page = vec![transfer_from_between_accounts_tx(10, &source_id, &output_id, 111_000_000, 10)];
+        let mut first_page = vec![transfer_from_between_accounts_tx(
+            10,
+            &source_id,
+            &output_id,
+            111_000_000,
+            10,
+        )];
         first_page.extend(filler);
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
@@ -862,15 +1204,39 @@ mod tests {
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
                 transactions: vec![
-                    transfer_from_between_accounts_tx(10 + PAGE_SIZE - 1, &source_id, &output_id, 999_000_000, 20),
-                    transfer_between_accounts_tx(10 + PAGE_SIZE, &source_id, &output_id, 22_000_000, 21),
-                    transfer_between_accounts_tx(10 + PAGE_SIZE + 1, "third-party", &output_id, 333_000_000, 22),
+                    transfer_from_between_accounts_tx(
+                        10 + PAGE_SIZE - 1,
+                        &source_id,
+                        &output_id,
+                        999_000_000,
+                        20,
+                    ),
+                    transfer_between_accounts_tx(
+                        10 + PAGE_SIZE,
+                        &source_id,
+                        &output_id,
+                        22_000_000,
+                        21,
+                    ),
+                    transfer_between_accounts_tx(
+                        10 + PAGE_SIZE + 1,
+                        "third-party",
+                        &output_id,
+                        333_000_000,
+                        22,
+                    ),
                 ],
                 oldest_tx_id: Some(10),
             },
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                transactions: vec![transfer_between_accounts_tx(30, &source_id, &rewards_id, 5_000_000, 30)],
+                transactions: vec![transfer_between_accounts_tx(
+                    30,
+                    &source_id,
+                    &rewards_id,
+                    5_000_000,
+                    30,
+                )],
                 oldest_tx_id: Some(30),
             },
         ]);
@@ -879,14 +1245,24 @@ mod tests {
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(111_000_000));
             assert_eq!(st.last_indexed_output_tx_id, Some(10 + PAGE_SIZE - 1));
-            assert_eq!(st.active_route_sweep.as_ref().map(|active| active.next_index), Some(0));
+            assert_eq!(
+                st.active_route_sweep
+                    .as_ref()
+                    .map(|active| active.next_index),
+                Some(0)
+            );
         });
 
         block_on(process_route_indexing(101, 201, &mock)).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(133_000_000), "repeated cursor tx should be skipped while the new routed transfer is counted once");
             assert_eq!(st.last_indexed_output_tx_id, Some(10 + PAGE_SIZE + 1));
-            assert_eq!(st.active_route_sweep.as_ref().map(|active| active.next_index), Some(1));
+            assert_eq!(
+                st.active_route_sweep
+                    .as_ref()
+                    .map(|active| active.next_index),
+                Some(1)
+            );
         });
 
         block_on(process_route_indexing(102, 202, &mock)).unwrap();
@@ -897,7 +1273,6 @@ mod tests {
             assert!(st.active_route_sweep.is_none());
         });
     }
-
 
     #[test]
     fn non_monotonic_commitment_page_latches_fault_and_stops_indexing() {
@@ -921,7 +1296,10 @@ mod tests {
         let err = block_on(process_commitment_indexing(&mock, 200)).unwrap_err();
         assert!(err.contains("non-monotonic"));
         state::with_state(|st| {
-            let fault = st.commitment_index_fault.as_ref().expect("fault should be latched");
+            let fault = st
+                .commitment_index_fault
+                .as_ref()
+                .expect("fault should be latched");
             assert_eq!(fault.observed_at_ts, 200);
             assert_eq!(fault.last_cursor_tx_id, Some(51));
             assert_eq!(fault.offending_tx_id, 49);
@@ -944,9 +1322,9 @@ mod tests {
             GetAccountIdentifierTransactionsResponse {
                 balance: 150,
                 transactions: vec![
-                transfer_to_staking_tx(51, &staking_id, beneficiary, 150, 124_000_000_000),
-                transfer_to_staking_tx(49, &staking_id, beneficiary, 150, 123_000_000_000),
-            ],
+                    transfer_to_staking_tx(51, &staking_id, beneficiary, 150, 124_000_000_000),
+                    transfer_to_staking_tx(49, &staking_id, beneficiary, 150, 123_000_000_000),
+                ],
                 oldest_tx_id: Some(49),
             },
             GetAccountIdentifierTransactionsResponse {
@@ -962,7 +1340,10 @@ mod tests {
         let err = block_on(process_commitment_indexing(&mock, 200)).unwrap_err();
         assert!(err.contains("non-monotonic"));
         state::with_state(|st| {
-            let fault = st.commitment_index_fault.as_ref().expect("fault should be latched");
+            let fault = st
+                .commitment_index_fault
+                .as_ref()
+                .expect("fault should be latched");
             assert_eq!(fault.observed_at_ts, 200);
             assert_eq!(fault.last_cursor_tx_id, Some(51));
             assert_eq!(fault.offending_tx_id, 49);
@@ -971,17 +1352,24 @@ mod tests {
 
         block_on(process_commitment_indexing(&mock, 201)).unwrap();
         state::with_state(|st| {
-            assert!(st.commitment_index_fault.is_none(), "fault should auto-clear after a clean retry");
+            assert!(
+                st.commitment_index_fault.is_none(),
+                "fault should auto-clear after a clean retry"
+            );
             assert_eq!(st.last_indexed_staking_tx_id, Some(52));
             assert_eq!(st.last_index_run_ts, Some(201));
             assert_eq!(st.qualifying_commitment_count, Some(2));
-            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(2));
+            assert_eq!(
+                st.recent_commitments.as_ref().map(|items| items.len()),
+                Some(2)
+            );
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 52);
         });
     }
 
     #[test]
-    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_separate_recent_lists_without_registering_under_threshold_canisters() {
+    fn indexing_retains_non_qualifying_and_invalid_memo_commitments_in_separate_recent_lists_without_registering_under_threshold_canisters(
+    ) {
         let staking_id = configure_state(10);
         let qualifying = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let low_amount = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
@@ -990,7 +1378,13 @@ mod tests {
             transactions: vec![
                 transfer_to_staking_tx(42, &staking_id, qualifying, 150, 123_000_000_000),
                 transfer_to_staking_tx(43, &staking_id, low_amount, 50, 124_000_000_000),
-                transfer_to_staking_memo_tx(44, &staking_id, b"not-a-principal".to_vec(), 210, 125_000_000_000),
+                transfer_to_staking_memo_tx(
+                    44,
+                    &staking_id,
+                    b"not-a-principal".to_vec(),
+                    210,
+                    125_000_000_000,
+                ),
             ],
             oldest_tx_id: Some(42),
         }]);
@@ -999,16 +1393,27 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(st.qualifying_commitment_count, Some(1));
-            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(
+                st.recent_commitments.as_ref().map(|items| items.len()),
+                Some(1)
+            );
             assert_eq!(
                 st.recent_under_threshold_commitments
                     .as_ref()
                     .map(|items| items.len()),
                 Some(1),
             );
-            assert_eq!(st.recent_invalid_commitments.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(
+                st.recent_invalid_commitments
+                    .as_ref()
+                    .map(|items| items.len()),
+                Some(1)
+            );
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
-            assert_eq!(st.recent_under_threshold_commitments.as_ref().unwrap()[0].tx_id, 43);
+            assert_eq!(
+                st.recent_under_threshold_commitments.as_ref().unwrap()[0].tx_id,
+                43
+            );
             assert!(!st.canister_sources.contains_key(&low_amount));
             assert!(!st.distinct_canisters.contains(&low_amount));
             assert!(!st.commitment_history.contains_key(&low_amount));
@@ -1026,13 +1431,7 @@ mod tests {
             transactions: (1..=105)
                 .map(|tx_id| {
                     let canister = candid::Principal::from_slice(&[1, (tx_id % 251 + 1) as u8]);
-                    transfer_to_staking_tx(
-                        tx_id,
-                        &staking_id,
-                        canister,
-                        5,
-                        tx_id * 1_000_000_000,
-                    )
+                    transfer_to_staking_tx(tx_id, &staking_id, canister, 5, tx_id * 1_000_000_000)
                 })
                 .collect(),
             oldest_tx_id: Some(1),
@@ -1049,7 +1448,10 @@ mod tests {
             assert_eq!(recent.len(), MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS);
             assert_eq!(recent[0].tx_id, 105);
             assert_eq!(recent.last().map(|item| item.tx_id), Some(6));
-            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(0));
+            assert_eq!(
+                st.recent_commitments.as_ref().map(|items| items.len()),
+                Some(0)
+            );
             assert_eq!(st.canister_sources.len(), 0);
             assert_eq!(st.distinct_canisters.len(), 0);
             assert!(st.commitment_history.is_empty());
@@ -1063,8 +1465,10 @@ mod tests {
         let existing = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
         state::with_state_mut(|st| {
             st.distinct_canisters.insert(existing);
-            st.canister_sources
-                .insert(existing, crate::logic::merge_sources(None, CanisterSource::MemoCommitment));
+            st.canister_sources.insert(
+                existing,
+                crate::logic::merge_sources(None, CanisterSource::MemoCommitment),
+            );
             st.commitment_history.insert(
                 existing,
                 vec![crate::state::CommitmentSample {
@@ -1079,7 +1483,13 @@ mod tests {
         let new_canister = candid::Principal::from_slice(&[251, 251, 251]);
         let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
             balance: 150,
-            transactions: vec![transfer_to_staking_tx(9_999, &staking_id, new_canister, 150, 123_000_000_000)],
+            transactions: vec![transfer_to_staking_tx(
+                9_999,
+                &staking_id,
+                new_canister,
+                150,
+                123_000_000_000,
+            )],
             oldest_tx_id: Some(9_999),
         }]);
 
@@ -1087,7 +1497,10 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(st.qualifying_commitment_count, Some(2));
-            assert_eq!(st.recent_commitments.as_ref().map(|items| items.len()), Some(1));
+            assert_eq!(
+                st.recent_commitments.as_ref().map(|items| items.len()),
+                Some(1)
+            );
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 9_999);
             assert!(st.canister_sources.contains_key(&new_canister));
             assert!(st.commitment_history.contains_key(&new_canister));
@@ -1095,6 +1508,4 @@ mod tests {
             assert!(st.distinct_canisters.contains(&existing));
         });
     }
-
-
 }

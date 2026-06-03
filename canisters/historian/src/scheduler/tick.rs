@@ -7,7 +7,8 @@ pub(super) struct MainGuard {
 impl MainGuard {
     fn acquire(now_secs: u64) -> Option<Self> {
         state::with_root_state_mut(|st| {
-            let inner = TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
+            let inner =
+                TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
             let lease_expires_at_ts = inner.lease_expires_at_ts();
             st.main_lock_state_ts = Some(lease_expires_at_ts);
             Some(Self { inner })
@@ -36,43 +37,57 @@ impl MainGuard {
 }
 
 impl Drop for MainGuard {
-    fn drop(&mut self) { self.release(); }
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 pub(crate) fn install_timers() {
     let interval_s = state::with_state(|st| st.config.scan_interval_seconds);
-    ic_cdk_timers::set_timer(Duration::from_secs(1), async { main_tick(true).await; });
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(interval_s.max(60)), || async { main_tick(false).await; });
+    ic_cdk_timers::set_timer(Duration::from_secs(1), async {
+        main_tick(true).await;
+    });
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(interval_s.max(60)), || async {
+        main_tick(false).await;
+    });
     ic_cdk_timers::set_timer(Duration::from_secs(5), async {
         let now_secs = ic_cdk::api::time() / 1_000_000_000;
         crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
     });
-    ic_cdk_timers::set_timer_interval(Duration::from_secs(crate::read_model::MODULE_HASH_REFRESH_INTERVAL_SECONDS), || async {
-        let now_secs = ic_cdk::api::time() / 1_000_000_000;
-        crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
-    });
+    ic_cdk_timers::set_timer_interval(
+        Duration::from_secs(crate::read_model::MODULE_HASH_REFRESH_INTERVAL_SECONDS),
+        || async {
+            let now_secs = ic_cdk::api::time() / 1_000_000_000;
+            crate::read_model::refresh_canister_module_hash_cache_if_due(now_secs).await;
+        },
+    );
 }
 
 pub async fn main_tick(force: bool) {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
-    let Some(guard) = MainGuard::acquire(now_secs) else { return; };
+    let Some(guard) = MainGuard::acquire(now_secs) else {
+        return;
+    };
     if !force {
         let min_gap = state::with_state(|st| st.config.scan_interval_seconds.saturating_sub(5));
-        let recently_ran = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
+        let recently_ran =
+            state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
             guard.finish(now_secs);
             return;
         }
     }
 
-    let (index_id, blackhole_id, sns_wasm_id, governance_id, xrc_id) = state::with_state(|st| (
-        st.config.index_canister_id,
-        st.config.blackhole_canister_id,
-        st.config.sns_wasm_canister_id,
-        st.config.staking_account.owner,
-        st.config.xrc_canister_id,
-    ));
+    let (index_id, blackhole_id, sns_wasm_id, governance_id, xrc_id) = state::with_state(|st| {
+        (
+            st.config.index_canister_id,
+            st.config.blackhole_canister_id,
+            st.config.sns_wasm_canister_id,
+            st.config.staking_account.owner,
+            st.config.xrc_canister_id,
+        )
+    });
     let index = IcpIndexCanister::new(index_id);
     let original_blackhole = BlackholeCanister::new(original_blackhole_id());
     let configured_blackhole = BlackholeCanister::new(blackhole_id);
@@ -128,7 +143,10 @@ pub async fn main_tick(force: bool) {
     state::clear_loaded_history_caches_after_flush();
 }
 
-pub(super) async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {
+pub(super) async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(
+    now_secs: u64,
+    xrc: &X,
+) -> Result<(), String> {
     state::with_root_state_mut(|st| st.last_icp_xdr_rate_attempt_ts = Some(now_secs));
     match xrc.get_icp_xdr_rate().await {
         Ok(rate) => {
@@ -155,14 +173,19 @@ pub(super) async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(now_secs: u64, x
     }
 }
 
-pub(super) async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(now_secs: u64, xrc: &X) -> Result<(), String> {
+pub(super) async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(
+    now_secs: u64,
+    xrc: &X,
+) -> Result<(), String> {
     let due = state::with_state(|st| {
         if let Some(last_attempt_ts) = st.last_icp_xdr_rate_attempt_ts {
             return now_secs.saturating_sub(last_attempt_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS;
         }
         st.icp_xdr_rate
             .as_ref()
-            .map(|snapshot| now_secs.saturating_sub(snapshot.fetched_at_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS)
+            .map(|snapshot| {
+                now_secs.saturating_sub(snapshot.fetched_at_ts) >= ICP_XDR_RATE_CACHE_TTL_SECONDS
+            })
             .unwrap_or(true)
     });
     if !due {
@@ -173,14 +196,24 @@ pub(super) async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(now_secs:
 }
 
 #[cfg(feature = "debug_api")]
-pub async fn debug_refresh_icp_xdr_rate_now(now_secs: u64, xrc_canister_id: Principal) -> Result<(), String> {
+pub async fn debug_refresh_icp_xdr_rate_now(
+    now_secs: u64,
+    xrc_canister_id: Principal,
+) -> Result<(), String> {
     let xrc = XrcCanister::with_canister_id(xrc_canister_id);
     refresh_icp_xdr_rate(now_secs, &xrc).await
 }
 
 // The scheduler takes explicit clients so unit tests can cover degraded dependencies independently.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClient, W: SnsWasmClient, R: SnsRootClient, G: GovernanceClient, X: ExchangeRateClient>(
+pub(super) async fn run_main_tick_with_clients<
+    I: IndexClient,
+    B: BlackholeClient,
+    W: SnsWasmClient,
+    R: SnsRootClient,
+    G: GovernanceClient,
+    X: ExchangeRateClient,
+>(
     now_nanos: u64,
     now_secs: u64,
     index: &I,
@@ -206,17 +239,20 @@ pub(super) async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClien
         initial_cycles_probe_queue_present,
         active_sns_present,
         interval_secs,
-    ) = state::with_state(|st| (
-        st.config.enable_sns_tracking,
-        st.last_sns_discovery_ts,
-        st.last_completed_cycles_sweep_ts,
-        st.active_cycles_sweep.is_some(),
-        !st.initial_cycles_probe_queue.is_empty(),
-        st.active_sns_discovery.is_some(),
-        st.config.cycles_interval_seconds,
-    ));
+    ) = state::with_state(|st| {
+        (
+            st.config.enable_sns_tracking,
+            st.last_sns_discovery_ts,
+            st.last_completed_cycles_sweep_ts,
+            st.active_cycles_sweep.is_some(),
+            !st.initial_cycles_probe_queue.is_empty(),
+            st.active_sns_discovery.is_some(),
+            st.config.cycles_interval_seconds,
+        )
+    });
 
-    let sns_due = enable_sns_tracking && (active_sns_present || now_secs.saturating_sub(last_sns_discovery_ts) >= interval_secs);
+    let sns_due = enable_sns_tracking
+        && (active_sns_present || now_secs.saturating_sub(last_sns_discovery_ts) >= interval_secs);
     if sns_due {
         process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root).await?;
     }
@@ -225,7 +261,8 @@ pub(super) async fn run_main_tick_with_clients<I: IndexClient, B: BlackholeClien
         process_initial_cycles_probe_queue(now_nanos, now_secs, blackhole, governance).await?;
     }
 
-    let cycles_due = active_cycles_present || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
+    let cycles_due = active_cycles_present
+        || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
     if cycles_due {
         process_cycles_sweep(now_nanos, now_secs, blackhole).await?;
     }

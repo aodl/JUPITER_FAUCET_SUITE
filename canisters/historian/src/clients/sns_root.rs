@@ -36,12 +36,19 @@ pub(crate) struct SnsRootCanister;
 
 #[async_trait]
 impl SnsRootClient for SnsRootCanister {
-    async fn get_sns_canisters_summary(&self, root_id: Principal) -> Result<GetSnsCanistersSummaryResponse, ClientError> {
+    async fn get_sns_canisters_summary(
+        &self,
+        root_id: Principal,
+    ) -> Result<GetSnsCanistersSummaryResponse, ClientError> {
         let resp = Call::bounded_wait(root_id, "get_sns_canisters_summary")
-            .with_arg(GetSnsCanistersSummaryRequest { update_canister_list: Some(false) })
+            .with_arg(GetSnsCanistersSummaryRequest {
+                update_canister_list: Some(false),
+            })
             .change_timeout(60)
             .await
             .map_err(|e| ClientError::Call(format!("{e:?}")))?;
-        resp.candid().map_err(|e| ClientError::Call(format!("decode get_sns_canisters_summary failed: {e:?}")))
+        resp.candid().map_err(|e| {
+            ClientError::Call(format!("decode get_sns_canisters_summary failed: {e:?}"))
+        })
     }
 }

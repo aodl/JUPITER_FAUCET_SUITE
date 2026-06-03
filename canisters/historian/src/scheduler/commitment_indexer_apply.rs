@@ -4,13 +4,17 @@ pub(super) fn apply_verified_qualifying_commitment(
     commitment: crate::logic::IndexedCommitment,
     now_secs: u64,
 ) {
-    let crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } = commitment.target else {
+    let crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } = commitment.target
+    else {
         return;
     };
     st.distinct_canisters.insert(canister_id);
     st.canister_sources.insert(
         canister_id,
-        logic::merge_sources(st.canister_sources.get(&canister_id), CanisterSource::MemoCommitment),
+        logic::merge_sources(
+            st.canister_sources.get(&canister_id),
+            CanisterSource::MemoCommitment,
+        ),
     );
     let recent_item = RecentCommitment {
         canister_id,
@@ -58,10 +62,16 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
     max_entries: usize,
 ) {
     match commitment.target {
-        crate::logic::IndexedCommitmentTarget::RawIcp { canister_id, memo_text } => {
+        crate::logic::IndexedCommitmentTarget::RawIcp {
+            canister_id,
+            memo_text,
+        } => {
             if commitment.counts_toward_faucet {
                 crate::state::ensure_raw_icp_commitment_history_loaded(st, canister_id);
-                let history = st.raw_icp_commitment_history.entry(canister_id).or_default();
+                let history = st
+                    .raw_icp_commitment_history
+                    .entry(canister_id)
+                    .or_default();
                 let inserted = logic::push_commitment(
                     history,
                     crate::state::CommitmentSample {
@@ -90,7 +100,9 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                     *count = count.saturating_add(1);
                 }
             } else {
-                let recent = st.recent_under_threshold_commitments.get_or_insert_with(Vec::new);
+                let recent = st
+                    .recent_under_threshold_commitments
+                    .get_or_insert_with(Vec::new);
                 push_recent_commitment(
                     recent,
                     RecentCommitment {
@@ -105,7 +117,10 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                 );
             }
         }
-        crate::logic::IndexedCommitmentTarget::NeuronStake { neuron_id, memo_text } => {
+        crate::logic::IndexedCommitmentTarget::NeuronStake {
+            neuron_id,
+            memo_text,
+        } => {
             if commitment.counts_toward_faucet {
                 crate::state::ensure_neuron_commitment_history_loaded(st, neuron_id);
                 let history = st.neuron_commitment_history.entry(neuron_id).or_default();
@@ -137,7 +152,9 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                     *count = count.saturating_add(1);
                 }
             } else {
-                let recent = st.recent_under_threshold_neuron_commitments.get_or_insert_with(Vec::new);
+                let recent = st
+                    .recent_under_threshold_neuron_commitments
+                    .get_or_insert_with(Vec::new);
                 push_recent_neuron_commitment(
                     recent,
                     RecentNeuronCommitment {
@@ -156,14 +173,15 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
     }
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PageOrder {
     Ascending,
     Descending,
 }
 
-pub(super) fn detect_page_order(page: &crate::clients::index::GetAccountIdentifierTransactionsResponse) -> Option<PageOrder> {
+pub(super) fn detect_page_order(
+    page: &crate::clients::index::GetAccountIdentifierTransactionsResponse,
+) -> Option<PageOrder> {
     if page.transactions.len() < 2 {
         return None;
     }
@@ -191,7 +209,11 @@ pub(super) fn infer_initial_page_order(
     // index's newest-first pagination is the only ordering compatible with the
     // page; otherwise keep the legacy ascending path.
     let first_id = page.transactions.first().map(|tx| tx.id);
-    if first_id.zip(oldest_cursor.or(latest_cursor)).map(|(tx_id, cursor)| tx_id < cursor).unwrap_or(false) {
+    if first_id
+        .zip(oldest_cursor.or(latest_cursor))
+        .map(|(tx_id, cursor)| tx_id < cursor)
+        .unwrap_or(false)
+    {
         PageOrder::Descending
     } else {
         PageOrder::Ascending
@@ -206,47 +228,69 @@ pub(super) fn apply_indexed_commitment_tx(
 ) {
     if let Some(commitment) = logic::indexed_commitment_from_tx(tx, staking_id, min_tx_e8s) {
         match commitment {
-            logic::IndexedCommitmentEntry::Valid(commitment) => {
-                match commitment.target {
-                    crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } if commitment.counts_toward_faucet => {
-                        state::with_root_registry_and_commitments_canister_state_mut(canister_id, |st| {
+            logic::IndexedCommitmentEntry::Valid(commitment) => match commitment.target {
+                crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id }
+                    if commitment.counts_toward_faucet =>
+                {
+                    state::with_root_registry_and_commitments_canister_state_mut(
+                        canister_id,
+                        |st| {
                             apply_verified_qualifying_commitment(st, commitment, now_secs);
-                        });
-                    }
-                    crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } => {
-                        state::with_root_state_mut(|st| {
-                            let recent = st.recent_under_threshold_commitments.get_or_insert_with(Vec::new);
-                            push_recent_commitment(
-                                recent,
-                                RecentCommitment {
-                                    canister_id,
-                                    raw_icp_memo_text: None,
-                                    tx_id: commitment.tx_id,
-                                    timestamp_nanos: commitment.timestamp_nanos,
-                                    amount_e8s: commitment.amount_e8s,
-                                    counts_toward_faucet: false,
-                                },
-                                MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
-                            );
-                        });
-                    }
-                    crate::logic::IndexedCommitmentTarget::RawIcp { canister_id, .. } if commitment.counts_toward_faucet => {
-                        state::with_root_and_raw_icp_commitments_state_mut(canister_id, |st| {
-                            apply_recent_raw_or_neuron_commitment(st, commitment, MAX_RECENT_QUALIFYING_COMMITMENTS);
-                        });
-                    }
-                    crate::logic::IndexedCommitmentTarget::NeuronStake { neuron_id, .. } if commitment.counts_toward_faucet => {
-                        state::with_root_and_neuron_commitments_state_mut(neuron_id, |st| {
-                            apply_recent_raw_or_neuron_commitment(st, commitment, MAX_RECENT_QUALIFYING_COMMITMENTS);
-                        });
-                    }
-                    crate::logic::IndexedCommitmentTarget::RawIcp { .. } | crate::logic::IndexedCommitmentTarget::NeuronStake { .. } => {
-                        state::with_root_state_mut(|st| {
-                            apply_recent_raw_or_neuron_commitment(st, commitment, MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS);
-                        });
-                    }
+                        },
+                    );
                 }
-            }
+                crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } => {
+                    state::with_root_state_mut(|st| {
+                        let recent = st
+                            .recent_under_threshold_commitments
+                            .get_or_insert_with(Vec::new);
+                        push_recent_commitment(
+                            recent,
+                            RecentCommitment {
+                                canister_id,
+                                raw_icp_memo_text: None,
+                                tx_id: commitment.tx_id,
+                                timestamp_nanos: commitment.timestamp_nanos,
+                                amount_e8s: commitment.amount_e8s,
+                                counts_toward_faucet: false,
+                            },
+                            MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
+                        );
+                    });
+                }
+                crate::logic::IndexedCommitmentTarget::RawIcp { canister_id, .. }
+                    if commitment.counts_toward_faucet =>
+                {
+                    state::with_root_and_raw_icp_commitments_state_mut(canister_id, |st| {
+                        apply_recent_raw_or_neuron_commitment(
+                            st,
+                            commitment,
+                            MAX_RECENT_QUALIFYING_COMMITMENTS,
+                        );
+                    });
+                }
+                crate::logic::IndexedCommitmentTarget::NeuronStake { neuron_id, .. }
+                    if commitment.counts_toward_faucet =>
+                {
+                    state::with_root_and_neuron_commitments_state_mut(neuron_id, |st| {
+                        apply_recent_raw_or_neuron_commitment(
+                            st,
+                            commitment,
+                            MAX_RECENT_QUALIFYING_COMMITMENTS,
+                        );
+                    });
+                }
+                crate::logic::IndexedCommitmentTarget::RawIcp { .. }
+                | crate::logic::IndexedCommitmentTarget::NeuronStake { .. } => {
+                    state::with_root_state_mut(|st| {
+                        apply_recent_raw_or_neuron_commitment(
+                            st,
+                            commitment,
+                            MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
+                        );
+                    });
+                }
+            },
             logic::IndexedCommitmentEntry::Invalid(commitment) => {
                 state::with_root_state_mut(|st| {
                     let recent = st.recent_invalid_commitments.get_or_insert_with(Vec::new);
@@ -369,7 +413,11 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
             let page = match first_page.take() {
                 Some(page) => page,
                 None => index
-                    .get_account_identifier_transactions(staking_id.to_string(), page_start, PAGE_SIZE)
+                    .get_account_identifier_transactions(
+                        staking_id.to_string(),
+                        page_start,
+                        PAGE_SIZE,
+                    )
                     .await
                     .map_err(|e| format!("index call failed: {e}"))?,
             };
@@ -393,9 +441,18 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
             }
             if !new_items.is_empty() {
                 let _batch = state::begin_persistence_batch();
-                apply_commitment_transactions_in_chronological_order(&new_items, staking_id, cfg.min_tx_e8s, now_secs);
+                apply_commitment_transactions_in_chronological_order(
+                    &new_items,
+                    staking_id,
+                    cfg.min_tx_e8s,
+                    now_secs,
+                );
                 if let Some(max_new) = new_items.iter().map(|tx| tx.id).max() {
-                    latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_new)).unwrap_or(max_new));
+                    latest_cursor = Some(
+                        latest_cursor
+                            .map(|existing| existing.max(max_new))
+                            .unwrap_or(max_new),
+                    );
                     state::with_root_state_mut(|st| st.last_indexed_staking_tx_id = latest_cursor);
                 }
             }
@@ -410,7 +467,11 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
         let page = match first_page.take() {
             Some(page) => page,
             None => index
-                .get_account_identifier_transactions(staking_id.to_string(), oldest_cursor, PAGE_SIZE)
+                .get_account_identifier_transactions(
+                    staking_id.to_string(),
+                    oldest_cursor,
+                    PAGE_SIZE,
+                )
                 .await
                 .map_err(|e| format!("index call failed: {e}"))?,
         };
@@ -420,7 +481,12 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
             break;
         }
         let older_items: Vec<_> = match oldest_cursor {
-            Some(oldest) => page.transactions.iter().filter(|tx| tx.id < oldest).cloned().collect(),
+            Some(oldest) => page
+                .transactions
+                .iter()
+                .filter(|tx| tx.id < oldest)
+                .cloned()
+                .collect(),
             None => page.transactions.clone(),
         };
         if older_items.is_empty() {
@@ -429,12 +495,25 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
         }
         {
             let _batch = state::begin_persistence_batch();
-            apply_commitment_transactions_in_chronological_order(&older_items, staking_id, cfg.min_tx_e8s, now_secs);
+            apply_commitment_transactions_in_chronological_order(
+                &older_items,
+                staking_id,
+                cfg.min_tx_e8s,
+                now_secs,
+            );
             if let Some(max_seen) = older_items.iter().map(|tx| tx.id).max() {
-                latest_cursor = Some(latest_cursor.map(|existing| existing.max(max_seen)).unwrap_or(max_seen));
+                latest_cursor = Some(
+                    latest_cursor
+                        .map(|existing| existing.max(max_seen))
+                        .unwrap_or(max_seen),
+                );
             }
             if let Some(min_seen) = older_items.iter().map(|tx| tx.id).min() {
-                oldest_cursor = Some(oldest_cursor.map(|existing| existing.min(min_seen)).unwrap_or(min_seen));
+                oldest_cursor = Some(
+                    oldest_cursor
+                        .map(|existing| existing.min(min_seen))
+                        .unwrap_or(min_seen),
+                );
             }
             state::with_root_state_mut(|st| {
                 st.last_indexed_staking_tx_id = latest_cursor;

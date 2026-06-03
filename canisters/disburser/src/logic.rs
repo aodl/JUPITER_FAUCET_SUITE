@@ -134,7 +134,10 @@ mod tests {
         assert_eq!(g.base_e8s, 400);
         assert_eq!(g.bonus_recipient_1_e8s, 95);
         assert_eq!(g.bonus_recipient_2_e8s, 5);
-        assert_eq!(g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s, 500);
+        assert_eq!(
+            g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s,
+            500
+        );
     }
 
     #[test]
@@ -161,7 +164,10 @@ mod tests {
         let age = 4 * SECS_PER_YEAR;
         for total in 1u64..200 {
             let g = compute_gross_split(total, age);
-            assert_eq!(g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s, total);
+            assert_eq!(
+                g.base_e8s + g.bonus_recipient_1_e8s + g.bonus_recipient_2_e8s,
+                total
+            );
 
             let bonus = total - g.base_e8s;
             let expected_bonus1 = ((bonus as u128) * BONUS_RECIPIENT_1_PCT as u128).div_ceil(100);
@@ -186,7 +192,8 @@ mod tests {
         let a = acct();
         let fee = 10_000;
         let balance = 1_000_000;
-        let (_gross, plan) = plan_payout_transfers(99, 5_000, balance, fee, 4 * SECS_PER_YEAR, &a, &a, &a);
+        let (_gross, plan) =
+            plan_payout_transfers(99, 5_000, balance, fee, 4 * SECS_PER_YEAR, &a, &a, &a);
 
         // Each planned transfer must have gross_share > fee and amount = gross - fee
         for p in plan.iter() {
@@ -203,7 +210,8 @@ mod tests {
     fn memo_unique_per_transfer_index() {
         let a = acct();
         let fee = 1;
-        let (_gross, plan) = plan_payout_transfers(7, 1000, 1000, fee, 4 * SECS_PER_YEAR, &a, &a, &a);
+        let (_gross, plan) =
+            plan_payout_transfers(7, 1000, 1000, fee, 4 * SECS_PER_YEAR, &a, &a, &a);
         assert_eq!(plan.len(), 3);
 
         let mut set = HashSet::new();
@@ -217,16 +225,7 @@ mod tests {
         let a = acct();
         let fee = 100;
         let balance = 50;
-        let (_gross, plan) = plan_payout_transfers(
-            1,
-            1000,
-            balance,
-            fee,
-            0,
-            &a,
-            &a,
-            &a,
-        );
+        let (_gross, plan) = plan_payout_transfers(1, 1000, balance, fee, 0, &a, &a, &a);
         assert!(plan.is_empty());
     }
 
@@ -239,17 +238,17 @@ mod tests {
             4 * SECS_PER_YEAR,
             10 * SECS_PER_YEAR, // should clamp at 4y
         ];
-    
+
         let totals = [
             0u64,
             1,
             2,
             10,
             123,
-            100_000_000,        // 1 ICP in e8s scale-ish
-            1_000_000_000_000,  // large
+            100_000_000,       // 1 ICP in e8s scale-ish
+            1_000_000_000_000, // large
         ];
-    
+
         for &age in &ages {
             for &total in &totals {
                 let g = compute_gross_split(total, age);
@@ -265,7 +264,7 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn plan_memos_and_timestamps_are_stable_monotonic_transfer_sequence() {
         let a = acct();
@@ -275,7 +274,8 @@ mod tests {
         let fee = 10_000u64;
         let age = 2 * SECS_PER_YEAR;
 
-        let (_gross, plan) = plan_payout_transfers(payout_id, created_at, balance, fee, age, &a, &a, &a);
+        let (_gross, plan) =
+            plan_payout_transfers(payout_id, created_at, balance, fee, age, &a, &a, &a);
 
         assert!(plan.len() <= 3);
         for (idx, transfer) in plan.iter().enumerate() {
@@ -295,16 +295,15 @@ mod tests {
         // payout_id = 0x0102030405060708
         // index    = 0x0A0B0C0D0E0F1011
         let memo = build_memo(0x0102030405060708, 0x0A0B0C0D0E0F1011);
-    
+
         assert_eq!(
             memo,
             [
-                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-                0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                0x10, 0x11
             ]
         );
     }
-
 
     #[test]
     fn base_is_stable_when_total_scales_with_age_multiplier() {

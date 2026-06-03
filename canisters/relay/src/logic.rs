@@ -218,9 +218,8 @@ pub(crate) fn effective_managed_canisters(
 fn known_blackhole_canisters() -> &'static [Principal; 2] {
     static KNOWN_BLACKHOLE_CANISTERS_PARSED: OnceLock<[Principal; 2]> = OnceLock::new();
     KNOWN_BLACKHOLE_CANISTERS_PARSED.get_or_init(|| {
-        KNOWN_BLACKHOLE_CANISTERS.map(|id| {
-            Principal::from_text(id).expect("invalid hardcoded blackhole canister id")
-        })
+        KNOWN_BLACKHOLE_CANISTERS
+            .map(|id| Principal::from_text(id).expect("invalid hardcoded blackhole canister id"))
     })
 }
 

@@ -16,86 +16,99 @@ pub(super) fn sync_canister_sources_map(
     current: &BTreeMap<Principal, BTreeSet<CanisterSource>>,
     scope: Option<&BTreeSet<Principal>>,
 ) {
-    with_canister_sources_map(|map| {
-        match scope {
-            Some(principals) => {
-                for principal in principals {
-                    let key = PrincipalKey::from(principal);
-                    match current.get(principal) {
-                        Some(sources) => {
-                            let desired = StableSourceSet(sources.clone());
-                            let needs_update = map.get(&key).map(|existing| existing != desired).unwrap_or(true);
-                            if needs_update {
-                                map.insert(key, desired);
-                            }
-                        }
-                        None => {
-                            map.remove(&key);
+    with_canister_sources_map(|map| match scope {
+        Some(principals) => {
+            for principal in principals {
+                let key = PrincipalKey::from(principal);
+                match current.get(principal) {
+                    Some(sources) => {
+                        let desired = StableSourceSet(sources.clone());
+                        let needs_update = map
+                            .get(&key)
+                            .map(|existing| existing != desired)
+                            .unwrap_or(true);
+                        if needs_update {
+                            map.insert(key, desired);
                         }
                     }
-                }
-            }
-            None => {
-                let existing_keys: Vec<_> = map.iter().map(|(key, _)| key).collect();
-                for key in existing_keys {
-                    if !current.contains_key(&key.to_principal()) {
+                    None => {
                         map.remove(&key);
                     }
                 }
-                for (principal, sources) in current {
-                    let key = PrincipalKey::from(principal);
-                    let desired = StableSourceSet(sources.clone());
-                    let needs_update = map.get(&key).map(|existing| existing != desired).unwrap_or(true);
-                    if needs_update {
-                        map.insert(key, desired);
-                    }
+            }
+        }
+        None => {
+            let existing_keys: Vec<_> = map.iter().map(|(key, _)| key).collect();
+            for key in existing_keys {
+                if !current.contains_key(&key.to_principal()) {
+                    map.remove(&key);
+                }
+            }
+            for (principal, sources) in current {
+                let key = PrincipalKey::from(principal);
+                let desired = StableSourceSet(sources.clone());
+                let needs_update = map
+                    .get(&key)
+                    .map(|existing| existing != desired)
+                    .unwrap_or(true);
+                if needs_update {
+                    map.insert(key, desired);
                 }
             }
         }
     });
 }
 
-pub(super) fn sync_canister_meta_map(current: &BTreeMap<Principal, CanisterMeta>, scope: Option<&BTreeSet<Principal>>) {
-    with_canister_meta_map(|map| {
-        match scope {
-            Some(principals) => {
-                for principal in principals {
-                    let key = PrincipalKey::from(principal);
-                    match current.get(principal) {
-                        Some(meta) => {
-                            let desired: StableCanisterMeta = meta.clone().into();
-                            let needs_update = map.get(&key).map(|existing| existing != desired).unwrap_or(true);
-                            if needs_update {
-                                map.insert(key, desired);
-                            }
-                        }
-                        None => {
-                            map.remove(&key);
+pub(super) fn sync_canister_meta_map(
+    current: &BTreeMap<Principal, CanisterMeta>,
+    scope: Option<&BTreeSet<Principal>>,
+) {
+    with_canister_meta_map(|map| match scope {
+        Some(principals) => {
+            for principal in principals {
+                let key = PrincipalKey::from(principal);
+                match current.get(principal) {
+                    Some(meta) => {
+                        let desired: StableCanisterMeta = meta.clone().into();
+                        let needs_update = map
+                            .get(&key)
+                            .map(|existing| existing != desired)
+                            .unwrap_or(true);
+                        if needs_update {
+                            map.insert(key, desired);
                         }
                     }
-                }
-            }
-            None => {
-                let existing_keys: Vec<_> = map.iter().map(|(key, _)| key).collect();
-                for key in existing_keys {
-                    if !current.contains_key(&key.to_principal()) {
+                    None => {
                         map.remove(&key);
                     }
                 }
-                for (principal, meta) in current {
-                    let key = PrincipalKey::from(principal);
-                    let desired: StableCanisterMeta = meta.clone().into();
-                    let needs_update = map.get(&key).map(|existing| existing != desired).unwrap_or(true);
-                    if needs_update {
-                        map.insert(key, desired);
-                    }
+            }
+        }
+        None => {
+            let existing_keys: Vec<_> = map.iter().map(|(key, _)| key).collect();
+            for key in existing_keys {
+                if !current.contains_key(&key.to_principal()) {
+                    map.remove(&key);
+                }
+            }
+            for (principal, meta) in current {
+                let key = PrincipalKey::from(principal);
+                let desired: StableCanisterMeta = meta.clone().into();
+                let needs_update = map
+                    .get(&key)
+                    .map(|existing| existing != desired)
+                    .unwrap_or(true);
+                if needs_update {
+                    map.insert(key, desired);
                 }
             }
         }
     });
 }
 
-pub(super) fn sync_all_commitment_history_maps(current: &BTreeMap<Principal, Vec<CommitmentSample>>) {
+pub(super) fn sync_all_commitment_history_maps(
+    current: &BTreeMap<Principal, Vec<CommitmentSample>>,
+) {
     with_commitment_history_index_map(|map| map.clear_new());
     with_commitment_entry_map(|map| map.clear_new());
     for (principal, samples) in current {
@@ -106,7 +119,10 @@ pub(super) fn sync_all_commitment_history_maps(current: &BTreeMap<Principal, Vec
             });
             with_commitment_entry_map(|map| {
                 for sample in samples {
-                    map.insert(CommitmentEntryKey::new(principal, sample.tx_id), sample.clone());
+                    map.insert(
+                        CommitmentEntryKey::new(principal, sample.tx_id),
+                        sample.clone(),
+                    );
                 }
             });
         }
@@ -136,7 +152,10 @@ pub(super) fn sync_commitment_history_principals(
             }
             for sample in &current_samples {
                 let key = CommitmentEntryKey::new(principal, sample.tx_id);
-                let needs_update = map.get(&key).map(|existing| existing != *sample).unwrap_or(true);
+                let needs_update = map
+                    .get(&key)
+                    .map(|existing| existing != *sample)
+                    .unwrap_or(true);
                 if needs_update {
                     map.insert(key, sample.clone());
                 }
@@ -148,7 +167,10 @@ pub(super) fn sync_commitment_history_principals(
                 map.remove(&principal_key);
             } else {
                 let desired = StableU64List(current_ids);
-                let needs_update = map.get(&principal_key).map(|existing| existing != desired).unwrap_or(true);
+                let needs_update = map
+                    .get(&principal_key)
+                    .map(|existing| existing != desired)
+                    .unwrap_or(true);
                 if needs_update {
                     map.insert(principal_key, desired);
                 }
@@ -156,4 +178,3 @@ pub(super) fn sync_commitment_history_principals(
         });
     }
 }
-

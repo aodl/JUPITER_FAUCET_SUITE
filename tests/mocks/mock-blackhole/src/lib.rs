@@ -35,7 +35,10 @@ fn init() {}
 #[ic_cdk::update]
 fn canister_status(args: Args) -> BlackholeCanisterStatus {
     STATUSES.with(|s| {
-        s.borrow().get(&args.canister_id).cloned().unwrap_or_else(|| ic_cdk::trap("status not found"))
+        s.borrow()
+            .get(&args.canister_id)
+            .cloned()
+            .unwrap_or_else(|| ic_cdk::trap("status not found"))
     })
 }
 
@@ -49,7 +52,13 @@ fn debug_set_status(canister_id: Principal, cycles: Option<Nat>, controllers: Ve
     STATUSES.with(|s| {
         let mut st = s.borrow_mut();
         if let Some(cycles) = cycles {
-            st.insert(canister_id, BlackholeCanisterStatus { cycles, settings: BlackholeSettings { controllers } });
+            st.insert(
+                canister_id,
+                BlackholeCanisterStatus {
+                    cycles,
+                    settings: BlackholeSettings { controllers },
+                },
+            );
         } else {
             st.remove(&canister_id);
         }
@@ -59,10 +68,13 @@ fn debug_set_status(canister_id: Principal, cycles: Option<Nat>, controllers: Ve
 #[ic_cdk::query]
 fn debug_statuses() -> Vec<DebugStatus> {
     STATUSES.with(|s| {
-        s.borrow().iter().map(|(canister_id, status)| DebugStatus {
-            canister_id: *canister_id,
-            cycles: status.cycles.clone(),
-            controllers: status.settings.controllers.clone(),
-        }).collect()
+        s.borrow()
+            .iter()
+            .map(|(canister_id, status)| DebugStatus {
+                canister_id: *canister_id,
+                cycles: status.cycles.clone(),
+                controllers: status.settings.controllers.clone(),
+            })
+            .collect()
     })
 }

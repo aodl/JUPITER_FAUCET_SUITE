@@ -11,8 +11,8 @@ use pocket_ic::PocketIc;
 #[path = "support/mod.rs"]
 mod support;
 
-use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 use support::account_identifier::principal_to_subaccount;
+use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 
 fn require_ignored_flag() -> Result<()> {
     support::assertions::require_ignored_flag()
@@ -223,7 +223,9 @@ impl RelayEnv {
             Vec<SurplusNeuronRecipient>,
         ),
     {
-        let pic = support::pocketic::builder().with_application_subnet().build();
+        let pic = support::pocketic::builder()
+            .with_application_subnet()
+            .build();
         let ledger = pic.create_canister();
         let cmc = pic.create_canister();
         let governance = pic.create_canister();
