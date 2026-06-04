@@ -82,6 +82,10 @@ disburser's age-bonus flow and reserves a future rewards-distribution location;
 until reward-distribution logic or privileged authority is added, it is not a
 production value-moving runtime path.
 
+Release checklist reminder: when `jupiter-sns-rewards` gains runtime logic or
+controller authority, add it to `production_canisters` in
+`tools/scripts/check-production-reachability` before release validation.
+
 Findings outside that surface are allowed only with automated proof:
 
 - `dev-test-only` findings must remain confined to local tooling, mocks, tests,

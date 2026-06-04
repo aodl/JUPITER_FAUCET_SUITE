@@ -91,6 +91,10 @@ timers, stable state, ledger/index/CMC/NNS/SNS/system clients, rescue logic, or
 controller authority; it is a passive recipient principal/account placeholder,
 not a production value-moving runtime path.
 
+Release checklist reminder: when `jupiter-sns-rewards` gains runtime logic or
+controller authority, add it to `production_canisters` in
+`tools/scripts/check-production-reachability` before release validation.
+
 The gate fails if an explicitly forbidden package enters the covered production
 trees, and it fails if `paste` appears there as anything other than proc-macro
 support. `paste` may appear only as proc-macro support, not as runtime logic or
