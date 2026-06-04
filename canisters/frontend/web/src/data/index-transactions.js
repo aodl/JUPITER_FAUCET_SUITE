@@ -18,6 +18,33 @@ function routeTransferTimestampOpt(transaction) {
     : [timestamp.timestamp_nanos];
 }
 
+function transactionTimestampNanos(transaction) {
+  const timestamp = readOptional(transaction?.timestamp) || readOptional(transaction?.created_at_time);
+  if (timestamp?.timestamp_nanos === undefined || timestamp?.timestamp_nanos === null) return null;
+  return typeof timestamp.timestamp_nanos === 'bigint' ? timestamp.timestamp_nanos : BigInt(timestamp.timestamp_nanos);
+}
+
+function itemTimestampNanos(item) {
+  const timestamp = readOptional(item?.timestamp_nanos);
+  if (timestamp === undefined || timestamp === null) return null;
+  return typeof timestamp === 'bigint' ? timestamp : BigInt(timestamp);
+}
+
+function isAtOrAfterTimestamp(item, minTimestampNanos) {
+  if (minTimestampNanos === null || minTimestampNanos === undefined) return true;
+  const timestamp = itemTimestampNanos(item);
+  return timestamp !== null && timestamp >= minTimestampNanos;
+}
+
+function pageCrossedTimestampCutoff(transactions, minTimestampNanos) {
+  if (minTimestampNanos === null || minTimestampNanos === undefined) return false;
+  const dated = (transactions || [])
+    .map((tx) => transactionTimestampNanos(tx?.transaction))
+    .filter((timestamp) => timestamp !== null);
+  if (dated.length === 0) return false;
+  return dated.reduce((oldest, timestamp) => timestamp < oldest ? timestamp : oldest, dated[0]) < minTimestampNanos;
+}
+
 function tokenE8s(tokens) {
   if (tokens?.e8s === undefined || tokens?.e8s === null) return null;
   return tokens.e8s;
@@ -217,7 +244,8 @@ export async function loadCmcTopUpTransfersFromIndex({
   cmcCanisterId = MAINNET_CMC_CANISTER_ID,
   limit = RECENT_ROUTE_TRANSFER_LIMIT,
   pageSize = RECENT_ROUTE_TRANSFER_PAGE_SIZE,
-  maxPages = RECENT_ROUTE_TRANSFER_MAX_INDEX_PAGES,
+  maxPages = Math.ceil(Math.max(1, limit) / Math.max(1, pageSize)),
+  minTimestampNanos = null,
 } = {}) {
   if (!index || typeof index.get_account_identifier_transactions !== 'function') {
     throw new Error('ICP index actor is unavailable');
@@ -236,7 +264,7 @@ export async function loadCmcTopUpTransfersFromIndex({
     const transactions = response?.transactions || [];
     for (const tx of transactions) {
       const item = cmcTopUpTransferFromIndexTransaction(tx, depositAccountIdentifier);
-      if (item) {
+      if (item && isAtOrAfterTimestamp(item, minTimestampNanos)) {
         const key = String(item.tx_id);
         if (!seen.has(key)) {
           seen.add(key);
@@ -246,6 +274,7 @@ export async function loadCmcTopUpTransfersFromIndex({
       if (items.length >= limit) break;
     }
 
+    if (pageCrossedTimestampCutoff(transactions, minTimestampNanos)) break;
     if (transactions.length < pageSize) break;
     const lastId = transactions[transactions.length - 1]?.id;
     if (lastId === undefined || lastId === null) break;
@@ -269,6 +298,7 @@ export async function loadIncomingIcpTransfersFromIndex({
   maxPages = Math.ceil(Math.max(1, limit) / Math.max(1, pageSize)),
   sourceAccountIdentifiers = [],
   memoText = null,
+  minTimestampNanos = null,
   onProgress = null,
 } = {}) {
   if (!index || typeof index.get_account_identifier_transactions !== 'function') {
@@ -298,9 +328,10 @@ export async function loadIncomingIcpTransfersFromIndex({
   for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
     const response = await getAccountIdentifierTransactions(index, accountIdentifier, start, pageSize);
     const transactions = response?.transactions || [];
+    const reachedTimeWindowEnd = pageCrossedTimestampCutoff(transactions, minTimestampNanos);
     for (const tx of transactions) {
       const item = incomingIcpTransferFromIndexTransaction(tx, accountIdentifier, sourceIds, exactMemo);
-      if (item) {
+      if (item && isAtOrAfterTimestamp(item, minTimestampNanos)) {
         const key = String(item.tx_id);
         if (!seen.has(key)) {
           seen.add(key);
@@ -316,8 +347,9 @@ export async function loadIncomingIcpTransfersFromIndex({
     if (!truncated && page + 1 >= Math.max(1, maxPages) && transactions.length >= pageSize) {
       truncated = true;
     }
-    await notifyProgress({ loading: !truncated, pagesLoaded: page + 1 });
+    await notifyProgress({ loading: !truncated && !reachedTimeWindowEnd, pagesLoaded: page + 1 });
 
+    if (reachedTimeWindowEnd) break;
     if (transactions.length < pageSize) break;
     const lastId = transactions[transactions.length - 1]?.id;
     if (lastId === undefined || lastId === null) break;

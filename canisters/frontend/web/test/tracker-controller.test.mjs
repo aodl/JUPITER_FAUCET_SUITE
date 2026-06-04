@@ -212,6 +212,8 @@ test('tracker hash hydration submits once for the same principal', async () => {
     assert.equal(calls[0].host, 'https://example.test');
     assert.equal(calls[0].local, true);
     assert.equal(calls[0].canisterId.toText(), 'jufzc-caaaa-aaaar-qb5da-cai');
+    assert.equal(calls[0].historyLimit, 10_000);
+    assert.equal(typeof calls[0].minTimestampNanos, 'bigint');
   }, { hash: '#metric-tracker-jufzc-caaaa-aaaar-qb5da-cai' });
 });
 
@@ -261,6 +263,83 @@ test('tracker range buttons rerender loaded beneficiary data', async () => {
     assert.deepEqual(monthButton.classList.toggled.at(-1), { name: 'is-active', active: true });
     assert.deepEqual(allButton.classList.toggled.at(-1), { name: 'is-active', active: false });
   }, { rangeButtons: [monthButton, allButton] });
+});
+
+test('tracker all range reloads raw ICP history with the large transfer limit', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const historyLimits = [];
+  const cutoffs = [];
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async ({ historyLimit, minTimestampNanos }) => {
+        historyLimits.push(historyLimit);
+        cutoffs.push(minTimestampNanos);
+        return {
+          status: {},
+          transfers: { items: [], limit: historyLimit },
+          candidates: { items: [] },
+          errors: {},
+        };
+      },
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+    controller.setRange('all');
+    await flushMicrotasks();
+
+    assert.deepEqual(historyLimits, [10_000, 10_000]);
+    assert.equal(typeof cutoffs[0], 'bigint');
+    assert.equal(cutoffs[1], null);
+    assert.equal(controller.state.range, 'all');
+    assert.equal(controller.state.loadedRange, 'all');
+  });
+});
+
+test('tracker year range reloads raw ICP history with a wider cutoff', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const historyLimits = [];
+  const cutoffs = [];
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async ({ historyLimit, minTimestampNanos }) => {
+        historyLimits.push(historyLimit);
+        cutoffs.push(minTimestampNanos);
+        return {
+          status: {},
+          transfers: { items: [], limit: historyLimit },
+          candidates: { items: [] },
+          errors: {},
+        };
+      },
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+    controller.setRange('year');
+    await flushMicrotasks();
+
+    assert.deepEqual(historyLimits, [10_000, 10_000]);
+    assert.equal(typeof cutoffs[0], 'bigint');
+    assert.equal(typeof cutoffs[1], 'bigint');
+    assert.ok(cutoffs[1] < cutoffs[0]);
+    assert.equal(controller.state.range, 'year');
+    assert.equal(controller.state.loadedRange, 'year');
+  });
 });
 
 test('tracker simulator prefill links update hash and call simulator hook', async () => {
@@ -333,6 +412,8 @@ test('delegated tracker memo links preserve compact dotted memo hashes', async (
         calls.push({
           canisterId: request.canisterId.toText(),
           outgoingMemoText: request.outgoingMemoText,
+          historyLimit: request.historyLimit,
+          hasCutoff: typeof request.minTimestampNanos === 'bigint',
         });
         return {
           status: {},
@@ -357,6 +438,8 @@ test('delegated tracker memo links preserve compact dotted memo hashes', async (
     assert.deepEqual(calls, [{
       canisterId: '22255-zqaaa-aaaas-qf6uq-cai',
       outgoingMemoText: 'miner',
+      historyLimit: 10_000,
+      hasCutoff: true,
     }]);
     assert.deepEqual(historyCalls.map((call) => call.hash), ['#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.miner']);
   });
@@ -400,7 +483,7 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
       frontendConfig: {},
       isLocalHost: () => false,
       simulatorHashForPrefill,
-      loadRawCanisterData: async () => ({
+      loadRawCanisterData: async ({ historyLimit }) => ({
         status: { output_account: [faucetAccount] },
         transfers: { items: [
           rawTransfer(5, faucetAccountId, 500_000_000n, true),
@@ -408,7 +491,7 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
           rawTransfer(3, relayAccountId, 300_000_000n, false),
           rawTransfer(2, protocolAccountId, 200_000_000n, false),
           rawTransfer(1, otherAccountId, 100_000_000n, true),
-        ], truncated: true, limit: 10_000 },
+        ], truncated: true, limit: historyLimit },
         candidates: { items: [] },
         errors: {},
       }),
@@ -447,14 +530,14 @@ test('raw ICP tracker renders incoming transfers while index pages are still loa
       frontendConfig: {},
       isLocalHost: () => false,
       simulatorHashForPrefill,
-      loadRawCanisterData: async ({ onTransfersProgress }) => {
+      loadRawCanisterData: async ({ historyLimit, onTransfersProgress }) => {
         onTransfersProgress({
           status: { output_account: [faucetAccount] },
           transfers: {
             items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)],
             loading: true,
             truncated: false,
-            limit: 10_000,
+            limit: historyLimit,
             pages_loaded: 1,
           },
           candidates: { items: [], truncated: false, loading: true },
@@ -470,7 +553,7 @@ test('raw ICP tracker renders incoming transfers while index pages are still loa
             ],
             loading: false,
             truncated: false,
-            limit: 10_000,
+            limit: historyLimit,
           },
           candidates: { items: [], truncated: false },
           errors: {},
@@ -567,6 +650,7 @@ test('raw ICP tracker renders revised candidate empty and heading copy', async (
       },
       errors: {},
     };
+    controller.state.loadedRange = 'all';
     controller.setRange('all');
 
     const candidateHtml = nodeMap.get('tracker-result').innerHTML;

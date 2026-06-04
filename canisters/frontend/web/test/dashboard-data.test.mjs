@@ -960,13 +960,102 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(data.cmcTransfers.items[0].amount_e8s, 123_000_000n);
   assert.deepEqual(calls[0], ['overview', target.toText()]);
   assert.equal(calls[1][1].limit[0], 12);
-  assert.equal(calls[1][1].descending[0], false);
+  assert.equal(calls[1][1].descending[0], true);
   assert.equal(calls[1][1].canister_id.toText(), target.toText());
   assert.equal(calls[2][1].limit[0], 12);
   assert.equal(calls[2][1].descending[0], true);
   assert.equal(calls[2][1].canister_id.toText(), target.toText());
   assert.deepEqual(calls[3], ['status']);
   assert.deepEqual(calls[4], ['logs', target.toText()]);
+});
+
+test('loadTrackerData pages recent historian histories until the timestamp cutoff is covered', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const calls = [];
+  const commitmentPages = new Map([
+    ['none', {
+      items: [
+        { tx_id: 5n, timestamp_nanos: [5_000_000n], amount_e8s: 500_000_000n, counts_toward_faucet: true },
+        { tx_id: 4n, timestamp_nanos: [4_000_000n], amount_e8s: 400_000_000n, counts_toward_faucet: true },
+      ],
+      next_start_after_tx_id: [4n],
+    }],
+    ['4', {
+      items: [
+        { tx_id: 3n, timestamp_nanos: [3_000_000n], amount_e8s: 300_000_000n, counts_toward_faucet: true },
+        { tx_id: 2n, timestamp_nanos: [2_000_000n], amount_e8s: 200_000_000n, counts_toward_faucet: true },
+      ],
+      next_start_after_tx_id: [2n],
+    }],
+  ]);
+  const cyclePages = new Map([
+    ['none', {
+      items: [
+        { timestamp_nanos: 5_000_000n, cycles: 500n, source: { BlackholeStatus: null } },
+        { timestamp_nanos: 4_000_000n, cycles: 400n, source: { BlackholeStatus: null } },
+      ],
+      next_start_after_ts: [4_000_000n],
+    }],
+    ['4000000', {
+      items: [
+        { timestamp_nanos: 3_000_000n, cycles: 300n, source: { BlackholeStatus: null } },
+        { timestamp_nanos: 2_000_000n, cycles: 200n, source: { BlackholeStatus: null } },
+      ],
+      next_start_after_ts: [2_000_000n],
+    }],
+  ]);
+
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historyLimit: 10,
+    minTimestampNanos: 2_500_000n,
+    historianActor: {
+      async get_canister_overview() {
+        return [{
+          canister_id: target,
+          sources: [{ MemoCommitment: null }],
+          meta: {},
+          cycles_points: 4,
+          commitment_points: 4,
+        }];
+      },
+      async get_commitment_history(args) {
+        calls.push(['commitments', args]);
+        const key = args.start_after_tx_id.length === 0 ? 'none' : args.start_after_tx_id[0].toString();
+        return commitmentPages.get(key) || { items: [], next_start_after_tx_id: [] };
+      },
+      async get_cycles_history(args) {
+        calls.push(['cycles', args]);
+        const key = args.start_after_ts.length === 0 ? 'none' : args.start_after_ts[0].toString();
+        return cyclePages.get(key) || { items: [], next_start_after_ts: [] };
+      },
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+    },
+    canisterLogsLoader: async () => ({ items: [] }),
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        return { Ok: { balance: 0n, oldest_tx_id: [], transactions: [] } };
+      },
+    }),
+  });
+
+  assert.deepEqual(data.commitments.items.map((item) => item.tx_id), [3n, 4n, 5n]);
+  assert.deepEqual(data.cycles.items.map((item) => item.timestamp_nanos), [3_000_000n, 4_000_000n, 5_000_000n]);
+  assert.deepEqual(
+    calls.filter(([kind]) => kind === 'commitments').map(([, args]) => args.start_after_tx_id),
+    [[], [4n]],
+  );
+  assert.deepEqual(
+    calls.filter(([kind]) => kind === 'cycles').map(([, args]) => args.start_after_ts),
+    [[], [4_000_000n]],
+  );
 });
 
 test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries', async () => {

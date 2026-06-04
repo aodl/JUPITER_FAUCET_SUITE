@@ -828,8 +828,9 @@ test('pane focus does not strip deep-link query parameters', () => {
   assert.doesNotMatch(navbarJs, /backdrop\.addEventListener\("focusin", \(evt\) => \{[\s\S]*activatePage\(sectionEl, page, \{ syncHash: true \}\);[\s\S]*\}\);/);
 });
 
-test('canister tracker defaults to all loaded history', () => {
-  assert.match(mainJs, /const state = \{[\s\S]*?range: 'all'/);
+test('canister tracker defaults to last month history', () => {
+  assert.match(mainJs, /const TRACKER_DEFAULT_RANGE = 'month'/);
+  assert.match(mainJs, /const state = \{[\s\S]*?range: TRACKER_DEFAULT_RANGE/);
 });
 
 test('simulator header and scroll region have dedicated compact layout CSS', () => {

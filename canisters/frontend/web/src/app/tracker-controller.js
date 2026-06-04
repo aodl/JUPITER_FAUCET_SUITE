@@ -1,5 +1,11 @@
 import { Principal } from '@icp-sdk/core/principal';
-import { normalizeError, loadTrackerData, loadRawIcpCanisterTrackerData, loadNeuronStakeTrackerData } from '../dashboard-data.js';
+import {
+  normalizeError,
+  loadTrackerData,
+  loadRawIcpCanisterTrackerData,
+  loadNeuronStakeTrackerData,
+  RAW_ICP_TRACKER_TRANSFER_LIMIT,
+} from '../dashboard-data.js';
 import { readOpt } from '../candid-opt.js';
 import { escapeHtml } from '../followee-links.js';
 import { renderAmountBarChart, renderEmptyChart, renderLineChart, renderStackedAmountBarChart } from '../chart-rendering.js';
@@ -28,6 +34,7 @@ const TRACKER_RANGE_LABELS = {
   year: 'last year',
   all: 'all currently loaded history',
 };
+const TRACKER_DEFAULT_RANGE = 'month';
 const SOURCE_SEGMENTS = [
   { key: 'faucetAmountE8s', countKey: 'faucetTransferCount', className: 'tracker-chart-bar--source-faucet', label: 'Jupiter Faucet', legendKey: 'faucet' },
   { key: 'relayAmountE8s', countKey: 'relayTransferCount', className: 'tracker-chart-bar--source-relay', label: 'Jupiter Relay', legendKey: 'relay' },
@@ -492,6 +499,17 @@ function pluralize(count, singular, plural = `${singular}s`) {
   return `${formatInteger(count)} ${count === 1 ? singular : plural}`;
 }
 
+function trackerRangeRank(range) {
+  if (range === 'all') return 3;
+  if (range === 'year') return 2;
+  return 1;
+}
+
+function trackerRangeCutoffNanos(range, anchorMs = Date.now()) {
+  const cutoffMs = trackerRangeCutoffMs(range, anchorMs);
+  return cutoffMs === null ? null : BigInt(cutoffMs) * 1_000_000n;
+}
+
 export function createTrackerController({
   frontendConfig,
   isLocalHost,
@@ -510,7 +528,8 @@ export function createTrackerController({
     protocolCanisterId: null,
     viewMode: '',
     data: null,
-    range: 'all',
+    range: TRACKER_DEFAULT_RANGE,
+    loadedRange: null,
     loading: false,
     error: null,
   };
@@ -955,6 +974,16 @@ export function createTrackerController({
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+    if (
+      state.data
+      && state.parsedMemo
+      && !state.loading
+      && state.loadedRange !== null
+      && trackerRangeRank(state.range) > trackerRangeRank(state.loadedRange)
+    ) {
+      void submitMemo();
+      return;
+    }
     if (state.viewMode === 'cyclesTopUp' && state.data?.isCommitmentBeneficiary) {
       renderData(state.data, state.principalText);
     } else if ((state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake') && state.data && state.parsedMemo) {
@@ -1000,6 +1029,8 @@ export function createTrackerController({
     replaceLocationHash(raw);
     setLoading(true);
     setStatus('Loading tracker data…', 'loading');
+    const historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT;
+    const minTimestampNanos = trackerRangeCutoffNanos(state.range);
     if (result) {
       result.innerHTML = '<div class="tracker-empty-state"><p>Loading…</p></div>';
     }
@@ -1018,12 +1049,13 @@ export function createTrackerController({
         renderRawIcpData(partialData, parsed);
       };
       const data = parsed.kind === 'cyclesTopUp'
-        ? await loadData({ ...common, canisterId: parsed.canisterId })
+        ? await loadData({ ...common, canisterId: parsed.canisterId, historyLimit, minTimestampNanos })
         : parsed.kind === 'rawIcpCanister'
-          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText, onTransfersProgress })
-          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText, onTransfersProgress });
+          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onTransfersProgress })
+          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onTransfersProgress });
       if (state.progressRequestId !== progressRequestId) return;
       state.data = data;
+      state.loadedRange = state.range;
       setStatus('', '');
       if (parsed.kind === 'cyclesTopUp') renderData(data, parsed.canisterText);
       else renderRawIcpData(data, parsed);

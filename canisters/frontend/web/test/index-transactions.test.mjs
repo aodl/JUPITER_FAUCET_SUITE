@@ -154,3 +154,54 @@ test('loadIncomingIcpTransfersFromIndex paginates until the requested transfer l
     { ids: [5n, 4n, 3n], loading: false, truncated: true, pagesLoaded: 2 },
   ]);
 });
+
+test('loadIncomingIcpTransfersFromIndex paginates until a timestamp cutoff is covered', async () => {
+  const account = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const to = accountIdentifierHex(account);
+  const source = 'a'.repeat(64);
+  const calls = [];
+  const progress = [];
+  const pages = new Map([
+    ['none', [
+      transferTx(5, { from: source, to }),
+      transferTx(4, { from: source, to }),
+    ]],
+    ['3', [
+      transferTx(3, { from: source, to }),
+      transferTx(2, { from: source, to }),
+    ]],
+    ['1', [
+      transferTx(1, { from: source, to }),
+    ]],
+  ]);
+  const index = {
+    async get_account_identifier_transactions(args) {
+      calls.push(args);
+      const key = args.start.length === 0 ? 'none' : args.start[0].toString();
+      return { Ok: { transactions: pages.get(key) || [] } };
+    },
+  };
+
+  const result = await loadIncomingIcpTransfersFromIndex({
+    index,
+    account,
+    limit: 10,
+    pageSize: 2,
+    minTimestampNanos: 2_500_000n,
+    onProgress: (page) => progress.push({
+      ids: page.items.map((item) => item.tx_id),
+      loading: page.loading,
+      truncated: page.truncated,
+      pagesLoaded: page.pages_loaded,
+    }),
+  });
+
+  assert.deepEqual(result.items.map((item) => item.tx_id), [5n, 4n, 3n]);
+  assert.equal(result.truncated, false);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((call) => call.start), [[], [3n]]);
+  assert.deepEqual(progress, [
+    { ids: [5n, 4n], loading: true, truncated: false, pagesLoaded: 1 },
+    { ids: [5n, 4n, 3n], loading: false, truncated: false, pagesLoaded: 2 },
+  ]);
+});
