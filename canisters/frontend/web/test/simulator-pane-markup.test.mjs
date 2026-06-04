@@ -106,10 +106,10 @@ test('first-load overlay uses the token logo and rotating cycle phrases', () => 
   assert.match(indexHtml, /<script src="\/loading-overlay\.js\?v=__ASSET_VERSION__" defer><\/script>/);
   assert.doesNotMatch(indexHtml, /<script>\s*\(\(\) => \{[\s\S]*page-loading-overlay/);
   assert.match(indexHtml, /class="page-loading-pane"/);
-  assert.match(indexHtml, /<link rel="preload" as="image" href="\/jupiter_faucet_token_logo\.webp\?v=__ASSET_VERSION__" type="image\/webp" fetchpriority="high">/);
+  assert.match(indexHtml, /<link rel="preload" as="image" href="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__" type="image\/svg\+xml" fetchpriority="high">/);
   assert.match(indexHtml, /<link rel="preload" as="image" href="\/background-orbit\/background-orbit-firstpaint\.jpg\?v=__ASSET_VERSION__" type="image\/jpeg" media="\(min-width: 1025px\)" fetchpriority="high">/);
   assert.match(indexHtml, /<link rel="preload" as="image" href="\/background-orbit\/background-orbit-mobile-firstpaint\.jpg\?v=__ASSET_VERSION__" type="image\/jpeg" media="\(max-width: 1024px\)" fetchpriority="high">/);
-  assert.match(indexHtml, /class="page-loading-logo" src="\/jupiter_faucet_token_logo\.webp\?v=__ASSET_VERSION__"/);
+  assert.match(indexHtml, /class="page-loading-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
   assert.match(indexHtml, /class="page-loading-logo"[^>]*decoding="sync"[^>]*fetchpriority="high"/);
   assert.match(indexHtml, /<link rel="stylesheet" href="\/index\.css\?v=__ASSET_VERSION__" \/>/);
   assert.match(indexHtml, /<noscript>\s*<link rel="stylesheet" href="\/noscript\.css\?v=__ASSET_VERSION__" \/>\s*<\/noscript>/);
@@ -157,7 +157,7 @@ test('first-load overlay uses the token logo and rotating cycle phrases', () => 
 });
 
 test('not found page displays the Jupiter Faucet token logo', () => {
-  assert.match(notFoundHtml, /class="not-found-logo" src="\/jupiter_faucet_token_logo\.webp\?v=__ASSET_VERSION__"/);
+  assert.match(notFoundHtml, /class="not-found-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
   assert.match(notFoundHtml, /<link rel="stylesheet" href="\/404\.css\?v=__ASSET_VERSION__" \/>/);
   assert.match(notFoundCss, /\.not-found-logo \{[\s\S]*width: clamp\(112px, 24vw, 172px\);[\s\S]*height: clamp\(112px, 24vw, 172px\);/);
   assert.match(notFoundHtml, /<h1>Not Found<\/h1>/);
