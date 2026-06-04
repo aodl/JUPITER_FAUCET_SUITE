@@ -318,7 +318,7 @@ test('Source and Governance panes expose subnet context', () => {
   assert.match(source, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae/);
   assert.match(source, /data-source-memory="uccpi-cqaaa-aaaar-qby3q-cai"/);
   assert.match(indexHtml, /jupiter_relay/);
-  assert.match(indexHtml, /Display name: Jupiter Relay/);
+  assert.doesNotMatch(indexHtml, /Display name: Jupiter Relay/);
   assert.match(indexHtml, /data-source-module-hash="u2qkp-aqaaa-aaaar-qb7ea-cai"/);
   assert.match(indexHtml, /JUPITER_FAUCET_SUITE\/tree\/master\/canisters\/relay/);
   assert.doesNotMatch(indexHtml, /canisters\/relay\/jupiter_relay\.did/);
