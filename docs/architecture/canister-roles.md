@@ -20,6 +20,6 @@ The historian keeps bounded, dashboard-friendly views in canister state. The ICP
 ## Recovery and Support
 
 - [`canisters/lifeline`](../../canisters/lifeline) is the minimal recovery/support canister used when a value-moving canister widens controllers after a sustained failure condition.
-- [`canisters/sns-rewards`](../../canisters/sns-rewards) is the current placeholder recipient for the primary disburser age-bonus flow and reserves the production principal/account for future reward distribution logic.
+- [`canisters/sns-rewards`](../../canisters/sns-rewards) is the placeholder recipient for the primary disburser age-bonus flow and reserves the production principal/account for future reward distribution logic.
 
 The blackhole pattern makes selected canister status public and supports immutable or self-managed controller postures. Recovery behavior is intentionally component-specific; see the relevant canister README for the exact rescue windows and controller transitions.

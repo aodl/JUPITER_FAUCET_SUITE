@@ -69,7 +69,7 @@ On each successful main tick, the canister does the following:
 6. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
 7. logs only errors plus a single `Cycles: ...` line per run, and logs `CONFIG ...` only when the tick reaches the payout / maturity-disbursement path
 
-The skip while in flight is intentional. The current implementation stores exactly one captured age snapshot (`prev_age_seconds`) and later uses that snapshot when staged ICP is split. By refusing to overlap payout work with an already in-flight maturity disbursement, the canister avoids applying the wrong captured age to staged ICP from a different disbursement cycle.
+The skip while in flight is intentional. The implementation stores exactly one captured age snapshot (`prev_age_seconds`) and later uses that snapshot when staged ICP is split. By refusing to overlap payout work with an already in-flight maturity disbursement, the canister avoids applying the wrong captured age to staged ICP from a different disbursement cycle.
 
 That ordering also matters for the faucet's round-accounting fairness model. Newly added stake may become visible in the neuron's live stake before its proportional base maturity has fully reached the faucet payout account. The faucet addresses that directly with a round-effective denominator: it carries a round-start staking snapshot forward, clamps the completed round by tx id, and applies a conservative stake-recognition delay before weighting valid in-round commitments into the denominator. That delay is faucet-side accounting only; it does not alter NNS maturity accrual, maturity spawning, or disburser timing. The disburser-side PocketIC suite exercises the full stake -> maturity -> disburser -> faucet path, while faucet logic mitigates the unfair first-round dilution condition.
 
@@ -227,7 +227,7 @@ A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-i
 
 ### Upgrade args
 
-Upgrades currently support:
+Upgrade args support:
 
 - `blackhole_controller`
 - `blackhole_armed`
@@ -237,9 +237,9 @@ Upgrades currently support:
 
 Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before preparing any upgrade-time argument file.
 
-### Current production wiring recorded in this repo
+### Production wiring recorded in this repo
 
-The committed mainnet install args currently wire:
+The committed mainnet install args wire:
 
 - normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
@@ -258,7 +258,7 @@ The faucet production install args separately configure `stake_recognition_delay
 
 Production builds expose **no public methods**.
 
-Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production disburser principal. The current operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is currently desired for these debug surfaces. The committed debug Candid file is:
+Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production disburser principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The committed debug Candid file is:
 
 - [`jupiter_disburser_debug.did`](jupiter_disburser_debug.did)
 

@@ -53,7 +53,7 @@ If the memo is valid text but does **not** parse as a supported declaration unde
 
 ### Output and rewards accounting
 
-Historian no longer indexes burn activity from CMC deposit accounts. Instead it tracks two explicit protocol routing metrics for the frontend:
+Historian tracks two explicit protocol routing metrics for the frontend:
 
 - **Total Output**: cumulative ICP transferred from the configured disburser staging account to the configured faucet payout account
 - **Total Rewards**: cumulative ICP transferred from the configured disburser staging account to the configured SNS rewards account
@@ -95,7 +95,7 @@ SNS-discovered canisters are not probed through blackhole status in the regular 
 
 The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry. Derived caches are rebuilt at runtime instead of being treated as durable source-of-truth state, and the durable commitment/cycles histories are stored as entry-keyed stable maps with per-canister retained-key indexes so hot-path updates do not rewrite whole per-canister sample vectors in stable memory.
 
-Durable bounded state currently uses these caps:
+Durable bounded state uses these caps:
 
 - the tracked target-canister registry for normal canister top-up beneficiaries is **not pruned**
 - `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
@@ -238,7 +238,7 @@ Inspect the current `UpgradeArgs` definition in [`src/lifecycle.rs`](src/lifecyc
 
 ### Mainnet install args committed in this repo
 
-The committed [`mainnet-install-args.did`](mainnet-install-args.did) currently configures:
+The committed [`mainnet-install-args.did`](mainnet-install-args.did) configures:
 
 - the Jupiter staking account as the commitment source
 - default ICP Ledger, ICP Index, canonical blackhole, CMC, faucet, and SNS-WASM IDs by leaving those principals as `null`
@@ -382,7 +382,7 @@ icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
 
 The production canister exposes the query interface described above.
 
-Additional debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC testing only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production historian principal. The current operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is currently desired for these debug surfaces. The debug Candid surface is committed at:
+Additional debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC testing only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production historian principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The debug Candid surface is committed at:
 
 - [`jupiter_historian_debug.did`](jupiter_historian_debug.did)
 
@@ -398,7 +398,7 @@ Useful debug helpers include:
 
 ## Future SNS test coverage
 
-SNS coverage is currently sufficient for the historian’s generic on-chain behavior, but still mock-based from the Jupiter suite’s perspective.
+SNS coverage is sufficient for the historian's generic on-chain behavior, but remains mock-based from the Jupiter suite's perspective.
 
 A future follow-up should add Jupiter-specific SNS smoke / integration coverage once the repo contains the actual Jupiter SNS configuration and deployment flow.
 

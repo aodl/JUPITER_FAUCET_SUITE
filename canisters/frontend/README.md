@@ -56,7 +56,7 @@ Only the content-hashed bundle is a public asset. `frontend-bundle.json` is a bu
 
 ### Runtime config and canister ID resolution
 
-The browser bundle is built with a tiny runtime config object that currently carries:
+The browser bundle is built with a tiny runtime config object that carries:
 
 - `network`
 - `historianCanisterId`
@@ -148,7 +148,7 @@ ASSET_VERSION=2026-03-19 ./tools/scripts/build-canister jupiter-faucet-frontend
 
 ## Security header notes
 
-The frontend CSP currently keeps `frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com`. These origins are intentional for the current deployment model so the custom domain and its `www` host can frame same-site frontend content when needed. Any future tightening of this directive should be handled as a separate policy decision.
+The frontend CSP keeps `frame-ancestors 'self' https://jupiter-faucet.com https://www.jupiter-faucet.com`. These origins are intentional for the deployment model so the custom domain and its `www` host can frame same-site frontend content when needed. Any future tightening of this directive should be handled as a separate policy decision.
 
 Inline JavaScript and inline CSS are not allowed by the frontend CSP. Page and fallback styles live in static stylesheet assets so the policy can keep `script-src 'self'`, `style-src 'self'`, and `style-src-attr 'none'`.
 

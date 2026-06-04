@@ -120,11 +120,11 @@ Instead, each new payout job rescans the staking account history from the beginn
 
 That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the blackholed canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
 
-To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the current attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the current commitment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional DAO-directed recovery events after blackhole activation, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
+To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the active attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the active commitment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional DAO-directed recovery events after blackhole activation, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
 
 The `10_000`-transaction persistence threshold is also intentional. The goal is to avoid repeated replay work for clearly barren history without turning skip-range storage into its own durable indexing system. Below-threshold barren spans can therefore be shaped and replayed, but the chosen threshold was set conservatively below the estimated economic break-even point where repeated replay would become more expensive for the faucet than periodically inserting fresh qualifying stake to prevent larger cached spans from forming. That keeps the durable cache small, keeps the implementation simple, and still makes large barren spans worth caching.
 
-Only the **currently active** job persists the scan cursor, partial skip-span state, and aggregate counters. 
+Only the **active** job persists the scan cursor, partial skip-span state, and aggregate counters.
 ### 2) Commitments are not aggregated
 
 Each eligible commitment is processed independently, even when multiple commitments map to the same beneficiary.
@@ -133,7 +133,7 @@ So if the same beneficiary appears twice in staking-account history, the faucet 
 
 ### 3) The denominator is a round-effective staking snapshot
 
-A payout job still snapshots the payout pot exactly once at job start, but it no longer uses the raw live staking balance as the beneficiary denominator for the completed reward round.
+A payout job snapshots the payout pot exactly once at job start and uses a round-effective staking denominator for the completed reward round.
 
 Instead, the faucet carries forward a **round-start staking snapshot** and builds a **round-effective denominator** for the round that just finished:
 
@@ -215,7 +215,7 @@ Outgoing top-ups are sent from:
 - the canister default account if `payout_subaccount` is omitted
 - the configured subaccount if `payout_subaccount` is provided
 
-The current suite wiring from `jupiter-disburser` targets the faucet’s default account.
+The suite wiring from `jupiter-disburser` targets the faucet's default account.
 
 ### Deposit account used for top-ups
 
@@ -414,7 +414,7 @@ A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-i
 
 ### Production upgrades
 
-The current production faucet has already completed a payout. Use upgrade for the current production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
+The production faucet has completed a payout. Use upgrade for the production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
@@ -519,7 +519,7 @@ After reinstall:
 
 ### Upgrade args
 
-Upgrade args currently support:
+Upgrade args support:
 
 - `blackhole_controller`
 - `blackhole_armed`
@@ -537,9 +537,9 @@ Every upgrade also clears the persisted skip-range cache before the faucet resum
 
 When `clear_forced_rescue = true` is used while blackhole mode remains armed, the faucet also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the armed-mode controller policy is the only one the canister reconciles itself toward.
 
-### Current production wiring recorded in this repo
+### Production wiring recorded in this repo
 
-The committed mainnet install args wire the current production constants used by the suite:
+The committed mainnet install args wire the production constants used by the suite:
 
 - staking account address (ICRC-1 text): `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 - staking account owner: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
@@ -571,7 +571,7 @@ Debug builds expose helper surfaces behind `debug_api`, including:
 - `debug_footprint`
 - debug methods for forcing timer runs and manipulating rescue state during tests
 
-These are for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production faucet principal. The current operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is currently desired for these debug surfaces. The committed debug Candid file is:
+These are for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production faucet principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The committed debug Candid file is:
 
 - [`jupiter_faucet_debug.did`](jupiter_faucet_debug.did)
 
