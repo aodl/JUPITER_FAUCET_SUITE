@@ -16,7 +16,6 @@ import { SIMULATOR_HASH_PREFIX, simulatorHashForPrefill } from './hash-routes.js
 import { createSimulatorController } from './simulator-controller.js';
 import { createSourcePaneController } from './source-pane-controller.js';
 import { createStakePaneController } from './stake-pane-controller.js';
-import { createTrackerController } from './tracker-controller.js';
 import {
   DASH,
   formatBytes,
@@ -53,15 +52,6 @@ const dashboardTablesController = createDashboardTablesController({
 const simulatorController = createSimulatorController({
   copyTextToClipboard,
   neuronId: JUPITER_NEURON_ID,
-});
-
-const trackerController = createTrackerController({
-  frontendConfig: FRONTEND_CONFIG,
-  isLocalHost,
-  simulatorHashForPrefill,
-  onSimulatorPrefillHash: () => {
-    simulatorController.hydrateFromLocationHash();
-  },
 });
 
 const stakePaneController = createStakePaneController({
@@ -350,6 +340,29 @@ const neuronDetailsController = createNeuronDetailsController({
 });
 
 const neuronState = neuronDetailsController.state;
+let trackerControllerPromise = null;
+
+async function getTrackerController() {
+  if (!trackerControllerPromise) {
+    trackerControllerPromise = import('./tracker-controller.js').then(({ createTrackerController }) => {
+      const controller = createTrackerController({
+        frontendConfig: FRONTEND_CONFIG,
+        isLocalHost,
+        simulatorHashForPrefill,
+        onSimulatorPrefillHash: () => {
+          simulatorController.hydrateFromLocationHash();
+        },
+      });
+      controller.bindPane();
+      return controller;
+    });
+  }
+  return trackerControllerPromise;
+}
+
+function trackerHashIsActive() {
+  return window.location.hash.startsWith('#metric-tracker');
+}
 
 async function ensureNeuronDetailsLoaded(data) {
   await neuronDetailsController.ensureLoaded(data);
@@ -402,17 +415,36 @@ async function initLandingPage() {
 
 bindInlineTooltipFallbacks();
 dashboardTablesController.bindResponsiveTablePageSize();
-trackerController.bindPane();
 initAdvancedMemoBuilder({ copyTextToClipboard });
 simulatorController.bind();
-trackerController.bindLinks();
-trackerController.hydrateFromLocationHash({ submit: true });
+document.addEventListener('click', (event) => {
+  const trigger = event.target instanceof Element ? event.target.closest('[data-tracker-principal]') : null;
+  const memoTrigger = event.target instanceof Element ? event.target.closest('[data-tracker-memo]') : null;
+  if (!trigger && !memoTrigger) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void getTrackerController().then((controller) => {
+    if (memoTrigger) {
+      controller.trackLinkedMemo({
+        memo: memoTrigger.getAttribute('data-tracker-memo') || '',
+        protocolCanister: memoTrigger.getAttribute('data-protocol-canister') || '',
+      });
+      return;
+    }
+    controller.trackLinkedPrincipal(trigger.getAttribute('data-tracker-principal') || '');
+  });
+}, true);
+if (trackerHashIsActive()) {
+  void getTrackerController().then((controller) => controller.hydrateFromLocationHash({ submit: true }));
+}
 simulatorController.hydrateFromLocationHash();
 window.addEventListener('hashchange', () => {
-  trackerController.hydrateFromLocationHash({ submit: true });
+  if (trackerHashIsActive()) {
+    void getTrackerController().then((controller) => controller.hydrateFromLocationHash({ submit: true }));
+  }
   simulatorController.hydrateFromLocationHash();
 });
-document.addEventListener('navpanel:open', (event) => {
+document.addEventListener('navpanel:open', async (event) => {
   if (event?.detail?.key === 'source') {
     void sourcePaneController.ensureLoaded();
   }
@@ -421,6 +453,7 @@ document.addEventListener('navpanel:open', (event) => {
     simulatorController.hydrateFromLocationHash();
   }
   if (event?.detail?.key === 'metric-tracker') {
+    const trackerController = await getTrackerController();
     const hydrated = trackerController.hydrateFromLocationHash({ submit: true });
     if (!hydrated) trackerController.renderPrompt();
     window.setTimeout(() => document.getElementById('tracker-principal-input')?.focus?.(), 0);

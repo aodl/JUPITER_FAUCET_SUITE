@@ -1196,6 +1196,7 @@ export function createTrackerController({
     renderPrompt,
     setRange,
     submitPrincipal,
+    trackLinkedMemo,
     trackLinkedPrincipal,
   };
 }

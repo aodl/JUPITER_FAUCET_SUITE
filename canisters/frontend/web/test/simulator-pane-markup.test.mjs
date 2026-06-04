@@ -900,11 +900,11 @@ test('simulator prefill links use shareable simulator fragments', () => {
 
 test('metric tracker hash deep links submit once on cold load and panel open', () => {
   assert.match(mainJs, /let lastHashSubmitMemo = ''/);
-  assert.match(mainJs, /trackerController\.hydrateFromLocationHash\(\{ submit: true \}\);/);
+  assert.match(mainJs, /getTrackerController\(\)\.then\(\(controller\) => controller\.hydrateFromLocationHash\(\{ submit: true \}\)\)/);
   assert.match(mainJs, /submit && lastHashSubmitMemo !== `\$\{memoText\}\|\$\{state\.protocolCanisterText\}`/);
   assert.match(mainJs, /lastHashSubmitMemo = `\$\{memoText\}\|\$\{state\.protocolCanisterText\}`/);
   assert.match(mainJs, /replaceLocationHash\(raw\);/);
-  assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*trackerController\.hydrateFromLocationHash\(\{ submit: true \}\)/);
+  assert.match(mainJs, /event\?\.detail\?\.key === 'metric-tracker'[\s\S]*await getTrackerController\(\)[\s\S]*trackerController\.hydrateFromLocationHash\(\{ submit: true \}\)/);
 });
 
 test('canister tracker displays cycles as T cycles and estimates burn per day', () => {

@@ -12,6 +12,7 @@ const outDir = path.join(assetsDir, 'generated');
 const entryPoint = path.join(__dirname, 'src', 'main.js');
 const manifestPath = path.join(outDir, 'frontend-bundle.json');
 const tempOutfile = path.join(outDir, '__app-build.js');
+const chunksDir = path.join(outDir, 'chunks');
 
 const network = process.env.JUPITER_FRONTEND_NETWORK || process.env.ICP_ENVIRONMENT || process.env.ICP_NETWORK || 'ic';
 const mappingPath = path.join(
@@ -44,14 +45,18 @@ for (const oldName of await readdir(outDir)) {
     await rm(path.join(outDir, oldName), { force: true });
   }
 }
+await rm(chunksDir, { recursive: true, force: true });
 
 await build({
   entryPoints: [entryPoint],
   bundle: true,
-  outfile: tempOutfile,
+  outdir: outDir,
+  entryNames: '__app-build',
+  chunkNames: 'chunks/[name]-[hash]',
   format: 'esm',
   platform: 'browser',
   target: ['es2022'],
+  splitting: true,
   sourcemap: false,
   minify: true,
   legalComments: 'none',
