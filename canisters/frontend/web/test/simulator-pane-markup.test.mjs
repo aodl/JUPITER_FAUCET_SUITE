@@ -304,7 +304,7 @@ test('Domains pane explains frontend origins and domain listing workflow', () =>
   assert.match(domains, /independent\s*parties can publish and manage domains/);
   assert.match(domains, /href="https:\/\/jupiter-faucet\.com\/"[^>]*>jupiter-faucet\.com<\/a>/);
   assert.match(domains, /Currently managed by <a href="https:\/\/dashboard\.internetcomputer\.org\/neuron\/16459595263909468577"[^>]*>LORIMER ♾️ 🐶<\/a> until decentralized DNS is available/);
-  assert.match(domains, /href="https:\/\/gvey7-gyaaa-aaaar-qb4fq-cai\.icp0\.io\/"[^>]*>gvey7-gyaaa-aaaar-qb4fq-cai\.icp0\.io<\/a>/);
+  assert.match(domains, /href="https:\/\/jufzc-caaaa-aaaar-qb5da-cai\.icp0\.io\/"[^>]*>jufzc-caaaa-aaaar-qb5da-cai\.icp0\.io<\/a>/);
   assert.match(domains, /Managed by <a href="https:\/\/dashboard\.internetcomputer\.org\/neuron\/27"[^>]*>DFINITY<\/a> through the default ICP HTTP gateway canister URL/);
   assert.match(domains, /href="https:\/\/docs\.internetcomputer\.org\/guides\/frontends\/custom-domains\/"[^>]*>ICP custom domains documentation<\/a>/);
   assert.match(domains, /href="https:\/\/github\.com\/aodl\/JUPITER_FAUCET_SUITE\/pulls"[^>]*>pull request<\/a>/);
