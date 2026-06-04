@@ -72,8 +72,10 @@ function attrValue(tag, name) {
   return match ? match[1] : null;
 }
 
-test('top navbar exposes Simulator and no longer exposes Partners', () => {
+test('top navbar exposes Simulator and Domains and no longer exposes Partners', () => {
   assert.match(indexHtml, /<a href="#simulator" class="nav-item" data-panel="simulator">Simulator<\/a>/);
+  assert.match(indexHtml, /<a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains<\/a>/);
+  assert.match(navbarCss, /@media \(max-width: 720px\) \{[\s\S]*\.nav-item--domains \{[\s\S]*display: none;[\s\S]*\}/);
   assert.doesNotMatch(indexHtml, /data-panel="partners"/i);
   assert.doesNotMatch(indexHtml, />Partners<\/a>/i);
 });
@@ -253,6 +255,7 @@ test('About pane includes social links and projects slide', () => {
   assert.match(about, /one-off operation/);
   assert.match(about, /data-panel="how-it-works"[^>]*>How It Works<\/a>/);
   assert.match(about, /memo-builder-safety-notice[\s\S]*<strong>Due diligence:<\/strong>/);
+  assert.match(about, /The frontend is accessible via multiple <a href="#domains" data-panel="domains" class="pane-external-link">domains<\/a> controlled by independent parties\./);
   assert.match(about, /The core components will be blackholed/);
   assert.match(about, /NNS-managed platform dependency prevents disbursals\s*or other core functionality/);
   assert.match(about, /blackhole themself again once service resumes/);
@@ -287,6 +290,25 @@ test('About pane includes social links and projects slide', () => {
   assert.match(metricsCss, /\.about-project-card \{[\s\S]*container-type: inline-size;[\s\S]*\}/);
   assert.doesNotMatch(metricsCss, /\.about-project-card \{[\s\S]*aspect-ratio: 1 \/ 1;[\s\S]*\}/);
   assert.match(metricsCss, /\.about-project-preview img \{[\s\S]*height: clamp\(128px, 38cqw, 160px\);[\s\S]*object-fit: cover;[\s\S]*\}/);
+});
+
+test('Domains pane explains frontend origins and domain listing workflow', () => {
+  const domains = sectionMarkup('domains');
+  assert.match(domains, /<h2 class="nav-panel-title">Domains<\/h2>/);
+  assert.match(domains, /Jupiter Faucet runs on the\s*<a href="https:\/\/internetcomputer\.org\/"[^>]*>Internet Computer<\/a>/);
+  assert.doesNotMatch(domains, /Jupiter Faucet's core canisters run/);
+  assert.match(domains, /DNS still depends on ordinary domain registrars and\s*gateway routing today/);
+  assert.match(domains, /Work <a href="https:\/\/dashboard\.internetcomputer\.org\/proposal\/35639"[^>]*>toward decentralized DNS<\/a>\s*is ongoing/);
+  assert.match(domains, /independent\s*parties can publish and manage domains/);
+  assert.match(domains, /href="https:\/\/jupiter-faucet\.com\/"[^>]*>jupiter-faucet\.com<\/a>/);
+  assert.match(domains, /Currently managed by <a href="https:\/\/dashboard\.internetcomputer\.org\/neuron\/16459595263909468577"[^>]*>LORIMER ♾️ 🐶<\/a> until decentralized DNS is available/);
+  assert.match(domains, /href="https:\/\/gvey7-gyaaa-aaaar-qb4fq-cai\.icp0\.io\/"[^>]*>gvey7-gyaaa-aaaar-qb4fq-cai\.icp0\.io<\/a>/);
+  assert.match(domains, /Managed by <a href="https:\/\/dashboard\.internetcomputer\.org\/neuron\/27"[^>]*>DFINITY<\/a> through the default ICP HTTP gateway canister URL/);
+  assert.match(domains, /href="https:\/\/docs\.internetcomputer\.org\/guides\/frontends\/custom-domains\/"[^>]*>ICP custom domains documentation<\/a>/);
+  assert.match(domains, /href="https:\/\/github\.com\/aodl\/JUPITER_FAUCET_SUITE\/pulls"[^>]*>pull request<\/a>/);
+  assert.match(domains, /href="#about" data-panel="about"[^>]*>social channels<\/a>/);
+  assert.match(navbarCss, /\.domain-pane-list \{[\s\S]*display: grid;[\s\S]*\}/);
+  assert.match(navbarCss, /\.domain-pane-entry \{[\s\S]*border: 1px solid rgba\(255, 255, 255, 0\.14\);[\s\S]*\}/);
 });
 
 test('Source and Governance panes expose subnet context', () => {

@@ -62,6 +62,7 @@
         <a href="#about" class="nav-item" data-panel="about">About</a>
         <a href="#how-it-works" class="nav-item" data-panel="how-it-works">How it works</a>
         <a href="#simulator" class="nav-item" data-panel="simulator">Simulator</a>
+        <a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains</a>
       </div>
       <div class="nav-actions">
         <button
@@ -174,6 +175,7 @@
                 <strong>Due diligence:</strong>
                 Jupiter Faucet is <a href="#source" data-panel="source" class="pane-external-link">open source</a>, reproducibly buildable, and designed to
                 <a href="#governance" data-panel="governance" class="pane-external-link">decentralize control</a> over time.
+                The frontend is accessible via multiple <a href="#domains" data-panel="domains" class="pane-external-link">domains</a> controlled by independent parties.
                 The core components will be blackholed. A worst-case scenario
                 lifeline is built into the canisters so they can temporarily hand control to the
                 <a href="#governance" data-panel="governance" class="pane-external-link">SNS DAO</a> if a breaking change in a NNS-managed platform dependency prevents disbursals
@@ -227,6 +229,42 @@
           <div class="nav-panel-dots" role="tablist" aria-label="About pages">
             <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="About Jupiter Faucet" aria-selected="true"></button>
             <button class="nav-panel-dot" type="button" data-page="1" aria-label="Featured Projects Powered by Jupiter Faucet" aria-selected="false"></button>
+          </div>
+        </article>
+
+        <article class="nav-panel-section" data-panel="domains" id="nav-panel-domains">
+          <h2 class="nav-panel-title">Domains</h2>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-content">
+              Jupiter Faucet runs on the
+              <a href="https://internetcomputer.org/" target="_blank" rel="noopener noreferrer" class="pane-external-link">Internet Computer</a>.
+              The frontend can be served
+              through more than one web origin, but DNS still depends on ordinary domain registrars and
+              gateway routing today. Work <a href="https://dashboard.internetcomputer.org/proposal/35639" target="_blank" rel="noopener noreferrer" class="pane-external-link">toward decentralized DNS</a>
+              is ongoing; until then, independent
+              parties can publish and manage domains that point at the same certified frontend canister.
+            </p>
+            <p class="nav-panel-content">
+              Known Jupiter Faucet frontend domains:
+            </p>
+            <div class="domain-pane-list" aria-label="Jupiter Faucet frontend domains">
+              <div class="domain-pane-entry">
+                <h3><a href="https://jupiter-faucet.com/" target="_blank" rel="noopener noreferrer" class="pane-external-link">jupiter-faucet.com</a></h3>
+                <p>Currently managed by <a href="https://dashboard.internetcomputer.org/neuron/16459595263909468577" target="_blank" rel="noopener noreferrer" class="pane-external-link">LORIMER ♾️ 🐶</a> until decentralized DNS is available.</p>
+              </div>
+              <div class="domain-pane-entry">
+                <h3><a href="https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io</a></h3>
+                <p>Managed by <a href="https://dashboard.internetcomputer.org/neuron/27" target="_blank" rel="noopener noreferrer" class="pane-external-link">DFINITY</a> through the default ICP HTTP gateway canister URL.</p>
+              </div>
+            </div>
+            <p class="nav-panel-content">
+              Anyone can register their own domain by following the
+              <a href="https://docs.internetcomputer.org/guides/frontends/custom-domains/" target="_blank" rel="noopener noreferrer" class="pane-external-link">ICP custom domains documentation</a>.
+              Raise a <a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/pulls" target="_blank" rel="noopener noreferrer" class="pane-external-link">pull request</a>
+              or start a discussion in one of Jupiter Faucet's
+              <a href="#about" data-panel="about" class="pane-external-link">social channels</a>
+              if you'd like to see another independently managed domain listed here.
+            </p>
           </div>
         </article>
 

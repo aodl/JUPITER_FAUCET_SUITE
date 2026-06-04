@@ -238,9 +238,13 @@ button {
 
 /* Small screens tweaks */
 
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .navbar {
     padding: 12px 20px;
+  }
+
+  .nav-item--domains {
+    display: none;
   }
 
   .nav-links {
@@ -264,6 +268,33 @@ button {
   .nav-panel-scroll-region {
     max-height: none;
   }
+}
+
+.domain-pane-list {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 18px;
+}
+
+.domain-pane-entry {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.domain-pane-entry h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+}
+
+.domain-pane-entry p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: 0.88;
 }
 
 
