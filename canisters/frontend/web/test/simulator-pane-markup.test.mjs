@@ -107,6 +107,8 @@ test('first-load overlay uses the token logo and rotating cycle phrases', () => 
   assert.doesNotMatch(indexHtml, /<script>\s*\(\(\) => \{[\s\S]*page-loading-overlay/);
   assert.match(indexHtml, /class="page-loading-pane"/);
   assert.match(indexHtml, /<link rel="preload" as="image" href="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__" type="image\/svg\+xml" fetchpriority="high">/);
+  assert.match(indexHtml, /<link rel="preload" as="image" href="\/background-orbit\/background-orbit-firstpaint\.jpg\?v=__ASSET_VERSION__" type="image\/jpeg" media="\(min-width: 1025px\)" fetchpriority="high">/);
+  assert.match(indexHtml, /<link rel="preload" as="image" href="\/background-orbit\/background-orbit-mobile-firstpaint\.jpg\?v=__ASSET_VERSION__" type="image\/jpeg" media="\(max-width: 1024px\)" fetchpriority="high">/);
   assert.match(indexHtml, /class="page-loading-logo" src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"/);
   assert.match(indexHtml, /class="page-loading-logo"[^>]*decoding="sync"[^>]*fetchpriority="high"/);
   assert.match(indexHtml, /<link rel="stylesheet" href="\/index\.css\?v=__ASSET_VERSION__" \/>/);

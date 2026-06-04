@@ -53,7 +53,8 @@ await build({
   platform: 'browser',
   target: ['es2022'],
   sourcemap: false,
-  minify: false,
+  minify: true,
+  legalComments: 'none',
   define: {
     __JUPITER_FRONTEND_CONFIG__: JSON.stringify(runtimeConfig),
     global: 'globalThis',
