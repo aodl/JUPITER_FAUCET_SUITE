@@ -5,7 +5,7 @@ production canisters. Scanner ignores are not treated as acceptance by
 themselves; each remaining exception needs an explicit reachability reason, and
 owner acceptance is the fallback rather than the target.
 
-Production canisters covered here:
+Production canisters covered in the dependency posture review:
 
 - `jupiter-disburser`
 - `jupiter-faucet`
@@ -31,13 +31,13 @@ cargo tree -i derivative --workspace --edges normal,build,dev
 Production canister wasm-target trees were captured with:
 
 ```bash
-cargo tree -p jupiter-disburser --target wasm32-unknown-unknown --edges normal,build
-cargo tree -p jupiter-faucet --target wasm32-unknown-unknown --edges normal,build
-cargo tree -p jupiter-relay --target wasm32-unknown-unknown --edges normal,build
-cargo tree -p jupiter-historian --target wasm32-unknown-unknown --edges normal,build
-cargo tree -p jupiter-faucet-frontend --target wasm32-unknown-unknown --edges normal,build
-cargo tree -p jupiter-lifeline --target wasm32-unknown-unknown --edges normal,build
-cargo tree -p jupiter-sns-rewards --target wasm32-unknown-unknown --edges normal,build
+cargo tree -p jupiter-disburser --target wasm32-unknown-unknown --edges normal,build --locked
+cargo tree -p jupiter-faucet --target wasm32-unknown-unknown --edges normal,build --locked
+cargo tree -p jupiter-relay --target wasm32-unknown-unknown --edges normal,build --locked
+cargo tree -p jupiter-historian --target wasm32-unknown-unknown --edges normal,build --locked
+cargo tree -p jupiter-faucet-frontend --target wasm32-unknown-unknown --edges normal,build --locked
+cargo tree -p jupiter-lifeline --target wasm32-unknown-unknown --edges normal,build --locked
+cargo tree -p jupiter-sns-rewards --target wasm32-unknown-unknown --edges normal,build --locked
 ```
 
 Required validation for this dependency posture:
@@ -49,6 +49,56 @@ cargo test --workspace --locked
 python3 ./tools/scripts/validate-mainnet-install-args
 ./tools/scripts/security-scan
 ```
+
+`tools/scripts/security-scan` calls
+`tools/scripts/check-production-reachability` before the advisory scanners. That
+helper regenerates the locked wasm-target normal/build trees for
+`jupiter-disburser`, `jupiter-faucet`, `jupiter-relay`, and
+`jupiter-historian`, plus the privileged `jupiter-lifeline` rescue principal,
+and enforces that non-value-moving advisory packages remain out of production
+value-moving and privileged operational runtime paths.
+
+## Exception Policy
+
+Scanner findings are release-blocking if they affect production value-moving
+runtime paths or privileged operational authority. For Jupiter Faucet, those
+paths are the backend production canisters that control ledger, index, CMC, NNS
+Governance, and SNS/system canister interactions, plus the reserved lifeline
+rescue-controller principal.
+
+The automated production reachability gate covers `jupiter-disburser`,
+`jupiter-faucet`, `jupiter-relay`, `jupiter-historian`, and
+`jupiter-lifeline`. `jupiter-lifeline` is included because it is the configured
+reserved rescue-controller principal for operational canisters; if rescue opens
+controller authority to that principal, its Wasm is part of the privileged
+operational attack surface even though its current implementation only logs
+cycles.
+
+`jupiter-sns-rewards` is intentionally not part of the automated production
+reachability gate today. Its current Wasm has no public methods, timers, stable
+state, ledger/index/CMC/NNS/SNS/system clients, rescue logic, or controller
+authority. It is the passive principal/default ledger account that receives the
+disburser's age-bonus flow and reserves a future rewards-distribution location;
+until reward-distribution logic or privileged authority is added, it is not a
+production value-moving runtime path.
+
+Findings outside that surface are allowed only with automated proof:
+
+- `dev-test-only` findings must remain confined to local tooling, mocks, tests,
+  or PocketIC paths.
+- `frontend-informational-only` findings may affect frontend display or asset
+  certification paths only. The frontend is informational and has no
+  authentication or value-moving control surface.
+- `production-proc-macro-only` findings may appear only when the automated gate
+  can prove the specific allowed non-runtime shape. For `paste`, that shape is
+  proc-macro support only, not runtime logic or broader build-only support.
+- `production-value-moving-runtime` findings are release-blocking and must not
+  be globally ignored.
+
+Global advisory ignores in `deny.toml` and `osv-scanner.toml` must remain paired
+with `tools/scripts/check-production-reachability`. Date-based exception expiry
+is intentionally not used for these findings; the gate fails when the dependency
+scope changes into the production value-moving runtime surface.
 
 ## Current NNS Dependency Posture
 
@@ -101,13 +151,13 @@ After this reduction:
 
 | Production canister | Advisory crates present in wasm-target normal/build tree | Reason |
 | --- | --- | --- |
-| `jupiter-disburser` | `paste` | Build-time proc macro through `candid` / `ic-cdk` macro dependencies. |
-| `jupiter-faucet` | `paste` | Build-time proc macro through `candid` / `ic-cdk` macro dependencies. |
-| `jupiter-relay` | `paste` | Build-time proc macro through `candid` / `ic-cdk` macro dependencies. |
-| `jupiter-historian` | `paste` | Build-time proc macro through `candid` / `ic-cdk` macro dependencies. |
-| `jupiter-faucet-frontend` | `serde_cbor`, `paste` | `serde_cbor` is pulled by `ic-http-certification` through `ic-asset-certification`; `paste` is a build-time proc macro. |
-| `jupiter-lifeline` | `paste` | Build-time proc macro through `candid` / `ic-cdk` macro dependencies. |
-| `jupiter-sns-rewards` | `paste` | Build-time proc macro through `candid` / `ic-cdk` macro dependencies. |
+| `jupiter-disburser` | `paste` | Proc-macro support through `candid` / `ic-cdk` macro dependencies. |
+| `jupiter-faucet` | `paste` | Proc-macro support through `candid` / `ic-cdk` macro dependencies. |
+| `jupiter-relay` | `paste` | Proc-macro support through `candid` / `ic-cdk` macro dependencies. |
+| `jupiter-historian` | `paste` | Proc-macro support through `candid` / `ic-cdk` macro dependencies. |
+| `jupiter-faucet-frontend` | `serde_cbor`, `paste` | `serde_cbor` is pulled by `ic-http-certification` through `ic-asset-certification`; `paste` is proc-macro support. |
+| `jupiter-lifeline` | `paste` | Proc-macro support through `candid` / `ic-cdk` macro dependencies. |
+| `jupiter-sns-rewards` | `paste` | Proc-macro support through `candid` / `ic-cdk` macro dependencies. |
 
 `rsa`, `bincode`, `proc-macro-error`, and `derivative` are no longer present in
 the workspace dependency graph. `serde_cbor` is no longer present in backend
@@ -121,9 +171,9 @@ production canister wasm-target normal/build trees.
 | `bincode` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i bincode --workspace --edges normal,build,dev` reports no matching package. |
 | `proc-macro-error` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i proc-macro-error --workspace --edges normal,build,dev` reports no matching package. |
 | `derivative` | Removed | None | Removed with the broad DFINITY NNS graph. `cargo tree -i derivative --workspace --edges normal,build,dev` reports no matching package. |
-| `paste` | Still present, build-time only | All production canisters | `cargo tree` marks `paste v1.0.15 (proc-macro)`. It is pulled by upstream `candid` / `ic-cdk` macro paths and expands at build time. Removing it requires upstream macro dependency changes. |
+| `paste` | Still present as proc-macro support only | All production canisters in this review | `cargo tree` marks `paste v1.0.15 (proc-macro)`. It is pulled by upstream `candid` / `ic-cdk` macro paths and expands at build time. Removing it requires upstream macro dependency changes. In the automated reachability gate, `paste` may appear only as proc-macro support, not as runtime logic or broader build-only support. |
 | `serde_cbor` | Still present through unavoidable upstream runtime dependency | `jupiter-faucet-frontend` | `serde_cbor -> ic-http-certification -> ic-asset-certification -> jupiter-faucet-frontend`. Current `ic-http-certification 3.2.0` has a direct `serde_cbor` dependency; current `ic-asset-certification` depends on it with `default-features = false`, so no local feature flag removes it. |
-| `serde_cbor` | Still present, dev/test-only | Test and PocketIC tooling for backend crates | `serde_cbor` also appears through `pocket-ic` / `ic-transport-types` dev dependency paths. These paths are absent from production wasm-target normal/build trees for disburser, faucet, relay, historian, lifeline, and sns-rewards. |
+| `serde_cbor` | Still present, dev/test-only | Test and PocketIC tooling for backend crates | `serde_cbor` also appears through `pocket-ic` / `ic-transport-types` dev dependency paths. These paths are absent from covered production value-moving and privileged operational wasm-target normal/build trees for disburser, faucet, relay, historian, and lifeline; they are also absent from the current passive sns-rewards placeholder tree. |
 
 The security scan still also ignores:
 
@@ -131,6 +181,18 @@ The security scan still also ignores:
 | --- | --- | --- |
 | `backoff` | Still present, dev/test-only | Pulled by `pocket-ic` dev/test tooling and absent from production canister wasm-target normal/build trees. |
 | `instant` | Still present, dev/test-only | Pulled by `backoff` / `pocket-ic` dev/test tooling and absent from production canister wasm-target normal/build trees. |
+
+Current ignored finding classification:
+
+| Finding | Crate | Classification | Automated enforcement |
+| --- | --- | --- | --- |
+| `RUSTSEC-2025-0012` | `backoff` | `dev-test-only` | `tools/scripts/security-scan` fails if present in disburser, faucet, relay, historian, or lifeline wasm normal/build trees. |
+| `RUSTSEC-2024-0384` | `instant` | `dev-test-only` | `tools/scripts/security-scan` fails if present in disburser, faucet, relay, historian, or lifeline wasm normal/build trees. |
+| `RUSTSEC-2024-0436` | `paste` | `production-proc-macro-only` | `tools/scripts/security-scan` fails if `paste` appears in those wasm trees as anything other than proc-macro support. |
+| `RUSTSEC-2021-0127` | `serde_cbor` | `frontend-informational-only`, with additional `dev-test-only` PocketIC paths | `tools/scripts/security-scan` fails if present in disburser, faucet, relay, historian, or lifeline wasm normal/build trees. |
+
+No current ignored finding is classified as
+`production-value-moving-runtime`.
 
 ## Wasm And Candid Impact
 
@@ -175,8 +237,8 @@ python3 ./tools/scripts/validate-mainnet-install-args
 
 Owner acceptance covers:
 
-- `paste` as a build-time upstream proc-macro dependency in all production
-  canister build trees.
+- `paste` as upstream proc-macro support in all production canister build
+  trees, not as runtime logic or broader build-only support.
 - `serde_cbor` as an upstream frontend certification runtime dependency through
   `ic-http-certification` / `ic-asset-certification`.
 - `serde_cbor`, `backoff`, and `instant` as dev/test-only dependencies through

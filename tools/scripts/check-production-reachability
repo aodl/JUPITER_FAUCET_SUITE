@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$repo_root" ]; then
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+  repo_root="$(CDPATH= cd -- "$script_dir/../.." && pwd)"
+fi
+cd "$repo_root"
+
+production_canisters=(
+  jupiter-disburser
+  jupiter-faucet
+  jupiter-relay
+  jupiter-historian
+  jupiter-lifeline
+)
+
+must_be_absent=(
+  backoff
+  instant
+  serde_cbor
+  pocket-ic
+  ic-management-canister-types
+  ic-base-types
+  ic-nns-common
+  ic-nns-governance-api
+  rsa
+  bincode
+  proc-macro-error
+  derivative
+)
+
+tmpdir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+
+status=0
+
+contains_package() {
+  local package="$1"
+  local tree_file="$2"
+  grep -Eq "^${package} v[0-9]" "$tree_file"
+}
+
+echo "Checking production value-moving and privileged operational wasm dependency reachability..."
+
+for canister in "${production_canisters[@]}"; do
+  tree_file="$tmpdir/${canister}.tree"
+  cargo tree \
+    -p "$canister" \
+    --target wasm32-unknown-unknown \
+    --edges normal,build \
+    --locked \
+    --prefix none \
+    > "$tree_file"
+
+  for package in "${must_be_absent[@]}"; do
+    if contains_package "$package" "$tree_file"; then
+      echo "error: ${package} is present in ${canister} wasm normal/build dependency tree" >&2
+      status=1
+    fi
+  done
+
+  if grep -E "^paste v[0-9]" "$tree_file" | grep -Ev " \(proc-macro\)$" >&2; then
+    echo "error: paste is present in ${canister} wasm tree outside proc-macro support" >&2
+    status=1
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "Production reachability check failed." >&2
+  exit "$status"
+fi
+
+echo "Production reachability check passed."

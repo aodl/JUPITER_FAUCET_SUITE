@@ -30,6 +30,7 @@ print_version "cargo cyclonedx" cargo cyclonedx --version
 node tools/scripts/check-npm-lock-hermetic.mjs
 print_version "cyclonedx-npm" npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --version
 
+tools/scripts/check-production-reachability
 cargo run -p nns-bindgen-check -- --check
 cargo audit
 cargo deny check advisories licenses bans sources
