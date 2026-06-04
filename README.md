@@ -29,13 +29,15 @@ The value-moving canisters expose little or no public production API. Public ver
 
 Reproducible builds are part of the trust model for Jupiter Faucet. A deployed canister's Wasm module hash can be compared with locally rebuilt release artifacts so readers can connect public source code to the code running on the Internet Computer.
 
-Start with [reproducible builds](docs/operations/reproducible-builds.md) for the verification flow and [`tools/scripts/build-canister`](tools/scripts/build-canister) for the normal release-artifact builder. The high-level local build command is:
+Start with [reproducible builds](docs/operations/reproducible-builds.md) for the scenario-based verification flow. If your goal is to compare this source checkout with mainnet, use the Docker-backed release path documented there; it prints the installed module-hash references that should match the live canister module hashes.
+
+Use [`tools/scripts/build-canister`](tools/scripts/build-canister) for normal local release-artifact builds, local installs, and quick inspection:
 
 ```bash
 ./tools/scripts/build-canister all
 ```
 
-The full reproducibility check uses the heavier Docker-backed path documented in [reproducible builds](docs/operations/reproducible-builds.md). Docker access and mainnet canister visibility may be required for parts of an end-to-end verification workflow.
+The full reproducibility check uses the heavier Docker-backed path and the clean-rebuild comparison documented in [reproducible builds](docs/operations/reproducible-builds.md). Docker access and mainnet canister visibility may be required for parts of an end-to-end verification workflow.
 
 ## Repository Layout
 
