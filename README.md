@@ -31,7 +31,7 @@ Reproducible builds are part of the trust model for Jupiter Faucet. A deployed c
 
 Start with [reproducible builds](docs/operations/reproducible-builds.md) for the scenario-based verification flow. If your goal is to compare this source checkout with mainnet, use the Docker-backed release path documented there; it prints the installed module-hash references that should match the live canister module hashes.
 
-Use [`tools/scripts/build-canister`](tools/scripts/build-canister) for normal local release-artifact builds, local installs, and quick inspection:
+Use [`tools/scripts/build-canister`](tools/scripts/build-canister) for local release-artifact builds, direct local installs, frontend prototype deployment, and quick inspection. For ordinary production deployment and upgrades, follow the canister-specific deployment docs and `icp deploy` flow:
 
 ```bash
 ./tools/scripts/build-canister all

@@ -31,14 +31,14 @@ find release-artifacts -maxdepth 2 -type f | sort
 echo
 for wasm in release-artifacts/*.wasm; do
   [ -e "$wasm" ] || continue
-  echo "Installed module hash reference ($(basename "$wasm")):"
+  echo "Decompressed Wasm hash ($(basename "$wasm")):"
   sha256sum "$wasm"
   echo
 done
 
 for wasm_gz in release-artifacts/*.wasm.gz; do
   [ -e "$wasm_gz" ] || continue
-  echo "Deployment package hash ($(basename "$wasm_gz")):"
+  echo "Installed module hash reference ($(basename "$wasm_gz")):"
   sha256sum "$wasm_gz"
   echo
 done

@@ -31,8 +31,8 @@ docker build --no-cache --file Dockerfile.repro --target artifact --output "type
 ) > "$workdir/run-b.sha256"
 
 if ! diff -u "$workdir/run-a.sha256" "$workdir/run-b.sha256"; then
-  echo "release artifacts are not reproducible" >&2
+  echo "release artifacts differ between clean same-environment rebuilds" >&2
   exit 1
 fi
 
-echo "release artifacts are reproducible"
+echo "release artifacts match across clean same-environment rebuilds"
