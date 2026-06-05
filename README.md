@@ -29,7 +29,7 @@ The value-moving canisters expose little or no public production API. Public ver
 
 Reproducible builds are part of the trust model for Jupiter Faucet. A deployed canister's Wasm module hash can be compared with locally rebuilt release artifacts so readers can connect public source code to the code running on the Internet Computer.
 
-Start with [reproducible builds](docs/operations/reproducible-builds.md) for the scenario-based verification flow. If your goal is to compare this source checkout with mainnet, use the Docker-backed release path documented there. That flow is designed around the `.wasm.gz` installed package hashes, but the disposable-canister smoke test in the operations docs should confirm the IC-reported `module_hash` comparison target for compressed installs before relying on it for a production release.
+Start with [reproducible builds](docs/operations/reproducible-builds.md) for the scenario-based verification flow. If your goal is to compare this source checkout with mainnet, use the Docker-backed release path documented there; it prints the `.wasm.gz` installed package hashes that should match the live canister module hashes.
 
 For canonical verification:
 

@@ -101,7 +101,7 @@ This runs the configured build step locally and installs the resulting `.wasm.gz
 
 ## Verification
 
-After deployment, compare the live module hash with the canonical Docker build hash target confirmed by the disposable-canister compressed-install smoke test in [reproducible builds](reproducible-builds.md). This flow is designed around the uploaded `.wasm.gz` package hash, while the decompressed `.wasm` hash remains useful release evidence. Then verify runtime configuration from public logs and canister-specific README checklists.
+After deployment, compare the live module hash with the `.wasm.gz` SHA-256 from the canonical Docker build. This verifies the installed package hash; runtime configuration must still be verified separately from public logs and canister-specific README checklists.
 
 Canister-specific README sections define production canister IDs, artifact names, `InitArgs` and `UpgradeArgs` usage, and verification commands:
 

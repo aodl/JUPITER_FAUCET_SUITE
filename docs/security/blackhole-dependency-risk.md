@@ -237,11 +237,9 @@ canonical Docker flow documented in
 ./tools/scripts/docker-build
 ```
 
-That flow is designed around the canonical Docker-built `.wasm.gz` package
-evidence, while the decompressed `.wasm` hash remains useful release evidence.
-Before relying on the `.wasm.gz` value as the production `module_hash`
-comparison target, run the disposable-canister compressed-install smoke test
-documented there.
+That flow uses the canonical Docker-built `.wasm.gz` installed package hash as
+the production module-hash comparison target, while the decompressed `.wasm`
+hash remains useful release evidence.
 
 No production `.did`, debug `.did`, `dfx.json`, `canister_ids.json`, or
 `mainnet-install-args.did` file changed. Production install arguments remain
