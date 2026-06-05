@@ -1,15 +1,15 @@
 # NNS Governance Bindgen Architecture
 
-`jupiter-nns-types` uses a checked-in generated Rust file for Jupiter's NNS
-Governance wire DTOs. `jupiter-ic-clients` uses a second checked-in generated
+[`jupiter-nns-types`](../../crates/nns-types) uses a checked-in generated Rust file for Jupiter's NNS
+Governance wire DTOs. [`jupiter-ic-clients`](../../crates/ic-clients) uses a second checked-in generated
 Rust file for the raw NNS Governance transport surface. Both files are
-regenerated and verified from a pinned Candid subset by `nns-bindgen-check`.
+regenerated and verified from a pinned Candid subset by [`nns-bindgen-check`](../../tools/nns-bindgen-check).
 
 ## Pinned Input
 
 The source DID is:
 
-- `candid/nns-governance/governance.subset.did`
+- [`candid/nns-governance/governance.subset.did`](../../candid/nns-governance/governance.subset.did)
 - `dfinity/ic` commit `0c7c8b83144844e1a598633585b3ee1beebe338b`
 - upstream path `rs/nns/governance/canister/governance.did`
 - copy date `2026-06-01`
@@ -24,15 +24,15 @@ The subset covers Jupiter-used NNS Governance calls:
 
 ## Production Generation Path
 
-Production builds do not run bindgen. `crates/nns-types/src/lib.rs` includes
+Production builds do not run bindgen. [`crates/nns-types/src/lib.rs`](../../crates/nns-types/src/lib.rs) includes
 the committed generated DTO file:
 
-- `crates/nns-types/src/generated/nns_governance_types.rs`
+- [`crates/nns-types/src/generated/nns_governance_types.rs`](../../crates/nns-types/src/generated/nns_governance_types.rs)
 
-`crates/ic-clients/src/generated/mod.rs` includes the committed generated raw
+[`crates/ic-clients/src/generated/mod.rs`](../../crates/ic-clients/src/generated/mod.rs) includes the committed generated raw
 transport file:
 
-- `crates/ic-clients/src/generated/nns_governance_transport.rs`
+- [`crates/ic-clients/src/generated/nns_governance_transport.rs`](../../crates/ic-clients/src/generated/nns_governance_transport.rs)
 
 Those files are generated from the pinned DID and reviewed in git. The
 verification command is:
@@ -62,12 +62,12 @@ avoiding unused generated call stubs.
 
 ## Current Architecture
 
-`jupiter-nns-types` remains a DTO-only crate. Its normal dependencies stay
+[`jupiter-nns-types`](../../crates/nns-types) remains a DTO-only crate. Its normal dependencies stay
 limited to `candid` and `serde`; the dev-only verifier owns the `candid_parser`
 dependency. The crate does not depend on `ic-cdk`, does not expose generated call
 stubs, and does not make generated transport code part of its runtime behavior.
 
-`jupiter-ic-clients` owns the generated raw NNS Governance transport because it
+[`jupiter-ic-clients`](../../crates/ic-clients) owns the generated raw NNS Governance transport because it
 already owns shared inter-canister client code and depends on `ic-cdk`. The
 generated transport accepts dynamic `Principal` callees, supports
 `GovernanceCallWait` for bounded default, bounded explicit-timeout, and
@@ -106,7 +106,7 @@ Generated bindgen names are flat. Examples:
 - `By`
 - `Result2`
 
-`jupiter-nns-types` directly re-exports the generated structs and enums. It also
+[`jupiter-nns-types`](../../crates/nns-types) directly re-exports the generated structs and enums. It also
 keeps a few compatibility modules, such as `manage_neuron`,
 `manage_neuron_response`, `list_neurons`, and `neuron`, as type aliases to the
 generated types. These modules are not parallel wire DTO definitions; they are
@@ -141,10 +141,10 @@ Command::Configure {}
 
 ## Dependency Boundary
 
-`jupiter-nns-types` has no build script and no bindgen dependency. Its
+[`jupiter-nns-types`](../../crates/nns-types) has no build script and no bindgen dependency. Its
 production normal dependency surface remains `candid` plus `serde`.
 
-The dev-only `nns-bindgen-check` tool pins `candid_parser = "=0.2.4"` to verify
+The dev-only [`nns-bindgen-check`](../../tools/nns-bindgen-check) tool pins `candid_parser = "=0.2.4"` to verify
 that the committed generated DTO and raw transport files remain in sync with the
 pinned DID and type selector config.
 

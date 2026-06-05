@@ -26,7 +26,7 @@ cargo run -p xtask -- frontend_all
 
 The frontend `xtask` commands auto-install or refresh repo-root Node dependencies when they are missing or stale, and `frontend_setup` lets you do that preflight explicitly.
 
-The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every `canisters/frontend/web/test/*.test.mjs` file):
+The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every [`canisters/frontend/web/test/*.test.mjs`](../../canisters/frontend/web/test) file):
 
 ```bash
 npm run setup:frontend
@@ -54,7 +54,7 @@ cargo run -p xtask -- setup
 
 - creating a dedicated non-interactive identity named `xtask-dev` if needed
 - starting the local replica
-- deploying the mock canisters used by the integration scenarios:
+- deploying the [mock canisters](../../tests/mocks) used by the integration scenarios:
   - `mock_icrc_ledger`
   - `mock_nns_governance`
   - `mock_icp_index`
@@ -155,7 +155,7 @@ Use this when iterating on pure logic and state transitions.
 
 ### `*_local_integration`
 
-Runs scenario-based integration checks against the local `icp-cli` managed replica using the mock canisters declared in `icp.yaml`.
+Runs scenario-based integration checks against the local `icp-cli` managed replica using the mock canisters declared in [`icp.yaml`](../../icp.yaml).
 
 These scenarios are especially useful for validating:
 

@@ -14,7 +14,7 @@ cargo install cargo-deny --version 0.19.8 --locked
 cargo install cargo-cyclonedx --version 0.5.9 --locked
 ```
 
-Install Node dependencies from the committed lockfile:
+Install Node dependencies from the committed [`package-lock.json`](../../package-lock.json):
 
 ```bash
 npm ci
@@ -44,10 +44,10 @@ Run the canonical local command from any directory in the repository:
 
 The script fails non-zero if any of these steps fails:
 
-- `tools/scripts/check-production-reachability`
+- [`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability)
 - `cargo audit`
 - `cargo deny check advisories licenses bans sources`
-- `node tools/scripts/check-npm-lock-hermetic.mjs`
+- [`node tools/scripts/check-npm-lock-hermetic.mjs`](../../tools/scripts/check-npm-lock-hermetic.mjs)
 - `npm audit --omit=dev`
 - `osv-scanner scan -L Cargo.lock -L package-lock.json`
 - Rust or npm SBOM generation
@@ -77,8 +77,8 @@ Allowed RustSec ignores must be classified as one of:
 - `dev-test-only`: local tooling, mocks, tests, or PocketIC-only paths.
 
 Global advisory ignores are allowed only when paired with automated
-reachability checks. `tools/scripts/check-production-reachability`, called by
-`tools/scripts/security-scan`, validates the locked wasm-target normal/build
+reachability checks. [`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability), called by
+[`tools/scripts/security-scan`](../../tools/scripts/security-scan), validates the locked wasm-target normal/build
 trees for `jupiter-disburser`, `jupiter-faucet`, `jupiter-relay`,
 `jupiter-historian`, and `jupiter-lifeline`. The first four canisters own the
 current production value-moving and system-observation paths. `jupiter-lifeline`
@@ -93,7 +93,7 @@ not a production value-moving runtime path.
 
 Release checklist reminder: when `jupiter-sns-rewards` gains runtime logic or
 controller authority, add it to `production_canisters` in
-`tools/scripts/check-production-reachability` before release validation.
+[`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability) before release validation.
 
 The gate fails if an explicitly forbidden package enters the covered production
 trees, and it fails if `paste` appears there as anything other than proc-macro
@@ -133,8 +133,8 @@ release-artifacts/sbom/npm.cdx.json
 release-artifacts/sbom/SHA256SUMS
 ```
 
-Keep advisory and license exceptions narrow. Any exception in `deny.toml` must
+Keep advisory and license exceptions narrow. Any exception in [`deny.toml`](../../deny.toml) must
 explain why it is acceptable for production and whether the dependency is
 runtime, build-time, test-only, dev-only, or frontend-informational-only. OSV
-exceptions live in `osv-scanner.toml` because OSV Scanner does not read
-`deny.toml`; keep the two files aligned for shared RustSec findings.
+exceptions live in [`osv-scanner.toml`](../../osv-scanner.toml) because OSV Scanner does not read
+[`deny.toml`](../../deny.toml); keep the two files aligned for shared RustSec findings.

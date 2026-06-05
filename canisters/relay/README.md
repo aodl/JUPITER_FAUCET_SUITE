@@ -1,6 +1,6 @@
 # Jupiter Relay
 
-`jupiter-relay` is an ICP-funded cycles allocator and optional surplus router for the Jupiter Faucet Suite. Jupiter Faucet uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and allocates ICP based on recent burn. When raw ICP surplus recipients are configured, top-ups are capped at 1% more than recent burn and remaining production surplus ICP is split equally across those recipients. When no raw ICP surplus recipients are configured, Relay routes ICP as cycles through CMC using burn-weighted allocations once the all-cycles batch is fee-efficient for every positive-burn managed canister. Relay also checks its own subaccount 1 on each main tick and forwards qualifying Jupiter Faucet commitments from that subaccount independently of the default-account allocation job.
+`jupiter-relay` is an ICP-funded cycles allocator and optional surplus router for the Jupiter Faucet Suite. [Jupiter Faucet](../faucet) uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and allocates ICP based on recent burn. When raw ICP surplus recipients are configured, top-ups are capped at 1% more than recent burn and remaining production surplus ICP is split equally across those recipients. When no raw ICP surplus recipients are configured, Relay routes ICP as cycles through CMC using burn-weighted allocations once the all-cycles batch is fee-efficient for every positive-burn managed canister. Relay also checks its own subaccount 1 on each main tick and forwards qualifying Jupiter Faucet commitments from that subaccount independently of the default-account allocation job.
 
 It spends ICP from the relay canister default ICP ledger account:
 
@@ -16,7 +16,7 @@ Fund it through the existing faucet raw-ICP memo route with:
 <relay_canister_id>.
 ```
 
-The trailing dot is required. In `jupiter-memo-policy`, `canister_id.memo` means raw ICP to the canister default account with the right-hand segment used as the outgoing memo; an empty right-hand segment sends raw ICP with an empty memo.
+The trailing dot is required. In [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` means raw ICP to the canister default account with the right-hand segment used as the outgoing memo; an empty right-hand segment sends raw ICP with an empty memo.
 
 ## Role in the Suite
 
@@ -94,7 +94,7 @@ CONFIG relay_canister_id=...
 
 The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ledger, CMC, NNS Governance, blackhole, interval, transfer limit, surplus recipients, surplus memo lengths, and whether the configured production managed set matches the known Jupiter suite set.
 
-After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with [`mainnet-install-args.did`](mainnet-install-args.did), and using the frontend source pane. Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
+After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with [`mainnet-install-args.did`](mainnet-install-args.did), and using the [frontend source pane](../frontend). Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 
 ```bash
 icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic

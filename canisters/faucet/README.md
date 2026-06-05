@@ -2,7 +2,7 @@
 
 `jupiter-faucet` is the cycles top-up canister in the Jupiter Faucet Suite.
 
-It receives the **base ICP flow** from `jupiter-disburser`, attributes staking-account deposits to beneficiaries using transaction memos, and performs proportional CMC top-ups for those beneficiaries.
+It receives the **base ICP flow** from [`jupiter-disburser`](../disburser), attributes staking-account deposits to beneficiaries using transaction memos, and performs proportional CMC top-ups for those beneficiaries.
 
 This is the canister that turns “someone deposited ICP into the reward neuron’s staking path” into “a beneficiary canister received a cycles top-up.”
 
@@ -20,7 +20,7 @@ Unless otherwise noted, command examples in this README are run from the reposit
 4. converting a payout pot of ICP into proportional per-commitment top-ups
 5. managing its own blackhole / recovery policy once armed
 
-It does **not** control the NNS neuron itself. `jupiter-disburser` is responsible for producing the ICP that the faucet spends.
+It does **not** control the NNS neuron itself. [`jupiter-disburser`](../disburser) is responsible for producing the ICP that the faucet spends.
 
 ## External dependencies
 
@@ -181,9 +181,9 @@ Operationally, the mitigation strategy is therefore:
 
 The repo covers this in three layers:
 
-- `src/logic.rs` unit tests verify the weighting, boundary, production-delay, and payout arithmetic used by the faucet
-- `src/scheduler/tests.rs` and `src/scheduler/route_accounting.rs` tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, keeps historical stake contributing, and handles the genesis strict tranche with a zero round-start baseline
-- the disburser/faucet PocketIC suite keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation; short-delay variants prove the mechanism, and the production-delay variant proves the 7-day policy
+- [`src/logic.rs`](src/logic.rs) unit tests verify the weighting, boundary, production-delay, and payout arithmetic used by the faucet
+- [`src/scheduler/tests.rs`](src/scheduler/tests.rs) and [`src/scheduler/route_accounting.rs`](src/scheduler/route_accounting.rs) tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, keeps historical stake contributing, and handles the genesis strict tranche with a zero round-start baseline
+- the [disburser/faucet PocketIC suite](../../tests/pocketic) keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation; short-delay variants prove the mechanism, and the production-delay variant proves the 7-day policy
 
 The detailed reward-environment caveats and the rationale for the PocketIC whale background live in [`../../tools/xtask/README.md`](../../tools/xtask/README.md) and in the comments around the PocketIC reward helpers.
 
@@ -462,7 +462,7 @@ Before upgrade:
 - Confirm the faucet canister ID is the intended production principal and will not change.
 - Confirm no active payout job or pending transfer/notification is in progress from logs and operational state.
 - Confirm the payout account is empty, dust-only, or otherwise at the expected balance for the planned upgrade window.
-- Run `python3 ./tools/scripts/validate-mainnet-install-args` and confirm the production install args still set `stake_recognition_delay_seconds = 604800`.
+- Run [`python3 ./tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args) and confirm the production install args still set `stake_recognition_delay_seconds = 604800`.
 
 After upgrade:
 
@@ -507,7 +507,7 @@ Before reinstall:
 - Confirm the faucet staking account is the intended Jupiter neuron staking account.
 - Confirm the canister principal and payout subaccount from deployment config.
 - Confirm the old Faucet timer will not process the current funds before reinstall.
-- Run `python3 ./tools/scripts/validate-mainnet-install-args` and confirm `main_interval_seconds = 86400`, `rescue_interval_seconds = 86400`, and `stake_recognition_delay_seconds = 604800`.
+- Run [`python3 ./tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args) and confirm `main_interval_seconds = 86400`, `rescue_interval_seconds = 86400`, and `stake_recognition_delay_seconds = 604800`.
 
 After reinstall:
 

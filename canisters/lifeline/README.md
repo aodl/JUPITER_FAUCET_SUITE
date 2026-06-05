@@ -26,7 +26,7 @@ The underlying assumption is that real rescue logic should be added only in the 
 
 ## Role in the suite
 
-During healthy operation, `jupiter-disburser` and `jupiter-faucet` are expected to reconcile to `self + blackhole` controller sets.
+During healthy operation, [`jupiter-disburser`](../disburser) and [`jupiter-faucet`](../faucet) are expected to reconcile to `self + blackhole` controller sets.
 
 If their local rescue policy concludes that value flow is broken, they widen their controller sets to include `jupiter-lifeline`.
 

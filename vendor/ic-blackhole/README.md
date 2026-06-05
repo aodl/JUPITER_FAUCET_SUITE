@@ -6,7 +6,7 @@ Once a canister sets its only controller to a black hole, it becomes immutable a
 
 ## How to verify it is a black hole
 
-First, we can read the source code in [src/blackhole.mo](https://github.com/ninegua/ic-blackhole/blob/main/src/blackhole.mo).
+First, we can read the source code in [`src/blackhole.mo`](src/blackhole.mo), mirrored from [upstream](https://github.com/ninegua/ic-blackhole/blob/main/src/blackhole.mo).
 It is about 30 lines, so should be easy to convince ourselves it is not doing anything fishy.
 
 Next, we need to make sure what is deployed on Internet Computer is compiled from this source code.

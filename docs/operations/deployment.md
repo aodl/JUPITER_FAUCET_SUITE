@@ -9,7 +9,7 @@ Fresh install argument files live with their owning canisters:
 - [`canisters/historian/mainnet-install-args.did`](../../canisters/historian/mainnet-install-args.did)
 - [`canisters/relay/mainnet-install-args.did`](../../canisters/relay/mainnet-install-args.did)
 
-Validate production install arguments and DID separation with:
+Validate production install arguments and DID separation with [`tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args):
 
 ```bash
 python3 ./tools/scripts/validate-mainnet-install-args

@@ -25,7 +25,7 @@ This canister is **read-oriented**. It does not move value, control the NNS neur
 
 ### Commitment indexing
 
-The historian scans the same ICRC-1 staking account address that `jupiter-faucet` uses: `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`.
+The historian scans the same ICRC-1 staking account address that [`jupiter-faucet`](../faucet) uses: `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`.
 
 Unlike the faucet, it keeps an incremental cursor and does not rescan old staking transfers after they have already been indexed.
 
@@ -197,7 +197,7 @@ Optional:
 - `ledger_canister_id` (defaults to ICP Ledger)
 - `index_canister_id` (defaults to ICP Index)
 - `cmc_canister_id` (defaults to CMC)
-- `faucet_canister_id` (defaults to production `jupiter-faucet` canister ID)
+- `faucet_canister_id` (defaults to production [`jupiter-faucet`](../faucet) canister ID)
 - `blackhole_canister_id` (defaults to canonical blackhole)
 - `sns_wasm_canister_id` (defaults to SNS-WASM)
 - `enable_sns_tracking` (defaults to `false`)
@@ -282,7 +282,7 @@ cargo run -p xtask -- historian_pocketic_integration
 cargo run -p xtask -- historian_all
 ```
 
-The suite-level PocketIC E2E tests also exercise historian-adjacent read-model expectations through the frontend-facing queries.
+The suite-level [PocketIC E2E tests](../../tests/pocketic) also exercise historian-adjacent read-model expectations through the frontend-facing queries.
 
 Coverage includes, among other things:
 

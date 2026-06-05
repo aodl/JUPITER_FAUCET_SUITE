@@ -2,7 +2,7 @@
 
 `jupiter-faucet-frontend` is the public asset canister for the Jupiter Faucet Suite.
 
-It serves the landing page as certified assets from a Rust asset canister. The browser-side dashboard logic uses generated declarations plus a browser-compatible `@icp-sdk/core/agent` transport to read live data directly from canisters.
+It serves the landing page as certified assets from a [Rust asset canister](src/lib.rs). The browser-side dashboard logic uses generated declarations plus a browser-compatible `@icp-sdk/core/agent` transport to read live data directly from canisters.
 
 See the suite overview in [`../../README.md`](../../README.md).
 
@@ -37,15 +37,15 @@ Asset responses also carry the canister’s standard security headers, including
 
 The frontend keeps the certified-asset Rust canister, and the in-page dashboard data path follows the normal ICP browser path:
 
-- declarations are checked in under `web/declarations/`
+- declarations are checked in under [`web/declarations/`](web/declarations)
 - the browser uses generated declarations with `@icp-sdk/core/agent`
 - actors are created through the generated `createActor(...)` helpers
 - dashboard data comes from Candid query calls, not from custom `/dashboard/*` JSON routes
 
 The browser-side source lives under:
 
-- `web/src/`
-- `web/declarations/`
+- [`web/src/`](web/src)
+- [`web/declarations/`](web/declarations)
 
 The bundled output is written to:
 
@@ -154,9 +154,9 @@ Inline JavaScript and inline CSS are not allowed by the frontend CSP. Page and f
 
 ## Declarations
 
-The checked-in historian declarations under `web/declarations/jupiter_historian/` are the browser-facing Candid bindings used by the bundle.
+The checked-in historian declarations under [`web/declarations/jupiter_historian/`](web/declarations/jupiter_historian) are the browser-facing Candid bindings used by the bundle.
 
-`web/declarations/icp_ledger/` is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the actor is pointed at the ledger canister ID returned by historian status.
+[`web/declarations/icp_ledger/`](web/declarations/icp_ledger) is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the actor is pointed at the ledger canister ID returned by historian status.
 
 ## Frontend-only tests
 

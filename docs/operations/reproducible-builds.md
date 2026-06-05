@@ -6,7 +6,7 @@ Most readers want one specific outcome: rebuild the canister Wasm modules from t
 
 ## How to compare this source checkout with mainnet
 
-Run the canonical Docker build:
+Run the canonical Docker build with [`tools/scripts/docker-build`](../../tools/scripts/docker-build):
 
 ```bash
 ./tools/scripts/docker-build

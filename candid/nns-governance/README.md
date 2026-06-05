@@ -1,9 +1,9 @@
 # NNS Governance Candid Evidence
 
 This directory pins the NNS Governance Candid wire shape used by
-`jupiter-nns-types` to generate Jupiter's committed NNS Governance wire DTOs.
+[`jupiter-nns-types`](../../crates/nns-types) to generate Jupiter's committed NNS Governance wire DTOs.
 Run `cargo run -p nns-bindgen-check -- --check` to verify the committed DTO file
-is in sync with this DID and `nns-governance-bindgen.toml`.
+is in sync with this DID and [`nns-governance-bindgen.toml`](nns-governance-bindgen.toml).
 
 Upstream source:
 
@@ -13,7 +13,7 @@ Upstream source:
 - Raw URL: <https://raw.githubusercontent.com/dfinity/ic/0c7c8b83144844e1a598633585b3ee1beebe338b/rs/nns/governance/canister/governance.did>
 - Date copied: 2026-06-01
 
-`governance.subset.did` is a documented subset, not a full copy of the
+[`governance.subset.did`](governance.subset.did) is a documented subset, not a full copy of the
 upstream DID. It contains the Governance methods and DTOs that Jupiter canisters
 or test harnesses use:
 
@@ -26,8 +26,8 @@ or test harnesses use:
 The subset intentionally excludes unrelated NNS proposal, economics, node
 provider, SNS, and canister-management DTOs. It keeps generated output
 reviewable while preserving pinned Candid evidence for the wire types used by
-Jupiter's faucet, disburser, relay, historian, mocks, and PocketIC tests.
+Jupiter's [faucet](../../canisters/faucet), [disburser](../../canisters/disburser), [relay](../../canisters/relay), [historian](../../canisters/historian), [mocks](../../tests/mocks), and [PocketIC tests](../../tests/pocketic).
 
 Do not update this file from an unpinned `master` URL. When refreshing the
 subset, record the exact upstream commit and review the generated
-`jupiter-nns-types` API changes before updating downstream call sites.
+[`jupiter-nns-types`](../../crates/nns-types) API changes before updating downstream call sites.

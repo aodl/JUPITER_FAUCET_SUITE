@@ -50,8 +50,8 @@ python3 ./tools/scripts/validate-mainnet-install-args
 ./tools/scripts/security-scan
 ```
 
-`tools/scripts/security-scan` calls
-`tools/scripts/check-production-reachability` before the advisory scanners. That
+[`tools/scripts/security-scan`](../../tools/scripts/security-scan) calls
+[`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability) before the advisory scanners. That
 helper regenerates the locked wasm-target normal/build trees for
 `jupiter-disburser`, `jupiter-faucet`, `jupiter-relay`, and
 `jupiter-historian`, plus the privileged `jupiter-lifeline` rescue principal,
@@ -82,9 +82,9 @@ disburser's age-bonus flow and reserves a future rewards-distribution location;
 until reward-distribution logic or privileged authority is added, it is not a
 production value-moving runtime path.
 
-Release checklist reminder: when `jupiter-sns-rewards` gains runtime logic or
+Release checklist reminder: when [`jupiter-sns-rewards`](../../canisters/sns-rewards) gains runtime logic or
 controller authority, add it to `production_canisters` in
-`tools/scripts/check-production-reachability` before release validation.
+[`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability) before release validation.
 
 Findings outside that surface are allowed only with automated proof:
 
@@ -99,20 +99,20 @@ Findings outside that surface are allowed only with automated proof:
 - `production-value-moving-runtime` findings are release-blocking and must not
   be globally ignored.
 
-Global advisory ignores in `deny.toml` and `osv-scanner.toml` must remain paired
-with `tools/scripts/check-production-reachability`. Date-based exception expiry
+Global advisory ignores in [`deny.toml`](../../deny.toml) and [`osv-scanner.toml`](../../osv-scanner.toml) must remain paired
+with [`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability). Date-based exception expiry
 is intentionally not used for these findings; the gate fails when the dependency
 scope changes into the production value-moving runtime surface.
 
 ## Current NNS Dependency Posture
 
-`jupiter-nns-types` provides the minimal Candid-compatible NNS Governance wire
+[`jupiter-nns-types`](../../crates/nns-types) provides the minimal Candid-compatible NNS Governance wire
 DTOs used by Jupiter canisters and tests from the pinned subset DID under
-`candid/nns-governance/`. The DTO file is committed and verified by the
-dev-only `nns-bindgen-check` tool, which uses `candid_parser` directly.
+[`candid/nns-governance/`](../../candid/nns-governance). The DTO file is committed and verified by the
+dev-only [`nns-bindgen-check`](../../tools/nns-bindgen-check) tool, which uses `candid_parser` directly.
 `jupiter-nns-types` remains DTO-only and has no `ic-cdk` dependency.
 
-`jupiter-ic-clients` contains the committed generated raw NNS Governance
+[`jupiter-ic-clients`](../../crates/ic-clients) contains the committed generated raw NNS Governance
 transport. That crate already owns shared inter-canister client code and already
 depends on `ic-cdk`, so the generated transport does not add `ic-cdk` to the
 DTO crate. The raw transport is generated from the same pinned subset and
