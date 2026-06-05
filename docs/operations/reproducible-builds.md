@@ -4,7 +4,7 @@ Jupiter Faucet release evidence connects reviewed source code, canonical build a
 
 ## What is being verified
 
-This flow compares the live canister module hash with the canonical Docker-built `.wasm.gz` package hash. The decompressed `.wasm` hash remains useful evidence about the module bytes.
+This flow compares the live canister module hash with the canonical Docker-built `.wasm.gz` package hash. The decompressed `.wasm` hash remains useful supporting evidence about the module bytes, but it is not the normal mainnet comparison target.
 
 ## Canonical Docker artifact build
 
@@ -14,14 +14,15 @@ Run the canonical Docker build from the repo root:
 ./tools/scripts/docker-build
 ```
 
-This runs [`Dockerfile.repro`](../../Dockerfile.repro), copies artifacts into `release-artifacts/`, writes `release-artifacts/release-artifacts.sha256`, and prints:
+This runs [`Dockerfile.repro`](../../Dockerfile.repro), copies artifacts into `release-artifacts/`, writes `release-artifacts/release-artifacts.sha256`, and prints the main verification hashes.
 
-- `Installed package hash (*.wasm.gz)` - the production mainnet module-hash comparison target.
-- `Decompressed Wasm hash (*.wasm)` - decompressed-module evidence.
+The `Mainnet module-hash comparison targets (*.wasm.gz)` section contains the hashes to compare with the live canister module hashes.
+
+The decompressed `.wasm` hashes remain available in the sidecar files and full manifest as supporting release evidence, but the normal mainnet comparison uses the `.wasm.gz` installed package hashes.
 
 ## Hash comparison with mainnet
 
-After a canonical artifact build or canonical-artifact deployment, compare each live canister module hash with the matching `Installed package hash (*.wasm.gz)` from `./tools/scripts/docker-build`.
+After a canonical artifact build or canonical-artifact deployment, compare each live canister module hash with the matching hash from the `Mainnet module-hash comparison targets (*.wasm.gz)` section printed by `./tools/scripts/docker-build`.
 
 The public Source Code pane is the easiest suite-level view:
 

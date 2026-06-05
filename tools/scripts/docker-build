@@ -30,8 +30,7 @@ fi
 rm -rf .repro-out
 
 echo
-echo "Built canonical artifact(s):"
-find release-artifacts -maxdepth 2 -type f | sort
+echo "Built canonical artifacts in release-artifacts/"
 
 manifest="release-artifacts/release-artifacts.sha256"
 manifest_tmp="$(mktemp)"
@@ -46,20 +45,22 @@ find release-artifacts \
 mv "$manifest_tmp" "$manifest"
 
 echo
-echo "Release artifact manifest:"
-cat "$manifest"
+echo "Mainnet module-hash comparison targets (*.wasm.gz):"
+find release-artifacts \
+  -maxdepth 1 \
+  -type f \
+  -name '*.wasm.gz' \
+  -print0 |
+  sort -z |
+  while IFS= read -r -d '' wasm_gz; do
+    sha="$(sha256sum "$wasm_gz" | awk '{print $1}')"
+    printf '%s  %s\n' "$sha" "$(basename "$wasm_gz")"
+  done
 
 echo
-for wasm in release-artifacts/*.wasm; do
-  [ -e "$wasm" ] || continue
-  echo "Decompressed Wasm hash ($(basename "$wasm")):"
-  sha256sum "$wasm"
-  echo
-done
+echo "Full artifact manifest:"
+echo "$manifest"
 
-for wasm_gz in release-artifacts/*.wasm.gz; do
-  [ -e "$wasm_gz" ] || continue
-  echo "Installed package hash ($(basename "$wasm_gz")):"
-  sha256sum "$wasm_gz"
-  echo
-done
+echo
+echo "Verify manifest:"
+echo "sha256sum -c $manifest"
