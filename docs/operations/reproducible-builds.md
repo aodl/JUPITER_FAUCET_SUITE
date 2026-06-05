@@ -1,89 +1,155 @@
 # Reproducible Builds
 
-Jupiter Faucet uses reproducible release artifacts so public source code can be checked against the Wasm module hashes deployed on the Internet Computer.
+Jupiter Faucet release evidence connects reviewed source code, canonical build artifacts, and the Wasm package installed on mainnet. The intended uploaded production package is the compressed `.wasm.gz` artifact.
 
-Most readers want one specific outcome: rebuild the canister install packages from this repository, get the module-hash references, and compare those hashes with mainnet. Use the Docker-backed release path for that.
+## What is being verified
 
-## How to compare this source checkout with mainnet
+This flow is designed to compare the live canister module hash with the canonical Docker-built `.wasm.gz` package hash. Before relying on this for production releases, run the disposable-canister smoke test below to confirm the IC-reported `module_hash` comparison target for compressed installs. The decompressed `.wasm` hash remains useful evidence about the module bytes.
 
-Run the canonical Docker build with [`tools/scripts/docker-build`](../../tools/scripts/docker-build):
+`icp deploy` is the preferred deployment orchestrator. It does not, by itself, prove that the installed bytes came from the canonical Docker build. For a reproducible production release, first produce canonical artifacts with `./tools/scripts/docker-build`, then deploy those prebuilt `.wasm.gz` artifacts through the documented canonical-artifact deploy mode, and finally compare the live canister module hash with the confirmed compressed-install hash target from the Docker build evidence.
+
+## Workflow quick reference
+
+| Scenario | Command | What it gives you |
+| --- | --- | --- |
+| Fast local artifact build | `./tools/scripts/build-canister all` | Local-toolchain artifacts for inspection and development. |
+| One-canister local artifact build | `./tools/scripts/build-canister jupiter-faucet` | Local-toolchain artifact for one canister. |
+| Canonical artifact build | `./tools/scripts/docker-build` | Docker-built `.wasm.gz` packages and hash manifest. |
+| Production deploy from canonical artifacts | `JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade` | Deploys the existing Docker-built `.wasm.gz` package through `icp deploy`. |
+| Ordinary local `icp deploy` | `icp deploy <canister_name> --environment ic --mode upgrade` | Runs the configured local build helper and deploys the resulting package. Convenient, but not canonical reproducibility evidence. |
+| Same-environment determinism check | `npm run verify:reproducible-artifacts` | Two clean Docker builds compared on the same machine. |
+
+## Canonical Docker artifact build
+
+Run the canonical Docker build from the repo root:
 
 ```bash
 ./tools/scripts/docker-build
 ```
 
-This builds the release artifacts in the pinned environment from [`Dockerfile.repro`](../../Dockerfile.repro), copies the artifacts into `release-artifacts/`, and prints two kinds of hashes:
+This runs [`Dockerfile.repro`](../../Dockerfile.repro), copies artifacts into `release-artifacts/`, writes `release-artifacts/release-artifacts.sha256`, and prints:
 
-- `Installed module hash reference (*.wasm.gz)` - compare this SHA-256 hash with the deployed canister's mainnet module hash when the release was installed from the compressed package.
-- `Decompressed Wasm hash (*.wasm)` - useful release evidence for the uncompressed module bytes, but not the hash shown by mainnet canister metadata for these compressed installs.
+- `Installed package hash (*.wasm.gz)` - the designed production install-package hash target, pending the compressed-install smoke-test confirmation below.
+- `Decompressed Wasm hash (*.wasm)` - decompressed-module evidence.
 
-Then compare each `Installed module hash reference` with the live mainnet module hash. The easiest public view is the Source Code pane:
+## Deploying Docker-built artifacts with icp deploy
 
-- [Jupiter Faucet Source Code pane](https://jupiter-faucet.com/#source)
+The strongest production release flow is:
 
-The Source Code pane loads module hashes, controllers, and memory information from mainnet canister metadata through the historian/frontend read surface. You can also compare against the IC dashboard canister pages or an authenticated CLI metadata read if you have an IC toolchain available.
+```bash
+./tools/scripts/docker-build
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
+```
 
-## How to rebuild artifacts locally for development
+With `JUPITER_USE_CANONICAL_ARTIFACTS=1`, the `icp.yaml` build helper refuses to rebuild locally and instead verifies `release-artifacts/release-artifacts.sha256`, confirms the requested artifact is present in that Docker-generated manifest, and copies the matching `release-artifacts/<name>.wasm.gz` package into the `icp deploy` build output path. It also prints the package SHA-256 before deployment.
 
-Use [`tools/scripts/build-canister`](../../tools/scripts/build-canister) when you need local release artifacts quickly, for example before a direct local install, a frontend prototype deployment, or a focused artifact inspection:
+For no-config-change upgrades, pass no args. For config-changing upgrades, pass a temporary, deployment-specific `UpgradeArgs` file:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
+  --mode upgrade \
+  --args-file /tmp/jupiter-faucet-upgrade-args.did
+```
+
+For fresh install or reinstall only, use the checked-in `mainnet-install-args.did` `InitArgs` file:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
+  --mode install \
+  --args-file canisters/faucet/mainnet-install-args.did
+```
+
+Reinstall clears canister Wasm/stable state and must be treated as a separate destructive operation.
+
+## Ordinary local icp deploy
+
+For development, inspection, or non-canonical operator builds, use `icp deploy` without `JUPITER_USE_CANONICAL_ARTIFACTS`:
+
+```bash
+icp deploy jupiter_faucet --environment ic --mode upgrade
+```
+
+That runs [`tools/scripts/build-canister`](../../tools/scripts/build-canister) on the local machine and deploys the resulting `.wasm.gz` package. This is convenient, but it is local-toolchain output. It can be compared afterwards against canonical Docker artifacts, but the deployment command itself is not reproducible-build proof.
+
+For fast local artifact work without deployment:
 
 ```bash
 ./tools/scripts/build-canister all
-```
-
-To build one canister:
-
-```bash
 ./tools/scripts/build-canister jupiter-faucet
 ./tools/scripts/build-canister jupiter-faucet-frontend
 ```
 
-This script writes artifacts and `build-info.json` into `release-artifacts/` using the checked-in lockfiles and the local machine's toolchain. It is intentionally useful for day-to-day artifact work. It is not the canonical production deployment path; use the canister-specific deployment docs and `icp deploy` flow for ordinary production deployment and upgrade operations. It is also not the strongest evidence for outside observers because it does not isolate the build inside the pinned Docker environment.
+## Same-environment deterministic rebuild check
 
-## Same-environment determinism check
-
-Use the verification command when you want evidence that the pinned release environment produces identical artifacts across clean rebuilds on the same machine:
+Use the verification command to check deterministic rebuilds inside the pinned Docker environment:
 
 ```bash
 npm run verify:reproducible-artifacts
 ```
 
-That command runs [`tools/scripts/verify-reproducible-artifacts`](../../tools/scripts/verify-reproducible-artifacts). It performs two no-cache Docker builds from [`Dockerfile.repro`](../../Dockerfile.repro), hashes every emitted file from each run, and diffs those hash manifests.
+That command runs two no-cache `docker buildx build --platform linux/amd64` artifact builds and diffs hash manifests for every emitted file. It proves same-environment determinism on that machine. It does not prove cross-machine reproducibility by itself and does not compare with mainnet.
 
-This checks deterministic rebuilds inside one pinned environment. It is useful release evidence, but it does not by itself prove reproducibility across independent machines and it does not compare the output to mainnet. For the live mainnet comparison, use `./tools/scripts/docker-build` output plus the Source Code pane or canister metadata.
+As a manifest regression check, run the canonical Docker build twice and verify the manifest afterwards:
 
-## How the build scripts differ
+```bash
+./tools/scripts/docker-build
+./tools/scripts/docker-build
+sha256sum -c release-artifacts/release-artifacts.sha256
+```
 
-| Scenario | Command | What it gives you |
-| --- | --- | --- |
-| Fast local artifact build | `./tools/scripts/build-canister all` | `release-artifacts/` from the local toolchain. Good for development, direct local installs, frontend prototype deployment, and quick inspection. |
-| Canonical mainnet hash comparison | `./tools/scripts/docker-build` | `release-artifacts/` from the pinned Docker environment plus printed module-hash references to compare with mainnet. |
-| Same-environment determinism check | `npm run verify:reproducible-artifacts` | Two clean Docker builds compared against each other on the same machine. Useful release evidence, but not a cross-machine reproducibility proof or a mainnet metadata check. |
+This verifies that the generated `release-artifacts/release-artifacts.sha256` manifest does not include and hash a previous copy of itself.
 
-## How to verify runtime configuration
+## Hash comparison with mainnet
 
-After the deployed Wasm hash matches the source build, verify the runtime configuration separately. Canisters that take configuration arguments periodically emit a public `CONFIG ...` line in canister logs alongside their regular health or activity logs. These logs are public and are also exposed through the Jupiter Faucet frontend canister views for the relevant canister principals.
+After a canonical-artifact deployment, compare each live canister module hash with the matching canonical Docker build hash target confirmed by the disposable-canister smoke test. This flow is designed around the `Installed package hash (*.wasm.gz)` value because `.wasm.gz` is the uploaded package, but that comparison target should be empirically confirmed for compressed installs before relying on it for a production release.
 
-Configuration-bearing mainnet canisters:
+The public Source Code pane is the easiest suite-level view:
 
-| Canister | Frontend canister view | Public log command |
-| --- | --- | --- |
-| `jupiter-disburser` | [uccpi-cqaaa-aaaar-qby3q-cai](https://jupiter-faucet.com/#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai) | `icp canister logs uccpi-cqaaa-aaaar-qby3q-cai -n ic` |
-| `jupiter-faucet` | [acjuz-liaaa-aaaar-qb4qq-cai](https://jupiter-faucet.com/#metric-tracker-acjuz-liaaa-aaaar-qb4qq-cai) | `icp canister logs acjuz-liaaa-aaaar-qb4qq-cai -n ic` |
-| `jupiter-historian` | [j5gs6-uiaaa-aaaar-qb5cq-cai](https://jupiter-faucet.com/#metric-tracker-j5gs6-uiaaa-aaaar-qb5cq-cai) | `icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic` |
-| `jupiter-relay` | [u2qkp-aqaaa-aaaar-qb7ea-cai](https://jupiter-faucet.com/#metric-tracker-u2qkp-aqaaa-aaaar-qb7ea-cai) | `icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic` |
+- [Jupiter Faucet Source Code pane](https://jupiter-faucet.com/#source)
 
-Use the canister-specific README for the exact config fields each `CONFIG ...` line is expected to contain:
+The Source Code pane loads module hashes, controllers, and memory information from mainnet canister metadata through the historian/frontend read surface.
 
-- [`canisters/disburser/README.md`](../../canisters/disburser/README.md)
-- [`canisters/faucet/README.md`](../../canisters/faucet/README.md)
-- [`canisters/historian/README.md`](../../canisters/historian/README.md)
-- [`canisters/relay/README.md`](../../canisters/relay/README.md)
+You can also compare against IC dashboard canister metadata or an authenticated CLI metadata read when you have the appropriate toolchain access.
 
-The checked-in fresh-install argument files are still useful release inputs, but live config should be verified from the deployed canister logs after module-hash verification:
+### Disposable canister module-hash smoke test
+
+Use this smoke test before changing the documented comparison target. It requires a disposable IC canister that can safely be installed or upgraded.
+
+```bash
+./tools/scripts/docker-build
+
+expected_gz="$(sha256sum release-artifacts/jupiter_faucet.wasm.gz | awk '{print $1}')"
+expected_wasm="$(sha256sum release-artifacts/jupiter_faucet.wasm | awk '{print $1}')"
+
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <scratch_canister_name> \
+  --environment ic \
+  --mode install \
+  --args-file canisters/faucet/mainnet-install-args.did
+```
+
+Read the scratch canister's live `module_hash` using the project's usual status/dashboard path, the IC dashboard, or an authenticated status command. Confirm whether the live hash equals `expected_gz` or `expected_wasm`; keep the production comparison target aligned with that observed result.
+
+## Runtime configuration verification
+
+Module hashes do not prove runtime configuration. Validate checked-in production arguments and DID separation with:
 
 ```bash
 python3 ./tools/scripts/validate-mainnet-install-args
 ```
 
-Run that validator when changing production install arguments, Candid files, production canister IDs, or deployment-policy documentation.
+Then verify deployed configuration from public canister logs. Configuration-bearing mainnet canisters emit `CONFIG ...` log lines.
+
+| Canister | Frontend log view | Public log command |
+| --- | --- | --- |
+| `jupiter-disburser` | [Frontend view](https://jupiter-faucet.com/#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai) | `icp canister logs uccpi-cqaaa-aaaar-qby3q-cai -n ic` |
+| `jupiter-faucet` | [Frontend view](https://jupiter-faucet.com/#metric-tracker-acjuz-liaaa-aaaar-qb4qq-cai) | `icp canister logs acjuz-liaaa-aaaar-qb4qq-cai -n ic` |
+| `jupiter-historian` | [Frontend view](https://jupiter-faucet.com/#metric-tracker-j5gs6-uiaaa-aaaar-qb5cq-cai) | `icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic` |
+| `jupiter-relay` | [Frontend view](https://jupiter-faucet.com/#metric-tracker-u2qkp-aqaaa-aaaar-qb7ea-cai) | `icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic` |
+
+Use the canister-specific README for expected config fields.
+
+## What this does not prove
+
+Canonical Docker artifacts plus mainnet hash comparison prove that the live canister hash matches the confirmed artifact hash target produced from this source in the pinned Docker environment. They do not prove that every independent machine will reproduce identical bytes, that runtime configuration is correct, that canister settings and controllers are correct, or that a non-canonical local `icp deploy` installed Docker-built bytes.

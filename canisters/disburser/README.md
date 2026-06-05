@@ -322,15 +322,16 @@ chmod +x tools/scripts/docker-build tools/scripts/build-canister
 ./tools/scripts/docker-build
 ```
 
-### Install release artifact
+### Deploy canonical release artifact
+
+Production canister: `jupiter_disburser` / `uccpi-cqaaa-aaaar-qby3q-cai`
 
 Fresh installs use the committed [`InitArgs` file](mainnet-install-args.did):
 
 ```bash
-icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_disburser \
+  --environment ic \
   --mode install \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz \
   --args-file canisters/disburser/mainnet-install-args.did
 ```
 
@@ -343,10 +344,7 @@ Normal production upgrades preserve stable state and must use the disburser `pos
 For a production upgrade with no config change, pass no args:
 
 ```bash
-icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
-  --network ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_disburser --environment ic --mode upgrade
 ```
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
@@ -368,10 +366,9 @@ EOF
 ```
 
 ```bash
-icp canister install uccpi-cqaaa-aaaar-qby3q-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_disburser \
+  --environment ic \
   --mode upgrade \
-  --wasm release-artifacts/jupiter_disburser.wasm.gz \
   --args-file /tmp/disburser-upgrade-args.did
 ```
 

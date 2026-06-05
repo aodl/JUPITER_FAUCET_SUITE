@@ -1,6 +1,71 @@
 # Deployment
 
-Production deployment is a manual, privileged operation. This repository contains build and validation helpers for the suite's canister names, Candid interfaces, install arguments, and deployment policy.
+Production deployment is a governance-controlled operation. Once Jupiter Faucet is under SNS DAO control, production upgrades are expected to pass through SNS community consensus before execution. During the initial bootstrap phase, upgrades may still be executed by the current bootstrap controller, but the release process should be documented and verifiable as if it will be reviewed by the community.
+
+Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
+
+## Production release flow
+
+Recommended release sequence:
+
+```bash
+python3 ./tools/scripts/validate-mainnet-install-args
+./tools/scripts/docker-build
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
+```
+
+`./tools/scripts/docker-build` produces canonical `.wasm.gz` install packages and `release-artifacts/release-artifacts.sha256`. `JUPITER_USE_CANONICAL_ARTIFACTS=1` tells the `icp.yaml` build helper to verify that manifest and deploy those existing packages instead of rebuilding with the local toolchain.
+
+For no-config-change production upgrades, pass no args. This preserves stable state and lets the canister decode the omitted upgrade argument as no config change.
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet --environment ic --mode upgrade
+```
+
+For config-changing upgrades, create a temporary deployment-specific `UpgradeArgs` file and pass it explicitly:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
+  --mode upgrade \
+  --args-file /tmp/jupiter-faucet-upgrade-args.did
+```
+
+For fresh install only, use the checked-in `mainnet-install-args.did` `InitArgs` file:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
+  --mode install \
+  --args-file canisters/faucet/mainnet-install-args.did
+```
+
+For reinstall, use the same pattern with `--mode reinstall` only after confirming state may be discarded:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
+  --mode reinstall \
+  --args-file canisters/faucet/mainnet-install-args.did
+```
+
+Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
+
+## Production canister IDs
+
+Keep the named `icp deploy` command and the production principal together during review:
+
+| Canister name | Production principal |
+| --- | --- |
+| `jupiter_disburser` | `uccpi-cqaaa-aaaar-qby3q-cai` |
+| `jupiter_faucet` | `acjuz-liaaa-aaaar-qb4qq-cai` |
+| `jupiter_historian` | `j5gs6-uiaaa-aaaar-qb5cq-cai` |
+| `jupiter_relay` | `u2qkp-aqaaa-aaaar-qb7ea-cai` |
+| `jupiter_lifeline` | `afisn-gqaaa-aaaar-qb4qa-cai` |
+| `jupiter_sns_rewards` | `alk7f-5aaaa-aaaar-qb4ra-cai` |
+| `jupiter_faucet_frontend` | `jufzc-caaaa-aaaar-qb5da-cai` |
+
+## Fresh installs vs upgrades
 
 Fresh install argument files live with their owning canisters:
 
@@ -9,38 +74,44 @@ Fresh install argument files live with their owning canisters:
 - [`canisters/historian/mainnet-install-args.did`](../../canisters/historian/mainnet-install-args.did)
 - [`canisters/relay/mainnet-install-args.did`](../../canisters/relay/mainnet-install-args.did)
 
-Validate production install arguments and DID separation with [`tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args):
-
-```bash
-python3 ./tools/scripts/validate-mainnet-install-args
-```
-
-Build release artifacts with [`tools/scripts/build-canister`](../../tools/scripts/build-canister):
-
-```bash
-./tools/scripts/build-canister all
-```
-
-## Fresh installs vs upgrades
-
-`mainnet-install-args.did` files are fresh-install `InitArgs`. Do not use those files for ordinary production upgrades.
+`mainnet-install-args.did` files are fresh-install/reinstall `InitArgs`. Do not use those files for ordinary production upgrades.
 
 > Warning:
 > Do not pass `canisters/<name>/mainnet-install-args.did` to `--mode upgrade`
 > for stateful production canisters. Those files are fresh-install `InitArgs`
 > and may be intentionally rejected during `post_upgrade`.
 
-For no-config-change production upgrades, pass no args. This preserves stable state and lets the canister decode the omitted upgrade argument as no config change.
+For config-changing upgrades, use the canister's current `UpgradeArgs` shape from source and keep the args file temporary. Do not check in example upgrade-args files.
 
-For config-changing production upgrades, create a temporary local `UpgradeArgs` file for that specific deployment and pass it with `--args-file`. Do not check in example upgrade-args files; realistic examples are easy to copy later for the wrong deployment.
+## Local development builds
 
-Canister-specific README sections define the correct production canister ID, artifact name, `UpgradeArgs` shape, and verification commands:
+For fast local release artifacts and inspection, use:
+
+```bash
+./tools/scripts/build-canister all
+```
+
+For local-toolchain deployment orchestration, omit `JUPITER_USE_CANONICAL_ARTIFACTS`:
+
+```bash
+icp deploy jupiter_faucet --environment ic --mode upgrade
+```
+
+This runs the configured build step locally and installs the resulting `.wasm.gz` package. It is convenient, but it is not a canonical reproducible-build boundary.
+
+## Verification
+
+After deployment, compare the live module hash with the canonical Docker build hash target confirmed by the disposable-canister compressed-install smoke test in [reproducible builds](reproducible-builds.md). This flow is designed around the uploaded `.wasm.gz` package hash, while the decompressed `.wasm` hash remains useful release evidence. Then verify runtime configuration from public logs and canister-specific README checklists.
+
+Canister-specific README sections define production canister IDs, artifact names, `InitArgs` and `UpgradeArgs` usage, and verification commands:
 
 - [`canisters/disburser/README.md`](../../canisters/disburser/README.md)
 - [`canisters/faucet/README.md`](../../canisters/faucet/README.md)
 - [`canisters/historian/README.md`](../../canisters/historian/README.md)
 - [`canisters/relay/README.md`](../../canisters/relay/README.md)
 
-A failed upgrade with an error such as `received InitArgs in post_upgrade` means the canister rejected the wrong argument shape. Rebuild the command using the canister's current `UpgradeArgs` shape instead of the fresh-install `InitArgs` file.
-
 For module-hash verification and deterministic rebuild checks, see [reproducible builds](reproducible-builds.md).
+
+## Troubleshooting
+
+A failed upgrade with an error such as `received InitArgs in post_upgrade` means the canister rejected the wrong argument shape. Rebuild the command using the canister's current `UpgradeArgs` shape instead of the fresh-install `InitArgs` file.

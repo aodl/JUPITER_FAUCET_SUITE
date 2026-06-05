@@ -414,6 +414,8 @@ A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-i
 
 ### Production upgrades
 
+Production canister: `jupiter_faucet` / `acjuz-liaaa-aaaar-qb4qq-cai`
+
 The production faucet has completed a payout. Use upgrade for the production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
@@ -423,10 +425,7 @@ Normal production upgrades preserve stable state and must use the faucet `post_u
 For a production upgrade with no config change, pass no args:
 
 ```bash
-icp canister install acjuz-liaaa-aaaar-qb4qq-cai \
-  --network ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_faucet.wasm.gz
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet --environment ic --mode upgrade
 ```
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
@@ -448,10 +447,9 @@ EOF
 ```
 
 ```bash
-icp canister install acjuz-liaaa-aaaar-qb4qq-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
   --mode upgrade \
-  --wasm release-artifacts/jupiter_faucet.wasm.gz \
   --args-file /tmp/faucet-upgrade-args.did
 ```
 
@@ -486,7 +484,7 @@ Reinstall intentionally discards faucet Wasm/stable state: runtime config, timer
 For a fresh-only deployment, use the reviewed production install args:
 
 ```bash
-icp canister install jupiter_faucet \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
   --environment ic \
   --mode reinstall \
   --args-file canisters/faucet/mainnet-install-args.did \

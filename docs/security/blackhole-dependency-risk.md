@@ -200,13 +200,14 @@ No current ignored finding is classified as
 
 ## Wasm And Candid Impact
 
-The canister build was regenerated with:
+Historical artifact evidence for this dependency review was regenerated with the
+fast local build path:
 
 ```bash
 ./tools/scripts/build-canister all
 ```
 
-The resulting artifact hashes were:
+The resulting historical local artifact hashes were:
 
 ```text
 fecd620438bb7e66d3ff91c44e9ab9b699ca0d9db2645b36de18997dda22b25a  release-artifacts/jupiter_faucet.wasm
@@ -227,7 +228,20 @@ aa607f9ab2f4824efefc1e70edf4a289bf1cd102cf2d2ec47ba79fc8d1084adf  release-artifa
 
 There is no tracked pre-change artifact baseline in this branch, so this
 document records the regenerated artifact hashes rather than claiming unchanged
-Wasm.
+Wasm. These hashes are historical evidence for this review note, not current
+production deployment instructions. For current release verification, use the
+canonical Docker flow documented in
+[`docs/operations/reproducible-builds.md`](../operations/reproducible-builds.md):
+
+```bash
+./tools/scripts/docker-build
+```
+
+That flow is designed around the canonical Docker-built `.wasm.gz` package
+evidence, while the decompressed `.wasm` hash remains useful release evidence.
+Before relying on the `.wasm.gz` value as the production `module_hash`
+comparison target, run the disposable-canister compressed-install smoke test
+documented there.
 
 No production `.did`, debug `.did`, `dfx.json`, `canister_ids.json`, or
 `mainnet-install-args.did` file changed. Production install arguments remain

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <target> <artifact-stem>" >&2
+  exit 2
+fi
+
+target="$1"
+artifact_stem="$2"
+
+if [ -z "${ICP_WASM_OUTPUT_PATH:-}" ]; then
+  echo "ICP_WASM_OUTPUT_PATH is required" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+artifact="${REPO_ROOT}/release-artifacts/${artifact_stem}.wasm.gz"
+manifest="${REPO_ROOT}/release-artifacts/release-artifacts.sha256"
+
+cd "$REPO_ROOT"
+
+if [ "${JUPITER_USE_CANONICAL_ARTIFACTS:-0}" = "1" ]; then
+  manifest_entry="release-artifacts/${artifact_stem}.wasm.gz"
+  if [ ! -f "$manifest" ]; then
+    echo "canonical artifact manifest is missing: ${manifest}" >&2
+    echo "run ./tools/scripts/docker-build first" >&2
+    exit 1
+  fi
+  if ! grep -F "  ${manifest_entry}" "$manifest" >/dev/null; then
+    echo "canonical manifest does not include ${manifest_entry}" >&2
+    exit 1
+  fi
+  if ! sha256sum -c release-artifacts/release-artifacts.sha256 --status; then
+    echo "canonical artifact manifest verification failed: ${manifest}" >&2
+    echo "run ./tools/scripts/docker-build first, then retry with JUPITER_USE_CANONICAL_ARTIFACTS=1" >&2
+    exit 1
+  fi
+  if [ ! -f "$artifact" ]; then
+    echo "canonical artifact is missing: ${artifact}" >&2
+    echo "run ./tools/scripts/docker-build first, then retry with JUPITER_USE_CANONICAL_ARTIFACTS=1" >&2
+    exit 1
+  fi
+  echo "Using canonical prebuilt artifact: release-artifacts/${artifact_stem}.wasm.gz"
+  sha256sum release-artifacts/${artifact_stem}.wasm.gz
+else
+  ./tools/scripts/build-canister "$target"
+  if [ ! -f "$artifact" ]; then
+    echo "local build did not produce expected artifact: ${artifact}" >&2
+    exit 1
+  fi
+fi
+
+cp "$artifact" "$ICP_WASM_OUTPUT_PATH"

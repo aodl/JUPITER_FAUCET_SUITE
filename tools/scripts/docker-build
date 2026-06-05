@@ -6,6 +6,11 @@ command -v docker >/dev/null 2>&1 || {
   exit 1
 }
 
+docker buildx version >/dev/null 2>&1 || {
+  echo "docker buildx is required but not available" >&2
+  exit 1
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -28,6 +33,22 @@ echo
 echo "Built canonical artifact(s):"
 find release-artifacts -maxdepth 2 -type f | sort
 
+manifest="release-artifacts/release-artifacts.sha256"
+manifest_tmp="$(mktemp)"
+find release-artifacts \
+  -maxdepth 2 \
+  -type f \
+  ! -name 'release-artifacts.sha256' \
+  \( -name '*.wasm' -o -name '*.wasm.gz' -o -name '*.sha256' -o -name 'build-info.json' \) \
+  -print0 |
+  sort -z |
+  xargs -0 sha256sum > "$manifest_tmp"
+mv "$manifest_tmp" "$manifest"
+
+echo
+echo "Release artifact manifest:"
+cat "$manifest"
+
 echo
 for wasm in release-artifacts/*.wasm; do
   [ -e "$wasm" ] || continue
@@ -38,7 +59,7 @@ done
 
 for wasm_gz in release-artifacts/*.wasm.gz; do
   [ -e "$wasm_gz" ] || continue
-  echo "Installed module hash reference ($(basename "$wasm_gz")):"
+  echo "Installed package hash ($(basename "$wasm_gz")):"
   sha256sum "$wasm_gz"
   echo
 done

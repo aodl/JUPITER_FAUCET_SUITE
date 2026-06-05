@@ -243,13 +243,14 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 
 ## Fresh install/reinstall
 
+Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
+
 Fresh install/reinstall is a deliberate separate path. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly only for that install/reinstall operation:
 
 ```bash
-icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
   --mode install \
-  --wasm release-artifacts/jupiter_relay.wasm.gz \
   --args-file canisters/relay/mainnet-install-args.did
 ```
 
@@ -262,10 +263,7 @@ Normal production upgrades preserve stable state and must use the relay `post_up
 For a production upgrade with no config change, pass no args:
 
 ```bash
-icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
-  --network ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_relay.wasm.gz
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay --environment ic --mode upgrade
 ```
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
@@ -287,10 +285,9 @@ EOF
 ```
 
 ```bash
-icp canister install u2qkp-aqaaa-aaaar-qb7ea-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
   --mode upgrade \
-  --wasm release-artifacts/jupiter_relay.wasm.gz \
   --args-file /tmp/relay-upgrade-args.did
 ```
 

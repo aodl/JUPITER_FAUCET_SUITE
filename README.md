@@ -29,15 +29,27 @@ The value-moving canisters expose little or no public production API. Public ver
 
 Reproducible builds are part of the trust model for Jupiter Faucet. A deployed canister's Wasm module hash can be compared with locally rebuilt release artifacts so readers can connect public source code to the code running on the Internet Computer.
 
-Start with [reproducible builds](docs/operations/reproducible-builds.md) for the scenario-based verification flow. If your goal is to compare this source checkout with mainnet, use the Docker-backed release path documented there; it prints the installed module-hash references that should match the live canister module hashes.
+Start with [reproducible builds](docs/operations/reproducible-builds.md) for the scenario-based verification flow. If your goal is to compare this source checkout with mainnet, use the Docker-backed release path documented there. That flow is designed around the `.wasm.gz` installed package hashes, but the disposable-canister smoke test in the operations docs should confirm the IC-reported `module_hash` comparison target for compressed installs before relying on it for a production release.
 
-Use [`tools/scripts/build-canister`](tools/scripts/build-canister) for local release-artifact builds, direct local installs, frontend prototype deployment, and quick inspection. For ordinary production deployment and upgrades, follow the canister-specific deployment docs and `icp deploy` flow:
+For canonical verification:
+
+```bash
+./tools/scripts/docker-build
+```
+
+For production deployment from canonical artifacts:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
+```
+
+For local artifact work, direct local installs, frontend prototype deployment, and quick inspection:
 
 ```bash
 ./tools/scripts/build-canister all
 ```
 
-The full reproducibility check uses the heavier Docker-backed path and the clean-rebuild comparison documented in [reproducible builds](docs/operations/reproducible-builds.md). Docker access and mainnet canister visibility may be required for parts of an end-to-end verification workflow.
+`icp deploy` is the preferred production deployment orchestrator, but it is not itself reproducible-build proof unless it is fed artifacts already produced by the canonical Docker build. Docker access and mainnet canister visibility may be required for parts of an end-to-end verification workflow.
 
 ## Repository Layout
 
@@ -62,12 +74,17 @@ The full reproducibility check uses the heavier Docker-backed path and the clean
 ## Common Commands
 
 ```bash
+# Development
 cargo run -p xtask -- test_unit
 cargo run -p xtask -- test_all
 npm run build:frontend
 npm run test:frontend-unit
 ./tools/scripts/build-canister all
+
+# Release verification
 python3 ./tools/scripts/validate-mainnet-install-args
+./tools/scripts/docker-build
+npm run verify:reproducible-artifacts
 ```
 
 ## Documentation

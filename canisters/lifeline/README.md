@@ -34,22 +34,22 @@ That means this canister is mostly a **reserved rescue principal**, not an activ
 
 ## Install and upgrade
 
+Production canister: `jupiter_lifeline` / `afisn-gqaaa-aaaar-qb4qa-cai`
+
 Fresh install:
 
 ```bash
-icp canister install jupiter_lifeline \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_lifeline \
   --environment ic \
-  --mode install \
-  --wasm release-artifacts/jupiter_lifeline.wasm.gz
+  --mode install
 ```
 
 Upgrade:
 
 ```bash
-icp canister install jupiter_lifeline \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_lifeline \
   --environment ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_lifeline.wasm.gz
+  --mode upgrade
 ```
 
 ## Build

@@ -71,6 +71,24 @@ ROUTINE_PROD_CANISTERS_WITHOUT_INIT_ARGS = [
     "jupiter_relay",
 ]
 
+PROD_CANISTER_ARTIFACTS = {
+    "jupiter_disburser": ("jupiter-disburser", "jupiter_disburser"),
+    "jupiter_lifeline": ("jupiter-lifeline", "jupiter_lifeline"),
+    "jupiter_faucet": ("jupiter-faucet", "jupiter_faucet"),
+    "jupiter_sns_rewards": ("jupiter-sns-rewards", "jupiter_sns_rewards"),
+    "jupiter_faucet_frontend": ("jupiter-faucet-frontend", "jupiter_faucet_frontend"),
+    "jupiter_historian": ("jupiter-historian", "jupiter_historian"),
+    "jupiter_relay": ("jupiter-relay", "jupiter_relay"),
+}
+
+REQUIRED_PUBLIC_VIEWS = [
+    "https://jupiter-faucet.com/#source",
+    "https://jupiter-faucet.com/#metric-tracker-uccpi-cqaaa-aaaar-qby3q-cai",
+    "https://jupiter-faucet.com/#metric-tracker-acjuz-liaaa-aaaar-qb4qq-cai",
+    "https://jupiter-faucet.com/#metric-tracker-j5gs6-uiaaa-aaaar-qb5cq-cai",
+    "https://jupiter-faucet.com/#metric-tracker-u2qkp-aqaaa-aaaar-qb7ea-cai",
+]
+
 
 def fail(msg: str) -> None:
     print(f"mainnet install-args validation failed: {msg}", file=sys.stderr)
@@ -244,6 +262,39 @@ def validate_icp_yaml_has_no_routine_prod_init_args() -> None:
             fail(f"{path} must not wire init_args for routine production canister `{canister_name}`")
 
 
+def icp_yaml_prod_artifact_error(text: str, canister_name: str, target: str, artifact_stem: str) -> str | None:
+    block = icp_yaml_canister_block(text, canister_name)
+    if block is None:
+        return f"icp.yaml is missing canister entry `{canister_name}`"
+    stale_uncompressed = rf"release-artifacts/{re.escape(artifact_stem)}\.wasm(?:\s|\"|$)"
+    if re.search(stale_uncompressed, block):
+        return f"icp.yaml production canister `{canister_name}` copies uncompressed `{artifact_stem}.wasm`"
+    helper = f"./tools/scripts/icp-build-canister {target} {artifact_stem}"
+    direct_copy = f'cp release-artifacts/{artifact_stem}.wasm.gz "$ICP_WASM_OUTPUT_PATH"'
+    if helper not in block and direct_copy not in block:
+        return (
+            f"icp.yaml production canister `{canister_name}` must copy "
+            f"`release-artifacts/{artifact_stem}.wasm.gz` to `$ICP_WASM_OUTPUT_PATH`"
+        )
+    return None
+
+
+def validate_icp_yaml_uses_compressed_prod_artifacts() -> None:
+    path = REPO_ROOT / "icp.yaml"
+    text = path.read_text()
+    for canister_name, (target, artifact_stem) in PROD_CANISTER_ARTIFACTS.items():
+        error = icp_yaml_prod_artifact_error(text, canister_name, target, artifact_stem)
+        if error:
+            fail(error)
+
+
+def validate_public_verifier_links() -> None:
+    path = REPO_ROOT / "docs" / "operations" / "reproducible-builds.md"
+    text = path.read_text()
+    for url in REQUIRED_PUBLIC_VIEWS:
+        require_contains(text, url, str(path))
+
+
 def validate_relay_prod_did(path: Path) -> None:
     text = path.read_text()
     if not re.search(r"service\s*:\s*\(\s*InitArgs\s*\)\s*->\s*\{\s*\}\s*$", text, re.S):
@@ -393,10 +444,10 @@ def faucet_upgrade_example_uses_install_args(text: str) -> bool:
 
 def docs_use_install_args_for_upgrade(text: str) -> bool:
     return re.search(
-        r"icp canister install \S+[\s\S]{0,400}--mode\s+upgrade[\s\S]{0,400}mainnet-install-args\.did",
+        r"icp (?:canister install|deploy) \S+[\s\S]{0,400}--mode\s+upgrade[\s\S]{0,400}mainnet-install-args\.did",
         text,
     ) is not None or re.search(
-        r"icp canister install \S+[\s\S]{0,400}mainnet-install-args\.did[\s\S]{0,400}--mode\s+upgrade",
+        r"icp (?:canister install|deploy) \S+[\s\S]{0,400}mainnet-install-args\.did[\s\S]{0,400}--mode\s+upgrade",
         text,
     ) is not None
 
@@ -411,6 +462,17 @@ def docs_recommend_explicit_null_for_routine_upgrade(text: str) -> bool:
     if any(phrase in text for phrase in forbidden_phrases):
         return True
     return re.search(r"--args\s+['\"]\(null\)['\"]", text) is not None
+
+
+def docs_recommend_direct_install_for_prod_deploy(text: str) -> bool:
+    return re.search(
+        r"(?m)^\s*icp canister install \S+[\s\S]{0,300}(?:--network|--environment)\s+ic[\s\S]{0,300}--wasm\s+release-artifacts/\S+\.wasm\.gz",
+        text,
+    ) is not None
+
+
+def docs_use_stale_privileged_deployment_framing(text: str) -> bool:
+    return "Production deployment is a manual, privileged operation." in text
 
 
 def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None:
@@ -429,6 +491,19 @@ def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None
             fail(f"{path} documents upgrade with mainnet-install-args.did; install args are fresh install/reinstall only")
         if docs_recommend_explicit_null_for_routine_upgrade(text):
             fail(f"{path} recommends explicit null args for a routine production upgrade; use icp deploy without args")
+        if docs_recommend_direct_install_for_prod_deploy(text):
+            fail(f"{path} documents direct production install as the preferred path; use icp deploy --environment ic")
+
+
+def validate_docs_do_not_use_stale_privileged_deployment_framing() -> None:
+    for path in [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "operations" / "deployment.md",
+        REPO_ROOT / "docs" / "operations" / "reproducible-builds.md",
+    ]:
+        text = path.read_text()
+        if docs_use_stale_privileged_deployment_framing(text):
+            fail(f"{path} uses stale privileged deployment framing; describe SNS governance control and bootstrap execution")
 
 
 def validate_historian() -> int:
@@ -680,6 +755,25 @@ def run_self_tests() -> None:
     if docs_recommend_explicit_null_for_routine_upgrade(routine_deploy_text):
         fail("self-test unexpectedly rejected routine deploy guidance")
 
+    direct_install_text = """
+    icp canister install jupiter_faucet \
+      --environment ic \
+      --mode upgrade \
+      --wasm release-artifacts/jupiter_faucet.wasm.gz
+    """
+    if not docs_recommend_direct_install_for_prod_deploy(direct_install_text):
+        fail("self-test failed to reject direct production install guidance")
+    stale_privileged_text = "Production deployment is a manual, privileged operation."
+    bootstrap_governance_text = (
+        "During the initial bootstrap phase, upgrades may still be executed by "
+        "the current bootstrap controller. Once Jupiter Faucet is under SNS DAO "
+        "control, production upgrades are expected to pass through SNS community consensus."
+    )
+    if not docs_use_stale_privileged_deployment_framing(stale_privileged_text):
+        fail("self-test failed to reject stale privileged deployment framing")
+    if docs_use_stale_privileged_deployment_framing(bootstrap_governance_text):
+        fail("self-test unexpectedly rejected bootstrap-scoped governance wording")
+
     icp_yaml_without_init_args = """
 canisters:
   - name: jupiter_faucet
@@ -705,6 +799,38 @@ canisters:
         )
         if not icp_yaml_canister_has_init_args(icp_yaml_with_init_args, canister_name):
             fail(f"self-test failed to reject init_args in {canister_name} block")
+
+    valid_icp_yaml = """
+canisters:
+  - name: jupiter_faucet
+    build:
+      steps:
+        - type: script
+          commands:
+            - ./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet
+    """
+    stale_icp_yaml = valid_icp_yaml.replace(
+        "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
+        'cp release-artifacts/jupiter_faucet.wasm "$ICP_WASM_OUTPUT_PATH"',
+    )
+    missing_icp_yaml = valid_icp_yaml.replace(
+        "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
+        "echo build elsewhere",
+    )
+    wrong_stem_icp_yaml = valid_icp_yaml.replace(
+        "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
+        "./tools/scripts/icp-build-canister jupiter-faucet wrong_artifact",
+    )
+    if icp_yaml_prod_artifact_error(valid_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
+        fail("self-test unexpectedly rejected compressed icp.yaml production artifact path")
+    if not icp_yaml_prod_artifact_error(stale_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
+        fail("self-test failed to reject uncompressed icp.yaml production artifact path")
+    if not icp_yaml_prod_artifact_error(missing_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
+        fail("self-test failed to reject missing icp.yaml compressed production artifact path")
+    if icp_yaml_canister_block(wrong_stem_icp_yaml, "jupiter_faucet") is None:
+        fail("self-test malformed wrong-stem icp.yaml fixture by removing the canister block")
+    if not icp_yaml_prod_artifact_error(wrong_stem_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
+        fail("self-test failed to reject wrong icp.yaml artifact stem")
     print("validate-mainnet-install-args self-tests OK")
 
 
@@ -743,7 +869,10 @@ def main() -> None:
     validate_disburser()
     faucet_min_tx_e8s = validate_faucet()
     validate_icp_yaml_has_no_routine_prod_init_args()
+    validate_icp_yaml_uses_compressed_prod_artifacts()
+    validate_public_verifier_links()
     validate_upgrade_docs_do_not_use_install_args_or_null_routine_args()
+    validate_docs_do_not_use_stale_privileged_deployment_framing()
     historian_min_tx_e8s = validate_historian()
     validate_relay()
     validate_release_build_script_uses_release_dids()

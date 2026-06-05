@@ -194,11 +194,12 @@ The local-replica variant is fixture-driven: it compares the live loader result 
 
 ## Upgrade command
 
+Production canister: `jupiter_faucet_frontend` / `jufzc-caaaa-aaaar-qb5da-cai`
+
 ```bash
-icp canister install jupiter_faucet_frontend \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet_frontend \
   --environment ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_faucet_frontend.wasm.gz
+  --mode upgrade
 ```
 
 ## Related docs

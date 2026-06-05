@@ -11,15 +11,32 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! docker buildx version >/dev/null 2>&1; then
+  echo "docker buildx is required to verify reproducible release artifacts" >&2
+  exit 1
+fi
+
 workdir="$(mktemp -d)"
 cleanup() {
   rm -rf "$workdir"
 }
 trap cleanup EXIT
 
-docker build --no-cache --file Dockerfile.repro --target artifact --output "type=local,dest=$workdir/run-a" .
+docker buildx build \
+  --platform linux/amd64 \
+  --no-cache \
+  --file Dockerfile.repro \
+  --target artifact \
+  --output "type=local,dest=$workdir/run-a" \
+  .
 
-docker build --no-cache --file Dockerfile.repro --target artifact --output "type=local,dest=$workdir/run-b" .
+docker buildx build \
+  --platform linux/amd64 \
+  --no-cache \
+  --file Dockerfile.repro \
+  --target artifact \
+  --output "type=local,dest=$workdir/run-b" \
+  .
 
 (
   cd "$workdir/run-a"

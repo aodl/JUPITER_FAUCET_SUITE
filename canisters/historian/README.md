@@ -319,15 +319,16 @@ It produces the canonical release artifacts under `release-artifacts/`, includin
 - `release-artifacts/jupiter_historian.wasm.gz`
 - corresponding `.sha256` files
 
-### Install canonical release artifact on the IC
+### Deploy canonical release artifact on the IC
+
+Production canister: `jupiter_historian` / `j5gs6-uiaaa-aaaar-qb5cq-cai`
 
 Fresh install:
 
 ```bash
-icp canister install j5gs6-uiaaa-aaaar-qb5cq-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
+  --environment ic \
   --mode install \
-  --wasm release-artifacts/jupiter_historian.wasm.gz \
   --args-file canisters/historian/mainnet-install-args.did
 ```
 
@@ -340,10 +341,7 @@ Normal production upgrades preserve stable state and must use the historian `pos
 For a production upgrade with no config change, pass no args:
 
 ```bash
-icp canister install j5gs6-uiaaa-aaaar-qb5cq-cai \
-  --network ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_historian.wasm.gz
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
 ```
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
@@ -365,10 +363,9 @@ EOF
 ```
 
 ```bash
-icp canister install j5gs6-uiaaa-aaaar-qb5cq-cai \
-  --network ic \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
+  --environment ic \
   --mode upgrade \
-  --wasm release-artifacts/jupiter_historian.wasm.gz \
   --args-file /tmp/historian-upgrade-args.did
 ```
 

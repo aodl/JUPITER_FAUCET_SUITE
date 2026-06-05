@@ -37,6 +37,8 @@ Until then, it can largely be ignored when trying to understand the operational 
 
 ## Build and upgrade
 
+Production canister: `jupiter_sns_rewards` / `alk7f-5aaaa-aaaar-qb4ra-cai`
+
 Build:
 
 ```bash
@@ -46,10 +48,9 @@ Build:
 Upgrade:
 
 ```bash
-icp canister install jupiter_sns_rewards \
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_sns_rewards \
   --environment ic \
-  --mode upgrade \
-  --wasm release-artifacts/jupiter_sns_rewards.wasm.gz
+  --mode upgrade
 ```
 
 ## Future historian / SNS testing note
