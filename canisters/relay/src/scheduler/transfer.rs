@@ -4,6 +4,7 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, Transfer
 
 use crate::clients::{ClientError, CmcClient, LedgerClient};
 use crate::logic;
+use crate::scheduler::logging::{emit_log_line, log_error};
 use crate::state::{
     self, PendingFaucetCommitmentTransfer, PendingTransfer, PendingTransferKind,
     PendingTransferPhase,
@@ -285,11 +286,9 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                 )
                 .await
                 {
-                    ic_cdk::println!(
-                        "relay: surplus neuron refresh failed neuron_id={} error={}",
-                        neuron_id,
-                        err
-                    );
+                    log_error(&format!(
+                        "surplus neuron refresh failed neuron_id={neuron_id} error={err}"
+                    ));
                 }
             });
         }
@@ -371,11 +370,9 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<L: LedgerClient>(
         if let Err(err) =
             crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id).await
         {
-            ic_cdk::println!(
-                "relay: faucet commitment neuron refresh failed neuron_id={} error={}",
-                neuron_id,
-                err
-            );
+            log_error(&format!(
+                "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
+            ));
         }
     });
     true
@@ -407,18 +404,15 @@ fn log_faucet_commitment(transfer: &PendingFaucetCommitmentTransfer, skipped_rea
     };
     let destination = destination_for_pending(Principal::management_canister(), &transfer.transfer);
     let memo_len = memo_for_pending(&transfer.transfer).len() as u32;
-    ic_cdk::println!(
-        "{}",
-        state::relay_faucet_commitment_log_line(
-            source,
-            destination,
-            transfer.balance_start_e8s,
-            transfer.transfer.amount_e8s,
-            transfer.fee_e8s,
-            memo_len,
-            skipped_reason,
-        )
-    );
+    emit_log_line(state::relay_faucet_commitment_log_line(
+        source,
+        destination,
+        transfer.balance_start_e8s,
+        transfer.transfer.amount_e8s,
+        transfer.fee_e8s,
+        memo_len,
+        skipped_reason,
+    ));
 }
 
 fn mark_faucet_commitment_ledger_accepted(block_index: u64) {

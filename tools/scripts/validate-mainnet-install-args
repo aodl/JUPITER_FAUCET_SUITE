@@ -297,9 +297,19 @@ def validate_public_verifier_links() -> None:
 
 def validate_relay_prod_did(path: Path) -> None:
     text = path.read_text()
-    if not re.search(r"service\s*:\s*\(\s*InitArgs\s*\)\s*->\s*\{\s*\}\s*$", text, re.S):
-        fail(f"{path} relay production DID must expose an empty service")
+    service_match = re.search(
+        r"service\s*:\s*\(\s*InitArgs\s*\)\s*->\s*\{(?P<body>.*?)\}\s*$", text, re.S
+    )
+    if not service_match:
+        fail(f"{path} relay production DID must expose a service")
+    body = service_match.group("body")
+    methods = set(re.findall(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", body))
+    if methods:
+        fail(f"{path} relay production DID must expose an empty service, got methods {sorted(methods)}")
     forbidden = [
+        "Relay" + "Status",
+        "relay_" + "status",
+        "admin_schedule_main_tick_now",
         "get_config",
         "get_last_summary",
         "get_last_cycles_samples",
@@ -310,8 +320,6 @@ def validate_relay_prod_did(path: Path) -> None:
     for token in forbidden:
         if re.search(rf"\b{re.escape(token)}\b", text):
             fail(f"{path} unexpectedly contains relay production-only forbidden token `{token}`")
-    if re.search(r"\)\s*->\s*\(", text):
-        fail(f"{path} relay production DID must contain no public query/update methods")
     forbidden_recipient_fields = [
         (r"\bcanister_id\s*:\s*opt\s+principal\b", "canister_id : opt principal"),
         (r"\bneuron_id\s*:\s*opt\s+nat64\b", "neuron_id : opt nat64"),
@@ -349,14 +357,27 @@ def validate_relay_debug_did(path: Path) -> None:
     for method in expected:
         if not re.search(rf"\b{re.escape(method)}\b", text):
             fail(f"{path} is missing debug relay method `{method}`")
-    forbidden = ["get_config", "get_last_summary", "get_last_cycles_samples"]
+    forbidden = [
+        "Relay" + "Status",
+        "relay_" + "status",
+        "get_config",
+        "get_last_summary",
+        "get_last_cycles_samples",
+        "admin_schedule_main_tick_now",
+    ]
     for method in forbidden:
         if re.search(rf"\b{re.escape(method)}\b", text):
             fail(f"{path} unexpectedly exposes removed relay production method `{method}`")
 
 
 def validate_relay_docs_and_smoke_are_log_only() -> None:
-    forbidden = ["get_config", "get_last_summary", "get_last_cycles_samples"]
+    forbidden = [
+        "get_config",
+        "get_last_summary",
+        "get_last_cycles_samples",
+        "relay_" + "status",
+        "admin_schedule_main_tick_now",
+    ]
     for path in [
         REPO_ROOT / "canisters" / "relay" / "README.md",
         REPO_ROOT / "tools" / "scripts" / "smoke-relay-mainnet",

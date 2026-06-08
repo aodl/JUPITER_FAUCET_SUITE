@@ -8,6 +8,8 @@ use ic_stable_structures::{
     DefaultMemoryImpl, StableCell, Storable,
 };
 use icrc_ledger_types::icrc1::account::Account;
+#[cfg(test)]
+use jupiter_ic_clients::account_identifier::account_identifier_text;
 use serde::Serialize;
 
 const PRODUCTION_JUPITER_MANAGED_CANISTERS: [&str; 8] = [
@@ -264,6 +266,25 @@ impl State {
             next_job_id: 1,
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn relay_subaccount_one_hex() -> String {
+    hex_bytes(&crate::logic::relay_subaccount_one())
+}
+
+#[cfg(test)]
+pub(crate) fn relay_subaccount_one_account_identifier(self_id: Principal) -> String {
+    account_identifier_text(self_id, Some(crate::logic::relay_subaccount_one()))
+}
+
+#[cfg(test)]
+pub(crate) fn relay_subaccount_one_icrc_text(self_id: Principal) -> String {
+    Account {
+        owner: self_id,
+        subaccount: Some(crate::logic::relay_subaccount_one()),
+    }
+    .to_string()
 }
 
 pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> String {
@@ -749,6 +770,37 @@ mod tests {
         assert!(line.contains("memo_len=29"));
         assert!(line.contains("skipped_reason=subaccount_1_below_1_icp_net"));
         assert!(!line.contains("u2qkpaqaaaaaaarqb7eacai.Relay"));
+    }
+
+    #[test]
+    fn production_subaccount_one_addresses_are_stable() {
+        let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        assert_eq!(
+            relay_subaccount_one_hex(),
+            "0000000000000000000000000000000000000000000000000000000000000001"
+        );
+        assert_eq!(
+            relay_subaccount_one_account_identifier(relay),
+            "9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee"
+        );
+        assert_eq!(
+            relay_subaccount_one_icrc_text(relay),
+            "u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1"
+        );
+    }
+
+    #[test]
+    fn non_production_subaccount_one_icrc_text_uses_valid_textual_encoding() {
+        let relay = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        let text = relay_subaccount_one_icrc_text(relay);
+        let parsed: Account = text.parse().expect("expected valid ICRC textual account");
+
+        assert_eq!(parsed.owner, relay);
+        assert_eq!(
+            parsed.subaccount,
+            Some(crate::logic::relay_subaccount_one())
+        );
+        assert!(!text.contains(':'));
     }
 
     #[test]

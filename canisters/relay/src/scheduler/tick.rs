@@ -37,6 +37,12 @@ pub(crate) fn install_timers() {
     });
 }
 
+pub(crate) fn schedule_startup_liveness_tick() {
+    ic_cdk_timers::set_timer(Duration::from_secs(1), async {
+        main_tick(false).await;
+    });
+}
+
 pub(crate) fn schedule_immediate_resume_if_needed() {
     let has_pending_work = state::with_state(|st| {
         st.active_job.is_some() || st.active_faucet_commitment_transfer.is_some()
@@ -163,18 +169,6 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
         Ok(v) => v,
         Err(err) => {
             log_error(&format!("subaccount 1 fee read failed: {err}"));
-            log_faucet_commitment_skip(
-                source,
-                Account {
-                    owner: cfg.governance_canister_id,
-                    subaccount: None,
-                },
-                0,
-                0,
-                0,
-                0,
-                "subaccount_1_fee_read_failed",
-            );
             return;
         }
     };
@@ -182,18 +176,6 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
         Ok(v) => v,
         Err(err) => {
             log_error(&format!("subaccount 1 balance read failed: {err}"));
-            log_faucet_commitment_skip(
-                source,
-                Account {
-                    owner: cfg.governance_canister_id,
-                    subaccount: None,
-                },
-                0,
-                0,
-                fee,
-                0,
-                "subaccount_1_balance_read_failed",
-            );
             return;
         }
     };
@@ -206,21 +188,7 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
         balance,
         fee,
     );
-    if let Err(reason) = threshold_probe {
-        log_faucet_commitment_skip(
-            source,
-            Account {
-                owner: cfg.governance_canister_id,
-                subaccount: None,
-            },
-            balance,
-            0,
-            fee,
-            logic::relay_faucet_commitment_memo(self_id)
-                .map(|memo| memo.len() as u32)
-                .unwrap_or(0),
-            reason,
-        );
+    if threshold_probe.is_err() {
         return;
     }
 
@@ -233,20 +201,6 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
             log_error(&format!(
                 "subaccount 1 Jupiter Faucet neuron resolution failed: {err}"
             ));
-            log_faucet_commitment_skip(
-                source,
-                Account {
-                    owner: cfg.governance_canister_id,
-                    subaccount: None,
-                },
-                balance,
-                0,
-                fee,
-                logic::relay_faucet_commitment_memo(self_id)
-                    .map(|memo| memo.len() as u32)
-                    .unwrap_or(0),
-                "subaccount_1_neuron_resolution_failed",
-            );
             return;
         }
     };
@@ -258,21 +212,7 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
         fee,
     ) {
         Ok(plan) => plan,
-        Err(reason) => {
-            log_faucet_commitment_skip(
-                source,
-                Account {
-                    owner: cfg.governance_canister_id,
-                    subaccount: Some(staking_subaccount),
-                },
-                balance,
-                0,
-                fee,
-                logic::relay_faucet_commitment_memo(self_id)
-                    .map(|memo| memo.len() as u32)
-                    .unwrap_or(0),
-                reason,
-            );
+        Err(_) => {
             return;
         }
     };
@@ -295,29 +235,6 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
             balance_start_e8s: plan.balance_start_e8s,
         });
     });
-}
-
-fn log_faucet_commitment_skip(
-    source: Account,
-    destination: Account,
-    balance_start_e8s: u64,
-    amount_e8s: u64,
-    fee_e8s: u64,
-    memo_len: u32,
-    reason: &'static str,
-) {
-    ic_cdk::println!(
-        "{}",
-        state::relay_faucet_commitment_log_line(
-            source,
-            destination,
-            balance_start_e8s,
-            amount_e8s,
-            fee_e8s,
-            memo_len,
-            Some(reason),
-        )
-    );
 }
 
 async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(

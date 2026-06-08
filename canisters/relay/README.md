@@ -83,7 +83,7 @@ If any required probe fails, the relay fails closed: it records a degraded summa
 
 ## Runtime Config Verification
 
-The production relay intentionally exposes no public application endpoints. Debug endpoints are only available in non-production debug builds, and the debug API guard traps if a debug build is ever installed at the production relay principal. The operational model treats the production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed relay with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces.
+The production relay exposes no public application query or update endpoints. Debug endpoints are only available in non-production debug builds, and the debug API guard traps if a debug build is ever installed at the production relay principal. The operational model treats the production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed relay with debug APIs is a separate non-production/debug deployment. No controller-only production application endpoint is used for recovery.
 
 The relay logs public runtime verification lines on every main tick that actually runs:
 
@@ -100,7 +100,7 @@ After deployment, anyone can verify the installed source/config by building the 
 icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
 ```
 
-Canister logs have finite retention. Operators should archive logs externally if long-term history is required.
+Canister logs have finite retention. Operators should archive logs externally if long-term history is required. Logs are intentionally low-noise: timer callbacks that are suppressed by the guard, startup liveness checks that are suppressed by the recent-run guard, empty scans, and below-threshold subaccount-1 scans do not produce extra public log lines. Main ticks that actually proceed still emit the documented runtime and financial logs.
 
 ## Public Log Records
 
@@ -114,13 +114,28 @@ RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cyc
 RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null> memo_len=<nat32-or-null>
 RELAY_FAUCET_COMMITMENT source_owner=<principal> source_subaccount=<hex> destination_owner=<principal> destination_subaccount=<hex-or-null> balance_start_e8s=<nat64> amount_e8s=<nat64> fee_e8s=<nat64> memo_len=<nat32> skipped_reason=<escaped-text-or-null>
 RELAY_PROBE_FAILURE canister_id=<principal> error=<escaped-text>
+relay LIFECYCLE event=<init_complete|post_upgrade_complete> timers_installed=true main_interval_seconds=<nat64>
+relay ERR message=<escaped-text>
 ```
 
-`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, the mode-specific top-up target, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_FAUCET_COMMITMENT` logs show subaccount-1 forwarding attempts and skips without printing raw memo bytes. Skip reasons include `subaccount_1_no_funds`, `subaccount_1_below_1_icp_net`, `subaccount_1_fee_read_failed`, `subaccount_1_balance_read_failed`, `subaccount_1_neuron_resolution_failed`, `subaccount_1_memo_invalid`, `subaccount_1_transfer_ambiguous`, and `subaccount_1_transfer_failed`.
+`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated burn, the mode-specific top-up target, planned top-up e8s, actual top-up e8s, actual minted cycles, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_FAUCET_COMMITMENT` logs show successful, ambiguous, or failed subaccount-1 forwarding attempts without printing raw memo bytes. Healthy empty scans and below-threshold scans are quiet; they do not produce repeated public log lines or durable status records.
+
+## Status and Recovery
+
+Production Relay exposes no public application query or update endpoints. Debug endpoints exist only in non-production debug builds. No controller-only production application endpoint is used for recovery. Routine recovery is a clean no-args upgrade, which re-installs timers, preserves stable state, and emits one `relay LIFECYCLE event=post_upgrade_complete ...` log line after a successful `post_upgrade`.
+
+Production Relay identity and subaccount-1 addresses:
+
+```text
+relay principal: u2qkp-aqaaa-aaaar-qb7ea-cai
+subaccount 1 hex: 0000000000000000000000000000000000000000000000000000000000000001
+legacy ICP account identifier: 9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee
+ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
+```
 
 ## Tick Behavior
 
-The default main interval is one day and timer intervals are clamped to at least 60 seconds. After upgrade, an active job schedules an immediate forced resume.
+The default main interval is one day and timer intervals are clamped to at least 60 seconds. After init and successful post-upgrade, the relay schedules an internal, stateless one-shot startup liveness tick that calls the normal non-forced main tick path. This is not an endpoint and does not write diagnostic state. If the recent-run guard suppresses that tick, no extra config/timer-firing log line is emitted. After upgrade, an active job also schedules an immediate forced resume.
 
 The first successful complete probe is baseline-only. It stores current cycles and does not spend ICP. Later ticks compare the previous completed sample, relay-minted cycles since that sample, and the current probe:
 
@@ -256,9 +271,9 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
 
 ## Production upgrades
 
-The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
+The committed install-args file is for fresh installs only. Do not pass fresh-install `InitArgs` when upgrading.
 
-Normal production upgrades preserve stable state and must use the relay `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
+Normal production upgrades preserve stable state and must use the relay `post_upgrade` argument shape, not the fresh-install `InitArgs` shape. Passing `InitArgs` to `post_upgrade` traps with `received InitArgs in relay post_upgrade; do not pass install args to upgrade`.
 
 For a production upgrade with no config change, pass no args:
 

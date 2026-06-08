@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 candid = { workspace = true }
 ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
+jupiter-canister-logging = { version = "0.1.0", path = "../../crates/canister-logging" }

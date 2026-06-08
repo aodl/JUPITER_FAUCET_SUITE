@@ -26,6 +26,7 @@ ic-cdk-timers = { workspace = true }
 icrc-ledger-types = { workspace = true }
 ic-stable-structures = { workspace = true }
 jupiter-ic-clients = { version = "0.1.0", path = "../../crates/ic-clients" }
+jupiter-canister-logging = { version = "0.1.0", path = "../../crates/canister-logging" }
 jupiter-persistence-batch = { version = "0.1.0", path = "../../crates/persistence-batch" }
 jupiter-memo-policy = { version = "0.1.0", path = "../../crates/memo-policy" }
 jupiter-nns-types = { version = "0.1.0", path = "../../crates/nns-types" }

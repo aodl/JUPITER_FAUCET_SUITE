@@ -296,6 +296,9 @@ fn init(args: InitArgs) {
     crate::state::init_stable_storage();
     crate::state::set_state(crate::state::State::new(cfg, now_secs));
     crate::scheduler::install_timers();
+    crate::scheduler::schedule_startup_liveness_tick();
+    let main_interval_seconds = crate::state::with_state(|st| st.config.main_interval_seconds);
+    crate::scheduler::log_lifecycle("init_complete", main_interval_seconds, None, None);
 }
 
 #[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
@@ -316,6 +319,21 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     crate::state::set_state(st);
     crate::scheduler::install_timers();
     crate::scheduler::schedule_immediate_resume_if_needed();
+    crate::scheduler::schedule_startup_liveness_tick();
+    let (main_interval_seconds, active_job_present, active_faucet_present) =
+        crate::state::with_state(|st| {
+            (
+                st.config.main_interval_seconds,
+                st.active_job.is_some(),
+                st.active_faucet_commitment_transfer.is_some(),
+            )
+        });
+    crate::scheduler::log_lifecycle(
+        "post_upgrade_complete",
+        main_interval_seconds,
+        Some(active_job_present),
+        Some(active_faucet_present),
+    );
 }
 
 #[cfg(feature = "debug_api")]
@@ -531,10 +549,29 @@ mod tests {
         assert_committed_did_matches_rust_service("jupiter_relay.did");
     }
 
+    #[cfg(not(feature = "debug_api"))]
+    #[test]
+    fn production_did_exposes_empty_service() {
+        let did = include_str!("../jupiter_relay.did");
+        assert!(did.trim_end().ends_with("service : (InitArgs) -> {}"));
+        assert!(!did.contains(concat!("Relay", "Status")));
+        assert!(!did.contains(concat!("relay_", "status")));
+        assert!(!did.contains("admin_schedule_main_tick_now"));
+    }
+
     #[cfg(feature = "debug_api")]
     #[test]
     fn committed_debug_did_matches_rust_service() {
         assert_committed_did_matches_rust_service("jupiter_relay_debug.did");
+    }
+
+    #[cfg(feature = "debug_api")]
+    #[test]
+    fn debug_did_does_not_expose_status_or_admin_endpoint() {
+        let did = include_str!("../jupiter_relay_debug.did");
+        assert!(!did.contains(concat!("Relay", "Status")));
+        assert!(!did.contains(concat!("relay_", "status")));
+        assert!(!did.contains("admin_schedule_main_tick_now"));
     }
 
     #[test]

@@ -1377,6 +1377,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jupiter-canister-logging"
+version = "0.1.0"
+
+[[package]]
 name = "jupiter-disburser"
 version = "0.2.0"
 dependencies = [
@@ -1389,6 +1393,7 @@ dependencies = [
  "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
+ "jupiter-canister-logging",
  "jupiter-ic-clients",
  "jupiter-nns-types",
  "jupiter-persistence-batch",
@@ -1413,6 +1418,7 @@ dependencies = [
  "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
+ "jupiter-canister-logging",
  "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
@@ -1450,6 +1456,7 @@ dependencies = [
  "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
+ "jupiter-canister-logging",
  "jupiter-ic-clients",
  "jupiter-memo-policy",
  "jupiter-nns-types",
@@ -1485,6 +1492,7 @@ dependencies = [
  "candid",
  "ic-cdk",
  "ic-cdk-timers",
+ "jupiter-canister-logging",
 ]
 
 [[package]]
@@ -1522,6 +1530,7 @@ dependencies = [
  "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
+ "jupiter-canister-logging",
  "jupiter-ic-clients",
  "jupiter-nns-types",
  "pocket-ic",

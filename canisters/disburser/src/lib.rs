@@ -6,6 +6,9 @@ mod state;
 
 use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_canister_logging::{
+    format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
+};
 use jupiter_ic_clients::constants;
 
 use crate::state::State;
@@ -191,6 +194,7 @@ fn init(args: InitArgs) {
     let st = State::new(cfg, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
+    log_lifecycle("init_complete");
 }
 
 pub(crate) fn apply_upgrade_args_to_state(
@@ -251,6 +255,26 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     if actions.schedule_immediate_controller_reconcile {
         crate::scheduler::schedule_immediate_rescue_reconcile();
     }
+    log_lifecycle("post_upgrade_complete");
+}
+
+fn log_lifecycle(event: &str) {
+    let main_interval_seconds = crate::state::with_state(|st| st.config.main_interval_seconds);
+    ic_cdk::println!(
+        "{}",
+        format_event_line(
+            "disburser",
+            "LIFECYCLE",
+            &[
+                (FIELD_EVENT, event.to_string()),
+                (FIELD_TIMERS_INSTALLED, true.to_string()),
+                (
+                    FIELD_MAIN_INTERVAL_SECONDS,
+                    main_interval_seconds.to_string()
+                ),
+            ],
+        )
+    );
 }
 
 #[cfg(feature = "debug_api")]

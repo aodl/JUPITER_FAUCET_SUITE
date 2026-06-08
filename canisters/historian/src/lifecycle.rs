@@ -1,4 +1,7 @@
 use super::*;
+use jupiter_canister_logging::{
+    format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
+};
 pub(super) fn mainnet_ledger_id() -> Principal {
     jupiter_ic_clients::constants::icp_ledger_id()
 }
@@ -561,6 +564,7 @@ pub(super) fn init(args: InitArgs) {
     normalize_runtime_state(&mut st);
     state::set_state(st);
     scheduler::install_timers();
+    log_lifecycle("init_complete");
 }
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
@@ -658,4 +662,24 @@ pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
     // here would clobber those bulk histories with an intentionally sparse heap view.
     state::set_state_root_only(st);
     scheduler::install_timers();
+    log_lifecycle("post_upgrade_complete");
+}
+
+fn log_lifecycle(event: &str) {
+    let main_interval_seconds = state::with_state(|st| st.config.scan_interval_seconds);
+    ic_cdk::println!(
+        "{}",
+        format_event_line(
+            "historian",
+            "LIFECYCLE",
+            &[
+                (FIELD_EVENT, event.to_string()),
+                (FIELD_TIMERS_INSTALLED, true.to_string()),
+                (
+                    FIELD_MAIN_INTERVAL_SECONDS,
+                    main_interval_seconds.to_string()
+                ),
+            ],
+        )
+    );
 }

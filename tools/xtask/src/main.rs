@@ -4865,10 +4865,17 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
                 &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)),
             )?;
 
-            let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
-            let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
-            let summary: Option<RelaySummary> =
-                call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
+            let mut summary = None;
+            for _ in 0..3 {
+                let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
+                summary = call_raw_noargs("jupiter_relay_args_dbg", "debug_last_summary")?;
+                if matches!(
+                    summary.as_ref().map(|summary: &RelaySummary| &summary.mode),
+                    Some(RelayMode::TopUpThenSurplus)
+                ) {
+                    break;
+                }
+            }
             let summary = summary.context("expected relay no-surplus-recipient summary")?;
             if summary.mode != RelayMode::TopUpThenSurplus
                 || summary.skipped_surplus_reason.as_deref() != Some("no_raw_icp_recipients")

@@ -27,6 +27,7 @@ static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static RELAY_PROD_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn ledger_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
@@ -42,6 +43,13 @@ fn blackhole_wasm() -> Result<Vec<u8>> {
 }
 fn relay_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&RELAY_WASM, "jupiter-relay", Some("debug_api"))
+}
+fn relay_prod_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&RELAY_PROD_WASM, "jupiter-relay", None)
+}
+
+fn wasm_contains(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes.windows(needle.len()).any(|window| window == needle)
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -568,6 +576,68 @@ fn relay_subaccount_one() -> [u8; 32] {
 
 #[test]
 #[ignore]
+fn relay_production_wasm_does_not_export_status_or_admin_endpoints() -> Result<()> {
+    require_ignored_flag()?;
+    let wasm = relay_prod_wasm()?;
+    let removed_debug_marker = b"relay_"
+        .iter()
+        .chain(b"status")
+        .copied()
+        .collect::<Vec<_>>();
+    let removed_debug_query_marker = b"canister_query "
+        .iter()
+        .chain(removed_debug_marker.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    for needle in [
+        removed_debug_query_marker.as_slice(),
+        b"canister_update admin_schedule_main_tick_now".as_slice(),
+        removed_debug_marker.as_slice(),
+        b"admin_schedule_main_tick_now".as_slice(),
+    ] {
+        if wasm_contains(&wasm, needle) {
+            bail!(
+                "production relay Wasm unexpectedly contains exported endpoint marker `{}`",
+                String::from_utf8_lossy(needle)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn relay_debug_wasm_does_not_export_status_or_admin_endpoints() -> Result<()> {
+    require_ignored_flag()?;
+    let wasm = relay_wasm()?;
+    let removed_debug_marker = b"relay_"
+        .iter()
+        .chain(b"status")
+        .copied()
+        .collect::<Vec<_>>();
+    let removed_debug_query_marker = b"canister_query "
+        .iter()
+        .chain(removed_debug_marker.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    for needle in [
+        removed_debug_query_marker.as_slice(),
+        removed_debug_marker.as_slice(),
+        b"canister_update admin_schedule_main_tick_now".as_slice(),
+        b"admin_schedule_main_tick_now".as_slice(),
+    ] {
+        if wasm_contains(&wasm, needle) {
+            bail!(
+                "debug relay Wasm unexpectedly contains status/admin endpoint marker `{}`",
+                String::from_utf8_lossy(needle)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<()> {
     require_ignored_flag()?;
     let jupiter_faucet_neuron = 11_614_578_985_374_291_210_u64;
@@ -651,10 +721,27 @@ fn subaccount_one_commitment_waits_until_one_icp_net() -> Result<()> {
         );
     }
     let logs = env.logs_text()?;
-    if !logs.contains("RELAY_FAUCET_COMMITMENT ")
-        || !logs.contains("skipped_reason=subaccount_1_below_1_icp_net")
-    {
-        bail!("expected below-threshold subaccount-1 skip log, got {logs}");
+    if logs.contains("skipped_reason=subaccount_1_below_1_icp_net") {
+        bail!("expected below-threshold subaccount-1 scan to stay out of repeated public logs, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_no_funds_is_quiet_without_skip_log() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+
+    let summary = env.tick_relay()?;
+    if summary.ledger_transfer_count != 0 || !env.transfers()?.is_empty() {
+        bail!("expected no transfer with empty subaccount-1, got {summary:?}");
+    }
+
+    let logs = env.logs_text()?;
+    if logs.contains("skipped_reason=subaccount_1_no_funds") {
+        bail!("expected no-funds scan to stay out of repeated public logs, got {logs}");
     }
     Ok(())
 }
@@ -714,7 +801,7 @@ fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Re
     let logs = env.logs_text()?;
     if !logs.contains("RELAY_FAUCET_COMMITMENT ")
         || !logs.contains("skipped_reason=null")
-        || !logs.contains("faucet commitment neuron refresh failed")
+        || !logs.contains("relay ERR message=faucet%20commitment%20neuron%20refresh%20failed")
     {
         bail!("expected accepted transfer and logged follow-up refresh failure, got {logs}");
     }
@@ -722,7 +809,7 @@ fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Re
         .find("RELAY_SUMMARY ")
         .context("expected allocation-job summary log")?;
     let refresh_failure_pos = logs
-        .find("faucet commitment neuron refresh failed")
+        .find("relay ERR message=faucet%20commitment%20neuron%20refresh%20failed")
         .context("expected scheduled refresh failure log")?;
     if refresh_failure_pos < summary_pos {
         bail!(
@@ -1524,6 +1611,25 @@ fn upgrade_after_trap_following_ledger_transfer_recovers_without_double_spend() 
         || !logs.contains("cmc_notify_success_count=1")
     {
         bail!("expected coherent public summary after upgrade recovery, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn relay_post_upgrade_logs_lifecycle_and_keeps_startup_liveness_stateless() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.upgrade_relay_without_config_changes()?;
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+
+    let logs = env.logs_text()?;
+    if !logs.contains("relay LIFECYCLE event=post_upgrade_complete timers_installed=true") {
+        bail!("expected post-upgrade lifecycle log, got {logs}");
+    }
+    if logs.contains("timer fired") {
+        bail!("expected no timer-fired public log spam, got {logs}");
     }
     Ok(())
 }
