@@ -1091,6 +1091,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic-stable-structures"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ee3372ddc0cf2a747fc26ce2d075a240ed6bfab151e63bc70109e8967f7ce6f"
+dependencies = [
+ "ic_principal",
+]
+
+[[package]]
 name = "ic-transport-types"
 version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1150,7 +1159,7 @@ dependencies = [
  "candid",
  "crc32fast",
  "hex",
- "ic-stable-structures",
+ "ic-stable-structures 0.6.9",
  "icrc-cbor",
  "itertools 0.12.1",
  "minicbor",
@@ -1390,7 +1399,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures",
+ "ic-stable-structures 0.7.2",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1415,7 +1424,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures",
+ "ic-stable-structures 0.7.2",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1453,7 +1462,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures",
+ "ic-stable-structures 0.7.2",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1527,7 +1536,7 @@ dependencies = [
  "candid_parser 0.1.4",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures",
+ "ic-stable-structures 0.7.2",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",

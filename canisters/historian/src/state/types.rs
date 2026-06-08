@@ -335,6 +335,10 @@ impl Storable for PrincipalKey {
         Cow::Owned(self.0.clone())
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         Self(bytes.into_owned())
     }
@@ -353,6 +357,10 @@ impl Storable for StableSourceSet {
         Cow::Owned(candid::encode_one(self).expect("failed to encode historian stable source set"))
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian stable source set")
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         candid::decode_one(bytes.as_ref()).expect("failed to decode historian stable source set")
     }
@@ -366,6 +374,10 @@ pub(super) struct StableU64List(pub Vec<u64>);
 impl Storable for StableU64List {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Owned(candid::encode_one(self).expect("failed to encode historian stable u64 list"))
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian stable u64 list")
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -397,6 +409,14 @@ impl Storable for CommitmentEntryKey {
         out.extend_from_slice(&self.canister.0);
         out.extend_from_slice(&self.tx_id.to_be_bytes());
         Cow::Owned(out)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(1 + self.canister.0.len() + 8);
+        out.push(self.canister.0.len() as u8);
+        out.extend_from_slice(&self.canister.0);
+        out.extend_from_slice(&self.tx_id.to_be_bytes());
+        out
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -439,6 +459,13 @@ impl Storable for NeuronCommitmentEntryKey {
         out.extend_from_slice(&self.neuron_id.to_be_bytes());
         out.extend_from_slice(&self.tx_id.to_be_bytes());
         Cow::Owned(out)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(16);
+        out.extend_from_slice(&self.neuron_id.to_be_bytes());
+        out.extend_from_slice(&self.tx_id.to_be_bytes());
+        out
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -487,6 +514,14 @@ impl Storable for CyclesEntryKey {
         Cow::Owned(out)
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(1 + self.canister.0.len() + 8);
+        out.push(self.canister.0.len() as u8);
+        out.extend_from_slice(&self.canister.0);
+        out.extend_from_slice(&self.timestamp_nanos.to_be_bytes());
+        out
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let bytes = bytes.as_ref();
         let len = bytes.first().copied().unwrap_or(0) as usize;
@@ -514,6 +549,10 @@ impl Storable for CommitmentSample {
         Cow::Owned(candid::encode_one(self).expect("failed to encode historian commitment sample"))
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian commitment sample")
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         candid::decode_one(bytes.as_ref()).expect("failed to decode historian commitment sample")
     }
@@ -524,6 +563,10 @@ impl Storable for CommitmentSample {
 impl Storable for CyclesSample {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Owned(candid::encode_one(self).expect("failed to encode historian cycles sample"))
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian cycles sample")
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -538,6 +581,10 @@ impl Storable for StableCanisterMeta {
         Cow::Owned(
             candid::encode_one(self).expect("failed to encode historian stable canister meta"),
         )
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian stable canister meta")
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -689,6 +736,10 @@ pub(crate) enum VersionedStableState {
 impl Storable for VersionedStableState {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Owned(candid::encode_one(self).expect("failed to encode historian root stable state"))
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian root stable state")
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {

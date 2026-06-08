@@ -68,8 +68,7 @@ pub(super) fn with_root_stable_cell<R>(
         if cell.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(0));
-                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized)
-                    .expect("failed to initialize historian root stable cell");
+                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized);
                 *cell.borrow_mut() = Some(stable_cell);
             });
         }

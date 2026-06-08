@@ -5,7 +5,7 @@
 //! narrow instead of pulling in broad generated management bindings.
 //!
 //! Preserve the existing management-call policy unless making an explicit
-//! scheduler-policy decision: mutating or trusted management calls use
+//! scheduler-policy decision: trusted/mutating management-canister calls use
 //! unbounded wait and include `sender_canister_version`, while read-style
 //! metadata calls use bounded wait.
 
@@ -53,6 +53,9 @@ pub async fn update_settings(arg: &UpdateSettingsArgs) -> CallResult<()> {
     };
 
     Ok(
+        // Intentional exception: trusted IC management-canister mutations follow
+        // the SDK management-call model and include sender_canister_version.
+        // External canister calls remain bounded to avoid untrusted callee stalls.
         Call::unbounded_wait(Principal::management_canister(), UPDATE_SETTINGS_METHOD)
             .with_arg(&complete_arg)
             .await?

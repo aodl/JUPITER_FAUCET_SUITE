@@ -50,21 +50,25 @@ pub(super) fn dirty_neuron_commitment_ids() -> BTreeSet<u64> {
 }
 
 pub(super) fn stable_commitment_history_keys_internal() -> BTreeSet<Principal> {
-    with_commitment_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
+    with_commitment_history_index_map(|map| {
+        map.iter().map(|entry| entry.key().to_principal()).collect()
+    })
 }
 
 pub(super) fn stable_cycles_history_keys_internal() -> BTreeSet<Principal> {
-    with_cycles_history_index_map(|map| map.iter().map(|(key, _)| key.to_principal()).collect())
+    with_cycles_history_index_map(|map| {
+        map.iter().map(|entry| entry.key().to_principal()).collect()
+    })
 }
 
 pub(super) fn stable_raw_icp_commitment_history_keys_internal() -> BTreeSet<Principal> {
     with_raw_icp_commitment_history_index_map(|map| {
-        map.iter().map(|(key, _)| key.to_principal()).collect()
+        map.iter().map(|entry| entry.key().to_principal()).collect()
     })
 }
 
 pub(super) fn stable_neuron_commitment_history_keys_internal() -> BTreeSet<u64> {
-    with_neuron_commitment_history_index_map(|map| map.iter().map(|(key, _)| key).collect())
+    with_neuron_commitment_history_index_map(|map| map.iter().map(|entry| *entry.key()).collect())
 }
 
 pub(super) fn load_stable_commitment_history_internal(

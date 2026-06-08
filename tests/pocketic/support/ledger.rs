@@ -33,7 +33,7 @@ pub fn icrc1_balance(pic: &PocketIc, ledger: Principal, account: &Account) -> Re
         ledger,
         Principal::anonymous(),
         "icrc1_balance_of",
-        account.clone(),
+        *account,
     )?;
     nat_to_u64(&balance)
 }

@@ -15,7 +15,6 @@ use jupiter_nns_types::{ListNeurons, ManageNeuronRequest};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GovernanceCallWait {
     Bounded { timeout_seconds: Option<u32> },
-    Unbounded,
 }
 
 impl GovernanceCallWait {
@@ -29,10 +28,6 @@ impl GovernanceCallWait {
         Self::Bounded {
             timeout_seconds: Some(timeout_seconds),
         }
-    }
-
-    pub const fn unbounded() -> Self {
-        Self::Unbounded
     }
 }
 
@@ -51,7 +46,6 @@ pub async fn get_full_neuron(
                 None => call,
             }
         }
-        GovernanceCallWait::Unbounded => Call::unbounded_wait(canister_id, GET_FULL_NEURON_METHOD),
     };
     call.with_arg(arg0).await
 }
@@ -71,7 +65,6 @@ pub async fn list_neurons(
                 None => call,
             }
         }
-        GovernanceCallWait::Unbounded => Call::unbounded_wait(canister_id, LIST_NEURONS_METHOD),
     };
     call.with_arg(arg0).await
 }
@@ -91,7 +84,6 @@ pub async fn manage_neuron(
                 None => call,
             }
         }
-        GovernanceCallWait::Unbounded => Call::unbounded_wait(canister_id, MANAGE_NEURON_METHOD),
     };
     call.with_arg(arg0).await
 }

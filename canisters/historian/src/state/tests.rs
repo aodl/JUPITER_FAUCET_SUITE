@@ -9,8 +9,7 @@ mod tests {
 
     fn reset_test_storage() {
         with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::Uninitialized)
-                .expect("failed to reset historian root stable state for test");
+            cell.set(VersionedStableState::Uninitialized);
         });
         with_canister_sources_map(|map| map.clear_new());
         with_canister_meta_map(|map| map.clear_new());
@@ -95,7 +94,8 @@ mod tests {
     fn snapshot_sources_map() -> BTreeMap<Principal, BTreeSet<CanisterSource>> {
         with_canister_sources_map(|map| {
             let mut out = BTreeMap::new();
-            for (key, value) in map.iter() {
+            for entry in map.iter() {
+                let (key, value) = entry.into_pair();
                 out.insert(key.to_principal(), value.0.clone());
             }
             out
@@ -105,7 +105,8 @@ mod tests {
     fn snapshot_meta_map() -> BTreeMap<Principal, StableCanisterMeta> {
         with_canister_meta_map(|map| {
             let mut out = BTreeMap::new();
-            for (key, value) in map.iter() {
+            for entry in map.iter() {
+                let (key, value) = entry.into_pair();
                 out.insert(key.to_principal(), value.clone());
             }
             out
@@ -115,7 +116,8 @@ mod tests {
     fn snapshot_commitment_history_map() -> BTreeMap<Principal, Vec<CommitmentSample>> {
         with_commitment_history_index_map(|index_map| {
             let mut out = BTreeMap::new();
-            for (key, ids) in index_map.iter() {
+            for entry in index_map.iter() {
+                let (key, ids) = entry.into_pair();
                 let canister_id = key.to_principal();
                 let mut samples = Vec::new();
                 for tx_id in ids.0 {
@@ -136,7 +138,8 @@ mod tests {
     fn snapshot_cycles_history_map() -> BTreeMap<Principal, Vec<CyclesSample>> {
         with_cycles_history_index_map(|index_map| {
             let mut out = BTreeMap::new();
-            for (key, timestamps) in index_map.iter() {
+            for entry in index_map.iter() {
+                let (key, timestamps) = entry.into_pair();
                 let canister_id = key.to_principal();
                 let mut samples = Vec::new();
                 for timestamp_nanos in timestamps.0 {
@@ -157,7 +160,8 @@ mod tests {
     fn snapshot_raw_icp_commitment_history_map() -> BTreeMap<Principal, Vec<CommitmentSample>> {
         with_raw_icp_commitment_history_index_map(|index_map| {
             let mut out = BTreeMap::new();
-            for (key, ids) in index_map.iter() {
+            for entry in index_map.iter() {
+                let (key, ids) = entry.into_pair();
                 let canister_id = key.to_principal();
                 let mut samples = Vec::new();
                 for tx_id in ids.0 {
@@ -178,7 +182,8 @@ mod tests {
     fn snapshot_neuron_commitment_history_map() -> BTreeMap<u64, Vec<CommitmentSample>> {
         with_neuron_commitment_history_index_map(|index_map| {
             let mut out = BTreeMap::new();
-            for (neuron_id, ids) in index_map.iter() {
+            for entry in index_map.iter() {
+                let (neuron_id, ids) = entry.into_pair();
                 let mut samples = Vec::new();
                 for tx_id in ids.0 {
                     if let Some(sample) = with_neuron_commitment_entry_map(|entry_map| {

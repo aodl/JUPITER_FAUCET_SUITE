@@ -6,7 +6,8 @@ pub(crate) fn init_stable_storage() {
 pub(super) fn restore_state_current(root: StableRootState) -> State {
     let canister_sources = with_canister_sources_map(|map| {
         let mut out = BTreeMap::new();
-        for (key, value) in map.iter() {
+        for entry in map.iter() {
+            let (key, value) = entry.into_pair();
             out.insert(key.to_principal(), value.0.clone());
         }
         out
@@ -15,7 +16,8 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
     let cycles_history = BTreeMap::new();
     let per_canister_meta = with_canister_meta_map(|map| {
         let mut out = BTreeMap::new();
-        for (key, value) in map.iter() {
+        for entry in map.iter() {
+            let (key, value) = entry.into_pair();
             out.insert(key.to_principal(), value.clone().into());
         }
         out

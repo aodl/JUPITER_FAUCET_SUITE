@@ -144,6 +144,10 @@ impl Storable for U64Key {
         Cow::Owned(self.0.to_be_bytes().to_vec())
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_be_bytes().to_vec()
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         let slice = bytes.as_ref();
         assert_eq!(slice.len(), 8, "invalid faucet u64 key length");
@@ -176,6 +180,10 @@ impl From<u64> for U64Value {
 impl Storable for U64Value {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Owned(self.0.to_be_bytes().to_vec())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_be_bytes().to_vec()
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
@@ -477,6 +485,10 @@ impl Storable for VersionedStableState {
         Cow::Owned(candid::encode_one(self).expect("failed to encode faucet stable state"))
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode faucet stable state")
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         candid::decode_one(bytes.as_ref()).expect("failed to decode faucet stable state")
     }
@@ -503,8 +515,7 @@ fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memo
         if cell.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(0));
-                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized)
-                    .expect("failed to initialize faucet stable cell");
+                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized);
                 *cell.borrow_mut() = Some(stable_cell);
             });
         }
@@ -515,8 +526,7 @@ fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memo
 
 fn persist_snapshot(st: &State) {
     with_stable_cell(|cell| {
-        cell.set(VersionedStableState::V1(st.clone()))
-            .expect("failed to persist faucet stable state");
+        cell.set(VersionedStableState::V1(st.clone()));
     });
 }
 
@@ -543,9 +553,12 @@ fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, M
 pub(crate) fn list_skip_ranges() -> Vec<SkipRange> {
     with_skip_range_map(|map| {
         map.iter()
-            .map(|(start, end)| SkipRange {
-                start_tx_id: start.get(),
-                end_tx_id: end.get(),
+            .map(|entry| {
+                let (start, end) = entry.into_pair();
+                SkipRange {
+                    start_tx_id: start.get(),
+                    end_tx_id: end.get(),
+                }
             })
             .collect()
     })
@@ -616,7 +629,7 @@ pub(crate) fn latch_skip_range_invariant_fault() {
 
 pub(crate) fn clear_skip_ranges() {
     with_skip_range_map(|map| {
-        let keys: Vec<_> = map.iter().map(|(start, _)| start).collect();
+        let keys: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
         for key in keys {
             map.remove(&key);
         }
@@ -716,8 +729,7 @@ mod tests {
 
     fn reset_test_storage() {
         with_stable_cell(|cell| {
-            cell.set(VersionedStableState::Uninitialized)
-                .expect("failed to reset faucet stable state for test");
+            cell.set(VersionedStableState::Uninitialized);
         });
         clear_skip_ranges();
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));

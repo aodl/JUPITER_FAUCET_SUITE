@@ -89,8 +89,7 @@ pub(super) fn persist_snapshot_sections_scoped(
         // bulk sections. This keeps the root as the final commit marker if a trap occurs before
         // the map-backed writes complete.
         with_root_stable_cell(|cell| {
-            cell.set(VersionedStableState::Current(build_root_snapshot(st)))
-                .expect("failed to persist historian root stable state");
+            cell.set(VersionedStableState::Current(build_root_snapshot(st)));
         });
     }
 }

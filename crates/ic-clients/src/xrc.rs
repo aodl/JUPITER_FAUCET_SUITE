@@ -87,7 +87,7 @@ impl XrcCanister {
 
     pub async fn get_icp_xdr_rate(&self) -> Result<IcpXdrRate, ClientError> {
         let decoded: GetExchangeRateResult =
-            ic_cdk::call::Call::unbounded_wait(self.canister_id, "get_exchange_rate")
+            ic_cdk::call::Call::bounded_wait(self.canister_id, "get_exchange_rate")
                 .with_arg(icp_xdr_request())
                 .with_cycles(XRC_CALL_CYCLES)
                 .await

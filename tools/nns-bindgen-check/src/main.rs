@@ -135,7 +135,6 @@ use jupiter_nns_types::{ListNeurons, ManageNeuronRequest};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GovernanceCallWait {
     Bounded { timeout_seconds: Option<u32> },
-    Unbounded,
 }
 
 impl GovernanceCallWait {
@@ -151,9 +150,6 @@ impl GovernanceCallWait {
         }
     }
 
-    pub const fn unbounded() -> Self {
-        Self::Unbounded
-    }
 }
 
 "#,
@@ -208,7 +204,6 @@ pub async fn {function_name}(
                 None => call,
             }}
         }}
-        GovernanceCallWait::Unbounded => Call::unbounded_wait(canister_id, {const_name}),
     }};
     call.with_arg({arg_name}).await
 }}

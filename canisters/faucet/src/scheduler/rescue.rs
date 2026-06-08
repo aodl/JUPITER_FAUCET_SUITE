@@ -80,7 +80,6 @@ pub(super) async fn attempt_rescue(now_secs: u64) {
         canister_id: self_id,
         settings: CanisterSettings {
             controllers: Some(desired),
-            ..Default::default()
         },
     };
     if update_settings(&arg).await.is_err() {

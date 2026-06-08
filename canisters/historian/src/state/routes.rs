@@ -38,7 +38,7 @@ pub(super) fn sync_canister_sources_map(
             }
         }
         None => {
-            let existing_keys: Vec<_> = map.iter().map(|(key, _)| key).collect();
+            let existing_keys: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
             for key in existing_keys {
                 if !current.contains_key(&key.to_principal()) {
                     map.remove(&key);
@@ -85,7 +85,7 @@ pub(super) fn sync_canister_meta_map(
             }
         }
         None => {
-            let existing_keys: Vec<_> = map.iter().map(|(key, _)| key).collect();
+            let existing_keys: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
             for key in existing_keys {
                 if !current.contains_key(&key.to_principal()) {
                     map.remove(&key);

@@ -5,9 +5,11 @@
 //! source and do not run bindgen, expose generated `ic-cdk` call stubs, or pull
 //! in broader DFINITY NNS crate dependencies.
 
+#![allow(clippy::derivable_impls)]
+
 use candid::Principal;
 
-#[allow(clippy::all, unused_imports)]
+#[allow(clippy::all, clippy::derivable_impls, unused_imports)]
 mod generated {
     use candid::{CandidType, Deserialize, Principal};
     use serde::Serialize;

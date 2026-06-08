@@ -552,8 +552,10 @@ mod tests {
         assert_eq!(MODULE_HASH_REFRESH_INTERVAL_SECONDS, 10 * 60);
         assert_eq!(MODULE_HASH_CACHE_TTL_SECONDS, 60 * 60);
 
-        assert!(MODULE_HASH_REFRESH_LEASE_SECONDS < MODULE_HASH_REFRESH_INTERVAL_SECONDS);
-        assert!(MODULE_HASH_REFRESH_INTERVAL_SECONDS < MODULE_HASH_CACHE_TTL_SECONDS);
+        const {
+            assert!(MODULE_HASH_REFRESH_LEASE_SECONDS < MODULE_HASH_REFRESH_INTERVAL_SECONDS);
+            assert!(MODULE_HASH_REFRESH_INTERVAL_SECONDS < MODULE_HASH_CACHE_TTL_SECONDS);
+        }
     }
 
     #[test]
@@ -1522,7 +1524,7 @@ mod tests {
     #[test]
     fn list_canisters_cursor_excludes_start_after_and_seeks_after_unknown_cursor() {
         let mut principal_pool: Vec<_> = (0..220)
-            .map(|idx| Principal::self_authenticating(&[idx]))
+            .map(|idx| Principal::self_authenticating([idx]))
             .collect();
         principal_pool.sort();
         let expected: Vec<_> = principal_pool
@@ -1609,7 +1611,7 @@ mod tests {
     #[test]
     fn list_canisters_limit_clamp_keeps_deterministic_order() {
         let canisters: Vec<_> = (0..105)
-            .map(|idx| Principal::self_authenticating(&[idx]))
+            .map(|idx| Principal::self_authenticating([idx]))
             .collect();
         let mut expected = canisters.clone();
         expected.sort();

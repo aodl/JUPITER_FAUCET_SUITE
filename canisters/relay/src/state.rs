@@ -515,6 +515,10 @@ impl Storable for VersionedStableState {
         Cow::Owned(candid::encode_one(self).expect("failed to encode relay stable state"))
     }
 
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode relay stable state")
+    }
+
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         candid::decode_one(bytes.as_ref()).expect("failed to decode relay stable state")
     }
@@ -537,8 +541,7 @@ fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memo
         if cell.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(0));
-                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized)
-                    .expect("failed to initialize relay stable cell");
+                let stable_cell = StableCell::init(memory, VersionedStableState::Uninitialized);
                 *cell.borrow_mut() = Some(stable_cell);
             });
         }
@@ -549,8 +552,7 @@ fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memo
 
 fn persist_snapshot(st: &State) {
     with_stable_cell(|cell| {
-        cell.set(VersionedStableState::V1(st.clone()))
-            .expect("failed to persist relay stable state");
+        cell.set(VersionedStableState::V1(st.clone()));
     });
 }
 
@@ -601,6 +603,7 @@ mod tests {
         pub next_job_id: u64,
     }
 
+    #[allow(clippy::large_enum_variant)]
     #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
     enum OldVersionedStableStateWithoutFaucetCommitment {
         Uninitialized,
@@ -609,8 +612,7 @@ mod tests {
 
     fn reset_test_storage() {
         with_stable_cell(|cell| {
-            cell.set(VersionedStableState::Uninitialized)
-                .expect("failed to reset relay stable state for test");
+            cell.set(VersionedStableState::Uninitialized);
         });
         STATE.with(|s| *s.borrow_mut() = None);
     }
