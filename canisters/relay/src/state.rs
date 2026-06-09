@@ -369,7 +369,7 @@ pub(crate) fn relay_canister_log_line(sample: &CanisterBurnSample) -> String {
         sample.relay_minted_cycles,
         sample.burn_cycles,
         sample.target_topup_cycles,
-        sample.gross_share_e8s,
+        sample.amount_e8s,
         sample.amount_e8s,
         sample.actual_minted_cycles,
         opt_text(sample.skipped_reason.as_deref()),
@@ -727,7 +727,7 @@ mod tests {
         let canister_line = relay_canister_log_line(&sample);
         assert!(canister_line.starts_with("RELAY_CANISTER "));
         assert!(canister_line.contains("burn_cycles=100"));
-        assert!(canister_line.contains("planned_topup_e8s=50"));
+        assert!(canister_line.contains("planned_topup_e8s=40"));
         assert!(canister_line.contains("actual_topup_e8s=40"));
         assert!(canister_line.contains("skipped_reason=gross%20share%20%3C%3D%20fee"));
 

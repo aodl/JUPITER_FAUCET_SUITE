@@ -6,13 +6,11 @@ use crate::clients::blackhole::BlackholeCanister;
 use crate::clients::cmc::CyclesMintingCanister;
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::ledger::IcrcLedgerCanister;
-use crate::clients::{
-    BlackholeClient, CmcClient, ExchangeRateClient, GovernanceClient, LedgerClient,
-};
+use crate::clients::{BlackholeClient, CmcClient, GovernanceClient, LedgerClient};
 use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::probe_cycles;
 use crate::scheduler::guards::MainGuard;
-use crate::scheduler::logging::{log_cycles_and_config, log_error, log_info, log_summary};
+use crate::scheduler::logging::{log_cycles_and_config, log_error, log_summary};
 use crate::scheduler::transfer::{
     drive_pending_faucet_commitment_transfer, drive_pending_transfer,
 };
@@ -21,7 +19,6 @@ use crate::state::{
     PendingTransfer, PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary,
     SurplusTarget,
 };
-use jupiter_ic_clients::xrc::XrcCanister;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransferPlanStep {
@@ -67,7 +64,6 @@ async fn main_tick(force: bool) {
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
     let governance = NnsGovernanceCanister::new(cfg.governance_canister_id);
     let blackhole = BlackholeCanister::new(cfg.blackhole_canister_id);
-    let xrc = XrcCanister::new();
     run_main_tick_with_clients(
         force,
         now_nanos,
@@ -76,7 +72,6 @@ async fn main_tick(force: bool) {
         &cmc,
         &governance,
         &blackhole,
-        &xrc,
     )
     .await;
 }
@@ -88,7 +83,6 @@ pub(crate) async fn run_main_tick_with_clients<
     C: CmcClient,
     G: GovernanceClient,
     B: BlackholeClient,
-    X: ExchangeRateClient,
 >(
     force: bool,
     now_nanos: u64,
@@ -97,7 +91,6 @@ pub(crate) async fn run_main_tick_with_clients<
     cmc: &C,
     governance: &G,
     blackhole: &B,
-    xrc: &X,
 ) {
     let Some(guard) = MainGuard::acquire(now_secs) else {
         return;
@@ -118,7 +111,7 @@ pub(crate) async fn run_main_tick_with_clients<
         guard.finish(now_secs);
         return;
     }
-    if !resume_or_start_job(now_nanos, ledger, cmc, governance, blackhole, xrc).await {
+    if !resume_or_start_job(now_nanos, ledger, cmc, governance, blackhole).await {
         log_error("relay tick stopped after debug transfer injection");
         guard.finish(now_secs);
         return;
@@ -131,17 +124,15 @@ async fn resume_or_start_job<
     C: CmcClient,
     G: GovernanceClient,
     B: BlackholeClient,
-    X: ExchangeRateClient,
 >(
     now_nanos: u64,
     ledger: &L,
     cmc: &C,
     governance: &G,
     blackhole: &B,
-    xrc: &X,
 ) -> bool {
     if state::with_state(|st| st.active_job.is_none()) {
-        start_job(now_nanos, ledger, blackhole, xrc).await;
+        start_job(now_nanos, ledger, cmc, blackhole).await;
     }
     drive_active_job(now_nanos, ledger, cmc, governance).await
 }
@@ -237,11 +228,11 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
     });
 }
 
-async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
+async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     now_nanos: u64,
     ledger: &L,
+    cmc: &C,
     blackhole: &B,
-    xrc: &X,
 ) {
     let cfg = state::with_state(|st| st.config.clone());
     let self_id = ic_cdk::api::canister_self();
@@ -288,7 +279,6 @@ async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
             st.relay_minted_cycles_since_sample.clear();
             st.last_summary = Some(summary);
         });
-        log_info("stored baseline cycles sample");
         return;
     }
 
@@ -347,7 +337,7 @@ async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
     }
 
     let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
-    refresh_conversion_estimate_if_needed(has_raw_icp_recipients, xrc).await;
+    refresh_conversion_estimate_if_needed(has_raw_icp_recipients, cmc).await;
 
     let (previous, relay_minted, conversion_estimate) = state::with_state(|st| {
         (
@@ -355,6 +345,11 @@ async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
             st.relay_minted_cycles_since_sample.clone(),
             st.conversion_estimate.clone(),
         )
+    });
+    state::with_state_mut(|st| {
+        for canister_id in relay_minted.keys() {
+            st.relay_minted_cycles_since_sample.remove(canister_id);
+        }
     });
     let allocation = if has_raw_icp_recipients {
         logic::build_allocation_plan(
@@ -418,38 +413,33 @@ async fn start_job<L: LedgerClient, B: BlackholeClient, X: ExchangeRateClient>(
     state::with_state_mut(|st| st.active_job = Some(job));
 }
 
-async fn refresh_conversion_estimate_if_needed<X: ExchangeRateClient>(
+async fn refresh_conversion_estimate_if_needed<C: CmcClient>(
     has_raw_icp_recipients: bool,
-    xrc: &X,
+    cmc: &C,
 ) {
     if has_raw_icp_recipients {
-        refresh_conversion_estimate_from_xrc(xrc).await;
+        refresh_conversion_estimate_from_cmc(cmc).await;
     }
 }
 
-async fn refresh_conversion_estimate_from_xrc<X: ExchangeRateClient>(xrc: &X) {
-    match xrc.get_icp_xdr_rate().await {
-        Ok(rate) => match logic::conversion_estimate_from_icp_xdr_rate(
-            rate.rate,
-            rate.decimals,
-            rate.timestamp,
+async fn refresh_conversion_estimate_from_cmc<C: CmcClient>(cmc: &C) {
+    match cmc.get_icp_xdr_conversion_rate().await {
+        Ok(rate) => match logic::conversion_estimate_from_cmc_rate(
+            rate.xdr_permyriad_per_icp,
+            rate.timestamp_seconds,
         ) {
             Ok(estimate) => {
-                log_info(&format!(
-                    "refreshed ICP/XDR conversion estimate cycles_per_e8={} timestamp_nanos={}",
-                    estimate.cycles_per_e8, estimate.timestamp_nanos
-                ));
                 state::with_state_mut(|st| st.conversion_estimate = Some(estimate));
             }
             Err(err) => {
                 log_error(&format!(
-                    "invalid XRC ICP/XDR rate; using cached or bootstrap estimate: {err}"
+                    "invalid CMC ICP/XDR conversion rate; using cached or bootstrap estimate: {err}"
                 ));
             }
         },
         Err(err) => {
             log_error(&format!(
-                "XRC ICP/XDR conversion estimate refresh failed; using cached or bootstrap estimate: {err}"
+                "CMC ICP/XDR conversion rate refresh failed; using cached or bootstrap estimate: {err}"
             ));
         }
     }
@@ -614,10 +604,12 @@ fn surplus_allowed_after_topups(job: &ActiveRelayJob) -> Result<(), &'static str
     if job.summary.partial_tick_count != 0 {
         return Err("topup_phase_incomplete");
     }
-    if job.canisters.iter().any(|sample| {
-        sample.amount_e8s > 0 && sample.actual_minted_cycles < sample.target_topup_cycles
-    }) {
-        return Err("observed_conversion_worse_than_planned_topups");
+    if job
+        .canisters
+        .iter()
+        .any(|sample| sample.amount_e8s > 0 && sample.actual_minted_cycles < sample.burn_cycles)
+    {
+        return Err("observed_conversion_failed_to_cover_burn");
     }
     Ok(())
 }
@@ -740,7 +732,6 @@ fn complete_job(now_nanos: u64) {
         job.summary.completed_at_ts_nanos = Some(now_nanos);
         log_summary(&job.summary);
         st.last_completed_cycles = job.current_cycles;
-        st.relay_minted_cycles_since_sample.clear();
         st.last_summary = Some(job.summary);
     });
 }
@@ -783,10 +774,23 @@ mod tests {
 
     use super::*;
     use crate::clients::ClientError;
-    use crate::state::CyclesSampleSource;
+    use crate::state::{Config, CyclesSampleSource, State};
 
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
+    }
+
+    fn base_config() -> Config {
+        Config {
+            managed_canisters: vec![principal("22255-zqaaa-aaaas-qf6uq-cai")],
+            ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
+            cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+            blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            main_interval_seconds: 60,
+            max_transfers_per_tick: None,
+            surplus_recipients: Vec::new(),
+        }
     }
 
     fn block_on<F: Future>(mut future: F) -> F::Output {
@@ -857,11 +861,11 @@ mod tests {
         }
     }
 
-    struct MockXrcClient {
+    struct MockCmcConversionClient {
         calls: AtomicUsize,
     }
 
-    impl MockXrcClient {
+    impl MockCmcConversionClient {
         fn new() -> Self {
             Self {
                 calls: AtomicUsize::new(0),
@@ -874,29 +878,46 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl ExchangeRateClient for MockXrcClient {
-        async fn get_icp_xdr_rate(&self) -> Result<crate::clients::IcpXdrRate, ClientError> {
+    impl CmcClient for MockCmcConversionClient {
+        async fn get_icp_xdr_conversion_rate(
+            &self,
+        ) -> Result<crate::clients::CmcIcpXdrConversionRate, ClientError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Err(ClientError::Call("mock xrc failure".to_string()))
+            Ok(crate::clients::CmcIcpXdrConversionRate {
+                timestamp_seconds: 7,
+                xdr_permyriad_per_icp: 42,
+            })
+        }
+
+        async fn notify_top_up(
+            &self,
+            _canister_id: Principal,
+            _block_index: u64,
+        ) -> Result<u128, ClientError> {
+            unreachable!("conversion refresh tests do not notify top-up")
         }
     }
 
     #[test]
-    fn start_job_without_raw_recipients_does_not_query_xrc() {
-        let xrc = MockXrcClient::new();
+    fn start_job_without_raw_recipients_does_not_query_cmc_conversion_rate() {
+        let cmc = MockCmcConversionClient::new();
 
-        block_on(refresh_conversion_estimate_if_needed(false, &xrc));
+        block_on(refresh_conversion_estimate_if_needed(false, &cmc));
 
-        assert_eq!(xrc.calls(), 0);
+        assert_eq!(cmc.calls(), 0);
     }
 
     #[test]
-    fn start_job_with_raw_recipients_queries_xrc_before_planning() {
-        let xrc = MockXrcClient::new();
+    fn start_job_with_raw_recipients_queries_cmc_conversion_rate_before_planning() {
+        let cmc = MockCmcConversionClient::new();
+        state::set_state(State::new(base_config(), 0));
 
-        block_on(refresh_conversion_estimate_if_needed(true, &xrc));
+        block_on(refresh_conversion_estimate_if_needed(true, &cmc));
 
-        assert_eq!(xrc.calls(), 1);
+        assert_eq!(cmc.calls(), 1);
+        let estimate = state::with_state(|st| st.conversion_estimate.clone()).unwrap();
+        assert_eq!(estimate.cycles_per_e8, 42);
+        assert_eq!(estimate.timestamp_nanos, 7_000_000_000);
     }
 
     #[test]
@@ -960,15 +981,81 @@ mod tests {
     }
 
     #[test]
-    fn surplus_is_blocked_when_observed_conversion_mints_less_than_target() {
+    fn surplus_is_allowed_when_observed_conversion_covers_burn_but_not_target() {
         let mut job = job_with_three_topups();
         job.next_transfer_index = job.canisters.len() as u32;
-        job.canisters[0].actual_minted_cycles = job.canisters[0].target_topup_cycles - 1;
+        for sample in &mut job.canisters {
+            sample.actual_minted_cycles = sample.burn_cycles;
+        }
+
+        assert_eq!(surplus_allowed_after_topups(&job), Ok(()));
+    }
+
+    #[test]
+    fn surplus_is_blocked_when_observed_conversion_mints_less_than_burn() {
+        let mut job = job_with_three_topups();
+        job.next_transfer_index = job.canisters.len() as u32;
+        job.canisters[0].actual_minted_cycles = job.canisters[0].burn_cycles - 1;
 
         assert_eq!(
             surplus_allowed_after_topups(&job),
-            Err("observed_conversion_worse_than_planned_topups")
+            Err("observed_conversion_failed_to_cover_burn")
         );
+    }
+
+    #[test]
+    fn completed_job_minted_cycles_remain_for_next_burn_calculation() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = State::new(base_config(), 0);
+        let mut job = job_with_three_topups();
+        job.current_cycles.clear();
+        job.current_cycles.insert(
+            canister,
+            crate::state::CyclesSnapshot {
+                cycles: 900,
+                timestamp_nanos: 1,
+                source: CyclesSampleSource::BlackholeStatus,
+            },
+        );
+        st.active_job = Some(job);
+        st.relay_minted_cycles_since_sample.insert(canister, 123);
+        state::set_state(st);
+
+        complete_job(2);
+
+        let (previous, relay_minted) = state::with_state(|st| {
+            (
+                st.last_completed_cycles.clone(),
+                st.relay_minted_cycles_since_sample.clone(),
+            )
+        });
+        assert_eq!(relay_minted.get(&canister), Some(&123));
+
+        let mut current = BTreeMap::new();
+        current.insert(
+            canister,
+            crate::state::CyclesSnapshot {
+                cycles: 850,
+                timestamp_nanos: 3,
+                source: CyclesSampleSource::BlackholeStatus,
+            },
+        );
+        let estimate = crate::state::ConversionEstimate {
+            cycles_per_e8: 10,
+            timestamp_nanos: 3,
+        };
+        let allocation = logic::build_allocation_plan(
+            &current,
+            &previous,
+            &relay_minted,
+            1_000,
+            10,
+            Some(&estimate),
+            3,
+        );
+
+        assert_eq!(allocation.topups[0].relay_minted_cycles, 123);
+        assert_eq!(allocation.topups[0].burn_cycles, 173);
     }
 
     #[test]
@@ -977,7 +1064,7 @@ mod tests {
         job.next_transfer_index = job.canisters.len() as u32;
         job.surplus_phase_planned = true;
         job.summary.skipped_surplus_reason = Some("no_raw_icp_recipients".to_string());
-        job.canisters[0].actual_minted_cycles = job.canisters[0].target_topup_cycles - 1;
+        job.canisters[0].actual_minted_cycles = job.canisters[0].burn_cycles - 1;
         let mut started = 0;
 
         assert_eq!(

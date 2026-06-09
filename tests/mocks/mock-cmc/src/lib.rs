@@ -2,6 +2,7 @@ use candid::{CandidType, Deserialize, Nat, Principal};
 use std::cell::RefCell;
 
 const MOCK_MINTED_CYCLES: u128 = 5_250_000_000_000;
+const DEFAULT_XDR_PERMYRIAD_PER_ICP: u64 = 100_000;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct NotifyTopUpArg {
@@ -13,6 +14,19 @@ pub struct NotifyTopUpArg {
 pub struct NotifyRecord {
     pub canister_id: Principal,
     pub block_index: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct IcpXdrConversionRate {
+    pub timestamp_seconds: u64,
+    pub xdr_permyriad_per_icp: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct IcpXdrConversionRateResponse {
+    pub data: IcpXdrConversionRate,
+    pub hash_tree: Vec<u8>,
+    pub certificate: Vec<u8>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -52,11 +66,25 @@ pub enum DebugNotifyBehavior {
     },
 }
 
-#[derive(Default)]
 struct State {
     fail: bool,
     notifications: Vec<NotifyRecord>,
     scripted_behaviors: Vec<DebugNotifyBehavior>,
+    conversion_rate: IcpXdrConversionRate,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            fail: false,
+            notifications: Vec::new(),
+            scripted_behaviors: Vec::new(),
+            conversion_rate: IcpXdrConversionRate {
+                timestamp_seconds: 4_000_000_000,
+                xdr_permyriad_per_icp: DEFAULT_XDR_PERMYRIAD_PER_ICP,
+            },
+        }
+    }
 }
 
 thread_local! {
@@ -65,6 +93,15 @@ thread_local! {
 
 #[ic_cdk::init]
 fn init() {}
+
+#[ic_cdk::query]
+fn get_icp_xdr_conversion_rate() -> IcpXdrConversionRateResponse {
+    ST.with(|s| IcpXdrConversionRateResponse {
+        data: s.borrow().conversion_rate.clone(),
+        hash_tree: Vec::new(),
+        certificate: Vec::new(),
+    })
+}
 
 #[ic_cdk::update]
 async fn notify_top_up(arg: NotifyTopUpArg) -> NotifyTopUpResult {
@@ -140,6 +177,11 @@ fn debug_set_fail(v: bool) {
 #[ic_cdk::update]
 fn debug_set_script(behaviors: Vec<DebugNotifyBehavior>) {
     ST.with(|s| s.borrow_mut().scripted_behaviors = behaviors);
+}
+
+#[ic_cdk::update]
+fn debug_set_conversion_rate(rate: IcpXdrConversionRate) {
+    ST.with(|s| s.borrow_mut().conversion_rate = rate);
 }
 
 #[ic_cdk::query]

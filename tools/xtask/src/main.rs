@@ -4728,6 +4728,11 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
             let _: () = call_raw("mock_cmc", "debug_reset", "()")?;
             let _: () = call_raw(
+                "mock_cmc",
+                "debug_set_conversion_rate",
+                "(record { timestamp_seconds = 4000000000:nat64; xdr_permyriad_per_icp = 10000000:nat64 })",
+            )?;
+            let _: () = call_raw(
                 "mock_blackhole",
                 "debug_set_status",
                 &format!(
@@ -4743,7 +4748,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)),
+                &format!("({}, 300000000:nat64)", account_to_candid(&relay_account)),
             )?;
 
             let _: () = call_raw_noargs::<()>("jupiter_relay_args_dbg", "debug_main_tick")?;
@@ -4760,7 +4765,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!("({}, 99000000:nat64)", account_to_candid(&relay_account)),
+                &format!("({}, 300000000:nat64)", account_to_candid(&relay_account)),
             )?;
             let _: () = call_raw(
                 "mock_blackhole",

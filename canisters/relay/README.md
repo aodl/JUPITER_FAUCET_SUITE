@@ -177,17 +177,19 @@ Jupiter Relay has two allocation modes depending on whether raw ICP surplus reci
 
 When one or more raw ICP surplus recipients are configured, Relay performs capped canister top-up planning.
 
-Relay first attempts to refresh the latest ICP/XDR conversion estimate. It uses that estimate to calculate capped CMC top-ups based on recent observed burn plus 1% headroom:
+Relay first attempts to refresh the latest CMC ICP/XDR conversion rate. It uses that CMC rate to calculate capped CMC top-ups based on recent observed burn plus 1% headroom:
 
 ```text
-cycles_per_e8 = floor(icp_xdr_rate * 10000 / 10^decimals)
+cycles_per_e8 = xdr_permyriad_per_icp
 target_topup_cycles = ceil(recent_burn_cycles * 101 / 100)
 planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
 ```
 
-Successful CMC top-ups still update the cached conversion estimate from observed minted cycles. If the live ICP/XDR refresh fails or returns unusable data, Relay may fall back to the cached or bootstrap estimate for capped top-up planning.
+`planned_topup_e8s` is the intended net CMC top-up amount and does not include the ledger fee. `actual_topup_e8s` is the actual net amount sent to CMC. Summary-level `fee_e8s`, `ledger_fees_e8s`, and `ledger_sent_e8s` carry the fee accounting.
 
-Relay always executes canister top-ups before raw ICP surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, Relay spends only on canister top-ups and routes no raw ICP surplus.
+If the live CMC conversion-rate refresh fails or returns unusable data, Relay may fall back to the cached or bootstrap CMC estimate for capped top-up planning.
+
+Relay always executes canister top-ups before raw ICP surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, Relay spends only on canister top-ups and routes no raw ICP surplus. Surplus routing is allowed when observed CMC minting covers the measured burn, even if conversion slippage consumes some of the 1% headroom. Surplus remains blocked when observed CMC minting fails to cover the measured burn.
 
 Raw ICP surplus is routed only when every configured raw ICP recipient receives at least 1 ICP net of ledger fee. If the equal net share is below 1 ICP, Relay sends no raw ICP surplus transfers and keeps the ICP in its default ledger account for a future tick.
 

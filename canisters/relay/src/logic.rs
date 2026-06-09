@@ -163,16 +163,11 @@ fn ceil_div(numerator: u128, denominator: u128) -> u128 {
     }
 }
 
-pub(crate) fn topup_gross_e8s(
-    target_cycles: u128,
-    estimate: &ConversionEstimate,
-    fee_e8s: u64,
-) -> u64 {
+pub(crate) fn topup_net_e8s(target_cycles: u128, estimate: &ConversionEstimate) -> u64 {
     if target_cycles == 0 || estimate.cycles_per_e8 == 0 {
         return 0;
     }
-    let amount = ceil_div(target_cycles, estimate.cycles_per_e8).min(u64::MAX as u128) as u64;
-    amount.saturating_add(fee_e8s)
+    ceil_div(target_cycles, estimate.cycles_per_e8).min(u64::MAX as u128) as u64
 }
 
 pub(crate) fn conversion_estimate_is_usable(estimate: &ConversionEstimate, now_nanos: u64) -> bool {
@@ -180,6 +175,7 @@ pub(crate) fn conversion_estimate_is_usable(estimate: &ConversionEstimate, now_n
         && now_nanos.saturating_sub(estimate.timestamp_nanos) <= CONVERSION_ESTIMATE_MAX_AGE_NANOS
 }
 
+#[cfg(test)]
 pub(crate) fn conversion_estimate_from_icp_xdr_rate(
     rate: u64,
     decimals: u32,
@@ -201,6 +197,22 @@ pub(crate) fn conversion_estimate_from_icp_xdr_rate(
 
     Ok(ConversionEstimate {
         cycles_per_e8,
+        timestamp_nanos,
+    })
+}
+
+pub(crate) fn conversion_estimate_from_cmc_rate(
+    xdr_permyriad_per_icp: u64,
+    timestamp_seconds: u64,
+) -> Result<ConversionEstimate, String> {
+    if xdr_permyriad_per_icp == 0 {
+        return Err("CMC ICP/XDR conversion rate produced zero cycles per e8".to_string());
+    }
+    let timestamp_nanos = timestamp_seconds
+        .checked_mul(1_000_000_000)
+        .ok_or_else(|| "timestamp seconds to nanoseconds overflows u64".to_string())?;
+    Ok(ConversionEstimate {
+        cycles_per_e8: u128::from(xdr_permyriad_per_icp),
         timestamp_nanos,
     })
 }
@@ -320,13 +332,14 @@ pub(crate) fn build_allocation_plan(
     let desired_gross = topups
         .iter_mut()
         .map(|plan| {
-            let gross = topup_gross_e8s(plan.target_topup_cycles, estimate, fee_e8s);
-            if gross == 0 {
+            let net = topup_net_e8s(plan.target_topup_cycles, estimate);
+            if net == 0 {
                 if plan.target_topup_cycles == 0 {
                     plan.skipped_reason = Some(SKIP_REASON_ZERO_BURN.to_string());
                 }
                 return 0;
             }
+            let gross = net.saturating_add(fee_e8s);
             if gross <= fee_e8s {
                 plan.skipped_reason = Some(SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE.to_string());
                 return 0;
@@ -971,6 +984,21 @@ mod tests {
     }
 
     #[test]
+    fn conversion_estimate_from_cmc_rate_treats_xdr_permyriad_as_cycles_per_e8() {
+        let estimate = conversion_estimate_from_cmc_rate(72_345, 1_700_000_000).unwrap();
+
+        assert_eq!(estimate.cycles_per_e8, 72_345);
+        assert_eq!(estimate.timestamp_nanos, 1_700_000_000_000_000_000);
+    }
+
+    #[test]
+    fn conversion_estimate_from_cmc_rate_rejects_zero_cycles_per_e8() {
+        let err = conversion_estimate_from_cmc_rate(0, 1).unwrap_err();
+
+        assert!(err.contains("zero cycles per e8"));
+    }
+
+    #[test]
     fn allocation_plans_topups_without_preplanning_surplus() {
         let mut current = BTreeMap::new();
         let mut previous = BTreeMap::new();
@@ -995,6 +1023,32 @@ mod tests {
         assert_eq!(plan.topups[0].amount_e8s, 11);
         assert!(plan.topup_phase_fully_funded);
         assert!(plan.skipped_surplus_reason.is_none());
+    }
+
+    #[test]
+    fn capped_topup_plan_keeps_planned_amount_net_of_ledger_fee() {
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        current.insert(canister_a(), snapshot(900));
+        previous.insert(canister_a(), snapshot(1_000));
+        let estimate = ConversionEstimate {
+            cycles_per_e8: 10,
+            timestamp_nanos: 1,
+        };
+
+        let plan = build_allocation_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            1_000,
+            10,
+            Some(&estimate),
+            1,
+        );
+
+        assert_eq!(plan.topups[0].target_topup_cycles, 101);
+        assert_eq!(plan.topups[0].amount_e8s, 11);
+        assert_eq!(plan.topups[0].gross_share_e8s, 21);
     }
 
     #[test]

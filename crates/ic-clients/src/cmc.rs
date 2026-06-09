@@ -20,6 +20,19 @@ enum NotifyTopUpResult {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+pub struct IcpXdrConversionRate {
+    pub timestamp_seconds: u64,
+    pub xdr_permyriad_per_icp: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct IcpXdrConversionRateResponse {
+    pub data: IcpXdrConversionRate,
+    pub hash_tree: Vec<u8>,
+    pub certificate: Vec<u8>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum NotifyError {
     Refunded {
         reason: String,
@@ -114,6 +127,19 @@ pub async fn notify_top_up(
     classify_notify_top_up_result(result)
 }
 
+pub async fn get_icp_xdr_conversion_rate(
+    cmc_id: Principal,
+) -> Result<IcpXdrConversionRate, crate::ClientError> {
+    let response: IcpXdrConversionRateResponse =
+        Call::bounded_wait(cmc_id, "get_icp_xdr_conversion_rate")
+            .change_timeout(60)
+            .await
+            .map_err(|e| crate::ClientError::Call(format!("{e:?}")))?
+            .candid()
+            .map_err(|e| crate::ClientError::Convert(format!("{e:?}")))?;
+    Ok(response.data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +214,43 @@ mod tests {
                 error_message: classified,
             })) if classified == message
         ));
+    }
+
+    #[test]
+    fn decodes_real_cmc_conversion_rate_wrapper() {
+        let wrapped = IcpXdrConversionRateResponse {
+            data: IcpXdrConversionRate {
+                timestamp_seconds: 4_000_000_000,
+                xdr_permyriad_per_icp: 100_000,
+            },
+            hash_tree: vec![1, 2, 3],
+            certificate: vec![4, 5, 6],
+        };
+        let bytes = candid::encode_one(wrapped).unwrap();
+
+        let response: IcpXdrConversionRateResponse = candid::decode_one(&bytes).unwrap();
+
+        assert_eq!(response.data.timestamp_seconds, 4_000_000_000);
+        assert_eq!(response.data.xdr_permyriad_per_icp, 100_000);
+    }
+
+    #[test]
+    fn real_cmc_conversion_rate_wrapper_is_not_bare_inner_record() {
+        let wrapped = IcpXdrConversionRateResponse {
+            data: IcpXdrConversionRate {
+                timestamp_seconds: 4_000_000_000,
+                xdr_permyriad_per_icp: 100_000,
+            },
+            hash_tree: vec![],
+            certificate: vec![],
+        };
+        let bytes = candid::encode_one(wrapped).unwrap();
+
+        let bare: Result<IcpXdrConversionRate, _> = candid::decode_one(&bytes);
+
+        assert!(
+            bare.is_err(),
+            "wrapper response must not decode as a bare rate"
+        );
     }
 }

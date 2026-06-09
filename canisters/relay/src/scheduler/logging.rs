@@ -26,14 +26,6 @@ pub(super) fn log_error(message: &str) {
     ));
 }
 
-pub(super) fn log_info(message: &str) {
-    emit_log_line(format_event_line(
-        "relay",
-        "INFO",
-        &[("message", message.to_string())],
-    ));
-}
-
 pub(crate) fn log_lifecycle(
     event: &str,
     main_interval_seconds: u64,

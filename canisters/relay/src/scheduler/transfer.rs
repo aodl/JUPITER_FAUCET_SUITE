@@ -480,15 +480,7 @@ fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal,
                     .copied()
                     .unwrap_or(0)
                     .saturating_add(minted_cycles);
-                let cycles_per_e8 = minted_cycles / u128::from(transferred_e8s.max(1));
-                if cycles_per_e8 > 0 {
-                    let estimate = crate::state::ConversionEstimate {
-                        cycles_per_e8,
-                        timestamp_nanos: job.started_at_ts_nanos,
-                    };
-                    job.summary.conversion_estimate_used = Some(estimate.clone());
-                    st.conversion_estimate = Some(estimate);
-                }
+                let _ = transferred_e8s;
             }
         }
     });
@@ -553,12 +545,76 @@ fn mark_pending_ambiguous_after_acceptance() {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use super::*;
-    use crate::state::{ActiveRelayJob, ActiveRelayMode, Config, RelayMode, RelaySummary, State};
+    use crate::state::{
+        ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, Config, CyclesSampleSource,
+        CyclesSnapshot, RelayMode, RelaySummary, State,
+    };
 
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
+    }
+
+    fn block_on<F: Future>(mut future: F) -> F::Output {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut future = unsafe { Pin::new_unchecked(&mut future) };
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    struct AcceptingLedger;
+
+    #[async_trait::async_trait]
+    impl LedgerClient for AcceptingLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10)
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
+            Ok(1_000)
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            Ok(Ok(Nat::from(7u64)))
+        }
+    }
+
+    struct MintingCmc {
+        minted_cycles: u128,
+    }
+
+    #[async_trait::async_trait]
+    impl CmcClient for MintingCmc {
+        async fn get_icp_xdr_conversion_rate(
+            &self,
+        ) -> Result<crate::clients::CmcIcpXdrConversionRate, ClientError> {
+            unreachable!("top-up completion test does not query conversion rate")
+        }
+
+        async fn notify_top_up(
+            &self,
+            _canister_id: Principal,
+            _block_index: u64,
+        ) -> Result<u128, ClientError> {
+            Ok(self.minted_cycles)
+        }
     }
 
     fn install_pending_job(phase: PendingTransferPhase) {
@@ -576,6 +632,28 @@ mod tests {
         let mut summary = RelaySummary::started(RelayMode::TopUpThenSurplus, 1, 1);
         summary.planned_retained_e8s = 100;
         summary.known_unspent_e8s = 100;
+        let sample = CanisterBurnSample {
+            canister_id: canister,
+            previous_cycles: Some(1_000),
+            current_cycles: 900,
+            relay_minted_cycles: 0,
+            burn_cycles: 100,
+            target_topup_cycles: 101,
+            gross_share_e8s: 900,
+            amount_e8s: 890,
+            actual_minted_cycles: 0,
+            skipped_reason: None,
+        };
+        summary.canisters = vec![sample.clone()];
+        let mut current_cycles = BTreeMap::new();
+        current_cycles.insert(
+            canister,
+            CyclesSnapshot {
+                cycles: 900,
+                timestamp_nanos: 1,
+                source: CyclesSampleSource::BlackholeStatus,
+            },
+        );
         let mut st = State::new(cfg, 1);
         st.active_job = Some(ActiveRelayJob {
             id: 1,
@@ -583,8 +661,8 @@ mod tests {
             started_at_ts_nanos: 1,
             fee_e8s: 10,
             balance_start_e8s: 1_000,
-            current_cycles: BTreeMap::new(),
-            canisters: Vec::new(),
+            current_cycles,
+            canisters: vec![sample],
             surplus_transfers: Vec::new(),
             surplus_memos: Vec::new(),
             surplus_phase_planned: true,
@@ -616,6 +694,32 @@ mod tests {
             assert_eq!(summary.ledger_fees_e8s, 10);
             assert_eq!(summary.cmc_notify_success_count, 0);
             assert_eq!(summary.known_unspent_e8s, 100);
+        });
+    }
+
+    #[test]
+    fn successful_topup_completion_persists_minted_cycles_for_next_sample() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        install_pending_job(PendingTransferPhase::AwaitingTransfer);
+
+        assert!(block_on(drive_pending_transfer(
+            &AcceptingLedger,
+            &MintingCmc { minted_cycles: 321 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        )));
+
+        state::with_state(|st| {
+            let job = st.active_job.as_ref().unwrap();
+            assert!(job.pending_transfer.is_none());
+            assert_eq!(job.summary.ledger_transfer_count, 1);
+            assert_eq!(job.summary.cmc_notify_success_count, 1);
+            assert_eq!(job.canisters[0].actual_minted_cycles, 321);
+            assert_eq!(job.summary.canisters[0].actual_minted_cycles, 321);
+            assert_eq!(
+                st.relay_minted_cycles_since_sample.get(&canister),
+                Some(&321)
+            );
         });
     }
 

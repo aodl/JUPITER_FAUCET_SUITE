@@ -53,6 +53,14 @@ impl CyclesMintingCanister {
 
 #[async_trait]
 impl CmcClient for CyclesMintingCanister {
+    async fn get_icp_xdr_conversion_rate(
+        &self,
+    ) -> Result<crate::clients::CmcIcpXdrConversionRate, ClientError> {
+        jupiter_ic_clients::cmc::get_icp_xdr_conversion_rate(self.canister_id)
+            .await
+            .map_err(Into::into)
+    }
+
     async fn notify_top_up(
         &self,
         canister_id: Principal,

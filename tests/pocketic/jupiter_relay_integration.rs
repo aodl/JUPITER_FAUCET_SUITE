@@ -864,6 +864,9 @@ fn baseline_then_headroom_cmc_topup_records_real_async_notify() -> Result<()> {
     {
         bail!("expected public relay logs for cycles top-up, got {logs}");
     }
+    if logs.contains("relay INFO ") {
+        bail!("relay INFO logs should not be emitted, got {logs}");
+    }
     Ok(())
 }
 
@@ -1062,7 +1065,7 @@ fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     );
     if !logs.contains(&cmc_log_fragment)
         || !logs.contains(&format!("burn_cycles={}", cmc_sample.burn_cycles))
-        || !logs.contains(&format!("planned_topup_e8s={}", cmc_sample.gross_share_e8s))
+        || !logs.contains(&format!("planned_topup_e8s={}", cmc_sample.amount_e8s))
         || !logs.contains(&format!("actual_topup_e8s={}", cmc_sample.amount_e8s))
     {
         bail!(
@@ -1191,6 +1194,7 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
     }
 
     env.credit_relay(99_000_000)?;
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(4_000_000_000_000)?;
     let summary = env.tick_relay()?;
     if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count == 0 {
@@ -1258,10 +1262,13 @@ fn surplus_neuron_transfers_are_suppressed_below_one_icp_each() -> Result<()> {
     }
 
     env.credit_relay(99_000_000)?;
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(4_000_000_000_000)?;
     let summary = env.tick_relay()?;
-    if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count != 1 {
-        bail!("expected only the CMC top-up transfer below raw ICP threshold, got {summary:?}");
+    if summary.mode != RelayMode::TopUpThenSurplus
+        || summary.ledger_transfer_count != summary.cmc_notify_success_count
+    {
+        bail!("expected only CMC top-up transfers below raw ICP threshold, got {summary:?}");
     }
     if summary.skipped_surplus_reason.as_deref() != Some("raw_icp_share_below_1_icp") {
         bail!("expected raw ICP threshold skip reason, got {summary:?}");

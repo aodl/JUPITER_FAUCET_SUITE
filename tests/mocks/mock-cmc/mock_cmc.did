@@ -1,5 +1,14 @@
 type NotifyTopUpArg = record { canister_id : principal; block_index : nat64 };
 type NotifyRecord = record { canister_id : principal; block_index : nat64 };
+type IcpXdrConversionRate = record {
+  timestamp_seconds : nat64;
+  xdr_permyriad_per_icp : nat64;
+};
+type IcpXdrConversionRateResponse = record {
+  data : IcpXdrConversionRate;
+  hash_tree : blob;
+  certificate : blob;
+};
 type NotifyError = variant {
   Refunded : record { reason : text; block_index : opt nat64 };
   Processing;
@@ -17,9 +26,11 @@ type DebugNotifyBehavior = variant {
   Other : record { error_code : nat64; error_message : text };
 };
 service : {
+  get_icp_xdr_conversion_rate : () -> (IcpXdrConversionRateResponse) query;
   notify_top_up : (NotifyTopUpArg) -> (NotifyTopUpResult);
   debug_reset : () -> ();
   debug_set_fail : (bool) -> ();
   debug_set_script : (vec DebugNotifyBehavior) -> ();
+  debug_set_conversion_rate : (IcpXdrConversionRate) -> ();
   debug_notifications : () -> (vec NotifyRecord) query;
 };
