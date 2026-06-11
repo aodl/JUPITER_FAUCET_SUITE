@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(args.surplus_neuron_recipients.len(), 2);
         assert_eq!(
             args.surplus_neuron_recipients[0].neuron_id,
-            6_345_890_886_899_317_159
+            10_292_412_127_977_304_661
         );
         assert!(args.surplus_neuron_recipients[0].memo.is_empty());
         assert_eq!(
@@ -607,7 +607,7 @@ mod tests {
         );
         assert_eq!(
             args.surplus_neuron_recipients[1].memo.as_slice(),
-            b"6345890886899317159"
+            b"10292412127977304661"
         );
 
         let roundtrip = encode_args((args,)).expect("decoded Rust InitArgs should re-encode");

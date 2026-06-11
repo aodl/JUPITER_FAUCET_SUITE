@@ -229,8 +229,8 @@ Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit acc
 
 Production surplus is split 50/50 between two public NNS neuron recipients:
 
-- IO neuron `6345890886899317159`, with `memo = blob ""`
-- Jupiter Faucet neuron `11614578985374291210`, with `memo = blob "6345890886899317159"`
+- IO neuron `10292412127977304661`, with `memo = blob ""`
+- Jupiter Faucet neuron `11614578985374291210`, with `memo = blob "10292412127977304661"`
 
 The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. This preserves the existing memo convention while separating immediate IO stake growth from compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
 

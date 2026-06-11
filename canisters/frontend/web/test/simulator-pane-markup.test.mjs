@@ -409,7 +409,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /<strong>e\.g\.<\/strong>/);
   assert.match(howItWorks, /href="#how-it-works:2\?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;title=mAIner%20ID&amp;label=mAIner%20ID%20Prefix%20\(xxxxx-xx\)"[^>]*>mAIner ID Memo Builder<\/a>/);
   assert.match(howItWorks, /tops up the protocol's GameState canister with raw ICP; GameState then routes a\s*portion as cycles to the declared mAIner/);
-  assert.match(howItWorks, /href="#how-it-works:2\?neuron=6345890886899317159&amp;title=IO%20Perpetual%20Stake&amp;label=Optional%20Donor%20Name"[^>]*>IO Perpetual Stake Memo Builder<\/a>/);
+  assert.match(howItWorks, /href="#how-it-works:2\?neuron=10292412127977304661&amp;title=IO%20Perpetual%20Stake&amp;label=Optional%20Donor%20Name"[^>]*>IO Perpetual Stake Memo Builder<\/a>/);
   assert.match(howItWorks, /perpetually pay into the IO neuron's staking account/);
   assert.match(howItWorks, /In this particular\s+case a <code>'\.'<\/code> suffix is superfluous/);
   assert.match(howItWorks, /<strong>Extra tip:<\/strong> Developers may wish to deploy an instance of the\s*<a href="#source"[^>]*data-panel="source"[^>]*>Jupiter Relay<\/a>/);

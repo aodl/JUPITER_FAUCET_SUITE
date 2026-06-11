@@ -1228,9 +1228,9 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
 #[ignore]
 fn surplus_neuron_transfers_are_suppressed_below_one_icp_each() -> Result<()> {
     require_ignored_flag()?;
-    let io_neuron = 6_345_890_886_899_317_159_u64;
+    let io_neuron = 10_292_412_127_977_304_661_u64;
     let jupiter_faucet_neuron = 11_614_578_985_374_291_210_u64;
-    let io_memo = b"6345890886899317159".to_vec();
+    let io_memo = b"10292412127977304661".to_vec();
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],

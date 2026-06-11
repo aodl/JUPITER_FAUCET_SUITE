@@ -22,12 +22,12 @@
     surplus_canister_recipients = null;
     surplus_neuron_recipients = vec {
       record {
-        neuron_id = 6_345_890_886_899_317_159 : nat64;
+        neuron_id = 10_292_412_127_977_304_661 : nat64;
         memo = blob "";
       };
       record {
         neuron_id = 11_614_578_985_374_291_210 : nat64;
-        memo = blob "6345890886899317159";
+        memo = blob "10292412127977304661";
       };
     };
   }

@@ -907,18 +907,18 @@ mod tests {
         let mut cfg = config();
         cfg.surplus_recipients = vec![
             SurplusRecipient {
-                target: SurplusTarget::Neuron(6_345_890_886_899_317_159),
+                target: SurplusTarget::Neuron(10_292_412_127_977_304_661),
                 memo: None,
             },
             SurplusRecipient {
                 target: SurplusTarget::Neuron(11_614_578_985_374_291_210),
-                memo: Some(b"6345890886899317159".to_vec()),
+                memo: Some(b"10292412127977304661".to_vec()),
             },
         ];
         assert!(validate_config(&cfg, self_id).is_ok());
 
         cfg.surplus_recipients.push(SurplusRecipient {
-            target: SurplusTarget::Neuron(6_345_890_886_899_317_159),
+            target: SurplusTarget::Neuron(10_292_412_127_977_304_661),
             memo: None,
         });
         assert!(validate_config(&cfg, self_id)
@@ -1319,10 +1319,10 @@ mod tests {
 
     #[test]
     fn surplus_plan_splits_equally_after_per_transfer_fees_and_preserves_memo_len() {
-        let io_memo = b"6345890886899317159".to_vec();
+        let io_memo = b"10292412127977304661".to_vec();
         let recipients = vec![
             ResolvedSurplusRecipient {
-                target: SurplusTarget::Neuron(6_345_890_886_899_317_159),
+                target: SurplusTarget::Neuron(10_292_412_127_977_304_661),
                 account: Account {
                     owner: canister_a(),
                     subaccount: Some([1; 32]),
