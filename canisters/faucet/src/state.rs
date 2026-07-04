@@ -50,6 +50,12 @@ fn opt_u64_text(value: Option<u64>) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
+fn opt_forced_rescue_reason_text(value: Option<&ForcedRescueReason>) -> String {
+    value
+        .map(|reason| format!("{reason:?}"))
+        .unwrap_or_else(|| "none".to_string())
+}
+
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
         "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, funding_source_account={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
@@ -68,6 +74,22 @@ pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
         cfg.rescue_interval_seconds,
         cfg.min_tx_e8s,
         opt_u64_text(cfg.stake_recognition_delay_seconds)
+    )
+}
+
+pub(crate) fn runtime_state_log_line(st: &State) -> String {
+    let active_funding_scan = st.active_funding_scan.as_ref();
+    let active_payout_job = st.active_payout_job.as_ref();
+    format!(
+        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={}",
+        opt_u64_text(st.last_processed_funding_tx_id),
+        opt_forced_rescue_reason_text(st.forced_rescue_reason.as_ref()),
+        opt_u64_text(active_funding_scan.and_then(|scan| scan.cursor)),
+        opt_u64_text(active_funding_scan.and_then(|scan| scan.candidate).map(|candidate| candidate.tx_id)),
+        opt_u64_text(active_funding_scan.and_then(|scan| scan.candidate).map(|candidate| candidate.amount_e8s)),
+        opt_u64_text(active_funding_scan.and_then(|scan| scan.anchor_last_processed_funding_tx_id)),
+        opt_u64_text(active_payout_job.and_then(|job| job.funding_tx_id)),
+        opt_u64_text(active_payout_job.and_then(|job| job.funding_amount_e8s)),
     )
 }
 
@@ -788,6 +810,37 @@ mod tests {
         assert!(line.contains("rescue_interval_seconds=120"));
         assert!(line.contains("min_tx_e8s=100000000"));
         assert!(line.contains("stake_recognition_delay_seconds=86400"));
+    }
+
+    #[test]
+    fn runtime_state_log_line_includes_recovery_observability_fields() {
+        let mut st = State::new(sample_config(), 0);
+        st.last_processed_funding_tx_id = Some(42);
+        st.forced_rescue_reason = Some(ForcedRescueReason::FundingTrancheBalanceMismatch);
+        st.active_funding_scan = Some(FundingScanState {
+            anchor_last_processed_funding_tx_id: Some(41),
+            cursor: Some(500),
+            candidate: Some(FundingTrancheState {
+                tx_id: 43,
+                timestamp_nanos: 123,
+                amount_e8s: 100_000_000,
+            }),
+        });
+        let mut job = ActivePayoutJob::new(7, 10_000, 100_000_000, 200_000_000, 1);
+        job.configure_funding_tranche(43, 123, 100_000_000);
+        st.active_payout_job = Some(job);
+
+        let line = runtime_state_log_line(&st);
+
+        assert!(line.starts_with("STATE:"));
+        assert!(line.contains("last_processed_funding_tx_id=42"));
+        assert!(line.contains("forced_rescue_reason=FundingTrancheBalanceMismatch"));
+        assert!(line.contains("active_funding_scan_cursor=500"));
+        assert!(line.contains("active_funding_scan_candidate_tx_id=43"));
+        assert!(line.contains("active_funding_scan_candidate_amount_e8s=100000000"));
+        assert!(line.contains("active_funding_scan_anchor_last_processed_funding_tx_id=41"));
+        assert!(line.contains("active_payout_funding_tx_id=43"));
+        assert!(line.contains("active_payout_funding_amount_e8s=100000000"));
     }
 
     #[test]

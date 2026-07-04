@@ -258,7 +258,7 @@ The PocketIC integration suite includes an end-to-end upgrade test that interrup
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits a single `CONFIG ...` line on the main-tick cadence, alongside its regular `Cycles: ...` health line. If a payout job is being recovered, forced resume ticks can emit additional config lines outside the regular cadence. The line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. If a payout job is being recovered, forced resume ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, funding source account, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, active payout funding tranche, and any forced rescue reason.
 
 ### Main tick sequence
 
@@ -379,7 +379,7 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 
 Strict-tranche accounting fails closed on persistent tranche invariants. If the Faucet discovers a funding tranche that cannot be safely processed, such as a funding amount exceeding the current payout-account balance or a qualifying funding transfer without a timestamp, it latches a forced-rescue reason rather than retrying silently forever. Transient ledger/index/CMC call failures continue to use the existing retry/failure-counter paths and do not immediately trigger forced rescue.
 
-These latches are persisted and can be cleared via upgrade args when appropriate. Forced rescue reasons only lead to controller changes when the blackhole/rescue controller policy is armed and configured accordingly.
+These latches are persisted and can be cleared via upgrade args when appropriate. Forced rescue reasons only lead to controller changes when the blackhole/rescue controller policy is armed and configured accordingly. Funding discovery emits compact `FUNDING` logs that distinguish `found`, `empty`, `in_progress`, `unreadable`, and `balance_mismatch`, so tranche discovery and strict-accounting failures remain visible in production logs.
 
 ## Install-time and upgrade-time configuration
 
@@ -454,6 +454,100 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
 ```
 
 Omitted upgrade args are decoded as no config change. Use optional `UpgradeArgs` only for an intentional DAO-approved upgrade-time config patch; they are a different Candid shape from `InitArgs`, and the faucet upgrade decoder rejects install args. Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before filling the temporary args file.
+
+Current upgrade args support these recovery/config fields:
+
+- `blackhole_controller : opt principal`
+- `blackhole_armed : opt bool`
+- `clear_forced_rescue : opt bool`
+- `last_processed_funding_tx_id : opt nat64`
+- `main_interval_seconds : opt nat64`
+- `rescue_interval_seconds : opt nat64`
+- `min_tx_e8s : opt nat64`
+- `stake_recognition_delay_seconds : opt nat64`
+
+`last_processed_funding_tx_id` can only be set from `null` to a value or moved forward from an existing value. It cannot be moved backwards. Changing it clears any active funding scan, but it does not clear `forced_rescue_reason` unless `clear_forced_rescue = opt true` is also supplied.
+
+### Funding cursor recovery procedure
+
+Use this procedure only for the strict-tranche recovery where the prior consumed funding transfer must be marked as already processed so the next unprocessed tranche can be discovered.
+
+1. Confirm the previously processed funding transfer:
+
+```text
+tx index: 36514691
+tx hash: 13800deab518eee74fdf6554edc2043a3358ab4828988d81f46d48775e550660
+```
+
+2. Confirm the new funding transfer to process:
+
+```text
+tx index: 37108711
+tx hash: 5832a04dd8a0b8435600fe86ab91865f46af621c88aab131d3d9e14525938a36
+```
+
+3. Do **not** use the new funding tx ID as the recovery cursor.
+
+4. Create a temporary local upgrade args file. Do **not** commit a production tx-specific args file.
+
+```did
+(
+  opt record {
+    last_processed_funding_tx_id = opt (36514691 : nat64);
+
+    main_interval_seconds = opt (86400 : nat64);
+    rescue_interval_seconds = opt (86400 : nat64);
+    min_tx_e8s = opt (100000000 : nat64);
+    stake_recognition_delay_seconds = opt (604800 : nat64);
+
+    clear_forced_rescue = opt true;
+    blackhole_controller = null;
+    blackhole_armed = null;
+  }
+)
+```
+
+5. Upgrade the production faucet canister with the temporary upgrade args:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
+  --environment ic \
+  --mode upgrade \
+  --args-file /tmp/faucet-upgrade-args.did
+```
+
+6. Confirm logs show the reconciled config:
+
+```text
+CONFIG ... funding_source_account=uccpi-cqaaa-aaaar-qby3q-cai:none ... main_interval_seconds=86400 ... rescue_interval_seconds=86400 ... min_tx_e8s=100000000 ... stake_recognition_delay_seconds=604800
+```
+
+7. Confirm logs show the recovered cursor and cleared forced rescue state:
+
+```text
+STATE:last_processed_funding_tx_id=36514691 forced_rescue_reason=none ...
+```
+
+8. On the next main tick, confirm funding discovery chooses the new funding transfer:
+
+```text
+FUNDING:result=found tx_id=37108711 ...
+```
+
+9. After payout completion, confirm the summary advances the cursor:
+
+```text
+SUMMARY:funding_tx_id=37108711 ... last_processed_funding_tx_id=37108711 ...
+```
+
+Warnings:
+
+- Do not reinstall the production faucet.
+- Do not pass `mainnet-install-args.did` to upgrade.
+- Do not set `last_processed_funding_tx_id` to `37108711` before processing it.
+- Set `last_processed_funding_tx_id` to `36514691` for this recovery.
+- Strict funding-tranche accounting remains required.
+- Do not restore the live-balance fallback.
 
 Before upgrade:
 

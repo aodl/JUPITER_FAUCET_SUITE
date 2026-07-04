@@ -281,15 +281,16 @@ pub(super) async fn process_payout(
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let last_processed = state::with_state(|st| st.last_processed_funding_tx_id);
         assert_no_persistence_batch_for_async();
-        let funding_tranche = match discover_oldest_unprocessed_funding_tranche(
+        let funding_discovery = discover_oldest_unprocessed_funding_tranche(
             index,
             payout_id,
             funding_source_id,
             last_processed,
             fee_e8s,
         )
-        .await
-        {
+        .await;
+        log_funding_discovery(funding_discovery, last_processed);
+        let funding_tranche = match funding_discovery {
             FundingDiscovery::Found(tranche) => tranche,
             FundingDiscovery::InProgress | FundingDiscovery::Empty => {
                 assert_no_persistence_batch_for_async();
@@ -308,6 +309,7 @@ pub(super) async fn process_payout(
             }
         };
         if payout_balance_e8s < funding_tranche.amount_e8s {
+            log_funding_balance_mismatch(funding_tranche, payout_balance_e8s, last_processed);
             state::latch_forced_rescue_reason(ForcedRescueReason::FundingTrancheBalanceMismatch);
             return true;
         }

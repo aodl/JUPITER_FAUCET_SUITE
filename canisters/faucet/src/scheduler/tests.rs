@@ -2337,12 +2337,16 @@ mod tests {
             now_secs
         )));
         let logs = take_test_logs();
+        let summaries = logs
+            .iter()
+            .filter(|line| line.starts_with("SUMMARY:"))
+            .collect::<Vec<_>>();
         assert_eq!(
-            logs.len(),
+            summaries.len(),
             1,
             "expected exactly one compact summary log line, got {logs:?}"
         );
-        let summary = &logs[0];
+        let summary = summaries[0];
         assert!(
             summary.starts_with("SUMMARY:"),
             "expected summary log prefix, got {summary}"
@@ -2388,6 +2392,122 @@ mod tests {
         ] {
             assert!(line.contains(field), "summary log missing {field}: {line}");
         }
+    }
+
+    #[test]
+    fn state_log_is_emitted_on_completed_main_tick() {
+        let now_secs = 2_350;
+        let mut cfg = test_config_with_intervals(120, 60);
+        cfg.stake_recognition_delay_seconds = Some(1);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_processed_funding_tx_id = Some(42);
+        st.forced_rescue_reason = Some(ForcedRescueReason::FundingTrancheBalanceMismatch);
+        st.active_funding_scan = Some(state::FundingScanState {
+            anchor_last_processed_funding_tx_id: Some(41),
+            cursor: Some(500),
+            candidate: Some(state::FundingTrancheState {
+                tx_id: 43,
+                timestamp_nanos: 123,
+                amount_e8s: 100_000_000,
+            }),
+        });
+        let mut job = ActivePayoutJob::new(7, 10_000, 100_000_000, 200_000_000, 1);
+        job.configure_funding_tranche(43, 123, 100_000_000);
+        st.active_payout_job = Some(job);
+        st.last_main_run_ts = now_secs;
+        state::set_state(st);
+
+        take_test_logs();
+        run_ready(run_main_tick_with_clients(
+            false,
+            now_secs * 1_000_000_000,
+            now_secs,
+            &BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![]),
+            &UnexpectedIndex,
+            &ScriptedCmc::new(vec![]),
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+        ));
+        let logs = take_test_logs();
+        let state_line = logs
+            .iter()
+            .find(|line| line.starts_with("STATE:"))
+            .expect("completed main tick should emit STATE log");
+        assert!(state_line.contains("last_processed_funding_tx_id=42"));
+        assert!(state_line.contains("forced_rescue_reason=FundingTrancheBalanceMismatch"));
+        assert!(state_line.contains("active_funding_scan_cursor=500"));
+        assert!(state_line.contains("active_funding_scan_candidate_tx_id=43"));
+        assert!(state_line.contains("active_funding_scan_candidate_amount_e8s=100000000"));
+        assert!(state_line.contains("active_funding_scan_anchor_last_processed_funding_tx_id=41"));
+        assert!(state_line.contains("active_payout_funding_tx_id=43"));
+        assert!(state_line.contains("active_payout_funding_amount_e8s=100000000"));
+    }
+
+    #[test]
+    fn funding_logs_distinguish_discovery_outcomes() {
+        state::set_state(state::State::new(test_config(), 0));
+        state::with_state_mut(|st| {
+            st.active_funding_scan = Some(state::FundingScanState {
+                anchor_last_processed_funding_tx_id: Some(10),
+                cursor: Some(500),
+                candidate: Some(state::FundingTrancheState {
+                    tx_id: 20,
+                    timestamp_nanos: 123,
+                    amount_e8s: 100_000_000,
+                }),
+            });
+        });
+
+        let found = format_funding_discovery_log(
+            FundingDiscovery::Found(FundingTranche {
+                tx_id: 20,
+                timestamp_nanos: 123,
+                amount_e8s: 100_000_000,
+            }),
+            Some(10),
+        );
+        let empty = format_funding_discovery_log(FundingDiscovery::Empty, None);
+        let in_progress = format_funding_discovery_log(FundingDiscovery::InProgress, Some(10));
+        let unreadable = format_funding_discovery_log(
+            FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::IndexReadFailed),
+            Some(10),
+        );
+
+        take_test_logs();
+        log_funding_balance_mismatch(
+            FundingTranche {
+                tx_id: 20,
+                timestamp_nanos: 123,
+                amount_e8s: 100_000_000,
+            },
+            50_000_000,
+            Some(10),
+        );
+        let balance_mismatch = take_test_logs()
+            .into_iter()
+            .next()
+            .expect("balance mismatch log should be emitted");
+
+        assert_eq!(
+            found,
+            "FUNDING:result=found tx_id=20 amount_e8s=100000000 timestamp_nanos=123 last_processed_funding_tx_id=10"
+        );
+        assert_eq!(
+            empty,
+            "FUNDING:result=empty last_processed_funding_tx_id=none"
+        );
+        assert_eq!(
+            in_progress,
+            "FUNDING:result=in_progress cursor=500 candidate_tx_id=20 candidate_amount_e8s=100000000 anchor_last_processed_funding_tx_id=10"
+        );
+        assert_eq!(
+            unreadable,
+            "FUNDING:result=unreadable reason=IndexReadFailed last_processed_funding_tx_id=10"
+        );
+        assert_eq!(
+            balance_mismatch,
+            "FUNDING:result=balance_mismatch funding_tx_id=20 funding_amount_e8s=100000000 payout_balance_e8s=50000000 last_processed_funding_tx_id=10"
+        );
     }
 
     #[test]
@@ -4245,6 +4365,86 @@ mod tests {
     }
 
     #[test]
+    fn funding_discovery_without_cursor_finds_oldest_historical_funding_transfer() {
+        state::set_state(state::State::new(test_config(), 0));
+        let payout_id = "payout-account".to_string();
+        let funding_source_id = "funding-source".to_string();
+        let index = ExclusiveIndex::new(vec![
+            funding_tx_at(
+                200,
+                &funding_source_id,
+                &payout_id,
+                100_000_000,
+                20_000_000_000,
+            ),
+            funding_tx_at(
+                100,
+                &funding_source_id,
+                &payout_id,
+                500_000_000,
+                10_000_000_000,
+            ),
+        ]);
+
+        let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
+            &index,
+            payout_id,
+            funding_source_id,
+            None,
+            10_000,
+        ));
+
+        assert_eq!(
+            discovery,
+            FundingDiscovery::Found(FundingTranche {
+                tx_id: 100,
+                timestamp_nanos: 10_000_000_000,
+                amount_e8s: 500_000_000,
+            })
+        );
+    }
+
+    #[test]
+    fn funding_discovery_with_recovery_cursor_skips_prior_processed_transfer() {
+        state::set_state(state::State::new(test_config(), 0));
+        let payout_id = "payout-account".to_string();
+        let funding_source_id = "funding-source".to_string();
+        let index = ExclusiveIndex::new(vec![
+            funding_tx_at(
+                200,
+                &funding_source_id,
+                &payout_id,
+                100_000_000,
+                20_000_000_000,
+            ),
+            funding_tx_at(
+                100,
+                &funding_source_id,
+                &payout_id,
+                500_000_000,
+                10_000_000_000,
+            ),
+        ]);
+
+        let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
+            &index,
+            payout_id,
+            funding_source_id,
+            Some(100),
+            10_000,
+        ));
+
+        assert_eq!(
+            discovery,
+            FundingDiscovery::Found(FundingTranche {
+                tx_id: 200,
+                timestamp_nanos: 20_000_000_000,
+                amount_e8s: 100_000_000,
+            })
+        );
+    }
+
+    #[test]
     fn funding_discovery_treats_missing_timestamp_on_qualifying_funding_transfer_as_unreadable() {
         state::set_state(state::State::new(test_config(), 0));
         let payout_id = "payout-account".to_string();
@@ -4326,6 +4526,126 @@ mod tests {
         );
         assert!(ledger.transfer_amounts().is_empty());
         assert_eq!(cmc.call_count(), 0);
+    }
+
+    #[test]
+    fn cursor_recovery_after_balance_mismatch_selects_next_funding_and_processes_job() {
+        let now_secs = 4_355;
+        let mut cfg = test_config();
+        cfg.staking_account.owner = Principal::from_text("qoctq-giaaa-aaaaa-aaaea-cai").unwrap();
+        cfg.stake_recognition_delay_seconds = Some(1);
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = ExclusiveIndex::new(vec![
+            funding_tx_at(
+                200,
+                &funding_source_id,
+                &payout_id,
+                100_000_000,
+                20_000_000_000,
+            ),
+            funding_tx_at(
+                100,
+                &funding_source_id,
+                &payout_id,
+                500_000_000,
+                10_000_000_000,
+            ),
+            commitment_tx_at(
+                1,
+                &staking_id,
+                100_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            ),
+        ]);
+        let mismatch_ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![]);
+        let mismatch_cmc = ScriptedCmc::new(vec![]);
+
+        take_test_logs();
+        assert!(run_ready(process_payout(
+            &mismatch_ledger,
+            &index,
+            &mismatch_cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+        )));
+        let mismatch_logs = take_test_logs();
+
+        let (active_job, last_processed_funding_tx_id, forced_rescue_reason) =
+            state::with_state(|st| {
+                (
+                    st.active_payout_job.clone(),
+                    st.last_processed_funding_tx_id,
+                    st.forced_rescue_reason.clone(),
+                )
+            });
+        assert!(active_job.is_none());
+        assert_eq!(last_processed_funding_tx_id, None);
+        assert_eq!(
+            forced_rescue_reason,
+            Some(ForcedRescueReason::FundingTrancheBalanceMismatch)
+        );
+        assert!(mismatch_ledger.transfer_amounts().is_empty());
+        assert!(mismatch_logs.iter().any(|line| line
+            == "FUNDING:result=found tx_id=100 amount_e8s=500000000 timestamp_nanos=10000000000 last_processed_funding_tx_id=none"));
+        assert!(mismatch_logs.iter().any(|line| line
+            == "FUNDING:result=balance_mismatch funding_tx_id=100 funding_amount_e8s=500000000 payout_balance_e8s=100000000 last_processed_funding_tx_id=none"));
+
+        state::with_state_mut(|st| {
+            crate::apply_upgrade_args_to_state(
+                st,
+                Some(crate::UpgradeArgs {
+                    last_processed_funding_tx_id: Some(100),
+                    clear_forced_rescue: Some(true),
+                    ..crate::UpgradeArgs::default()
+                }),
+                now_secs + 1,
+            );
+        });
+
+        let recovery_ledger =
+            BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![501]);
+        let recovery_cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+        take_test_logs();
+        assert!(run_ready(process_payout(
+            &recovery_ledger,
+            &index,
+            &recovery_cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            (now_secs + 1) * 1_000_000_000,
+            now_secs + 1,
+        )));
+        let recovery_logs = take_test_logs();
+
+        let (summary, active_job, last_processed_funding_tx_id, forced_rescue_reason) =
+            state::with_state(|st| {
+                (
+                    st.last_summary
+                        .clone()
+                        .expect("summary should be finalized"),
+                    st.active_payout_job.clone(),
+                    st.last_processed_funding_tx_id,
+                    st.forced_rescue_reason.clone(),
+                )
+            });
+        assert!(active_job.is_none());
+        assert_eq!(summary.funding_tx_id, Some(200));
+        assert_eq!(summary.last_processed_funding_tx_id, Some(200));
+        assert_eq!(last_processed_funding_tx_id, Some(200));
+        assert_eq!(forced_rescue_reason, None);
+        assert_eq!(recovery_ledger.transfer_amounts(), vec![99_990_000]);
+        assert_eq!(recovery_cmc.call_count(), 1);
+        assert!(recovery_logs.iter().any(|line| line
+            == "FUNDING:result=found tx_id=200 amount_e8s=100000000 timestamp_nanos=20000000000 last_processed_funding_tx_id=100"));
     }
 
     #[test]

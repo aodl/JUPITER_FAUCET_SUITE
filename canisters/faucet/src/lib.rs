@@ -45,7 +45,24 @@ pub struct UpgradeArgs {
     pub blackhole_controller: Option<Principal>,
     pub blackhole_armed: Option<bool>,
     pub clear_forced_rescue: Option<bool>,
+    pub last_processed_funding_tx_id: Option<u64>,
+    pub main_interval_seconds: Option<u64>,
+    pub rescue_interval_seconds: Option<u64>,
+    pub min_tx_e8s: Option<u64>,
     pub stake_recognition_delay_seconds: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Default)]
+struct UpgradeArgsInstallFieldProbe {
+    staking_account: Option<Account>,
+    payout_subaccount: Option<Option<Vec<u8>>>,
+    ledger_canister_id: Option<Option<Principal>>,
+    index_canister_id: Option<Option<Principal>>,
+    cmc_canister_id: Option<Option<Principal>>,
+    governance_canister_id: Option<Option<Principal>>,
+    funding_source_account: Option<Account>,
+    rescue_controller: Option<Principal>,
+    expected_first_staking_tx_id: Option<Option<u64>>,
 }
 
 fn mainnet_ledger_id() -> Principal {
@@ -260,6 +277,36 @@ pub(crate) fn apply_upgrade_args_to_state(
             st.consecutive_index_latest_unreadable_failures = Some(0);
             st.consecutive_cmc_zero_success_runs = Some(0);
         }
+        if let Some(last_processed_funding_tx_id) = args.last_processed_funding_tx_id {
+            if let Some(old) = st.last_processed_funding_tx_id {
+                assert!(
+                    last_processed_funding_tx_id >= old,
+                    "last_processed_funding_tx_id cannot move backwards"
+                );
+            }
+            if st.last_processed_funding_tx_id != Some(last_processed_funding_tx_id) {
+                st.last_processed_funding_tx_id = Some(last_processed_funding_tx_id);
+                st.active_funding_scan = None;
+            }
+        }
+        if let Some(interval) = args.main_interval_seconds {
+            assert!(interval > 0, "main_interval_seconds must be greater than 0");
+            st.config.main_interval_seconds = interval;
+        }
+        if let Some(interval) = args.rescue_interval_seconds {
+            assert!(
+                interval > 0,
+                "rescue_interval_seconds must be greater than 0"
+            );
+            st.config.rescue_interval_seconds = interval;
+        }
+        if let Some(min_tx_e8s) = args.min_tx_e8s {
+            assert!(
+                min_tx_e8s >= MIN_MIN_TX_E8S,
+                "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
+            );
+            st.config.min_tx_e8s = min_tx_e8s;
+        }
         if let Some(delay) = args.stake_recognition_delay_seconds {
             assert!(
                 delay > 0,
@@ -280,7 +327,41 @@ pub(crate) fn apply_upgrade_args_to_state(
 }
 
 fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
-    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>("faucet", raw)
+    let zero_args = candid::encode_args(()).expect("failed to encode Candid zero args");
+    if raw.is_empty() || raw == zero_args.as_slice() {
+        return Ok(None);
+    }
+    if candid::decode_one::<InitArgs>(raw).is_ok() {
+        return Err(
+            "received InitArgs in faucet post_upgrade; do not pass install args to upgrade"
+                .to_string(),
+        );
+    }
+    reject_install_only_upgrade_fields(raw)?;
+    candid::decode_one::<Option<UpgradeArgs>>(raw)
+        .map_err(|err| format!("failed to decode faucet UpgradeArgs: {err}"))
+}
+
+fn reject_install_only_upgrade_fields(raw: &[u8]) -> Result<(), String> {
+    let Ok(Some(probe)) = candid::decode_one::<Option<UpgradeArgsInstallFieldProbe>>(raw) else {
+        return Ok(());
+    };
+    if probe.staking_account.is_some()
+        || probe.payout_subaccount.is_some()
+        || probe.ledger_canister_id.is_some()
+        || probe.index_canister_id.is_some()
+        || probe.cmc_canister_id.is_some()
+        || probe.governance_canister_id.is_some()
+        || probe.funding_source_account.is_some()
+        || probe.rescue_controller.is_some()
+        || probe.expected_first_staking_tx_id.is_some()
+    {
+        return Err(
+            "received install-only fields in faucet UpgradeArgs; do not pass install args to upgrade"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
@@ -738,6 +819,10 @@ mod tests {
             blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
             blackhole_armed: Some(true),
             clear_forced_rescue: Some(false),
+            last_processed_funding_tx_id: Some(365),
+            main_interval_seconds: Some(86_400),
+            rescue_interval_seconds: Some(86_400),
+            min_tx_e8s: Some(100_000_000),
             stake_recognition_delay_seconds: Some(604_800),
         }),))
         .unwrap();
@@ -748,6 +833,10 @@ mod tests {
         );
         assert_eq!(decoded.blackhole_armed, Some(true));
         assert_eq!(decoded.clear_forced_rescue, Some(false));
+        assert_eq!(decoded.last_processed_funding_tx_id, Some(365));
+        assert_eq!(decoded.main_interval_seconds, Some(86_400));
+        assert_eq!(decoded.rescue_interval_seconds, Some(86_400));
+        assert_eq!(decoded.min_tx_e8s, Some(100_000_000));
         assert_eq!(decoded.stake_recognition_delay_seconds, Some(604_800));
     }
 
@@ -756,6 +845,17 @@ mod tests {
         let raw = encode_args((sample_init_args(),)).unwrap();
         let err = expect_decode_err(&raw);
         assert!(err.contains("received InitArgs in faucet post_upgrade"));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_opt_record_with_install_only_fields() {
+        let raw = encode_args((Some(UpgradeArgsInstallFieldProbe {
+            staking_account: Some(sample_account()),
+            ..UpgradeArgsInstallFieldProbe::default()
+        }),))
+        .unwrap();
+        let err = expect_decode_err(&raw);
+        assert!(err.contains("received install-only fields in faucet UpgradeArgs"));
     }
 
     #[test]
@@ -869,7 +969,7 @@ mod tests {
                 blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
                 blackhole_armed: Some(true),
                 clear_forced_rescue: Some(true),
-                stake_recognition_delay_seconds: None,
+                ..UpgradeArgs::default()
             }),
             now_secs,
         );
@@ -900,7 +1000,7 @@ mod tests {
                 blackhole_controller: None,
                 blackhole_armed: Some(false),
                 clear_forced_rescue: Some(true),
-                stake_recognition_delay_seconds: None,
+                ..UpgradeArgs::default()
             }),
             now_secs,
         );
@@ -926,7 +1026,7 @@ mod tests {
                 blackhole_controller: None,
                 blackhole_armed: Some(true),
                 clear_forced_rescue: Some(true),
-                stake_recognition_delay_seconds: None,
+                ..UpgradeArgs::default()
             }),
             now_secs,
         );
@@ -958,6 +1058,7 @@ mod tests {
                 blackhole_armed: None,
                 clear_forced_rescue: None,
                 stake_recognition_delay_seconds: Some(604_800),
+                ..UpgradeArgs::default()
             }),
             now_secs,
         );
@@ -978,12 +1079,203 @@ mod tests {
                 blackhole_controller: None,
                 blackhole_armed: None,
                 clear_forced_rescue: None,
-                stake_recognition_delay_seconds: None,
+                ..UpgradeArgs::default()
             }),
             now_secs,
         );
 
         assert_eq!(st.config.stake_recognition_delay_seconds, Some(86_400));
+    }
+
+    #[test]
+    fn apply_upgrade_args_sets_funding_cursor_from_none_and_clears_scan() {
+        let now_secs = 893;
+        let mut st = State::new(sample_config(), now_secs);
+        st.active_funding_scan = Some(crate::state::FundingScanState {
+            anchor_last_processed_funding_tx_id: None,
+            cursor: Some(500),
+            candidate: Some(crate::state::FundingTrancheState {
+                tx_id: 300,
+                timestamp_nanos: 1,
+                amount_e8s: 100_000_000,
+            }),
+        });
+        st.forced_rescue_reason =
+            Some(crate::state::ForcedRescueReason::FundingTrancheBalanceMismatch);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                last_processed_funding_tx_id: Some(100),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.last_processed_funding_tx_id, Some(100));
+        assert_eq!(st.active_funding_scan, None);
+        assert_eq!(
+            st.forced_rescue_reason,
+            Some(crate::state::ForcedRescueReason::FundingTrancheBalanceMismatch)
+        );
+    }
+
+    #[test]
+    fn apply_upgrade_args_advances_existing_funding_cursor_and_clears_scan() {
+        let now_secs = 894;
+        let mut st = State::new(sample_config(), now_secs);
+        st.last_processed_funding_tx_id = Some(100);
+        st.active_funding_scan = Some(crate::state::FundingScanState {
+            anchor_last_processed_funding_tx_id: Some(100),
+            cursor: Some(500),
+            candidate: None,
+        });
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                last_processed_funding_tx_id: Some(200),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.last_processed_funding_tx_id, Some(200));
+        assert_eq!(st.active_funding_scan, None);
+    }
+
+    #[test]
+    fn apply_upgrade_args_keeps_scan_when_funding_cursor_is_unchanged() {
+        let now_secs = 895;
+        let mut st = State::new(sample_config(), now_secs);
+        st.last_processed_funding_tx_id = Some(100);
+        let scan = crate::state::FundingScanState {
+            anchor_last_processed_funding_tx_id: Some(100),
+            cursor: Some(500),
+            candidate: None,
+        };
+        st.active_funding_scan = Some(scan.clone());
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                last_processed_funding_tx_id: Some(100),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.last_processed_funding_tx_id, Some(100));
+        assert_eq!(st.active_funding_scan, Some(scan));
+    }
+
+    #[test]
+    #[should_panic(expected = "last_processed_funding_tx_id cannot move backwards")]
+    fn apply_upgrade_args_rejects_funding_cursor_rewind() {
+        let now_secs = 896;
+        let mut st = State::new(sample_config(), now_secs);
+        st.last_processed_funding_tx_id = Some(200);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                last_processed_funding_tx_id: Some(100),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+    }
+
+    #[test]
+    fn apply_upgrade_args_clear_forced_rescue_can_pair_with_cursor_recovery() {
+        let now_secs = 897;
+        let mut st = State::new(sample_config(), now_secs);
+        st.forced_rescue_reason =
+            Some(crate::state::ForcedRescueReason::FundingTrancheBalanceMismatch);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                clear_forced_rescue: Some(true),
+                last_processed_funding_tx_id: Some(100),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.last_processed_funding_tx_id, Some(100));
+        assert_eq!(st.forced_rescue_reason, None);
+    }
+
+    #[test]
+    fn apply_upgrade_args_updates_scalar_runtime_config() {
+        let now_secs = 898;
+        let mut st = State::new(sample_config(), now_secs);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                main_interval_seconds: Some(86_400),
+                rescue_interval_seconds: Some(86_400),
+                min_tx_e8s: Some(100_000_000),
+                stake_recognition_delay_seconds: Some(604_800),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+
+        assert_eq!(st.config.main_interval_seconds, 86_400);
+        assert_eq!(st.config.rescue_interval_seconds, 86_400);
+        assert_eq!(st.config.min_tx_e8s, 100_000_000);
+        assert_eq!(st.config.stake_recognition_delay_seconds, Some(604_800));
+    }
+
+    #[test]
+    #[should_panic(expected = "main_interval_seconds must be greater than 0")]
+    fn apply_upgrade_args_rejects_zero_main_interval() {
+        let now_secs = 899;
+        let mut st = State::new(sample_config(), now_secs);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                main_interval_seconds: Some(0),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "rescue_interval_seconds must be greater than 0")]
+    fn apply_upgrade_args_rejects_zero_rescue_interval() {
+        let now_secs = 900;
+        let mut st = State::new(sample_config(), now_secs);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                rescue_interval_seconds: Some(0),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "min_tx_e8s must be at least")]
+    fn apply_upgrade_args_rejects_invalid_min_tx_e8s() {
+        let now_secs = 901;
+        let mut st = State::new(sample_config(), now_secs);
+
+        apply_upgrade_args_to_state(
+            &mut st,
+            Some(UpgradeArgs {
+                min_tx_e8s: Some(MIN_MIN_TX_E8S - 1),
+                ..UpgradeArgs::default()
+            }),
+            now_secs,
+        );
     }
 
     #[test]
@@ -999,6 +1291,7 @@ mod tests {
                 blackhole_armed: None,
                 clear_forced_rescue: None,
                 stake_recognition_delay_seconds: Some(0),
+                ..UpgradeArgs::default()
             }),
             now_secs,
         );

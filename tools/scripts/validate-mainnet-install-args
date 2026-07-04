@@ -443,8 +443,8 @@ def validate_faucet() -> int:
         fail(f"{path} is missing `expected_first_staking_tx_id`")
     value = match.group(1).strip()
     faucet_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
-    if faucet_min_tx_e8s < 10_000_000:
-        fail(f"{path} configures min_tx_e8s below the supported floor of 10_000_000 e8s (0.1 ICP)")
+    if faucet_min_tx_e8s != 100_000_000:
+        fail(f"{path} must configure min_tx_e8s as 100_000_000 e8s for the intended mainnet faucet config")
     if value == "null":
         return faucet_min_tx_e8s
     if re.fullmatch(r"opt\s+\(?\s*\d+(?:\s*:\s*nat64)?\s*\)?", value):

@@ -37,6 +37,7 @@ impl MainGuard {
             log_error(code);
         }
         log_cycles();
+        log_current_state();
         log_current_config();
     }
 }
