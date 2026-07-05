@@ -32,7 +32,7 @@
   ];
   const startedAt = Date.now();
   const minVisibleMs = 2000;
-  const maxVisibleMs = 10000;
+  const maxVisibleMs = 60000;
   let phraseIndex = Math.floor(Math.random() * phrases.length);
   let progress = 8;
   let animationFrame = 0;

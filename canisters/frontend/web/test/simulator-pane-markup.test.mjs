@@ -149,7 +149,7 @@ test('first-load overlay uses the token logo and rotating cycle phrases', () => 
   assert.match(loadingOverlayJs, /title\.classList\.add\("is-swiping-in"\)/);
   assert.match(loadingOverlayJs, /\}, 2100\);/);
   assert.match(loadingOverlayJs, /const minVisibleMs = 2000;/);
-  assert.match(loadingOverlayJs, /const maxVisibleMs = 10000;/);
+  assert.match(loadingOverlayJs, /const maxVisibleMs = 60000;/);
   assert.match(loadingOverlayJs, /const maxVisibleTimer = window\.setTimeout\(finish, maxVisibleMs\);/);
   assert.match(loadingOverlayJs, /window\.requestAnimationFrame\(animateProgress\)/);
   assert.match(loadingOverlayJs, /function enableFullBackgroundAfterOverlayPaint\(\)/);
