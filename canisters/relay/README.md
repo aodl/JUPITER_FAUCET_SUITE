@@ -104,7 +104,7 @@ Canister logs have finite retention. Operators should archive logs externally if
 
 ## Public Log Records
 
-The relay emits stable, single-line, grep-friendly public records:
+The relay emits consistent, single-line, grep-friendly public records:
 
 ```text
 Cycles: <relay_self_cycles_balance>
@@ -258,16 +258,16 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 
 Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
 
-Initial deployment of this no-stable-state lifecycle may use reinstall to wipe old stable memory. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly for that operation:
+Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly when replacing Relay Wasm:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --environment ic \
-  --mode reinstall \
+  --mode upgrade \
   --args-file canisters/relay/mainnet-install-args.did
 ```
 
-Future replacements may use install, reinstall, or upgrade with full init args. All replacement paths reset heap-only operational state. Before replacement, confirm that state reset is intentional, save current public logs/settings if needed, and verify managed canister cycle balances are healthy enough for a new baseline. After replacement, confirm config/logs, confirm the first tick is `BaselineOnly`, check managed canister cycle balances, and manually top up if any canister is unexpectedly low.
+Replacement may use install, reinstall, or upgrade with full init args. All replacement paths reset heap-only operational state. Before replacement, confirm that state reset is intentional, save current public logs/settings if needed, and verify managed canister cycle balances are healthy enough for a new baseline. After replacement, confirm config/logs, confirm the first tick is `BaselineOnly`, check managed canister cycle balances, and manually top up if any canister is unexpectedly low.
 
 Post-replacement verification:
 
