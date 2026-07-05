@@ -462,6 +462,9 @@ fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal,
                 {
                     sample.actual_minted_cycles =
                         sample.actual_minted_cycles.saturating_add(minted_cycles);
+                    sample.remaining_deficit_cycles = sample
+                        .target_topup_cycles
+                        .saturating_sub(sample.actual_minted_cycles);
                 }
                 if let Some(sample) = job
                     .summary
@@ -471,6 +474,9 @@ fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal,
                 {
                     sample.actual_minted_cycles =
                         sample.actual_minted_cycles.saturating_add(minted_cycles);
+                    sample.remaining_deficit_cycles = sample
+                        .target_topup_cycles
+                        .saturating_sub(sample.actual_minted_cycles);
                 }
                 *st.relay_minted_cycles_since_sample
                     .entry(canister_id)
@@ -486,7 +492,7 @@ fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal,
     });
 }
 
-fn mark_pending_failed() {
+pub(super) fn mark_pending_failed() {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
             if let Some(pending) = job.pending_transfer.take() {
@@ -500,7 +506,7 @@ fn mark_pending_failed() {
     });
 }
 
-fn mark_pending_failed_after_acceptance() {
+pub(super) fn mark_pending_failed_after_acceptance() {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
             if job.pending_transfer.take().is_some() {
@@ -526,7 +532,7 @@ fn mark_pending_ambiguous() {
     });
 }
 
-fn mark_pending_ambiguous_after_acceptance() {
+pub(super) fn mark_pending_ambiguous_after_acceptance() {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
             if let Some(pending) = job.pending_transfer.take() {
@@ -638,10 +644,12 @@ mod tests {
             current_cycles: 900,
             relay_minted_cycles: 0,
             burn_cycles: 100,
+            carried_deficit_cycles: 0,
             target_topup_cycles: 101,
             gross_share_e8s: 900,
             amount_e8s: 890,
             actual_minted_cycles: 0,
+            remaining_deficit_cycles: 101,
             skipped_reason: None,
         };
         summary.canisters = vec![sample.clone()];

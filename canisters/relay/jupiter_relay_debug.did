@@ -40,10 +40,12 @@ type CanisterBurnSample = record {
   current_cycles : nat;
   relay_minted_cycles : nat;
   burn_cycles : nat;
+  carried_deficit_cycles : nat;
   target_topup_cycles : nat;
   gross_share_e8s : nat64;
   amount_e8s : nat64;
   actual_minted_cycles : nat;
+  remaining_deficit_cycles : nat;
   skipped_reason : opt text;
 };
 type ProbeFailure = record { canister_id : principal; error : text };

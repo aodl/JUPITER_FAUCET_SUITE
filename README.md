@@ -12,7 +12,7 @@ The operational path is intentionally split across small canisters:
 
 - [`canisters/disburser`](canisters/disburser) controls one NNS neuron, disburses available maturity, and routes staged ICP into the fixed base/age-bonus recipients.
 - [`canisters/faucet`](canisters/faucet) receives the base ICP flow, scans the configured staking account, interprets eligible transfer memos, and performs proportional payouts as cycles top-ups, raw ICP transfers, or NNS neuron stake transfers.
-- [`canisters/relay`](canisters/relay) receives suite-funding ICP from the faucet, tops up managed suite canisters from recent cycles-burn observations, and routes remaining surplus.
+- [`canisters/relay`](canisters/relay) receives suite-funding ICP from the faucet, tops up managed suite canisters from recent cycles-burn observations plus carried recovery deficits, and routes remaining surplus only after canister recovery targets are met.
 - [`canisters/historian`](canisters/historian) indexes commitment history, target canisters, cycles samples, SNS discovery, and dashboard-facing public state.
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
 - [`canisters/lifeline`](canisters/lifeline) and [`canisters/sns-rewards`](canisters/sns-rewards) provide recovery/support and reward-recipient roles.

@@ -81,10 +81,12 @@ pub struct CanisterBurnSample {
     pub current_cycles: u128,
     pub relay_minted_cycles: u128,
     pub burn_cycles: u128,
+    pub carried_deficit_cycles: u128,
     pub target_topup_cycles: u128,
     pub gross_share_e8s: u64,
     pub amount_e8s: u64,
     pub actual_minted_cycles: u128,
+    pub remaining_deficit_cycles: u128,
     pub skipped_reason: Option<String>,
 }
 
@@ -244,6 +246,7 @@ pub(crate) struct State {
     pub main_lock_state_ts: Option<u64>,
     pub last_completed_cycles: BTreeMap<Principal, CyclesSnapshot>,
     pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
+    pub recovery_deficit_cycles: BTreeMap<Principal, u128>,
     pub conversion_estimate: Option<ConversionEstimate>,
     pub active_job: Option<ActiveRelayJob>,
     pub active_faucet_commitment_transfer: Option<PendingFaucetCommitmentTransfer>,
@@ -259,6 +262,7 @@ impl State {
             main_lock_state_ts: Some(0),
             last_completed_cycles: BTreeMap::new(),
             relay_minted_cycles_since_sample: BTreeMap::new(),
+            recovery_deficit_cycles: BTreeMap::new(),
             conversion_estimate: None,
             active_job: None,
             active_faucet_commitment_transfer: None,
@@ -362,16 +366,18 @@ pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
 
 pub(crate) fn relay_canister_log_line(sample: &CanisterBurnSample) -> String {
     format!(
-        "RELAY_CANISTER canister_id={} previous_cycles={} current_cycles={} relay_minted_cycles={} burn_cycles={} target_topup_cycles={} planned_topup_e8s={} actual_topup_e8s={} actual_minted_cycles={} skipped_reason={}",
+        "RELAY_CANISTER canister_id={} previous_cycles={} current_cycles={} relay_minted_cycles={} burn_cycles={} carried_deficit_cycles={} target_topup_cycles={} planned_topup_e8s={} actual_topup_e8s={} actual_minted_cycles={} remaining_deficit_cycles={} skipped_reason={}",
         sample.canister_id.to_text(),
         opt_u128(sample.previous_cycles),
         sample.current_cycles,
         sample.relay_minted_cycles,
         sample.burn_cycles,
+        sample.carried_deficit_cycles,
         sample.target_topup_cycles,
         sample.amount_e8s,
         sample.amount_e8s,
         sample.actual_minted_cycles,
+        sample.remaining_deficit_cycles,
         opt_text(sample.skipped_reason.as_deref()),
     )
 }
@@ -502,12 +508,206 @@ fn hex_bytes(bytes: &[u8]) -> String {
     out
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct CanisterBurnSampleV1 {
+    pub canister_id: Principal,
+    pub previous_cycles: Option<u128>,
+    pub current_cycles: u128,
+    pub relay_minted_cycles: u128,
+    pub burn_cycles: u128,
+    pub target_topup_cycles: u128,
+    pub gross_share_e8s: u64,
+    pub amount_e8s: u64,
+    pub actual_minted_cycles: u128,
+    pub skipped_reason: Option<String>,
+}
+
+impl From<CanisterBurnSampleV1> for CanisterBurnSample {
+    fn from(value: CanisterBurnSampleV1) -> Self {
+        let remaining_deficit_cycles = value
+            .target_topup_cycles
+            .saturating_sub(value.actual_minted_cycles);
+        Self {
+            canister_id: value.canister_id,
+            previous_cycles: value.previous_cycles,
+            current_cycles: value.current_cycles,
+            relay_minted_cycles: value.relay_minted_cycles,
+            burn_cycles: value.burn_cycles,
+            carried_deficit_cycles: 0,
+            target_topup_cycles: value.target_topup_cycles,
+            gross_share_e8s: value.gross_share_e8s,
+            amount_e8s: value.amount_e8s,
+            actual_minted_cycles: value.actual_minted_cycles,
+            remaining_deficit_cycles,
+            skipped_reason: value.skipped_reason,
+        }
+    }
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct RelaySummaryV1 {
+    pub mode: RelayMode,
+    pub started_at_ts_nanos: u64,
+    pub completed_at_ts_nanos: Option<u64>,
+    pub default_account_balance_start_e8s: u64,
+    pub fee_e8s: u64,
+    pub managed_canister_count: u32,
+    pub min_cycles_balance: Option<u128>,
+    pub total_burn_cycles: u128,
+    pub transfer_count: u32,
+    pub ledger_transfer_count: u32,
+    pub ledger_sent_e8s: u64,
+    pub ledger_fees_e8s: u64,
+    pub cmc_notify_success_count: u32,
+    pub cmc_notify_failed_count: u32,
+    pub cmc_notify_ambiguous_count: u32,
+    pub planned_retained_e8s: u64,
+    pub known_unspent_e8s: u64,
+    pub ambiguous_e8s: u64,
+    pub failed_transfers: u32,
+    pub ambiguous_transfers: u32,
+    pub partial_tick_count: u32,
+    pub probe_failures: Vec<ProbeFailure>,
+    pub canisters: Vec<CanisterBurnSampleV1>,
+    pub conversion_estimate_used: Option<ConversionEstimate>,
+    pub surplus_e8s_before_fees: u64,
+    pub surplus_transfers: Vec<SurplusTransferSample>,
+    pub skipped_surplus_reason: Option<String>,
+}
+
+impl From<RelaySummaryV1> for RelaySummary {
+    fn from(value: RelaySummaryV1) -> Self {
+        Self {
+            mode: value.mode,
+            started_at_ts_nanos: value.started_at_ts_nanos,
+            completed_at_ts_nanos: value.completed_at_ts_nanos,
+            default_account_balance_start_e8s: value.default_account_balance_start_e8s,
+            fee_e8s: value.fee_e8s,
+            managed_canister_count: value.managed_canister_count,
+            min_cycles_balance: value.min_cycles_balance,
+            total_burn_cycles: value.total_burn_cycles,
+            transfer_count: value.transfer_count,
+            ledger_transfer_count: value.ledger_transfer_count,
+            ledger_sent_e8s: value.ledger_sent_e8s,
+            ledger_fees_e8s: value.ledger_fees_e8s,
+            cmc_notify_success_count: value.cmc_notify_success_count,
+            cmc_notify_failed_count: value.cmc_notify_failed_count,
+            cmc_notify_ambiguous_count: value.cmc_notify_ambiguous_count,
+            planned_retained_e8s: value.planned_retained_e8s,
+            known_unspent_e8s: value.known_unspent_e8s,
+            ambiguous_e8s: value.ambiguous_e8s,
+            failed_transfers: value.failed_transfers,
+            ambiguous_transfers: value.ambiguous_transfers,
+            partial_tick_count: value.partial_tick_count,
+            probe_failures: value.probe_failures,
+            canisters: value.canisters.into_iter().map(Into::into).collect(),
+            conversion_estimate_used: value.conversion_estimate_used,
+            surplus_e8s_before_fees: value.surplus_e8s_before_fees,
+            surplus_transfers: value.surplus_transfers,
+            skipped_surplus_reason: value.skipped_surplus_reason,
+        }
+    }
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct ActiveRelayJobV1 {
+    pub id: u64,
+    pub mode: ActiveRelayMode,
+    pub started_at_ts_nanos: u64,
+    pub fee_e8s: u64,
+    pub balance_start_e8s: u64,
+    pub current_cycles: BTreeMap<Principal, CyclesSnapshot>,
+    pub canisters: Vec<CanisterBurnSampleV1>,
+    pub surplus_transfers: Vec<SurplusTransferSample>,
+    pub surplus_memos: Vec<Option<Vec<u8>>>,
+    pub surplus_phase_planned: bool,
+    pub pending_transfer: Option<PendingTransfer>,
+    pub next_transfer_index: u32,
+    pub surplus_transfer_index: u32,
+    pub next_created_at_time_nanos: u64,
+    pub summary: RelaySummaryV1,
+}
+
+impl From<ActiveRelayJobV1> for ActiveRelayJob {
+    fn from(value: ActiveRelayJobV1) -> Self {
+        Self {
+            id: value.id,
+            mode: value.mode,
+            started_at_ts_nanos: value.started_at_ts_nanos,
+            fee_e8s: value.fee_e8s,
+            balance_start_e8s: value.balance_start_e8s,
+            current_cycles: value.current_cycles,
+            canisters: value.canisters.into_iter().map(Into::into).collect(),
+            surplus_transfers: value.surplus_transfers,
+            surplus_memos: value.surplus_memos,
+            surplus_phase_planned: value.surplus_phase_planned,
+            pending_transfer: value.pending_transfer,
+            next_transfer_index: value.next_transfer_index,
+            surplus_transfer_index: value.surplus_transfer_index,
+            next_created_at_time_nanos: value.next_created_at_time_nanos,
+            summary: value.summary.into(),
+        }
+    }
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct PendingFaucetCommitmentTransferV1 {
+    pub transfer: PendingTransfer,
+    pub fee_e8s: u64,
+    pub balance_start_e8s: u64,
+}
+
+impl From<PendingFaucetCommitmentTransferV1> for PendingFaucetCommitmentTransfer {
+    fn from(value: PendingFaucetCommitmentTransferV1) -> Self {
+        Self {
+            transfer: value.transfer,
+            fee_e8s: value.fee_e8s,
+            balance_start_e8s: value.balance_start_e8s,
+        }
+    }
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct StateV1 {
+    pub config: Config,
+    pub last_main_run_ts: u64,
+    pub main_lock_state_ts: Option<u64>,
+    pub last_completed_cycles: BTreeMap<Principal, CyclesSnapshot>,
+    pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
+    pub conversion_estimate: Option<ConversionEstimate>,
+    pub active_job: Option<ActiveRelayJobV1>,
+    pub active_faucet_commitment_transfer: Option<PendingFaucetCommitmentTransferV1>,
+    pub last_summary: Option<RelaySummaryV1>,
+    pub next_job_id: u64,
+}
+
+impl From<StateV1> for State {
+    fn from(value: StateV1) -> Self {
+        Self {
+            config: value.config,
+            last_main_run_ts: value.last_main_run_ts,
+            main_lock_state_ts: value.main_lock_state_ts,
+            last_completed_cycles: value.last_completed_cycles,
+            relay_minted_cycles_since_sample: value.relay_minted_cycles_since_sample,
+            recovery_deficit_cycles: BTreeMap::new(),
+            conversion_estimate: value.conversion_estimate,
+            active_job: value.active_job.map(Into::into),
+            active_faucet_commitment_transfer: value
+                .active_faucet_commitment_transfer
+                .map(Into::into),
+            last_summary: value.last_summary.map(Into::into),
+            next_job_id: value.next_job_id,
+        }
+    }
+}
+
 // Stable-state enum shape is part of the upgrade contract; boxing V1 would change Candid.
 #[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) enum VersionedStableState {
     Uninitialized,
-    V1(State),
+    V1(StateV1),
+    V2(State),
 }
 
 impl Storable for VersionedStableState {
@@ -552,7 +752,7 @@ fn with_stable_cell<R>(f: impl FnOnce(&mut StableCell<VersionedStableState, Memo
 
 fn persist_snapshot(st: &State) {
     with_stable_cell(|cell| {
-        cell.set(VersionedStableState::V1(st.clone()));
+        cell.set(VersionedStableState::V2(st.clone()));
     });
 }
 
@@ -563,7 +763,8 @@ pub(crate) fn init_stable_storage() {
 pub(crate) fn restore_state_from_stable() -> Option<State> {
     with_stable_cell(|cell| match cell.get().clone() {
         VersionedStableState::Uninitialized => None,
-        VersionedStableState::V1(st) => Some(st),
+        VersionedStableState::V1(st) => Some(st.into()),
+        VersionedStableState::V2(st) => Some(st),
     })
 }
 
@@ -718,17 +919,21 @@ mod tests {
             current_cycles: 900,
             relay_minted_cycles: 0,
             burn_cycles: 100,
+            carried_deficit_cycles: 25,
             target_topup_cycles: 101,
             gross_share_e8s: 50,
             amount_e8s: 40,
             actual_minted_cycles: 0,
+            remaining_deficit_cycles: 101,
             skipped_reason: Some("gross share <= fee".to_string()),
         };
         let canister_line = relay_canister_log_line(&sample);
         assert!(canister_line.starts_with("RELAY_CANISTER "));
         assert!(canister_line.contains("burn_cycles=100"));
+        assert!(canister_line.contains("carried_deficit_cycles=25"));
         assert!(canister_line.contains("planned_topup_e8s=40"));
         assert!(canister_line.contains("actual_topup_e8s=40"));
+        assert!(canister_line.contains("remaining_deficit_cycles=101"));
         assert!(canister_line.contains("skipped_reason=gross%20share%20%3C%3D%20fee"));
 
         let failure = ProbeFailure {
@@ -822,6 +1027,7 @@ mod tests {
         );
         st.relay_minted_cycles_since_sample
             .insert(canister_id, 50_000);
+        st.recovery_deficit_cycles.insert(canister_id, 41_000);
         st.conversion_estimate = Some(ConversionEstimate {
             cycles_per_e8: 7_000_000_000,
             timestamp_nanos: 124_000_000_000,
@@ -830,8 +1036,8 @@ mod tests {
         set_state(st.clone());
 
         let encoded_state = with_stable_cell(|cell| cell.get().clone());
-        let VersionedStableState::V1(decoded_state) = encoded_state else {
-            panic!("expected relay V1 state");
+        let VersionedStableState::V2(decoded_state) = encoded_state else {
+            panic!("expected relay V2 state");
         };
         assert_eq!(decoded_state.last_main_run_ts, 9_900);
         assert_eq!(decoded_state.next_job_id, 12);
@@ -848,6 +1054,10 @@ mod tests {
                 .get(&canister_id),
             Some(&50_000)
         );
+        assert_eq!(
+            decoded_state.recovery_deficit_cycles.get(&canister_id),
+            Some(&41_000)
+        );
 
         let restored = restore_state_from_stable().expect("expected restored relay state");
         assert_eq!(restored.config, st.config);
@@ -861,6 +1071,47 @@ mod tests {
                 .map(|sample| sample.timestamp_nanos),
             Some(123_000_000_000)
         );
+        assert_eq!(
+            restored.recovery_deficit_cycles.get(&canister_id),
+            Some(&41_000)
+        );
+    }
+
+    #[test]
+    fn legacy_v1_stable_state_migrates_with_empty_recovery_deficits() {
+        reset_test_storage();
+        let canister_id = principal("uccpi-cqaaa-aaaar-qby3q-cai");
+        let mut last_completed_cycles = BTreeMap::new();
+        last_completed_cycles.insert(
+            canister_id,
+            CyclesSnapshot {
+                cycles: 1_000_000,
+                timestamp_nanos: 42,
+                source: CyclesSampleSource::BlackholeStatus,
+            },
+        );
+        with_stable_cell(|cell| {
+            cell.set(VersionedStableState::V1(StateV1 {
+                config: base_config(),
+                last_main_run_ts: 9_900,
+                main_lock_state_ts: Some(0),
+                last_completed_cycles,
+                relay_minted_cycles_since_sample: BTreeMap::from([(canister_id, 123)]),
+                conversion_estimate: None,
+                active_job: None,
+                active_faucet_commitment_transfer: None,
+                last_summary: None,
+                next_job_id: 12,
+            }));
+        });
+
+        let restored = restore_state_from_stable().expect("expected restored relay state");
+        assert_eq!(restored.next_job_id, 12);
+        assert_eq!(
+            restored.relay_minted_cycles_since_sample.get(&canister_id),
+            Some(&123)
+        );
+        assert!(restored.recovery_deficit_cycles.is_empty());
     }
 
     #[test]

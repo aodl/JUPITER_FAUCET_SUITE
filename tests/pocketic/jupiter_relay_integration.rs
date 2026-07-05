@@ -141,10 +141,12 @@ struct CanisterBurnSample {
     current_cycles: u128,
     relay_minted_cycles: u128,
     burn_cycles: u128,
+    carried_deficit_cycles: u128,
     target_topup_cycles: u128,
     gross_share_e8s: u64,
     amount_e8s: u64,
     actual_minted_cycles: u128,
+    remaining_deficit_cycles: u128,
     skipped_reason: Option<String>,
 }
 
@@ -1220,6 +1222,109 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
         || !logs.contains("memo_len=2")
     {
         bail!("expected public surplus recipient logs, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn recovery_deficit_carries_underfunded_topup_and_blocks_surplus_until_recovered() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
+        (
+            vec![cmc],
+            Some(vec![SurplusCanisterRecipient {
+                canister_id: cmc,
+                memo: Vec::new(),
+            }]),
+            Vec::new(),
+        )
+    })?;
+    env.add_relay_cycles(1_000_000_000_000);
+    env.set_managed_cycles(10_000_000_000_000)?;
+
+    let baseline = env.tick_relay()?;
+    if baseline.mode != RelayMode::BaselineOnly {
+        bail!("expected baseline-only first tick, got {baseline:?}");
+    }
+
+    env.add_relay_cycles(1_000_000_000_000);
+    env.set_managed_cycles(0)?;
+    env.credit_relay(60_010_000)?;
+    let underfunded = env.tick_relay()?;
+    let underfunded_sample = underfunded
+        .canisters
+        .iter()
+        .find(|sample| sample.canister_id == env.cmc)
+        .context("missing underfunded CMC burn sample")?;
+    if underfunded.mode != RelayMode::TopUpThenSurplus
+        || underfunded_sample.target_topup_cycles == 0
+        || underfunded_sample.actual_minted_cycles >= underfunded_sample.target_topup_cycles
+        || underfunded_sample.remaining_deficit_cycles == 0
+        || !underfunded.surplus_transfers.is_empty()
+    {
+        bail!(
+            "expected underfunded CMC top-up with retained recovery deficit, got {underfunded:?}"
+        );
+    }
+    let carried_deficit = underfunded_sample.remaining_deficit_cycles;
+    let logs_after_underfunded = env.logs_text()?;
+    if !logs_after_underfunded.contains(&format!("remaining_deficit_cycles={carried_deficit}")) {
+        bail!(
+            "expected RELAY_CANISTER log to expose remaining deficit, got {logs_after_underfunded}"
+        );
+    }
+
+    env.add_relay_cycles(1_000_000_000_000);
+    env.set_managed_cycles(5_250_000_000_000)?;
+    env.credit_relay(300_000_000)?;
+    let recovered = env.tick_relay()?;
+    let recovered_sample = recovered
+        .canisters
+        .iter()
+        .find(|sample| sample.canister_id == env.cmc)
+        .context("missing recovered CMC burn sample")?;
+    if recovered_sample.carried_deficit_cycles != carried_deficit
+        || recovered_sample.target_topup_cycles != carried_deficit
+        || recovered_sample.remaining_deficit_cycles != 0
+        || recovered_sample.actual_minted_cycles < recovered_sample.target_topup_cycles
+    {
+        bail!(
+            "expected next tick to carry and clear previous deficit without headroom, got {recovered:?}"
+        );
+    }
+    env.add_relay_cycles(1_000_000_000_000);
+    env.set_managed_cycles(9_000_000_000_000)?;
+    env.credit_relay(200_000_000)?;
+    let mut surplus = env.tick_relay()?;
+    for _ in 0..2 {
+        if !surplus.surplus_transfers.is_empty() || !env.debug_state()?.active_job_present {
+            break;
+        }
+        surplus = env.tick_relay()?;
+    }
+    let surplus_sample = surplus
+        .canisters
+        .iter()
+        .find(|sample| sample.canister_id == env.cmc)
+        .context("missing post-recovery CMC burn sample")?;
+    if surplus_sample.carried_deficit_cycles != 0 || surplus_sample.remaining_deficit_cycles != 0 {
+        bail!("expected recovery deficit to stay cleared on next clean tick, got {surplus:?}");
+    }
+    if surplus.surplus_transfers.iter().all(|transfer| {
+        transfer.target != SurplusTarget::Canister(env.cmc) || transfer.amount_e8s == 0
+    }) {
+        bail!("expected raw surplus to route after recovery deficit cleared, got {surplus:?}");
+    }
+    let transfers = env.transfers()?;
+    if transfers.iter().all(|transfer| {
+        transfer.to
+            != (Account {
+                owner: env.cmc,
+                subaccount: None,
+            })
+    }) {
+        bail!("expected surplus transfer to CMC account after deficit recovery, got {transfers:?}");
     }
     Ok(())
 }

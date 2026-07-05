@@ -275,9 +275,7 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
         summary.skipped_surplus_reason = Some("missing_previous_sample".to_string());
         log_summary(&summary);
         state::with_state_mut(|st| {
-            st.last_completed_cycles = current_cycles;
-            st.relay_minted_cycles_since_sample.clear();
-            st.last_summary = Some(summary);
+            complete_baseline_sample(st, current_cycles, &managed, summary);
         });
         return;
     }
@@ -320,18 +318,29 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     };
 
     if balance == 0 {
-        let mut summary =
-            RelaySummary::started(RelayMode::NoFunds, now_nanos, managed.len() as u32);
-        summary.completed_at_ts_nanos = Some(now_nanos);
-        summary.default_account_balance_start_e8s = balance;
-        summary.fee_e8s = fee;
-        summary.min_cycles_balance = min_cycles;
-        summary.skipped_surplus_reason = Some("no_surplus".to_string());
+        let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
+        let (previous, relay_minted, recovery_deficits) = state::with_state(|st| {
+            (
+                st.last_completed_cycles.clone(),
+                st.relay_minted_cycles_since_sample.clone(),
+                st.recovery_deficit_cycles.clone(),
+            )
+        });
+        let summary = build_no_funds_summary(
+            now_nanos,
+            managed.len() as u32,
+            min_cycles,
+            balance,
+            fee,
+            has_raw_icp_recipients,
+            &current_cycles,
+            &previous,
+            &relay_minted,
+            &recovery_deficits,
+        );
         log_summary(&summary);
         state::with_state_mut(|st| {
-            st.last_completed_cycles = current_cycles;
-            st.relay_minted_cycles_since_sample.clear();
-            st.last_summary = Some(summary);
+            complete_no_funds_sample(st, current_cycles, summary);
         });
         return;
     }
@@ -339,13 +348,15 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
     refresh_conversion_estimate_if_needed(has_raw_icp_recipients, cmc).await;
 
-    let (previous, relay_minted, conversion_estimate) = state::with_state(|st| {
-        (
-            st.last_completed_cycles.clone(),
-            st.relay_minted_cycles_since_sample.clone(),
-            st.conversion_estimate.clone(),
-        )
-    });
+    let (previous, relay_minted, recovery_deficits, conversion_estimate) =
+        state::with_state(|st| {
+            (
+                st.last_completed_cycles.clone(),
+                st.relay_minted_cycles_since_sample.clone(),
+                st.recovery_deficit_cycles.clone(),
+                st.conversion_estimate.clone(),
+            )
+        });
     state::with_state_mut(|st| {
         for canister_id in relay_minted.keys() {
             st.relay_minted_cycles_since_sample.remove(canister_id);
@@ -356,13 +367,21 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
             &current_cycles,
             &previous,
             &relay_minted,
+            &recovery_deficits,
             balance,
             fee,
             conversion_estimate.as_ref(),
             now_nanos,
         )
     } else {
-        logic::build_spend_all_cycles_plan(&current_cycles, &previous, &relay_minted, balance, fee)
+        logic::build_spend_all_cycles_plan(
+            &current_cycles,
+            &previous,
+            &relay_minted,
+            &recovery_deficits,
+            balance,
+            fee,
+        )
     };
     let canisters = allocation
         .topups
@@ -411,6 +430,61 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
         summary,
     };
     state::with_state_mut(|st| st.active_job = Some(job));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_no_funds_summary(
+    now_nanos: u64,
+    managed_canister_count: u32,
+    min_cycles: Option<u128>,
+    balance: u64,
+    fee: u64,
+    has_raw_icp_recipients: bool,
+    current_cycles: &std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
+    previous: &std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
+    relay_minted: &std::collections::BTreeMap<candid::Principal, u128>,
+    recovery_deficits: &std::collections::BTreeMap<candid::Principal, u128>,
+) -> RelaySummary {
+    let allocation = if has_raw_icp_recipients {
+        logic::build_allocation_plan(
+            current_cycles,
+            previous,
+            relay_minted,
+            recovery_deficits,
+            balance,
+            fee,
+            None,
+            now_nanos,
+        )
+    } else {
+        logic::build_spend_all_cycles_plan(
+            current_cycles,
+            previous,
+            relay_minted,
+            recovery_deficits,
+            balance,
+            fee,
+        )
+    };
+    let mut summary = RelaySummary::started(RelayMode::NoFunds, now_nanos, managed_canister_count);
+    summary.completed_at_ts_nanos = Some(now_nanos);
+    summary.default_account_balance_start_e8s = balance;
+    summary.fee_e8s = fee;
+    summary.min_cycles_balance = min_cycles;
+    summary.skipped_surplus_reason = Some("no_surplus".to_string());
+    summary.canisters = allocation
+        .topups
+        .iter()
+        .map(CanisterBurnSample::from)
+        .collect();
+    summary.total_burn_cycles = summary
+        .canisters
+        .iter()
+        .map(|sample| sample.burn_cycles)
+        .sum();
+    summary.planned_retained_e8s = balance;
+    summary.known_unspent_e8s = balance;
+    summary
 }
 
 async fn refresh_conversion_estimate_if_needed<C: CmcClient>(
@@ -516,6 +590,9 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
             }
             TransferPlanStep::Done => {}
         }
+        if topup_phase_done_and_surplus_unplanned() && topup_phase_had_activity() {
+            continue;
+        }
         complete_job(now_nanos);
         return true;
     }
@@ -528,6 +605,22 @@ fn topup_phase_done_and_surplus_unplanned() -> bool {
             .map(|job| {
                 (job.next_transfer_index as usize) >= job.canisters.len()
                     && !job.surplus_phase_planned
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn topup_phase_had_activity() -> bool {
+    state::with_state(|st| {
+        st.active_job
+            .as_ref()
+            .map(|job| {
+                job.summary.ledger_transfer_count > 0
+                    || job.summary.failed_transfers > 0
+                    || job.summary.ambiguous_transfers > 0
+                    || job.summary.cmc_notify_success_count > 0
+                    || job.summary.cmc_notify_failed_count > 0
+                    || job.summary.cmc_notify_ambiguous_count > 0
             })
             .unwrap_or(false)
     })
@@ -607,9 +700,9 @@ fn surplus_allowed_after_topups(job: &ActiveRelayJob) -> Result<(), &'static str
     if job
         .canisters
         .iter()
-        .any(|sample| sample.amount_e8s > 0 && sample.actual_minted_cycles < sample.burn_cycles)
+        .any(|sample| sample.remaining_deficit_cycles > 0)
     {
-        return Err("observed_conversion_failed_to_cover_burn");
+        return Err(logic::SKIP_REASON_UNRECOVERED_CYCLE_DEFICIT);
     }
     Ok(())
 }
@@ -729,11 +822,71 @@ fn complete_job(now_nanos: u64) {
         let Some(mut job) = st.active_job.take() else {
             return;
         };
+        for sample in &mut job.canisters {
+            sample.remaining_deficit_cycles = sample
+                .target_topup_cycles
+                .saturating_sub(sample.actual_minted_cycles);
+        }
+        for summary_sample in &mut job.summary.canisters {
+            if let Some(sample) = job
+                .canisters
+                .iter()
+                .find(|sample| sample.canister_id == summary_sample.canister_id)
+            {
+                summary_sample.actual_minted_cycles = sample.actual_minted_cycles;
+                summary_sample.remaining_deficit_cycles = sample.remaining_deficit_cycles;
+            }
+        }
         job.summary.completed_at_ts_nanos = Some(now_nanos);
         log_summary(&job.summary);
         st.last_completed_cycles = job.current_cycles;
+        persist_recovery_deficits_from_samples(st, &job.canisters);
         st.last_summary = Some(job.summary);
     });
+}
+
+fn complete_baseline_sample(
+    st: &mut crate::state::State,
+    current_cycles: std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
+    managed: &[candid::Principal],
+    summary: RelaySummary,
+) {
+    st.last_completed_cycles = current_cycles;
+    st.relay_minted_cycles_since_sample.clear();
+    st.recovery_deficit_cycles
+        .retain(|canister_id, _| managed.contains(canister_id));
+    st.last_summary = Some(summary);
+}
+
+fn complete_no_funds_sample(
+    st: &mut crate::state::State,
+    current_cycles: std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
+    summary: RelaySummary,
+) {
+    st.last_completed_cycles = current_cycles;
+    st.relay_minted_cycles_since_sample.clear();
+    persist_recovery_deficits_from_samples(st, &summary.canisters);
+    st.last_summary = Some(summary);
+}
+
+fn persist_recovery_deficits_from_samples(
+    st: &mut crate::state::State,
+    samples: &[CanisterBurnSample],
+) {
+    let sampled_canisters = samples
+        .iter()
+        .map(|sample| sample.canister_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    for sample in samples {
+        if sample.remaining_deficit_cycles > 0 {
+            st.recovery_deficit_cycles
+                .insert(sample.canister_id, sample.remaining_deficit_cycles);
+        } else {
+            st.recovery_deficit_cycles.remove(&sample.canister_id);
+        }
+    }
+    st.recovery_deficit_cycles
+        .retain(|canister_id, _| sampled_canisters.contains(canister_id));
 }
 
 fn log_active_job_summary() {
@@ -817,11 +970,21 @@ mod tests {
             current_cycles: 900,
             relay_minted_cycles: 0,
             burn_cycles: 100,
+            carried_deficit_cycles: 0,
             target_topup_cycles: 101,
             gross_share_e8s: amount_e8s + 10,
             amount_e8s,
             actual_minted_cycles: 0,
+            remaining_deficit_cycles: 101,
             skipped_reason: None,
+        }
+    }
+
+    fn snapshot(cycles: u128) -> crate::state::CyclesSnapshot {
+        crate::state::CyclesSnapshot {
+            cycles,
+            timestamp_nanos: 1,
+            source: CyclesSampleSource::BlackholeStatus,
         }
     }
 
@@ -838,6 +1001,13 @@ mod tests {
                 source: CyclesSampleSource::BlackholeStatus,
             },
         );
+        let canisters = vec![
+            sample(canister_a, 100),
+            sample(canister_b, 200),
+            sample(canister_c, 300),
+        ];
+        let mut summary = RelaySummary::started(RelayMode::TopUpThenSurplus, 1, 3);
+        summary.canisters = canisters.clone();
         ActiveRelayJob {
             id: 1,
             mode: ActiveRelayMode::TopUpThenSurplus,
@@ -845,11 +1015,7 @@ mod tests {
             fee_e8s: 10,
             balance_start_e8s: 1_000,
             current_cycles,
-            canisters: vec![
-                sample(canister_a, 100),
-                sample(canister_b, 200),
-                sample(canister_c, 300),
-            ],
+            canisters,
             surplus_transfers: Vec::new(),
             surplus_memos: Vec::new(),
             surplus_phase_planned: false,
@@ -857,7 +1023,7 @@ mod tests {
             next_transfer_index: 0,
             surplus_transfer_index: 0,
             next_created_at_time_nanos: 10,
-            summary: RelaySummary::started(RelayMode::TopUpThenSurplus, 1, 3),
+            summary,
         }
     }
 
@@ -981,11 +1147,29 @@ mod tests {
     }
 
     #[test]
-    fn surplus_is_allowed_when_observed_conversion_covers_burn_but_not_target() {
+    fn surplus_is_blocked_when_observed_conversion_covers_burn_but_not_target() {
         let mut job = job_with_three_topups();
         job.next_transfer_index = job.canisters.len() as u32;
         for sample in &mut job.canisters {
             sample.actual_minted_cycles = sample.burn_cycles;
+            sample.remaining_deficit_cycles = sample
+                .target_topup_cycles
+                .saturating_sub(sample.actual_minted_cycles);
+        }
+
+        assert_eq!(
+            surplus_allowed_after_topups(&job),
+            Err(logic::SKIP_REASON_UNRECOVERED_CYCLE_DEFICIT)
+        );
+    }
+
+    #[test]
+    fn surplus_is_allowed_when_actual_minted_covers_full_target() {
+        let mut job = job_with_three_topups();
+        job.next_transfer_index = job.canisters.len() as u32;
+        for sample in &mut job.canisters {
+            sample.actual_minted_cycles = sample.target_topup_cycles;
+            sample.remaining_deficit_cycles = 0;
         }
 
         assert_eq!(surplus_allowed_after_topups(&job), Ok(()));
@@ -996,10 +1180,13 @@ mod tests {
         let mut job = job_with_three_topups();
         job.next_transfer_index = job.canisters.len() as u32;
         job.canisters[0].actual_minted_cycles = job.canisters[0].burn_cycles - 1;
+        job.canisters[0].remaining_deficit_cycles = job.canisters[0]
+            .target_topup_cycles
+            .saturating_sub(job.canisters[0].actual_minted_cycles);
 
         assert_eq!(
             surplus_allowed_after_topups(&job),
-            Err("observed_conversion_failed_to_cover_burn")
+            Err(logic::SKIP_REASON_UNRECOVERED_CYCLE_DEFICIT)
         );
     }
 
@@ -1048,6 +1235,7 @@ mod tests {
             &current,
             &previous,
             &relay_minted,
+            &BTreeMap::new(),
             1_000,
             10,
             Some(&estimate),
@@ -1056,6 +1244,204 @@ mod tests {
 
         assert_eq!(allocation.topups[0].relay_minted_cycles, 123);
         assert_eq!(allocation.topups[0].burn_cycles, 173);
+    }
+
+    #[test]
+    fn new_baseline_clears_consumed_relay_minted_cycles_since_sample() {
+        let managed = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let removed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let mut st = State::new(base_config(), 0);
+        st.relay_minted_cycles_since_sample.insert(managed, 123);
+        st.relay_minted_cycles_since_sample.insert(removed, 456);
+
+        complete_baseline_sample(
+            &mut st,
+            BTreeMap::from([(managed, snapshot(900))]),
+            &[managed],
+            RelaySummary::started(RelayMode::BaselineOnly, 1, 1),
+        );
+
+        assert!(st.relay_minted_cycles_since_sample.is_empty());
+    }
+
+    #[test]
+    fn underfunded_completed_job_persists_recovery_deficit() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = State::new(base_config(), 0);
+        let mut job = job_with_three_topups();
+        for sample in &mut job.canisters {
+            sample.actual_minted_cycles = sample.target_topup_cycles;
+            sample.remaining_deficit_cycles = 0;
+        }
+        job.canisters[0].actual_minted_cycles = 60;
+        job.canisters[0].remaining_deficit_cycles = 41;
+        st.active_job = Some(job);
+        state::set_state(st);
+
+        complete_job(2);
+
+        state::with_state(|st| {
+            assert_eq!(st.recovery_deficit_cycles.get(&canister), Some(&41));
+            assert_eq!(
+                st.last_summary
+                    .as_ref()
+                    .unwrap()
+                    .canisters
+                    .iter()
+                    .find(|sample| sample.canister_id == canister)
+                    .unwrap()
+                    .remaining_deficit_cycles,
+                41
+            );
+        });
+    }
+
+    #[test]
+    fn completed_job_prunes_recovery_deficits_absent_from_completed_samples() {
+        let sampled = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let removed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let mut st = State::new(base_config(), 0);
+        st.recovery_deficit_cycles.insert(sampled, 25);
+        st.recovery_deficit_cycles.insert(removed, 77);
+        let mut job = job_with_three_topups();
+        job.canisters.retain(|sample| sample.canister_id == sampled);
+        job.summary.canisters = job.canisters.clone();
+        for sample in &mut job.canisters {
+            sample.actual_minted_cycles = sample.target_topup_cycles;
+            sample.remaining_deficit_cycles = 0;
+        }
+        st.active_job = Some(job);
+        state::set_state(st);
+
+        complete_job(2);
+
+        state::with_state(|st| {
+            assert!(st.recovery_deficit_cycles.is_empty());
+        });
+    }
+
+    #[test]
+    fn full_completed_job_clears_existing_recovery_deficit() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = State::new(base_config(), 0);
+        st.recovery_deficit_cycles.insert(canister, 25);
+        let mut job = job_with_three_topups();
+        for sample in &mut job.canisters {
+            sample.actual_minted_cycles = sample.target_topup_cycles;
+            sample.remaining_deficit_cycles = 0;
+        }
+        st.active_job = Some(job);
+        state::set_state(st);
+
+        complete_job(2);
+
+        state::with_state(|st| {
+            assert_eq!(st.recovery_deficit_cycles.get(&canister), None);
+        });
+    }
+
+    #[test]
+    fn over_topup_clears_deficit_without_storing_negative_credit() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = State::new(base_config(), 0);
+        st.recovery_deficit_cycles.insert(canister, 25);
+        let mut job = job_with_three_topups();
+        for sample in &mut job.canisters {
+            sample.actual_minted_cycles = sample.target_topup_cycles.saturating_add(500);
+            sample.remaining_deficit_cycles = 0;
+        }
+        st.active_job = Some(job);
+        state::set_state(st);
+
+        complete_job(2);
+
+        state::with_state(|st| {
+            assert!(st.recovery_deficit_cycles.is_empty());
+        });
+    }
+
+    #[test]
+    fn failed_or_ambiguous_topup_boundaries_persist_full_target_deficit() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        for mark_failure in [
+            crate::scheduler::transfer::mark_pending_failed as fn(),
+            crate::scheduler::transfer::mark_pending_failed_after_acceptance as fn(),
+            crate::scheduler::transfer::mark_pending_ambiguous_after_acceptance as fn(),
+        ] {
+            let mut st = State::new(base_config(), 0);
+            st.active_job = Some(job_with_three_topups());
+            state::set_state(st);
+            mark_failure();
+            complete_job(2);
+            state::with_state(|st| {
+                assert_eq!(st.recovery_deficit_cycles.get(&canister), Some(&101));
+            });
+        }
+    }
+
+    #[test]
+    fn no_funds_summary_records_recovery_deficit_instead_of_forgetting_burn() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        let mut relay_minted = BTreeMap::new();
+        let mut deficits = BTreeMap::new();
+        current.insert(canister, snapshot(900));
+        previous.insert(canister, snapshot(1_000));
+        relay_minted.insert(canister, 50);
+        deficits.insert(canister, 25);
+
+        let summary = build_no_funds_summary(
+            10,
+            1,
+            Some(900),
+            0,
+            10,
+            true,
+            &current,
+            &previous,
+            &relay_minted,
+            &deficits,
+        );
+
+        let sample = &summary.canisters[0];
+        assert_eq!(sample.burn_cycles, 150);
+        assert_eq!(sample.carried_deficit_cycles, 25);
+        assert_eq!(sample.target_topup_cycles, 177);
+        assert_eq!(sample.actual_minted_cycles, 0);
+        assert_eq!(sample.remaining_deficit_cycles, 177);
+    }
+
+    #[test]
+    fn no_funds_sample_persists_sampled_deficits_and_prunes_removed_deficits() {
+        let sampled = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let removed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let mut st = State::new(base_config(), 0);
+        st.relay_minted_cycles_since_sample.insert(sampled, 50);
+        st.relay_minted_cycles_since_sample.insert(removed, 75);
+        st.recovery_deficit_cycles.insert(sampled, 25);
+        st.recovery_deficit_cycles.insert(removed, 77);
+        let mut summary = RelaySummary::started(RelayMode::NoFunds, 1, 1);
+        summary.canisters = vec![CanisterBurnSample {
+            canister_id: sampled,
+            previous_cycles: Some(1_000),
+            current_cycles: 900,
+            relay_minted_cycles: 50,
+            burn_cycles: 150,
+            carried_deficit_cycles: 25,
+            target_topup_cycles: 177,
+            gross_share_e8s: 0,
+            amount_e8s: 0,
+            actual_minted_cycles: 0,
+            remaining_deficit_cycles: 177,
+            skipped_reason: None,
+        }];
+
+        complete_no_funds_sample(&mut st, BTreeMap::from([(sampled, snapshot(900))]), summary);
+
+        assert!(st.relay_minted_cycles_since_sample.is_empty());
+        assert_eq!(st.recovery_deficit_cycles.get(&sampled), Some(&177));
+        assert_eq!(st.recovery_deficit_cycles.get(&removed), None);
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub(crate) const SKIP_REASON_MISSING_CONVERSION_ESTIMATE: &str = "missing_conver
 pub(crate) const SKIP_REASON_NO_SURPLUS_RECIPIENTS: &str = "no_surplus_recipients";
 pub(crate) const SKIP_REASON_NO_SURPLUS: &str = "no_surplus";
 pub(crate) const SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP: &str = "raw_icp_share_below_1_icp";
+pub(crate) const SKIP_REASON_UNRECOVERED_CYCLE_DEFICIT: &str = "unrecovered_cycle_deficit";
 pub(crate) const ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD: &str =
     "all_cycles_batch_below_fee_efficient_threshold";
 const BOOTSTRAP_CYCLES_PER_E8: u128 = 100_000;
@@ -40,10 +41,12 @@ pub(crate) struct BurnPlan {
     pub current_cycles: u128,
     pub relay_minted_cycles: u128,
     pub burn_cycles: u128,
+    pub carried_deficit_cycles: u128,
     pub target_topup_cycles: u128,
     pub gross_share_e8s: u64,
     pub amount_e8s: u64,
     pub actual_minted_cycles: u128,
+    pub remaining_deficit_cycles: u128,
     pub skipped_reason: Option<String>,
 }
 
@@ -309,12 +312,19 @@ pub(crate) fn build_allocation_plan(
     current: &BTreeMap<Principal, CyclesSnapshot>,
     previous: &BTreeMap<Principal, CyclesSnapshot>,
     relay_minted_since_previous: &BTreeMap<Principal, u128>,
+    recovery_deficits: &BTreeMap<Principal, u128>,
     available_balance_e8s: u64,
     fee_e8s: u64,
     conversion_estimate: Option<&ConversionEstimate>,
     now_nanos: u64,
 ) -> AllocationPlan {
-    let mut topups = burn_plans(current, previous, relay_minted_since_previous, true);
+    let mut topups = burn_plans(
+        current,
+        previous,
+        relay_minted_since_previous,
+        recovery_deficits,
+        true,
+    );
 
     let usable_estimate =
         conversion_estimate.filter(|e| conversion_estimate_is_usable(e, now_nanos));
@@ -397,18 +407,28 @@ pub(crate) fn build_spend_all_cycles_plan(
     current: &BTreeMap<Principal, CyclesSnapshot>,
     previous: &BTreeMap<Principal, CyclesSnapshot>,
     relay_minted_since_previous: &BTreeMap<Principal, u128>,
+    recovery_deficits: &BTreeMap<Principal, u128>,
     available_balance_e8s: u64,
     fee_e8s: u64,
 ) -> AllocationPlan {
-    let mut topups = burn_plans(current, previous, relay_minted_since_previous, false);
-    let positive_burn_count = topups.iter().filter(|plan| plan.burn_cycles > 0).count();
-    let total_positive_burn = topups
+    let mut topups = burn_plans(
+        current,
+        previous,
+        relay_minted_since_previous,
+        recovery_deficits,
+        false,
+    );
+    let positive_need_count = topups
         .iter()
-        .filter(|plan| plan.burn_cycles > 0)
-        .map(|plan| plan.burn_cycles)
+        .filter(|plan| plan.target_topup_cycles > 0)
+        .count();
+    let total_positive_need = topups
+        .iter()
+        .filter(|plan| plan.target_topup_cycles > 0)
+        .map(|plan| plan.target_topup_cycles)
         .sum::<u128>();
 
-    if total_positive_burn == 0 {
+    if total_positive_need == 0 {
         for plan in &mut topups {
             plan.skipped_reason = Some(SKIP_REASON_NO_POSITIVE_BURN.to_string());
         }
@@ -422,28 +442,28 @@ pub(crate) fn build_spend_all_cycles_plan(
     let gross_shares = topups
         .iter()
         .map(|plan| {
-            if plan.burn_cycles == 0 {
+            if plan.target_topup_cycles == 0 {
                 0
             } else {
-                (u128::from(available_balance_e8s).saturating_mul(plan.burn_cycles)
-                    / total_positive_burn)
+                (u128::from(available_balance_e8s).saturating_mul(plan.target_topup_cycles)
+                    / total_positive_need)
                     .min(u128::from(u64::MAX)) as u64
             }
         })
         .collect::<Vec<_>>();
     let fee_efficient_threshold = u128::from(fee_e8s).saturating_mul(2);
     let batch_is_fee_efficient = u128::from(available_balance_e8s)
-        >= u128::from(fee_e8s).saturating_mul(positive_burn_count as u128)
+        >= u128::from(fee_e8s).saturating_mul(positive_need_count as u128)
         && topups
             .iter()
             .zip(gross_shares.iter())
-            .filter(|(plan, _)| plan.burn_cycles > 0)
+            .filter(|(plan, _)| plan.target_topup_cycles > 0)
             .all(|(_, gross)| u128::from(*gross) >= fee_efficient_threshold);
 
     if !batch_is_fee_efficient {
         for (plan, gross) in topups.iter_mut().zip(gross_shares) {
             plan.gross_share_e8s = gross;
-            plan.skipped_reason = Some(if plan.burn_cycles == 0 {
+            plan.skipped_reason = Some(if plan.target_topup_cycles == 0 {
                 SKIP_REASON_ZERO_BURN.to_string()
             } else {
                 ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD.to_string()
@@ -459,7 +479,7 @@ pub(crate) fn build_spend_all_cycles_plan(
     }
 
     for (plan, gross) in topups.iter_mut().zip(gross_shares) {
-        if plan.burn_cycles == 0 {
+        if plan.target_topup_cycles == 0 {
             plan.skipped_reason = Some(SKIP_REASON_ZERO_BURN.to_string());
             continue;
         }
@@ -478,6 +498,7 @@ fn burn_plans(
     current: &BTreeMap<Principal, CyclesSnapshot>,
     previous: &BTreeMap<Principal, CyclesSnapshot>,
     relay_minted_since_previous: &BTreeMap<Principal, u128>,
+    recovery_deficits: &BTreeMap<Principal, u128>,
     use_headroom_target: bool,
 ) -> Vec<BurnPlan> {
     current
@@ -491,20 +512,25 @@ fn burn_plans(
             let burn_cycles = previous_cycles
                 .map(|prev| compute_burn(prev, relay_minted_cycles, current_snapshot.cycles))
                 .unwrap_or(0);
+            let carried_deficit_cycles = recovery_deficits.get(canister_id).copied().unwrap_or(0);
+            let new_burn_target_cycles = if use_headroom_target {
+                target_topup_cycles(burn_cycles)
+            } else {
+                burn_cycles
+            };
             BurnPlan {
                 canister_id: *canister_id,
                 previous_cycles,
                 current_cycles: current_snapshot.cycles,
                 relay_minted_cycles,
                 burn_cycles,
-                target_topup_cycles: if use_headroom_target {
-                    target_topup_cycles(burn_cycles)
-                } else {
-                    burn_cycles
-                },
+                carried_deficit_cycles,
+                target_topup_cycles: carried_deficit_cycles.saturating_add(new_burn_target_cycles),
                 gross_share_e8s: 0,
                 amount_e8s: 0,
                 actual_minted_cycles: 0,
+                remaining_deficit_cycles: carried_deficit_cycles
+                    .saturating_add(new_burn_target_cycles),
                 skipped_reason: None,
             }
         })
@@ -677,10 +703,12 @@ impl From<&BurnPlan> for CanisterBurnSample {
             current_cycles: value.current_cycles,
             relay_minted_cycles: value.relay_minted_cycles,
             burn_cycles: value.burn_cycles,
+            carried_deficit_cycles: value.carried_deficit_cycles,
             target_topup_cycles: value.target_topup_cycles,
             gross_share_e8s: value.gross_share_e8s,
             amount_e8s: value.amount_e8s,
             actual_minted_cycles: value.actual_minted_cycles,
+            remaining_deficit_cycles: value.remaining_deficit_cycles,
             skipped_reason: value.skipped_reason.clone(),
         }
     }
@@ -749,6 +777,10 @@ mod tests {
         assert_eq!(
             SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP,
             "raw_icp_share_below_1_icp"
+        );
+        assert_eq!(
+            SKIP_REASON_UNRECOVERED_CYCLE_DEFICIT,
+            "unrecovered_cycle_deficit"
         );
         assert_eq!(
             ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD,
@@ -1012,6 +1044,7 @@ mod tests {
             &current,
             &previous,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             1_000,
             10,
             Some(&estimate),
@@ -1040,6 +1073,7 @@ mod tests {
             &current,
             &previous,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             1_000,
             10,
             Some(&estimate),
@@ -1066,6 +1100,7 @@ mod tests {
             &current,
             &previous,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             50,
             10,
             Some(&estimate),
@@ -1086,11 +1121,78 @@ mod tests {
         current.insert(canister_a(), snapshot(900));
         previous.insert(canister_a(), snapshot(1_000));
 
-        let plan = build_allocation_plan(&current, &previous, &BTreeMap::new(), 1_000, 10, None, 1);
+        let plan = build_allocation_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            1_000,
+            10,
+            None,
+            1,
+        );
 
         assert!(plan.topup_phase_fully_funded);
         assert!(plan.topups[0].amount_e8s > 0);
         assert!(plan.skipped_surplus_reason.is_none());
+    }
+
+    #[test]
+    fn raw_surplus_target_adds_carried_deficit_after_new_burn_headroom() {
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        let mut deficits = BTreeMap::new();
+        current.insert(canister_a(), snapshot(900));
+        previous.insert(canister_a(), snapshot(1_000));
+        deficits.insert(canister_a(), 25);
+        let estimate = ConversionEstimate {
+            cycles_per_e8: 1,
+            timestamp_nanos: 1,
+        };
+
+        let plan = build_allocation_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &deficits,
+            1_000,
+            10,
+            Some(&estimate),
+            1,
+        );
+
+        assert_eq!(plan.topups[0].burn_cycles, 100);
+        assert_eq!(plan.topups[0].carried_deficit_cycles, 25);
+        assert_eq!(plan.topups[0].target_topup_cycles, 126);
+        assert_eq!(plan.topups[0].remaining_deficit_cycles, 126);
+    }
+
+    #[test]
+    fn raw_surplus_target_does_not_apply_headroom_to_carried_deficit() {
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        let mut deficits = BTreeMap::new();
+        current.insert(canister_a(), snapshot(1_000));
+        previous.insert(canister_a(), snapshot(1_000));
+        deficits.insert(canister_a(), 25);
+        let estimate = ConversionEstimate {
+            cycles_per_e8: 1,
+            timestamp_nanos: 1,
+        };
+
+        let plan = build_allocation_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &deficits,
+            1_000,
+            10,
+            Some(&estimate),
+            1,
+        );
+
+        assert_eq!(plan.topups[0].burn_cycles, 0);
+        assert_eq!(plan.topups[0].target_topup_cycles, 25);
     }
 
     #[test]
@@ -1102,7 +1204,14 @@ mod tests {
         previous.insert(canister_a(), snapshot(1_000));
         previous.insert(canister_b(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 1_000, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            1_000,
+            10,
+        );
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
@@ -1128,7 +1237,14 @@ mod tests {
         previous.insert(canister_a(), snapshot(1_000));
         previous.insert(canister_b(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 15, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            15,
+            10,
+        );
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
@@ -1153,6 +1269,7 @@ mod tests {
             &current,
             &previous,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             10 * BOOTSTRAP_CYCLES_PER_E8 as u64,
             10,
         );
@@ -1168,6 +1285,29 @@ mod tests {
     }
 
     #[test]
+    fn all_cycles_mode_zero_fresh_burn_with_carried_deficit_participates() {
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        let mut deficits = BTreeMap::new();
+        current.insert(canister_a(), snapshot(1_000));
+        previous.insert(canister_a(), snapshot(1_000));
+        deficits.insert(canister_a(), 100);
+
+        let plan =
+            build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), &deficits, 110, 10);
+
+        assert_eq!(plan.topups[0].burn_cycles, 0);
+        assert_eq!(plan.topups[0].carried_deficit_cycles, 100);
+        assert_eq!(plan.topups[0].target_topup_cycles, 100);
+        assert_eq!(plan.topups[0].gross_share_e8s, 110);
+        assert_eq!(plan.topups[0].amount_e8s, 100);
+        assert_eq!(
+            plan.skipped_surplus_reason.as_deref(),
+            Some(SKIP_REASON_NO_RAW_ICP_RECIPIENTS)
+        );
+    }
+
+    #[test]
     fn allocation_without_raw_recipients_uses_burn_weighted_shares() {
         let mut current = BTreeMap::new();
         let mut previous = BTreeMap::new();
@@ -1176,7 +1316,14 @@ mod tests {
         previous.insert(canister_a(), snapshot(1_000));
         previous.insert(canister_b(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 1_200, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            1_200,
+            10,
+        );
         let a = plan
             .topups
             .iter()
@@ -1195,6 +1342,58 @@ mod tests {
     }
 
     #[test]
+    fn all_cycles_mode_allocation_weights_use_burn_plus_carried_deficit() {
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        let mut deficits = BTreeMap::new();
+        current.insert(canister_a(), snapshot(900));
+        current.insert(canister_b(), snapshot(700));
+        previous.insert(canister_a(), snapshot(1_000));
+        previous.insert(canister_b(), snapshot(1_000));
+        deficits.insert(canister_a(), 100);
+
+        let plan =
+            build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), &deficits, 500, 10);
+        let a = plan
+            .topups
+            .iter()
+            .find(|sample| sample.canister_id == canister_a())
+            .unwrap();
+        let b = plan
+            .topups
+            .iter()
+            .find(|sample| sample.canister_id == canister_b())
+            .unwrap();
+
+        assert_eq!(a.target_topup_cycles, 200);
+        assert_eq!(b.target_topup_cycles, 300);
+        assert_eq!(a.gross_share_e8s, 200);
+        assert_eq!(b.gross_share_e8s, 300);
+    }
+
+    #[test]
+    fn all_cycles_fee_efficiency_gating_considers_carried_deficits() {
+        let mut current = BTreeMap::new();
+        let mut previous = BTreeMap::new();
+        let mut deficits = BTreeMap::new();
+        current.insert(canister_a(), snapshot(1_000));
+        previous.insert(canister_a(), snapshot(1_000));
+        deficits.insert(canister_a(), 100);
+
+        let plan =
+            build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), &deficits, 15, 10);
+
+        assert_eq!(
+            plan.skipped_surplus_reason.as_deref(),
+            Some(ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD)
+        );
+        assert_eq!(
+            plan.topups[0].skipped_reason.as_deref(),
+            Some(ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD)
+        );
+    }
+
+    #[test]
     fn allocation_without_raw_recipients_blocks_partial_fast_burner_batch() {
         let mut current = BTreeMap::new();
         let mut previous = BTreeMap::new();
@@ -1203,7 +1402,14 @@ mod tests {
         previous.insert(canister_a(), snapshot(1_000));
         previous.insert(canister_b(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 100, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            100,
+            10,
+        );
         let a = plan
             .topups
             .iter()
@@ -1244,7 +1450,14 @@ mod tests {
         previous.insert(canister_b(), snapshot(1_000));
         previous.insert(canister_c(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 1_200, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            1_200,
+            10,
+        );
         let c = plan
             .topups
             .iter()
@@ -1272,7 +1485,14 @@ mod tests {
         current.insert(canister_a(), snapshot(900));
         previous.insert(canister_a(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 10, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            10,
+            10,
+        );
 
         assert_eq!(plan.topups[0].gross_share_e8s, 10);
         assert_eq!(plan.topups[0].amount_e8s, 0);
@@ -1293,7 +1513,14 @@ mod tests {
         current.insert(canister_a(), snapshot(1_000));
         previous.insert(canister_a(), snapshot(1_000));
 
-        let plan = build_spend_all_cycles_plan(&current, &previous, &BTreeMap::new(), 1_000, 10);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            1_000,
+            10,
+        );
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
@@ -1495,6 +1722,7 @@ mod tests {
         let plan = build_allocation_plan(
             &current,
             &previous,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             180,
             10,

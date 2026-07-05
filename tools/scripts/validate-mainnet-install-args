@@ -710,7 +710,7 @@ def run_self_tests() -> None:
     )
     escaped_memo = valid.replace(
         f'"{EXPECTED_RELAY_IO_NEURON_CANONICAL}"',
-        r'"\36\33\34\35\38\39\30\38\38\36\38\39\39\33\31\37\31\35\39"',
+        r'"\31\30\32\39\32\34\31\32\31\32\37\39\37\37\33\30\34\36\36\31"',
     )
 
     cases = [
