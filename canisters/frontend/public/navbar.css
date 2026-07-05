@@ -48,6 +48,22 @@ button {
   gap: 16px;
 }
 
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  color: #fff;
+  text-decoration: none;
+  flex: 0 0 auto;
+}
+
+.nav-logo {
+  display: block;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  object-fit: contain;
+}
+
 .nav-actions {
   margin-left: auto;
   display: flex;
@@ -249,6 +265,12 @@ button {
 
   .nav-links {
     gap: 10px;
+  }
+
+  .nav-logo {
+    width: 26px;
+    height: 26px;
+    flex-basis: 26px;
   }
 
   .nav-actions {

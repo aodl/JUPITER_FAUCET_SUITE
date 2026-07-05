@@ -73,6 +73,13 @@ function attrValue(tag, name) {
 }
 
 test('top navbar exposes Simulator and Domains and no longer exposes Partners', () => {
+  assert.match(
+    indexHtml,
+    /<div class="nav-links">\s*<a href="\/#intro" class="nav-brand" aria-label="Jupiter Faucet intro">\s*<img\s+class="nav-logo"\s+src="\/jupiter_faucet_token_logo\.svg\?v=__ASSET_VERSION__"\s+alt=""\s+width="32"\s+height="32"\s+decoding="async"\s+\/>\s*<\/a>\s*<a href="#about" class="nav-item" data-panel="about">About<\/a>/
+  );
+  assert.match(navbarCss, /\.nav-brand \{[\s\S]*display: inline-flex;[\s\S]*text-decoration: none;/);
+  assert.match(navbarCss, /\.nav-logo \{[\s\S]*width: 32px;[\s\S]*height: 32px;[\s\S]*flex: 0 0 32px;/);
+  assert.doesNotMatch(indexHtml, /<span class="nav-brand-text">JUPITER FAUCET<\/span>/);
   assert.match(indexHtml, /<a href="#simulator" class="nav-item" data-panel="simulator">Simulator<\/a>/);
   assert.match(indexHtml, /<a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains<\/a>/);
   assert.match(navbarCss, /@media \(max-width: 720px\) \{[\s\S]*\.nav-item--domains \{[\s\S]*display: none;[\s\S]*\}/);
@@ -792,6 +799,14 @@ test('simulator displays T-cycle values with four decimal places and uses weekly
 test('metrics nav button closes an open pane before showing the metrics rail', () => {
   assert.match(navbarJs, /if \(backdrop\.classList\.contains\("is-open"\)\) \{/);
   assert.match(navbarJs, /metricsMenuOpen = true;[\s\S]*?closePanel\(\);/);
+});
+
+test('navbar brand link closes visible pane state before navigating to intro', () => {
+  assert.match(indexHtml, /<a href="\/#intro" class="nav-brand" aria-label="Jupiter Faucet intro">/);
+  assert.match(navbarJs, /const brandLink = document\.querySelector\("\.nav-brand"\);/);
+  assert.match(navbarJs, /brandLink\?\.addEventListener\("click", \(\) => \{/);
+  assert.match(navbarJs, /metricsMenuOpen = false;[\s\S]*?closePanel\(\{ syncHash: false, restoreFocus: false \}\);/);
+  assert.doesNotMatch(navbarJs, /brandLink\?\.addEventListener\("click", \(evt\) => \{[\s\S]*?evt\.preventDefault\(\);/);
 });
 
 test('pane fragment navigation participates in browser history', () => {

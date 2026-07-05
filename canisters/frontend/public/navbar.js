@@ -16,6 +16,7 @@
 
   function initNavbar() {
     const navbar = document.getElementById("navbar");
+    const brandLink = document.querySelector(".nav-brand");
     const panelTriggers = Array.from(document.querySelectorAll("a[data-panel]"));
     const metricsToggle = document.getElementById("metrics-menu-toggle");
     const backdrop = document.getElementById("nav-panel-backdrop");
@@ -304,6 +305,15 @@
         }
         handleTriggerClick(btn, page);
       });
+    });
+
+    brandLink?.addEventListener("click", () => {
+      metricsMenuOpen = false;
+      if (backdrop.classList.contains("is-open")) {
+        closePanel({ syncHash: false, restoreFocus: false });
+        return;
+      }
+      syncMetricsUi();
     });
 
     metricsToggle?.addEventListener("click", (evt) => {
