@@ -31,19 +31,6 @@ pub struct SurplusNeuronRecipient {
     pub memo: Vec<u8>,
 }
 
-#[derive(CandidType, Deserialize, Clone)]
-pub struct UpgradeArgs {
-    pub managed_canisters: Option<Vec<Principal>>,
-    pub ledger_canister_id: Option<Principal>,
-    pub cmc_canister_id: Option<Principal>,
-    pub governance_canister_id: Option<Principal>,
-    pub blackhole_canister_id: Option<Principal>,
-    pub main_interval_seconds: Option<u64>,
-    pub max_transfers_per_tick: Option<Option<u32>>,
-    pub surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
-    pub surplus_neuron_recipients: Option<Vec<SurplusNeuronRecipient>>,
-}
-
 fn mainnet_ledger_id() -> Principal {
     constants::icp_ledger_id()
 }
@@ -150,47 +137,25 @@ fn public_surplus_recipients_from_args(
     Ok(recipients)
 }
 
-fn replace_surplus_recipients_by_target(
-    existing: &[crate::state::SurplusRecipient],
-    canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
-    neuron_recipients: Option<Vec<SurplusNeuronRecipient>>,
-) -> Result<Vec<crate::state::SurplusRecipient>, String> {
-    if canister_recipients.is_none() && neuron_recipients.is_none() {
-        return Ok(existing.to_vec());
+fn config_from_init_args(args: InitArgs) -> crate::state::Config {
+    crate::state::Config {
+        managed_canisters: args.managed_canisters,
+        ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
+        cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
+        governance_canister_id: args
+            .governance_canister_id
+            .unwrap_or_else(mainnet_governance_id),
+        blackhole_canister_id: args
+            .blackhole_canister_id
+            .unwrap_or_else(mainnet_blackhole_id),
+        main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60).max(60),
+        max_transfers_per_tick: args.max_transfers_per_tick,
+        surplus_recipients: public_surplus_recipients_from_args(
+            args.surplus_canister_recipients,
+            args.surplus_neuron_recipients,
+        )
+        .expect("invalid relay surplus recipients"),
     }
-
-    let mut recipients = Vec::new();
-    match canister_recipients {
-        Some(canister_recipients) => {
-            for recipient in canister_recipients {
-                recipients.push(surplus_canister_recipient_from_public(recipient)?);
-            }
-        }
-        None => recipients.extend(
-            existing
-                .iter()
-                .filter(|recipient| {
-                    matches!(recipient.target, crate::state::SurplusTarget::Canister(_))
-                })
-                .cloned(),
-        ),
-    }
-    match neuron_recipients {
-        Some(neuron_recipients) => recipients.extend(
-            neuron_recipients
-                .into_iter()
-                .map(surplus_neuron_recipient_from_public),
-        ),
-        None => recipients.extend(
-            existing
-                .iter()
-                .filter(|recipient| {
-                    matches!(recipient.target, crate::state::SurplusTarget::Neuron(_))
-                })
-                .cloned(),
-        ),
-    }
-    Ok(recipients)
 }
 
 #[cfg(feature = "debug_api")]
@@ -230,110 +195,26 @@ fn surplus_neuron_recipients_to_public(
         .collect()
 }
 
-fn apply_upgrade_args(st: &mut crate::state::State, args: UpgradeArgs) -> Result<(), String> {
-    let surplus_recipients = replace_surplus_recipients_by_target(
-        &st.config.surplus_recipients,
-        args.surplus_canister_recipients,
-        args.surplus_neuron_recipients,
-    )?;
-    st.config = crate::state::Config {
-        managed_canisters: args
-            .managed_canisters
-            .unwrap_or_else(|| st.config.managed_canisters.clone()),
-        ledger_canister_id: args
-            .ledger_canister_id
-            .unwrap_or(st.config.ledger_canister_id),
-        cmc_canister_id: args.cmc_canister_id.unwrap_or(st.config.cmc_canister_id),
-        governance_canister_id: args
-            .governance_canister_id
-            .unwrap_or(st.config.governance_canister_id),
-        blackhole_canister_id: args
-            .blackhole_canister_id
-            .unwrap_or(st.config.blackhole_canister_id),
-        main_interval_seconds: args
-            .main_interval_seconds
-            .unwrap_or(st.config.main_interval_seconds)
-            .max(60),
-        max_transfers_per_tick: args
-            .max_transfers_per_tick
-            .unwrap_or(st.config.max_transfers_per_tick),
-        surplus_recipients,
-    };
-    Ok(())
-}
-
-fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
-    jupiter_ic_clients::lifecycle::decode_post_upgrade_args::<InitArgs, UpgradeArgs>("relay", raw)
-}
-
-fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
-    decode_post_upgrade_args_from_bytes(&raw).unwrap_or_else(|err| ic_cdk::trap(&err))
-}
-
-#[ic_cdk::init]
-fn init(args: InitArgs) {
+fn initialize_from_args(args: InitArgs, lifecycle_event: &'static str) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
-    let cfg = crate::state::Config {
-        managed_canisters: args.managed_canisters,
-        ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
-        cmc_canister_id: args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id),
-        governance_canister_id: args
-            .governance_canister_id
-            .unwrap_or_else(mainnet_governance_id),
-        blackhole_canister_id: args
-            .blackhole_canister_id
-            .unwrap_or_else(mainnet_blackhole_id),
-        main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60).max(60),
-        max_transfers_per_tick: args.max_transfers_per_tick,
-        surplus_recipients: public_surplus_recipients_from_args(
-            args.surplus_canister_recipients,
-            args.surplus_neuron_recipients,
-        )
-        .expect("invalid relay surplus recipients"),
-    };
+    let cfg = config_from_init_args(args);
     crate::logic::validate_config(&cfg, self_canister_principal_for_validation())
         .expect("invalid relay config");
-    crate::state::init_stable_storage();
     crate::state::set_state(crate::state::State::new(cfg, now_secs));
     crate::scheduler::install_timers();
     crate::scheduler::schedule_startup_liveness_tick();
     let main_interval_seconds = crate::state::with_state(|st| st.config.main_interval_seconds);
-    crate::scheduler::log_lifecycle("init_complete", main_interval_seconds, None, None);
+    crate::scheduler::log_lifecycle(lifecycle_event, main_interval_seconds, None, None);
 }
 
-#[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
-fn post_upgrade(args: Option<UpgradeArgs>) {
-    let now_secs = ic_cdk::api::time() / 1_000_000_000;
-    crate::state::init_stable_storage();
-    let mut st = crate::state::restore_state_from_stable()
-        .expect("stable state missing during relay post_upgrade");
-    if let Some(args) = args {
-        apply_upgrade_args(&mut st, args).expect("invalid relay upgrade args");
-    }
-    crate::logic::validate_config(&st.config, self_canister_principal_for_validation())
-        .expect("invalid relay config after upgrade");
-    st.main_lock_state_ts = Some(0);
-    if st.last_main_run_ts == 0 {
-        st.last_main_run_ts = now_secs.saturating_sub(10 * 365 * 24 * 60 * 60);
-    }
-    crate::state::set_state(st);
-    crate::scheduler::install_timers();
-    crate::scheduler::schedule_immediate_resume_if_needed();
-    crate::scheduler::schedule_startup_liveness_tick();
-    let (main_interval_seconds, active_job_present, active_faucet_present) =
-        crate::state::with_state(|st| {
-            (
-                st.config.main_interval_seconds,
-                st.active_job.is_some(),
-                st.active_faucet_commitment_transfer.is_some(),
-            )
-        });
-    crate::scheduler::log_lifecycle(
-        "post_upgrade_complete",
-        main_interval_seconds,
-        Some(active_job_present),
-        Some(active_faucet_present),
-    );
+#[ic_cdk::init]
+fn init(args: InitArgs) {
+    initialize_from_args(args, "init_complete");
+}
+
+#[ic_cdk::post_upgrade]
+fn post_upgrade(args: InitArgs) {
+    initialize_from_args(args, "post_upgrade_complete");
 }
 
 #[cfg(feature = "debug_api")]
@@ -474,7 +355,7 @@ mod tests {
             cmc_canister_id: None,
             governance_canister_id: None,
             blackhole_canister_id: None,
-            main_interval_seconds: Some(60),
+            main_interval_seconds: Some(12),
             max_transfers_per_tick: Some(3),
             surplus_canister_recipients: None,
             surplus_neuron_recipients: vec![SurplusNeuronRecipient {
@@ -482,54 +363,6 @@ mod tests {
                 memo: Vec::new(),
             }],
         }
-    }
-
-    fn expect_decode_err(raw: &[u8]) -> String {
-        match decode_post_upgrade_args_from_bytes(raw) {
-            Ok(_) => panic!("decode unexpectedly succeeded"),
-            Err(err) => err,
-        }
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_decodes_upgrade_record() {
-        let raw = encode_args((Some(UpgradeArgs {
-            managed_canisters: Some(vec![principal("22255-zqaaa-aaaas-qf6uq-cai")]),
-            ledger_canister_id: None,
-            cmc_canister_id: None,
-            governance_canister_id: None,
-            blackhole_canister_id: None,
-            main_interval_seconds: Some(120),
-            max_transfers_per_tick: Some(Some(2)),
-            surplus_canister_recipients: Some(Vec::new()),
-            surplus_neuron_recipients: Some(vec![SurplusNeuronRecipient {
-                neuron_id: 7,
-                memo: vec![7],
-            }]),
-        }),))
-        .unwrap();
-        let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
-        assert_eq!(
-            decoded.managed_canisters,
-            Some(vec![principal("22255-zqaaa-aaaas-qf6uq-cai")])
-        );
-        assert_eq!(decoded.main_interval_seconds, Some(120));
-        assert_eq!(decoded.max_transfers_per_tick, Some(Some(2)));
-        assert_eq!(
-            decoded.surplus_canister_recipients.as_ref().map(Vec::len),
-            Some(0)
-        );
-        let neuron_recipients = decoded.surplus_neuron_recipients.unwrap();
-        assert_eq!(neuron_recipients.len(), 1);
-        assert_eq!(neuron_recipients[0].neuron_id, 7);
-        assert_eq!(neuron_recipients[0].memo, vec![7]);
-    }
-
-    #[test]
-    fn decode_post_upgrade_args_rejects_install_args() {
-        let raw = encode_args((sample_init_args(),)).unwrap();
-        let err = expect_decode_err(&raw);
-        assert!(err.contains("received InitArgs in relay post_upgrade"));
     }
 
     fn assert_committed_did_matches_rust_service(did_file: &str) {
@@ -642,7 +475,7 @@ mod tests {
 
     #[test]
     fn public_surplus_conversion_maps_empty_memo_to_none() {
-        let owner = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let owner = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let canister = surplus_canister_recipient_from_public(SurplusCanisterRecipient {
             canister_id: owner,
             memo: Vec::new(),
@@ -655,6 +488,36 @@ mod tests {
             memo: Vec::new(),
         });
         assert_eq!(neuron.memo, None);
+    }
+
+    #[test]
+    fn config_from_init_args_uses_full_init_args_for_fresh_state() {
+        let cfg = config_from_init_args(sample_init_args());
+        assert_eq!(
+            cfg.managed_canisters,
+            vec![principal("22255-zqaaa-aaaas-qf6uq-cai")]
+        );
+        assert_eq!(cfg.main_interval_seconds, 60);
+        assert_eq!(cfg.max_transfers_per_tick, Some(3));
+        assert_eq!(cfg.surplus_recipients.len(), 1);
+        assert_eq!(
+            cfg.surplus_recipients[0].target,
+            crate::state::SurplusTarget::Neuron(42)
+        );
+    }
+
+    #[test]
+    fn fresh_state_from_full_init_args_has_empty_runtime_accounting() {
+        let cfg = config_from_init_args(sample_init_args());
+        let st = crate::state::State::new(cfg, 1_000);
+        assert!(st.last_completed_cycles.is_empty());
+        assert!(st.relay_minted_cycles_since_sample.is_empty());
+        assert!(st.recovery_deficit_cycles.is_empty());
+        assert!(st.conversion_estimate.is_none());
+        assert!(st.active_job.is_none());
+        assert!(st.active_faucet_commitment_transfer.is_none());
+        assert!(st.last_summary.is_none());
+        assert_eq!(st.next_job_id, 1);
     }
 
     #[test]
@@ -678,102 +541,5 @@ mod tests {
         assert_eq!(production_canister_id(), prod);
         assert!(is_production_canister(prod));
         assert!(!is_production_canister(Principal::anonymous()));
-    }
-
-    #[test]
-    fn upgrade_args_can_leave_set_or_clear_optional_config() {
-        let owner = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let cfg = crate::state::Config {
-            managed_canisters: vec![owner],
-            ledger_canister_id: Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap(),
-            cmc_canister_id: mainnet_cmc_id(),
-            governance_canister_id: mainnet_governance_id(),
-            blackhole_canister_id: mainnet_blackhole_id(),
-            main_interval_seconds: 60,
-            max_transfers_per_tick: Some(3),
-            surplus_recipients: vec![
-                crate::state::SurplusRecipient {
-                    target: crate::state::SurplusTarget::Canister(owner),
-                    memo: None,
-                },
-                crate::state::SurplusRecipient {
-                    target: crate::state::SurplusTarget::Neuron(7),
-                    memo: Some(vec![7]),
-                },
-            ],
-        };
-        let mut st = crate::state::State::new(cfg, 1);
-
-        apply_upgrade_args(
-            &mut st,
-            UpgradeArgs {
-                managed_canisters: None,
-                ledger_canister_id: None,
-                cmc_canister_id: None,
-                governance_canister_id: None,
-                blackhole_canister_id: None,
-                main_interval_seconds: None,
-                max_transfers_per_tick: None,
-                surplus_canister_recipients: None,
-                surplus_neuron_recipients: None,
-            },
-        )
-        .unwrap();
-        assert_eq!(st.config.max_transfers_per_tick, Some(3));
-        assert_eq!(st.config.surplus_recipients.len(), 2);
-        assert_eq!(
-            st.config.surplus_recipients[0].target,
-            crate::state::SurplusTarget::Canister(owner)
-        );
-        assert_eq!(st.config.surplus_recipients[0].memo, None);
-        assert_eq!(
-            st.config.surplus_recipients[1].target,
-            crate::state::SurplusTarget::Neuron(7)
-        );
-        assert_eq!(st.config.surplus_recipients[1].memo, Some(vec![7]));
-
-        apply_upgrade_args(
-            &mut st,
-            UpgradeArgs {
-                managed_canisters: None,
-                ledger_canister_id: None,
-                cmc_canister_id: None,
-                governance_canister_id: None,
-                blackhole_canister_id: None,
-                main_interval_seconds: None,
-                max_transfers_per_tick: Some(None),
-                surplus_canister_recipients: Some(Vec::new()),
-                surplus_neuron_recipients: Some(Vec::new()),
-            },
-        )
-        .unwrap();
-        assert_eq!(st.config.max_transfers_per_tick, None);
-        assert!(st.config.surplus_recipients.is_empty());
-
-        apply_upgrade_args(
-            &mut st,
-            UpgradeArgs {
-                managed_canisters: None,
-                ledger_canister_id: None,
-                cmc_canister_id: None,
-                governance_canister_id: None,
-                blackhole_canister_id: None,
-                main_interval_seconds: None,
-                max_transfers_per_tick: Some(Some(1)),
-                surplus_canister_recipients: None,
-                surplus_neuron_recipients: Some(vec![SurplusNeuronRecipient {
-                    neuron_id: 42,
-                    memo: vec![4],
-                }]),
-            },
-        )
-        .unwrap();
-        assert_eq!(st.config.max_transfers_per_tick, Some(1));
-        assert_eq!(st.config.surplus_recipients.len(), 1);
-        assert_eq!(
-            st.config.surplus_recipients[0].target,
-            crate::state::SurplusTarget::Neuron(42)
-        );
-        assert_eq!(st.config.surplus_recipients[0].memo, Some(vec![4]));
     }
 }

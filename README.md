@@ -43,6 +43,8 @@ For production deployment from canonical artifacts:
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
 ```
 
+Some canisters require lifecycle-specific args or reset handling. Canister-specific lifecycle notes live in each component README.
+
 For local artifact work, direct local installs, frontend prototype deployment, and quick inspection:
 
 ```bash

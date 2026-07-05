@@ -66,19 +66,6 @@ struct RelayInitArg {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct RelayUpgradeArg {
-    managed_canisters: Option<Vec<Principal>>,
-    ledger_canister_id: Option<Principal>,
-    cmc_canister_id: Option<Principal>,
-    governance_canister_id: Option<Principal>,
-    blackhole_canister_id: Option<Principal>,
-    main_interval_seconds: Option<u64>,
-    max_transfers_per_tick: Option<Option<u32>>,
-    surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
-    surplus_neuron_recipients: Option<Vec<SurplusNeuronRecipient>>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
 struct SurplusCanisterRecipient {
     canister_id: Principal,
     memo: Vec<u8>,
@@ -102,6 +89,11 @@ enum RelayMode {
 struct RelaySummary {
     mode: RelayMode,
     total_burn_cycles: u128,
+    total_target_topup_cycles: u128,
+    total_actual_minted_cycles: u128,
+    total_carried_deficit_cycles: u128,
+    total_remaining_deficit_cycles: u128,
+    deficit_canister_count: u32,
     transfer_count: u32,
     ledger_transfer_count: u32,
     ledger_sent_e8s: u64,
@@ -145,6 +137,7 @@ struct CanisterBurnSample {
     target_topup_cycles: u128,
     gross_share_e8s: u64,
     amount_e8s: u64,
+    sent_topup_e8s: u64,
     actual_minted_cycles: u128,
     remaining_deficit_cycles: u128,
     skipped_reason: Option<String>,
@@ -202,6 +195,8 @@ struct TransferRecord {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     active_job_present: bool,
+    last_summary_present: bool,
+    last_completed_cycles_count: u32,
 }
 
 struct RelayEnv {
@@ -502,16 +497,6 @@ impl RelayEnv {
         )
     }
 
-    fn set_trap_after_successful_transfer(&self, value: bool) -> Result<()> {
-        update_one(
-            &self.pic,
-            self.relay,
-            Principal::anonymous(),
-            "debug_trap_after_successful_transfer",
-            value,
-        )
-    }
-
     fn set_cmc_script(&self, script: Vec<DebugNotifyBehavior>) -> Result<()> {
         update_one(
             &self.pic,
@@ -547,15 +532,45 @@ impl RelayEnv {
         tick_n(&self.pic, ticks);
     }
 
-    fn upgrade_relay_without_config_changes(&self) -> Result<()> {
+    fn default_init_arg(&self) -> RelayInitArg {
+        RelayInitArg {
+            managed_canisters: vec![self.cmc],
+            ledger_canister_id: Some(self.ledger),
+            cmc_canister_id: Some(self.cmc),
+            governance_canister_id: Some(self.governance),
+            blackhole_canister_id: Some(self.blackhole),
+            main_interval_seconds: Some(31_536_000),
+            max_transfers_per_tick: None,
+            surplus_canister_recipients: None,
+            surplus_neuron_recipients: Vec::new(),
+        }
+    }
+
+    fn upgrade_relay_with_init_args(&self, init: RelayInitArg) -> Result<()> {
         self.pic
             .upgrade_canister(
                 self.relay,
                 relay_wasm()?,
-                encode_one(Option::<RelayUpgradeArg>::None)?,
+                encode_one(init)?,
                 Some(Principal::anonymous()),
             )
             .map_err(|e| anyhow::anyhow!("upgrade_canister reject: {e:?}"))?;
+        Ok(())
+    }
+
+    fn upgrade_relay_with_default_config(&self) -> Result<()> {
+        self.upgrade_relay_with_init_args(self.default_init_arg())
+    }
+
+    fn reinstall_relay_with_default_config(&self) -> Result<()> {
+        self.pic
+            .reinstall_canister(
+                self.relay,
+                relay_wasm()?,
+                encode_one(self.default_init_arg())?,
+                Some(Principal::anonymous()),
+            )
+            .map_err(|e| anyhow::anyhow!("reinstall_canister reject: {e:?}"))?;
         Ok(())
     }
 }
@@ -862,7 +877,8 @@ fn baseline_then_headroom_cmc_topup_records_real_async_notify() -> Result<()> {
         || !logs.contains("RELAY_CANISTER ")
         || !logs.contains("burn_cycles=")
         || !logs.contains("planned_topup_e8s=")
-        || !logs.contains("actual_topup_e8s=")
+        || !logs.contains("sent_topup_e8s=")
+        || !logs.contains("total_remaining_deficit_cycles=")
     {
         bail!("expected public relay logs for cycles top-up, got {logs}");
     }
@@ -1068,7 +1084,7 @@ fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
     if !logs.contains(&cmc_log_fragment)
         || !logs.contains(&format!("burn_cycles={}", cmc_sample.burn_cycles))
         || !logs.contains(&format!("planned_topup_e8s={}", cmc_sample.amount_e8s))
-        || !logs.contains(&format!("actual_topup_e8s={}", cmc_sample.amount_e8s))
+        || !logs.contains(&format!("sent_topup_e8s={}", cmc_sample.sent_topup_e8s))
     {
         bail!(
             "expected public logs to include CMC burn/allocation sample {cmc_sample:?}, got {logs}"
@@ -1657,91 +1673,98 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
 
 #[test]
 #[ignore]
-fn upgrade_after_trap_following_ledger_transfer_recovers_without_double_spend() -> Result<()> {
+fn relay_upgrade_with_full_init_args_starts_fresh_heap_state() -> Result<()> {
     require_ignored_flag()?;
-    let env = RelayEnv::new(None)?;
+    let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
+        (
+            vec![cmc],
+            Some(vec![SurplusCanisterRecipient {
+                canister_id: cmc,
+                memo: Vec::new(),
+            }]),
+            Vec::new(),
+        )
+    })?;
+    env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(10_000_000_000_000)?;
-    env.credit_relay(100_000_000)?;
-    let _ = env.tick_relay()?;
+
+    let baseline = env.tick_relay()?;
+    if baseline.mode != RelayMode::BaselineOnly {
+        bail!("expected baseline before upgrade setup, got {baseline:?}");
+    }
 
     env.add_relay_cycles(1_000_000_000_000);
-    env.set_managed_cycles(5_000_000_000_000)?;
-    env.set_trap_after_successful_transfer(true)?;
-    let trapped = update_noargs::<()>(
-        &env.pic,
-        env.relay,
-        Principal::anonymous(),
-        "debug_main_tick",
-    );
-    if trapped.is_ok() {
-        bail!("expected debug_main_tick to reject after injected relay transfer trap");
-    }
-    tick_n(&env.pic, 10);
-
-    let transfers_mid = env.transfers()?;
-    if transfers_mid.len() != 1 {
-        bail!("expected exactly one ledger transfer to land before upgrade, got {transfers_mid:?}");
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected trap before accepted-transfer persistence to leave no CMC notifications before upgrade");
-    }
-    let st_mid = env.debug_state()?;
-    if !st_mid.active_job_present {
-        bail!("expected interrupted relay job to remain active before upgrade");
-    }
-
-    env.upgrade_relay_without_config_changes()?;
-    let st_after_upgrade = env.debug_state()?;
-    if !st_after_upgrade.active_job_present {
-        bail!("expected interrupted relay job to remain active immediately after upgrade");
-    }
-
-    env.advance_time_and_tick(1, 20);
-
-    let transfers_after = env.transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected post-upgrade recovery to reuse duplicate ledger transfer without double spend, got {transfers_after:?}");
-    }
-    let notifications = env.notifications()?;
-    if notifications.len() != 1 || notifications[0].canister_id != env.cmc {
-        bail!("expected one successful CMC notify after upgrade recovery, got {notifications:?}");
-    }
-    let summary = env.summary()?;
-    if summary.mode != RelayMode::TopUpThenSurplus
-        || summary.cmc_notify_success_count != 1
-        || summary.ledger_transfer_count != 1
+    env.set_managed_cycles(0)?;
+    env.credit_relay(60_010_000)?;
+    let underfunded = env.tick_relay()?;
+    let underfunded_sample = underfunded
+        .canisters
+        .iter()
+        .find(|sample| sample.canister_id == env.cmc)
+        .context("missing underfunded CMC sample before upgrade")?;
+    if underfunded_sample.remaining_deficit_cycles == 0
+        || underfunded.total_remaining_deficit_cycles == 0
     {
-        bail!("unexpected relay summary after upgrade recovery: {summary:?}");
+        bail!("expected pre-upgrade runtime accounting to contain a recovery deficit, got {underfunded:?}");
     }
-    let st_done = env.debug_state()?;
-    if st_done.active_job_present {
-        bail!("expected post-upgrade recovery to complete the interrupted relay job");
+    let before = env.debug_state()?;
+    if !before.last_summary_present || before.last_completed_cycles_count == 0 {
+        bail!("expected pre-upgrade summary and completed sample, got {before:?}");
     }
-    let logs = env.logs_text()?;
-    if !logs.contains("RELAY_SUMMARY mode=TopUpThenSurplus")
-        || !logs.contains("ledger_transfer_count=1")
-        || !logs.contains("cmc_notify_success_count=1")
+
+    env.upgrade_relay_with_default_config()?;
+    let after = env.debug_state()?;
+    if after.active_job_present
+        || after.last_summary_present
+        || after.last_completed_cycles_count != 0
     {
-        bail!("expected coherent public summary after upgrade recovery, got {logs}");
+        bail!("expected full-args upgrade to reset relay heap state, got {after:?}");
     }
+
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.advance_time_and_tick(1, 5);
+    let first_after_upgrade = env.summary()?;
+    if first_after_upgrade.mode != RelayMode::BaselineOnly
+        || first_after_upgrade.ledger_transfer_count != 0
+        || first_after_upgrade.total_remaining_deficit_cycles != 0
+    {
+        bail!("expected first tick after full-args upgrade to establish a fresh baseline, got {first_after_upgrade:?}");
+    }
+
+    env.credit_relay(100_000_000)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    let unchanged_after_baseline = env.tick_relay()?;
+    if unchanged_after_baseline.cmc_notify_success_count != 0
+        || unchanged_after_baseline.total_carried_deficit_cycles != 0
+        || unchanged_after_baseline.total_remaining_deficit_cycles != 0
+    {
+        bail!("expected prior recovery deficit and samples to be cleared after upgrade, got {unchanged_after_baseline:?}");
+    }
+
     Ok(())
 }
 
 #[test]
 #[ignore]
-fn relay_post_upgrade_logs_lifecycle_and_keeps_startup_liveness_stateless() -> Result<()> {
+fn relay_reinstall_starts_without_summary_or_active_job() -> Result<()> {
     require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
-    env.upgrade_relay_without_config_changes()?;
-    env.pic.advance_time(Duration::from_secs(2));
-    tick_n(&env.pic, 5);
-
-    let logs = env.logs_text()?;
-    if !logs.contains("relay LIFECYCLE event=post_upgrade_complete timers_installed=true") {
-        bail!("expected post-upgrade lifecycle log, got {logs}");
+    env.set_managed_cycles(10_000_000_000_000)?;
+    let first = env.tick_relay()?;
+    if first.mode != RelayMode::BaselineOnly {
+        bail!("expected initial baseline summary before reinstall, got {first:?}");
     }
-    if logs.contains("timer fired") {
-        bail!("expected no timer-fired public log spam, got {logs}");
+
+    env.reinstall_relay_with_default_config()?;
+    let st = env.debug_state()?;
+    if st.active_job_present || st.last_summary_present {
+        bail!("expected fresh relay heap after reinstall, got {st:?}");
+    }
+
+    env.advance_time_and_tick(1, 5);
+    let summary = env.summary()?;
+    if summary.mode != RelayMode::BaselineOnly {
+        bail!("expected first tick after reinstall to establish a fresh baseline, got {summary:?}");
     }
     Ok(())
 }

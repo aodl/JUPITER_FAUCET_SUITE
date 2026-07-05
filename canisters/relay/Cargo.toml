@@ -17,7 +17,6 @@ async-trait = { workspace = true }
 candid = { workspace = true }
 ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
-ic-stable-structures = { workspace = true }
 icrc-ledger-types = { workspace = true }
 jupiter-ic-clients = { version = "0.1.0", path = "../../crates/ic-clients" }
 jupiter-canister-logging = { version = "0.1.0", path = "../../crates/canister-logging" }

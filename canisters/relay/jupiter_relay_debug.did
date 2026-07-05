@@ -44,6 +44,7 @@ type CanisterBurnSample = record {
   target_topup_cycles : nat;
   gross_share_e8s : nat64;
   amount_e8s : nat64;
+  sent_topup_e8s : nat64;
   actual_minted_cycles : nat;
   remaining_deficit_cycles : nat;
   skipped_reason : opt text;
@@ -66,6 +67,11 @@ type RelaySummary = record {
   managed_canister_count : nat32;
   min_cycles_balance : opt nat;
   total_burn_cycles : nat;
+  total_target_topup_cycles : nat;
+  total_actual_minted_cycles : nat;
+  total_carried_deficit_cycles : nat;
+  total_remaining_deficit_cycles : nat;
+  deficit_canister_count : nat32;
   transfer_count : nat32;
   ledger_transfer_count : nat32;
   ledger_sent_e8s : nat64;

@@ -383,6 +383,26 @@ fn mark_pending_ledger_accepted(block_index: u64) {
         if let Some(job) = st.active_job.as_mut() {
             if let Some(pending) = job.pending_transfer.as_mut() {
                 pending.phase = PendingTransferPhase::TransferAccepted { block_index };
+                if let PendingTransferKind::CmcTopUp { canister_id } = pending.kind {
+                    if let Some(sample) = job
+                        .canisters
+                        .iter_mut()
+                        .find(|sample| sample.canister_id == canister_id)
+                    {
+                        sample.sent_topup_e8s =
+                            sample.sent_topup_e8s.saturating_add(pending.amount_e8s);
+                    }
+                    if let Some(sample) = job
+                        .summary
+                        .canisters
+                        .iter_mut()
+                        .find(|sample| sample.canister_id == canister_id)
+                    {
+                        sample.sent_topup_e8s =
+                            sample.sent_topup_e8s.saturating_add(pending.amount_e8s);
+                    }
+                    job.summary.refresh_canister_totals();
+                }
                 job.summary.transfer_count = job.summary.transfer_count.saturating_add(1);
                 job.summary.ledger_transfer_count =
                     job.summary.ledger_transfer_count.saturating_add(1);
@@ -478,6 +498,7 @@ fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal,
                         .target_topup_cycles
                         .saturating_sub(sample.actual_minted_cycles);
                 }
+                job.summary.refresh_canister_totals();
                 *st.relay_minted_cycles_since_sample
                     .entry(canister_id)
                     .or_insert(0) = st
@@ -501,6 +522,7 @@ pub(super) fn mark_pending_failed() {
                     .summary
                     .known_unspent_e8s
                     .saturating_add(pending.gross_share_e8s);
+                job.summary.refresh_canister_totals();
             }
         }
     });
@@ -513,6 +535,7 @@ pub(super) fn mark_pending_failed_after_acceptance() {
                 job.summary.failed_transfers = job.summary.failed_transfers.saturating_add(1);
                 job.summary.cmc_notify_failed_count =
                     job.summary.cmc_notify_failed_count.saturating_add(1);
+                job.summary.refresh_canister_totals();
             }
         }
     });
@@ -527,6 +550,7 @@ fn mark_pending_ambiguous() {
                     .summary
                     .ambiguous_e8s
                     .saturating_add(pending.gross_share_e8s);
+                job.summary.refresh_canister_totals();
             }
         }
     });
@@ -543,6 +567,7 @@ pub(super) fn mark_pending_ambiguous_after_acceptance() {
                     .summary
                     .ambiguous_e8s
                     .saturating_add(pending.gross_share_e8s);
+                job.summary.refresh_canister_totals();
             }
         }
     });
@@ -648,6 +673,7 @@ mod tests {
             target_topup_cycles: 101,
             gross_share_e8s: 900,
             amount_e8s: 890,
+            sent_topup_e8s: 0,
             actual_minted_cycles: 0,
             remaining_deficit_cycles: 101,
             skipped_reason: None,
@@ -702,6 +728,7 @@ mod tests {
             assert_eq!(summary.ledger_fees_e8s, 10);
             assert_eq!(summary.cmc_notify_success_count, 0);
             assert_eq!(summary.known_unspent_e8s, 100);
+            assert_eq!(summary.canisters[0].sent_topup_e8s, 890);
         });
     }
 
@@ -722,6 +749,8 @@ mod tests {
             assert!(job.pending_transfer.is_none());
             assert_eq!(job.summary.ledger_transfer_count, 1);
             assert_eq!(job.summary.cmc_notify_success_count, 1);
+            assert_eq!(job.canisters[0].sent_topup_e8s, 890);
+            assert_eq!(job.summary.canisters[0].sent_topup_e8s, 890);
             assert_eq!(job.canisters[0].actual_minted_cycles, 321);
             assert_eq!(job.summary.canisters[0].actual_minted_cycles, 321);
             assert_eq!(

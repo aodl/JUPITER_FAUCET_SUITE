@@ -40,17 +40,6 @@ pub(crate) fn schedule_startup_liveness_tick() {
     });
 }
 
-pub(crate) fn schedule_immediate_resume_if_needed() {
-    let has_pending_work = state::with_state(|st| {
-        st.active_job.is_some() || st.active_faucet_commitment_transfer.is_some()
-    });
-    if has_pending_work {
-        ic_cdk_timers::set_timer(Duration::from_secs(1), async {
-            main_tick(true).await;
-        });
-    }
-}
-
 #[cfg(feature = "debug_api")]
 pub(crate) async fn debug_main_tick_impl() {
     main_tick(true).await;
@@ -403,6 +392,7 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     summary.min_cycles_balance = min_cycles;
     summary.total_burn_cycles = total_burn_cycles;
     summary.canisters = canisters.clone();
+    summary.refresh_canister_totals();
     summary.conversion_estimate_used = if has_raw_icp_recipients {
         conversion_estimate
     } else {
@@ -482,6 +472,7 @@ fn build_no_funds_summary(
         .iter()
         .map(|sample| sample.burn_cycles)
         .sum();
+    summary.refresh_canister_totals();
     summary.planned_retained_e8s = balance;
     summary.known_unspent_e8s = balance;
     summary
@@ -678,6 +669,7 @@ async fn plan_surplus_phase<G: GovernanceClient>(now_nanos: u64, governance: &G)
             &job.surplus_transfers,
         );
         job.summary.known_unspent_e8s = job.summary.planned_retained_e8s;
+        job.summary.refresh_canister_totals();
     });
 }
 
@@ -720,6 +712,7 @@ fn disable_surplus(reason: &'static str) {
             job.summary.planned_retained_e8s =
                 retained_e8s(job.balance_start_e8s, &job.canisters, &[]);
             job.summary.known_unspent_e8s = job.summary.planned_retained_e8s;
+            job.summary.refresh_canister_totals();
         }
     });
 }
@@ -835,9 +828,11 @@ fn complete_job(now_nanos: u64) {
             {
                 summary_sample.actual_minted_cycles = sample.actual_minted_cycles;
                 summary_sample.remaining_deficit_cycles = sample.remaining_deficit_cycles;
+                summary_sample.sent_topup_e8s = sample.sent_topup_e8s;
             }
         }
         job.summary.completed_at_ts_nanos = Some(now_nanos);
+        job.summary.refresh_canister_totals();
         log_summary(&job.summary);
         st.last_completed_cycles = job.current_cycles;
         persist_recovery_deficits_from_samples(st, &job.canisters);
@@ -974,6 +969,7 @@ mod tests {
             target_topup_cycles: 101,
             gross_share_e8s: amount_e8s + 10,
             amount_e8s,
+            sent_topup_e8s: 0,
             actual_minted_cycles: 0,
             remaining_deficit_cycles: 101,
             skipped_reason: None,
@@ -1432,6 +1428,7 @@ mod tests {
             target_topup_cycles: 177,
             gross_share_e8s: 0,
             amount_e8s: 0,
+            sent_topup_e8s: 0,
             actual_minted_cycles: 0,
             remaining_deficit_cycles: 177,
             skipped_reason: None,

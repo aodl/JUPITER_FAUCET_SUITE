@@ -109,8 +109,8 @@ The relay emits stable, single-line, grep-friendly public records:
 ```text
 Cycles: <relay_self_cycles_balance>
 CONFIG relay_canister_id=...
-RELAY_SUMMARY mode=<BaselineOnly|TopUpThenSurplus|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> total_burn_cycles=<nat> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32> conversion_cycles_per_e8=<nat-or-null> surplus_e8s_before_fees=<nat64> skipped_surplus_reason=<escaped-text-or-null>
-RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> relay_minted_cycles=<nat> burn_cycles=<nat> carried_deficit_cycles=<nat> target_topup_cycles=<nat> planned_topup_e8s=<nat64> actual_topup_e8s=<nat64> actual_minted_cycles=<nat> remaining_deficit_cycles=<nat> skipped_reason=<escaped-text-or-null>
+RELAY_SUMMARY mode=<BaselineOnly|TopUpThenSurplus|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> total_burn_cycles=<nat> total_target_topup_cycles=<nat> total_actual_minted_cycles=<nat> total_carried_deficit_cycles=<nat> total_remaining_deficit_cycles=<nat> deficit_canister_count=<nat32> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32> conversion_cycles_per_e8=<nat-or-null> surplus_e8s_before_fees=<nat64> skipped_surplus_reason=<escaped-text-or-null>
+RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> relay_minted_cycles=<nat> burn_cycles=<nat> carried_deficit_cycles=<nat> target_topup_cycles=<nat> planned_topup_e8s=<nat64> sent_topup_e8s=<nat64> actual_minted_cycles=<nat> remaining_deficit_cycles=<nat> skipped_reason=<escaped-text-or-null>
 RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null> memo_len=<nat32-or-null>
 RELAY_FAUCET_COMMITMENT source_owner=<principal> source_subaccount=<hex> destination_owner=<principal> destination_subaccount=<hex-or-null> balance_start_e8s=<nat64> amount_e8s=<nat64> fee_e8s=<nat64> memo_len=<nat32> skipped_reason=<escaped-text-or-null>
 RELAY_PROBE_FAILURE canister_id=<principal> error=<escaped-text>
@@ -118,11 +118,11 @@ relay LIFECYCLE event=<init_complete|post_upgrade_complete> timers_installed=tru
 relay ERR message=<escaped-text>
 ```
 
-`RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated fresh burn, carried recovery deficit, the mode-specific top-up target, planned top-up e8s, actual top-up e8s, actual minted cycles, remaining recovery deficit, and skipped reason if any. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_FAUCET_COMMITMENT` logs show successful, ambiguous, or failed subaccount-1 forwarding attempts without printing raw memo bytes. Healthy empty scans and below-threshold scans are quiet; they do not produce repeated public log lines or durable status records.
+`RELAY_SUMMARY` aggregates the per-canister recovery view: `total_target_topup_cycles` is the tick's total CMC target, `total_actual_minted_cycles` is cycles returned by successful CMC notify calls, `total_carried_deficit_cycles` is pre-existing recovery debt, `total_remaining_deficit_cycles` is unrecovered debt after the tick, and `deficit_canister_count` is the number of canisters still blocking surplus. `RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated fresh burn, carried recovery deficit, the mode-specific top-up target, planned top-up e8s, sent top-up e8s, actual minted cycles, remaining recovery deficit, and skipped reason if any. `planned_topup_e8s` is the intended net CMC top-up amount. `sent_topup_e8s` is the accepted net amount actually sent to CMC, and is zero if the transfer was not accepted. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_FAUCET_COMMITMENT` logs show successful, ambiguous, or failed subaccount-1 forwarding attempts without printing raw memo bytes. Healthy empty scans and below-threshold scans are quiet; they do not produce repeated public log lines or durable status records. Canister logs are public observability, not durable full history.
 
 ## Status and Recovery
 
-Production Relay exposes no public application query or update endpoints. Debug endpoints exist only in non-production debug builds. No controller-only production application endpoint is used for recovery. Routine recovery is a clean no-args upgrade, which re-installs timers, preserves stable state, and emits one `relay LIFECYCLE event=post_upgrade_complete ...` log line after a successful `post_upgrade`.
+Production Relay exposes no public application query or update endpoints. Debug endpoints exist only in non-production debug builds. No controller-only production application endpoint is used for recovery. Replacement with full init args re-installs timers, resets runtime state, and emits one `relay LIFECYCLE event=<init_complete|post_upgrade_complete> ...` log line.
 
 Production Relay identity and subaccount-1 addresses:
 
@@ -135,7 +135,7 @@ ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
 
 ## Tick Behavior
 
-The default main interval is one day and timer intervals are clamped to at least 60 seconds. After init and successful post-upgrade, the relay schedules an internal, stateless one-shot startup liveness tick that calls the normal non-forced main tick path. This is not an endpoint and does not write diagnostic state. If the recent-run guard suppresses that tick, no extra config/timer-firing log line is emitted. After upgrade, an active job also schedules an immediate forced resume.
+The default main interval is one day and timer intervals are clamped to at least 60 seconds. After init or post-upgrade, the relay schedules an internal, stateless one-shot startup liveness tick that calls the normal non-forced main tick path. This is not an endpoint and does not write diagnostic state. If the recent-run guard suppresses that tick, no extra config/timer-firing log line is emitted.
 
 The first successful complete probe is baseline-only. It stores current cycles and does not spend ICP. Later ticks compare the previous completed sample, relay-minted cycles since that sample, and the current probe:
 
@@ -147,27 +147,13 @@ Relay-minted cycles come from successful CMC `notify_top_up` responses. This pre
 
 `max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the default-account allocation job starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped. Subaccount-1 Jupiter Faucet commitment forwarding is a separate operation with its own at-most-one-transfer-per-run behavior so it can proceed even when the default account has no funds, is degraded, or is blocked by allocation-job state.
 
-## Upgrade Args
+## Lifecycle
 
-Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before preparing any upgrade-time argument file.
+Relay operational state is heap-only. Cycle samples, relay-minted-cycle accounting, recovery deficits, conversion estimates, summaries, active jobs, pending transfers, faucet forwarding state, and job IDs are not persisted across install, reinstall, or upgrade.
 
-Optional upgrade fields use Candid tri-state values where supported:
+Install, reinstall, and upgrade with full init args all initialize a fresh relay state from the supplied config. The first successful tick after replacement is `BaselineOnly` and spends no ICP.
 
-```text
-null            = leave the existing value unchanged
-opt null        = clear the existing optional value
-opt opt <value> = set the value
-```
-
-This applies to `max_transfers_per_tick : opt opt nat32`:
-
-```text
-null            = leave unchanged
-opt null        = clear
-opt opt <value> = set
-```
-
-Plain optional fields such as `managed_canisters`, `ledger_canister_id`, `cmc_canister_id`, `governance_canister_id`, `blackhole_canister_id`, `main_interval_seconds`, `surplus_canister_recipients`, and `surplus_neuron_recipients` use `null` to leave unchanged and `opt <value>` to set. For surplus recipient fields, `opt vec {}` clears that recipient group.
+Operators must pass full init args when replacing Relay Wasm. Replacement resets any in-flight relay job or recovery deficit. Operators should check managed canister cycle balances after replacement and manually top up any unexpectedly low canister.
 
 ## Relay Allocation Modes
 
@@ -190,7 +176,7 @@ planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
 
 The 1% headroom applies only to fresh burn. Carried recovery deficits are not multiplied again.
 
-`planned_topup_e8s` is the intended net CMC top-up amount and does not include the ledger fee. `actual_topup_e8s` is the actual net amount sent to CMC. Summary-level `fee_e8s`, `ledger_fees_e8s`, and `ledger_sent_e8s` carry the fee accounting.
+`planned_topup_e8s` is the intended net CMC top-up amount and does not include the ledger fee. `sent_topup_e8s` is the accepted net amount sent to CMC, or zero if no ledger transfer was accepted. Summary-level `fee_e8s`, `ledger_fees_e8s`, and `ledger_sent_e8s` carry the fee accounting.
 
 If the live CMC conversion-rate refresh fails or returns unusable data, Relay may fall back to the cached or bootstrap CMC estimate for capped top-up planning.
 
@@ -221,7 +207,7 @@ Clearing all raw ICP surplus recipients therefore switches Relay into all-cycles
 
 ## Surplus Recipient Configuration
 
-Surplus recipients use split homogeneous public install and upgrade records:
+Surplus recipients use split homogeneous public install records:
 
 ```text
 SurplusCanisterRecipient {
@@ -235,7 +221,7 @@ SurplusNeuronRecipient {
 }
 ```
 
-Install args use `surplus_canister_recipients : opt vec SurplusCanisterRecipient`; production sets it to `null` for no canister surplus recipients. Install args use `surplus_neuron_recipients : vec SurplusNeuronRecipient`. Upgrade args make both recipient groups optional: `null` leaves that group unchanged, `opt vec {}` clears it, and `opt vec { ... }` replaces it. An empty `memo = blob ""` means no outgoing ledger memo internally; a non-empty blob is used as the outgoing ledger memo. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer. The NNS claim/refresh endpoint is publicly callable, so a later natural flow or manual/public retry can refresh the neuron; no durable claim-refresh retry queue is maintained.
+Install args use `surplus_canister_recipients : opt vec SurplusCanisterRecipient`; production sets it to `null` for no canister surplus recipients. Install args use `surplus_neuron_recipients : vec SurplusNeuronRecipient`. An empty `memo = blob ""` means no outgoing ledger memo internally; a non-empty blob is used as the outgoing ledger memo. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer. The NNS claim/refresh endpoint is publicly callable, so a later natural flow or manual/public retry can refresh the neuron; no durable claim-refresh retry queue is maintained.
 
 Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit account derived from the target canister principal, then call `notify_top_up { canister_id, block_index }`.
 
@@ -246,13 +232,11 @@ Production surplus is split 50/50 between two public NNS neuron recipients:
 
 The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. This preserves the existing memo convention while separating immediate IO stake growth from compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
 
-When changing surplus recipients, create a temporary local `UpgradeArgs` file using the production upgrade pattern below and fill in only the recipient group being intentionally changed. Do not commit a realistic full upgrade-args file; it is too easy to copy into a later deployment with the wrong intent.
-
 ## Retry Safety
 
-Each pending transfer stores a stable `created_at_time` and memo. Immediate ledger retries reuse the same identity, and ledger `Duplicate` is treated as an accepted transfer using the duplicate block index. Once a ledger transfer is accepted, CMC `Processing` and transport-like notify failures are retried once inline. Repeated uncertainty is recorded as ambiguous rather than blindly retried with a changed transfer identity.
+Each pending transfer stores a heap/runtime `created_at_time` and memo. Immediate ledger retries reuse the same identity during the current Wasm lifetime, and ledger `Duplicate` is treated as an accepted transfer using the duplicate block index. Once a ledger transfer is accepted, CMC `Processing` and transport-like notify failures are retried once inline. Repeated uncertainty is recorded as ambiguous rather than blindly retried with a changed transfer identity.
 
-Subaccount-1 Jupiter Faucet commitment forwarding uses the same stable transfer identity and ledger duplicate handling. After a ledger-accepted transfer to the Jupiter Faucet neuron staking account, Relay marks the transfer complete and schedules NNS Governance `claim_or_refresh_neuron` on a zero-delay timer; a refresh failure is logged as a follow-up failure and does not roll back or duplicate the accepted ledger transfer.
+Subaccount-1 Jupiter Faucet commitment forwarding uses the same deterministic transfer identity and ledger duplicate handling. After a ledger-accepted transfer to the Jupiter Faucet neuron staking account, Relay marks the transfer complete and schedules NNS Governance `claim_or_refresh_neuron` on a zero-delay timer; a refresh failure is logged as a follow-up failure and does not roll back or duplicate the accepted ledger transfer.
 
 ## Operational Warning
 
@@ -270,57 +254,22 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
-## Fresh install/reinstall
+## Replacement
 
 Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
 
-Fresh install/reinstall is a deliberate separate path. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly only for that install/reinstall operation:
+Initial deployment of this no-stable-state lifecycle may use reinstall to wipe old stable memory. Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly for that operation:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --environment ic \
-  --mode install \
+  --mode reinstall \
   --args-file canisters/relay/mainnet-install-args.did
 ```
 
-## Production upgrades
+Future replacements may use install, reinstall, or upgrade with full init args. All replacement paths reset heap-only operational state. Before replacement, confirm that state reset is intentional, save current public logs/settings if needed, and verify managed canister cycle balances are healthy enough for a new baseline. After replacement, confirm config/logs, confirm the first tick is `BaselineOnly`, check managed canister cycle balances, and manually top up if any canister is unexpectedly low.
 
-The committed install-args file is for fresh installs only. Do not pass fresh-install `InitArgs` when upgrading.
-
-Normal production upgrades preserve stable state and must use the relay `post_upgrade` argument shape, not the fresh-install `InitArgs` shape. Passing `InitArgs` to `post_upgrade` traps with `received InitArgs in relay post_upgrade; do not pass install args to upgrade`.
-
-For a production upgrade with no config change, pass no args:
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay --environment ic --mode upgrade
-```
-
-For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
-
-```bash
-cat > /tmp/relay-upgrade-args.did <<'EOF'
-(
-  opt record {
-    // Fill in only the UpgradeArgs fields intentionally changed by this deployment.
-    // Set unchanged optional fields to null, or omit them if the UpgradeArgs type
-    // and Candid tooling allow omission.
-    //
-    // Example shape only:
-    // field_to_change = opt <new value>;
-    // field_to_leave_unchanged = null;
-  }
-)
-EOF
-```
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
-  --environment ic \
-  --mode upgrade \
-  --args-file /tmp/relay-upgrade-args.did
-```
-
-Post-upgrade verification:
+Post-replacement verification:
 
 ```bash
 ./tools/scripts/smoke-relay-mainnet

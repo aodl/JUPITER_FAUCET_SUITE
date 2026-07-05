@@ -581,10 +581,13 @@ struct RelayCanisterBurnSample {
     current_cycles: Nat,
     relay_minted_cycles: Nat,
     burn_cycles: Nat,
+    carried_deficit_cycles: Nat,
     target_topup_cycles: Nat,
     gross_share_e8s: u64,
     amount_e8s: u64,
+    sent_topup_e8s: u64,
     actual_minted_cycles: Nat,
+    remaining_deficit_cycles: Nat,
     skipped_reason: Option<String>,
 }
 
@@ -626,6 +629,11 @@ struct RelaySummary {
     managed_canister_count: u32,
     min_cycles_balance: Option<Nat>,
     total_burn_cycles: Nat,
+    total_target_topup_cycles: Nat,
+    total_actual_minted_cycles: Nat,
+    total_carried_deficit_cycles: Nat,
+    total_remaining_deficit_cycles: Nat,
+    deficit_canister_count: u32,
     transfer_count: u32,
     ledger_transfer_count: u32,
     ledger_sent_e8s: u64,
@@ -4616,7 +4624,7 @@ fn run_local_relay_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
                 || !logs.contains("RELAY_CANISTER ")
                 || !logs.contains("burn_cycles=")
                 || !logs.contains("planned_topup_e8s=")
-                || !logs.contains("actual_topup_e8s=")
+                || !logs.contains("sent_topup_e8s=")
             {
                 bail!("expected cycles top-up public logs with summary and canister allocation fields, got {logs}");
             }

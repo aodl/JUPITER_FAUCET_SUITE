@@ -707,6 +707,7 @@ impl From<&BurnPlan> for CanisterBurnSample {
             target_topup_cycles: value.target_topup_cycles,
             gross_share_e8s: value.gross_share_e8s,
             amount_e8s: value.amount_e8s,
+            sent_topup_e8s: 0,
             actual_minted_cycles: value.actual_minted_cycles,
             remaining_deficit_cycles: value.remaining_deficit_cycles,
             skipped_reason: value.skipped_reason.clone(),

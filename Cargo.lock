@@ -1536,7 +1536,6 @@ dependencies = [
  "candid_parser 0.1.4",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures 0.7.2",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
