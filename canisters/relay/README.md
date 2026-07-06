@@ -1,22 +1,130 @@
 # Jupiter Relay
 
-`jupiter-relay` is an ICP-funded cycles allocator and optional surplus router for the Jupiter Faucet Suite. [Jupiter Faucet](../faucet) uses the Jupiter Faucet Relay canister as a singular target for perpetual suite top-ups in raw ICP form, using the `.` memo syntax. The relay periodically samples the cycles balance of all Jupiter Faucet Suite canisters and allocates ICP based on recent burn plus any unrecovered per-canister cycle deficit. When raw ICP surplus recipients are configured, fresh burn receives 1% headroom and remaining production surplus ICP is split equally across those recipients only after every recovery deficit is cleared. When no raw ICP surplus recipients are configured, Relay routes ICP as cycles through CMC using burn-plus-deficit-weighted allocations once the all-cycles batch is fee-efficient for every positive-need managed canister. Relay also checks its own subaccount 1 on each main tick and forwards qualifying Jupiter Faucet commitments from that subaccount independently of the default-account allocation job.
+`jupiter-relay` keeps Jupiter Faucet Suite canisters funded with cycles. Relay spends ICP from its default ICP ledger account to top up managed canisters through CMC. Once managed-canister recovery targets are satisfied, any surplus ICP can be routed to configured surplus recipients.
 
-It spends ICP from the relay canister default ICP ledger account:
+Relay can be funded in three ways:
+
+- direct ICP payment to Relay's default account for immediate one-off liquidity;
+- a Jupiter Faucet commitment that targets Relay and perpetually pays raw ICP into Relay's default account;
+- Relay subaccount 1, which accumulates or memo-fixes ICP and then creates that Jupiter Faucet commitment for Relay.
+
+Default-account funding is direct liquidity. Faucet commitments are perpetual funding. Subaccount 1 is a staging helper for creating Faucet commitments when a direct commitment is not possible.
+
+## Three ways to fund Relay
+
+| Workflow | Send ICP to | Use when | What happens | Outcome |
+|---|---|---|---|---|
+| 1. Direct Relay funding | Relay default account | You need ICP available to Relay now for short-term canister-cycle funding, bootstrap, or manual recovery | Relay spends the ICP directly on managed-canister CMC top-ups first, then surplus if safe | One-off operational liquidity; must be replenished periodically |
+| 2. Direct Jupiter Faucet commitment for Relay | Jupiter Faucet neuron staking account, with memo `u2qkp-aqaaa-aaaar-qb7ea-cai.` | You can attach the memo and send at least the qualifying commitment amount | Jupiter Faucet records a commitment whose payout target is Relay's default account in raw ICP form | Recommended perpetual funding stream into Relay |
+| 3. Relay subaccount 1 staging | Relay subaccount 1 `u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1` | You cannot attach the memo, or ICP arrives in small amounts below the Faucet threshold | Relay accumulates the ICP, adds the correct memo, and forwards a qualifying Jupiter Faucet commitment | Helper path that creates the same perpetual Faucet-backed funding stream |
+
+## Workflow 1: Direct Relay default-account funding
+
+This is the direct way to give Relay ICP to spend immediately. It is useful for bootstrapping, short-term funding gaps, manual recovery, or emergency canister-cycle support.
+
+ICP sent to Relay's default account is not a Jupiter Faucet commitment. It does not create a perpetual stream. Once spent, it must be replenished by another direct payment or by Faucet-backed flows.
+
+Relay uses default-account ICP for managed-canister CMC top-ups first. Surplus is only routed after canister recovery targets are satisfied.
+
+Relay's default ICP ledger account is:
 
 ```text
-Account { owner = <relay_canister_id>, subaccount = null }
+Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai; subaccount = null }
 ```
 
-This default account remains the only source for managed-canister CMC top-ups and configured surplus transfers.
+The Relay default account remains the only account used for managed-canister CMC top-ups and configured surplus routing.
 
-Fund it through the existing faucet raw-ICP memo route with:
+## Workflow 2: Direct Jupiter Faucet commitment for perpetual Relay funding
+
+This is the recommended long-term funding path when the sender can make a normal qualifying Jupiter Faucet commitment.
+
+The sender commits ICP through Jupiter Faucet with memo:
 
 ```text
-<relay_canister_id>.
+u2qkp-aqaaa-aaaar-qb7ea-cai.
 ```
 
-The trailing dot is required. In [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` means raw ICP to the canister default account with the right-hand segment used as the outgoing memo; an empty right-hand segment sends raw ICP with an empty memo.
+The Relay canister ID before the dot identifies Relay as the target. The trailing `.` matters: it asks Jupiter Faucet to route raw ICP to Relay, with an empty outgoing memo, rather than convert the payout to cycles first.
+
+In [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` means raw ICP to the canister default account with the right-hand segment used as the outgoing memo. An empty right-hand segment sends raw ICP with an empty memo.
+
+Jupiter Faucet then perpetually pays Relay's default account in raw ICP according to the commitment's future payouts. Relay, not Jupiter Faucet, orchestrates the downstream CMC conversion and allocation across managed canisters.
+
+This is different from sending ICP directly to Relay's default account. A direct payment is finite. A Faucet commitment is a recurring/perpetual funding source for Relay.
+
+## Workflow 3: Relay subaccount 1 staging
+
+Relay subaccount 1 is not for immediate canister top-ups. It is a staging account for creating a Jupiter Faucet commitment that targets Relay.
+
+Subaccount 1 exists for two cases:
+
+1. Memo is unavailable. Some funding paths can send ICP but cannot attach the required Jupiter Faucet memo. For example, minting maturity can send or mint ICP to Relay subaccount 1, and Relay later forwards the ICP with the correct memo.
+2. ICP arrives in small pieces. If ICP arrives in dribs and drabs below Jupiter Faucet's minimum qualifying commitment threshold, sending each piece directly to Jupiter Faucet would not create qualifying commitments. Relay subaccount 1 accumulates those pieces until it can make one qualifying commitment.
+
+Once subaccount 1 holds enough ICP to send at least the qualifying commitment amount after paying the ledger fee, Relay forwards `balance - fee` to the Jupiter Faucet neuron staking account and attaches the memo for Relay. Jupiter Faucet then treats that as a normal commitment that perpetually pays raw ICP back to Relay's default account.
+
+Subaccount 1 eventually produces the same kind of perpetual funding stream as workflow 2. It just lets Relay assemble the commitment when the sender cannot do so directly.
+
+Relay subaccount 1 is exactly 32 bytes: 31 zero bytes followed by `0x01`.
+
+The production ICRC textual account is:
+
+```text
+u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
+```
+
+Its equivalent explicit ICRC account fields are:
+
+```text
+owner = u2qkp-aqaaa-aaaar-qb7ea-cai
+subaccount = 0000000000000000000000000000000000000000000000000000000000000001
+```
+
+On each main tick, Relay checks:
+
+```text
+Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai, subaccount = opt blob "\00...\01" }
+```
+
+The destination Jupiter Faucet neuron is `11614578985374291210`, resolved through NNS Governance `list_neurons`. The forwarding memo is `u2qkpaqaaaaaaarqb7eacai.Relay`. Balances below `1 ICP + fee` remain in subaccount 1 for a future tick. `RELAY_FAUCET_COMMITMENT` logs show subaccount-1 forwarding attempts without printing raw memo bytes.
+
+Subaccount 1 flow:
+
+1. ICP arrives at Relay subaccount 1.
+2. Relay checks subaccount 1 on each main tick.
+3. If the balance is below `1 ICP + ledger fee`, Relay leaves it there.
+4. Once the balance can produce at least a qualifying net commitment, Relay sends `balance - fee` to the Jupiter Faucet neuron staking account.
+5. Relay attaches memo `u2qkpaqaaaaaaarqb7eacai.Relay`.
+6. Jupiter Faucet records the commitment.
+7. Future Faucet payouts from that commitment flow as raw ICP to Relay's default account.
+8. Relay then uses that default-account ICP for managed-canister top-ups and surplus routing.
+
+## When should I use which workflow?
+
+Use direct Relay default-account funding when:
+
+- Relay needs ICP available now;
+- you are bootstrapping;
+- you are filling a short-term gap;
+- you are manually recovering after replacement or unexpected funding shortfall.
+
+Use a direct Jupiter Faucet commitment when:
+
+- you want long-term/perpetual Relay funding;
+- you can attach memo `u2qkp-aqaaa-aaaar-qb7ea-cai.`;
+- you can meet the Jupiter Faucet minimum qualifying commitment threshold.
+
+Use Relay subaccount 1 when:
+
+- you want long-term/perpetual Relay funding, but cannot attach the memo directly;
+- the source produces small ICP amounts that individually do not meet the Jupiter Faucet threshold;
+- you want Relay to accumulate those amounts and make the qualifying Faucet commitment later.
+
+Do not use subaccount 1 when:
+
+- you need immediate ICP available to Relay;
+- you can already make a direct qualifying Jupiter Faucet commitment with the right memo;
+- you intend a one-off operational top-up rather than a perpetual Faucet-backed funding stream.
 
 ## Role in the Suite
 
@@ -37,41 +145,6 @@ blackhole_fiduciary_subnet 77deu-baaaa-aaaar-qb6za-cai
 blackhole_13_node_subnet   e3mmv-5qaaa-aaaah-aadma-cai
 relay, auto-included       u2qkp-aqaaa-aaaar-qb7ea-cai
 ```
-
-## Funding
-
-The production relay default account can be funded through the faucet raw ICP route:
-
-```text
-u2qkp-aqaaa-aaaar-qb7ea-cai.
-```
-
-Start with a small funding amount, observe one baseline tick and one allocation tick, and only then increase funding.
-
-Relay subaccount 1 is reserved for direct Jupiter Faucet commitment forwarding. The subaccount is exactly 32 bytes, with 31 zero bytes followed by `0x01`. On each main tick, Relay checks:
-
-```text
-Account { owner = <relay_canister_id>, subaccount = opt blob "\00...\01" }
-```
-
-Relay subaccount 1 supports memo-free perpetual funding of the Relay canister, and therefore all Relay-managed canisters. It is useful when the funding source cannot, or should not, attach an ICP ledger memo. A concrete example is minting maturity directly into a Jupiter Faucet funding flow.
-
-The production ICRC textual account is:
-
-```text
-u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
-```
-
-Its equivalent explicit ICRC account fields are:
-
-```text
-owner = u2qkp-aqaaa-aaaar-qb7ea-cai
-subaccount = 0000000000000000000000000000000000000000000000000000000000000001
-```
-
-The Relay default account remains for normal managed-canister CMC top-ups and configured surplus routing. Relay subaccount 1 is only for memo-free Jupiter Faucet commitment forwarding. Funds sent to subaccount 1 accumulate until the account can make a qualifying commitment.
-
-Once the account holds more than the current ledger fee and the net transferable amount is at least 1 ICP, Relay transfers `balance - fee` to the Jupiter Faucet neuron staking account under NNS Governance. The destination neuron is `11614578985374291210`, resolved through NNS Governance `list_neurons`. The production transfer memo is derived from the Relay principal as compact text plus `.Relay`; for `u2qkp-aqaaa-aaaar-qb7ea-cai`, it is `u2qkpaqaaaaaaarqb7eacai.Relay`. Balances below `1 ICP + fee` remain in subaccount 1 for a future tick.
 
 ## Managed Canisters
 
@@ -250,7 +323,7 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 2. Verify canister settings: logs public, log memory limit `2MiB`, canonical blackhole as an additional controller, and the current operational/admin controller retained until handoff is complete.
 3. Compare `CONFIG` public logs with [`mainnet-install-args.did`](mainnet-install-args.did).
 4. Observe a first complete baseline tick and confirm it spends no ICP.
-5. Fund the relay with a small ICP amount through `u2qkp-aqaaa-aaaar-qb7ea-cai.`.
+5. For allocation testing, fund Relay's default account with a small direct ICP payment so liquidity is available immediately.
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
