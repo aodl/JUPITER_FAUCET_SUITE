@@ -43,7 +43,9 @@ For production deployment from canonical artifacts:
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
 ```
 
-Some canisters require lifecycle-specific args or reset handling. Canister-specific lifecycle notes live in each component README.
+Routine no-config-change production upgrades pass no args for Disburser, Faucet, and Historian. Checked-in install argument files are fresh install/reinstall `InitArgs`, not routine upgrade inputs for those stateful canisters. Config-changing upgrades use temporary canister-specific `Option<UpgradeArgs>` files where supported. Relay is replacement-style: every Relay install, reinstall, or upgrade passes full `InitArgs`, initializes fresh heap state, and resets operational state. Relay upgrades are non-resumable; avoid upgrading during active Relay work where practical, and reconcile manually if an operation is interrupted. Its first successful post-upgrade tick is expected to be `BaselineOnly`.
+
+The full lifecycle matrix is in [deployment operations](docs/operations/deployment.md#lifecycle-matrix). Canister-specific lifecycle notes live in each component README.
 
 For local artifact work, direct local installs, frontend prototype deployment, and quick inspection:
 

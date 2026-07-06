@@ -75,7 +75,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --
 
 With `JUPITER_USE_CANONICAL_ARTIFACTS=1`, the `icp.yaml` build helper refuses to rebuild locally and instead verifies `release-artifacts/release-artifacts.sha256`, confirms the requested artifact is present in that Docker-generated manifest, and copies the matching `release-artifacts/<name>.wasm.gz` package into the `icp deploy` build output path. It also prints the package SHA-256 before deployment.
 
-For no-config-change upgrades, pass no args. For config-changing upgrades, pass a temporary, deployment-specific `UpgradeArgs` file:
+For routine no-config-change upgrades, pass no args for Disburser, Faucet, and Historian. Checked-in `mainnet-install-args.did` files are fresh install/reinstall `InitArgs`, not routine upgrade inputs for those stateful canisters. Relay is replacement-style and requires full `InitArgs` on every upgrade. For Disburser, Faucet, and Historian config-changing upgrades, pass a temporary, deployment-specific `Option<UpgradeArgs>` file:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
@@ -94,6 +94,16 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
 ```
 
 Reinstall clears canister Wasm/stable state and must be treated as a separate destructive operation.
+
+Lifecycle summary:
+
+| Canister group | Routine upgrade args | Config-changing upgrade args | State behavior |
+| --- | --- | --- | --- |
+| Disburser/Faucet/Historian | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
+| Relay | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
+| Frontend/Lifeline/SNS Rewards | No args | No args | No install args |
+
+Relay has no `UpgradeArgs`. Relay config-changing upgrades update and review the checked-in full `InitArgs` file at `canisters/relay/mainnet-install-args.did`. Relay upgrades are replacement-style and non-resumable. Avoid deploying Relay artifacts during active Relay work where practical. After upgrade, verify `CONFIG` logs, the `BaselineOnly` first tick, and managed canister cycle balances.
 
 ## Ordinary local icp deploy
 

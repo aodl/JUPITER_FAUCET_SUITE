@@ -96,9 +96,14 @@ type DebugState = record {
   last_main_run_ts : nat64;
   main_lock_state_ts : opt nat64;
   active_job_present : bool;
+  active_job_pending_transfer_present : bool;
+  active_faucet_commitment_transfer_present : bool;
   last_summary_present : bool;
   next_job_id : nat64;
   last_completed_cycles_count : nat32;
+  relay_minted_cycles_since_sample_count : nat32;
+  recovery_deficit_cycles_count : nat32;
+  conversion_estimate_present : bool;
 };
 type DebugConfig = record {
   managed_canisters : vec principal;

@@ -616,6 +616,10 @@ Upgrade args support:
 - `blackhole_controller`
 - `blackhole_armed`
 - `clear_forced_rescue`
+- `last_processed_funding_tx_id`
+- `main_interval_seconds`
+- `rescue_interval_seconds`
+- `min_tx_e8s`
 - `stake_recognition_delay_seconds`
 
 There is no committed canonical production upgrade args file. Upgrade args are exceptional deployment-time inputs; routine production upgrades with no config change should pass no args as shown in the production upgrades section.

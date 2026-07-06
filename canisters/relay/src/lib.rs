@@ -19,13 +19,13 @@ pub struct InitArgs {
     pub surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
 }
 
-#[derive(CandidType, Deserialize, Clone)]
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SurplusCanisterRecipient {
     pub canister_id: Principal,
     pub memo: Vec<u8>,
 }
 
-#[derive(CandidType, Deserialize, Clone)]
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SurplusNeuronRecipient {
     pub neuron_id: u64,
     pub memo: Vec<u8>,
@@ -195,9 +195,8 @@ fn surplus_neuron_recipients_to_public(
         .collect()
 }
 
-fn initialize_from_args(args: InitArgs, lifecycle_event: &'static str) {
+fn initialize_from_config(cfg: crate::state::Config, lifecycle_event: &'static str) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
-    let cfg = config_from_init_args(args);
     crate::logic::validate_config(&cfg, self_canister_principal_for_validation())
         .expect("invalid relay config");
     crate::state::set_state(crate::state::State::new(cfg, now_secs));
@@ -212,6 +211,10 @@ fn init(args: InitArgs) {
     initialize_from_args(args, "init_complete");
 }
 
+fn initialize_from_args(args: InitArgs, lifecycle_event: &'static str) {
+    initialize_from_config(config_from_init_args(args), lifecycle_event);
+}
+
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: InitArgs) {
     initialize_from_args(args, "post_upgrade_complete");
@@ -223,9 +226,14 @@ pub struct DebugState {
     pub last_main_run_ts: u64,
     pub main_lock_state_ts: Option<u64>,
     pub active_job_present: bool,
+    pub active_job_pending_transfer_present: bool,
+    pub active_faucet_commitment_transfer_present: bool,
     pub last_summary_present: bool,
     pub next_job_id: u64,
     pub last_completed_cycles_count: u32,
+    pub relay_minted_cycles_since_sample_count: u32,
+    pub recovery_deficit_cycles_count: u32,
+    pub conversion_estimate_present: bool,
 }
 
 #[cfg(feature = "debug_api")]
@@ -251,9 +259,18 @@ fn debug_state() -> DebugState {
         last_main_run_ts: st.last_main_run_ts,
         main_lock_state_ts: st.main_lock_state_ts,
         active_job_present: st.active_job.is_some(),
+        active_job_pending_transfer_present: st
+            .active_job
+            .as_ref()
+            .and_then(|job| job.pending_transfer.as_ref())
+            .is_some(),
+        active_faucet_commitment_transfer_present: st.active_faucet_commitment_transfer.is_some(),
         last_summary_present: st.last_summary.is_some(),
         next_job_id: st.next_job_id,
         last_completed_cycles_count: st.last_completed_cycles.len() as u32,
+        relay_minted_cycles_since_sample_count: st.relay_minted_cycles_since_sample.len() as u32,
+        recovery_deficit_cycles_count: st.recovery_deficit_cycles.len() as u32,
+        conversion_estimate_present: st.conversion_estimate.is_some(),
     })
 }
 

@@ -65,13 +65,13 @@ struct RelayInitArg {
     surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct SurplusCanisterRecipient {
     canister_id: Principal,
     memo: Vec<u8>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct SurplusNeuronRecipient {
     neuron_id: u64,
     memo: Vec<u8>,
@@ -195,8 +195,28 @@ struct TransferRecord {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     active_job_present: bool,
+    active_job_pending_transfer_present: bool,
+    active_faucet_commitment_transfer_present: bool,
     last_summary_present: bool,
+    next_job_id: u64,
     last_completed_cycles_count: u32,
+    relay_minted_cycles_since_sample_count: u32,
+    recovery_deficit_cycles_count: u32,
+    conversion_estimate_present: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugConfig {
+    managed_canisters: Vec<Principal>,
+    effective_managed_canisters: Vec<Principal>,
+    ledger_canister_id: Principal,
+    cmc_canister_id: Principal,
+    governance_canister_id: Principal,
+    blackhole_canister_id: Principal,
+    main_interval_seconds: u64,
+    max_transfers_per_tick: Option<u32>,
+    surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
 }
 
 struct RelayEnv {
@@ -517,12 +537,32 @@ impl RelayEnv {
         )
     }
 
+    fn abort_after_successful_transfer(&self) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.relay,
+            Principal::anonymous(),
+            "debug_abort_after_successful_transfer",
+            true,
+        )
+    }
+
     fn debug_state(&self) -> Result<DebugState> {
         query_one(
             &self.pic,
             self.relay,
             Principal::anonymous(),
             "debug_state",
+            (),
+        )
+    }
+
+    fn debug_config(&self) -> Result<DebugConfig> {
+        query_one(
+            &self.pic,
+            self.relay,
+            Principal::anonymous(),
+            "debug_config",
             (),
         )
     }
@@ -546,6 +586,18 @@ impl RelayEnv {
         }
     }
 
+    fn try_upgrade_relay_without_args(&self) -> Result<Result<(), String>> {
+        Ok(self
+            .pic
+            .upgrade_canister(
+                self.relay,
+                relay_wasm()?,
+                vec![],
+                Some(Principal::anonymous()),
+            )
+            .map_err(|e| format!("{e:?}")))
+    }
+
     fn upgrade_relay_with_init_args(&self, init: RelayInitArg) -> Result<()> {
         self.pic
             .upgrade_canister(
@@ -556,10 +608,6 @@ impl RelayEnv {
             )
             .map_err(|e| anyhow::anyhow!("upgrade_canister reject: {e:?}"))?;
         Ok(())
-    }
-
-    fn upgrade_relay_with_default_config(&self) -> Result<()> {
-        self.upgrade_relay_with_init_args(self.default_init_arg())
     }
 
     fn reinstall_relay_with_default_config(&self) -> Result<()> {
@@ -1673,7 +1721,8 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
 
 #[test]
 #[ignore]
-fn relay_upgrade_with_full_init_args_starts_fresh_heap_state() -> Result<()> {
+fn relay_full_init_args_upgrade_reinitializes_config_and_resets_operational_heap_state(
+) -> Result<()> {
     require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
@@ -1707,18 +1756,60 @@ fn relay_upgrade_with_full_init_args_starts_fresh_heap_state() -> Result<()> {
     {
         bail!("expected pre-upgrade runtime accounting to contain a recovery deficit, got {underfunded:?}");
     }
+
+    env.add_relay_cycles(1_000_000_000_000);
+    env.set_managed_cycles(0)?;
+    env.credit_relay(100_000_000)?;
+    env.abort_after_successful_transfer()?;
+    let _ = env.tick_relay()?;
     let before = env.debug_state()?;
-    if !before.last_summary_present || before.last_completed_cycles_count == 0 {
-        bail!("expected pre-upgrade summary and completed sample, got {before:?}");
+    if !before.active_job_present
+        || !before.active_job_pending_transfer_present
+        || !before.last_summary_present
+        || before.last_completed_cycles_count == 0
+        || before.recovery_deficit_cycles_count == 0
+        || !before.conversion_estimate_present
+    {
+        bail!("expected pre-upgrade heap accounting, deficit, conversion estimate, and pending transfer, got {before:?}");
     }
 
-    env.upgrade_relay_with_default_config()?;
+    let replacement_args = RelayInitArg {
+        main_interval_seconds: Some(120),
+        max_transfers_per_tick: Some(7),
+        surplus_canister_recipients: None,
+        surplus_neuron_recipients: vec![SurplusNeuronRecipient {
+            neuron_id: 99,
+            memo: b"replacement".to_vec(),
+        }],
+        ..env.default_init_arg()
+    };
+    env.upgrade_relay_with_init_args(replacement_args)?;
+    let config_after = env.debug_config()?;
+    if config_after.main_interval_seconds != 120
+        || config_after.max_transfers_per_tick != Some(7)
+        || config_after.surplus_canister_recipients.is_some()
+        || config_after.surplus_neuron_recipients
+            != vec![SurplusNeuronRecipient {
+                neuron_id: 99,
+                memo: b"replacement".to_vec(),
+            }]
+    {
+        bail!("expected full InitArgs upgrade to replace relay config, got {config_after:?}");
+    }
     let after = env.debug_state()?;
     if after.active_job_present
+        || after.active_job_pending_transfer_present
+        || after.active_faucet_commitment_transfer_present
         || after.last_summary_present
         || after.last_completed_cycles_count != 0
+        || after.relay_minted_cycles_since_sample_count != 0
+        || after.recovery_deficit_cycles_count != 0
+        || after.conversion_estimate_present
+        || after.next_job_id != 1
     {
-        bail!("expected full-args upgrade to reset relay heap state, got {after:?}");
+        bail!(
+            "expected full InitArgs upgrade to reset relay operational heap state, got {after:?}"
+        );
     }
 
     env.set_managed_cycles(10_000_000_000_000)?;
@@ -1728,7 +1819,7 @@ fn relay_upgrade_with_full_init_args_starts_fresh_heap_state() -> Result<()> {
         || first_after_upgrade.ledger_transfer_count != 0
         || first_after_upgrade.total_remaining_deficit_cycles != 0
     {
-        bail!("expected first tick after full-args upgrade to establish a fresh baseline, got {first_after_upgrade:?}");
+        bail!("expected first tick after full InitArgs upgrade to establish a fresh baseline, got {first_after_upgrade:?}");
     }
 
     env.credit_relay(100_000_000)?;
@@ -1741,6 +1832,22 @@ fn relay_upgrade_with_full_init_args_starts_fresh_heap_state() -> Result<()> {
         bail!("expected prior recovery deficit and samples to be cleared after upgrade, got {unchanged_after_baseline:?}");
     }
 
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn relay_no_arg_upgrade_is_rejected() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.advance_time_and_tick(5 * 60, 5);
+    let result = env.try_upgrade_relay_without_args()?;
+    let Err(err) = result else {
+        bail!("expected no-arg Relay upgrade to be rejected");
+    };
+    if !err.contains("Canister called `ic0.trap`") && !err.contains("failed to decode") {
+        bail!("expected Candid decode rejection for no-arg Relay upgrade, got {err}");
+    }
     Ok(())
 }
 

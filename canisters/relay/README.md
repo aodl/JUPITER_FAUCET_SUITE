@@ -222,11 +222,11 @@ Relay-minted cycles come from successful CMC `notify_top_up` responses. This pre
 
 ## Lifecycle
 
-Relay operational state is heap-only. Cycle samples, relay-minted-cycle accounting, recovery deficits, conversion estimates, summaries, active jobs, pending transfers, faucet forwarding state, and job IDs are not persisted across install, reinstall, or upgrade.
+Relay is replacement-style and heap-only. It does not persist config or operational state in stable memory. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, conversion estimates, summaries, active jobs, pending transfers, faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
 
-Install, reinstall, and upgrade with full init args all initialize a fresh relay state from the supplied config. The first successful tick after replacement is `BaselineOnly` and spends no ICP.
+Relay upgrades are non-resumable. Avoid upgrading during active Relay work where practical, including active top-ups, ambiguous transfers, or CMC notify sequences. If an operation is interrupted, Relay starts fresh from the supplied `InitArgs`. After upgrade, confirm the fresh `CONFIG` log, check managed canister cycle balances, and manually top up or reconcile if needed.
 
-Operators must pass full init args when replacing Relay Wasm. Replacement resets any in-flight relay job or recovery deficit. Operators should check managed canister cycle balances after replacement and manually top up any unexpectedly low canister.
+This is intentional and differs from Faucet, Disburser, and Historian, which preserve safety-critical stable state across ordinary upgrades.
 
 ## Relay Allocation Modes
 
@@ -327,11 +327,13 @@ If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks
 6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
 7. Increase funding only after the baseline and first allocation behave as expected.
 
-## Replacement
+## Production upgrades
 
 Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
 
-Supply [`mainnet-install-args.did`](mainnet-install-args.did) explicitly when replacing Relay Wasm:
+### Routine replacement upgrade
+
+Routine Relay upgrades pass the full reviewed `InitArgs` file. Relay intentionally requires full InitArgs on upgrade because it does not persist config in stable memory. Under this replacement-style lifecycle, Relay does not support no-arg upgrades and does not support Relay UpgradeArgs.
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
@@ -340,7 +342,66 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --args-file canisters/relay/mainnet-install-args.did
 ```
 
-Replacement may use install, reinstall, or upgrade with full init args. All replacement paths reset heap-only operational state. Before replacement, confirm that state reset is intentional, save current public logs/settings if needed, and verify managed canister cycle balances are healthy enough for a new baseline. After replacement, confirm config/logs, confirm the first tick is `BaselineOnly`, check managed canister cycle balances, and manually top up if any canister is unexpectedly low.
+Avoid running this command during active Relay work where practical. After upgrade, confirm the fresh `CONFIG` log from supplied `InitArgs`, confirm the first successful tick is `BaselineOnly`, check managed canister cycle balances, and manually top up or reconcile if needed.
+
+### Config-changing replacement upgrade
+
+Config-changing Relay upgrades use full `InitArgs`. Relay has no `UpgradeArgs`, so the standard production path is to update [`canisters/relay/mainnet-install-args.did`](mainnet-install-args.did) in the repo, review the diff, and deploy that reviewed checked-in file. A config-changing upgrade is also non-resumable and resets all Relay heap state; avoid active Relay work where practical.
+
+Example shape:
+
+```did
+(
+  record {
+    managed_canisters = vec { principal "..." };
+    ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
+    cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
+    governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
+    blackhole_canister_id = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
+    main_interval_seconds = opt (86400 : nat64);
+    max_transfers_per_tick = opt (10 : nat32);
+    surplus_canister_recipients = null;
+    surplus_neuron_recipients = vec {};
+  },
+)
+```
+
+Deploy with:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
+  --mode upgrade \
+  --args-file canisters/relay/mainnet-install-args.did
+```
+
+`max_transfers_per_tick = opt <nat32>` sets the transfer limit; `max_transfers_per_tick = null` clears it. For `surplus_canister_recipients`, `null` means no canister recipients. For `surplus_neuron_recipients`, `vec {}` means no neuron recipients.
+
+### Fresh install
+
+Fresh install uses the reviewed Relay `InitArgs` file. This creates fresh config and fresh operational state.
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
+  --mode install \
+  --args-file canisters/relay/mainnet-install-args.did
+```
+
+### Destructive reinstall
+
+Destructive reinstall uses the reviewed Relay `InitArgs` file. This creates fresh config and fresh operational state.
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
+  --mode reinstall \
+  --args-file canisters/relay/mainnet-install-args.did
+```
+
+Reinstall is destructive to Relay Wasm and heap state. Use it only when replacing Relay as a fresh deployment and after confirming external ICP/cycles conditions are safe.
+
+Before any Relay upgrade or reinstall, confirm that state reset is intentional, save current public logs/settings if needed, and verify managed canister cycle balances are healthy enough for a new baseline.
 
 Post-replacement verification:
 

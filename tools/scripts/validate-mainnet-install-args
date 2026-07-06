@@ -464,13 +464,48 @@ def faucet_upgrade_example_uses_install_args(text: str) -> bool:
 
 
 def docs_use_install_args_for_upgrade(text: str) -> bool:
-    return re.search(
-        r"icp (?:canister install|deploy) \S+[\s\S]{0,400}--mode\s+upgrade[\s\S]{0,400}mainnet-install-args\.did",
-        text,
-    ) is not None or re.search(
-        r"icp (?:canister install|deploy) \S+[\s\S]{0,400}mainnet-install-args\.did[\s\S]{0,400}--mode\s+upgrade",
-        text,
-    ) is not None
+    return bool(install_args_upgrade_command_contexts(text))
+
+
+def documented_icp_install_commands(text: str) -> list[str]:
+    lines = text.splitlines()
+    commands = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.search(r"\bicp (?:canister install|deploy)\b", line):
+            command_lines = [line.strip()]
+            while command_lines[-1].rstrip().endswith("\\") and i + 1 < len(lines):
+                i += 1
+                command_lines.append(lines[i].strip())
+            commands.append("\n".join(command_lines))
+        i += 1
+    return commands
+
+
+def install_args_upgrade_command_contexts(text: str) -> list[str]:
+    return [
+        command
+        for command in documented_icp_install_commands(text)
+        if re.search(r"--mode\s+upgrade\b", command)
+        and re.search(r"mainnet-install-args\.did\b", command)
+    ]
+
+
+def relay_upgrade_context_uses_full_init_args(context: str) -> bool:
+    command_is_relay_deploy = re.search(r"icp deploy\s+jupiter_relay\b", context) is not None
+    uses_mode_upgrade = re.search(r"--mode\s+upgrade\b", context) is not None
+    uses_reviewed_init_args = (
+        re.search(r"--args-file\s+canisters/relay/mainnet-install-args\.did\b", context) is not None
+    )
+    return command_is_relay_deploy and uses_mode_upgrade and uses_reviewed_init_args
+
+
+def docs_use_disallowed_install_args_for_upgrade(path: Path, text: str) -> bool:
+    return any(
+        not relay_upgrade_context_uses_full_init_args(context)
+        for context in install_args_upgrade_command_contexts(text)
+    )
 
 
 def docs_recommend_explicit_null_for_routine_upgrade(text: str) -> bool:
@@ -508,12 +543,48 @@ def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None
         text = path.read_text()
         if faucet_upgrade_example_uses_install_args(text):
             fail(f"{path} documents faucet upgrade with mainnet-install-args.did; use appropriate UpgradeArgs instead")
-        if docs_use_install_args_for_upgrade(text):
+        if docs_use_disallowed_install_args_for_upgrade(path, text):
             fail(f"{path} documents upgrade with mainnet-install-args.did; install args are fresh install/reinstall only")
         if docs_recommend_explicit_null_for_routine_upgrade(text):
             fail(f"{path} recommends explicit null args for a routine production upgrade; use icp deploy without args")
         if docs_recommend_direct_install_for_prod_deploy(text):
             fail(f"{path} documents direct production install as the preferred path; use icp deploy --environment ic")
+
+
+def validate_relay_docs_contain_full_init_args_upgrade() -> None:
+    path = REPO_ROOT / "canisters" / "relay" / "README.md"
+    text = path.read_text()
+    required = (
+        "JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \\\n"
+        "  --environment ic \\\n"
+        "  --mode upgrade \\\n"
+        "  --args-file canisters/relay/mainnet-install-args.did"
+    )
+    if required not in text:
+        fail(f"{path} must document a full-InitArgs Relay production upgrade command")
+    for phrase in [
+        "replacement-style",
+        "non-resumable",
+        "Avoid upgrading during active Relay work where practical",
+        "does not support no-arg upgrades",
+        "does not support Relay UpgradeArgs",
+        "requires full InitArgs",
+    ]:
+        if phrase not in text:
+            fail(f"{path} must document Relay replacement-upgrade constraint phrase: {phrase}")
+    forbidden = [
+        "Option<UpgradeArgs>",
+        "Relay `Option<UpgradeArgs>`",
+        "Routine Relay upgrades pass no args",
+        "/tmp/relay-upgrade-args.did",
+        "temporary full `InitArgs`",
+        "stable config storage",
+        "requires quiescence",
+        "### One-time legacy lifecycle migration",
+    ]
+    for phrase in forbidden:
+        if phrase in text:
+            fail(f"{path} contains obsolete Relay stable-config upgrade guidance: {phrase}")
 
 
 def validate_docs_do_not_use_stale_privileged_deployment_framing() -> None:
@@ -764,6 +835,26 @@ def run_self_tests() -> None:
         fail("self-test failed to reject generic upgrade example using install args before --mode upgrade")
     if docs_use_install_args_for_upgrade(reinstall_example):
         fail("self-test unexpectedly rejected generic fresh-only reinstall example using install args")
+    relay_path = REPO_ROOT / "canisters" / "relay" / "README.md"
+    relay_replacement_upgrade_text = """
+### Routine replacement upgrade
+
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \\
+  --environment ic \\
+  --mode upgrade \\
+  --args-file canisters/relay/mainnet-install-args.did
+    """
+    if docs_use_disallowed_install_args_for_upgrade(relay_path, relay_replacement_upgrade_text):
+        fail("self-test unexpectedly rejected Relay replacement upgrade using full InitArgs")
+    relay_wrong_canister_upgrade_text = relay_replacement_upgrade_text.replace("jupiter_relay", "jupiter_faucet")
+    relay_wrong_args_upgrade_text = relay_replacement_upgrade_text.replace(
+        "canisters/relay/mainnet-install-args.did",
+        "canisters/faucet/mainnet-install-args.did",
+    )
+    if not docs_use_disallowed_install_args_for_upgrade(relay_path, relay_wrong_canister_upgrade_text):
+        fail("self-test failed to reject Relay README upgrade install args for the wrong canister")
+    if not docs_use_disallowed_install_args_for_upgrade(relay_path, relay_wrong_args_upgrade_text):
+        fail("self-test failed to reject Relay README upgrade install args from the wrong file")
 
     routine_null_text = (
         "Routine production upgrades with no config change should pass explicit "
@@ -893,6 +984,7 @@ def main() -> None:
     validate_icp_yaml_uses_compressed_prod_artifacts()
     validate_public_verifier_links()
     validate_upgrade_docs_do_not_use_install_args_or_null_routine_args()
+    validate_relay_docs_contain_full_init_args_upgrade()
     validate_docs_do_not_use_stale_privileged_deployment_framing()
     historian_min_tx_e8s = validate_historian()
     validate_relay()
