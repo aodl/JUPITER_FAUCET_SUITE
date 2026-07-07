@@ -53,6 +53,28 @@ pub(crate) fn mainnet_faucet_id() -> Principal {
     Principal::from_text("acjuz-liaaa-aaaar-qb4qq-cai").expect("invalid hardcoded faucet principal")
 }
 
+pub(crate) const DEFAULT_IO_SURPLUS_NEURON_ID: u64 = 10_292_412_127_977_304_661;
+
+pub(crate) fn mainnet_relay_id() -> Principal {
+    Principal::from_text("u2qkp-aqaaa-aaaar-qb7ea-cai").expect("invalid hardcoded relay principal")
+}
+
+pub(crate) fn mainnet_canonical_relay_targets() -> Vec<Principal> {
+    [
+        "uccpi-cqaaa-aaaar-qby3q-cai",
+        "afisn-gqaaa-aaaar-qb4qa-cai",
+        "acjuz-liaaa-aaaar-qb4qq-cai",
+        "alk7f-5aaaa-aaaar-qb4ra-cai",
+        "jufzc-caaaa-aaaar-qb5da-cai",
+        "j5gs6-uiaaa-aaaar-qb5cq-cai",
+        "77deu-baaaa-aaaar-qb6za-cai",
+        "e3mmv-5qaaa-aaaah-aadma-cai",
+    ]
+    .into_iter()
+    .map(|id| Principal::from_text(id).expect("invalid hardcoded canonical relay target"))
+    .collect()
+}
+
 pub(super) fn mainnet_sns_wasm_id() -> Principal {
     jupiter_ic_clients::constants::sns_wasm_id()
 }
@@ -114,6 +136,36 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
         max_canisters_per_cycles_tick: clamp_canisters_per_cycles_tick(
             args.max_canisters_per_cycles_tick.unwrap_or(25),
         ),
+        relay_factory_enabled: args
+            .relay_factory_enabled
+            .unwrap_or_else(|| crate::approved_self_service_relay_wasm().is_some()),
+        relay_setup_min_e8s: args.relay_setup_min_e8s.unwrap_or(200_000_000),
+        relay_setup_dust_e8s: args.relay_setup_dust_e8s.unwrap_or(10_000),
+        relay_setup_refund_cooldown_seconds: args
+            .relay_setup_refund_cooldown_seconds
+            .unwrap_or(300),
+        relay_initial_cycles: args.relay_initial_cycles.unwrap_or(1_000_000_000_000),
+        relay_cycle_safety_margin_e8s: args.relay_cycle_safety_margin_e8s.unwrap_or(5_000_000),
+        relay_min_subaccount_one_seed_e8s: args
+            .relay_min_subaccount_one_seed_e8s
+            .unwrap_or(100_020_000),
+        self_service_relay_interval_seconds: args
+            .self_service_relay_interval_seconds
+            .unwrap_or(3600)
+            .max(60),
+        self_service_relay_max_transfers_per_tick: Some(
+            args.self_service_relay_max_transfers_per_tick.unwrap_or(10),
+        ),
+        io_surplus_neuron_id: args
+            .io_surplus_neuron_id
+            .unwrap_or(DEFAULT_IO_SURPLUS_NEURON_ID),
+        canonical_relay_canister_id: Some(
+            args.canonical_relay_canister_id
+                .unwrap_or_else(mainnet_relay_id),
+        ),
+        canonical_relay_targets: args
+            .canonical_relay_targets
+            .unwrap_or_else(mainnet_canonical_relay_targets),
     };
     validate_config(&cfg);
     cfg
@@ -384,6 +436,79 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.last_completed_route_sweep_ts.is_none() {
         st.last_completed_route_sweep_ts = Some(0);
     }
+    if st.config.relay_setup_min_e8s == 0 {
+        st.config.relay_setup_min_e8s = 200_000_000;
+    }
+    if st.config.relay_setup_dust_e8s == 0 {
+        st.config.relay_setup_dust_e8s = 10_000;
+    }
+    if st.config.relay_setup_refund_cooldown_seconds == 0 {
+        st.config.relay_setup_refund_cooldown_seconds = 300;
+    }
+    if st.config.relay_initial_cycles == 0 {
+        st.config.relay_initial_cycles = 1_000_000_000_000;
+    }
+    if st.config.relay_cycle_safety_margin_e8s == 0 {
+        st.config.relay_cycle_safety_margin_e8s = 5_000_000;
+    }
+    if st.config.relay_min_subaccount_one_seed_e8s == 0 {
+        st.config.relay_min_subaccount_one_seed_e8s = 100_020_000;
+    }
+    if st.config.self_service_relay_interval_seconds == 0 {
+        st.config.self_service_relay_interval_seconds = 3600;
+    }
+    if st.config.io_surplus_neuron_id == 0 {
+        st.config.io_surplus_neuron_id = DEFAULT_IO_SURPLUS_NEURON_ID;
+    }
+    if st.config.canonical_relay_canister_id.is_none() {
+        st.config.canonical_relay_canister_id = Some(mainnet_relay_id());
+    }
+    if st.config.canonical_relay_targets.is_empty() {
+        st.config.canonical_relay_targets = mainnet_canonical_relay_targets();
+    }
+    ensure_canonical_relay_registry(st);
+}
+
+pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
+    let Some(relay_canister_id) = st.config.canonical_relay_canister_id else {
+        return;
+    };
+    let targets = st.config.canonical_relay_targets.clone();
+    for target_canister_id in targets {
+        let entry = RelayRegistryEntry {
+            relay_canister_id,
+            target_canister_id,
+            kind: RelayRegistryKind::Canonical,
+            status: RelayRegistryStatus::Active,
+            setup_account: None,
+            setup_account_identifier: None,
+            setup_amount_e8s: None,
+            setup_tx_ids: Vec::new(),
+            relay_wasm_hash_hex: None,
+            final_controllers: None,
+            log_visibility_public: Some(true),
+            created_at_ts: None,
+            activated_at_ts: None,
+        };
+        st.relay_registry_by_target
+            .entry(target_canister_id)
+            .or_insert(entry);
+    }
+    rebuild_relay_targets_by_relay(st);
+}
+
+pub(crate) fn rebuild_relay_targets_by_relay(st: &mut State) {
+    st.relay_targets_by_relay.clear();
+    for entry in st.relay_registry_by_target.values() {
+        st.relay_targets_by_relay
+            .entry(entry.relay_canister_id)
+            .or_default()
+            .push(entry.target_canister_id);
+    }
+    for targets in st.relay_targets_by_relay.values_mut() {
+        targets.sort();
+        targets.dedup();
+    }
 }
 
 pub(super) fn initialize_derived_state_if_missing(st: &mut State) {
@@ -618,6 +743,42 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         if let Some(v) = args.xrc_canister_id {
             st.config.xrc_canister_id = v;
         }
+        if let Some(v) = args.relay_factory_enabled {
+            st.config.relay_factory_enabled = v;
+        }
+        if let Some(v) = args.relay_setup_min_e8s {
+            st.config.relay_setup_min_e8s = v;
+        }
+        if let Some(v) = args.relay_setup_dust_e8s {
+            st.config.relay_setup_dust_e8s = v;
+        }
+        if let Some(v) = args.relay_setup_refund_cooldown_seconds {
+            st.config.relay_setup_refund_cooldown_seconds = v;
+        }
+        if let Some(v) = args.relay_initial_cycles {
+            st.config.relay_initial_cycles = v;
+        }
+        if let Some(v) = args.relay_cycle_safety_margin_e8s {
+            st.config.relay_cycle_safety_margin_e8s = v;
+        }
+        if let Some(v) = args.relay_min_subaccount_one_seed_e8s {
+            st.config.relay_min_subaccount_one_seed_e8s = v;
+        }
+        if let Some(v) = args.self_service_relay_interval_seconds {
+            st.config.self_service_relay_interval_seconds = v.max(60);
+        }
+        if let Some(v) = args.self_service_relay_max_transfers_per_tick {
+            st.config.self_service_relay_max_transfers_per_tick = v;
+        }
+        if let Some(v) = args.io_surplus_neuron_id {
+            st.config.io_surplus_neuron_id = v;
+        }
+        if let Some(v) = args.canonical_relay_canister_id {
+            st.config.canonical_relay_canister_id = v;
+        }
+        if let Some(v) = args.canonical_relay_targets {
+            st.config.canonical_relay_targets = v;
+        }
         if let Some(v) = args.output_source_account {
             st.config.output_source_account = v;
         }
@@ -633,6 +794,7 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     }
     initialize_derived_state_if_missing(st);
     normalize_runtime_state(st);
+    ensure_canonical_relay_registry(st);
     validate_config(&st.config);
     st.main_lock_state_ts = Some(0);
 }

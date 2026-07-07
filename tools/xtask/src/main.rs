@@ -10,6 +10,7 @@
 use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use jupiter_ic_clients::account::relay_setup_subaccount;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::constants as ic_constants;
 use num_traits::ToPrimitive;
@@ -365,6 +366,22 @@ struct TransferRecord {
     result: String,
 }
 
+#[derive(Debug, CandidType, Deserialize)]
+struct Tokens {
+    e8s: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct LegacyTransferRecord {
+    from: Account,
+    to_account_identifier_hex: String,
+    amount: Tokens,
+    fee: Tokens,
+    memo: u64,
+    created_at_time: Option<u64>,
+    result: String,
+}
+
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum ForcedRescueReason {
     BootstrapNoSuccess,
@@ -564,6 +581,137 @@ struct HistorianDebugConfig {
     max_commitment_entries_per_canister: u32,
     max_index_pages_per_tick: u32,
     max_canisters_per_cycles_tick: u32,
+}
+
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelayRegistryKind {
+    Canonical,
+    SelfService,
+}
+
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelayRegistryStatus {
+    Pending,
+    Active,
+    Failed,
+    Superseded,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelayRegistryEntry {
+    relay_canister_id: Principal,
+    target_canister_id: Principal,
+    kind: RelayRegistryKind,
+    status: RelayRegistryStatus,
+    setup_account: Option<Account>,
+    setup_account_identifier: Option<String>,
+    setup_amount_e8s: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    relay_wasm_hash_hex: Option<String>,
+    final_controllers: Option<Vec<Principal>>,
+    log_visibility_public: Option<bool>,
+    created_at_ts: Option<u64>,
+    activated_at_ts: Option<u64>,
+}
+
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq, Clone)]
+enum RelaySetupStatus {
+    NotFunded,
+    BelowMinimum,
+    InsufficientForCurrentRate,
+    TargetNotObservable,
+    Pending,
+    ConvertingCycles,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    CreatingCanister,
+    CanisterCreated,
+    InstallingCode,
+    CodeInstalled,
+    SettingPublicLogs,
+    FundingRelaySubaccountOne,
+    Blackholing,
+    Active,
+    SweepingToExistingRelay,
+    SweptToExistingRelay,
+    SweepBelowDust,
+    RefundAvailable,
+    Refunding,
+    Refunded,
+    FailedRetryable,
+    FailedTerminal,
+    Ambiguous,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelaySetupJobView {
+    target_canister_id: Principal,
+    status: RelaySetupStatus,
+    relay_canister_id: Option<Principal>,
+    setup_amount_seen_e8s: u64,
+    setup_amount_processed_e8s: u64,
+    cycle_conversion_e8s: Option<u64>,
+    relay_funding_e8s: Option<u64>,
+    last_error: Option<String>,
+    updated_at_ts: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelaySetupView {
+    target_canister_id: Principal,
+    setup_account: Account,
+    setup_account_identifier: String,
+    minimum_e8s: u64,
+    dust_e8s: u64,
+    current_status: Option<RelaySetupStatus>,
+    existing_relay: Option<RelayRegistryEntry>,
+    setup_job: Option<RelaySetupJobView>,
+    factory_enabled: bool,
+    relay_wasm_hash_hex: Option<String>,
+    warning_text: Option<String>,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+enum RelaySetupNotifyResult {
+    BelowMinimum {
+        minimum_e8s: u64,
+        current_balance_e8s: u64,
+    },
+    InsufficientForCurrentRate {
+        required_e8s: u64,
+        current_balance_e8s: u64,
+    },
+    TargetNotObservable {
+        message: String,
+    },
+    Pending {
+        job: RelaySetupJobView,
+    },
+    Active {
+        relay: RelayRegistryEntry,
+    },
+    SweptToExistingRelay {
+        relay: RelayRegistryEntry,
+        amount_e8s: u64,
+        block_index: u64,
+    },
+    SweepBelowDust {
+        relay: RelayRegistryEntry,
+        current_balance_e8s: u64,
+    },
+    Failed {
+        status: RelaySetupStatus,
+        message: String,
+    },
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+enum RelaySetupRefundResult {
+    NotEligible { status: Option<RelaySetupStatus> },
+    Cooldown { retry_after_seconds: u64 },
+    Refunded { blocks: Vec<u64> },
+    NoRefundableAmount,
+    Failed { message: String },
 }
 
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -829,6 +977,33 @@ fn account_to_candid(account: &Account) -> String {
         "record {{ owner = principal \"{}\"; subaccount = {} }}",
         account.owner.to_text(),
         subaccount
+    )
+}
+
+fn relay_setup_view(target: Principal) -> Result<RelaySetupView> {
+    call_raw(
+        "jupiter_historian_dbg",
+        "get_relay_setup_view",
+        &format!(
+            r#"(record {{ target_canister_id = principal "{}" }})"#,
+            target.to_text()
+        ),
+    )
+}
+
+fn append_setup_payment(
+    source: Account,
+    setup_account_identifier: &str,
+    amount_e8s: u64,
+) -> Result<u64> {
+    let source_id = account_identifier_text(source.owner, source.subaccount);
+    call_raw(
+        "mock_icp_index",
+        "debug_append_transfer_from",
+        &format!(
+            r#"("{}", "{}", {}:nat64, null)"#,
+            source_id, setup_account_identifier, amount_e8s
+        ),
     )
 }
 
@@ -3465,6 +3640,222 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
 fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+
+    run_scenario(
+        outcomes,
+        label("icp", "historian", "relay setup account is deterministic"),
+        || {
+            reset_historian_local_replica_state()?;
+            let historian = Principal::from_text(canister_id("jupiter_historian_dbg")?.trim())?;
+            let view = relay_setup_view(target)?;
+            let expected_subaccount = relay_setup_subaccount(target);
+            let expected_account = Account {
+                owner: historian,
+                subaccount: Some(expected_subaccount),
+            };
+            let expected_account_identifier =
+                account_identifier_text(expected_account.owner, expected_account.subaccount);
+
+            if view.target_canister_id != target
+                || view.setup_account != expected_account
+                || view.setup_account_identifier != expected_account_identifier
+                || view.existing_relay.is_some()
+            {
+                bail!("unexpected relay setup view: {view:?}");
+            }
+            if view.minimum_e8s == 0 || view.dust_e8s == 0 {
+                bail!("relay setup view should expose positive economics: {view:?}");
+            }
+            Ok(())
+        },
+    );
+
+    run_scenario(
+        outcomes,
+        label("icp", "historian", "notify below minimum does not spend"),
+        || {
+            reset_historian_local_replica_state()?;
+            let view = relay_setup_view(target)?;
+            let amount = view.minimum_e8s.saturating_sub(1);
+            let source = Account {
+                owner: short_test_principal(),
+                subaccount: Some([11; 32]),
+            };
+            let _: () = call_raw(
+                "mock_icrc_ledger",
+                "debug_credit",
+                &format!(
+                    "({}, {}:nat64)",
+                    account_to_candid(&view.setup_account),
+                    amount
+                ),
+            )?;
+            append_setup_payment(source, &view.setup_account_identifier, amount)?;
+
+            let result: RelaySetupNotifyResult = call_raw(
+                "jupiter_historian_dbg",
+                "notify_relay_setup",
+                &format!(r#"(principal "{}")"#, target.to_text()),
+            )?;
+            match result {
+                RelaySetupNotifyResult::BelowMinimum {
+                    minimum_e8s,
+                    current_balance_e8s,
+                } if minimum_e8s == view.minimum_e8s && current_balance_e8s == amount => {}
+                other => bail!("expected BelowMinimum notify result, got {other:?}"),
+            }
+
+            let relay: Option<RelayRegistryEntry> = call_raw(
+                "jupiter_historian_dbg",
+                "get_relay_for_canister",
+                &format!(r#"(principal "{}")"#, target.to_text()),
+            )?;
+            if relay.is_some() {
+                bail!("below-minimum notify should not register a relay: {relay:?}");
+            }
+            let balance: Nat = call_raw(
+                "mock_icrc_ledger",
+                "icrc1_balance_of",
+                &format!("({})", account_to_candid(&view.setup_account)),
+            )?;
+            if nat_to_u64(&balance) != amount {
+                bail!("below-minimum notify spent funds: balance={balance}");
+            }
+            Ok(())
+        },
+    );
+
+    run_scenario(
+        outcomes,
+        label(
+            "icp",
+            "historian",
+            "target not observable exposes refund to source",
+        ),
+        || {
+            reset_historian_local_replica_state()?;
+            let view = relay_setup_view(target)?;
+            let amount = view.minimum_e8s;
+            let source = Account {
+                owner: short_test_principal(),
+                subaccount: Some([12; 32]),
+            };
+            let source_id = account_identifier_text(source.owner, source.subaccount);
+            let _: () = call_raw(
+                "mock_icrc_ledger",
+                "debug_credit",
+                &format!(
+                    "({}, {}:nat64)",
+                    account_to_candid(&view.setup_account),
+                    amount
+                ),
+            )?;
+            append_setup_payment(source, &view.setup_account_identifier, amount)?;
+
+            let result: RelaySetupNotifyResult = call_raw(
+                "jupiter_historian_dbg",
+                "notify_relay_setup",
+                &format!(r#"(principal "{}")"#, target.to_text()),
+            )?;
+            if !matches!(result, RelaySetupNotifyResult::TargetNotObservable { .. }) {
+                bail!("expected TargetNotObservable, got {result:?}");
+            }
+
+            let refund: RelaySetupRefundResult = call_raw(
+                "jupiter_historian_dbg",
+                "request_relay_setup_refund",
+                &format!(r#"(principal "{}")"#, target.to_text()),
+            )?;
+            if !matches!(refund, RelaySetupRefundResult::Refunded { .. }) {
+                bail!("expected Refunded result, got {refund:?}");
+            }
+            let legacy: Vec<LegacyTransferRecord> =
+                call_raw_noargs("mock_icrc_ledger", "debug_legacy_transfers")?;
+            if legacy.len() != 1
+                || legacy[0].to_account_identifier_hex != source_id
+                || legacy[0].from != view.setup_account
+                || legacy[0].amount.e8s == 0
+            {
+                bail!("unexpected legacy refund transfers: {legacy:?}");
+            }
+            Ok(())
+        },
+    );
+
+    run_scenario(
+        outcomes,
+        label(
+            "icp",
+            "historian",
+            "existing relay setup balance sweeps to relay subaccount one",
+        ),
+        || {
+            reset_historian_local_replica_state()?;
+            let view = relay_setup_view(target)?;
+            let relay = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
+            let amount = view.minimum_e8s;
+            let _: () = call_raw(
+                "jupiter_historian_dbg",
+                "debug_insert_relay_registry_entry",
+                &format!(
+                    r#"(record {{
+                        relay_canister_id = principal "{}";
+                        target_canister_id = principal "{}";
+                        kind = variant {{ SelfService }};
+                        status = variant {{ Active }};
+                        setup_account = null;
+                        setup_account_identifier = null;
+                        setup_amount_e8s = null;
+                        setup_tx_ids = vec {{}};
+                        relay_wasm_hash_hex = null;
+                        final_controllers = null;
+                        log_visibility_public = null;
+                        created_at_ts = null;
+                        activated_at_ts = null;
+                    }})"#,
+                    relay.to_text(),
+                    target.to_text()
+                ),
+            )?;
+            let _: () = call_raw(
+                "mock_icrc_ledger",
+                "debug_credit",
+                &format!(
+                    "({}, {}:nat64)",
+                    account_to_candid(&view.setup_account),
+                    amount
+                ),
+            )?;
+
+            let result: RelaySetupNotifyResult = call_raw(
+                "jupiter_historian_dbg",
+                "notify_relay_setup",
+                &format!(r#"(principal "{}")"#, target.to_text()),
+            )?;
+            let swept_amount = match result {
+                RelaySetupNotifyResult::SweptToExistingRelay { amount_e8s, .. } => amount_e8s,
+                other => bail!("expected sweep result for existing relay, got {other:?}"),
+            };
+            let transfers: Vec<TransferRecord> =
+                call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+            let transfer = transfers
+                .last()
+                .context("expected setup sweep ledger transfer")?;
+            let mut relay_subaccount_one = [0u8; 32];
+            relay_subaccount_one[31] = 1;
+            if transfer.from != view.setup_account
+                || transfer.to
+                    != (Account {
+                        owner: relay,
+                        subaccount: Some(relay_subaccount_one),
+                    })
+                || nat_to_u64(&transfer.amount) != swept_amount
+            {
+                bail!("unexpected sweep transfer: {transfer:?}");
+            }
+            Ok(())
+        },
+    );
 
     run_scenario(
         outcomes,

@@ -6,7 +6,7 @@ import { createTrackerController } from '../src/app/tracker-controller.js';
 import { simulatorHashForPrefill } from '../src/app/hash-routes.js';
 import { JUPITER_RELAY_CANISTER_ID } from '../src/app/config.js';
 import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
-import { defaultCanisterAccountIdentifier } from '../src/data/transfer-source-classification.js';
+import { classifyTransferItem, defaultCanisterAccountIdentifier, relayRegistrySourceMap } from '../src/data/transfer-source-classification.js';
 
 class FakeElement {
   constructor(attrs = {}) {
@@ -57,6 +57,21 @@ class FakeElement {
     this.focused = true;
   }
 }
+
+test('dynamic relay registry classifies relay source and adds metadata', () => {
+  const relay = 'br5f7-7uaaa-aaaaa-qaaca-cai';
+  const relayAccountId = defaultCanisterAccountIdentifier(relay);
+  const relaySourceMap = relayRegistrySourceMap([{
+    relay_canister_id: Principal.fromText(relay),
+    target_canister_id: Principal.fromText('22255-zqaaa-aaaas-qf6uq-cai'),
+  }]);
+
+  const item = classifyTransferItem({ from_account_identifier: relayAccountId }, { relaySourceMap });
+
+  assert.equal(item.source_category, 'relay');
+  assert.equal(item.source_relay_canister_id, relay);
+  assert.equal(item.source_label, 'Relay br5f7…');
+});
 
 async function flushMicrotasks() {
   await Promise.resolve();

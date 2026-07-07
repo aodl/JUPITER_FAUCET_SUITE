@@ -74,6 +74,7 @@
         <a href="#about" class="nav-item" data-panel="about">About</a>
         <a href="#how-it-works" class="nav-item" data-panel="how-it-works">How it works</a>
         <a href="#simulator" class="nav-item" data-panel="simulator">Simulator</a>
+        <a href="#relay-setup" class="nav-item" data-panel="relay-setup">Relay setup</a>
         <a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains</a>
       </div>
       <div class="nav-actions">
@@ -101,6 +102,9 @@
       </a>
       <a href="#metric-tracker" class="metric-rail-link metric-rail-link--action nav-item" data-panel="metric-tracker">
         <span class="metric-rail-link-label">Track Memos</span>
+      </a>
+      <a href="#relay-setup" class="metric-rail-link metric-rail-link--action nav-item" data-panel="relay-setup">
+        <span class="metric-rail-link-label">Create Relay</span>
       </a>
     </div>
   </aside>
@@ -873,6 +877,42 @@
             </form>
             <p class="pane-status-note tracker-status-note" id="tracker-status" hidden></p>
             <div class="tracker-result" id="tracker-result"></div>
+          </div>
+        </article>
+
+        <article class="nav-panel-section" data-panel="relay-setup" id="nav-panel-relay-setup">
+          <h2 class="nav-panel-title">Relay Setup</h2>
+          <div class="nav-panel-scroll-region">
+            <p class="nav-panel-subtitle">Create a target-specific Jupiter Relay instance without login.</p>
+            <p class="nav-panel-content">This setup creates a relay; it is not an emergency top-up. If your canister is close to freezing, top it up directly first.</p>
+            <form class="tracker-form relay-setup-form" id="relay-setup-form">
+              <label class="tracker-label" for="relay-setup-target-input">Target canister ID</label>
+              <div class="tracker-input-row">
+                <input class="tracker-input mono" id="relay-setup-target-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
+                <button class="pane-page-button" id="relay-setup-submit" type="submit">Check</button>
+              </div>
+            </form>
+            <p class="nav-panel-content memo-builder-safety-notice" id="relay-setup-warning"></p>
+            <dl class="pane-detail-grid tracker-summary-grid relay-setup-grid">
+              <div><dt>Status</dt><dd class="pane-detail-value" id="relay-setup-status" role="status" aria-live="polite"></dd></div>
+              <div><dt>Factory</dt><dd class="pane-detail-value" id="relay-setup-factory">—</dd></div>
+              <div><dt>Minimum</dt><dd class="pane-detail-value" id="relay-setup-minimum">—</dd></div>
+              <div><dt>Setup balance</dt><dd class="pane-detail-value" id="relay-setup-balance">—</dd></div>
+            </dl>
+            <section id="relay-setup-payment-details">
+              <div class="pane-inline-block">
+                <div class="pane-inline-header"><strong>ICRC setup subaccount</strong></div>
+                <code class="pane-inline-code mono" id="relay-setup-subaccount">—</code>
+              </div>
+              <div class="pane-inline-block">
+                <div class="pane-inline-header"><strong>Legacy account identifier</strong></div>
+                <code class="pane-inline-code mono" id="relay-setup-account-identifier">—</code>
+              </div>
+              <p class="pane-status-note tracker-status-note">Send at least the displayed minimum ICP to the setup account. The page checks the account balance and notifies historian when non-dust ICP is detected.</p>
+              <p class="pane-status-note tracker-status-note">Refunds are sent back to the ledger account that sent the ICP. If you paid from an exchange or custodial wallet, the refund may return to that service’s wallet rather than directly to your exchange user balance.</p>
+            </section>
+            <section id="relay-setup-existing-relay" hidden></section>
+            <button class="pane-page-button" id="relay-setup-refund" type="button" hidden>Request refund</button>
           </div>
         </article>
 

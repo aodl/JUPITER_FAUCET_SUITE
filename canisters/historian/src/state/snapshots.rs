@@ -51,6 +51,7 @@ pub(super) fn persist_snapshot_sections_scoped(
     cycles_scope: Option<&BTreeSet<Principal>>,
     raw_icp_commitment_scope: Option<&BTreeSet<Principal>>,
     neuron_commitment_scope: Option<&BTreeSet<u64>>,
+    relay_target_scope: Option<&BTreeSet<Principal>>,
 ) {
     if dirty_sections & DIRTY_REGISTRY != 0 {
         sync_canister_sources_map(&st.canister_sources, registry_scope);
@@ -84,6 +85,14 @@ pub(super) fn persist_snapshot_sections_scoped(
             sync_all_neuron_commitment_history_maps(&st.neuron_commitment_history);
         }
     }
+    if dirty_sections & DIRTY_RELAY_FACTORY != 0 {
+        sync_relay_factory_maps(
+            &st.relay_registry_by_target,
+            &st.relay_targets_by_relay,
+            &st.relay_setup_jobs,
+            relay_target_scope,
+        );
+    }
     if dirty_sections & DIRTY_ROOT != 0 {
         // Commit the root section last so the durable root always points at fully written
         // bulk sections. This keeps the root as the final commit marker if a trap occurs before
@@ -95,7 +104,7 @@ pub(super) fn persist_snapshot_sections_scoped(
 }
 
 pub(super) fn persist_snapshot_sections(st: &State, dirty_sections: u8) {
-    persist_snapshot_sections_scoped(st, dirty_sections, None, None, None, None, None);
+    persist_snapshot_sections_scoped(st, dirty_sections, None, None, None, None, None, None);
 }
 
 pub(super) fn persist_snapshot(st: &State) {

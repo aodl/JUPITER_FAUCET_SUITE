@@ -6,6 +6,7 @@ pub(crate) use serde::Serialize;
 pub(crate) use std::cmp::Reverse;
 pub(crate) use std::collections::{BTreeMap, BTreeSet};
 
+#[allow(unused_imports)]
 pub(crate) use crate::state::{
     CanisterMeta, CanisterSource, CommitmentIndexFault, CommitmentSample, Config, CyclesSample,
     IcpXdrRateSnapshot, InvalidCommitment, RecentCommitment, State,

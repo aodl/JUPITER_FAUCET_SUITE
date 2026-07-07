@@ -206,8 +206,40 @@ pub(super) fn debug_reset_derived_state() {
         st.icp_xdr_rate = None;
         st.last_icp_xdr_rate_attempt_ts = None;
         st.last_icp_xdr_rate_error = None;
+        st.relay_registry_by_target.clear();
+        st.relay_targets_by_relay.clear();
+        st.relay_setup_jobs.clear();
         st.registered_canister_summaries_cache = Some(BTreeMap::new());
         st.registered_canister_summaries_total_desc_index = Some(Vec::new());
+    });
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+pub(super) fn debug_get_relay_setup_job(target: Principal) -> Option<RelaySetupJob> {
+    guard_debug_api_not_production();
+    state::with_state(|st| st.relay_setup_jobs.get(&target).cloned())
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+pub(super) fn debug_insert_relay_registry_entry(entry: RelayRegistryEntry) {
+    guard_debug_api_not_production();
+    state::with_root_and_relay_factory_state_mut(entry.target_canister_id, |st| {
+        st.relay_registry_by_target
+            .insert(entry.target_canister_id, entry);
+        crate::rebuild_relay_targets_by_relay(st);
+    });
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+pub(super) fn debug_clear_relay_registry() {
+    guard_debug_api_not_production();
+    state::with_state_mut(|st| {
+        st.relay_registry_by_target.clear();
+        st.relay_targets_by_relay.clear();
+        st.relay_setup_jobs.clear();
     });
 }
 

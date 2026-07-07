@@ -33,6 +33,30 @@ pub(crate) struct Config {
     pub max_commitment_entries_per_canister: u32,
     pub max_index_pages_per_tick: u32,
     pub max_canisters_per_cycles_tick: u32,
+    #[serde(default)]
+    pub relay_factory_enabled: bool,
+    #[serde(default)]
+    pub relay_setup_min_e8s: u64,
+    #[serde(default)]
+    pub relay_setup_dust_e8s: u64,
+    #[serde(default)]
+    pub relay_setup_refund_cooldown_seconds: u64,
+    #[serde(default)]
+    pub relay_initial_cycles: u128,
+    #[serde(default)]
+    pub relay_cycle_safety_margin_e8s: u64,
+    #[serde(default)]
+    pub relay_min_subaccount_one_seed_e8s: u64,
+    #[serde(default)]
+    pub self_service_relay_interval_seconds: u64,
+    #[serde(default)]
+    pub self_service_relay_max_transfers_per_tick: Option<u32>,
+    #[serde(default)]
+    pub io_surplus_neuron_id: u64,
+    #[serde(default)]
+    pub canonical_relay_canister_id: Option<Principal>,
+    #[serde(default)]
+    pub canonical_relay_targets: Vec<Principal>,
 }
 
 fn opt_principal_text(principal: Option<Principal>) -> String {
@@ -43,7 +67,7 @@ fn opt_principal_text(principal: Option<Principal>) -> String {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, blackhole_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}",
+        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, blackhole_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}, relay_factory_enabled={}, relay_setup_min_e8s={}, relay_setup_dust_e8s={}, relay_setup_refund_cooldown_seconds={}, relay_initial_cycles={}, relay_cycle_safety_margin_e8s={}, relay_min_subaccount_one_seed_e8s={}, self_service_relay_interval_seconds={}, self_service_relay_max_transfers_per_tick={:?}, io_surplus_neuron_id={}, canonical_relay_canister_id={}, canonical_relay_targets={}",
         account_text(&cfg.staking_account),
         account_text(&cfg.output_source_account),
         account_text(&cfg.output_account),
@@ -62,7 +86,23 @@ pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
         cfg.max_cycles_entries_per_canister,
         cfg.max_commitment_entries_per_canister,
         cfg.max_index_pages_per_tick,
-        cfg.max_canisters_per_cycles_tick
+        cfg.max_canisters_per_cycles_tick,
+        cfg.relay_factory_enabled,
+        cfg.relay_setup_min_e8s,
+        cfg.relay_setup_dust_e8s,
+        cfg.relay_setup_refund_cooldown_seconds,
+        cfg.relay_initial_cycles,
+        cfg.relay_cycle_safety_margin_e8s,
+        cfg.relay_min_subaccount_one_seed_e8s,
+        cfg.self_service_relay_interval_seconds,
+        cfg.self_service_relay_max_transfers_per_tick,
+        cfg.io_surplus_neuron_id,
+        opt_principal_text(cfg.canonical_relay_canister_id),
+        cfg.canonical_relay_targets
+            .iter()
+            .map(|p| p.to_text())
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 
@@ -222,6 +262,127 @@ pub(crate) struct StableConfig {
     pub max_commitment_entries_per_canister: u32,
     pub max_index_pages_per_tick: u32,
     pub max_canisters_per_cycles_tick: u32,
+    #[serde(default)]
+    pub relay_factory_enabled: Option<bool>,
+    #[serde(default)]
+    pub relay_setup_min_e8s: Option<u64>,
+    #[serde(default)]
+    pub relay_setup_dust_e8s: Option<u64>,
+    #[serde(default)]
+    pub relay_setup_refund_cooldown_seconds: Option<u64>,
+    #[serde(default)]
+    pub relay_initial_cycles: Option<u128>,
+    #[serde(default)]
+    pub relay_cycle_safety_margin_e8s: Option<u64>,
+    #[serde(default)]
+    pub relay_min_subaccount_one_seed_e8s: Option<u64>,
+    #[serde(default)]
+    pub self_service_relay_interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub self_service_relay_max_transfers_per_tick: Option<Option<u32>>,
+    #[serde(default)]
+    pub io_surplus_neuron_id: Option<u64>,
+    #[serde(default)]
+    pub canonical_relay_canister_id: Option<Option<Principal>>,
+    #[serde(default)]
+    pub canonical_relay_targets: Option<Vec<Principal>>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum RelayRegistryKind {
+    Canonical,
+    SelfService,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum RelayRegistryStatus {
+    Pending,
+    Active,
+    Failed,
+    Superseded,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelayRegistryEntry {
+    pub relay_canister_id: Principal,
+    pub target_canister_id: Principal,
+    pub kind: RelayRegistryKind,
+    pub status: RelayRegistryStatus,
+    pub setup_account: Option<Account>,
+    pub setup_account_identifier: Option<String>,
+    pub setup_amount_e8s: Option<u64>,
+    pub setup_tx_ids: Vec<u64>,
+    pub relay_wasm_hash_hex: Option<String>,
+    pub final_controllers: Option<Vec<Principal>>,
+    pub log_visibility_public: Option<bool>,
+    pub created_at_ts: Option<u64>,
+    pub activated_at_ts: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum RelaySetupStatus {
+    NotFunded,
+    BelowMinimum,
+    InsufficientForCurrentRate,
+    TargetNotObservable,
+    Pending,
+    ConvertingCycles,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    CreatingCanister,
+    CanisterCreated,
+    InstallingCode,
+    CodeInstalled,
+    SettingPublicLogs,
+    FundingRelaySubaccountOne,
+    Blackholing,
+    Active,
+    SweepingToExistingRelay,
+    SweptToExistingRelay,
+    SweepBelowDust,
+    RefundAvailable,
+    Refunding,
+    Refunded,
+    FailedRetryable,
+    FailedTerminal,
+    Ambiguous,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelaySetupPayment {
+    pub target_canister_id: Principal,
+    pub tx_id: u64,
+    pub from_account_identifier: String,
+    pub amount_e8s: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub processed: bool,
+    pub refunded: bool,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelaySetupJob {
+    pub target_canister_id: Principal,
+    pub setup_account: Account,
+    pub setup_account_identifier: String,
+    pub status: RelaySetupStatus,
+    pub relay_canister_id: Option<Principal>,
+    pub last_indexed_setup_tx_id: Option<u64>,
+    pub setup_tx_ids: Vec<u64>,
+    pub setup_amount_seen_e8s: u64,
+    pub setup_amount_processed_e8s: u64,
+    pub payments: Vec<RelaySetupPayment>,
+    pub cycle_conversion_e8s: Option<u64>,
+    pub cycle_transfer_block_index: Option<u64>,
+    pub cycles_minted: Option<u128>,
+    pub relay_initial_cycles: Option<u128>,
+    pub relay_funding_e8s: Option<u64>,
+    pub relay_funding_block_index: Option<u64>,
+    pub refund_attempt_count: u32,
+    pub last_refund_attempt_ts: Option<u64>,
+    pub refund_blocks: Vec<u64>,
+    pub created_at_ts: u64,
+    pub updated_at_ts: u64,
+    pub last_error: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -594,6 +755,59 @@ impl Storable for StableCanisterMeta {
     const BOUND: Bound = Bound::Unbounded;
 }
 
+impl Storable for RelayRegistryEntry {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(
+            candid::encode_one(self).expect("failed to encode historian relay registry entry"),
+        )
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian relay registry entry")
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(bytes.as_ref()).expect("failed to decode historian relay registry entry")
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
+pub(super) struct StableRelayTargetList(pub Vec<Principal>);
+
+impl Storable for StableRelayTargetList {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(candid::encode_one(self).expect("failed to encode historian relay target list"))
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian relay target list")
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(bytes.as_ref()).expect("failed to decode historian relay target list")
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+impl Storable for RelaySetupJob {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(candid::encode_one(self).expect("failed to encode historian relay setup job"))
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        candid::encode_one(self).expect("failed to encode historian relay setup job")
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(bytes.as_ref()).expect("failed to decode historian relay setup job")
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) struct State {
     pub config: Config,
@@ -602,6 +816,12 @@ pub(crate) struct State {
     pub commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
+    #[serde(default)]
+    pub relay_registry_by_target: BTreeMap<Principal, RelayRegistryEntry>,
+    #[serde(default)]
+    pub relay_targets_by_relay: BTreeMap<Principal, Vec<Principal>>,
+    #[serde(default)]
+    pub relay_setup_jobs: BTreeMap<Principal, RelaySetupJob>,
     #[serde(default)]
     pub registered_canister_summaries_cache:
         Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
@@ -678,6 +898,9 @@ impl State {
             commitment_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
+            relay_registry_by_target: BTreeMap::new(),
+            relay_targets_by_relay: BTreeMap::new(),
+            relay_setup_jobs: BTreeMap::new(),
             registered_canister_summaries_cache: Some(BTreeMap::new()),
             registered_canister_summaries_total_desc_index: Some(Vec::new()),
             last_indexed_staking_tx_id: None,

@@ -300,6 +300,7 @@ test('raw HTML sinks stay inventoried for XSS review coverage', () => {
     'app/dashboard-tables-controller.js:body.innerHTML = items.length',
     'app/dashboard-tables-controller.js:body.innerHTML = pageItems.length',
     'app/dashboard-tables-controller.js:node.innerHTML = `Jupiter neuron maturity is disbursed to the controlling canister\'s ${stagingLink}. ${escapeHtml(routeLabel)} counts ICP routed from that staging account to ${destination}. ${aggregate ? \'Historian tracks the aggregate; \' : \'\'}recent rows are fetched directly from the ICP index canister.`;',
+    "app/relay-setup-controller.js:if (node) node.innerHTML = value || '';",
     'app/simulator-controller.js:assumption.innerHTML = `Projection uses the configured APY. Exact APY depends on numerous factors — consult the <a class="pane-external-link" href="${dashboardHref}" target="_blank" rel="noopener noreferrer">dashboard</a> for the current annualised rewards estimate. ${ageBonusCopy} ${rateCopy} It assumes 1T cycles per ICP/XDR price unit and a weekly-cadence one-year projection.`;',
     "app/simulator-controller.js:if (wrapper) wrapper.innerHTML = renderEmptyChart('Enter valid simulator inputs to render the projection.');",
     'app/simulator-controller.js:wrapper.innerHTML = `',

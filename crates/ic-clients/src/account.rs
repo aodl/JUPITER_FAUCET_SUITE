@@ -6,6 +6,9 @@
 
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
+use sha2::{Digest, Sha256};
+
+pub const RELAY_SETUP_SUBACCOUNT_DOMAIN: &[u8] = b"jupiter-relay-setup-v1";
 
 pub fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     let bytes = principal.as_slice();
@@ -14,6 +17,13 @@ pub fn principal_to_subaccount(principal: Principal) -> [u8; 32] {
     let len = bytes.len().min(31);
     out[1..1 + len].copy_from_slice(&bytes[..len]);
     out
+}
+
+pub fn relay_setup_subaccount(target: Principal) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(RELAY_SETUP_SUBACCOUNT_DOMAIN);
+    hasher.update(target.as_slice());
+    hasher.finalize().into()
 }
 
 pub fn subaccount_text(subaccount: &Option<[u8; 32]>) -> String {
@@ -34,7 +44,7 @@ pub fn account_text(account: &Account) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{account_text, principal_to_subaccount, subaccount_text};
+    use super::{account_text, principal_to_subaccount, relay_setup_subaccount, subaccount_text};
     use candid::Principal;
     use icrc_ledger_types::icrc1::account::Account;
 
@@ -71,5 +81,17 @@ mod tests {
             account_text(&account),
             "qaa6y-5yaaa-aaaaa-aaafa-cai:0707070707070707070707070707070707070707070707070707070707070707"
         );
+    }
+
+    #[test]
+    fn relay_setup_subaccount_is_domain_separated_sha256() {
+        let principal = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let subaccount = relay_setup_subaccount(principal);
+
+        assert_eq!(
+            hex::encode(subaccount),
+            "9008ebda9c222b8ca7a187b58876c9c5ce11ec50eb413da2c1ab1b8f71447312"
+        );
+        assert_ne!(subaccount, principal_to_subaccount(principal));
     }
 }

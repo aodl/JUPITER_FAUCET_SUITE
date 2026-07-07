@@ -22,6 +22,30 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         }
         out
     });
+    let relay_registry_by_target = with_relay_registry_by_target_map(|map| {
+        let mut out = BTreeMap::new();
+        for entry in map.iter() {
+            let (key, value) = entry.into_pair();
+            out.insert(key.to_principal(), value.clone());
+        }
+        out
+    });
+    let relay_targets_by_relay = with_relay_targets_by_relay_map(|map| {
+        let mut out = BTreeMap::new();
+        for entry in map.iter() {
+            let (key, value) = entry.into_pair();
+            out.insert(key.to_principal(), value.0.clone());
+        }
+        out
+    });
+    let relay_setup_jobs = with_relay_setup_jobs_map(|map| {
+        let mut out = BTreeMap::new();
+        for entry in map.iter() {
+            let (key, value) = entry.into_pair();
+            out.insert(key.to_principal(), value.clone());
+        }
+        out
+    });
 
     let mut st = State {
         config: root.config.into(),
@@ -30,6 +54,9 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         commitment_history,
         cycles_history,
         per_canister_meta,
+        relay_registry_by_target,
+        relay_targets_by_relay,
+        relay_setup_jobs,
         registered_canister_summaries_cache: None,
         registered_canister_summaries_total_desc_index: None,
         last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,

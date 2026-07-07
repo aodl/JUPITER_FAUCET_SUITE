@@ -341,6 +341,7 @@ const neuronDetailsController = createNeuronDetailsController({
 
 const neuronState = neuronDetailsController.state;
 let trackerControllerPromise = null;
+let relaySetupControllerPromise = null;
 
 async function getTrackerController() {
   if (!trackerControllerPromise) {
@@ -360,8 +361,26 @@ async function getTrackerController() {
   return trackerControllerPromise;
 }
 
+async function getRelaySetupController() {
+  if (!relaySetupControllerPromise) {
+    relaySetupControllerPromise = import('./relay-setup-controller.js').then(({ createRelaySetupController }) => {
+      const controller = createRelaySetupController({
+        frontendConfig: FRONTEND_CONFIG,
+        isLocalHost,
+      });
+      controller.bindPane();
+      return controller;
+    });
+  }
+  return relaySetupControllerPromise;
+}
+
 function trackerHashIsActive() {
   return window.location.hash.startsWith('#metric-tracker');
+}
+
+function relaySetupHashIsActive() {
+  return window.location.hash === '#relay-setup';
 }
 
 async function ensureNeuronDetailsLoaded(data) {
@@ -437,10 +456,16 @@ document.addEventListener('click', (event) => {
 if (trackerHashIsActive()) {
   void getTrackerController().then((controller) => controller.hydrateFromLocationHash({ submit: true }));
 }
+if (relaySetupHashIsActive()) {
+  void getRelaySetupController();
+}
 simulatorController.hydrateFromLocationHash();
 window.addEventListener('hashchange', () => {
   if (trackerHashIsActive()) {
     void getTrackerController().then((controller) => controller.hydrateFromLocationHash({ submit: true }));
+  }
+  if (relaySetupHashIsActive()) {
+    void getRelaySetupController();
   }
   simulatorController.hydrateFromLocationHash();
 });
@@ -457,6 +482,10 @@ document.addEventListener('navpanel:open', async (event) => {
     const hydrated = trackerController.hydrateFromLocationHash({ submit: true });
     if (!hydrated) trackerController.renderPrompt();
     window.setTimeout(() => document.getElementById('tracker-principal-input')?.focus?.(), 0);
+  }
+  if (event?.detail?.key === 'relay-setup') {
+    await getRelaySetupController();
+    window.setTimeout(() => document.getElementById('relay-setup-target-input')?.focus?.(), 0);
   }
 });
 if (window.location.hash === '#source' || document.querySelector('.nav-panel-section--active[data-panel="source"]')) {

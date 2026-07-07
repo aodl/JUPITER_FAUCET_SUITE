@@ -66,6 +66,18 @@ type InitArgs = record {
   max_commitment_entries_per_canister : opt nat32;
   max_index_pages_per_tick : opt nat32;
   max_canisters_per_cycles_tick : opt nat32;
+  relay_factory_enabled : opt bool;
+  relay_setup_min_e8s : opt nat64;
+  relay_setup_dust_e8s : opt nat64;
+  relay_setup_refund_cooldown_seconds : opt nat64;
+  relay_initial_cycles : opt nat;
+  relay_cycle_safety_margin_e8s : opt nat64;
+  relay_min_subaccount_one_seed_e8s : opt nat64;
+  self_service_relay_interval_seconds : opt nat64;
+  self_service_relay_max_transfers_per_tick : opt nat32;
+  io_surplus_neuron_id : opt nat64;
+  canonical_relay_canister_id : opt principal;
+  canonical_relay_targets : opt vec principal;
 };
 type ListCanistersArgs = record {
   start_after : opt principal;
@@ -138,6 +150,137 @@ type PublicStatus = record {
   commitment_index_fault : opt CommitmentIndexFault;
   icp_xdr_rate : opt IcpXdrRateSnapshot;
   last_icp_xdr_rate_error : opt text;
+  relay_factory_enabled : opt bool;
+  relay_setup_min_e8s : opt nat64;
+  relay_setup_dust_e8s : opt nat64;
+  relay_wasm_hash_hex : opt text;
+};
+type RelayRegistryKind = variant { Canonical; SelfService };
+type RelayRegistryStatus = variant { Pending; Active; Failed; Superseded };
+type RelayRegistryEntry = record {
+  relay_canister_id : principal;
+  target_canister_id : principal;
+  kind : RelayRegistryKind;
+  status : RelayRegistryStatus;
+  setup_account : opt Account;
+  setup_account_identifier : opt text;
+  setup_amount_e8s : opt nat64;
+  setup_tx_ids : vec nat64;
+  relay_wasm_hash_hex : opt text;
+  final_controllers : opt vec principal;
+  log_visibility_public : opt bool;
+  created_at_ts : opt nat64;
+  activated_at_ts : opt nat64;
+};
+type RelaySetupStatus = variant {
+  NotFunded;
+  BelowMinimum;
+  InsufficientForCurrentRate;
+  TargetNotObservable;
+  Pending;
+  ConvertingCycles;
+  CycleTransferAccepted;
+  CycleNotifySucceeded;
+  CreatingCanister;
+  CanisterCreated;
+  InstallingCode;
+  CodeInstalled;
+  SettingPublicLogs;
+  FundingRelaySubaccountOne;
+  Blackholing;
+  Active;
+  SweepingToExistingRelay;
+  SweptToExistingRelay;
+  SweepBelowDust;
+  RefundAvailable;
+  Refunding;
+  Refunded;
+  FailedRetryable;
+  FailedTerminal;
+  Ambiguous;
+};
+type RelaySetupJobView = record {
+  target_canister_id : principal;
+  status : RelaySetupStatus;
+  relay_canister_id : opt principal;
+  setup_amount_seen_e8s : nat64;
+  setup_amount_processed_e8s : nat64;
+  cycle_conversion_e8s : opt nat64;
+  relay_funding_e8s : opt nat64;
+  last_error : opt text;
+  updated_at_ts : nat64;
+};
+type RelaySetupPayment = record {
+  target_canister_id : principal;
+  tx_id : nat64;
+  from_account_identifier : text;
+  amount_e8s : nat64;
+  timestamp_nanos : opt nat64;
+  processed : bool;
+  refunded : bool;
+};
+type RelaySetupJob = record {
+  target_canister_id : principal;
+  setup_account : Account;
+  setup_account_identifier : text;
+  status : RelaySetupStatus;
+  relay_canister_id : opt principal;
+  last_indexed_setup_tx_id : opt nat64;
+  setup_tx_ids : vec nat64;
+  setup_amount_seen_e8s : nat64;
+  setup_amount_processed_e8s : nat64;
+  payments : vec RelaySetupPayment;
+  cycle_conversion_e8s : opt nat64;
+  cycle_transfer_block_index : opt nat64;
+  cycles_minted : opt nat;
+  relay_initial_cycles : opt nat;
+  relay_funding_e8s : opt nat64;
+  relay_funding_block_index : opt nat64;
+  refund_attempt_count : nat32;
+  last_refund_attempt_ts : opt nat64;
+  refund_blocks : vec nat64;
+  created_at_ts : nat64;
+  updated_at_ts : nat64;
+  last_error : opt text;
+};
+type GetRelaySetupViewArgs = record { target_canister_id : principal };
+type RelaySetupView = record {
+  target_canister_id : principal;
+  setup_account : Account;
+  setup_account_identifier : text;
+  minimum_e8s : nat64;
+  dust_e8s : nat64;
+  current_status : opt RelaySetupStatus;
+  existing_relay : opt RelayRegistryEntry;
+  setup_job : opt RelaySetupJobView;
+  factory_enabled : bool;
+  relay_wasm_hash_hex : opt text;
+  warning_text : opt text;
+};
+type ListRelayRegistrationsArgs = record {
+  start_after : opt principal;
+  limit : opt nat32;
+};
+type ListRelayRegistrationsResponse = record {
+  items : vec RelayRegistryEntry;
+  next_start_after : opt principal;
+};
+type RelaySetupNotifyResult = variant {
+  BelowMinimum : record { minimum_e8s : nat64; current_balance_e8s : nat64 };
+  InsufficientForCurrentRate : record { required_e8s : nat64; current_balance_e8s : nat64 };
+  TargetNotObservable : record { message : text };
+  Pending : record { job : RelaySetupJobView };
+  Active : record { relay : RelayRegistryEntry };
+  SweptToExistingRelay : record { relay : RelayRegistryEntry; amount_e8s : nat64; block_index : nat64 };
+  SweepBelowDust : record { relay : RelayRegistryEntry; current_balance_e8s : nat64 };
+  Failed : record { status : RelaySetupStatus; message : text };
+};
+type RelaySetupRefundResult = variant {
+  NotEligible : record { status : opt RelaySetupStatus };
+  Cooldown : record { retry_after_seconds : nat64 };
+  Refunded : record { blocks : vec nat64 };
+  NoRefundableAmount;
+  Failed : record { message : text };
 };
 type ListRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
@@ -236,6 +379,12 @@ service : (InitArgs) -> {
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
+  get_relay_setup_view : (GetRelaySetupViewArgs) -> (RelaySetupView) query;
+  get_relay_for_canister : (principal) -> (opt RelayRegistryEntry) query;
+  get_relay_by_id : (principal) -> (vec RelayRegistryEntry) query;
+  list_relay_registrations : (ListRelayRegistrationsArgs) -> (ListRelayRegistrationsResponse) query;
+  notify_relay_setup : (principal) -> (RelaySetupNotifyResult);
+  request_relay_setup_refund : (principal) -> (RelaySetupRefundResult);
   find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;
   list_registered_canister_summaries : (ListRegisteredCanisterSummariesArgs) -> (ListRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
@@ -250,4 +399,7 @@ service : (InitArgs) -> {
   debug_set_icp_xdr_rate_fetched_at_ts : (opt nat64) -> ();
   debug_reset_runtime_state : () -> ();
   debug_reset_derived_state : () -> ();
+  debug_get_relay_setup_job : (principal) -> (opt RelaySetupJob) query;
+  debug_insert_relay_registry_entry : (RelayRegistryEntry) -> ();
+  debug_clear_relay_registry : () -> ();
 }

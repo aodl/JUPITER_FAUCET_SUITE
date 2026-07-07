@@ -1,5 +1,5 @@
 import { Principal } from '@icp-sdk/core/principal';
-import { sha224 } from '@noble/hashes/sha2.js';
+import { sha224, sha256 } from '@noble/hashes/sha2.js';
 import {
   DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX,
   GOVERNANCE_CANISTER_ID,
@@ -101,6 +101,20 @@ export function accountIdentifierBytes(account) {
 
 export function accountIdentifierHex(account) {
   return bytesToHex(accountIdentifierBytes(account));
+}
+
+export function relaySetupSubaccount(targetPrincipal) {
+  const target = typeof targetPrincipal === 'string' ? Principal.fromText(targetPrincipal) : targetPrincipal;
+  const domain = new TextEncoder().encode('jupiter-relay-setup-v1');
+  return sha256(concatBytes(domain, target.toUint8Array()));
+}
+
+export function relaySetupAccount({ historianCanisterId, targetCanisterId }) {
+  const owner = typeof historianCanisterId === 'string' ? Principal.fromText(historianCanisterId) : historianCanisterId;
+  return {
+    owner,
+    subaccount: [Array.from(relaySetupSubaccount(targetCanisterId))],
+  };
 }
 
 export function buildRegisteredCanisterSummariesRequest({ page = 0, pageSize = REGISTERED_SUMMARY_PAGE_SIZE } = {}) {

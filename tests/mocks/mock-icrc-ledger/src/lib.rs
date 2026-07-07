@@ -49,6 +49,41 @@ pub struct TransferRecord {
     pub result: String,
 }
 
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct LegacyTransferArg {
+    pub memo: u64,
+    pub amount: Tokens,
+    pub fee: Tokens,
+    pub from_subaccount: Option<[u8; 32]>,
+    pub to: Vec<u8>,
+    pub created_at_time: Option<LegacyTimeStamp>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct LegacyTimeStamp {
+    pub timestamp_nanos: u64,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub enum LegacyTransferError {
+    BadFee { expected_fee: Tokens },
+    InsufficientFunds { balance: Tokens },
+    TxTooOld { allowed_window_nanos: u64 },
+    TxCreatedInFuture,
+    TxDuplicate { duplicate_of: u64 },
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct LegacyTransferRecord {
+    pub from: Account,
+    pub to_account_identifier_hex: String,
+    pub amount: Tokens,
+    pub fee: Tokens,
+    pub memo: u64,
+    pub created_at_time: Option<u64>,
+    pub result: String,
+}
+
 #[derive(Default)]
 struct LedgerState {
     fee_e8s: u64,
@@ -58,6 +93,7 @@ struct LedgerState {
     next_block: u64,
     dedup: HashMap<DedupKey, u64>,
     transfers: Vec<TransferRecord>,
+    legacy_transfers: Vec<LegacyTransferRecord>,
 }
 
 thread_local! {
@@ -66,6 +102,13 @@ thread_local! {
 
 fn nat_u64(n: &Nat) -> u64 {
     n.0.to_u64().unwrap_or(u64::MAX)
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
@@ -252,6 +295,51 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
 }
 
 #[ic_cdk::update]
+fn transfer(arg: LegacyTransferArg) -> Result<u64, LegacyTransferError> {
+    let caller = ic_cdk::api::msg_caller();
+    let from = Account {
+        owner: caller,
+        subaccount: arg.from_subaccount,
+    };
+    let fee_expected = ST.with(|s| s.borrow().fee_e8s);
+    if arg.fee.e8s != fee_expected {
+        return Err(LegacyTransferError::BadFee {
+            expected_fee: Tokens { e8s: fee_expected },
+        });
+    }
+    if arg.to.len() != 32 {
+        return Err(LegacyTransferError::TxCreatedInFuture);
+    }
+    let total_debit = (arg.amount.e8s as u128).saturating_add(arg.fee.e8s as u128);
+    let from_key = key(&from);
+    let from_bal = ST.with(|s| *s.borrow().balances.get(&from_key).unwrap_or(&0));
+    if from_bal < total_debit {
+        return Err(LegacyTransferError::InsufficientFunds {
+            balance: Tokens {
+                e8s: from_bal.try_into().unwrap_or(u64::MAX),
+            },
+        });
+    }
+    Ok(ST.with(|s| {
+        let mut st = s.borrow_mut();
+        let fb = st.balances.entry(from_key).or_insert(0);
+        *fb = fb.saturating_sub(total_debit);
+        st.next_block = st.next_block.saturating_add(1);
+        let block = st.next_block;
+        st.legacy_transfers.push(LegacyTransferRecord {
+            from,
+            to_account_identifier_hex: bytes_to_hex(&arg.to),
+            amount: arg.amount,
+            fee: arg.fee,
+            memo: arg.memo,
+            created_at_time: arg.created_at_time.map(|ts| ts.timestamp_nanos),
+            result: "Ok".to_string(),
+        });
+        block
+    }))
+}
+
+#[ic_cdk::update]
 fn debug_reset() {
     ST.with(|s| {
         *s.borrow_mut() = LedgerState {
@@ -293,6 +381,11 @@ fn debug_credit(a: Account, amount_e8s: u64) {
 #[ic_cdk::query]
 fn debug_transfers() -> Vec<TransferRecord> {
     ST.with(|s| s.borrow().transfers.clone())
+}
+
+#[ic_cdk::query]
+fn debug_legacy_transfers() -> Vec<LegacyTransferRecord> {
+    ST.with(|s| s.borrow().legacy_transfers.clone())
 }
 
 ic_cdk::export_candid!();

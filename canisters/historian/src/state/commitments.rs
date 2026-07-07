@@ -29,6 +29,12 @@ pub(super) fn mark_neuron_commitment_id_dirty(neuron_id: u64) {
     });
 }
 
+pub(super) fn mark_relay_target_dirty(target: Principal) {
+    DIRTY_RELAY_TARGETS.with(|dirty| {
+        dirty.borrow_mut().insert(target);
+    });
+}
+
 pub(super) fn dirty_registry_principals() -> BTreeSet<Principal> {
     DIRTY_REGISTRY_PRINCIPALS.with(|dirty| dirty.borrow().clone())
 }
@@ -47,6 +53,10 @@ pub(super) fn dirty_raw_icp_commitment_principals() -> BTreeSet<Principal> {
 
 pub(super) fn dirty_neuron_commitment_ids() -> BTreeSet<u64> {
     DIRTY_NEURON_COMMITMENT_IDS.with(|dirty| dirty.borrow().clone())
+}
+
+pub(super) fn dirty_relay_targets() -> BTreeSet<Principal> {
+    DIRTY_RELAY_TARGETS.with(|dirty| dirty.borrow().clone())
 }
 
 pub(super) fn stable_commitment_history_keys_internal() -> BTreeSet<Principal> {

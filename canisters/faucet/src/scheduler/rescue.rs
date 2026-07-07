@@ -80,6 +80,7 @@ pub(super) async fn attempt_rescue(now_secs: u64) {
         canister_id: self_id,
         settings: CanisterSettings {
             controllers: Some(desired),
+            log_visibility: None,
         },
     };
     if update_settings(&arg).await.is_err() {

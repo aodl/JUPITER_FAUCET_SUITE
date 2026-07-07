@@ -6,6 +6,7 @@ import { IDL } from '@icp-sdk/core/candid';
 
 import {
   accountIdentifierHex,
+  bytesToHex,
   loadDashboardData,
   loadRecentRouteTransfersFromIndex,
   loadRegisteredCanisterSummaryPage,
@@ -15,6 +16,8 @@ import {
   loadCmcTopUpTransfersFromIndex,
   cmcDepositAccount,
   dquorumStakingAccount,
+  relaySetupAccount,
+  relaySetupSubaccount,
   hasCanisterSource,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
@@ -23,6 +26,7 @@ import {
   RECENT_COMMITMENT_LIMIT,
   RECENT_ROUTE_TRANSFER_LIMIT,
 } from '../src/dashboard-data.js';
+import { classifyTransferItem, defaultCanisterAccountIdentifier, relayRegistrySourceMap } from '../src/data/transfer-source-classification.js';
 
 const FetchCanisterLogsArgs = IDL.Record({ canister_id: IDL.Principal });
 const CanisterLogRecord = IDL.Record({
@@ -109,6 +113,20 @@ test('accountIdentifierHex stays stable for the staking-account derivation fixtu
     accountIdentifierHex(stakingAccount()),
     '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3',
   );
+});
+
+test('relay setup subaccount matches Rust SHA-256 fixture', () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  assert.equal(
+    bytesToHex(relaySetupSubaccount(target)),
+    '9008ebda9c222b8ca7a187b58876c9c5ce11ec50eb413da2c1ab1b8f71447312',
+  );
+  const account = relaySetupAccount({
+    historianCanisterId: 'qaa6y-5yaaa-aaaaa-aaafa-cai',
+    targetCanisterId: target,
+  });
+  assert.equal(account.owner.toText(), 'qaa6y-5yaaa-aaaaa-aaafa-cai');
+  assert.equal(bytesToHex(account.subaccount[0]), '9008ebda9c222b8ca7a187b58876c9c5ce11ec50eb413da2c1ab1b8f71447312');
 });
 
 test('dquorumStakingAccount uses the committed production staking subaccount', () => {
@@ -967,6 +985,67 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(calls[2][1].canister_id.toText(), target.toText());
   assert.deepEqual(calls[3], ['status']);
   assert.deepEqual(calls[4], ['logs', target.toText()]);
+});
+
+test('loadTrackerData pages relay registrations for tracker classification', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const relay = principal('br5f7-7uaaa-aaaaa-qaaca-cai');
+  const calls = [];
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_canister_overview() {
+        return [{
+          canister_id: target,
+          sources: [{ MemoCommitment: null }],
+          meta: {},
+          cycles_points: 0,
+          commitment_points: 0,
+        }];
+      },
+      async get_commitment_history() {
+        return { items: [], next_start_after_tx_id: [] };
+      },
+      async get_cycles_history() {
+        return { items: [], next_start_after_ts: [] };
+      },
+      async get_public_status() {
+        return historianStatus({ index_canister_id: [] });
+      },
+      async list_relay_registrations(args) {
+        calls.push(args);
+        if (args.start_after.length === 0) {
+          return {
+            items: [{
+              relay_canister_id: principal('rrkah-fqaaa-aaaaa-aaaaq-cai'),
+              target_canister_id: principal('qaa6y-5yaaa-aaaaa-aaafa-cai'),
+            }],
+            next_start_after: [principal('qaa6y-5yaaa-aaaaa-aaafa-cai')],
+          };
+        }
+        return {
+          items: [{
+            relay_canister_id: relay,
+            target_canister_id: target,
+          }],
+          next_start_after: [],
+        };
+      },
+    },
+    canisterLogsLoader: async () => ({ items: [] }),
+  });
+
+  assert.equal(calls.length, 2);
+  const relaySourceMap = relayRegistrySourceMap(data.relayRegistrations.items);
+  const item = classifyTransferItem(
+    { from_account_identifier: defaultCanisterAccountIdentifier(relay.toText()) },
+    { relaySourceMap },
+  );
+  assert.equal(item.source_category, 'relay');
+  assert.equal(item.source_relay_canister_id, relay.toText());
 });
 
 test('loadTrackerData pages recent historian histories until the timestamp cutoff is covered', async () => {

@@ -34,6 +34,16 @@ type TransferRecord = record {
   result : text;
 };
 
+type LegacyTransferRecord = record {
+  from : Account;
+  to_account_identifier_hex : text;
+  amount : Tokens;
+  fee : Tokens;
+  memo : nat64;
+  created_at_time : opt nat64;
+  result : text;
+};
+
 type DebugNextTransferError = variant {
   TemporarilyUnavailable;
   TooOld;
@@ -54,4 +64,5 @@ service : {
   debug_set_error_script : (vec DebugNextTransferError) -> ();
   debug_credit : (Account, nat64) -> ();
   debug_transfers : () -> (vec TransferRecord) query;
+  debug_legacy_transfers : () -> (vec LegacyTransferRecord) query;
 }

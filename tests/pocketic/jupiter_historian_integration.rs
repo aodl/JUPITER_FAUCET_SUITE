@@ -1,7 +1,7 @@
 // PocketIC historian scenarios use explicit casts to mirror Candid/interface boundary values.
 #![allow(clippy::unnecessary_cast)]
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
@@ -16,6 +16,7 @@ use pocket_ic::PocketIc;
 mod real_blackhole;
 #[path = "support/mod.rs"]
 mod support;
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -34,6 +35,8 @@ static SNS_WASM_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static HISTORIAN_WITH_RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
@@ -53,6 +56,42 @@ fn historian_wasm() -> Result<Vec<u8>> {
         "jupiter-historian",
         Some("debug_api"),
     )
+}
+fn relay_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&RELAY_WASM, "jupiter-relay", None)
+}
+fn historian_with_relay_wasm() -> Result<Vec<u8>> {
+    if let Some(bytes) = HISTORIAN_WITH_RELAY_WASM.get() {
+        return Ok(bytes.clone());
+    }
+    let relay = relay_wasm()?;
+    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    let relay_path =
+        workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm");
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+            "-p",
+            "jupiter-historian",
+            "--locked",
+        ])
+        .env("JUPITER_RELAY_WASM_PATH", &relay_path)
+        .current_dir(&workspace_root)
+        .status()?;
+    if !status.success() {
+        bail!("cargo build (wasm) failed for jupiter-historian with embedded relay wasm");
+    }
+    let path = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_historian.wasm");
+    let bytes = std::fs::read(&path)?;
+    let _ = HISTORIAN_WITH_RELAY_WASM.set(bytes.clone());
+    assert!(
+        !relay.is_empty(),
+        "non-debug relay wasm used for embedding must not be empty"
+    );
+    Ok(bytes)
 }
 
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
@@ -79,6 +118,18 @@ struct HistorianInitArg {
     max_commitment_entries_per_canister: Option<u32>,
     max_index_pages_per_tick: Option<u32>,
     max_canisters_per_cycles_tick: Option<u32>,
+    relay_factory_enabled: Option<bool>,
+    relay_setup_min_e8s: Option<u64>,
+    relay_setup_dust_e8s: Option<u64>,
+    relay_setup_refund_cooldown_seconds: Option<u64>,
+    relay_initial_cycles: Option<u128>,
+    relay_cycle_safety_margin_e8s: Option<u64>,
+    relay_min_subaccount_one_seed_e8s: Option<u64>,
+    self_service_relay_interval_seconds: Option<u64>,
+    self_service_relay_max_transfers_per_tick: Option<u32>,
+    io_surplus_neuron_id: Option<u64>,
+    canonical_relay_canister_id: Option<Principal>,
+    canonical_relay_targets: Option<Vec<Principal>>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -310,6 +361,133 @@ struct ListRecentCommitmentsResponse {
     items: Vec<RecentCommitmentListItem>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelayRegistryKind {
+    Canonical,
+    SelfService,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelayRegistryStatus {
+    Pending,
+    Active,
+    Failed,
+    Superseded,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelayRegistryEntry {
+    relay_canister_id: Principal,
+    target_canister_id: Principal,
+    kind: RelayRegistryKind,
+    status: RelayRegistryStatus,
+    setup_account: Option<Account>,
+    setup_account_identifier: Option<String>,
+    setup_amount_e8s: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    relay_wasm_hash_hex: Option<String>,
+    final_controllers: Option<Vec<Principal>>,
+    log_visibility_public: Option<bool>,
+    created_at_ts: Option<u64>,
+    activated_at_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySetupStatus {
+    NotFunded,
+    BelowMinimum,
+    InsufficientForCurrentRate,
+    TargetNotObservable,
+    Pending,
+    ConvertingCycles,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    CreatingCanister,
+    CanisterCreated,
+    InstallingCode,
+    CodeInstalled,
+    SettingPublicLogs,
+    FundingRelaySubaccountOne,
+    Blackholing,
+    Active,
+    SweepingToExistingRelay,
+    SweptToExistingRelay,
+    SweepBelowDust,
+    RefundAvailable,
+    Refunding,
+    Refunded,
+    FailedRetryable,
+    FailedTerminal,
+    Ambiguous,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelaySetupJobView {
+    target_canister_id: Principal,
+    status: RelaySetupStatus,
+    relay_canister_id: Option<Principal>,
+    setup_amount_seen_e8s: u64,
+    setup_amount_processed_e8s: u64,
+    cycle_conversion_e8s: Option<u64>,
+    relay_funding_e8s: Option<u64>,
+    last_error: Option<String>,
+    updated_at_ts: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetRelaySetupViewArgs {
+    target_canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelaySetupView {
+    target_canister_id: Principal,
+    setup_account: Account,
+    setup_account_identifier: String,
+    minimum_e8s: u64,
+    dust_e8s: u64,
+    current_status: Option<RelaySetupStatus>,
+    existing_relay: Option<RelayRegistryEntry>,
+    setup_job: Option<RelaySetupJobView>,
+    factory_enabled: bool,
+    relay_wasm_hash_hex: Option<String>,
+    warning_text: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RelaySetupNotifyResult {
+    BelowMinimum {
+        minimum_e8s: u64,
+        current_balance_e8s: u64,
+    },
+    InsufficientForCurrentRate {
+        required_e8s: u64,
+        current_balance_e8s: u64,
+    },
+    TargetNotObservable {
+        message: String,
+    },
+    Pending {
+        job: RelaySetupJobView,
+    },
+    Active {
+        relay: RelayRegistryEntry,
+    },
+    SweptToExistingRelay {
+        relay: RelayRegistryEntry,
+        amount_e8s: u64,
+        block_index: u64,
+    },
+    SweepBelowDust {
+        relay: RelayRegistryEntry,
+        current_balance_e8s: u64,
+    },
+    Failed {
+        status: RelaySetupStatus,
+        message: String,
+    },
+}
+
 fn real_icp_ledger_principal() -> Principal {
     support::principals::icp_ledger()
 }
@@ -382,6 +560,56 @@ fn wait_for_index_transactions(
     bail!("real ICP index did not expose {expected_min} transactions for account {} after waiting; last page: {:?}", account_identifier, last.map(|page| page.transactions.iter().map(|tx| tx.id).collect::<Vec<_>>()));
 }
 
+fn relay_subaccount_one() -> [u8; 32] {
+    let mut subaccount = [0u8; 32];
+    subaccount[31] = 1;
+    subaccount
+}
+
+fn self_service_historian_init(
+    ledger: Principal,
+    index: Principal,
+    cmc: Principal,
+    blackhole: Principal,
+) -> HistorianInitArg {
+    HistorianInitArg {
+        staking_account: Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([33u8; 32]),
+        },
+        output_source_account: None,
+        output_account: None,
+        rewards_account: None,
+        ledger_canister_id: Some(ledger),
+        index_canister_id: Some(index),
+        cmc_canister_id: Some(cmc),
+        faucet_canister_id: Some(blackhole),
+        blackhole_canister_id: Some(blackhole),
+        sns_wasm_canister_id: Some(blackhole),
+        xrc_canister_id: Some(blackhole),
+        enable_sns_tracking: Some(false),
+        scan_interval_seconds: Some(60),
+        cycles_interval_seconds: Some(60),
+        min_tx_e8s: Some(10_000_000),
+        max_cycles_entries_per_canister: Some(100),
+        max_commitment_entries_per_canister: Some(100),
+        max_index_pages_per_tick: Some(10),
+        max_canisters_per_cycles_tick: Some(10),
+        relay_factory_enabled: Some(true),
+        relay_setup_min_e8s: Some(200_000_000),
+        relay_setup_dust_e8s: Some(10_000),
+        relay_setup_refund_cooldown_seconds: Some(0),
+        relay_initial_cycles: Some(1_000_000_000_000),
+        relay_cycle_safety_margin_e8s: Some(5_000_000),
+        relay_min_subaccount_one_seed_e8s: Some(100_020_000),
+        self_service_relay_interval_seconds: Some(3600),
+        self_service_relay_max_transfers_per_tick: Some(10),
+        io_surplus_neuron_id: Some(11614578985374291210),
+        canonical_relay_canister_id: None,
+        canonical_relay_targets: Some(Vec::new()),
+    }
+}
+
 struct Harness {
     pic: PocketIc,
     index: Principal,
@@ -439,6 +667,18 @@ impl Harness {
             max_commitment_entries_per_canister: Some(100),
             max_index_pages_per_tick: Some(10),
             max_canisters_per_cycles_tick: Some(10),
+            relay_factory_enabled: None,
+            relay_setup_min_e8s: None,
+            relay_setup_dust_e8s: None,
+            relay_setup_refund_cooldown_seconds: None,
+            relay_initial_cycles: None,
+            relay_cycle_safety_margin_e8s: None,
+            relay_min_subaccount_one_seed_e8s: None,
+            self_service_relay_interval_seconds: None,
+            self_service_relay_max_transfers_per_tick: None,
+            io_surplus_neuron_id: None,
+            canonical_relay_canister_id: None,
+            canonical_relay_targets: None,
         };
         pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
         Ok(Self {
@@ -565,6 +805,210 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
 
 #[test]
 #[ignore]
+fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let cmc = support::principals::cycles_minting_canister();
+    let blackhole = pic.create_canister();
+    let historian = pic.create_canister();
+    let target = pic.create_canister();
+    for canister in [blackhole, historian, target] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(
+        blackhole,
+        real_blackhole::real_blackhole_wasm()?,
+        vec![],
+        None,
+    );
+    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
+    set_controllers_exact(&pic, target, vec![blackhole])?;
+    pic.install_canister(
+        historian,
+        historian_with_relay_wasm()?,
+        encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
+        None,
+    );
+    pic.add_cycles(historian, 20_000_000_000_000);
+
+    let view: RelaySetupView = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_setup_view",
+        GetRelaySetupViewArgs {
+            target_canister_id: target,
+        },
+    )?;
+    assert!(
+        view.factory_enabled,
+        "embedded relay wasm should enable factory in setup view: {view:?}"
+    );
+    assert!(
+        view.relay_wasm_hash_hex.is_some(),
+        "setup view should expose embedded relay wasm hash"
+    );
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+    let setup_amount = 300_000_000u64;
+    let setup_block = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: view.setup_account,
+            fee: Some(Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: Some(Memo::from(b"self-service-relay-pocketic".to_vec())),
+            amount: Nat::from(setup_amount),
+        },
+    )?;
+    let setup_page = wait_for_index_transactions(&pic, index, &view.setup_account_identifier, 1)?;
+    assert!(
+        setup_page
+            .transactions
+            .iter()
+            .any(|tx| tx.id == setup_block),
+        "setup account index page should include funding block {setup_block}: {:?}",
+        setup_page.transactions
+    );
+
+    let result: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_setup",
+        target,
+    )?;
+    let relay = match result {
+        RelaySetupNotifyResult::Active { relay } => relay,
+        other => bail!("expected Active relay setup result, got {other:?}"),
+    };
+    assert_eq!(relay.target_canister_id, target);
+    assert_eq!(relay.kind, RelayRegistryKind::SelfService);
+    assert_eq!(relay.status, RelayRegistryStatus::Active);
+    assert_ne!(relay.relay_canister_id, historian);
+    assert_ne!(relay.relay_canister_id, target);
+    assert_eq!(relay.final_controllers, Some(vec![blackhole]));
+    assert_eq!(relay.log_visibility_public, Some(true));
+    assert_eq!(relay.setup_amount_e8s, Some(setup_amount));
+
+    let registered: Option<RelayRegistryEntry> = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_for_canister",
+        target,
+    )?;
+    let registered = registered.context("expected active relay registry entry")?;
+    assert_eq!(registered.relay_canister_id, relay.relay_canister_id);
+    assert_eq!(registered.status, RelayRegistryStatus::Active);
+
+    let relay_status = pic
+        .canister_status(relay.relay_canister_id, Some(blackhole))
+        .map_err(|err| anyhow!("relay canister_status failed: {err:?}"))?;
+    assert!(
+        relay_status.module_hash.is_some(),
+        "relay wasm should be installed"
+    );
+    assert_eq!(
+        pic.get_controllers(relay.relay_canister_id),
+        vec![blackhole]
+    );
+
+    let post_setup_page =
+        wait_for_index_transactions(&pic, index, &view.setup_account_identifier, 3)?;
+    let relay_subaccount_one_id =
+        account_identifier_text(relay.relay_canister_id, Some(relay_subaccount_one()));
+    let historian_cmc_deposit_id = account_identifier_text(
+        cmc,
+        Some(jupiter_ic_clients::account::principal_to_subaccount(
+            historian,
+        )),
+    );
+    let mut saw_cmc_conversion_transfer = false;
+    let mut saw_relay_funding_transfer = false;
+    for tx in &post_setup_page.transactions {
+        let jupiter_ic_clients::index::IndexOperation::Transfer { from, to, .. } =
+            &tx.transaction.operation
+        else {
+            continue;
+        };
+        if from == &view.setup_account_identifier && to == &historian_cmc_deposit_id {
+            saw_cmc_conversion_transfer = true;
+        }
+        if from == &view.setup_account_identifier && to == &relay_subaccount_one_id {
+            saw_relay_funding_transfer = true;
+        }
+    }
+    assert!(
+        saw_cmc_conversion_transfer,
+        "mock/real ledger should record setup subaccount CMC conversion transfer; page={post_setup_page:?}"
+    );
+    assert!(
+        saw_relay_funding_transfer,
+        "ledger should record setup subaccount transfer to relay subaccount 1; page={post_setup_page:?}"
+    );
+
+    let second_amount = 50_000_000u64;
+    let second_block = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: view.setup_account,
+            fee: Some(Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: Some(Memo::from(b"second-self-service-sweep".to_vec())),
+            amount: Nat::from(second_amount),
+        },
+    )?;
+    let _ = wait_for_index_transactions(&pic, index, &view.setup_account_identifier, 4)?;
+    let duplicate: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_setup",
+        target,
+    )?;
+    let (swept_relay, swept_amount) = match duplicate {
+        RelaySetupNotifyResult::SweptToExistingRelay {
+            relay, amount_e8s, ..
+        } => (relay, amount_e8s),
+        other => bail!("expected duplicate notify to sweep to existing relay, got {other:?}"),
+    };
+    assert_eq!(swept_relay.relay_canister_id, relay.relay_canister_id);
+    assert_eq!(swept_amount, second_amount.saturating_sub(fee_e8s));
+    let after_duplicate: Option<RelayRegistryEntry> = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_for_canister",
+        target,
+    )?;
+    assert_eq!(
+        after_duplicate
+            .context("expected relay registry after duplicate notify")?
+            .relay_canister_id,
+        relay.relay_canister_id
+    );
+    let final_setup_page =
+        wait_for_index_transactions(&pic, index, &view.setup_account_identifier, 5)?;
+    assert!(
+        final_setup_page
+            .transactions
+            .iter()
+            .any(|tx| tx.id == second_block),
+        "setup account index should include second payment block {second_block}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monotonic_fault(
 ) -> Result<()> {
     require_ignored_flag()?;
@@ -614,6 +1058,18 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
         max_commitment_entries_per_canister: Some(100),
         max_index_pages_per_tick: Some(10),
         max_canisters_per_cycles_tick: Some(10),
+        relay_factory_enabled: None,
+        relay_setup_min_e8s: None,
+        relay_setup_dust_e8s: None,
+        relay_setup_refund_cooldown_seconds: None,
+        relay_initial_cycles: None,
+        relay_cycle_safety_margin_e8s: None,
+        relay_min_subaccount_one_seed_e8s: None,
+        self_service_relay_interval_seconds: None,
+        self_service_relay_max_transfers_per_tick: None,
+        io_surplus_neuron_id: None,
+        canonical_relay_canister_id: None,
+        canonical_relay_targets: None,
     };
     pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
 
@@ -814,6 +1270,18 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         max_commitment_entries_per_canister: Some(100),
         max_index_pages_per_tick: Some(10),
         max_canisters_per_cycles_tick: Some(10),
+        relay_factory_enabled: None,
+        relay_setup_min_e8s: None,
+        relay_setup_dust_e8s: None,
+        relay_setup_refund_cooldown_seconds: None,
+        relay_initial_cycles: None,
+        relay_cycle_safety_margin_e8s: None,
+        relay_min_subaccount_one_seed_e8s: None,
+        self_service_relay_interval_seconds: None,
+        self_service_relay_max_transfers_per_tick: None,
+        io_surplus_neuron_id: None,
+        canonical_relay_canister_id: None,
+        canonical_relay_targets: None,
     };
     pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
 

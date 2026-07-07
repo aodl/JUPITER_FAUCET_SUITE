@@ -36,6 +36,7 @@ pub(super) fn clear_persistence_dirty() {
     DIRTY_CYCLES_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
     DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS.with(|dirty| dirty.borrow_mut().clear());
     DIRTY_NEURON_COMMITMENT_IDS.with(|dirty| dirty.borrow_mut().clear());
+    DIRTY_RELAY_TARGETS.with(|dirty| dirty.borrow_mut().clear());
 }
 
 pub(crate) fn persist_dirty_state() {
@@ -48,6 +49,7 @@ pub(crate) fn persist_dirty_state() {
     let cycles_scope = dirty_cycles_principals();
     let raw_icp_commitment_scope = dirty_raw_icp_commitment_principals();
     let neuron_commitment_scope = dirty_neuron_commitment_ids();
+    let relay_target_scope = dirty_relay_targets();
     let snapshot = get_state();
     persist_snapshot_sections_scoped(
         &snapshot,
@@ -57,6 +59,7 @@ pub(crate) fn persist_dirty_state() {
         (!cycles_scope.is_empty()).then_some(&cycles_scope),
         (!raw_icp_commitment_scope.is_empty()).then_some(&raw_icp_commitment_scope),
         (!neuron_commitment_scope.is_empty()).then_some(&neuron_commitment_scope),
+        (!relay_target_scope.is_empty()).then_some(&relay_target_scope),
     );
     clear_persistence_dirty();
 }
@@ -88,6 +91,7 @@ pub(super) fn with_state_mut_sections_scoped<R>(
     cycles_principal: Option<Principal>,
     raw_icp_commitment_principal: Option<Principal>,
     neuron_commitment_id: Option<u64>,
+    relay_target: Option<Principal>,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
     STATE.with(|s| {
@@ -105,6 +109,7 @@ pub(super) fn with_state_mut_sections_scoped<R>(
                 .into_iter()
                 .collect::<BTreeSet<_>>();
             let neuron_commitment_scope = neuron_commitment_id.into_iter().collect::<BTreeSet<_>>();
+            let relay_target_scope = relay_target.into_iter().collect::<BTreeSet<_>>();
             persist_snapshot_sections_scoped(
                 &snapshot,
                 dirty_sections,
@@ -113,6 +118,7 @@ pub(super) fn with_state_mut_sections_scoped<R>(
                 (!cycles_scope.is_empty()).then_some(&cycles_scope),
                 (!raw_icp_commitment_scope.is_empty()).then_some(&raw_icp_commitment_scope),
                 (!neuron_commitment_scope.is_empty()).then_some(&neuron_commitment_scope),
+                (!relay_target_scope.is_empty()).then_some(&relay_target_scope),
             );
             return out;
         }
@@ -131,6 +137,9 @@ pub(super) fn with_state_mut_sections_scoped<R>(
         if let Some(neuron_id) = neuron_commitment_id {
             mark_neuron_commitment_id_dirty(neuron_id);
         }
+        if let Some(target) = relay_target {
+            mark_relay_target_dirty(target);
+        }
         mark_persistence_dirty(dirty_sections);
         drop(borrow);
         out
@@ -138,7 +147,7 @@ pub(super) fn with_state_mut_sections_scoped<R>(
 }
 
 pub(crate) fn with_state_mut_sections<R>(dirty_sections: u8, f: impl FnOnce(&mut State) -> R) -> R {
-    with_state_mut_sections_scoped(dirty_sections, None, None, None, None, None, f)
+    with_state_mut_sections_scoped(dirty_sections, None, None, None, None, None, None, f)
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -255,6 +264,7 @@ pub(crate) fn with_root_and_registry_canister_state_mut<R>(
         None,
         None,
         None,
+        None,
         f,
     )
 }
@@ -269,6 +279,7 @@ pub(crate) fn with_root_and_raw_icp_commitments_state_mut<R>(
         None,
         None,
         Some(canister_id),
+        None,
         None,
         f,
     )
@@ -285,6 +296,7 @@ pub(crate) fn with_root_and_neuron_commitments_state_mut<R>(
         None,
         None,
         Some(neuron_id),
+        None,
         f,
     )
 }
@@ -297,6 +309,7 @@ pub(crate) fn with_root_registry_and_commitments_canister_state_mut<R>(
         DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_COMMITMENTS,
         Some(canister_id),
         Some(canister_id),
+        None,
         None,
         None,
         None,
@@ -315,6 +328,23 @@ pub(crate) fn with_root_registry_and_cycles_canister_state_mut<R>(
         Some(canister_id),
         None,
         None,
+        None,
+        f,
+    )
+}
+
+pub(crate) fn with_root_and_relay_factory_state_mut<R>(
+    target: Principal,
+    f: impl FnOnce(&mut State) -> R,
+) -> R {
+    with_state_mut_sections_scoped(
+        DIRTY_ROOT | DIRTY_RELAY_FACTORY,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(target),
         f,
     )
 }

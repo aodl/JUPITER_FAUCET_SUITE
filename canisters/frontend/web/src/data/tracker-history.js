@@ -162,6 +162,27 @@ async function loadRawIncomingTransfers({ historian, status = null, agent, index
   });
 }
 
+async function loadRelayRegistrations(historian) {
+  if (typeof historian?.list_relay_registrations !== 'function') return { items: [] };
+  try {
+    const items = [];
+    let startAfter = [];
+    for (let pageIndex = 0; pageIndex < 50; pageIndex += 1) {
+      const page = await historian.list_relay_registrations({
+        start_after: startAfter,
+        limit: [200],
+      });
+      items.push(...(page?.items || []));
+      const next = readOptional(page?.next_start_after);
+      if (!next) break;
+      startAfter = [next];
+    }
+    return { items };
+  } catch {
+    return { items: [] };
+  }
+}
+
 export async function loadTrackerData({
   historianCanisterId,
   host,
@@ -218,6 +239,7 @@ export async function loadTrackerData({
     minTimestampNanos,
   });
   const statusPromise = historian.get_public_status();
+  const relayRegistrationsPromise = loadRelayRegistrations(historian);
   const logsPromise = canisterLogsLoader({
     agent: resolvedAgent,
     canisterId,
@@ -233,10 +255,11 @@ export async function loadTrackerData({
     minTimestampNanos,
   }));
 
-  const [commitmentsResult, cyclesResult, statusResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
+  const [commitmentsResult, cyclesResult, statusResult, relayRegistrationsResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
     commitmentsPromise,
     cyclesPromise,
     statusPromise,
+    relayRegistrationsPromise,
     logsPromise,
     cmcTransfersPromise,
   ]);
@@ -245,6 +268,7 @@ export async function loadTrackerData({
     canisterId,
     overview: overviewValue,
     status: fulfilledOrNull(statusResult),
+    relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
     isRecognized: true,
     isCommitmentBeneficiary: true,
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
@@ -285,6 +309,7 @@ export async function loadRawIcpCanisterTrackerData({
     historianActorFactory,
   });
   const statusPromise = historian.get_public_status();
+  const relayRegistrationsPromise = loadRelayRegistrations(historian);
   const transfersPromise = statusPromise.then((status) => loadRawIncomingTransfers({
     historian,
     status,
@@ -312,14 +337,16 @@ export async function loadRawIcpCanisterTrackerData({
         source_filter: [{ MemoCommitment: null }],
       })
     : Promise.resolve({ items: [], truncated: false });
-  const [statusResult, transfersResult, candidatesResult] = await Promise.allSettled([
+  const [statusResult, relayRegistrationsResult, transfersResult, candidatesResult] = await Promise.allSettled([
     statusPromise,
+    relayRegistrationsPromise,
     transfersPromise,
     candidatesPromise,
   ]);
   return {
     canisterId,
     status: fulfilledOrNull(statusResult),
+    relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
     transfers: fulfilledOrNull(transfersResult) || { items: [] },
     candidates: fulfilledOrNull(candidatesResult) || { items: [], truncated: false },
     errors: {
