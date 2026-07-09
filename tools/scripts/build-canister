@@ -266,6 +266,24 @@ build_one() {
   echo "Built ${target_name}: ${raw_out} ${gz_out}"
 }
 
+build_historian_with_relay() {
+  build_selected jupiter-relay
+
+  local relay_wasm="release-artifacts/jupiter_relay.wasm"
+  if [[ ! -f "$relay_wasm" ]]; then
+    echo "relay wasm artifact missing after jupiter-relay build: ${relay_wasm}" >&2
+    exit 1
+  fi
+
+  local relay_hash
+  relay_hash="$(sha256sum "$relay_wasm" | awk '{print $1}')"
+  printf '%s  %s\n' "$relay_hash" "$relay_wasm" > release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm.sha256
+  export JUPITER_RELAY_WASM_PATH="${REPO_ROOT}/${relay_wasm}"
+  echo "Embedding relay wasm in jupiter-historian: ${JUPITER_RELAY_WASM_PATH}"
+  echo "Embedded relay wasm sha256: ${relay_hash}"
+  build_one "jupiter-historian-with-relay" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian_with_relay" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+}
+
 build_selected() {
   case "$1" in
     jupiter-disburser)
@@ -279,6 +297,9 @@ build_selected() {
       ;;
     jupiter-historian)
       build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+      ;;
+    jupiter-historian-with-relay)
+      build_historian_with_relay
       ;;
     jupiter-relay)
       build_one "jupiter-relay" "jupiter-relay" "jupiter_relay" "canisters/relay/jupiter_relay.did" "jupiter_relay" "JUPITER_RELAY_PROD_CANISTER_ID" "jupiter_relay"
@@ -303,7 +324,7 @@ build_selected() {
       ;;
     *)
       echo "unknown build target: $1" >&2
-      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-relay, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
+      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-historian-with-relay, jupiter-relay, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
       exit 1
       ;;
   esac

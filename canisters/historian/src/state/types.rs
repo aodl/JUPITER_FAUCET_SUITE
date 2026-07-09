@@ -343,9 +343,11 @@ pub enum RelaySetupStatus {
     RefundAvailable,
     Refunding,
     Refunded,
+    IndexNotReady,
     FailedRetryable,
     FailedTerminal,
     Ambiguous,
+    ManualRecoveryRequired,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]

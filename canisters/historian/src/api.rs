@@ -227,6 +227,7 @@ impl From<RelaySetupStatus> for RelaySetupPublicStatus {
             }
             RelaySetupStatus::RefundAvailable | RelaySetupStatus::Refunding => Self::Refunding,
             RelaySetupStatus::Refunded => Self::Refunded,
+            RelaySetupStatus::IndexNotReady => Self::IndexNotReady,
             RelaySetupStatus::CreatingCanister
             | RelaySetupStatus::CanisterCreated
             | RelaySetupStatus::InstallingCode
@@ -240,6 +241,7 @@ impl From<RelaySetupStatus> for RelaySetupPublicStatus {
             RelaySetupStatus::FailedRetryable | RelaySetupStatus::Ambiguous => {
                 Self::FailedRetryable
             }
+            RelaySetupStatus::ManualRecoveryRequired => Self::ManualRecoveryRequired,
             RelaySetupStatus::Pending
             | RelaySetupStatus::ConvertingCycles
             | RelaySetupStatus::CycleTransferAccepted

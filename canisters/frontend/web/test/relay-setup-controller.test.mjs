@@ -420,6 +420,62 @@ test('relay setup polling cancels old target after target change', async () => {
   });
 });
 
+test('relay setup late initial response for old target does not overwrite newer target', async () => {
+  const targetA = '22255-zqaaa-aaaas-qf6uq-cai';
+  const targetB = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  let resolveFirstView;
+  const firstView = new Promise((resolve) => {
+    resolveFirstView = resolve;
+  });
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view(request) {
+            const target = request.target_canister_id.toText();
+            if (target === targetA) {
+              await firstView;
+            }
+            return setupView({ target, historian: historianId });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup(arg) {
+            return { BelowMinimum: { minimum_e8s: 200_000_000n, current_balance_e8s: 20_000n, target: arg } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 0n;
+        },
+      }),
+      hostProvider: () => 'https://example.test',
+    });
+
+    nodes.get('relay-setup-target-input').value = targetA;
+    const submitA = controller.submitTarget();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    nodes.get('relay-setup-target-input').value = targetB;
+    await controller.submitTarget();
+    assert.equal(controller.state.targetText, targetB);
+    assert.equal(controller.state.target.toText(), targetB);
+
+    resolveFirstView();
+    await submitA;
+
+    assert.equal(controller.state.targetText, targetB);
+    assert.equal(controller.state.target.toText(), targetB);
+    assert.equal(controller.state.view.target_canister_id.toText(), targetB);
+  });
+});
+
 test('relay setup polling stops after active result', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';

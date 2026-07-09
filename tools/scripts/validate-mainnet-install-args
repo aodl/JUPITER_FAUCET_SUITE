@@ -34,6 +34,14 @@ EXPECTED_RELAY_IO_NEURON_CANONICAL = "10292412127977304661"
 EXPECTED_RELAY_JUPITER_FAUCET_NEURON = "11_614_578_985_374_291_210"
 EXPECTED_RELAY_JUPITER_FAUCET_NEURON_CANONICAL = "11614578985374291210"
 EXPECTED_RELAY_JUPITER_FAUCET_COMMITMENT_MEMO = "u2qkpaqaaaaaaarqb7eacai.Relay"
+EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S = 200_000_000
+EXPECTED_HISTORIAN_RELAY_SETUP_DUST_E8S = 10_000
+EXPECTED_HISTORIAN_RELAY_REFUND_COOLDOWN_SECONDS = 300
+EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES = 1_000_000_000_000
+EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
+EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
+EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_INTERVAL_SECONDS = 3_600
+EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
     PROD["jupiter_lifeline"],
@@ -44,6 +52,7 @@ EXPECTED_RELAY_MANAGED = {
     MAINNET["blackhole"],
     MAINNET["blackhole_13_node_subnet"],
 }
+EXPECTED_CANONICAL_RELAY_TARGETS = EXPECTED_RELAY_MANAGED
 FORBIDDEN_RELAY_MANAGED = {
     MAINNET["ledger"],
     MAINNET["index"],
@@ -105,6 +114,20 @@ def extract_nat64(text: str, field: str, path: Path) -> int:
     if not match:
         fail(f"{path} is missing `{field}`")
     return int(match.group(1))
+
+
+def extract_nat(text: str, field: str, path: Path) -> int:
+    match = re.search(rf"{re.escape(field)}\s*=\s*(?:opt\s*)?(?:\()?\s*(\d+)(?:\s*:\s*nat(?:32|64)?)?\s*\)?\s*;", text)
+    if not match:
+        fail(f"{path} is missing `{field}`")
+    return int(match.group(1))
+
+
+def extract_opt_bool(text: str, field: str, path: Path) -> bool:
+    match = re.search(rf"{re.escape(field)}\s*=\s*opt\s+(true|false)\s*;", text)
+    if not match:
+        fail(f"{path} is missing explicit opt bool `{field}`")
+    return match.group(1) == "true"
 
 
 def extract_account(text: str, field: str, path: Path) -> tuple[str, str]:
@@ -612,14 +635,87 @@ def validate_historian() -> int:
     historian_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
     if historian_min_tx_e8s < 10_000_000:
         fail(f"{path} configures min_tx_e8s below the supported floor of 10_000_000 e8s (0.1 ICP)")
+    relay_factory_enabled = extract_opt_bool(text, "relay_factory_enabled", path)
+    if relay_factory_enabled:
+        hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.embedded-relay-wasm.sha256"
+        if not hash_path.exists():
+            fail(
+                f"{path} enables relay_factory_enabled but embedded relay wasm hash record is missing: {hash_path}"
+            )
+        hash_text = hash_path.read_text().strip()
+        if not re.fullmatch(r"[0-9a-f]{64}\s+release-artifacts/jupiter_relay\.wasm", hash_text):
+            fail(f"{hash_path} must record the embedded relay wasm sha256 and source path")
+        fail(f"{path} must keep relay_factory_enabled=false for current mainnet historian artifacts")
+
+    build_script = (REPO_ROOT / "tools" / "scripts" / "build-canister").read_text()
+    if "jupiter-historian-with-relay" not in build_script or "JUPITER_RELAY_WASM_PATH" not in build_script:
+        fail("tools/scripts/build-canister is missing the historian-with-relay production build path")
+
+    setup_min = extract_nat64(text, "relay_setup_min_e8s", path)
+    dust = extract_nat64(text, "relay_setup_dust_e8s", path)
+    cooldown = extract_nat64(text, "relay_setup_refund_cooldown_seconds", path)
+    initial_cycles = extract_nat(text, "relay_initial_cycles", path)
+    safety = extract_nat64(text, "relay_cycle_safety_margin_e8s", path)
+    seed = extract_nat64(text, "relay_min_subaccount_one_seed_e8s", path)
+    interval = extract_nat64(text, "self_service_relay_interval_seconds", path)
+    max_transfers = extract_nat(text, "self_service_relay_max_transfers_per_tick", path)
+    if setup_min != EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S:
+        fail(f"{path} relay_setup_min_e8s={setup_min}; expected {EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S}")
+    if dust != EXPECTED_HISTORIAN_RELAY_SETUP_DUST_E8S:
+        fail(f"{path} relay_setup_dust_e8s={dust}; expected {EXPECTED_HISTORIAN_RELAY_SETUP_DUST_E8S}")
+    if dust == 0 or dust >= setup_min:
+        fail(f"{path} relay_setup_dust_e8s must be nonzero and below relay_setup_min_e8s")
+    if cooldown != EXPECTED_HISTORIAN_RELAY_REFUND_COOLDOWN_SECONDS:
+        fail(f"{path} relay_setup_refund_cooldown_seconds={cooldown}; expected {EXPECTED_HISTORIAN_RELAY_REFUND_COOLDOWN_SECONDS}")
+    if initial_cycles != EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES:
+        fail(f"{path} relay_initial_cycles={initial_cycles}; expected {EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES}")
+    if safety != EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S:
+        fail(f"{path} relay_cycle_safety_margin_e8s={safety}; expected {EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S}")
+    if seed != EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S:
+        fail(f"{path} relay_min_subaccount_one_seed_e8s={seed}; expected {EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S}")
+    if setup_min < seed + safety + 40_000:
+        fail(f"{path} relay setup economics cannot preserve seed, safety margin, and four ICP ledger fees")
+    if interval != EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_INTERVAL_SECONDS:
+        fail(f"{path} self_service_relay_interval_seconds={interval}; expected {EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_INTERVAL_SECONDS}")
+    if max_transfers != EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK:
+        fail(f"{path} self_service_relay_max_transfers_per_tick={max_transfers}; expected {EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK}")
+    io_neuron = extract_nat64(text, "io_surplus_neuron_id", path)
+    if str(io_neuron) != EXPECTED_RELAY_IO_NEURON_CANONICAL:
+        fail(f"{path} io_surplus_neuron_id={io_neuron}; expected {EXPECTED_RELAY_IO_NEURON_CANONICAL}")
+    canonical_relay = extract_optional_principal(text, "canonical_relay_canister_id", path)
+    if canonical_relay != EXPECTED_RELAY_ID:
+        fail(f"{path} canonical_relay_canister_id={canonical_relay}; expected {EXPECTED_RELAY_ID}")
+    canonical_targets = set(extract_vec_principals(text, "canonical_relay_targets", path, optional=True))
+    if canonical_targets != EXPECTED_CANONICAL_RELAY_TARGETS:
+        fail(
+            f"{path} canonical_relay_targets mismatch: got {sorted(canonical_targets)} "
+            f"expected {sorted(EXPECTED_CANONICAL_RELAY_TARGETS)}"
+        )
+    forbidden = sorted(canonical_targets & FORBIDDEN_RELAY_MANAGED)
+    if forbidden:
+        fail(f"{path} canonical_relay_targets contains forbidden system/self principal(s): {forbidden}")
     return historian_min_tx_e8s
 
 
-def extract_vec_principals(text: str, field: str, path: Path) -> list[str]:
-    match = re.search(rf"{re.escape(field)}\s*=\s*vec\s*\{{(?P<body>.*?)\}}\s*;", text, re.S)
+def extract_vec_principals(text: str, field: str, path: Path, *, optional: bool = False) -> list[str]:
+    prefix = r"opt\s+vec" if optional else r"vec"
+    match = re.search(rf"{re.escape(field)}\s*=\s*{prefix}\s*\{{(?P<body>.*?)\}}\s*;", text, re.S)
     if not match:
         fail(f"{path} is missing `{field}`")
     return re.findall(r'principal\s+"([^"]+)"', match.group("body"))
+
+
+def extract_optional_principal(text: str, field: str, path: Path) -> str | None:
+    match = re.search(rf"{re.escape(field)}\s*=\s*(?P<value>[^;]+);", text)
+    if not match:
+        fail(f"{path} is missing `{field}`")
+    value = re.sub(r"\s+", " ", match.group("value").strip())
+    if value == "null":
+        return None
+    principal = re.fullmatch(r'opt principal "([^"]+)"', value)
+    if not principal:
+        fail(f"{path} has invalid `{field}` value `{value}`")
+    return principal.group(1)
 
 
 def require_opt_principal(text: str, field: str, expected: str, path: Path) -> None:

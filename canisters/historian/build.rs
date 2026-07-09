@@ -7,6 +7,10 @@ fn main() {
     let out_dir = std::env::var_os("OUT_DIR").expect("OUT_DIR not set");
     let out_path = std::path::PathBuf::from(out_dir).join("self_service_relay.wasm");
     if let Some(path) = std::env::var_os("JUPITER_RELAY_WASM_PATH") {
+        println!(
+            "cargo:rerun-if-changed={}",
+            std::path::PathBuf::from(&path).display()
+        );
         std::fs::copy(&path, &out_path).unwrap_or_else(|err| {
             panic!(
                 "failed to copy JUPITER_RELAY_WASM_PATH={} to {}: {err}",

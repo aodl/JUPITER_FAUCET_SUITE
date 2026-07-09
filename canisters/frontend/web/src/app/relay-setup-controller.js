@@ -199,6 +199,11 @@ export function createRelaySetupController({
     return TERMINAL_POLL_STATUSES.has(status);
   }
 
+  function submittedTargetStillCurrent(targetText) {
+    const input = document.getElementById('relay-setup-target-input');
+    return state.targetText === targetText && String(input?.value || '').trim() === targetText;
+  }
+
   async function refreshBalanceAndMaybeNotify(expectedTargetText) {
     if (!state.target || state.targetText !== expectedTargetText || shouldStopForStatus()) {
       stopPolling();
@@ -262,6 +267,7 @@ export function createRelaySetupController({
     state.balanceE8s = null;
     state.notifyResult = null;
     state.loaded = false;
+    state.notifying = false;
     stopPolling();
     render();
 
@@ -278,9 +284,13 @@ export function createRelaySetupController({
     try {
       setText('relay-setup-status', 'Loading setup account...');
       const { agent, historian } = await historianBundle();
+      if (!submittedTargetStillCurrent(targetText)) return;
       const view = await historian.get_relay_setup_view({ target_canister_id: target });
+      if (!submittedTargetStillCurrent(targetText)) return;
       const ledger = await loadLedger({ agent, historian });
+      if (!submittedTargetStillCurrent(targetText)) return;
       const balance = await ledger.icrc1_balance_of(view.setup_account);
+      if (!submittedTargetStillCurrent(targetText)) return;
       state.target = target;
       state.view = view;
       state.balanceE8s = BigInt(balance || 0);
@@ -290,12 +300,15 @@ export function createRelaySetupController({
         state.notifying = true;
         render();
         state.notifyResult = await historian.notify_relay_setup(target);
+        if (!submittedTargetStillCurrent(targetText)) return;
         state.notifying = false;
         state.view = await historian.get_relay_setup_view({ target_canister_id: target });
+        if (!submittedTargetStillCurrent(targetText)) return;
       }
       render();
       startPolling();
     } catch (error) {
+      if (!submittedTargetStillCurrent(targetText)) return;
       state.notifying = false;
       state.error = normalizeError(error);
       stopPolling();

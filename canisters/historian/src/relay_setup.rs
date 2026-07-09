@@ -1,6 +1,7 @@
 use crate::clients::index::{account_identifier_text_for_account, IndexOperation};
 use crate::clients::{
-    BlackholeClient, ClientError, CmcCanister, CmcClient, IndexClient, LedgerClient,
+    BlackholeClient, ClientError, CmcCanister, CmcClient, IcpXdrConversionRate, IndexClient,
+    LedgerClient,
 };
 use crate::state::{self, Config, RelayRegistryStatus, State};
 use crate::*;
@@ -21,6 +22,14 @@ pub(crate) const RELAY_SUBACCOUNT_ONE: [u8; 32] = {
 
 const TOP_UP_CANISTER_MEMO: u64 = 1_347_768_404;
 const REFUND_MEMO: u64 = 0x4a525246;
+const INDEX_PAGE_LIMIT: usize = 20;
+const INDEX_PAGE_SIZE: u64 = 100;
+const LEDGER_DUPLICATE_WINDOW_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
+
+struct IndexedSetupPayments {
+    payments: Vec<RelaySetupPayment>,
+    hit_page_cap: bool,
+}
 
 pub(crate) fn setup_account_for(historian: Principal, target: Principal) -> Account {
     Account {
@@ -100,6 +109,8 @@ pub(crate) fn setup_view_from_state(
         Some(message)
     } else if !st.config.relay_factory_enabled {
         Some("relay factory is disabled".to_string())
+    } else if st.config.cmc_canister_id.is_none() {
+        Some("CMC canister is not configured".to_string())
     } else if approved_self_service_relay_wasm().is_none() {
         Some("approved relay wasm is not embedded".to_string())
     } else {
@@ -249,12 +260,17 @@ async fn index_setup_payments(
     target: Principal,
     setup_account_identifier: String,
     index: &dyn IndexClient,
-) -> Result<Vec<RelaySetupPayment>, String> {
+) -> Result<IndexedSetupPayments, String> {
     let mut payments = Vec::new();
     let mut start = None;
-    for _ in 0..20 {
+    let mut hit_page_cap = true;
+    for _ in 0..INDEX_PAGE_LIMIT {
         let resp = index
-            .get_account_identifier_transactions(setup_account_identifier.clone(), start, 100)
+            .get_account_identifier_transactions(
+                setup_account_identifier.clone(),
+                start,
+                INDEX_PAGE_SIZE,
+            )
             .await
             .map_err(|err| err.to_string())?;
         let transaction_count = resp.transactions.len();
@@ -289,14 +305,19 @@ async fn index_setup_payments(
             });
         }
         let Some(oldest) = resp.oldest_tx_id else {
+            hit_page_cap = false;
             break;
         };
-        if transaction_count < 100 {
+        if transaction_count < INDEX_PAGE_SIZE as usize {
+            hit_page_cap = false;
             break;
         }
         start = Some(oldest);
     }
-    Ok(payments)
+    Ok(IndexedSetupPayments {
+        payments,
+        hit_page_cap,
+    })
 }
 
 fn merge_payments(job: &mut RelaySetupJob, payments: Vec<RelaySetupPayment>) {
@@ -400,6 +421,8 @@ fn refund_eligible_status(job: &RelaySetupJob) -> bool {
         job.status,
         RelaySetupStatus::BelowMinimum
             | RelaySetupStatus::TargetNotObservable
+            | RelaySetupStatus::InsufficientForCurrentRate
+            | RelaySetupStatus::IndexNotReady
             | RelaySetupStatus::RefundAvailable
     ) || (matches!(job.status, RelaySetupStatus::FailedRetryable)
         && refund_allowed_before_spend(job))
@@ -552,6 +575,37 @@ async fn find_recorded_transfer_in_index(
 fn note_transfer_success(record: &mut RelaySetupTransferRecord, block_index: u64) {
     record.block_index = Some(block_index);
     record.completed = true;
+}
+
+fn pending_transfer_is_stale(record: &RelaySetupTransferRecord) -> bool {
+    !record.completed
+        && record.block_index.is_none()
+        && now_nanos().saturating_sub(record.created_at_time_nanos) > LEDGER_DUPLICATE_WINDOW_NANOS
+}
+
+fn mark_manual_recovery_required(target: Principal, message: String) -> RelaySetupNotifyResult {
+    set_job_status(
+        target,
+        RelaySetupStatus::ManualRecoveryRequired,
+        Some(message.clone()),
+    );
+    RelaySetupNotifyResult::Failed {
+        status: RelaySetupStatus::ManualRecoveryRequired.into(),
+        message,
+    }
+}
+
+fn stale_transfer_manual_recovery(
+    target: Principal,
+    record: &RelaySetupTransferRecord,
+) -> RelaySetupNotifyResult {
+    mark_manual_recovery_required(
+        target,
+        format!(
+            "{:?} transfer created at {} is older than the ledger duplicate window and was not found in the index",
+            record.kind, record.created_at_time_nanos
+        ),
+    )
 }
 
 fn handle_cmc_notify_error(target: Principal, err: NotifyTopUpError) -> RelaySetupNotifyResult {
@@ -711,6 +765,9 @@ async fn sweep_existing(
             }
         }
     }
+    if pending_transfer_is_stale(&record) {
+        return stale_transfer_manual_recovery(target, &record);
+    }
     match classify_transfer_response(ledger.icrc1_transfer(record_to_transfer_arg(&record)).await) {
         Ok(block_index) => {
             note_transfer_success(&mut record, block_index);
@@ -828,6 +885,9 @@ async fn notify_relay_setup_with_clients_for_historian(
                 } {
                 block_index
             } else {
+                if pending_transfer_is_stale(&cycle_record) {
+                    return stale_transfer_manual_recovery(target, &cycle_record);
+                }
                 match classify_transfer_response(
                     ledger
                         .icrc1_transfer(record_to_transfer_arg(&cycle_record))
@@ -945,10 +1005,14 @@ async fn notify_relay_setup_with_clients_for_historian(
             RelaySetupStatus::InsufficientForCurrentRate,
             Some("setup balance is below current relay setup requirement".to_string()),
         );
-        return RelaySetupNotifyResult::InsufficientForCurrentRate {
-            required_e8s: required,
-            current_balance_e8s: balance,
-        };
+        return auto_refund_pre_spend(
+            historian,
+            target,
+            "setup balance is below current relay setup requirement".to_string(),
+            ledger,
+            index,
+        )
+        .await;
     }
     if let Err(err) = blackhole.canister_status(target).await {
         state::with_root_and_relay_factory_state_mut(target, |st| {
@@ -969,9 +1033,9 @@ async fn notify_relay_setup_with_clients_for_historian(
         )
         .await;
     }
-    let payments = match index_setup_payments(target, setup_account_identifier.clone(), index).await
+    let indexed = match index_setup_payments(target, setup_account_identifier.clone(), index).await
     {
-        Ok(payments) => payments,
+        Ok(indexed) => indexed,
         Err(err) => {
             set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
             return RelaySetupNotifyResult::Failed {
@@ -982,7 +1046,7 @@ async fn notify_relay_setup_with_clients_for_historian(
     };
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
-            merge_payments(job, payments);
+            merge_payments(job, indexed.payments);
             job.updated_at_ts = now_secs();
         }
     });
@@ -993,19 +1057,32 @@ async fn notify_relay_setup_with_clients_for_historian(
             .unwrap_or(0)
     });
     if indexed_total.saturating_add(cfg.relay_setup_dust_e8s) < balance {
-        let message = "setup account balance is visible on ledger but ICP index has not caught up"
-            .to_string();
-        set_job_failed_retryable(target, message.clone());
-        return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedRetryable.into(),
-            message,
+        set_job_status(
+            target,
+            RelaySetupStatus::IndexNotReady,
+            Some(
+                "setup account balance is visible on ledger but ICP index has not caught up"
+                    .to_string(),
+            ),
+        );
+        if indexed.hit_page_cap {
+            return RelaySetupNotifyResult::Pending {
+                status: RelaySetupPublicStatus::IndexNotReady,
+            };
+        }
+        return RelaySetupNotifyResult::Pending {
+            status: RelaySetupPublicStatus::IndexNotReady,
         };
     }
-    if !cfg.relay_factory_enabled || approved_self_service_relay_wasm().is_none() {
+    if !cfg.relay_factory_enabled
+        || approved_self_service_relay_wasm().is_none()
+        || cfg.cmc_canister_id.is_none()
+    {
         return auto_refund_pre_spend(
             historian,
             target,
-            "relay factory is disabled or approved relay wasm is not embedded".to_string(),
+            "relay factory is disabled, approved relay wasm is not embedded, or CMC canister is not configured"
+                .to_string(),
             ledger,
             index,
         )
@@ -1018,12 +1095,18 @@ async fn notify_relay_setup_with_clients_for_historian(
             RelaySetupStatus::InsufficientForCurrentRate,
             Some("setup balance cannot leave useful relay subaccount-1 seed".to_string()),
         );
-        return RelaySetupNotifyResult::InsufficientForCurrentRate {
-            required_e8s: required,
-            current_balance_e8s: balance,
-        };
+        return auto_refund_pre_spend(
+            historian,
+            target,
+            "setup balance cannot leave useful relay subaccount-1 seed".to_string(),
+            ledger,
+            index,
+        )
+        .await;
     };
-    let cmc_id = cfg.cmc_canister_id.unwrap_or_else(mainnet_cmc_id);
+    let cmc_id = cfg
+        .cmc_canister_id
+        .expect("CMC canister id must be configured before conversion");
     let mut cycle_record = state::with_root_and_relay_factory_state_mut(target, |st| {
         let job = st
             .relay_setup_jobs
@@ -1062,6 +1145,9 @@ async fn notify_relay_setup_with_clients_for_historian(
     {
         block_index
     } else {
+        if pending_transfer_is_stale(&cycle_record) {
+            return stale_transfer_manual_recovery(target, &cycle_record);
+        }
         match classify_transfer_response(
             ledger
                 .icrc1_transfer(record_to_transfer_arg(&cycle_record))
@@ -1446,14 +1532,39 @@ pub(crate) async fn notify_relay_setup(target: Principal) -> RelaySetupNotifyRes
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let index = jupiter_ic_clients::index::IcpIndexCanister::new(cfg.index_canister_id);
     let blackhole = clients::blackhole::BlackholeCanister::new(cfg.blackhole_canister_id);
-    let Some(cmc_id) = cfg.cmc_canister_id else {
-        return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedTerminal.into(),
-            message: "CMC canister is not configured".to_string(),
-        };
-    };
-    let cmc = CmcCanister::new(cmc_id);
-    notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, &cmc).await
+    let cmc = cfg.cmc_canister_id.map(CmcCanister::new);
+    let missing_cmc = MissingCmcClient;
+    match cmc.as_ref() {
+        Some(cmc) => {
+            notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, cmc).await
+        }
+        None => {
+            notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, &missing_cmc).await
+        }
+    }
+}
+
+struct MissingCmcClient;
+
+#[async_trait::async_trait]
+impl CmcClient for MissingCmcClient {
+    async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
+        Err(ClientError::Call(
+            "CMC canister is not configured".to_string(),
+        ))
+    }
+
+    async fn notify_top_up(
+        &self,
+        _canister_id: Principal,
+        _block_index: u64,
+    ) -> Result<u128, NotifyTopUpError> {
+        Err(NotifyTopUpError::Terminal(
+            jupiter_ic_clients::cmc::NotifyTerminalError::InvalidTransaction(
+                "CMC canister is not configured".to_string(),
+            ),
+        ))
+    }
 }
 
 async fn request_relay_setup_refund_with_clients_for_historian(
@@ -1508,19 +1619,40 @@ async fn request_relay_setup_refund_with_clients_for_historian(
             }
         }
     };
-    let payments = match index_setup_payments(target, setup_account_identifier, index).await {
-        Ok(payments) => payments,
+    let indexed = match index_setup_payments(target, setup_account_identifier, index).await {
+        Ok(indexed) => indexed,
         Err(err) => return RelaySetupRefundResult::Failed { message: err },
     };
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
-            merge_payments(job, payments);
+            merge_payments(job, indexed.payments);
             job.status = RelaySetupStatus::Refunding;
             job.last_refund_attempt_ts = Some(now);
             job.refund_attempt_count = job.refund_attempt_count.saturating_add(1);
             job.updated_at_ts = now;
         }
     });
+    let indexed_total = state::with_state(|st| {
+        st.relay_setup_jobs
+            .get(&target)
+            .map(indexed_inbound_total_for_job)
+            .unwrap_or(0)
+    });
+    if indexed.hit_page_cap && indexed_total.saturating_add(1) < balance {
+        set_job_status(
+            target,
+            RelaySetupStatus::IndexNotReady,
+            Some(
+                "setup payment indexing reached the page cap before explaining the ledger balance"
+                    .to_string(),
+            ),
+        );
+        return RelaySetupRefundResult::Failed {
+            message:
+                "setup payment indexing reached the page cap before explaining the ledger balance"
+                    .to_string(),
+        };
+    }
     let grouped = state::with_state(|st| {
         let mut grouped = BTreeMap::<String, (u64, Vec<u64>)>::new();
         if let Some(job) = st.relay_setup_jobs.get(&target) {
@@ -1581,6 +1713,31 @@ async fn request_relay_setup_refund_with_clients_for_historian(
             }
             now_nanos()
         });
+        let stale = state::with_state(|st| {
+            st.relay_setup_jobs
+                .get(&target)
+                .and_then(|job| {
+                    job.refund_transfers.iter().find(|record| {
+                        !record.completed
+                            && record.kind == RelaySetupTransferKind::Refund
+                            && record.to_account_identifier == account_identifier
+                            && record.amount_e8s == refund_amount
+                            && record.created_at_time_nanos == created_at_time
+                    })
+                })
+                .map(pending_transfer_is_stale)
+                .unwrap_or(false)
+        });
+        if stale {
+            set_job_status(
+                target,
+                RelaySetupStatus::ManualRecoveryRequired,
+                Some("pending refund transfer is older than the ledger duplicate window and was not found in the index".to_string()),
+            );
+            return RelaySetupRefundResult::Failed {
+                message: "pending refund transfer is older than the ledger duplicate window and was not found in the index".to_string(),
+            };
+        }
         let result = ledger
             .legacy_transfer_to_account_identifier(
                 setup_account.subaccount,
@@ -1993,9 +2150,11 @@ mod tests {
             RelaySetupStatus::Active,
             RelaySetupStatus::RefundAvailable,
             RelaySetupStatus::Refunded,
+            RelaySetupStatus::IndexNotReady,
             RelaySetupStatus::FailedRetryable,
             RelaySetupStatus::FailedTerminal,
             RelaySetupStatus::Ambiguous,
+            RelaySetupStatus::ManualRecoveryRequired,
         ] {
             assert!(!in_flight_job(&job_with_status(status)));
         }
@@ -2350,12 +2509,205 @@ mod tests {
         ));
         assert!(matches!(
             result,
+            RelaySetupNotifyResult::Pending {
+                status: RelaySetupPublicStatus::IndexNotReady,
+            }
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn funded_setup_below_required_amount_auto_refunds() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25]);
+        state::set_state(State::new(config(), 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            legacy_results: Arc::new(Mutex::new(vec![Ok(Ok(88))])),
+            ..FakeLedger::healthy(150_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 150_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    150_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![88]
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::Refunded);
+    }
+
+    #[test]
+    fn missing_cmc_hides_payment_and_auto_refunds_funded_setup() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[26]);
+        let mut cfg = config();
+        cfg.cmc_canister_id = None;
+        state::set_state(State::new(cfg, 0));
+
+        let view = state::with_state(|st| setup_view_from_state(st, target, historian));
+        assert!(!view.payment_allowed);
+        assert_eq!(
+            view.payment_blocked_reason.as_deref(),
+            Some("CMC canister is not configured")
+        );
+
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            legacy_results: Arc::new(Mutex::new(vec![Ok(Ok(89))])),
+            ..FakeLedger::healthy(250_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 250_000_000,
+                transactions: vec![index_transfer(
+                    2,
+                    "source-a",
+                    &setup_account_identifier,
+                    250_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![89]
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pagination_cap_does_not_mark_refunded_while_balance_unexplained() {
+        let target = Principal::from_slice(&[27]);
+        let mut job = job_with_status(RelaySetupStatus::RefundAvailable);
+        job.target_canister_id = target;
+        job.setup_account_identifier = "setup".to_string();
+        install_state_with_job(target, job);
+
+        let mut pages = Vec::new();
+        for page in 0..INDEX_PAGE_LIMIT {
+            let mut transactions = Vec::new();
+            for offset in 0..INDEX_PAGE_SIZE {
+                let tx_id = (page as u64) * INDEX_PAGE_SIZE + offset;
+                transactions.push(index_transfer(tx_id, "source-a", "setup", 1_000));
+            }
+            pages.push(GetAccountIdentifierTransactionsResponse {
+                balance: 3_000_000,
+                transactions,
+                oldest_tx_id: Some((page as u64 + 1) * INDEX_PAGE_SIZE),
+            });
+        }
+        let ledger = FakeLedger::healthy(3_000_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 3_000_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(pages)),
+        };
+
+        let result = block_on(request_relay_setup_refund_with_clients_for_historian(
+            Principal::from_slice(&[42]),
+            target,
+            &ledger,
+            &index,
+        ));
+
+        assert!(matches!(result, RelaySetupRefundResult::Failed { .. }));
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::IndexNotReady);
+    }
+
+    #[test]
+    fn stale_pending_transfer_requires_manual_recovery_after_duplicate_window() {
+        TEST_NOW_NANOS.store(
+            LEDGER_DUPLICATE_WINDOW_NANOS + 10_000_000_000,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[28]);
+        let setup_account = setup_account_for(historian, target);
+        let mut job = job_with_status(RelaySetupStatus::Ambiguous);
+        job.target_canister_id = target;
+        job.setup_account = setup_account;
+        job.setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let mut record = transfer_record(
+            RelaySetupTransferKind::CmcConversion,
+            setup_account.subaccount,
+            setup_account,
+            cmc_deposit_account(Principal::from_slice(&[4]), historian),
+            50_000,
+            10_000,
+            Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
+        );
+        record.created_at_time_nanos = 1;
+        job.cycle_transfer = Some(record);
+        install_state_with_job(target, job);
+        let ledger = FakeLedger::healthy(60_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 60_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(
+            result,
             RelaySetupNotifyResult::Failed {
-                status: RelaySetupPublicStatus::FailedRetryable,
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
                 ..
             }
         ));
         assert!(ledger.transfers.lock().unwrap().is_empty());
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
     }
 
     #[test]
@@ -2750,10 +3102,12 @@ mod tests {
 
         let payments = block_on(index_setup_payments(target, setup.to_string(), &index)).unwrap();
 
-        assert_eq!(payments.len(), 105);
-        assert!(payments.iter().any(|payment| payment.tx_id == 100));
+        assert!(!payments.hit_page_cap);
+        assert_eq!(payments.payments.len(), 105);
+        assert!(payments.payments.iter().any(|payment| payment.tx_id == 100));
         assert_eq!(
             payments
+                .payments
                 .iter()
                 .fold(0u64, |acc, payment| acc.saturating_add(payment.amount_e8s)),
             50_100

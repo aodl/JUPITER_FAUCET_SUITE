@@ -195,9 +195,11 @@ type RelaySetupStatus = variant {
   RefundAvailable;
   Refunding;
   Refunded;
+  IndexNotReady;
   FailedRetryable;
   FailedTerminal;
   Ambiguous;
+  ManualRecoveryRequired;
 };
 type RelaySetupJobView = record {
   target_canister_id : principal;
