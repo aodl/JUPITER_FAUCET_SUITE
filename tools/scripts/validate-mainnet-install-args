@@ -42,6 +42,9 @@ EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_INTERVAL_SECONDS = 3_600
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
+REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256 = (
+    "354103788f8e24ccf474e7a3c4eaf43a2554ed5c26bb7cd8cb297ed21900c281"
+)
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
     PROD["jupiter_lifeline"],
@@ -637,15 +640,30 @@ def validate_historian() -> int:
         fail(f"{path} configures min_tx_e8s below the supported floor of 10_000_000 e8s (0.1 ICP)")
     relay_factory_enabled = extract_opt_bool(text, "relay_factory_enabled", path)
     if relay_factory_enabled:
+        artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.wasm.gz"
+        if not artifact_path.exists():
+            fail(
+                f"{path} enables relay_factory_enabled but reviewed historian-with-relay artifact is missing: {artifact_path}"
+            )
         hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.embedded-relay-wasm.sha256"
         if not hash_path.exists():
             fail(
                 f"{path} enables relay_factory_enabled but embedded relay wasm hash record is missing: {hash_path}"
             )
         hash_text = hash_path.read_text().strip()
-        if not re.fullmatch(r"[0-9a-f]{64}\s+release-artifacts/jupiter_relay\.wasm", hash_text):
+        hash_match = re.fullmatch(r"([0-9a-f]{64})\s+release-artifacts/jupiter_relay\.wasm", hash_text)
+        if not hash_match:
             fail(f"{hash_path} must record the embedded relay wasm sha256 and source path")
-        fail(f"{path} must keep relay_factory_enabled=false for current mainnet historian artifacts")
+        embedded_hash = hash_match.group(1)
+        if embedded_hash != REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256:
+            fail(
+                f"{path} enables relay_factory_enabled with embedded relay wasm sha256 {embedded_hash}; "
+                f"expected reviewed hash {REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256}"
+            )
+        print(
+            "reviewed historian-with-relay embedded relay wasm sha256: "
+            f"{REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256}"
+        )
 
     build_script = (REPO_ROOT / "tools" / "scripts" / "build-canister").read_text()
     if "jupiter-historian-with-relay" not in build_script or "JUPITER_RELAY_WASM_PATH" not in build_script:

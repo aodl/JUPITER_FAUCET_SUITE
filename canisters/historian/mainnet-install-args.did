@@ -30,7 +30,7 @@
   max_commitment_entries_per_canister = opt (100 : nat32);
   max_index_pages_per_tick = opt (10 : nat32);
   max_canisters_per_cycles_tick = opt (25 : nat32);
-  relay_factory_enabled = opt false;
+  relay_factory_enabled = opt true;
   relay_setup_min_e8s = opt (200000000 : nat64);
   relay_setup_dust_e8s = opt (10000 : nat64);
   relay_setup_refund_cooldown_seconds = opt (300 : nat64);

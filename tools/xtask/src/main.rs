@@ -131,6 +131,14 @@ fn print_summary(outcomes: &[ScenarioOutcome]) -> bool {
 }
 
 fn run_cargo_build(package: &str, features: &[&str]) -> Result<()> {
+    run_cargo_build_with_env(package, features, &[])
+}
+
+fn run_cargo_build_with_env(
+    package: &str,
+    features: &[&str],
+    envs: &[(&str, String)],
+) -> Result<()> {
     let root = repo_root();
     let mut args = vec![
         "build".to_string(),
@@ -147,9 +155,12 @@ fn run_cargo_build(package: &str, features: &[&str]) -> Result<()> {
     }
 
     eprintln!("▶ cargo {}", args.join(" "));
-    let status = Command::new("cargo")
-        .args(&args)
-        .current_dir(&root)
+    let mut command = Command::new("cargo");
+    command.args(&args).current_dir(&root);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let status = command
         .status()
         .with_context(|| format!("failed to build {package}"))?;
     if !status.success() {
@@ -233,8 +244,20 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         "jupiter_faucet_dbg" | "jupiter_faucet_args_dbg" => {
             run_cargo_build("jupiter-faucet", &["debug_api"])
         }
-        "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => {
-            run_cargo_build("jupiter-historian", &["debug_api"])
+        "jupiter_historian_dbg" => run_cargo_build("jupiter-historian", &["debug_api"]),
+        "jupiter_historian_args_dbg" => {
+            run_cargo_build("jupiter-relay", &["debug_api"])?;
+            let relay_wasm = std::path::Path::new(&repo_root())
+                .join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm")
+                .canonicalize()
+                .context("failed to resolve local relay wasm for historian args roundtrip")?
+                .to_string_lossy()
+                .into_owned();
+            run_cargo_build_with_env(
+                "jupiter-historian",
+                &["debug_api"],
+                &[("JUPITER_RELAY_WASM_PATH", relay_wasm)],
+            )
         }
         "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => {
             run_cargo_build("jupiter-relay", &["debug_api"])
