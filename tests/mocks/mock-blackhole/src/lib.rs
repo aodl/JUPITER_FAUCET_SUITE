@@ -21,12 +21,19 @@ struct DebugStatus {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugCall {
+    canister_id: Principal,
+    caller: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct Args {
     canister_id: Principal,
 }
 
 thread_local! {
     static STATUSES: RefCell<BTreeMap<Principal, BlackholeCanisterStatus>> = const { RefCell::new(BTreeMap::new()) };
+    static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
 }
 
 #[ic_cdk::init]
@@ -34,6 +41,12 @@ fn init() {}
 
 #[ic_cdk::update]
 fn canister_status(args: Args) -> BlackholeCanisterStatus {
+    CALLS.with(|calls| {
+        calls.borrow_mut().push(DebugCall {
+            canister_id: args.canister_id,
+            caller: ic_cdk::api::msg_caller(),
+        });
+    });
     STATUSES.with(|s| {
         s.borrow()
             .get(&args.canister_id)
@@ -45,6 +58,7 @@ fn canister_status(args: Args) -> BlackholeCanisterStatus {
 #[ic_cdk::update]
 fn debug_reset() {
     STATUSES.with(|s| s.borrow_mut().clear());
+    CALLS.with(|calls| calls.borrow_mut().clear());
 }
 
 #[ic_cdk::update]
@@ -77,4 +91,9 @@ fn debug_statuses() -> Vec<DebugStatus> {
             })
             .collect()
     })
+}
+
+#[ic_cdk::query]
+fn debug_calls() -> Vec<DebugCall> {
+    CALLS.with(|calls| calls.borrow().clone())
 }

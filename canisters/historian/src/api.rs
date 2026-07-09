@@ -176,35 +176,76 @@ pub struct ListRelayRegistrationsArgs {
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct ListRelayRegistrationsResponse {
-    pub items: Vec<RelayRegistryEntry>,
+    pub items: Vec<RelayRegistration>,
     pub next_start_after: Option<Principal>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RelaySetupJobView {
+pub struct RelayRegistration {
     pub target_canister_id: Principal,
-    pub status: RelaySetupStatus,
-    pub relay_canister_id: Option<Principal>,
-    pub setup_amount_seen_e8s: u64,
-    pub setup_amount_processed_e8s: u64,
-    pub cycle_conversion_e8s: Option<u64>,
-    pub relay_funding_e8s: Option<u64>,
-    pub last_error: Option<String>,
-    pub updated_at_ts: u64,
+    pub relay_canister_id: Principal,
+    pub kind: RelayRegistryKind,
+    pub relay_wasm_hash_hex: Option<String>,
+    pub created_at_ts: Option<u64>,
 }
 
-impl From<RelaySetupJob> for RelaySetupJobView {
-    fn from(value: RelaySetupJob) -> Self {
+impl From<RelayRegistryEntry> for RelayRegistration {
+    fn from(value: RelayRegistryEntry) -> Self {
         Self {
             target_canister_id: value.target_canister_id,
-            status: value.status,
             relay_canister_id: value.relay_canister_id,
-            setup_amount_seen_e8s: value.setup_amount_seen_e8s,
-            setup_amount_processed_e8s: value.setup_amount_processed_e8s,
-            cycle_conversion_e8s: value.cycle_conversion_e8s,
-            relay_funding_e8s: value.relay_funding_e8s,
-            last_error: value.last_error,
-            updated_at_ts: value.updated_at_ts,
+            kind: value.kind,
+            relay_wasm_hash_hex: value.relay_wasm_hash_hex,
+            created_at_ts: value.created_at_ts,
+        }
+    }
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub enum RelaySetupPublicStatus {
+    NotFunded,
+    BelowMinimum,
+    PaymentNotAllowed,
+    IndexNotReady,
+    Pending,
+    CreatingRelay,
+    Active,
+    SweepingToExistingRelay,
+    Refunding,
+    Refunded,
+    FailedRetryable,
+    ManualRecoveryRequired,
+}
+
+impl From<RelaySetupStatus> for RelaySetupPublicStatus {
+    fn from(value: RelaySetupStatus) -> Self {
+        match value {
+            RelaySetupStatus::NotFunded => Self::NotFunded,
+            RelaySetupStatus::BelowMinimum | RelaySetupStatus::SweepBelowDust => Self::BelowMinimum,
+            RelaySetupStatus::TargetNotObservable | RelaySetupStatus::FailedTerminal => {
+                Self::ManualRecoveryRequired
+            }
+            RelaySetupStatus::RefundAvailable | RelaySetupStatus::Refunding => Self::Refunding,
+            RelaySetupStatus::Refunded => Self::Refunded,
+            RelaySetupStatus::CreatingCanister
+            | RelaySetupStatus::CanisterCreated
+            | RelaySetupStatus::InstallingCode
+            | RelaySetupStatus::CodeInstalled
+            | RelaySetupStatus::SettingPublicLogs
+            | RelaySetupStatus::Blackholing => Self::CreatingRelay,
+            RelaySetupStatus::Active => Self::Active,
+            RelaySetupStatus::SweepingToExistingRelay | RelaySetupStatus::SweptToExistingRelay => {
+                Self::SweepingToExistingRelay
+            }
+            RelaySetupStatus::FailedRetryable | RelaySetupStatus::Ambiguous => {
+                Self::FailedRetryable
+            }
+            RelaySetupStatus::Pending
+            | RelaySetupStatus::ConvertingCycles
+            | RelaySetupStatus::CycleTransferAccepted
+            | RelaySetupStatus::CycleNotifySucceeded
+            | RelaySetupStatus::FundingRelaySubaccountOne => Self::Pending,
+            RelaySetupStatus::InsufficientForCurrentRate => Self::BelowMinimum,
         }
     }
 }
@@ -215,11 +256,11 @@ pub struct RelaySetupView {
     pub setup_account: Account,
     pub setup_account_identifier: String,
     pub minimum_e8s: u64,
-    pub dust_e8s: u64,
-    pub current_status: Option<RelaySetupStatus>,
-    pub existing_relay: Option<RelayRegistryEntry>,
-    pub setup_job: Option<RelaySetupJobView>,
-    pub factory_enabled: bool,
+    pub payment_allowed: bool,
+    pub payment_blocked_reason: Option<String>,
+    pub existing_relay: Option<RelayRegistration>,
+    pub status: RelaySetupPublicStatus,
+    pub factory_available: bool,
     pub relay_wasm_hash_hex: Option<String>,
     pub warning_text: Option<String>,
 }
@@ -238,22 +279,28 @@ pub enum RelaySetupNotifyResult {
         message: String,
     },
     Pending {
-        job: RelaySetupJobView,
+        status: RelaySetupPublicStatus,
     },
     Active {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
     },
     SweptToExistingRelay {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
         amount_e8s: u64,
         block_index: u64,
     },
     SweepBelowDust {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
         current_balance_e8s: u64,
     },
+    Refunded {
+        blocks: Vec<u64>,
+    },
+    RefundPending {
+        reason: String,
+    },
     Failed {
-        status: RelaySetupStatus,
+        status: RelaySetupPublicStatus,
         message: String,
     },
 }

@@ -5,21 +5,25 @@ import { accountIdentifierHex, bytesToHex, readOptional } from '../data/dashboar
 import { escapeHtml } from '../followee-links.js';
 import { DASH, formatIcpE8s, renderCanisterDashboardLink, renderCanisterTrackerLink } from './view-formatters.js';
 
-const REFUND_ELIGIBLE_STATUSES = new Set([
-  'BelowMinimum',
-  'TargetNotObservable',
-  'RefundAvailable',
-  'FailedRetryable',
-  'FailedTerminal',
-]);
-
 const TERMINAL_POLL_STATUSES = new Set([
   'Active',
-  'TargetNotObservable',
-  'FailedTerminal',
+  'Refunded',
+  'ManualRecoveryRequired',
 ]);
 
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
+const FRONTEND_NOTIFY_MIN_E8S = 10_000n;
+const STATUS_LABELS = {
+  NotFunded: 'Not funded',
+  BelowMinimum: 'Below minimum',
+  PaymentNotAllowed: 'Payment not allowed',
+  IndexNotReady: 'Index not ready',
+  CreatingRelay: 'Creating relay',
+  SweepingToExistingRelay: 'Sweeping to existing relay',
+  RefundPending: 'Refund pending',
+  FailedRetryable: 'Retryable failure',
+  ManualRecoveryRequired: 'Manual recovery required',
+};
 
 function variantName(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
@@ -28,8 +32,15 @@ function variantName(value) {
 
 function statusText(value) {
   if (!value) return '';
+  if (typeof value === 'string') return STATUS_LABELS[value] || value;
+  const variant = variantName(value);
+  return STATUS_LABELS[variant] || variant || String(value);
+}
+
+function statusKey(value) {
+  if (!value) return '';
   if (typeof value === 'string') return value;
-  return variantName(value) || String(value);
+  return variantName(value);
 }
 
 function principalText(value) {
@@ -46,8 +57,10 @@ function statusFromNotifyResult(result) {
   if (kind === 'Active') return 'Active';
   if (kind === 'SweptToExistingRelay') return 'SweptToExistingRelay';
   if (kind === 'SweepBelowDust') return 'SweepBelowDust';
-  if (kind === 'Pending') return statusText(result.Pending?.job?.status) || 'Pending';
-  if (kind === 'Failed') return statusText(result.Failed?.status) || 'Failed';
+  if (kind === 'Refunded') return 'Refunded';
+  if (kind === 'RefundPending') return 'RefundPending';
+  if (kind === 'Pending') return statusKey(result.Pending?.status) || 'Pending';
+  if (kind === 'Failed') return statusKey(result.Failed?.status) || 'Failed';
   return kind || '';
 }
 
@@ -79,14 +92,12 @@ function renderRelayEntry(entry) {
   const relayId = principalText(entry.relay_canister_id);
   const targetId = principalText(entry.target_canister_id);
   const kind = statusText(entry.kind) || 'Relay';
-  const status = statusText(entry.status) || 'Unknown';
   return `
     <dl class="pane-detail-grid relay-setup-grid">
       <div><dt>Relay</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(relayId)}</dd></div>
       <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(relayId)}</dd></div>
       <div><dt>Target</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(targetId)}</dd></div>
       <div><dt>Registry kind</dt><dd class="pane-detail-value">${escapeHtml(kind)}</dd></div>
-      <div><dt>Status</dt><dd class="pane-detail-value">${escapeHtml(status)}</dd></div>
     </dl>`;
 }
 
@@ -96,11 +107,12 @@ function renderView({ view, balanceE8s = null, notifyResult = null }) {
   const subaccount = setupAccount?.subaccount?.[0] || [];
   const subaccountHex = bytesToHex(subaccount);
   const accountIdentifier = view?.setup_account_identifier || (setupAccount ? accountIdentifierHex(setupAccount) : '');
-  const currentStatus = statusText(readOptional(view?.current_status)) || statusFromNotifyResult(notifyResult);
+  const currentStatus = statusText(view?.status) || statusFromNotifyResult(notifyResult);
   const notifyStatus = statusFromNotifyResult(notifyResult);
-  const status = notifyStatus || currentStatus || (existingRelay ? 'Active' : 'Not funded');
+  const status = statusText(notifyStatus) || currentStatus || (existingRelay ? 'Active' : 'Not funded');
   const minimum = view?.minimum_e8s === undefined ? null : BigInt(view.minimum_e8s);
-  const factoryEnabled = Boolean(view?.factory_enabled);
+  const factoryAvailable = Boolean(view?.factory_available);
+  const paymentBlockedReason = readOptional(view?.payment_blocked_reason);
 
   setText('relay-setup-status', status);
   setText('relay-setup-minimum', minimum === null ? DASH : formatIcpE8s(minimum));
@@ -108,13 +120,15 @@ function renderView({ view, balanceE8s = null, notifyResult = null }) {
   setText('relay-setup-subaccount', subaccountHex || DASH);
   setText('relay-setup-account-identifier', accountIdentifier || DASH);
   setText('relay-setup-warning', readOptional(view?.warning_text) || '');
-  setText('relay-setup-factory', factoryEnabled ? 'Available' : 'Unavailable');
+  setText('relay-setup-factory', factoryAvailable ? 'Available' : 'Unavailable');
   setHtml('relay-setup-existing-relay', existingRelay ? renderRelayEntry(existingRelay) : '');
   setHidden('relay-setup-existing-relay', !existingRelay);
 
-  const refundEligible = REFUND_ELIGIBLE_STATUSES.has(status);
-  setHidden('relay-setup-refund', !refundEligible);
-  setHidden('relay-setup-payment-details', Boolean(existingRelay));
+  if (paymentBlockedReason && !notifyStatus) {
+    setText('relay-setup-status', paymentBlockedReason);
+  }
+  setHidden('relay-setup-refund', true);
+  setHidden('relay-setup-payment-details', Boolean(existingRelay) || view?.payment_allowed === false);
 }
 
 export function createRelaySetupController({
@@ -136,7 +150,6 @@ export function createRelaySetupController({
     error: '',
     loaded: false,
     notifying: false,
-    refunding: false,
     polling: false,
   };
   let pollHandle = null;
@@ -182,7 +195,7 @@ export function createRelaySetupController({
 
   function shouldStopForStatus() {
     const status = statusFromNotifyResult(state.notifyResult)
-      || statusText(readOptional(state.view?.current_status));
+      || statusKey(state.view?.status);
     return TERMINAL_POLL_STATUSES.has(status);
   }
 
@@ -207,8 +220,7 @@ export function createRelaySetupController({
       state.view = view;
       state.balanceE8s = BigInt(balance || 0);
       state.loaded = true;
-      const dust = BigInt(view.dust_e8s || 0);
-      if (state.balanceE8s > dust && !state.notifying) {
+      if (state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S && !state.notifying) {
         state.notifying = true;
         render();
         state.notifyResult = await historian.notify_relay_setup(state.target);
@@ -274,8 +286,7 @@ export function createRelaySetupController({
       state.balanceE8s = BigInt(balance || 0);
       state.loaded = true;
 
-      const dust = BigInt(view.dust_e8s || 0);
-      if (state.balanceE8s > dust) {
+      if (state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S) {
         state.notifying = true;
         render();
         state.notifyResult = await historian.notify_relay_setup(target);
@@ -292,29 +303,6 @@ export function createRelaySetupController({
     }
   }
 
-  async function requestRefund() {
-    if (!state.target) return;
-    try {
-      state.refunding = true;
-      setText('relay-setup-status', 'Requesting refund...');
-      const { historian } = await historianBundle();
-      const result = await historian.request_relay_setup_refund(state.target);
-      const kind = variantName(result);
-      state.notifyResult = kind ? { Failed: { status: kind, message: kind } } : state.notifyResult;
-      state.view = await historian.get_relay_setup_view({ target_canister_id: state.target });
-      state.refunding = false;
-      setText('relay-setup-status', kind || 'Refund request complete');
-      render();
-      if (shouldStopForStatus()) {
-        stopPolling();
-      }
-    } catch (error) {
-      state.refunding = false;
-      state.error = normalizeError(error);
-      render();
-    }
-  }
-
   function bindPane() {
     const form = document.getElementById('relay-setup-form');
     if (form && form.dataset.bound !== 'true') {
@@ -324,20 +312,12 @@ export function createRelaySetupController({
         void submitTarget();
       });
     }
-    const refund = document.getElementById('relay-setup-refund');
-    if (refund && refund.dataset.bound !== 'true') {
-      refund.dataset.bound = 'true';
-      refund.addEventListener('click', () => {
-        void requestRefund();
-      });
-    }
   }
 
   return {
     state,
     bindPane,
     submitTarget,
-    requestRefund,
     stopPolling,
     refreshBalanceAndMaybeNotify,
     render,

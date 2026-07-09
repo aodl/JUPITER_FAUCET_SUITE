@@ -173,7 +173,6 @@ mod tests {
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
-            relay_targets_by_relay: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
             registered_canister_summaries_cache: None,
             registered_canister_summaries_total_desc_index: None,

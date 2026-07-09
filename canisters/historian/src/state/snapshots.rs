@@ -88,7 +88,6 @@ pub(super) fn persist_snapshot_sections_scoped(
     if dirty_sections & DIRTY_RELAY_FACTORY != 0 {
         sync_relay_factory_maps(
             &st.relay_registry_by_target,
-            &st.relay_targets_by_relay,
             &st.relay_setup_jobs,
             relay_target_scope,
         );

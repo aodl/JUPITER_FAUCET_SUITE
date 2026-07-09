@@ -66,7 +66,16 @@ async function withRelaySetupDom(fn) {
   }
 }
 
-function setupView({ target, historian, existingRelay = [], status = [], minimum = 200_000_000n, dust = 10_000n } = {}) {
+function setupView({
+  target,
+  historian,
+  existingRelay = [],
+  status = { NotFunded: null },
+  minimum = 200_000_000n,
+  paymentAllowed = true,
+  paymentBlockedReason = [],
+  factoryAvailable = true,
+} = {}) {
   const setupAccount = {
     owner: Principal.fromText(historian),
     subaccount: [Array.from(relaySetupSubaccount(target))],
@@ -76,11 +85,11 @@ function setupView({ target, historian, existingRelay = [], status = [], minimum
     setup_account: setupAccount,
     setup_account_identifier: accountIdentifierHex(setupAccount),
     minimum_e8s: minimum,
-    dust_e8s: dust,
-    current_status: status,
+    payment_allowed: paymentAllowed,
+    payment_blocked_reason: paymentBlockedReason,
     existing_relay: existingRelay,
-    setup_job: [],
-    factory_enabled: true,
+    status,
+    factory_available: factoryAvailable,
     relay_wasm_hash_hex: ['a'.repeat(64)],
     warning_text: ['Blackhole visibility warning'],
   };
@@ -172,16 +181,8 @@ test('relay setup notifies above dust and renders active relay', async () => {
     relay_canister_id: relay,
     target_canister_id: Principal.fromText(target),
     kind: { SelfService: null },
-    status: { Active: null },
-    setup_account: [],
-    setup_account_identifier: [],
-    setup_amount_e8s: [200_000_000n],
-    setup_tx_ids: [],
     relay_wasm_hash_hex: [],
-    final_controllers: [],
-    log_visibility_public: [true],
     created_at_ts: [],
-    activated_at_ts: [],
   };
   const calls = [];
 
@@ -227,7 +228,7 @@ test('relay setup notifies above dust and renders active relay', async () => {
   });
 });
 
-test('relay setup refund button calls historian refund for eligible status', async () => {
+test('relay setup has no refund button and renders automatic refunded result', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const calls = [];
@@ -242,14 +243,14 @@ test('relay setup refund button calls historian refund for eligible status', asy
             return setupView({
               target,
               historian: historianId,
-              status: [{ TargetNotObservable: null }],
+              status: { Refunded: null },
             });
           },
           async get_public_status() {
             return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
           },
-          async request_relay_setup_refund(arg) {
-            calls.push(['refund', arg.toText()]);
+          async notify_relay_setup(arg) {
+            calls.push(['notify', arg.toText()]);
             return { Refunded: { blocks: [7n] } };
           },
         },
@@ -264,10 +265,54 @@ test('relay setup refund button calls historian refund for eligible status', asy
     nodes.get('relay-setup-target-input').value = target;
 
     await controller.submitTarget();
-    assert.equal(nodes.get('relay-setup-refund').hidden, false);
-    await controller.requestRefund();
+    assert.equal(nodes.get('relay-setup-refund').hidden, true);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Refunded');
+    assert.deepEqual(calls, []);
+  });
+});
 
-    assert.deepEqual(calls, [['refund', target]]);
+test('relay setup hides payment details but still notifies funded blocked target for auto-refund', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const calls = [];
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            return setupView({
+              target,
+              historian: historianId,
+              paymentAllowed: false,
+              paymentBlockedReason: ['target must not be a configured protocol dependency'],
+            });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup(arg) {
+            calls.push(['notify', arg.toText()]);
+            return { RefundPending: { reason: 'refund pending index catch-up' } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 1_000_000_000n;
+        },
+      }),
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    await controller.submitTarget();
+
+    assert.deepEqual(calls, [['notify', target]]);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Refund pending');
   });
 });
 
@@ -411,6 +456,48 @@ test('relay setup polling stops after active result', async () => {
     nodes.get('relay-setup-target-input').value = target;
     await controller.submitTarget();
 
+    assert.equal(controller.state.polling, false);
+    assert.equal(cleared, 1);
+  });
+});
+
+test('relay setup polling stops after manual recovery required result', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  let cleared = 0;
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            return setupView({ target, historian: historianId });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            return { Failed: { status: { ManualRecoveryRequired: null }, message: 'manual intervention required' } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 20_000n;
+        },
+      }),
+      setIntervalFn: () => 7,
+      clearIntervalFn: () => {
+        cleared += 1;
+      },
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+    await controller.submitTarget();
+
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
     assert.equal(controller.state.polling, false);
     assert.equal(cleared, 1);
   });

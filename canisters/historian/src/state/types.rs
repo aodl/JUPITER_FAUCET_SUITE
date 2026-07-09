@@ -360,6 +360,41 @@ pub struct RelaySetupPayment {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum RelaySetupTransferKind {
+    CmcConversion,
+    RelayFunding,
+    ExistingRelaySweep,
+    Refund,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum RelaySetupPhase {
+    PreSpend,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    RelayCanisterCreated,
+    RelayCodeInstalled,
+    RelayFundingAccepted,
+    BlackholeUpdateAttempted,
+    Active,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelaySetupTransferRecord {
+    pub kind: RelaySetupTransferKind,
+    pub from_subaccount: Option<[u8; 32]>,
+    pub from_account_identifier: String,
+    pub to: Account,
+    pub to_account_identifier: String,
+    pub amount_e8s: u64,
+    pub fee_e8s: u64,
+    pub memo: Option<Vec<u8>>,
+    pub created_at_time_nanos: u64,
+    pub block_index: Option<u64>,
+    pub completed: bool,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct RelaySetupJob {
     pub target_canister_id: Principal,
     pub setup_account: Account,
@@ -377,6 +412,24 @@ pub struct RelaySetupJob {
     pub relay_initial_cycles: Option<u128>,
     pub relay_funding_e8s: Option<u64>,
     pub relay_funding_block_index: Option<u64>,
+    #[serde(default)]
+    pub phase: Option<RelaySetupPhase>,
+    #[serde(default)]
+    pub cycle_transfer: Option<RelaySetupTransferRecord>,
+    #[serde(default)]
+    pub relay_funding_transfer: Option<RelaySetupTransferRecord>,
+    #[serde(default)]
+    pub existing_relay_sweep_transfer: Option<RelaySetupTransferRecord>,
+    #[serde(default)]
+    pub refund_transfers: Vec<RelaySetupTransferRecord>,
+    #[serde(default)]
+    pub code_installed: bool,
+    #[serde(default)]
+    pub relay_funding_accepted: bool,
+    #[serde(default)]
+    pub blackhole_update_attempted: bool,
+    #[serde(default)]
+    pub blackhole_confirmed: bool,
     pub refund_attempt_count: u32,
     pub last_refund_attempt_ts: Option<u64>,
     pub refund_blocks: Vec<u64>,
@@ -773,25 +826,6 @@ impl Storable for RelayRegistryEntry {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-pub(super) struct StableRelayTargetList(pub Vec<Principal>);
-
-impl Storable for StableRelayTargetList {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian relay target list"))
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        candid::encode_one(self).expect("failed to encode historian relay target list")
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian relay target list")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
 impl Storable for RelaySetupJob {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Owned(candid::encode_one(self).expect("failed to encode historian relay setup job"))
@@ -818,8 +852,6 @@ pub(crate) struct State {
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
     #[serde(default)]
     pub relay_registry_by_target: BTreeMap<Principal, RelayRegistryEntry>,
-    #[serde(default)]
-    pub relay_targets_by_relay: BTreeMap<Principal, Vec<Principal>>,
     #[serde(default)]
     pub relay_setup_jobs: BTreeMap<Principal, RelaySetupJob>,
     #[serde(default)]
@@ -899,7 +931,6 @@ impl State {
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
-            relay_targets_by_relay: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
             registered_canister_summaries_cache: Some(BTreeMap::new()),
             registered_canister_summaries_total_desc_index: Some(Vec::new()),

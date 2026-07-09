@@ -14,7 +14,7 @@ pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
 // 20: neuron commitment history index
 // 21: neuron commitment entries
 // 22: relay registry by target
-// 23: relay targets by relay
+// 23: reserved (formerly relay targets by relay)
 // 24: relay setup jobs by target
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -42,8 +42,6 @@ thread_local! {
     pub(super) static STABLE_NEURON_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_RELAY_REGISTRY_BY_TARGET_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RelayRegistryEntry, Memory>>> =
-        const { std::cell::RefCell::new(None) };
-    pub(super) static STABLE_RELAY_TARGETS_BY_RELAY_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableRelayTargetList, Memory>>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_RELAY_SETUP_JOBS_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RelaySetupJob, Memory>>> =
         const { std::cell::RefCell::new(None) };
@@ -286,24 +284,6 @@ pub(super) fn with_relay_registry_by_target_map<R>(
         f(borrow
             .as_mut()
             .expect("historian relay-registry stable map not initialized"))
-    })
-}
-
-pub(super) fn with_relay_targets_by_relay_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableRelayTargetList, Memory>) -> R,
-) -> R {
-    STABLE_RELAY_TARGETS_BY_RELAY_MAP.with(|map| {
-        if map.borrow().is_none() {
-            MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(23));
-                let stable_map = StableBTreeMap::init(memory);
-                *map.borrow_mut() = Some(stable_map);
-            });
-        }
-        let mut borrow = map.borrow_mut();
-        f(borrow
-            .as_mut()
-            .expect("historian relay-targets stable map not initialized"))
     })
 }
 

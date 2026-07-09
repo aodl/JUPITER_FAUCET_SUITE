@@ -589,71 +589,35 @@ enum RelayRegistryKind {
     SelfService,
 }
 
-#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
-enum RelayRegistryStatus {
-    Pending,
-    Active,
-    Failed,
-    Superseded,
+#[derive(Debug, CandidType, Deserialize)]
+struct RelayRegistration {
+    target_canister_id: Principal,
+    relay_canister_id: Principal,
+    kind: RelayRegistryKind,
+    relay_wasm_hash_hex: Option<String>,
+    created_at_ts: Option<u64>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct RelayRegistryEntry {
-    relay_canister_id: Principal,
-    target_canister_id: Principal,
-    kind: RelayRegistryKind,
-    status: RelayRegistryStatus,
-    setup_account: Option<Account>,
-    setup_account_identifier: Option<String>,
-    setup_amount_e8s: Option<u64>,
-    setup_tx_ids: Vec<u64>,
-    relay_wasm_hash_hex: Option<String>,
-    final_controllers: Option<Vec<Principal>>,
-    log_visibility_public: Option<bool>,
-    created_at_ts: Option<u64>,
-    activated_at_ts: Option<u64>,
+struct ListRelayRegistrationsResponse {
+    items: Vec<RelayRegistration>,
+    next_start_after: Option<Principal>,
 }
 
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq, Clone)]
-enum RelaySetupStatus {
+enum RelaySetupPublicStatus {
     NotFunded,
     BelowMinimum,
-    InsufficientForCurrentRate,
-    TargetNotObservable,
+    PaymentNotAllowed,
+    IndexNotReady,
     Pending,
-    ConvertingCycles,
-    CycleTransferAccepted,
-    CycleNotifySucceeded,
-    CreatingCanister,
-    CanisterCreated,
-    InstallingCode,
-    CodeInstalled,
-    SettingPublicLogs,
-    FundingRelaySubaccountOne,
-    Blackholing,
+    CreatingRelay,
     Active,
     SweepingToExistingRelay,
-    SweptToExistingRelay,
-    SweepBelowDust,
-    RefundAvailable,
     Refunding,
     Refunded,
     FailedRetryable,
-    FailedTerminal,
-    Ambiguous,
-}
-
-#[derive(Debug, CandidType, Deserialize)]
-struct RelaySetupJobView {
-    target_canister_id: Principal,
-    status: RelaySetupStatus,
-    relay_canister_id: Option<Principal>,
-    setup_amount_seen_e8s: u64,
-    setup_amount_processed_e8s: u64,
-    cycle_conversion_e8s: Option<u64>,
-    relay_funding_e8s: Option<u64>,
-    last_error: Option<String>,
-    updated_at_ts: u64,
+    ManualRecoveryRequired,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -662,11 +626,11 @@ struct RelaySetupView {
     setup_account: Account,
     setup_account_identifier: String,
     minimum_e8s: u64,
-    dust_e8s: u64,
-    current_status: Option<RelaySetupStatus>,
-    existing_relay: Option<RelayRegistryEntry>,
-    setup_job: Option<RelaySetupJobView>,
-    factory_enabled: bool,
+    payment_allowed: bool,
+    payment_blocked_reason: Option<String>,
+    existing_relay: Option<RelayRegistration>,
+    status: RelaySetupPublicStatus,
+    factory_available: bool,
     relay_wasm_hash_hex: Option<String>,
     warning_text: Option<String>,
 }
@@ -685,33 +649,30 @@ enum RelaySetupNotifyResult {
         message: String,
     },
     Pending {
-        job: RelaySetupJobView,
+        status: RelaySetupPublicStatus,
     },
     Active {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
     },
     SweptToExistingRelay {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
         amount_e8s: u64,
         block_index: u64,
     },
     SweepBelowDust {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
         current_balance_e8s: u64,
     },
+    Refunded {
+        blocks: Vec<u64>,
+    },
+    RefundPending {
+        reason: String,
+    },
     Failed {
-        status: RelaySetupStatus,
+        status: RelaySetupPublicStatus,
         message: String,
     },
-}
-
-#[derive(Debug, CandidType, Deserialize)]
-enum RelaySetupRefundResult {
-    NotEligible { status: Option<RelaySetupStatus> },
-    Cooldown { retry_after_seconds: u64 },
-    Refunded { blocks: Vec<u64> },
-    NoRefundableAmount,
-    Failed { message: String },
 }
 
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -3663,7 +3624,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             {
                 bail!("unexpected relay setup view: {view:?}");
             }
-            if view.minimum_e8s == 0 || view.dust_e8s == 0 {
+            if view.minimum_e8s == 0 {
                 bail!("relay setup view should expose positive economics: {view:?}");
             }
             Ok(())
@@ -3672,7 +3633,58 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
     run_scenario(
         outcomes,
-        label("icp", "historian", "notify below minimum does not spend"),
+        label(
+            "icp",
+            "historian",
+            "relay setup zero-balance notify does not persist jobs",
+        ),
+        || {
+            reset_historian_local_replica_state()?;
+            for id in 0..50u8 {
+                let spam_target = Principal::from_slice(&[91, id]);
+                let result: RelaySetupNotifyResult = call_raw(
+                    "jupiter_historian_dbg",
+                    "notify_relay_setup",
+                    &format!(r#"(principal "{}")"#, spam_target.to_text()),
+                )?;
+                if !matches!(result, RelaySetupNotifyResult::BelowMinimum { .. }) {
+                    bail!("expected BelowMinimum for zero-balance notify, got {result:?}");
+                }
+                let job: Option<()> = call_raw(
+                    "jupiter_historian_dbg",
+                    "debug_get_relay_setup_job",
+                    &format!(r#"(principal "{}")"#, spam_target.to_text()),
+                )?;
+                if job.is_some() {
+                    bail!("zero-balance notify persisted a setup job for {spam_target}");
+                }
+            }
+
+            let registrations: ListRelayRegistrationsResponse = call_raw(
+                "jupiter_historian_dbg",
+                "list_relay_registrations",
+                "(record { start_after = null; limit = opt (100 : nat32) })",
+            )?;
+            if !registrations.items.is_empty() {
+                bail!("zero-balance notify created relay registrations: {registrations:?}");
+            }
+            let transfers: Vec<TransferRecord> =
+                call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+            if !transfers.is_empty() {
+                bail!("zero-balance notify attempted ledger transfers: {transfers:?}");
+            }
+            let legacy: Vec<LegacyTransferRecord> =
+                call_raw_noargs("mock_icrc_ledger", "debug_legacy_transfers")?;
+            if !legacy.is_empty() {
+                bail!("zero-balance notify attempted legacy transfers: {legacy:?}");
+            }
+            Ok(())
+        },
+    );
+
+    run_scenario(
+        outcomes,
+        label("icp", "historian", "notify below minimum auto-refunds"),
         || {
             reset_historian_local_replica_state()?;
             let view = relay_setup_view(target)?;
@@ -3697,29 +3709,21 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "notify_relay_setup",
                 &format!(r#"(principal "{}")"#, target.to_text()),
             )?;
-            match result {
-                RelaySetupNotifyResult::BelowMinimum {
-                    minimum_e8s,
-                    current_balance_e8s,
-                } if minimum_e8s == view.minimum_e8s && current_balance_e8s == amount => {}
-                other => bail!("expected BelowMinimum notify result, got {other:?}"),
+            if !matches!(result, RelaySetupNotifyResult::Refunded { .. }) {
+                bail!("expected Refunded notify result, got {result:?}");
             }
 
-            let relay: Option<RelayRegistryEntry> = call_raw(
+            let registrations: ListRelayRegistrationsResponse = call_raw(
                 "jupiter_historian_dbg",
-                "get_relay_for_canister",
-                &format!(r#"(principal "{}")"#, target.to_text()),
+                "list_relay_registrations",
+                "(record { start_after = null; limit = opt (100 : nat32) })",
             )?;
-            if relay.is_some() {
-                bail!("below-minimum notify should not register a relay: {relay:?}");
-            }
-            let balance: Nat = call_raw(
-                "mock_icrc_ledger",
-                "icrc1_balance_of",
-                &format!("({})", account_to_candid(&view.setup_account)),
-            )?;
-            if nat_to_u64(&balance) != amount {
-                bail!("below-minimum notify spent funds: balance={balance}");
+            if registrations
+                .items
+                .iter()
+                .any(|registration| registration.target_canister_id == target)
+            {
+                bail!("below-minimum notify should not register a relay: {registrations:?}");
             }
             Ok(())
         },
@@ -3757,17 +3761,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "notify_relay_setup",
                 &format!(r#"(principal "{}")"#, target.to_text()),
             )?;
-            if !matches!(result, RelaySetupNotifyResult::TargetNotObservable { .. }) {
-                bail!("expected TargetNotObservable, got {result:?}");
-            }
-
-            let refund: RelaySetupRefundResult = call_raw(
-                "jupiter_historian_dbg",
-                "request_relay_setup_refund",
-                &format!(r#"(principal "{}")"#, target.to_text()),
-            )?;
-            if !matches!(refund, RelaySetupRefundResult::Refunded { .. }) {
-                bail!("expected Refunded result, got {refund:?}");
+            if !matches!(result, RelaySetupNotifyResult::Refunded { .. }) {
+                bail!("expected Refunded notify result, got {result:?}");
             }
             let legacy: Vec<LegacyTransferRecord> =
                 call_raw_noargs("mock_icrc_ledger", "debug_legacy_transfers")?;

@@ -123,64 +123,26 @@ export const idlFactory = ({ IDL }) => {
     Canonical: IDL.Null,
     SelfService: IDL.Null,
   });
-  const RelayRegistryStatus = IDL.Variant({
-    Pending: IDL.Null,
-    Active: IDL.Null,
-    Failed: IDL.Null,
-    Superseded: IDL.Null,
-  });
-  const RelayRegistryEntry = IDL.Record({
-    relay_canister_id: IDL.Principal,
+  const RelayRegistration = IDL.Record({
     target_canister_id: IDL.Principal,
+    relay_canister_id: IDL.Principal,
     kind: RelayRegistryKind,
-    status: RelayRegistryStatus,
-    setup_account: IDL.Opt(Account),
-    setup_account_identifier: IDL.Opt(IDL.Text),
-    setup_amount_e8s: IDL.Opt(IDL.Nat64),
-    setup_tx_ids: IDL.Vec(IDL.Nat64),
     relay_wasm_hash_hex: IDL.Opt(IDL.Text),
-    final_controllers: IDL.Opt(IDL.Vec(IDL.Principal)),
-    log_visibility_public: IDL.Opt(IDL.Bool),
     created_at_ts: IDL.Opt(IDL.Nat64),
-    activated_at_ts: IDL.Opt(IDL.Nat64),
   });
-  const RelaySetupStatus = IDL.Variant({
+  const RelaySetupPublicStatus = IDL.Variant({
     NotFunded: IDL.Null,
     BelowMinimum: IDL.Null,
-    InsufficientForCurrentRate: IDL.Null,
-    TargetNotObservable: IDL.Null,
+    PaymentNotAllowed: IDL.Null,
+    IndexNotReady: IDL.Null,
     Pending: IDL.Null,
-    ConvertingCycles: IDL.Null,
-    CycleTransferAccepted: IDL.Null,
-    CycleNotifySucceeded: IDL.Null,
-    CreatingCanister: IDL.Null,
-    CanisterCreated: IDL.Null,
-    InstallingCode: IDL.Null,
-    CodeInstalled: IDL.Null,
-    SettingPublicLogs: IDL.Null,
-    FundingRelaySubaccountOne: IDL.Null,
-    Blackholing: IDL.Null,
+    CreatingRelay: IDL.Null,
     Active: IDL.Null,
     SweepingToExistingRelay: IDL.Null,
-    SweptToExistingRelay: IDL.Null,
-    SweepBelowDust: IDL.Null,
-    RefundAvailable: IDL.Null,
     Refunding: IDL.Null,
     Refunded: IDL.Null,
     FailedRetryable: IDL.Null,
-    FailedTerminal: IDL.Null,
-    Ambiguous: IDL.Null,
-  });
-  const RelaySetupJobView = IDL.Record({
-    target_canister_id: IDL.Principal,
-    status: RelaySetupStatus,
-    relay_canister_id: IDL.Opt(IDL.Principal),
-    setup_amount_seen_e8s: IDL.Nat64,
-    setup_amount_processed_e8s: IDL.Nat64,
-    cycle_conversion_e8s: IDL.Opt(IDL.Nat64),
-    relay_funding_e8s: IDL.Opt(IDL.Nat64),
-    last_error: IDL.Opt(IDL.Text),
-    updated_at_ts: IDL.Nat64,
+    ManualRecoveryRequired: IDL.Null,
   });
   const GetRelaySetupViewArgs = IDL.Record({
     target_canister_id: IDL.Principal,
@@ -190,11 +152,11 @@ export const idlFactory = ({ IDL }) => {
     setup_account: Account,
     setup_account_identifier: IDL.Text,
     minimum_e8s: IDL.Nat64,
-    dust_e8s: IDL.Nat64,
-    current_status: IDL.Opt(RelaySetupStatus),
-    existing_relay: IDL.Opt(RelayRegistryEntry),
-    setup_job: IDL.Opt(RelaySetupJobView),
-    factory_enabled: IDL.Bool,
+    payment_allowed: IDL.Bool,
+    payment_blocked_reason: IDL.Opt(IDL.Text),
+    existing_relay: IDL.Opt(RelayRegistration),
+    status: RelaySetupPublicStatus,
+    factory_available: IDL.Bool,
     relay_wasm_hash_hex: IDL.Opt(IDL.Text),
     warning_text: IDL.Opt(IDL.Text),
   });
@@ -203,25 +165,20 @@ export const idlFactory = ({ IDL }) => {
     limit: IDL.Opt(IDL.Nat32),
   });
   const ListRelayRegistrationsResponse = IDL.Record({
-    items: IDL.Vec(RelayRegistryEntry),
+    items: IDL.Vec(RelayRegistration),
     next_start_after: IDL.Opt(IDL.Principal),
   });
   const RelaySetupNotifyResult = IDL.Variant({
     BelowMinimum: IDL.Record({ minimum_e8s: IDL.Nat64, current_balance_e8s: IDL.Nat64 }),
     InsufficientForCurrentRate: IDL.Record({ required_e8s: IDL.Nat64, current_balance_e8s: IDL.Nat64 }),
     TargetNotObservable: IDL.Record({ message: IDL.Text }),
-    Pending: IDL.Record({ job: RelaySetupJobView }),
-    Active: IDL.Record({ relay: RelayRegistryEntry }),
-    SweptToExistingRelay: IDL.Record({ relay: RelayRegistryEntry, amount_e8s: IDL.Nat64, block_index: IDL.Nat64 }),
-    SweepBelowDust: IDL.Record({ relay: RelayRegistryEntry, current_balance_e8s: IDL.Nat64 }),
-    Failed: IDL.Record({ status: RelaySetupStatus, message: IDL.Text }),
-  });
-  const RelaySetupRefundResult = IDL.Variant({
-    NotEligible: IDL.Record({ status: IDL.Opt(RelaySetupStatus) }),
-    Cooldown: IDL.Record({ retry_after_seconds: IDL.Nat64 }),
+    Pending: IDL.Record({ status: RelaySetupPublicStatus }),
+    Active: IDL.Record({ relay: RelayRegistration }),
+    SweptToExistingRelay: IDL.Record({ relay: RelayRegistration, amount_e8s: IDL.Nat64, block_index: IDL.Nat64 }),
+    SweepBelowDust: IDL.Record({ relay: RelayRegistration, current_balance_e8s: IDL.Nat64 }),
     Refunded: IDL.Record({ blocks: IDL.Vec(IDL.Nat64) }),
-    NoRefundableAmount: IDL.Null,
-    Failed: IDL.Record({ message: IDL.Text }),
+    RefundPending: IDL.Record({ reason: IDL.Text }),
+    Failed: IDL.Record({ status: RelaySetupPublicStatus, message: IDL.Text }),
   });
   const ListRegisteredCanisterSummariesArgs = IDL.Record({
     page: IDL.Opt(IDL.Nat32),
@@ -302,11 +259,8 @@ export const idlFactory = ({ IDL }) => {
     get_public_counts: IDL.Func([], [PublicCounts], ['query']),
     get_public_status: IDL.Func([], [PublicStatus], ['query']),
     get_relay_setup_view: IDL.Func([GetRelaySetupViewArgs], [RelaySetupView], ['query']),
-    get_relay_for_canister: IDL.Func([IDL.Principal], [IDL.Opt(RelayRegistryEntry)], ['query']),
-    get_relay_by_id: IDL.Func([IDL.Principal], [IDL.Vec(RelayRegistryEntry)], ['query']),
     list_relay_registrations: IDL.Func([ListRelayRegistrationsArgs], [ListRelayRegistrationsResponse], ['query']),
     notify_relay_setup: IDL.Func([IDL.Principal], [RelaySetupNotifyResult], []),
-    request_relay_setup_refund: IDL.Func([IDL.Principal], [RelaySetupRefundResult], []),
     find_canisters_by_memo_prefix: IDL.Func(
       [FindCanistersByMemoPrefixArgs],
       [FindCanistersByMemoPrefixResponse],

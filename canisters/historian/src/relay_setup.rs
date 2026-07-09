@@ -1,11 +1,16 @@
 use crate::clients::index::{account_identifier_text_for_account, IndexOperation};
-use crate::clients::{BlackholeClient, CmcCanister, CmcClient, IndexClient, LedgerClient};
+use crate::clients::{
+    BlackholeClient, ClientError, CmcCanister, CmcClient, IndexClient, LedgerClient,
+};
 use crate::state::{self, Config, RelayRegistryStatus, State};
 use crate::*;
 use candid::{Encode, Principal};
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
+use icrc_ledger_types::icrc1::transfer::TransferError;
+use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg};
 use jupiter_ic_clients::account::{principal_to_subaccount, relay_setup_subaccount};
+use jupiter_ic_clients::cmc::NotifyTopUpError;
+use jupiter_ic_clients::ledger::LegacyTransferError;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RELAY_SUBACCOUNT_ONE: [u8; 32] = {
@@ -48,8 +53,12 @@ fn now_nanos() -> u64 {
 }
 
 #[cfg(test)]
+static TEST_NOW_NANOS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1_000_000_000);
+
+#[cfg(test)]
 fn now_nanos() -> u64 {
-    0
+    TEST_NOW_NANOS.fetch_add(1_000_000_000, std::sync::atomic::Ordering::SeqCst)
 }
 
 fn now_secs() -> u64 {
@@ -78,37 +87,54 @@ pub(crate) fn setup_view_from_state(
     let setup_account = setup_account_for(historian, target);
     let setup_account_identifier = account_identifier_text_for_account(&setup_account);
     let setup_job = st.relay_setup_jobs.get(&target).cloned();
+    let existing_relay = st
+        .relay_registry_by_target
+        .get(&target)
+        .filter(|entry| entry.status == RelayRegistryStatus::Active)
+        .cloned();
+    let factory_available =
+        st.config.relay_factory_enabled && approved_self_service_relay_wasm().is_some();
+    let payment_blocked_reason = if existing_relay.is_some() {
+        None
+    } else if let Some(message) = invalid_target(target, &st.config, historian) {
+        Some(message)
+    } else if !st.config.relay_factory_enabled {
+        Some("relay factory is disabled".to_string())
+    } else if approved_self_service_relay_wasm().is_none() {
+        Some("approved relay wasm is not embedded".to_string())
+    } else {
+        None
+    };
+    let payment_allowed = existing_relay.is_some() || payment_blocked_reason.is_none();
+    let status = if existing_relay.is_some() {
+        RelaySetupPublicStatus::Active
+    } else {
+        setup_job
+            .as_ref()
+            .map(|job| RelaySetupPublicStatus::from(job.status.clone()))
+            .unwrap_or_else(|| {
+                if payment_allowed {
+                    RelaySetupPublicStatus::NotFunded
+                } else {
+                    RelaySetupPublicStatus::PaymentNotAllowed
+                }
+            })
+    };
     RelaySetupView {
         target_canister_id: target,
         setup_account,
         setup_account_identifier,
         minimum_e8s: st.config.relay_setup_min_e8s,
-        dust_e8s: st.config.relay_setup_dust_e8s,
-        current_status: setup_job.as_ref().map(|job| job.status.clone()),
-        existing_relay: st.relay_registry_by_target.get(&target).cloned(),
-        setup_job: setup_job.map(Into::into),
-        factory_enabled: st.config.relay_factory_enabled && approved_self_service_relay_wasm().is_some(),
+        payment_allowed,
+        payment_blocked_reason,
+        existing_relay: existing_relay.map(Into::into),
+        status,
+        factory_available,
         relay_wasm_hash_hex: relay_wasm_hash_hex(),
         warning_text: Some(
             "This relay can only be created for canisters whose cycle balance is visible through the Jupiter blackhole canister. In practice, the configured blackhole canister must be able to call canister_status for the target.".to_string(),
         ),
     }
-}
-
-pub(crate) fn get_relay_for_canister(target: Principal) -> Option<RelayRegistryEntry> {
-    state::with_state(|st| st.relay_registry_by_target.get(&target).cloned())
-}
-
-pub(crate) fn get_relay_by_id(relay: Principal) -> Vec<RelayRegistryEntry> {
-    state::with_state(|st| {
-        st.relay_targets_by_relay
-            .get(&relay)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|target| st.relay_registry_by_target.get(&target).cloned())
-            .collect()
-    })
 }
 
 pub(crate) fn list_relay_registrations(
@@ -126,13 +152,16 @@ pub(crate) fn list_relay_registrations(
             {
                 continue;
             }
+            if entry.status != RelayRegistryStatus::Active {
+                continue;
+            }
             if items.len() >= limit {
                 next = items
                     .last()
-                    .map(|item: &RelayRegistryEntry| item.target_canister_id);
+                    .map(|item: &RelayRegistration| item.target_canister_id);
                 break;
             }
-            items.push(entry.clone());
+            items.push(entry.clone().into());
         }
         ListRelayRegistrationsResponse {
             items,
@@ -184,6 +213,15 @@ fn reserve_job(
         relay_initial_cycles: None,
         relay_funding_e8s: None,
         relay_funding_block_index: None,
+        phase: Some(RelaySetupPhase::PreSpend),
+        cycle_transfer: None,
+        relay_funding_transfer: None,
+        existing_relay_sweep_transfer: None,
+        refund_transfers: Vec::new(),
+        code_installed: false,
+        relay_funding_accepted: false,
+        blackhole_update_attempted: false,
+        blackhole_confirmed: false,
         refund_attempt_count: 0,
         last_refund_attempt_ts: None,
         refund_blocks: Vec::new(),
@@ -212,40 +250,51 @@ async fn index_setup_payments(
     setup_account_identifier: String,
     index: &dyn IndexClient,
 ) -> Result<Vec<RelaySetupPayment>, String> {
-    let resp = index
-        .get_account_identifier_transactions(setup_account_identifier.clone(), None, 100)
-        .await
-        .map_err(|err| err.to_string())?;
     let mut payments = Vec::new();
-    for tx in resp.transactions {
-        let IndexOperation::Transfer {
-            from, to, amount, ..
-        } = &tx.transaction.operation
-        else {
-            continue;
-        };
-        if to != &setup_account_identifier {
-            continue;
+    let mut start = None;
+    for _ in 0..20 {
+        let resp = index
+            .get_account_identifier_transactions(setup_account_identifier.clone(), start, 100)
+            .await
+            .map_err(|err| err.to_string())?;
+        let transaction_count = resp.transactions.len();
+        for tx in resp.transactions {
+            let IndexOperation::Transfer {
+                from, to, amount, ..
+            } = &tx.transaction.operation
+            else {
+                continue;
+            };
+            if to != &setup_account_identifier {
+                continue;
+            }
+            payments.push(RelaySetupPayment {
+                target_canister_id: target,
+                tx_id: tx.id,
+                from_account_identifier: from.clone(),
+                amount_e8s: amount.e8s(),
+                timestamp_nanos: tx
+                    .transaction
+                    .timestamp
+                    .as_ref()
+                    .map(|ts| ts.timestamp_nanos)
+                    .or_else(|| {
+                        tx.transaction
+                            .created_at_time
+                            .as_ref()
+                            .map(|ts| ts.timestamp_nanos)
+                    }),
+                processed: false,
+                refunded: false,
+            });
         }
-        payments.push(RelaySetupPayment {
-            target_canister_id: target,
-            tx_id: tx.id,
-            from_account_identifier: from.clone(),
-            amount_e8s: amount.e8s(),
-            timestamp_nanos: tx
-                .transaction
-                .timestamp
-                .as_ref()
-                .map(|ts| ts.timestamp_nanos)
-                .or_else(|| {
-                    tx.transaction
-                        .created_at_time
-                        .as_ref()
-                        .map(|ts| ts.timestamp_nanos)
-                }),
-            processed: false,
-            refunded: false,
-        });
+        let Some(oldest) = resp.oldest_tx_id else {
+            break;
+        };
+        if transaction_count < 100 {
+            break;
+        }
+        start = Some(oldest);
     }
     Ok(payments)
 }
@@ -290,6 +339,7 @@ enum RelaySetupResumePoint {
     FundRelaySubaccountOne { relay_id: Principal },
     BlackholeRelay { relay_id: Principal },
     RegisterActive { relay_id: Principal },
+    ReconcileCycleTransfer,
 }
 
 fn relay_setup_resume_point(job: &RelaySetupJob) -> RelaySetupResumePoint {
@@ -314,6 +364,8 @@ fn relay_setup_resume_point(job: &RelaySetupJob) -> RelaySetupResumePoint {
         RelaySetupResumePoint::CreateRelayCanister
     } else if let Some(block_index) = job.cycle_transfer_block_index {
         RelaySetupResumePoint::NotifyCycleTopUp { block_index }
+    } else if job.cycle_transfer.is_some() {
+        RelaySetupResumePoint::ReconcileCycleTransfer
     } else {
         RelaySetupResumePoint::PreSpend
     }
@@ -338,6 +390,8 @@ fn refund_allowed_before_spend(job: &RelaySetupJob) -> bool {
         && job.cycles_minted.is_none()
         && job.relay_canister_id.is_none()
         && job.relay_funding_block_index.is_none()
+        && job.cycle_transfer.is_none()
+        && job.relay_funding_transfer.is_none()
         && job.setup_amount_processed_e8s == 0
 }
 
@@ -378,6 +432,7 @@ fn transfer_arg(
     amount: u64,
     fee: u64,
     memo: Option<Vec<u8>>,
+    created_at_time_nanos: u64,
 ) -> TransferArg {
     TransferArg {
         from_subaccount,
@@ -385,8 +440,194 @@ fn transfer_arg(
         amount: amount.into(),
         fee: Some(fee.into()),
         memo: memo.map(Memo::from),
-        created_at_time: Some(now_nanos()),
+        created_at_time: Some(created_at_time_nanos),
     }
+}
+
+fn transfer_record(
+    kind: RelaySetupTransferKind,
+    from_subaccount: Option<[u8; 32]>,
+    from_account: Account,
+    to: Account,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo: Option<Vec<u8>>,
+) -> RelaySetupTransferRecord {
+    RelaySetupTransferRecord {
+        kind,
+        from_subaccount,
+        from_account_identifier: account_identifier_text_for_account(&from_account),
+        to_account_identifier: account_identifier_text_for_account(&to),
+        to,
+        amount_e8s,
+        fee_e8s,
+        memo,
+        created_at_time_nanos: now_nanos(),
+        block_index: None,
+        completed: false,
+    }
+}
+
+fn record_to_transfer_arg(record: &RelaySetupTransferRecord) -> TransferArg {
+    transfer_arg(
+        record.from_subaccount,
+        record.to,
+        record.amount_e8s,
+        record.fee_e8s,
+        record.memo.clone(),
+        record.created_at_time_nanos,
+    )
+}
+
+fn record_block_index(block: BlockIndex) -> u64 {
+    u64::try_from(block.0).unwrap_or(u64::MAX)
+}
+
+fn transfer_error_duplicate_block(err: &TransferError) -> Option<u64> {
+    match err {
+        TransferError::Duplicate { duplicate_of } => {
+            Some(u64::try_from(duplicate_of.0.clone()).unwrap_or(u64::MAX))
+        }
+        _ => None,
+    }
+}
+
+fn classify_transfer_response(
+    result: Result<Result<BlockIndex, TransferError>, ClientError>,
+) -> Result<u64, Result<TransferError, ClientError>> {
+    match result {
+        Ok(Ok(block)) => Ok(record_block_index(block)),
+        Ok(Err(err)) => transfer_error_duplicate_block(&err).ok_or(Ok(err)),
+        Err(err) => Err(Err(err)),
+    }
+}
+
+async fn find_recorded_transfer_in_index(
+    record: &RelaySetupTransferRecord,
+    index: &dyn IndexClient,
+) -> Result<Option<u64>, String> {
+    let mut start = None;
+    for _ in 0..20 {
+        let resp = index
+            .get_account_identifier_transactions(record.from_account_identifier.clone(), start, 100)
+            .await
+            .map_err(|err| err.to_string())?;
+        for tx in &resp.transactions {
+            let IndexOperation::Transfer {
+                from, to, amount, ..
+            } = &tx.transaction.operation
+            else {
+                continue;
+            };
+            if from == &record.from_account_identifier
+                && to == &record.to_account_identifier
+                && amount.e8s() == record.amount_e8s
+                && tx
+                    .transaction
+                    .created_at_time
+                    .as_ref()
+                    .map(|ts| ts.timestamp_nanos)
+                    .or_else(|| {
+                        tx.transaction
+                            .timestamp
+                            .as_ref()
+                            .map(|ts| ts.timestamp_nanos)
+                    })
+                    == Some(record.created_at_time_nanos)
+            {
+                return Ok(Some(tx.id));
+            }
+        }
+        let Some(oldest) = resp.oldest_tx_id else {
+            break;
+        };
+        if resp.transactions.is_empty() {
+            break;
+        }
+        start = Some(oldest);
+    }
+    Ok(None)
+}
+
+fn note_transfer_success(record: &mut RelaySetupTransferRecord, block_index: u64) {
+    record.block_index = Some(block_index);
+    record.completed = true;
+}
+
+fn handle_cmc_notify_error(target: Principal, err: NotifyTopUpError) -> RelaySetupNotifyResult {
+    match err {
+        NotifyTopUpError::Retryable(retryable) => {
+            let message = format!("{retryable:?}");
+            set_job_failed_retryable(target, message.clone());
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message,
+            }
+        }
+        NotifyTopUpError::Transport(message)
+        | NotifyTopUpError::Decode(message)
+        | NotifyTopUpError::Convert(message) => {
+            set_job_failed_retryable(target, message.clone());
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message,
+            }
+        }
+        NotifyTopUpError::Terminal(terminal) => {
+            let message = format!("{terminal:?}");
+            set_job_status(
+                target,
+                RelaySetupStatus::FailedTerminal,
+                Some(message.clone()),
+            );
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedTerminal.into(),
+                message,
+            }
+        }
+    }
+}
+
+fn refund_result_to_notify(result: RelaySetupRefundResult) -> RelaySetupNotifyResult {
+    match result {
+        RelaySetupRefundResult::Refunded { blocks } => RelaySetupNotifyResult::Refunded { blocks },
+        RelaySetupRefundResult::NoRefundableAmount => RelaySetupNotifyResult::RefundPending {
+            reason: "no refundable payment amount was found".to_string(),
+        },
+        RelaySetupRefundResult::Cooldown {
+            retry_after_seconds,
+        } => RelaySetupNotifyResult::RefundPending {
+            reason: format!("refund retry is cooling down for {retry_after_seconds} seconds"),
+        },
+        RelaySetupRefundResult::NotEligible { status } => RelaySetupNotifyResult::RefundPending {
+            reason: status
+                .map(|status| format!("setup status is not refundable: {status:?}"))
+                .unwrap_or_else(|| "setup job is not refundable".to_string()),
+        },
+        RelaySetupRefundResult::Failed { message } => {
+            RelaySetupNotifyResult::RefundPending { reason: message }
+        }
+    }
+}
+
+async fn auto_refund_pre_spend(
+    historian: Principal,
+    target: Principal,
+    reason: String,
+    ledger: &dyn LedgerClient,
+    index: &dyn IndexClient,
+) -> RelaySetupNotifyResult {
+    state::with_root_and_relay_factory_state_mut(target, |st| {
+        if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+            job.status = RelaySetupStatus::RefundAvailable;
+            job.last_error = Some(reason);
+            job.updated_at_ts = now_secs();
+        }
+    });
+    refund_result_to_notify(
+        request_relay_setup_refund_with_clients_for_historian(historian, target, ledger, index)
+            .await,
+    )
 }
 
 async fn sweep_existing(
@@ -395,33 +636,103 @@ async fn sweep_existing(
     balance: u64,
     fee: u64,
     ledger: &dyn LedgerClient,
+    index: &dyn IndexClient,
+    historian: Principal,
 ) -> RelaySetupNotifyResult {
-    if balance <= fee.saturating_add(state::with_state(|st| st.config.relay_setup_dust_e8s)) {
+    let from_subaccount = Some(relay_setup_subaccount(target));
+    let setup_account = setup_account_for(historian, target);
+    let pending_record = state::with_state(|st| {
+        st.relay_setup_jobs
+            .get(&target)
+            .and_then(|job| job.existing_relay_sweep_transfer.clone())
+            .filter(|record| {
+                !record.completed && record.to == relay_subaccount_one(relay.relay_canister_id)
+            })
+    });
+    if pending_record.is_none()
+        && balance <= fee.saturating_add(state::with_state(|st| st.config.relay_setup_dust_e8s))
+    {
         return RelaySetupNotifyResult::SweepBelowDust {
-            relay,
+            relay: relay.into(),
             current_balance_e8s: balance,
         };
     }
     let amount = balance.saturating_sub(fee);
-    let arg = transfer_arg(
-        Some(relay_setup_subaccount(target)),
-        relay_subaccount_one(relay.relay_canister_id),
-        amount,
-        fee,
-        None,
-    );
-    match ledger.icrc1_transfer(arg).await {
-        Ok(Ok(block)) => RelaySetupNotifyResult::SweptToExistingRelay {
-            relay,
-            amount_e8s: amount,
-            block_index: u64::try_from(block.0).unwrap_or(u64::MAX),
-        },
-        Ok(Err(err)) => RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedRetryable,
+    let mut record = state::with_root_and_relay_factory_state_mut(target, |st| {
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let job = st
+            .relay_setup_jobs
+            .entry(target)
+            .or_insert_with(|| reserve_job(target, setup_account, setup_account_identifier));
+        let record = pending_record.unwrap_or_else(|| {
+            transfer_record(
+                RelaySetupTransferKind::ExistingRelaySweep,
+                from_subaccount,
+                setup_account,
+                relay_subaccount_one(relay.relay_canister_id),
+                amount,
+                fee,
+                None,
+            )
+        });
+        job.existing_relay_sweep_transfer = Some(record.clone());
+        job.status = RelaySetupStatus::SweepingToExistingRelay;
+        job.updated_at_ts = now_secs();
+        record
+    });
+    if let Some(block_index) = record.block_index {
+        return RelaySetupNotifyResult::SweptToExistingRelay {
+            relay: relay.into(),
+            amount_e8s: record.amount_e8s,
+            block_index,
+        };
+    }
+    match find_recorded_transfer_in_index(&record, index).await {
+        Ok(Some(block_index)) => {
+            note_transfer_success(&mut record, block_index);
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                    job.existing_relay_sweep_transfer = Some(record.clone());
+                    job.status = RelaySetupStatus::SweptToExistingRelay;
+                    job.updated_at_ts = now_secs();
+                }
+            });
+            return RelaySetupNotifyResult::SweptToExistingRelay {
+                relay: relay.into(),
+                amount_e8s: record.amount_e8s,
+                block_index,
+            };
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message: err,
+            }
+        }
+    }
+    match classify_transfer_response(ledger.icrc1_transfer(record_to_transfer_arg(&record)).await) {
+        Ok(block_index) => {
+            note_transfer_success(&mut record, block_index);
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                    job.existing_relay_sweep_transfer = Some(record.clone());
+                    job.status = RelaySetupStatus::SweptToExistingRelay;
+                    job.updated_at_ts = now_secs();
+                }
+            });
+            RelaySetupNotifyResult::SweptToExistingRelay {
+                relay: relay.into(),
+                amount_e8s: record.amount_e8s,
+                block_index,
+            }
+        }
+        Err(Ok(err)) => RelaySetupNotifyResult::Failed {
+            status: RelaySetupStatus::FailedRetryable.into(),
             message: format!("sweep transfer failed: {err:?}"),
         },
-        Err(err) => RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedRetryable,
+        Err(Err(err)) => RelaySetupNotifyResult::Failed {
+            status: RelaySetupStatus::Ambiguous.into(),
             message: err.to_string(),
         },
     }
@@ -454,39 +765,30 @@ async fn notify_relay_setup_with_clients_for_historian(
     cmc: &dyn CmcClient,
 ) -> RelaySetupNotifyResult {
     let cfg = state::with_state(|st| st.config.clone());
-    if let Some(message) = invalid_target(target, &cfg, historian) {
-        return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedTerminal,
-            message,
-        };
-    }
     let setup_account = setup_account_for(historian, target);
     let setup_account_identifier = account_identifier_text_for_account(&setup_account);
     let existing_job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned());
+    let had_existing_job = existing_job.is_some();
     if let Some(job) = existing_job
         .as_ref()
         .filter(|job| in_flight_job(job) && !resumable_job(job))
     {
         return RelaySetupNotifyResult::Pending {
-            job: job.clone().into(),
+            status: RelaySetupPublicStatus::from(job.status.clone()),
         };
     }
     let resume_job = existing_job.filter(resumable_job);
+    let has_resume_job = resume_job.is_some();
     let active_relay = state::with_state(|st| st.relay_registry_by_target.get(&target).cloned())
         .filter(|entry| entry.status == RelayRegistryStatus::Active);
-    if active_relay.is_none() && resume_job.is_none() {
-        state::with_root_and_relay_factory_state_mut(target, |st| {
-            st.relay_setup_jobs.entry(target).or_insert_with(|| {
-                reserve_job(target, setup_account, setup_account_identifier.clone())
-            });
-        });
-    }
     let fee = match ledger.fee_e8s().await {
         Ok(fee) => fee,
         Err(err) => {
-            set_job_failed_retryable(target, err.to_string());
+            if had_existing_job {
+                set_job_failed_retryable(target, err.to_string());
+            }
             return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
+                status: RelaySetupStatus::FailedRetryable.into(),
                 message: err.to_string(),
             };
         }
@@ -494,32 +796,89 @@ async fn notify_relay_setup_with_clients_for_historian(
     let balance = match ledger.balance_of_e8s(setup_account).await {
         Ok(balance) => balance,
         Err(err) => {
-            set_job_failed_retryable(target, err.to_string());
+            if had_existing_job {
+                set_job_failed_retryable(target, err.to_string());
+            }
             return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
+                status: RelaySetupStatus::FailedRetryable.into(),
                 message: err.to_string(),
             };
         }
     };
     if let Some(relay) = active_relay {
-        return sweep_existing(target, relay, balance, fee, ledger).await;
+        return sweep_existing(target, relay, balance, fee, ledger, index, historian).await;
     }
     if let Some(job) = resume_job {
         let resume_point = relay_setup_resume_point(&job);
-        if let RelaySetupResumePoint::NotifyCycleTopUp { block_index } = resume_point {
+        let block_index = if let RelaySetupResumePoint::ReconcileCycleTransfer = resume_point {
+            let mut cycle_record = job
+                .cycle_transfer
+                .clone()
+                .expect("reconcile cycle transfer requires durable record");
+            let block_index = if let Some(block_index) =
+                match find_recorded_transfer_in_index(&cycle_record, index).await {
+                    Ok(block_index) => block_index,
+                    Err(err) => {
+                        set_job_failed_retryable(target, err.clone());
+                        return RelaySetupNotifyResult::Failed {
+                            status: RelaySetupStatus::FailedRetryable.into(),
+                            message: err,
+                        };
+                    }
+                } {
+                block_index
+            } else {
+                match classify_transfer_response(
+                    ledger
+                        .icrc1_transfer(record_to_transfer_arg(&cycle_record))
+                        .await,
+                ) {
+                    Ok(block_index) => block_index,
+                    Err(Ok(err)) => {
+                        set_job_status(
+                            target,
+                            RelaySetupStatus::FailedRetryable,
+                            Some(format!("{err:?}")),
+                        );
+                        return RelaySetupNotifyResult::Failed {
+                            status: RelaySetupStatus::FailedRetryable.into(),
+                            message: format!("CMC transfer failed: {err:?}"),
+                        };
+                    }
+                    Err(Err(err)) => {
+                        set_job_status(target, RelaySetupStatus::Ambiguous, Some(err.to_string()));
+                        return RelaySetupNotifyResult::Failed {
+                            status: RelaySetupStatus::Ambiguous.into(),
+                            message: err.to_string(),
+                        };
+                    }
+                }
+            };
+            note_transfer_success(&mut cycle_record, block_index);
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                    job.status = RelaySetupStatus::CycleTransferAccepted;
+                    job.phase = Some(RelaySetupPhase::CycleTransferAccepted);
+                    job.cycle_transfer = Some(cycle_record);
+                    job.cycle_transfer_block_index = Some(block_index);
+                    job.updated_at_ts = now_secs();
+                }
+            });
+            Some(block_index)
+        } else if let RelaySetupResumePoint::NotifyCycleTopUp { block_index } = resume_point {
+            Some(block_index)
+        } else {
+            None
+        };
+        if let Some(block_index) = block_index {
             let minted = match cmc.notify_top_up(historian, block_index).await {
                 Ok(cycles) => cycles,
-                Err(err) => {
-                    set_job_failed_retryable(target, err.clone());
-                    return RelaySetupNotifyResult::Failed {
-                        status: RelaySetupStatus::FailedRetryable,
-                        message: err,
-                    };
-                }
+                Err(err) => return handle_cmc_notify_error(target, err),
             };
             state::with_root_and_relay_factory_state_mut(target, |st| {
                 if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
                     job.status = RelaySetupStatus::CycleNotifySucceeded;
+                    job.phase = Some(RelaySetupPhase::CycleNotifySucceeded);
                     job.cycles_minted = Some(minted);
                     job.updated_at_ts = now_secs();
                 }
@@ -530,14 +889,54 @@ async fn notify_relay_setup_with_clients_for_historian(
         } else {
             balance.saturating_sub(fee)
         };
-        return create_and_activate_relay(target, relay_funding, fee).await;
+        return create_and_activate_relay(target, relay_funding, fee, index, blackhole, historian)
+            .await;
+    }
+    if let Some(message) = invalid_target(target, &cfg, historian) {
+        if balance > cfg.relay_setup_dust_e8s {
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                let job = st.relay_setup_jobs.entry(target).or_insert_with(|| {
+                    reserve_job(target, setup_account, setup_account_identifier.clone())
+                });
+                job.status = RelaySetupStatus::RefundAvailable;
+                job.last_error = Some(message.clone());
+                job.updated_at_ts = now_secs();
+            });
+            return auto_refund_pre_spend(historian, target, message, ledger, index).await;
+        }
+        return RelaySetupNotifyResult::Failed {
+            status: RelaySetupStatus::FailedTerminal.into(),
+            message,
+        };
     }
     if balance < cfg.relay_setup_min_e8s {
-        set_job_status(target, RelaySetupStatus::BelowMinimum, None);
+        if balance > cfg.relay_setup_dust_e8s {
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                st.relay_setup_jobs.entry(target).or_insert_with(|| {
+                    reserve_job(target, setup_account, setup_account_identifier.clone())
+                });
+            });
+            set_job_status(target, RelaySetupStatus::BelowMinimum, None);
+            return auto_refund_pre_spend(
+                historian,
+                target,
+                "setup balance is below the minimum".to_string(),
+                ledger,
+                index,
+            )
+            .await;
+        }
         return RelaySetupNotifyResult::BelowMinimum {
             minimum_e8s: cfg.relay_setup_min_e8s,
             current_balance_e8s: balance,
         };
+    }
+    if !has_resume_job {
+        state::with_root_and_relay_factory_state_mut(target, |st| {
+            st.relay_setup_jobs.entry(target).or_insert_with(|| {
+                reserve_job(target, setup_account, setup_account_identifier.clone())
+            });
+        });
     }
     let required = required_setup_e8s(&cfg, fee);
     if balance < required {
@@ -556,15 +955,19 @@ async fn notify_relay_setup_with_clients_for_historian(
             let mut job = st.relay_setup_jobs.remove(&target).unwrap_or_else(|| {
                 reserve_job(target, setup_account, setup_account_identifier.clone())
             });
-            job.status = RelaySetupStatus::TargetNotObservable;
+            job.status = RelaySetupStatus::RefundAvailable;
             job.last_error = Some(err.to_string());
             job.updated_at_ts = now_secs();
             st.relay_setup_jobs.insert(target, job);
         });
-        return RelaySetupNotifyResult::TargetNotObservable {
-            message: "target is not observable through the configured blackhole canister"
-                .to_string(),
-        };
+        return auto_refund_pre_spend(
+            historian,
+            target,
+            "target is not observable through the configured blackhole canister".to_string(),
+            ledger,
+            index,
+        )
+        .await;
     }
     let payments = match index_setup_payments(target, setup_account_identifier.clone(), index).await
     {
@@ -572,7 +975,7 @@ async fn notify_relay_setup_with_clients_for_historian(
         Err(err) => {
             set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
             return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
+                status: RelaySetupStatus::FailedRetryable.into(),
                 message: err,
             };
         }
@@ -594,20 +997,19 @@ async fn notify_relay_setup_with_clients_for_historian(
             .to_string();
         set_job_failed_retryable(target, message.clone());
         return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedRetryable,
+            status: RelaySetupStatus::FailedRetryable.into(),
             message,
         };
     }
     if !cfg.relay_factory_enabled || approved_self_service_relay_wasm().is_none() {
-        set_job_status(
+        return auto_refund_pre_spend(
+            historian,
             target,
-            RelaySetupStatus::FailedTerminal,
-            Some("relay factory is disabled".to_string()),
-        );
-        return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedTerminal,
-            message: "relay factory is disabled".to_string(),
-        };
+            "relay factory is disabled or approved relay wasm is not embedded".to_string(),
+            ledger,
+            index,
+        )
+        .await;
     }
 
     let Some(conversion_e8s) = cycle_conversion_e8s(&cfg, fee, balance) else {
@@ -622,40 +1024,76 @@ async fn notify_relay_setup_with_clients_for_historian(
         };
     };
     let cmc_id = cfg.cmc_canister_id.unwrap_or_else(mainnet_cmc_id);
-    set_job_status(target, RelaySetupStatus::ConvertingCycles, None);
-    let block_index = match ledger
-        .icrc1_transfer(transfer_arg(
-            Some(relay_setup_subaccount(target)),
-            cmc_deposit_account(cmc_id, historian),
-            conversion_e8s,
-            fee,
-            Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
-        ))
-        .await
-    {
-        Ok(Ok(block)) => u64::try_from(block.0).unwrap_or(u64::MAX),
-        Ok(Err(err)) => {
-            set_job_status(
-                target,
-                RelaySetupStatus::FailedRetryable,
-                Some(format!("{err:?}")),
+    let mut cycle_record = state::with_root_and_relay_factory_state_mut(target, |st| {
+        let job = st
+            .relay_setup_jobs
+            .get_mut(&target)
+            .expect("funded setup job must exist before CMC conversion");
+        job.status = RelaySetupStatus::ConvertingCycles;
+        job.cycle_transfer.clone().unwrap_or_else(|| {
+            let record = transfer_record(
+                RelaySetupTransferKind::CmcConversion,
+                Some(relay_setup_subaccount(target)),
+                setup_account,
+                cmc_deposit_account(cmc_id, historian),
+                conversion_e8s,
+                fee,
+                Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
             );
-            return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
-                message: format!("CMC transfer failed: {err:?}"),
-            };
+            job.cycle_transfer = Some(record.clone());
+            job.cycle_conversion_e8s = Some(conversion_e8s);
+            job.updated_at_ts = now_secs();
+            record
+        })
+    });
+    let block_index = if let Some(block_index) = cycle_record.block_index {
+        block_index
+    } else if let Some(block_index) =
+        match find_recorded_transfer_in_index(&cycle_record, index).await {
+            Ok(block_index) => block_index,
+            Err(err) => {
+                set_job_failed_retryable(target, err.clone());
+                return RelaySetupNotifyResult::Failed {
+                    status: RelaySetupStatus::FailedRetryable.into(),
+                    message: err,
+                };
+            }
         }
-        Err(err) => {
-            set_job_status(target, RelaySetupStatus::Ambiguous, Some(err.to_string()));
-            return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::Ambiguous,
-                message: err.to_string(),
-            };
+    {
+        block_index
+    } else {
+        match classify_transfer_response(
+            ledger
+                .icrc1_transfer(record_to_transfer_arg(&cycle_record))
+                .await,
+        ) {
+            Ok(block_index) => block_index,
+            Err(Ok(err)) => {
+                set_job_status(
+                    target,
+                    RelaySetupStatus::FailedRetryable,
+                    Some(format!("{err:?}")),
+                );
+                return RelaySetupNotifyResult::Failed {
+                    status: RelaySetupStatus::FailedRetryable.into(),
+                    message: format!("CMC transfer failed: {err:?}"),
+                };
+            }
+            Err(Err(err)) => {
+                set_job_status(target, RelaySetupStatus::Ambiguous, Some(err.to_string()));
+                return RelaySetupNotifyResult::Failed {
+                    status: RelaySetupStatus::Ambiguous.into(),
+                    message: err.to_string(),
+                };
+            }
         }
     };
+    note_transfer_success(&mut cycle_record, block_index);
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
             job.status = RelaySetupStatus::CycleTransferAccepted;
+            job.phase = Some(RelaySetupPhase::CycleTransferAccepted);
+            job.cycle_transfer = Some(cycle_record);
             job.cycle_conversion_e8s = Some(conversion_e8s);
             job.cycle_transfer_block_index = Some(block_index);
             job.updated_at_ts = now_secs();
@@ -663,17 +1101,12 @@ async fn notify_relay_setup_with_clients_for_historian(
     });
     let minted = match cmc.notify_top_up(historian, block_index).await {
         Ok(cycles) => cycles,
-        Err(err) => {
-            set_job_failed_retryable(target, err.clone());
-            return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
-                message: err,
-            };
-        }
+        Err(err) => return handle_cmc_notify_error(target, err),
     };
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
             job.status = RelaySetupStatus::CycleNotifySucceeded;
+            job.phase = Some(RelaySetupPhase::CycleNotifySucceeded);
             job.cycles_minted = Some(minted);
             job.updated_at_ts = now_secs();
         }
@@ -681,31 +1114,34 @@ async fn notify_relay_setup_with_clients_for_historian(
     let relay_funding = balance
         .saturating_sub(conversion_e8s)
         .saturating_sub(fee.saturating_mul(2));
-    create_and_activate_relay(target, relay_funding, fee).await
+    create_and_activate_relay(target, relay_funding, fee, index, blackhole, historian).await
 }
 
 async fn create_and_activate_relay(
     target: Principal,
     relay_funding: u64,
     fee: u64,
+    index: &dyn IndexClient,
+    blackhole: &dyn BlackholeClient,
+    historian: Principal,
 ) -> RelaySetupNotifyResult {
     let cfg = state::with_state(|st| st.config.clone());
     let wasm = match approved_self_service_relay_wasm() {
         Some(wasm) => wasm.to_vec(),
         None => {
             return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedTerminal,
+                status: RelaySetupStatus::FailedTerminal.into(),
                 message: "approved relay wasm is not embedded".to_string(),
             }
         }
     };
-    let (relay_id, status, funding_already_recorded) = state::with_state(|st| {
+    let (relay_id, code_installed, funding_already_recorded) = state::with_state(|st| {
         let job = st.relay_setup_jobs.get(&target);
         (
             job.and_then(|job| job.relay_canister_id),
-            job.map(|job| job.status.clone())
-                .unwrap_or(RelaySetupStatus::Pending),
-            job.and_then(|job| job.relay_funding_block_index).is_some(),
+            job.map(|job| job.code_installed).unwrap_or(false),
+            job.map(|job| job.relay_funding_accepted).unwrap_or(false)
+                || job.and_then(|job| job.relay_funding_block_index).is_some(),
         )
     });
     let relay_id = match relay_id {
@@ -732,7 +1168,7 @@ async fn create_and_activate_relay(
                         Some(format!("{err:?}")),
                     );
                     return RelaySetupNotifyResult::Failed {
-                        status: RelaySetupStatus::FailedRetryable,
+                        status: RelaySetupStatus::FailedRetryable.into(),
                         message: format!("create_canister failed: {err:?}"),
                     };
                 }
@@ -740,6 +1176,7 @@ async fn create_and_activate_relay(
             state::with_root_and_relay_factory_state_mut(target, |st| {
                 if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
                     job.status = RelaySetupStatus::CanisterCreated;
+                    job.phase = Some(RelaySetupPhase::RelayCanisterCreated);
                     job.relay_canister_id = Some(relay_id);
                     job.relay_initial_cycles = Some(cfg.relay_initial_cycles);
                     job.updated_at_ts = now_secs();
@@ -748,12 +1185,7 @@ async fn create_and_activate_relay(
             relay_id
         }
     };
-    if !matches!(
-        status,
-        RelaySetupStatus::CodeInstalled
-            | RelaySetupStatus::FundingRelaySubaccountOne
-            | RelaySetupStatus::Blackholing
-    ) {
+    if !code_installed {
         let relay_args = jupiter_relay_init_arg(&cfg, target);
         set_job_status(target, RelaySetupStatus::InstallingCode, None);
         if let Err(err) = jupiter_ic_clients::management::install_code(
@@ -772,58 +1204,118 @@ async fn create_and_activate_relay(
                 Some(format!("{err:?}")),
             );
             return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
+                status: RelaySetupStatus::FailedRetryable.into(),
                 message: format!("install_code failed: {err:?}"),
             };
         }
+        state::with_root_and_relay_factory_state_mut(target, |st| {
+            if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                job.code_installed = true;
+                job.phase = Some(RelaySetupPhase::RelayCodeInstalled);
+                job.updated_at_ts = now_secs();
+            }
+        });
     }
     set_job_status(target, RelaySetupStatus::CodeInstalled, None);
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
-    if !funding_already_recorded && relay_funding > cfg.relay_setup_dust_e8s {
-        set_job_status(target, RelaySetupStatus::FundingRelaySubaccountOne, None);
-        match crate::clients::LedgerClient::icrc1_transfer(
-            &ledger,
-            transfer_arg(
-                Some(relay_setup_subaccount(target)),
-                relay_subaccount_one(relay_id),
-                relay_funding,
-                fee,
-                None,
-            ),
-        )
-        .await
-        {
-            Ok(Ok(block)) => {
-                state::with_root_and_relay_factory_state_mut(target, |st| {
-                    if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
-                        job.relay_funding_e8s = Some(relay_funding);
-                        job.relay_funding_block_index =
-                            Some(u64::try_from(block.0).unwrap_or(u64::MAX));
-                        job.updated_at_ts = now_secs();
-                    }
-                });
-            }
-            Ok(Err(err)) => {
-                set_job_status(
-                    target,
-                    RelaySetupStatus::FailedRetryable,
-                    Some(format!("{err:?}")),
+    let pending_funding_transfer = state::with_state(|st| {
+        st.relay_setup_jobs
+            .get(&target)
+            .and_then(|job| job.relay_funding_transfer.as_ref())
+            .map(|record| !record.completed)
+            .unwrap_or(false)
+    });
+    if pending_funding_transfer
+        || (!funding_already_recorded && relay_funding > cfg.relay_setup_dust_e8s)
+    {
+        let setup_account = setup_account_for(historian, target);
+        let mut record = state::with_root_and_relay_factory_state_mut(target, |st| {
+            let job = st
+                .relay_setup_jobs
+                .get_mut(&target)
+                .expect("relay funding requires setup job");
+            job.status = RelaySetupStatus::FundingRelaySubaccountOne;
+            job.relay_funding_transfer.clone().unwrap_or_else(|| {
+                let record = transfer_record(
+                    RelaySetupTransferKind::RelayFunding,
+                    Some(relay_setup_subaccount(target)),
+                    setup_account,
+                    relay_subaccount_one(relay_id),
+                    relay_funding,
+                    fee,
+                    None,
                 );
-                return RelaySetupNotifyResult::Failed {
-                    status: RelaySetupStatus::FailedRetryable,
-                    message: format!("relay funding failed: {err:?}"),
-                };
+                job.relay_funding_transfer = Some(record.clone());
+                job.relay_funding_e8s = Some(relay_funding);
+                job.updated_at_ts = now_secs();
+                record
+            })
+        });
+        let block_index = if let Some(block_index) = record.block_index {
+            block_index
+        } else if let Some(block_index) =
+            match find_recorded_transfer_in_index(&record, index).await {
+                Ok(block_index) => block_index,
+                Err(err) => {
+                    set_job_failed_retryable(target, err.clone());
+                    return RelaySetupNotifyResult::Failed {
+                        status: RelaySetupStatus::FailedRetryable.into(),
+                        message: err,
+                    };
+                }
             }
-            Err(err) => {
-                set_job_status(target, RelaySetupStatus::Ambiguous, Some(err.to_string()));
-                return RelaySetupNotifyResult::Failed {
-                    status: RelaySetupStatus::Ambiguous,
-                    message: err.to_string(),
-                };
+        {
+            block_index
+        } else {
+            match classify_transfer_response(
+                crate::clients::LedgerClient::icrc1_transfer(
+                    &ledger,
+                    record_to_transfer_arg(&record),
+                )
+                .await,
+            ) {
+                Ok(block_index) => block_index,
+                Err(Ok(err)) => {
+                    set_job_status(
+                        target,
+                        RelaySetupStatus::FailedRetryable,
+                        Some(format!("{err:?}")),
+                    );
+                    return RelaySetupNotifyResult::Failed {
+                        status: RelaySetupStatus::FailedRetryable.into(),
+                        message: format!("relay funding failed: {err:?}"),
+                    };
+                }
+                Err(Err(err)) => {
+                    set_job_status(target, RelaySetupStatus::Ambiguous, Some(err.to_string()));
+                    return RelaySetupNotifyResult::Failed {
+                        status: RelaySetupStatus::Ambiguous.into(),
+                        message: err.to_string(),
+                    };
+                }
             }
-        }
+        };
+        note_transfer_success(&mut record, block_index);
+        state::with_root_and_relay_factory_state_mut(target, |st| {
+            if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                let funding_amount = record.amount_e8s;
+                job.relay_funding_transfer = Some(record);
+                job.relay_funding_e8s = Some(funding_amount);
+                job.relay_funding_block_index = Some(block_index);
+                job.relay_funding_accepted = true;
+                job.phase = Some(RelaySetupPhase::RelayFundingAccepted);
+                job.updated_at_ts = now_secs();
+            }
+        });
     }
     set_job_status(target, RelaySetupStatus::Blackholing, None);
+    state::with_root_and_relay_factory_state_mut(target, |st| {
+        if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+            job.blackhole_update_attempted = true;
+            job.phase = Some(RelaySetupPhase::BlackholeUpdateAttempted);
+            job.updated_at_ts = now_secs();
+        }
+    });
     if let Err(err) = jupiter_ic_clients::management::update_settings(
         &jupiter_ic_clients::management::UpdateSettingsArgs {
             canister_id: relay_id,
@@ -835,25 +1327,52 @@ async fn create_and_activate_relay(
     )
     .await
     {
-        set_job_status(
-            target,
-            RelaySetupStatus::FailedRetryable,
-            Some(format!("{err:?}")),
-        );
-        return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedRetryable,
-            message: format!("blackhole update_settings failed: {err:?}"),
-        };
+        if let Ok(status) = blackhole.canister_status(relay_id).await {
+            if status.settings.controllers == vec![cfg.blackhole_canister_id] {
+                state::with_root_and_relay_factory_state_mut(target, |st| {
+                    if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                        job.blackhole_confirmed = true;
+                        job.updated_at_ts = now_secs();
+                    }
+                });
+            } else {
+                set_job_status(
+                    target,
+                    RelaySetupStatus::FailedRetryable,
+                    Some(format!("{err:?}")),
+                );
+                return RelaySetupNotifyResult::Failed {
+                    status: RelaySetupStatus::FailedRetryable.into(),
+                    message: format!("blackhole update_settings failed: {err:?}"),
+                };
+            }
+        } else {
+            set_job_status(
+                target,
+                RelaySetupStatus::FailedRetryable,
+                Some(format!("{err:?}")),
+            );
+            return RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message: format!("blackhole update_settings failed: {err:?}"),
+            };
+        }
+    } else {
+        state::with_root_and_relay_factory_state_mut(target, |st| {
+            if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                job.blackhole_confirmed = true;
+                job.updated_at_ts = now_secs();
+            }
+        });
     }
     let entry = RelayRegistryEntry {
         relay_canister_id: relay_id,
         target_canister_id: target,
         kind: RelayRegistryKind::SelfService,
         status: RelayRegistryStatus::Active,
-        setup_account: Some(setup_account_for(self_canister_id(), target)),
+        setup_account: Some(setup_account_for(historian, target)),
         setup_account_identifier: Some(account_identifier_text_for_account(&setup_account_for(
-            self_canister_id(),
-            target,
+            historian, target,
         ))),
         setup_amount_e8s: state::with_state(|st| {
             st.relay_setup_jobs
@@ -875,14 +1394,16 @@ async fn create_and_activate_relay(
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
             job.status = RelaySetupStatus::Active;
+            job.phase = Some(RelaySetupPhase::Active);
             job.relay_canister_id = Some(relay_id);
             job.setup_amount_processed_e8s = job.setup_amount_seen_e8s;
             job.updated_at_ts = now_secs();
         }
         st.relay_registry_by_target.insert(target, entry.clone());
-        crate::rebuild_relay_targets_by_relay(st);
     });
-    RelaySetupNotifyResult::Active { relay: entry }
+    RelaySetupNotifyResult::Active {
+        relay: entry.into(),
+    }
 }
 
 fn jupiter_relay_init_arg(cfg: &Config, target: Principal) -> Vec<u8> {
@@ -927,21 +1448,12 @@ pub(crate) async fn notify_relay_setup(target: Principal) -> RelaySetupNotifyRes
     let blackhole = clients::blackhole::BlackholeCanister::new(cfg.blackhole_canister_id);
     let Some(cmc_id) = cfg.cmc_canister_id else {
         return RelaySetupNotifyResult::Failed {
-            status: RelaySetupStatus::FailedTerminal,
+            status: RelaySetupStatus::FailedTerminal.into(),
             message: "CMC canister is not configured".to_string(),
         };
     };
     let cmc = CmcCanister::new(cmc_id);
     notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, &cmc).await
-}
-
-pub(crate) async fn request_relay_setup_refund_with_clients(
-    target: Principal,
-    ledger: &dyn LedgerClient,
-    index: &dyn IndexClient,
-) -> RelaySetupRefundResult {
-    request_relay_setup_refund_with_clients_for_historian(self_canister_id(), target, ledger, index)
-        .await
 }
 
 async fn request_relay_setup_refund_with_clients_for_historian(
@@ -1037,18 +1549,53 @@ async fn request_relay_setup_refund_with_clients_for_historian(
             continue;
         }
         let refund_amount = gross.saturating_sub(fee);
+        let created_at_time = state::with_root_and_relay_factory_state_mut(target, |st| {
+            if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                if let Some(record) = job.refund_transfers.iter().find(|record| {
+                    !record.completed
+                        && record.kind == RelaySetupTransferKind::Refund
+                        && record.from_subaccount == setup_account.subaccount
+                        && record.to_account_identifier == account_identifier
+                        && record.amount_e8s == refund_amount
+                        && record.fee_e8s == fee
+                }) {
+                    return record.created_at_time_nanos;
+                }
+                let mut record = transfer_record(
+                    RelaySetupTransferKind::Refund,
+                    setup_account.subaccount,
+                    setup_account,
+                    Account {
+                        owner: Principal::anonymous(),
+                        subaccount: None,
+                    },
+                    refund_amount,
+                    fee,
+                    Some(REFUND_MEMO.to_le_bytes().to_vec()),
+                );
+                record.to_account_identifier = account_identifier.clone();
+                let created_at_time = record.created_at_time_nanos;
+                job.refund_transfers.push(record);
+                job.updated_at_ts = now;
+                return created_at_time;
+            }
+            now_nanos()
+        });
         let result = ledger
             .legacy_transfer_to_account_identifier(
                 setup_account.subaccount,
-                account_identifier,
+                account_identifier.clone(),
                 refund_amount,
                 fee,
                 REFUND_MEMO,
-                Some(now_nanos()),
+                Some(created_at_time),
             )
             .await;
         match result {
-            Ok(Ok(block)) => {
+            Ok(Ok(block))
+            | Ok(Err(LegacyTransferError::TxDuplicate {
+                duplicate_of: block,
+            })) => {
                 refundable_balance = refundable_balance.saturating_sub(gross);
                 blocks.push(block);
                 state::with_root_and_relay_factory_state_mut(target, |st| {
@@ -1059,6 +1606,13 @@ async fn request_relay_setup_refund_with_clients_for_historian(
                             }
                         }
                         job.refund_blocks.push(block);
+                        if let Some(record) = job.refund_transfers.iter_mut().rev().find(|record| {
+                            record.to_account_identifier == account_identifier
+                                && record.amount_e8s == refund_amount
+                                && record.created_at_time_nanos == created_at_time
+                        }) {
+                            note_transfer_success(record, block);
+                        }
                         job.updated_at_ts = now;
                     }
                 });
@@ -1102,18 +1656,14 @@ async fn request_relay_setup_refund_with_clients_for_historian(
     }
 }
 
-pub(crate) async fn request_relay_setup_refund(target: Principal) -> RelaySetupRefundResult {
-    let cfg = state::with_state(|st| st.config.clone());
-    let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
-    let index = jupiter_ic_clients::index::IcpIndexCanister::new(cfg.index_canister_id);
-    request_relay_setup_refund_with_clients(target, &ledger, &index).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::clients::blackhole::{BlackholeCanisterStatus, BlackholeSettings};
-    use crate::clients::index::GetAccountIdentifierTransactionsResponse;
+    use crate::clients::index::{
+        GetAccountIdentifierTransactionsResponse, IndexTimeStamp, IndexTransaction,
+        IndexTransactionWithId, Tokens,
+    };
     use crate::clients::{ClientError, IcpXdrConversionRate};
     use futures::executor::block_on;
     use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferError};
@@ -1140,6 +1690,15 @@ mod tests {
             relay_initial_cycles: None,
             relay_funding_e8s: None,
             relay_funding_block_index: None,
+            phase: Some(RelaySetupPhase::PreSpend),
+            cycle_transfer: None,
+            relay_funding_transfer: None,
+            existing_relay_sweep_transfer: None,
+            refund_transfers: Vec::new(),
+            code_installed: false,
+            relay_funding_accepted: false,
+            blackhole_update_attempted: false,
+            blackhole_confirmed: false,
             refund_attempt_count: 0,
             last_refund_attempt_ts: None,
             refund_blocks: Vec::new(),
@@ -1207,10 +1766,11 @@ mod tests {
     struct FakeLedger {
         fee: Result<u64, String>,
         balance: Result<u64, String>,
+        transfer_results: Arc<Mutex<Vec<Result<Result<BlockIndex, TransferError>, String>>>>,
         transfers: Arc<Mutex<Vec<TransferArg>>>,
         legacy_results:
             Arc<Mutex<Vec<Result<jupiter_ic_clients::ledger::LegacyTransferResult, String>>>>,
-        legacy_calls: Arc<Mutex<Vec<(String, u64)>>>,
+        legacy_calls: Arc<Mutex<Vec<(String, u64, Option<u64>)>>>,
     }
 
     impl FakeLedger {
@@ -1218,6 +1778,7 @@ mod tests {
             Self {
                 fee: Ok(10_000),
                 balance: Ok(balance),
+                transfer_results: Arc::new(Mutex::new(Vec::new())),
                 transfers: Arc::new(Mutex::new(Vec::new())),
                 legacy_results: Arc::new(Mutex::new(Vec::new())),
                 legacy_calls: Arc::new(Mutex::new(Vec::new())),
@@ -1240,7 +1801,11 @@ mod tests {
             arg: TransferArg,
         ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
             self.transfers.lock().unwrap().push(arg);
-            Ok(Ok(candid::Nat::from(77u64)))
+            let mut results = self.transfer_results.lock().unwrap();
+            if results.is_empty() {
+                return Ok(Ok(candid::Nat::from(77u64)));
+            }
+            results.remove(0).map_err(ClientError::Call)
         }
 
         async fn legacy_transfer_to_account_identifier(
@@ -1250,12 +1815,13 @@ mod tests {
             amount_e8s: u64,
             _fee_e8s: u64,
             _memo: u64,
-            _created_at_time_nanos: Option<u64>,
+            created_at_time_nanos: Option<u64>,
         ) -> Result<crate::clients::LegacyTransferResult, ClientError> {
-            self.legacy_calls
-                .lock()
-                .unwrap()
-                .push((to_account_identifier_hex, amount_e8s));
+            self.legacy_calls.lock().unwrap().push((
+                to_account_identifier_hex,
+                amount_e8s,
+                created_at_time_nanos,
+            ));
             let result = self
                 .legacy_results
                 .lock()
@@ -1268,6 +1834,7 @@ mod tests {
 
     struct FakeIndex {
         response: GetAccountIdentifierTransactionsResponse,
+        pages: Arc<Mutex<Vec<GetAccountIdentifierTransactionsResponse>>>,
     }
 
     #[async_trait::async_trait]
@@ -1278,6 +1845,10 @@ mod tests {
             _start: Option<u64>,
             _max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, ClientError> {
+            let mut pages = self.pages.lock().unwrap();
+            if !pages.is_empty() {
+                return Ok(pages.remove(0));
+            }
             Ok(self.response.clone())
         }
     }
@@ -1301,7 +1872,19 @@ mod tests {
         }
     }
 
-    struct FakeCmc;
+    struct FakeCmc {
+        notify_results: Arc<Mutex<Vec<Result<u128, NotifyTopUpError>>>>,
+        notify_calls: Arc<Mutex<Vec<u64>>>,
+    }
+
+    impl FakeCmc {
+        fn healthy() -> Self {
+            Self {
+                notify_results: Arc::new(Mutex::new(Vec::new())),
+                notify_calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl CmcClient for FakeCmc {
@@ -1312,9 +1895,14 @@ mod tests {
         async fn notify_top_up(
             &self,
             _canister_id: Principal,
-            _block_index: u64,
-        ) -> Result<u128, String> {
-            Ok(1_000_000_000_000)
+            block_index: u64,
+        ) -> Result<u128, NotifyTopUpError> {
+            self.notify_calls.lock().unwrap().push(block_index);
+            let mut results = self.notify_results.lock().unwrap();
+            if results.is_empty() {
+                return Ok(1_000_000_000_000);
+            }
+            results.remove(0)
         }
     }
 
@@ -1327,6 +1915,55 @@ mod tests {
             timestamp_nanos: None,
             processed: false,
             refunded: false,
+        }
+    }
+
+    fn index_transfer(tx_id: u64, from: &str, to: &str, amount_e8s: u64) -> IndexTransactionWithId {
+        index_transfer_with_created_at(tx_id, from, to, amount_e8s, tx_id)
+    }
+
+    fn index_transfer_with_created_at(
+        tx_id: u64,
+        from: &str,
+        to: &str,
+        amount_e8s: u64,
+        created_at_time_nanos: u64,
+    ) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id: tx_id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    from: from.to_string(),
+                    to: to.to_string(),
+                    amount: Tokens::new(amount_e8s),
+                    fee: Tokens::new(10_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp {
+                    timestamp_nanos: created_at_time_nanos,
+                }),
+                timestamp: None,
+            },
+        }
+    }
+
+    fn active_relay(target: Principal, relay_id: Principal) -> RelayRegistryEntry {
+        RelayRegistryEntry {
+            relay_canister_id: relay_id,
+            target_canister_id: target,
+            kind: RelayRegistryKind::SelfService,
+            status: RelayRegistryStatus::Active,
+            setup_account: None,
+            setup_account_identifier: None,
+            setup_amount_e8s: None,
+            setup_tx_ids: Vec::new(),
+            relay_wasm_hash_hex: None,
+            final_controllers: None,
+            log_visibility_public: None,
+            created_at_ts: None,
+            activated_at_ts: None,
         }
     }
 
@@ -1429,6 +2066,45 @@ mod tests {
     }
 
     #[test]
+    fn refund_eligibility_rejects_durable_irreversible_transfer_records() {
+        let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
+        job.cycle_transfer = Some(transfer_record(
+            RelaySetupTransferKind::CmcConversion,
+            Some([1; 32]),
+            Account {
+                owner: Principal::from_slice(&[2]),
+                subaccount: Some([1; 32]),
+            },
+            Account {
+                owner: Principal::from_slice(&[3]),
+                subaccount: None,
+            },
+            100_000,
+            10_000,
+            None,
+        ));
+        assert!(!refund_eligible_status(&job));
+
+        job.cycle_transfer = None;
+        job.relay_funding_transfer = Some(transfer_record(
+            RelaySetupTransferKind::RelayFunding,
+            Some([1; 32]),
+            Account {
+                owner: Principal::from_slice(&[2]),
+                subaccount: Some([1; 32]),
+            },
+            Account {
+                owner: Principal::from_slice(&[4]),
+                subaccount: Some([0; 32]),
+            },
+            100_000,
+            10_000,
+            None,
+        ));
+        assert!(!refund_eligible_status(&job));
+    }
+
+    #[test]
     fn indexed_inbound_total_ignores_refunded_payments() {
         let mut job = job_with_status(RelaySetupStatus::BelowMinimum);
         job.payments = vec![
@@ -1485,6 +2161,7 @@ mod tests {
                 transactions: Vec::new(),
                 oldest_tx_id: None,
             },
+            pages: Arc::new(Mutex::new(Vec::new())),
         };
 
         let result = block_on(request_relay_setup_refund_with_clients_for_historian(
@@ -1515,6 +2192,62 @@ mod tests {
     }
 
     #[test]
+    fn automatic_refund_reuses_incomplete_record_and_duplicate_success() {
+        let target = Principal::from_slice(&[31]);
+        let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
+        job.target_canister_id = target;
+        job.setup_account_identifier = "setup".to_string();
+        job.payments = vec![payment(1, "source-a", 100_000)];
+        install_state_with_job(target, job);
+        let ledger = FakeLedger {
+            legacy_results: Arc::new(Mutex::new(vec![
+                Err("reply lost after ledger accepted refund".to_string()),
+                Ok(Err(LegacyTransferError::TxDuplicate { duplicate_of: 44 })),
+            ])),
+            ..FakeLedger::healthy(100_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 100_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let first = block_on(request_relay_setup_refund_with_clients_for_historian(
+            Principal::from_slice(&[42]),
+            target,
+            &ledger,
+            &index,
+        ));
+        assert!(matches!(first, RelaySetupRefundResult::Failed { .. }));
+        let first_call = ledger.legacy_calls.lock().unwrap()[0].clone();
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.refund_transfers.len(), 1);
+        assert!(!job.refund_transfers[0].completed);
+
+        let second = block_on(request_relay_setup_refund_with_clients_for_historian(
+            Principal::from_slice(&[42]),
+            target,
+            &ledger,
+            &index,
+        ));
+        assert!(matches!(
+            second,
+            RelaySetupRefundResult::Refunded { ref blocks } if blocks == &vec![44]
+        ));
+        let calls = ledger.legacy_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].2, first_call.2);
+        assert_eq!(calls[1].2, first_call.2);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.refund_transfers.len(), 1);
+        assert!(job.refund_transfers[0].completed);
+        assert_eq!(job.refund_transfers[0].block_index, Some(44));
+    }
+
+    #[test]
     fn refund_skips_already_refunded_and_dust_and_caps_balance() {
         let target = Principal::from_slice(&[22]);
         let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
@@ -1539,6 +2272,7 @@ mod tests {
                 transactions: Vec::new(),
                 oldest_tx_id: None,
             },
+            pages: Arc::new(Mutex::new(Vec::new())),
         };
 
         let result = block_on(request_relay_setup_refund_with_clients_for_historian(
@@ -1549,13 +2283,15 @@ mod tests {
         ));
         assert!(matches!(result, RelaySetupRefundResult::Refunded { .. }));
         let calls = ledger.legacy_calls.lock().unwrap().clone();
-        assert_eq!(calls, vec![("capped".to_string(), 50_000)]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "capped");
+        assert_eq!(calls[0].1, 50_000);
     }
 
     #[test]
     fn early_ledger_fee_failure_marks_reserved_job_retryable() {
         let target = Principal::from_slice(&[23]);
-        state::set_state(State::new(config(), 0));
+        install_state_with_job(target, job_with_status(RelaySetupStatus::FailedRetryable));
         let ledger = FakeLedger {
             fee: Err("fee unavailable".to_string()),
             ..FakeLedger::healthy(0)
@@ -1566,6 +2302,7 @@ mod tests {
                 transactions: Vec::new(),
                 oldest_tx_id: None,
             },
+            pages: Arc::new(Mutex::new(Vec::new())),
         };
         let result = block_on(notify_relay_setup_with_clients_for_historian(
             Principal::from_slice(&[42]),
@@ -1573,12 +2310,12 @@ mod tests {
             &ledger,
             &index,
             &FakeBlackhole,
-            &FakeCmc,
+            &FakeCmc::healthy(),
         ));
         assert!(matches!(
             result,
             RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
+                status: RelaySetupPublicStatus::FailedRetryable,
                 ..
             }
         ));
@@ -1601,6 +2338,7 @@ mod tests {
                 transactions: Vec::new(),
                 oldest_tx_id: None,
             },
+            pages: Arc::new(Mutex::new(Vec::new())),
         };
         let result = block_on(notify_relay_setup_with_clients_for_historian(
             Principal::from_slice(&[42]),
@@ -1608,15 +2346,417 @@ mod tests {
             &ledger,
             &index,
             &FakeBlackhole,
-            &FakeCmc,
+            &FakeCmc::healthy(),
         ));
         assert!(matches!(
             result,
             RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable,
+                status: RelaySetupPublicStatus::FailedRetryable,
                 ..
             }
         ));
         assert!(ledger.transfers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cmc_reply_loss_resumes_topup_without_auto_refund_or_new_transfer() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[32]);
+        let setup_account = setup_account_for(historian, target);
+        let mut job = job_with_status(RelaySetupStatus::Ambiguous);
+        job.target_canister_id = target;
+        job.setup_account = setup_account;
+        job.setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        job.cycle_conversion_e8s = Some(50_000);
+        job.cycle_transfer = Some(transfer_record(
+            RelaySetupTransferKind::CmcConversion,
+            setup_account.subaccount,
+            setup_account,
+            cmc_deposit_account(Principal::from_slice(&[4]), historian),
+            50_000,
+            10_000,
+            Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
+        ));
+        let original_created_at = job.cycle_transfer.as_ref().unwrap().created_at_time_nanos;
+        install_state_with_job(target, job);
+        let ledger = FakeLedger::healthy(20_000);
+        let cmc = FakeCmc {
+            notify_results: Arc::new(Mutex::new(vec![Err(NotifyTopUpError::Transport(
+                "reply still lost".to_string(),
+            ))])),
+            notify_calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 20_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &cmc,
+        ));
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::FailedRetryable,
+                ..
+            }
+        ));
+        let transfers = ledger.transfers.lock().unwrap().clone();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].created_at_time, Some(original_created_at));
+        assert!(state::with_state(|st| st
+            .relay_setup_jobs
+            .get(&target)
+            .unwrap()
+            .refund_transfers
+            .is_empty()));
+        assert_eq!(cmc.notify_calls.lock().unwrap().as_slice(), &[77]);
+    }
+
+    #[test]
+    fn existing_relay_sweep_reconciles_pending_record_before_dust_check() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[33]);
+        let relay_id = Principal::from_slice(&[34]);
+        state::set_state(State::new(config(), 0));
+        let ledger = FakeLedger {
+            transfer_results: Arc::new(Mutex::new(vec![Err(
+                "reply lost after ledger accepted sweep".to_string(),
+            )])),
+            ..FakeLedger::healthy(200_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 200_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let first = block_on(sweep_existing(
+            target,
+            active_relay(target, relay_id),
+            200_000,
+            10_000,
+            &ledger,
+            &index,
+            historian,
+        ));
+        assert!(matches!(
+            first,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::FailedRetryable,
+                ..
+            }
+        ));
+        let record = state::with_state(|st| {
+            st.relay_setup_jobs
+                .get(&target)
+                .unwrap()
+                .existing_relay_sweep_transfer
+                .clone()
+                .unwrap()
+        });
+        assert!(!record.completed);
+        let index_after_accept = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 10_000,
+                transactions: vec![index_transfer_with_created_at(
+                    88,
+                    &record.from_account_identifier,
+                    &record.to_account_identifier,
+                    record.amount_e8s,
+                    record.created_at_time_nanos,
+                )],
+                oldest_tx_id: Some(88),
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let second = block_on(sweep_existing(
+            target,
+            active_relay(target, relay_id),
+            1,
+            10_000,
+            &ledger,
+            &index_after_accept,
+            historian,
+        ));
+        assert!(matches!(
+            second,
+            RelaySetupNotifyResult::SweptToExistingRelay {
+                amount_e8s: 190_000,
+                block_index: 88,
+                ..
+            }
+        ));
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert!(job.existing_relay_sweep_transfer.unwrap().completed);
+    }
+
+    #[test]
+    fn active_relay_second_same_amount_deposit_creates_distinct_sweep() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[35]);
+        let relay_id = Principal::from_slice(&[36]);
+        state::set_state(State::new(config(), 0));
+        let ledger = FakeLedger::healthy(200_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 200_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let first = block_on(sweep_existing(
+            target,
+            active_relay(target, relay_id),
+            200_000,
+            10_000,
+            &ledger,
+            &index,
+            historian,
+        ));
+        assert!(matches!(
+            first,
+            RelaySetupNotifyResult::SweptToExistingRelay { .. }
+        ));
+        let first_created_at = ledger.transfers.lock().unwrap()[0].created_at_time;
+
+        let second = block_on(sweep_existing(
+            target,
+            active_relay(target, relay_id),
+            200_000,
+            10_000,
+            &ledger,
+            &index,
+            historian,
+        ));
+        assert!(matches!(
+            second,
+            RelaySetupNotifyResult::SweptToExistingRelay { .. }
+        ));
+        let transfers = ledger.transfers.lock().unwrap().clone();
+        assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].amount, transfers[1].amount);
+        assert_eq!(transfers[0].created_at_time, first_created_at);
+        assert_ne!(transfers[0].created_at_time, transfers[1].created_at_time);
+    }
+
+    #[test]
+    fn list_relay_registrations_returns_only_active_entries() {
+        let target_active = Principal::from_slice(&[25, 1]);
+        let target_pending = Principal::from_slice(&[25, 2]);
+        let target_failed = Principal::from_slice(&[25, 3]);
+        let target_superseded = Principal::from_slice(&[25, 4]);
+        let mut st = State::new(config(), 0);
+        st.relay_registry_by_target.insert(
+            target_active,
+            active_relay(target_active, Principal::from_slice(&[35, 1])),
+        );
+        let mut pending = active_relay(target_pending, Principal::from_slice(&[35, 2]));
+        pending.status = RelayRegistryStatus::Pending;
+        st.relay_registry_by_target.insert(target_pending, pending);
+        let mut failed = active_relay(target_failed, Principal::from_slice(&[35, 3]));
+        failed.status = RelayRegistryStatus::Failed;
+        st.relay_registry_by_target.insert(target_failed, failed);
+        let mut superseded = active_relay(target_superseded, Principal::from_slice(&[35, 4]));
+        superseded.status = RelayRegistryStatus::Superseded;
+        st.relay_registry_by_target
+            .insert(target_superseded, superseded);
+        state::set_state(st);
+
+        let listed = list_relay_registrations(ListRelayRegistrationsArgs::default());
+
+        assert_eq!(listed.items.len(), 1);
+        assert_eq!(listed.items[0].target_canister_id, target_active);
+        assert_eq!(listed.next_start_after, None);
+    }
+
+    #[test]
+    fn relay_setup_zero_balance_notify_does_not_persist_jobs() {
+        state::set_state(State::new(config(), 0));
+        let ledger = FakeLedger::healthy(0);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        for target_id in 0..50u8 {
+            let result = block_on(notify_relay_setup_with_clients_for_historian(
+                Principal::from_slice(&[42]),
+                Principal::from_slice(&[26, target_id]),
+                &ledger,
+                &index,
+                &FakeBlackhole,
+                &FakeCmc::healthy(),
+            ));
+
+            assert!(matches!(
+                result,
+                RelaySetupNotifyResult::BelowMinimum { .. }
+            ));
+        }
+        assert_eq!(state::with_state(|st| st.relay_setup_jobs.len()), 0);
+        assert_eq!(state::with_state(|st| st.relay_registry_by_target.len()), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn relay_setup_view_is_pure_query() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25]);
+        state::set_state(State::new(config(), 0));
+
+        let first = setup_view_from_state(&state::with_state(|st| st.clone()), target, historian);
+        let second = setup_view_from_state(&state::with_state(|st| st.clone()), target, historian);
+
+        assert_eq!(first.setup_account, second.setup_account);
+        assert_eq!(
+            first.setup_account_identifier,
+            second.setup_account_identifier
+        );
+        assert_eq!(state::with_state(|st| st.relay_setup_jobs.len()), 0);
+        assert_eq!(state::with_state(|st| st.relay_registry_by_target.len()), 0);
+    }
+
+    #[test]
+    fn funded_invalid_target_auto_refund_is_attempted() {
+        let historian = Principal::from_slice(&[42]);
+        state::set_state(State::new(config(), 0));
+        let ledger = FakeLedger::healthy(250_000_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            Principal::anonymous(),
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::RefundPending { .. }
+        ));
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&Principal::anonymous()).cloned())
+            .unwrap();
+        assert_eq!(job.status, RelaySetupStatus::RefundAvailable);
+        assert!(refund_eligible_status(&job));
+
+        let view = setup_view_from_state(
+            &state::with_state(|st| st.clone()),
+            Principal::anonymous(),
+            historian,
+        );
+        assert!(!view.payment_allowed);
+        assert!(view.payment_blocked_reason.is_some());
+        assert_eq!(view.status, RelaySetupPublicStatus::Refunding);
+    }
+
+    #[test]
+    fn funded_factory_disabled_setup_auto_refunds() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[26]);
+        let mut cfg = config();
+        cfg.relay_factory_enabled = false;
+        state::set_state(State::new(cfg, 0));
+        let ledger = FakeLedger::healthy(250_000_000);
+        ledger.legacy_results.lock().unwrap().push(Ok(Ok(88)));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 250_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source",
+                    &setup_account_identifier,
+                    250_000_000,
+                )],
+                oldest_tx_id: Some(1),
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(result, RelaySetupNotifyResult::Refunded { .. }));
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned()).unwrap();
+        assert_eq!(job.status, RelaySetupStatus::Refunded);
+        let view = setup_view_from_state(&state::with_state(|st| st.clone()), target, historian);
+        assert!(!view.payment_allowed);
+        assert_eq!(view.status, RelaySetupPublicStatus::Refunded);
+    }
+
+    #[test]
+    fn setup_payment_indexing_paginates_beyond_first_hundred() {
+        let target = Principal::from_slice(&[27]);
+        let setup = "setup-account";
+        let first_page = GetAccountIdentifierTransactionsResponse {
+            balance: 105_000,
+            transactions: (0..100)
+                .map(|idx| index_transfer(200 - idx, "dust", setup, 1))
+                .collect(),
+            oldest_tx_id: Some(101),
+        };
+        let second_page = GetAccountIdentifierTransactionsResponse {
+            balance: 105_000,
+            transactions: (0..5)
+                .map(|idx| index_transfer(100 - idx, "funded", setup, 10_000))
+                .collect(),
+            oldest_tx_id: Some(96),
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(vec![first_page, second_page])),
+        };
+
+        let payments = block_on(index_setup_payments(target, setup.to_string(), &index)).unwrap();
+
+        assert_eq!(payments.len(), 105);
+        assert!(payments.iter().any(|payment| payment.tx_id == 100));
+        assert_eq!(
+            payments
+                .iter()
+                .fold(0u64, |acc, payment| acc.saturating_add(payment.amount_e8s)),
+            50_100
+        );
     }
 }

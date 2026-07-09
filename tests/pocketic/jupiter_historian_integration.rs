@@ -37,6 +37,9 @@ static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WITH_RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static MOCK_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static MOCK_CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static MOCK_BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
@@ -59,6 +62,15 @@ fn historian_wasm() -> Result<Vec<u8>> {
 }
 fn relay_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&RELAY_WASM, "jupiter-relay", None)
+}
+fn mock_ledger_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&MOCK_LEDGER_WASM, "mock-icrc-ledger", None)
+}
+fn mock_cmc_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&MOCK_CMC_WASM, "mock-cmc", None)
+}
+fn mock_blackhole_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&MOCK_BLACKHOLE_WASM, "mock-blackhole", None)
 }
 fn historian_with_relay_wasm() -> Result<Vec<u8>> {
     if let Some(bytes) = HISTORIAN_WITH_RELAY_WASM.get() {
@@ -367,71 +379,64 @@ enum RelayRegistryKind {
     SelfService,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-enum RelayRegistryStatus {
-    Pending,
-    Active,
-    Failed,
-    Superseded,
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelayRegistration {
+    target_canister_id: Principal,
+    relay_canister_id: Principal,
+    kind: RelayRegistryKind,
+    relay_wasm_hash_hex: Option<String>,
+    created_at_ts: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct RelayRegistryEntry {
-    relay_canister_id: Principal,
-    target_canister_id: Principal,
-    kind: RelayRegistryKind,
-    status: RelayRegistryStatus,
-    setup_account: Option<Account>,
-    setup_account_identifier: Option<String>,
-    setup_amount_e8s: Option<u64>,
-    setup_tx_ids: Vec<u64>,
-    relay_wasm_hash_hex: Option<String>,
-    final_controllers: Option<Vec<Principal>>,
-    log_visibility_public: Option<bool>,
-    created_at_ts: Option<u64>,
-    activated_at_ts: Option<u64>,
+struct ListRelayRegistrationsResponse {
+    items: Vec<RelayRegistration>,
+    next_start_after: Option<Principal>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListRelayRegistrationsArgs {
+    start_after: Option<Principal>,
+    limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct NotifyRecord {
+    canister_id: Principal,
+    block_index: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct TransferRecord {
+    from: Account,
+    to: Account,
+    amount: Nat,
+    fee: Nat,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    result: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugBlackholeCall {
+    canister_id: Principal,
+    caller: Principal,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-enum RelaySetupStatus {
+enum RelaySetupPublicStatus {
     NotFunded,
     BelowMinimum,
-    InsufficientForCurrentRate,
-    TargetNotObservable,
+    PaymentNotAllowed,
+    IndexNotReady,
     Pending,
-    ConvertingCycles,
-    CycleTransferAccepted,
-    CycleNotifySucceeded,
-    CreatingCanister,
-    CanisterCreated,
-    InstallingCode,
-    CodeInstalled,
-    SettingPublicLogs,
-    FundingRelaySubaccountOne,
-    Blackholing,
+    CreatingRelay,
     Active,
     SweepingToExistingRelay,
-    SweptToExistingRelay,
-    SweepBelowDust,
-    RefundAvailable,
     Refunding,
     Refunded,
     FailedRetryable,
-    FailedTerminal,
-    Ambiguous,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct RelaySetupJobView {
-    target_canister_id: Principal,
-    status: RelaySetupStatus,
-    relay_canister_id: Option<Principal>,
-    setup_amount_seen_e8s: u64,
-    setup_amount_processed_e8s: u64,
-    cycle_conversion_e8s: Option<u64>,
-    relay_funding_e8s: Option<u64>,
-    last_error: Option<String>,
-    updated_at_ts: u64,
+    ManualRecoveryRequired,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -445,11 +450,11 @@ struct RelaySetupView {
     setup_account: Account,
     setup_account_identifier: String,
     minimum_e8s: u64,
-    dust_e8s: u64,
-    current_status: Option<RelaySetupStatus>,
-    existing_relay: Option<RelayRegistryEntry>,
-    setup_job: Option<RelaySetupJobView>,
-    factory_enabled: bool,
+    payment_allowed: bool,
+    payment_blocked_reason: Option<String>,
+    existing_relay: Option<RelayRegistration>,
+    status: RelaySetupPublicStatus,
+    factory_available: bool,
     relay_wasm_hash_hex: Option<String>,
     warning_text: Option<String>,
 }
@@ -468,22 +473,28 @@ enum RelaySetupNotifyResult {
         message: String,
     },
     Pending {
-        job: RelaySetupJobView,
+        status: RelaySetupPublicStatus,
     },
     Active {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
     },
     SweptToExistingRelay {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
         amount_e8s: u64,
         block_index: u64,
     },
     SweepBelowDust {
-        relay: RelayRegistryEntry,
+        relay: RelayRegistration,
         current_balance_e8s: u64,
     },
+    Refunded {
+        blocks: Vec<u64>,
+    },
+    RefundPending {
+        reason: String,
+    },
     Failed {
-        status: RelaySetupStatus,
+        status: RelaySetupPublicStatus,
         message: String,
     },
 }
@@ -843,7 +854,7 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
         },
     )?;
     assert!(
-        view.factory_enabled,
+        view.factory_available,
         "embedded relay wasm should enable factory in setup view: {view:?}"
     );
     assert!(
@@ -888,23 +899,25 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     };
     assert_eq!(relay.target_canister_id, target);
     assert_eq!(relay.kind, RelayRegistryKind::SelfService);
-    assert_eq!(relay.status, RelayRegistryStatus::Active);
     assert_ne!(relay.relay_canister_id, historian);
     assert_ne!(relay.relay_canister_id, target);
-    assert_eq!(relay.final_controllers, Some(vec![blackhole]));
-    assert_eq!(relay.log_visibility_public, Some(true));
-    assert_eq!(relay.setup_amount_e8s, Some(setup_amount));
 
-    let registered: Option<RelayRegistryEntry> = query_one(
+    let registered: ListRelayRegistrationsResponse = query_one(
         &pic,
         historian,
         Principal::anonymous(),
-        "get_relay_for_canister",
-        target,
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
     )?;
-    let registered = registered.context("expected active relay registry entry")?;
+    let registered = registered
+        .items
+        .into_iter()
+        .find(|entry| entry.target_canister_id == target)
+        .context("expected active relay registry entry")?;
     assert_eq!(registered.relay_canister_id, relay.relay_canister_id);
-    assert_eq!(registered.status, RelayRegistryStatus::Active);
 
     let relay_status = pic
         .canister_status(relay.relay_canister_id, Some(blackhole))
@@ -982,15 +995,21 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     };
     assert_eq!(swept_relay.relay_canister_id, relay.relay_canister_id);
     assert_eq!(swept_amount, second_amount.saturating_sub(fee_e8s));
-    let after_duplicate: Option<RelayRegistryEntry> = query_one(
+    let after_duplicate: ListRelayRegistrationsResponse = query_one(
         &pic,
         historian,
         Principal::anonymous(),
-        "get_relay_for_canister",
-        target,
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
     )?;
     assert_eq!(
         after_duplicate
+            .items
+            .into_iter()
+            .find(|entry| entry.target_canister_id == target)
             .context("expected relay registry after duplicate notify")?
             .relay_canister_id,
         relay.relay_canister_id
@@ -1004,6 +1023,239 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
             .any(|tx| tx.id == second_block),
         "setup account index should include second payment block {second_block}"
     );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let ledger = pic.create_canister();
+    let index = pic.create_canister();
+    let cmc = pic.create_canister();
+    let blackhole = pic.create_canister();
+    let historian = pic.create_canister();
+    let target = pic.create_canister();
+    for canister in [ledger, index, cmc, blackhole, historian, target] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(ledger, mock_ledger_wasm()?, vec![], None);
+    pic.install_canister(index, index_wasm()?, vec![], None);
+    pic.install_canister(cmc, mock_cmc_wasm()?, vec![], None);
+    pic.install_canister(blackhole, mock_blackhole_wasm()?, vec![], None);
+    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
+    let _: () = update_bytes(
+        &pic,
+        blackhole,
+        Principal::anonymous(),
+        "debug_set_status",
+        encode_args((
+            target,
+            Some(Nat::from(10_000_000_000_000u128)),
+            vec![blackhole],
+        ))?,
+    )?;
+
+    pic.install_canister(
+        historian,
+        historian_with_relay_wasm()?,
+        encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
+        None,
+    );
+    pic.add_cycles(historian, 20_000_000_000_000);
+
+    let view: RelaySetupView = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_setup_view",
+        GetRelaySetupViewArgs {
+            target_canister_id: target,
+        },
+    )?;
+    assert!(
+        view.payment_allowed,
+        "funded self-service setup should be allowed before notify: {view:?}"
+    );
+    let setup_amount = 300_000_000u64;
+    let _: () = update_bytes(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((view.setup_account, setup_amount))?,
+    )?;
+    let _: u64 = update_bytes(
+        &pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer_from",
+        encode_args((
+            "setup-source".to_string(),
+            view.setup_account_identifier.clone(),
+            setup_amount,
+            Option::<Vec<u8>>::None,
+        ))?,
+    )?;
+
+    let result: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_setup",
+        target,
+    )?;
+    let relay = match result {
+        RelaySetupNotifyResult::Active { relay } => relay,
+        other => bail!("expected self-service setup to activate relay, got {other:?}"),
+    };
+    let relay_id = relay.relay_canister_id;
+    assert_ne!(relay_id, historian);
+    assert_ne!(relay_id, target);
+    let relay_status = pic
+        .canister_status(relay_id, Some(blackhole))
+        .map_err(|err| anyhow!("spawned relay canister_status failed: {err:?}"))?;
+    assert!(
+        relay_status.module_hash.is_some(),
+        "spawned relay should have installed code"
+    );
+    assert_eq!(pic.get_controllers(relay_id), vec![blackhole]);
+
+    let relay_default = Account {
+        owner: relay_id,
+        subaccount: None,
+    };
+    let _: () = update_bytes(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((relay_default, 200_000_000u64))?,
+    )?;
+    let _: () = update_bytes(
+        &pic,
+        blackhole,
+        Principal::anonymous(),
+        "debug_set_status",
+        encode_args((
+            relay_id,
+            Some(Nat::from(10_000_000_000_000u128)),
+            vec![blackhole],
+        ))?,
+    )?;
+
+    pic.advance_time(Duration::from_secs(3_605));
+    tick_n(&pic, 20);
+    let _: () = update_bytes(
+        &pic,
+        blackhole,
+        Principal::anonymous(),
+        "debug_set_status",
+        encode_args((
+            target,
+            Some(Nat::from(1_000_000_000_000u128)),
+            vec![blackhole],
+        ))?,
+    )?;
+
+    let mut notifications = Vec::<NotifyRecord>::new();
+    for _ in 0..3 {
+        pic.advance_time(Duration::from_secs(3_605));
+        tick_n(&pic, 30);
+        notifications = query_one(&pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+        if notifications
+            .iter()
+            .any(|notification| notification.canister_id == target)
+        {
+            break;
+        }
+    }
+    assert!(
+        notifications
+            .iter()
+            .any(|notification| notification.canister_id == target),
+        "spawned relay should notify CMC for the low-cycle target; notifications={notifications:?}"
+    );
+
+    let calls: Vec<DebugBlackholeCall> =
+        query_one(&pic, blackhole, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.caller == relay_id && call.canister_id == target),
+        "spawned relay should probe target cycles through blackhole; calls={calls:?}"
+    );
+
+    let cmc_deposit = Account {
+        owner: cmc,
+        subaccount: Some(jupiter_ic_clients::account::principal_to_subaccount(target)),
+    };
+    let transfers: Vec<TransferRecord> =
+        query_one(&pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    assert!(
+        transfers.iter().any(|transfer| {
+            transfer.from == relay_default
+                && transfer.to == cmc_deposit
+                && transfer.result == "Ok"
+                && transfer.amount > Nat::from(0u8)
+        }),
+        "spawned relay should create a CMC top-up transfer for target; transfers={transfers:?}"
+    );
+
+    let registrations: ListRelayRegistrationsResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
+    )?;
+    let target_registrations = registrations
+        .items
+        .iter()
+        .filter(|entry| entry.target_canister_id == target)
+        .collect::<Vec<_>>();
+    assert_eq!(target_registrations.len(), 1);
+    assert_eq!(target_registrations[0].relay_canister_id, relay_id);
+
+    let repeated: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_setup",
+        target,
+    )?;
+    match repeated {
+        RelaySetupNotifyResult::Active { relay } => {
+            assert_eq!(relay.relay_canister_id, relay_id);
+        }
+        RelaySetupNotifyResult::SweepBelowDust { relay, .. } => {
+            assert_eq!(relay.relay_canister_id, relay_id);
+        }
+        other => bail!("repeated notify should not create a second relay, got {other:?}"),
+    }
+    let after_repeated: ListRelayRegistrationsResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
+    )?;
+    let after_target_registrations = after_repeated
+        .items
+        .iter()
+        .filter(|entry| entry.target_canister_id == target)
+        .collect::<Vec<_>>();
+    assert_eq!(after_target_registrations.len(), 1);
+    assert_eq!(after_target_registrations[0].relay_canister_id, relay_id);
     Ok(())
 }
 

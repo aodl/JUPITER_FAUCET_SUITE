@@ -212,6 +212,67 @@ mod tests {
         })
     }
 
+    fn snapshot_relay_registry_by_target_map() -> BTreeMap<Principal, RelayRegistryEntry> {
+        with_relay_registry_by_target_map(|map| {
+            let mut out = BTreeMap::new();
+            for entry in map.iter() {
+                let (key, registration) = entry.into_pair();
+                out.insert(key.to_principal(), registration.clone());
+            }
+            out
+        })
+    }
+
+    fn relay_entry(target: Principal, relay: Principal) -> RelayRegistryEntry {
+        RelayRegistryEntry {
+            relay_canister_id: relay,
+            target_canister_id: target,
+            kind: RelayRegistryKind::SelfService,
+            status: RelayRegistryStatus::Active,
+            setup_account: None,
+            setup_account_identifier: None,
+            setup_amount_e8s: None,
+            setup_tx_ids: Vec::new(),
+            relay_wasm_hash_hex: None,
+            final_controllers: None,
+            log_visibility_public: None,
+            created_at_ts: None,
+            activated_at_ts: None,
+        }
+    }
+
+    #[test]
+    fn relay_registry_remap_updates_target_entry() {
+        reset_test_storage();
+        let target = principal(&[30]);
+        let relay_a = principal(&[31]);
+        let relay_b = principal(&[32]);
+        let mut registry = BTreeMap::new();
+        registry.insert(target, relay_entry(target, relay_a));
+        sync_relay_factory_maps(&registry, &BTreeMap::new(), None);
+
+        registry.insert(target, relay_entry(target, relay_b));
+        sync_relay_factory_maps(&registry, &BTreeMap::new(), Some(&BTreeSet::from([target])));
+
+        let stored = snapshot_relay_registry_by_target_map();
+        assert_eq!(stored.get(&target).unwrap().relay_canister_id, relay_b);
+    }
+
+    #[test]
+    fn relay_registry_removal_deletes_target_entry() {
+        reset_test_storage();
+        let target = principal(&[33]);
+        let relay = principal(&[34]);
+        let mut registry = BTreeMap::new();
+        registry.insert(target, relay_entry(target, relay));
+        sync_relay_factory_maps(&registry, &BTreeMap::new(), None);
+
+        registry.remove(&target);
+        sync_relay_factory_maps(&registry, &BTreeMap::new(), Some(&BTreeSet::from([target])));
+
+        assert!(snapshot_relay_registry_by_target_map().is_empty());
+    }
+
     #[test]
     fn cleaned_historian_root_decodes_current_root_with_removed_legacy_fields() {
         #[derive(CandidType)]

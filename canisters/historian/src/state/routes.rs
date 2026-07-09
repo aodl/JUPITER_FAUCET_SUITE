@@ -108,20 +108,11 @@ pub(super) fn sync_canister_meta_map(
 
 pub(super) fn sync_relay_factory_maps(
     registry_by_target: &BTreeMap<Principal, RelayRegistryEntry>,
-    targets_by_relay: &BTreeMap<Principal, Vec<Principal>>,
     setup_jobs: &BTreeMap<Principal, RelaySetupJob>,
     scope: Option<&BTreeSet<Principal>>,
 ) {
     match scope {
         Some(targets) => {
-            let affected_relays: BTreeSet<_> = targets
-                .iter()
-                .filter_map(|target| {
-                    registry_by_target
-                        .get(target)
-                        .map(|entry| entry.relay_canister_id)
-                })
-                .collect();
             with_relay_registry_by_target_map(|map| {
                 for target in targets {
                     let key = PrincipalKey::from(target);
@@ -152,22 +143,6 @@ pub(super) fn sync_relay_factory_maps(
                     }
                 }
             });
-            with_relay_targets_by_relay_map(|map| {
-                for relay in affected_relays {
-                    let key = PrincipalKey::from(relay);
-                    match targets_by_relay.get(&relay) {
-                        Some(targets) if !targets.is_empty() => {
-                            let desired = StableRelayTargetList(targets.clone());
-                            if map.get(&key).as_ref() != Some(&desired) {
-                                map.insert(key, desired);
-                            }
-                        }
-                        _ => {
-                            map.remove(&key);
-                        }
-                    }
-                }
-            });
         }
         None => {
             with_relay_registry_by_target_map(|map| {
@@ -181,21 +156,6 @@ pub(super) fn sync_relay_factory_maps(
                     let key = PrincipalKey::from(target);
                     if map.get(&key).as_ref() != Some(entry) {
                         map.insert(key, entry.clone());
-                    }
-                }
-            });
-            with_relay_targets_by_relay_map(|map| {
-                let existing: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
-                for key in existing {
-                    if !targets_by_relay.contains_key(&key.to_principal()) {
-                        map.remove(&key);
-                    }
-                }
-                for (relay, targets) in targets_by_relay {
-                    let key = PrincipalKey::from(relay);
-                    let desired = StableRelayTargetList(targets.clone());
-                    if map.get(&key).as_ref() != Some(&desired) {
-                        map.insert(key, desired);
                     }
                 }
             });

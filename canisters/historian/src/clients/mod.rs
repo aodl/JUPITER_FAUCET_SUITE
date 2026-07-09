@@ -143,8 +143,11 @@ impl LedgerClient for jupiter_ic_clients::ledger::IcrcLedgerCanister {
 pub(crate) trait CmcClient: Send + Sync {
     #[allow(dead_code)]
     async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError>;
-    async fn notify_top_up(&self, canister_id: Principal, block_index: u64)
-        -> Result<u128, String>;
+    async fn notify_top_up(
+        &self,
+        canister_id: Principal,
+        block_index: u64,
+    ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError>;
 }
 
 pub(crate) struct CmcCanister {
@@ -167,10 +170,8 @@ impl CmcClient for CmcCanister {
         &self,
         canister_id: Principal,
         block_index: u64,
-    ) -> Result<u128, String> {
-        jupiter_ic_clients::cmc::notify_top_up(self.canister_id, canister_id, block_index)
-            .await
-            .map_err(|err| format!("{err:?}"))
+    ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
+        jupiter_ic_clients::cmc::notify_top_up(self.canister_id, canister_id, block_index).await
     }
 }
 

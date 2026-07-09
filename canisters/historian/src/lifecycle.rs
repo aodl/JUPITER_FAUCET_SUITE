@@ -494,21 +494,6 @@ pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
             .entry(target_canister_id)
             .or_insert(entry);
     }
-    rebuild_relay_targets_by_relay(st);
-}
-
-pub(crate) fn rebuild_relay_targets_by_relay(st: &mut State) {
-    st.relay_targets_by_relay.clear();
-    for entry in st.relay_registry_by_target.values() {
-        st.relay_targets_by_relay
-            .entry(entry.relay_canister_id)
-            .or_default()
-            .push(entry.target_canister_id);
-    }
-    for targets in st.relay_targets_by_relay.values_mut() {
-        targets.sort();
-        targets.dedup();
-    }
 }
 
 pub(super) fn initialize_derived_state_if_missing(st: &mut State) {

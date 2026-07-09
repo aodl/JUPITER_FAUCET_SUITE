@@ -193,16 +193,6 @@ pub(super) fn get_relay_setup_view(args: GetRelaySetupViewArgs) -> RelaySetupVie
 }
 
 #[ic_cdk::query]
-pub(super) fn get_relay_for_canister(target: Principal) -> Option<RelayRegistryEntry> {
-    crate::relay_setup::get_relay_for_canister(target)
-}
-
-#[ic_cdk::query]
-pub(super) fn get_relay_by_id(relay: Principal) -> Vec<RelayRegistryEntry> {
-    crate::relay_setup::get_relay_by_id(relay)
-}
-
-#[ic_cdk::query]
 pub(super) fn list_relay_registrations(
     args: ListRelayRegistrationsArgs,
 ) -> ListRelayRegistrationsResponse {
@@ -212,11 +202,6 @@ pub(super) fn list_relay_registrations(
 #[ic_cdk::update]
 pub(super) async fn notify_relay_setup(target: Principal) -> RelaySetupNotifyResult {
     crate::relay_setup::notify_relay_setup(target).await
-}
-
-#[ic_cdk::update]
-pub(super) async fn request_relay_setup_refund(target: Principal) -> RelaySetupRefundResult {
-    crate::relay_setup::request_relay_setup_refund(target).await
 }
 
 fn principal_matches_compact_prefix(principal: Principal, prefix: &str) -> bool {

@@ -74,6 +74,13 @@ pub(crate) fn validate_config(cfg: &Config) {
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
     );
+    if cfg.relay_factory_enabled {
+        assert!(
+            crate::approved_self_service_relay_wasm().is_some()
+                && crate::approved_self_service_relay_wasm_hash_hex().is_some(),
+            "relay_factory_enabled requires a nonempty approved relay wasm artifact and hash"
+        );
+    }
 }
 
 pub(crate) fn commitment_sort_key(item: &RecentCommitment) -> (u64, u64) {
