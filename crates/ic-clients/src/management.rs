@@ -14,6 +14,7 @@ use ic_cdk::call::{Call, CallResult};
 
 const UPDATE_SETTINGS_METHOD: &str = "update_settings";
 const CANISTER_INFO_METHOD: &str = "canister_info";
+const CANISTER_STATUS_METHOD: &str = "canister_status";
 const CREATE_CANISTER_METHOD: &str = "create_canister";
 const INSTALL_CODE_METHOD: &str = "install_code";
 
@@ -97,6 +98,17 @@ pub struct CanisterInfoResult {
     pub controllers: Vec<Principal>,
 }
 
+#[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct CanisterStatusArgs {
+    pub canister_id: Principal,
+}
+
+#[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct CanisterStatusResult {
+    pub module_hash: Option<Vec<u8>>,
+    pub settings: CanisterSettings,
+}
+
 pub async fn update_settings(arg: &UpdateSettingsArgs) -> CallResult<()> {
     let complete_arg = CompleteUpdateSettingsArgs {
         canister_id: arg.canister_id,
@@ -153,6 +165,15 @@ pub async fn install_code(arg: &InstallCodeArgs) -> CallResult<()> {
 pub async fn canister_info(arg: &CanisterInfoArgs) -> CallResult<CanisterInfoResult> {
     Ok(
         Call::bounded_wait(Principal::management_canister(), CANISTER_INFO_METHOD)
+            .with_arg(arg)
+            .await?
+            .candid()?,
+    )
+}
+
+pub async fn canister_status(arg: &CanisterStatusArgs) -> CallResult<CanisterStatusResult> {
+    Ok(
+        Call::bounded_wait(Principal::management_canister(), CANISTER_STATUS_METHOD)
             .with_arg(arg)
             .await?
             .candid()?,

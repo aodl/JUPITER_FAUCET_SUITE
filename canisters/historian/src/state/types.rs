@@ -397,6 +397,14 @@ pub struct RelaySetupTransferRecord {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelayCreateAttempt {
+    pub target_canister_id: Principal,
+    pub created_at_ts: u64,
+    pub initial_cycles: u128,
+    pub relay_wasm_hash_hex: Option<String>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct RelaySetupJob {
     pub target_canister_id: Principal,
     pub setup_account: Account,
@@ -424,6 +432,8 @@ pub struct RelaySetupJob {
     pub existing_relay_sweep_transfer: Option<RelaySetupTransferRecord>,
     #[serde(default)]
     pub refund_transfers: Vec<RelaySetupTransferRecord>,
+    #[serde(default)]
+    pub relay_create_attempt: Option<RelayCreateAttempt>,
     #[serde(default)]
     pub code_installed: bool,
     #[serde(default)]

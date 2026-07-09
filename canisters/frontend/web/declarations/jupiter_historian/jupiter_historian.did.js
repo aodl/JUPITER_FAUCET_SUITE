@@ -160,6 +160,47 @@ export const idlFactory = ({ IDL }) => {
     relay_wasm_hash_hex: IDL.Opt(IDL.Text),
     warning_text: IDL.Opt(IDL.Text),
   });
+  const GetRelaySetupRecoveryViewArgs = IDL.Record({
+    target_canister_id: IDL.Principal,
+  });
+  const RelaySetupTransferKind = IDL.Variant({
+    CmcConversion: IDL.Null,
+    RelayFunding: IDL.Null,
+    ExistingRelaySweep: IDL.Null,
+    Refund: IDL.Null,
+  });
+  const RedactedTransferRecord = IDL.Record({
+    kind: RelaySetupTransferKind,
+    from_account_identifier: IDL.Text,
+    to_account_identifier: IDL.Text,
+    amount_e8s: IDL.Nat64,
+    fee_e8s: IDL.Nat64,
+    created_at_time_nanos: IDL.Nat64,
+    block_index: IDL.Opt(IDL.Nat64),
+    completed: IDL.Bool,
+  });
+  const RelayCreateAttemptView = IDL.Record({
+    target_canister_id: IDL.Principal,
+    created_at_ts: IDL.Nat64,
+    initial_cycles: IDL.Nat,
+    relay_wasm_hash_hex: IDL.Opt(IDL.Text),
+  });
+  const RelaySetupRecoveryView = IDL.Record({
+    target_canister_id: IDL.Principal,
+    status: RelaySetupPublicStatus,
+    last_error: IDL.Opt(IDL.Text),
+    relay_canister_id: IDL.Opt(IDL.Principal),
+    setup_account_identifier: IDL.Text,
+    setup_amount_seen_e8s: IDL.Nat64,
+    setup_amount_processed_e8s: IDL.Nat64,
+    cycle_transfer: IDL.Opt(RedactedTransferRecord),
+    relay_funding_transfer: IDL.Opt(RedactedTransferRecord),
+    existing_relay_sweep_transfer: IDL.Opt(RedactedTransferRecord),
+    refund_transfer_count: IDL.Nat32,
+    relay_create_attempt: IDL.Opt(RelayCreateAttemptView),
+    created_at_ts: IDL.Nat64,
+    updated_at_ts: IDL.Nat64,
+  });
   const ListRelayRegistrationsArgs = IDL.Record({
     start_after: IDL.Opt(IDL.Principal),
     limit: IDL.Opt(IDL.Nat32),
@@ -259,6 +300,11 @@ export const idlFactory = ({ IDL }) => {
     get_public_counts: IDL.Func([], [PublicCounts], ['query']),
     get_public_status: IDL.Func([], [PublicStatus], ['query']),
     get_relay_setup_view: IDL.Func([GetRelaySetupViewArgs], [RelaySetupView], ['query']),
+    get_relay_setup_recovery_view: IDL.Func(
+      [GetRelaySetupRecoveryViewArgs],
+      [RelaySetupRecoveryView],
+      ['query'],
+    ),
     list_relay_registrations: IDL.Func([ListRelayRegistrationsArgs], [ListRelayRegistrationsResponse], ['query']),
     notify_relay_setup: IDL.Func([IDL.Principal], [RelaySetupNotifyResult], []),
     find_canisters_by_memo_prefix: IDL.Func(

@@ -697,6 +697,20 @@ def validate_historian() -> int:
     return historian_min_tx_e8s
 
 
+def validate_relay_setup_recovery_runbook() -> None:
+    path = REPO_ROOT / "docs" / "relay-setup-recovery.md"
+    text = path.read_text()
+    required = [
+        "ManualRecoveryRequired",
+        "create_canister ambiguous relay ID loss",
+        "install_code module-hash reconciliation",
+        "module hash exists but differs",
+    ]
+    for phrase in required:
+        if phrase not in text:
+            fail(f"{path} must mention {phrase!r}")
+
+
 def extract_vec_principals(text: str, field: str, path: Path, *, optional: bool = False) -> list[str]:
     prefix = r"opt\s+vec" if optional else r"vec"
     match = re.search(rf"{re.escape(field)}\s*=\s*{prefix}\s*\{{(?P<body>.*?)\}}\s*;", text, re.S)
@@ -1083,6 +1097,7 @@ def main() -> None:
     validate_relay_docs_contain_full_init_args_upgrade()
     validate_docs_do_not_use_stale_privileged_deployment_framing()
     historian_min_tx_e8s = validate_historian()
+    validate_relay_setup_recovery_runbook()
     validate_relay()
     validate_release_build_script_uses_release_dids()
     if faucet_min_tx_e8s != historian_min_tx_e8s:

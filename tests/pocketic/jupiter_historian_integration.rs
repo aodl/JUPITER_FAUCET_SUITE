@@ -1028,6 +1028,85 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
 
 #[test]
 #[ignore]
+fn historian_with_relay_artifact_exposes_embedded_relay_hash() -> Result<()> {
+    require_ignored_flag()?;
+    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    let status = Command::new("./tools/scripts/build-canister")
+        .arg("jupiter-historian-with-relay")
+        .current_dir(&workspace_root)
+        .status()?;
+    if !status.success() {
+        bail!("tools/scripts/build-canister jupiter-historian-with-relay failed");
+    }
+    let hash_record_path = workspace_root
+        .join("release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm.sha256");
+    let hash_record = std::fs::read_to_string(&hash_record_path)
+        .with_context(|| format!("read {}", hash_record_path.display()))?;
+    let recorded_hash = hash_record
+        .split_whitespace()
+        .next()
+        .context("embedded relay wasm hash record is empty")?
+        .to_string();
+    assert_eq!(recorded_hash.len(), 64);
+    let artifact_path = workspace_root.join("release-artifacts/jupiter_historian_with_relay.wasm");
+    let historian_artifact = std::fs::read(&artifact_path)
+        .with_context(|| format!("read {}", artifact_path.display()))?;
+
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let ledger = pic.create_canister();
+    let index = pic.create_canister();
+    let cmc = pic.create_canister();
+    let blackhole = pic.create_canister();
+    let historian = pic.create_canister();
+    let target = pic.create_canister();
+    for canister in [ledger, index, cmc, blackhole, historian, target] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(blackhole, mock_blackhole_wasm()?, vec![], None);
+    let _: () = update_bytes(
+        &pic,
+        blackhole,
+        Principal::anonymous(),
+        "debug_set_status",
+        encode_args((
+            target,
+            Some(Nat::from(10_000_000_000_000u128)),
+            vec![blackhole],
+        ))?,
+    )?;
+    pic.install_canister(
+        historian,
+        historian_artifact,
+        encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
+        None,
+    );
+
+    let view: RelaySetupView = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_setup_view",
+        GetRelaySetupViewArgs {
+            target_canister_id: target,
+        },
+    )?;
+
+    assert_eq!(
+        view.relay_wasm_hash_hex.as_deref(),
+        Some(recorded_hash.as_str())
+    );
+    assert!(view.factory_available);
+    assert!(
+        view.payment_allowed,
+        "valid observable target should allow payment when CMC is configured: {view:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
     require_ignored_flag()?;
     let pic = support::pocketic::builder()

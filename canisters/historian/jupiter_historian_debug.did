@@ -280,6 +280,45 @@ type RelaySetupView = record {
   relay_wasm_hash_hex : opt text;
   warning_text : opt text;
 };
+type GetRelaySetupRecoveryViewArgs = record { target_canister_id : principal };
+type RelaySetupTransferKind = variant {
+  CmcConversion;
+  RelayFunding;
+  ExistingRelaySweep;
+  Refund;
+};
+type RedactedTransferRecord = record {
+  kind : RelaySetupTransferKind;
+  from_account_identifier : text;
+  to_account_identifier : text;
+  amount_e8s : nat64;
+  fee_e8s : nat64;
+  created_at_time_nanos : nat64;
+  block_index : opt nat64;
+  completed : bool;
+};
+type RelayCreateAttemptView = record {
+  target_canister_id : principal;
+  created_at_ts : nat64;
+  initial_cycles : nat;
+  relay_wasm_hash_hex : opt text;
+};
+type RelaySetupRecoveryView = record {
+  target_canister_id : principal;
+  status : RelaySetupPublicStatus;
+  last_error : opt text;
+  relay_canister_id : opt principal;
+  setup_account_identifier : text;
+  setup_amount_seen_e8s : nat64;
+  setup_amount_processed_e8s : nat64;
+  cycle_transfer : opt RedactedTransferRecord;
+  relay_funding_transfer : opt RedactedTransferRecord;
+  existing_relay_sweep_transfer : opt RedactedTransferRecord;
+  refund_transfer_count : nat32;
+  relay_create_attempt : opt RelayCreateAttemptView;
+  created_at_ts : nat64;
+  updated_at_ts : nat64;
+};
 type ListRelayRegistrationsArgs = record {
   start_after : opt principal;
   limit : opt nat32;
@@ -405,6 +444,7 @@ service : (InitArgs) -> {
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
   get_relay_setup_view : (GetRelaySetupViewArgs) -> (RelaySetupView) query;
+  get_relay_setup_recovery_view : (GetRelaySetupRecoveryViewArgs) -> (RelaySetupRecoveryView) query;
   list_relay_registrations : (ListRelayRegistrationsArgs) -> (ListRelayRegistrationsResponse) query;
   notify_relay_setup : (principal) -> (RelaySetupNotifyResult);
   find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;

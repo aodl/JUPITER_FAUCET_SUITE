@@ -168,6 +168,11 @@ pub struct GetRelaySetupViewArgs {
     pub target_canister_id: Principal,
 }
 
+#[derive(CandidType, Deserialize, Clone)]
+pub struct GetRelaySetupRecoveryViewArgs {
+    pub target_canister_id: Principal,
+}
+
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct ListRelayRegistrationsArgs {
     pub start_after: Option<Principal>,
@@ -265,6 +270,44 @@ pub struct RelaySetupView {
     pub factory_available: bool,
     pub relay_wasm_hash_hex: Option<String>,
     pub warning_text: Option<String>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize)]
+pub struct RedactedTransferRecord {
+    pub kind: RelaySetupTransferKind,
+    pub from_account_identifier: String,
+    pub to_account_identifier: String,
+    pub amount_e8s: u64,
+    pub fee_e8s: u64,
+    pub created_at_time_nanos: u64,
+    pub block_index: Option<u64>,
+    pub completed: bool,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize)]
+pub struct RelayCreateAttemptView {
+    pub target_canister_id: Principal,
+    pub created_at_ts: u64,
+    pub initial_cycles: u128,
+    pub relay_wasm_hash_hex: Option<String>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize)]
+pub struct RelaySetupRecoveryView {
+    pub target_canister_id: Principal,
+    pub status: RelaySetupPublicStatus,
+    pub last_error: Option<String>,
+    pub relay_canister_id: Option<Principal>,
+    pub setup_account_identifier: String,
+    pub setup_amount_seen_e8s: u64,
+    pub setup_amount_processed_e8s: u64,
+    pub cycle_transfer: Option<RedactedTransferRecord>,
+    pub relay_funding_transfer: Option<RedactedTransferRecord>,
+    pub existing_relay_sweep_transfer: Option<RedactedTransferRecord>,
+    pub refund_transfer_count: u32,
+    pub relay_create_attempt: Option<RelayCreateAttemptView>,
+    pub created_at_ts: u64,
+    pub updated_at_ts: u64,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]

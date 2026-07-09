@@ -12,6 +12,7 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg};
 use jupiter_ic_clients::account::{principal_to_subaccount, relay_setup_subaccount};
 use jupiter_ic_clients::cmc::NotifyTopUpError;
 use jupiter_ic_clients::ledger::LegacyTransferError;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RELAY_SUBACCOUNT_ONE: [u8; 32] = {
@@ -56,6 +57,98 @@ pub(crate) fn relay_wasm_hash_hex() -> Option<String> {
     approved_self_service_relay_wasm_hash_hex()
 }
 
+fn approved_relay_wasm_hash() -> Option<[u8; 32]> {
+    approved_self_service_relay_wasm().map(|wasm| Sha256::digest(wasm).into())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ManagementClientError {
+    Ambiguous(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for ManagementClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ambiguous(message) | Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<ic_cdk::call::Error> for ManagementClientError {
+    fn from(value: ic_cdk::call::Error) -> Self {
+        if let ic_cdk::call::Error::CallRejected(rejected) = &value {
+            if rejected.reject_code() == Ok(ic_cdk::call::RejectCode::SysUnknown) {
+                return Self::Ambiguous(format!("{value:?}"));
+            }
+        }
+        Self::Failed(format!("{value:?}"))
+    }
+}
+
+#[async_trait::async_trait]
+trait ManagementClient: Send + Sync {
+    async fn create_canister(
+        &self,
+        arg: &jupiter_ic_clients::management::CreateCanisterArgs,
+        cycles_to_attach: u128,
+    ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, ManagementClientError>;
+    async fn install_code(
+        &self,
+        arg: &jupiter_ic_clients::management::InstallCodeArgs,
+    ) -> Result<(), ManagementClientError>;
+    async fn canister_status(
+        &self,
+        arg: &jupiter_ic_clients::management::CanisterStatusArgs,
+    ) -> Result<jupiter_ic_clients::management::CanisterStatusResult, ManagementClientError>;
+    async fn update_settings(
+        &self,
+        arg: &jupiter_ic_clients::management::UpdateSettingsArgs,
+    ) -> Result<(), ManagementClientError>;
+}
+
+struct IcManagementClient;
+
+#[async_trait::async_trait]
+impl ManagementClient for IcManagementClient {
+    async fn create_canister(
+        &self,
+        arg: &jupiter_ic_clients::management::CreateCanisterArgs,
+        cycles_to_attach: u128,
+    ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, ManagementClientError> {
+        jupiter_ic_clients::management::create_canister(arg, cycles_to_attach)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn install_code(
+        &self,
+        arg: &jupiter_ic_clients::management::InstallCodeArgs,
+    ) -> Result<(), ManagementClientError> {
+        jupiter_ic_clients::management::install_code(arg)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn canister_status(
+        &self,
+        arg: &jupiter_ic_clients::management::CanisterStatusArgs,
+    ) -> Result<jupiter_ic_clients::management::CanisterStatusResult, ManagementClientError> {
+        jupiter_ic_clients::management::canister_status(arg)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn update_settings(
+        &self,
+        arg: &jupiter_ic_clients::management::UpdateSettingsArgs,
+    ) -> Result<(), ManagementClientError> {
+        jupiter_ic_clients::management::update_settings(arg)
+            .await
+            .map_err(Into::into)
+    }
+}
+
 #[cfg(not(test))]
 fn now_nanos() -> u64 {
     ic_cdk::api::time()
@@ -86,6 +179,70 @@ fn self_canister_id() -> Principal {
 
 pub(crate) fn setup_view(target: Principal) -> RelaySetupView {
     state::with_state(|st| setup_view_from_state(st, target, self_canister_id()))
+}
+
+fn redacted_transfer(record: &RelaySetupTransferRecord) -> RedactedTransferRecord {
+    RedactedTransferRecord {
+        kind: record.kind.clone(),
+        from_account_identifier: record.from_account_identifier.clone(),
+        to_account_identifier: record.to_account_identifier.clone(),
+        amount_e8s: record.amount_e8s,
+        fee_e8s: record.fee_e8s,
+        created_at_time_nanos: record.created_at_time_nanos,
+        block_index: record.block_index,
+        completed: record.completed,
+    }
+}
+
+pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
+    state::with_state(|st| {
+        let setup_account = setup_account_for(self_canister_id(), target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        if let Some(job) = st.relay_setup_jobs.get(&target) {
+            return RelaySetupRecoveryView {
+                target_canister_id: target,
+                status: RelaySetupPublicStatus::from(job.status.clone()),
+                last_error: job.last_error.clone(),
+                relay_canister_id: job.relay_canister_id,
+                setup_account_identifier: job.setup_account_identifier.clone(),
+                setup_amount_seen_e8s: job.setup_amount_seen_e8s,
+                setup_amount_processed_e8s: job.setup_amount_processed_e8s,
+                cycle_transfer: job.cycle_transfer.as_ref().map(redacted_transfer),
+                relay_funding_transfer: job.relay_funding_transfer.as_ref().map(redacted_transfer),
+                existing_relay_sweep_transfer: job
+                    .existing_relay_sweep_transfer
+                    .as_ref()
+                    .map(redacted_transfer),
+                refund_transfer_count: job.refund_transfers.len() as u32,
+                relay_create_attempt: job.relay_create_attempt.as_ref().map(|attempt| {
+                    RelayCreateAttemptView {
+                        target_canister_id: attempt.target_canister_id,
+                        created_at_ts: attempt.created_at_ts,
+                        initial_cycles: attempt.initial_cycles,
+                        relay_wasm_hash_hex: attempt.relay_wasm_hash_hex.clone(),
+                    }
+                }),
+                created_at_ts: job.created_at_ts,
+                updated_at_ts: job.updated_at_ts,
+            };
+        }
+        RelaySetupRecoveryView {
+            target_canister_id: target,
+            status: setup_view_from_state(st, target, self_canister_id()).status,
+            last_error: None,
+            relay_canister_id: None,
+            setup_account_identifier,
+            setup_amount_seen_e8s: 0,
+            setup_amount_processed_e8s: 0,
+            cycle_transfer: None,
+            relay_funding_transfer: None,
+            existing_relay_sweep_transfer: None,
+            refund_transfer_count: 0,
+            relay_create_attempt: None,
+            created_at_ts: 0,
+            updated_at_ts: 0,
+        }
+    })
 }
 
 pub(crate) fn setup_view_from_state(
@@ -229,6 +386,7 @@ fn reserve_job(
         relay_funding_transfer: None,
         existing_relay_sweep_transfer: None,
         refund_transfers: Vec::new(),
+        relay_create_attempt: None,
         code_installed: false,
         relay_funding_accepted: false,
         blackhole_update_attempted: false,
@@ -828,6 +986,18 @@ async fn notify_relay_setup_with_clients_for_historian(
     let had_existing_job = existing_job.is_some();
     if let Some(job) = existing_job
         .as_ref()
+        .filter(|job| job.status == RelaySetupStatus::ManualRecoveryRequired)
+    {
+        return RelaySetupNotifyResult::Failed {
+            status: RelaySetupPublicStatus::ManualRecoveryRequired,
+            message: job
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "relay setup requires manual recovery before retry".to_string()),
+        };
+    }
+    if let Some(job) = existing_job
+        .as_ref()
         .filter(|job| in_flight_job(job) && !resumable_job(job))
     {
         return RelaySetupNotifyResult::Pending {
@@ -949,8 +1119,16 @@ async fn notify_relay_setup_with_clients_for_historian(
         } else {
             balance.saturating_sub(fee)
         };
-        return create_and_activate_relay(target, relay_funding, fee, index, blackhole, historian)
-            .await;
+        return create_and_activate_relay(
+            target,
+            relay_funding,
+            fee,
+            index,
+            blackhole,
+            &IcManagementClient,
+            historian,
+        )
+        .await;
     }
     if let Some(message) = invalid_target(target, &cfg, historian) {
         if balance > cfg.relay_setup_dust_e8s {
@@ -1200,7 +1378,56 @@ async fn notify_relay_setup_with_clients_for_historian(
     let relay_funding = balance
         .saturating_sub(conversion_e8s)
         .saturating_sub(fee.saturating_mul(2));
-    create_and_activate_relay(target, relay_funding, fee, index, blackhole, historian).await
+    create_and_activate_relay(
+        target,
+        relay_funding,
+        fee,
+        index,
+        blackhole,
+        &IcManagementClient,
+        historian,
+    )
+    .await
+}
+
+enum RelayCodeInstallReconciliation {
+    ExistingApprovedModule,
+    EmptyCanister,
+    ManualRecoveryRequired(RelaySetupNotifyResult),
+}
+
+async fn reconcile_relay_code_installed(
+    target: Principal,
+    relay_id: Principal,
+    expected_wasm_hash: [u8; 32],
+    management: &dyn ManagementClient,
+) -> Result<RelayCodeInstallReconciliation, String> {
+    let status = management
+        .canister_status(&jupiter_ic_clients::management::CanisterStatusArgs {
+            canister_id: relay_id,
+        })
+        .await
+        .map_err(|err| format!("relay canister_status failed before install retry: {err}"))?;
+    match status.module_hash.as_deref() {
+        Some(hash) if hash == expected_wasm_hash.as_slice() => {
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                    job.code_installed = true;
+                    job.status = RelaySetupStatus::CodeInstalled;
+                    job.phase = Some(RelaySetupPhase::RelayCodeInstalled);
+                    job.updated_at_ts = now_secs();
+                }
+            });
+            Ok(RelayCodeInstallReconciliation::ExistingApprovedModule)
+        }
+        Some(_) => Ok(RelayCodeInstallReconciliation::ManualRecoveryRequired(
+            mark_manual_recovery_required(
+                target,
+                "relay canister already has an unexpected module hash".to_string(),
+            ),
+        )),
+        None => Ok(RelayCodeInstallReconciliation::EmptyCanister),
+    }
 }
 
 async fn create_and_activate_relay(
@@ -1209,6 +1436,7 @@ async fn create_and_activate_relay(
     fee: u64,
     index: &dyn IndexClient,
     blackhole: &dyn BlackholeClient,
+    management: &dyn ManagementClient,
     historian: Principal,
 ) -> RelaySetupNotifyResult {
     let cfg = state::with_state(|st| st.config.clone());
@@ -1235,27 +1463,40 @@ async fn create_and_activate_relay(
         None => {
             let create_args = jupiter_ic_clients::management::CreateCanisterArgs {
                 settings: Some(jupiter_ic_clients::management::CanisterSettings {
-                    controllers: Some(vec![ic_cdk::api::canister_self()]),
+                    controllers: Some(vec![self_canister_id()]),
                     log_visibility: Some(jupiter_ic_clients::management::LogVisibility::Public),
                 }),
             };
-            set_job_status(target, RelaySetupStatus::CreatingCanister, None);
-            let relay_id = match jupiter_ic_clients::management::create_canister(
-                &create_args,
-                cfg.relay_initial_cycles,
-            )
-            .await
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                    job.status = RelaySetupStatus::CreatingCanister;
+                    job.relay_create_attempt = Some(RelayCreateAttempt {
+                        target_canister_id: target,
+                        created_at_ts: now_secs(),
+                        initial_cycles: cfg.relay_initial_cycles,
+                        relay_wasm_hash_hex: relay_wasm_hash_hex(),
+                    });
+                    job.updated_at_ts = now_secs();
+                }
+            });
+            let relay_id = match management
+                .create_canister(&create_args, cfg.relay_initial_cycles)
+                .await
             {
                 Ok(result) => result.canister_id,
-                Err(err) => {
-                    set_job_status(
+                Err(ManagementClientError::Ambiguous(err)) => {
+                    return mark_manual_recovery_required(
                         target,
-                        RelaySetupStatus::FailedRetryable,
-                        Some(format!("{err:?}")),
+                        format!(
+                            "create_canister may have succeeded but relay_canister_id was not recorded: {err}"
+                        ),
                     );
+                }
+                Err(ManagementClientError::Failed(err)) => {
+                    set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
                     return RelaySetupNotifyResult::Failed {
                         status: RelaySetupStatus::FailedRetryable.into(),
-                        message: format!("create_canister failed: {err:?}"),
+                        message: format!("create_canister failed: {err}"),
                     };
                 }
             };
@@ -1272,35 +1513,50 @@ async fn create_and_activate_relay(
         }
     };
     if !code_installed {
-        let relay_args = jupiter_relay_init_arg(&cfg, target);
-        set_job_status(target, RelaySetupStatus::InstallingCode, None);
-        if let Err(err) = jupiter_ic_clients::management::install_code(
-            &jupiter_ic_clients::management::InstallCodeArgs {
-                mode: jupiter_ic_clients::management::InstallMode::Install,
-                canister_id: relay_id,
-                wasm_module: wasm,
-                arg: relay_args,
-            },
-        )
-        .await
+        let expected_wasm_hash =
+            approved_relay_wasm_hash().expect("approved relay wasm exists when installing");
+        match reconcile_relay_code_installed(target, relay_id, expected_wasm_hash, management).await
         {
-            set_job_status(
-                target,
-                RelaySetupStatus::FailedRetryable,
-                Some(format!("{err:?}")),
-            );
-            return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable.into(),
-                message: format!("install_code failed: {err:?}"),
-            };
-        }
-        state::with_root_and_relay_factory_state_mut(target, |st| {
-            if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
-                job.code_installed = true;
-                job.phase = Some(RelaySetupPhase::RelayCodeInstalled);
-                job.updated_at_ts = now_secs();
+            Ok(RelayCodeInstallReconciliation::ExistingApprovedModule) => {}
+            Ok(RelayCodeInstallReconciliation::EmptyCanister) => {
+                let relay_args = jupiter_relay_init_arg(&cfg, target);
+                set_job_status(target, RelaySetupStatus::InstallingCode, None);
+                if let Err(err) = management
+                    .install_code(&jupiter_ic_clients::management::InstallCodeArgs {
+                        mode: jupiter_ic_clients::management::InstallMode::Install,
+                        canister_id: relay_id,
+                        wasm_module: wasm,
+                        arg: relay_args,
+                    })
+                    .await
+                {
+                    set_job_status(
+                        target,
+                        RelaySetupStatus::FailedRetryable,
+                        Some(err.to_string()),
+                    );
+                    return RelaySetupNotifyResult::Failed {
+                        status: RelaySetupStatus::FailedRetryable.into(),
+                        message: format!("install_code failed: {err}"),
+                    };
+                }
+                state::with_root_and_relay_factory_state_mut(target, |st| {
+                    if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+                        job.code_installed = true;
+                        job.phase = Some(RelaySetupPhase::RelayCodeInstalled);
+                        job.updated_at_ts = now_secs();
+                    }
+                });
             }
-        });
+            Ok(RelayCodeInstallReconciliation::ManualRecoveryRequired(result)) => return result,
+            Err(err) => {
+                set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
+                return RelaySetupNotifyResult::Failed {
+                    status: RelaySetupStatus::FailedRetryable.into(),
+                    message: err,
+                };
+            }
+        }
     }
     set_job_status(target, RelaySetupStatus::CodeInstalled, None);
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
@@ -1402,16 +1658,15 @@ async fn create_and_activate_relay(
             job.updated_at_ts = now_secs();
         }
     });
-    if let Err(err) = jupiter_ic_clients::management::update_settings(
-        &jupiter_ic_clients::management::UpdateSettingsArgs {
+    if let Err(err) = management
+        .update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
             canister_id: relay_id,
             settings: jupiter_ic_clients::management::CanisterSettings {
                 controllers: Some(vec![cfg.blackhole_canister_id]),
                 log_visibility: Some(jupiter_ic_clients::management::LogVisibility::Public),
             },
-        },
-    )
-    .await
+        })
+        .await
     {
         if let Ok(status) = blackhole.canister_status(relay_id).await {
             if status.settings.controllers == vec![cfg.blackhole_canister_id] {
@@ -1425,22 +1680,22 @@ async fn create_and_activate_relay(
                 set_job_status(
                     target,
                     RelaySetupStatus::FailedRetryable,
-                    Some(format!("{err:?}")),
+                    Some(err.to_string()),
                 );
                 return RelaySetupNotifyResult::Failed {
                     status: RelaySetupStatus::FailedRetryable.into(),
-                    message: format!("blackhole update_settings failed: {err:?}"),
+                    message: format!("blackhole update_settings failed: {err}"),
                 };
             }
         } else {
             set_job_status(
                 target,
                 RelaySetupStatus::FailedRetryable,
-                Some(format!("{err:?}")),
+                Some(err.to_string()),
             );
             return RelaySetupNotifyResult::Failed {
                 status: RelaySetupStatus::FailedRetryable.into(),
-                message: format!("blackhole update_settings failed: {err:?}"),
+                message: format!("blackhole update_settings failed: {err}"),
             };
         }
     } else {
@@ -1852,6 +2107,7 @@ mod tests {
             relay_funding_transfer: None,
             existing_relay_sweep_transfer: None,
             refund_transfers: Vec::new(),
+            relay_create_attempt: None,
             code_installed: false,
             relay_funding_accepted: false,
             blackhole_update_attempted: false,
@@ -2060,6 +2316,76 @@ mod tests {
                 return Ok(1_000_000_000_000);
             }
             results.remove(0)
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakeManagement {
+        create_results: Arc<Mutex<Vec<Result<Principal, ManagementClientError>>>>,
+        create_calls: Arc<Mutex<u32>>,
+        install_calls: Arc<Mutex<u32>>,
+        update_calls: Arc<Mutex<u32>>,
+        status_hashes: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
+    }
+
+    impl FakeManagement {
+        fn healthy(relay_id: Principal, module_hash: Option<Vec<u8>>) -> Self {
+            Self {
+                create_results: Arc::new(Mutex::new(vec![Ok(relay_id)])),
+                create_calls: Arc::new(Mutex::new(0)),
+                install_calls: Arc::new(Mutex::new(0)),
+                update_calls: Arc::new(Mutex::new(0)),
+                status_hashes: Arc::new(Mutex::new(vec![module_hash])),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ManagementClient for FakeManagement {
+        async fn create_canister(
+            &self,
+            _arg: &jupiter_ic_clients::management::CreateCanisterArgs,
+            _cycles_to_attach: u128,
+        ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, ManagementClientError>
+        {
+            *self.create_calls.lock().unwrap() += 1;
+            let result = self.create_results.lock().unwrap().remove(0)?;
+            Ok(jupiter_ic_clients::management::CreateCanisterResult {
+                canister_id: result,
+            })
+        }
+
+        async fn install_code(
+            &self,
+            _arg: &jupiter_ic_clients::management::InstallCodeArgs,
+        ) -> Result<(), ManagementClientError> {
+            *self.install_calls.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        async fn canister_status(
+            &self,
+            _arg: &jupiter_ic_clients::management::CanisterStatusArgs,
+        ) -> Result<jupiter_ic_clients::management::CanisterStatusResult, ManagementClientError>
+        {
+            let mut hashes = self.status_hashes.lock().unwrap();
+            let module_hash = if hashes.is_empty() {
+                None
+            } else {
+                hashes.remove(0)
+            };
+            Ok(jupiter_ic_clients::management::CanisterStatusResult {
+                module_hash,
+                settings: jupiter_ic_clients::management::CanisterSettings::default(),
+            })
+        }
+
+        async fn update_settings(
+            &self,
+            _arg: &jupiter_ic_clients::management::UpdateSettingsArgs,
+        ) -> Result<(), ManagementClientError> {
+            *self.update_calls.lock().unwrap() += 1;
+            Ok(())
         }
     }
 
@@ -2905,6 +3231,458 @@ mod tests {
         assert_eq!(transfers[0].amount, transfers[1].amount);
         assert_eq!(transfers[0].created_at_time, first_created_at);
         assert_ne!(transfers[0].created_at_time, transfers[1].created_at_time);
+    }
+
+    #[test]
+    fn relay_setup_install_code_lost_reply_detects_existing_module_hash() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[37]);
+        let relay_id = Principal::from_slice(&[38]);
+        let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
+        job.target_canister_id = target;
+        job.relay_canister_id = Some(relay_id);
+        job.cycles_minted = Some(1_000_000_000_000);
+        job.code_installed = false;
+        install_state_with_job(target, job);
+        let expected_hash = approved_relay_wasm_hash().unwrap().to_vec();
+        let management = FakeManagement::healthy(relay_id, Some(expected_hash));
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
+        assert_eq!(*management.create_calls.lock().unwrap(), 0);
+        assert_eq!(*management.install_calls.lock().unwrap(), 0);
+        assert_eq!(*management.update_calls.lock().unwrap(), 1);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert!(job.code_installed);
+        assert_eq!(job.phase, Some(RelaySetupPhase::Active));
+        assert_eq!(job.relay_canister_id, Some(relay_id));
+    }
+
+    #[test]
+    fn relay_setup_install_code_unexpected_module_hash_enters_manual_recovery() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[41]);
+        let relay_id = Principal::from_slice(&[42, 1]);
+        let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
+        job.target_canister_id = target;
+        job.relay_canister_id = Some(relay_id);
+        job.cycles_minted = Some(1_000_000_000_000);
+        job.code_installed = false;
+        install_state_with_job(target, job);
+        let management = FakeManagement::healthy(relay_id, Some(vec![0xAA; 32]));
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(*management.create_calls.lock().unwrap(), 0);
+        assert_eq!(*management.install_calls.lock().unwrap(), 0);
+        assert_eq!(*management.update_calls.lock().unwrap(), 0);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.relay_canister_id, Some(relay_id));
+        assert!(!job.code_installed);
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert_eq!(
+            job.last_error.as_deref(),
+            Some("relay canister already has an unexpected module hash")
+        );
+        assert!(state::with_state(|st| st
+            .relay_registry_by_target
+            .get(&target)
+            .is_none()));
+    }
+
+    #[test]
+    fn relay_setup_create_canister_ambiguous_enters_manual_recovery_without_duplicate_create() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[39]);
+        let mut job = job_with_status(RelaySetupStatus::CycleNotifySucceeded);
+        job.target_canister_id = target;
+        job.cycles_minted = Some(1_000_000_000_000);
+        install_state_with_job(target, job);
+        let management = FakeManagement {
+            create_results: Arc::new(Mutex::new(vec![Err(ManagementClientError::Ambiguous(
+                "SYS_UNKNOWN".to_string(),
+            ))])),
+            create_calls: Arc::new(Mutex::new(0)),
+            install_calls: Arc::new(Mutex::new(0)),
+            update_calls: Arc::new(Mutex::new(0)),
+            status_hashes: Arc::new(Mutex::new(Vec::new())),
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(*management.create_calls.lock().unwrap(), 1);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert!(job.relay_create_attempt.is_some());
+        assert!(job.relay_canister_id.is_none());
+        assert!(state::with_state(|st| st
+            .relay_registry_by_target
+            .get(&target)
+            .is_none()));
+
+        let ledger = FakeLedger::healthy(250_000_000);
+        let retry = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+        assert!(matches!(
+            retry,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(*management.create_calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn relay_setup_manual_recovery_view_exposes_stuck_job() {
+        let target = Principal::from_slice(&[40]);
+        let mut job = job_with_status(RelaySetupStatus::ManualRecoveryRequired);
+        job.target_canister_id = target;
+        job.last_error = Some(
+            "create_canister may have succeeded but relay_canister_id was not recorded".to_string(),
+        );
+        job.setup_amount_seen_e8s = 250_000_000;
+        job.cycle_transfer = Some(transfer_record(
+            RelaySetupTransferKind::CmcConversion,
+            Some([1; 32]),
+            Account {
+                owner: Principal::from_slice(&[2]),
+                subaccount: Some([1; 32]),
+            },
+            Account {
+                owner: Principal::from_slice(&[4]),
+                subaccount: None,
+            },
+            100_000_000,
+            10_000,
+            Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
+        ));
+        install_state_with_job(target, job);
+
+        let view = setup_recovery_view(target);
+
+        assert_eq!(view.target_canister_id, target);
+        assert_eq!(view.status, RelaySetupPublicStatus::ManualRecoveryRequired);
+        assert_eq!(view.setup_amount_seen_e8s, 250_000_000);
+        assert_eq!(view.refund_transfer_count, 0);
+        assert!(view.cycle_transfer.is_some());
+        assert!(view
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("relay_canister_id was not recorded"));
+    }
+
+    #[test]
+    fn relay_setup_manual_recovery_view_does_not_mutate_state() {
+        let target = Principal::from_slice(&[41]);
+        install_state_with_job(
+            target,
+            job_with_status(RelaySetupStatus::ManualRecoveryRequired),
+        );
+        let before = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned());
+
+        let first = setup_recovery_view(target);
+        let second = setup_recovery_view(target);
+
+        assert_eq!(first.updated_at_ts, second.updated_at_ts);
+        assert_eq!(
+            before,
+            state::with_state(|st| st.relay_setup_jobs.get(&target).cloned())
+        );
+    }
+
+    #[test]
+    fn relay_setup_index_cap_then_catchup_refunds() {
+        let target = Principal::from_slice(&[42, 1]);
+        let mut job = job_with_status(RelaySetupStatus::RefundAvailable);
+        job.target_canister_id = target;
+        job.setup_account_identifier = "setup".to_string();
+        install_state_with_job(target, job);
+        let ledger = FakeLedger {
+            legacy_results: Arc::new(Mutex::new(vec![Ok(Ok(91))])),
+            ..FakeLedger::healthy(3_000_000)
+        };
+        let capped_pages = (0..INDEX_PAGE_LIMIT)
+            .map(|page| GetAccountIdentifierTransactionsResponse {
+                balance: 3_000_000,
+                transactions: (0..INDEX_PAGE_SIZE)
+                    .map(|offset| {
+                        index_transfer(
+                            (page as u64) * INDEX_PAGE_SIZE + offset,
+                            "source-a",
+                            "setup",
+                            1_000,
+                        )
+                    })
+                    .collect(),
+                oldest_tx_id: Some((page as u64 + 1) * INDEX_PAGE_SIZE),
+            })
+            .collect();
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 3_000_000,
+                transactions: vec![index_transfer(5000, "source-a", "setup", 3_000_000)],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(capped_pages)),
+        };
+
+        let first = block_on(request_relay_setup_refund_with_clients_for_historian(
+            Principal::from_slice(&[42]),
+            target,
+            &ledger,
+            &index,
+        ));
+        assert!(matches!(first, RelaySetupRefundResult::Failed { .. }));
+        let second = block_on(request_relay_setup_refund_with_clients_for_historian(
+            Principal::from_slice(&[42]),
+            target,
+            &ledger,
+            &index,
+        ));
+
+        assert!(matches!(
+            second,
+            RelaySetupRefundResult::Refunded { ref blocks } if blocks == &vec![91]
+        ));
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::Refunded);
+    }
+
+    #[test]
+    fn relay_setup_existing_active_relay_allows_sweep_when_factory_disabled() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[43]);
+        let relay_id = Principal::from_slice(&[44]);
+        let mut cfg = config();
+        cfg.relay_factory_enabled = false;
+        let mut st = State::new(cfg, 0);
+        st.relay_registry_by_target
+            .insert(target, active_relay(target, relay_id));
+        state::set_state(st);
+        let ledger = FakeLedger::healthy(200_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 200_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let view = setup_view_from_state(&state::with_state(|st| st.clone()), target, historian);
+        assert!(view.payment_allowed);
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::SweptToExistingRelay {
+                amount_e8s: 190_000,
+                ..
+            }
+        ));
+    }
+
+    fn stable_roundtrip(job: RelaySetupJob) -> RelaySetupJob {
+        candid::decode_one(&candid::encode_one(job).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn relay_setup_upgrade_preserves_cycle_transfer_incomplete() {
+        let target = Principal::from_slice(&[45]);
+        let setup_account = setup_account_for(Principal::from_slice(&[42]), target);
+        let mut job = job_with_status(RelaySetupStatus::Ambiguous);
+        job.target_canister_id = target;
+        job.setup_account = setup_account;
+        job.setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        job.cycle_transfer = Some(transfer_record(
+            RelaySetupTransferKind::CmcConversion,
+            setup_account.subaccount,
+            setup_account,
+            cmc_deposit_account(Principal::from_slice(&[4]), Principal::from_slice(&[42])),
+            50_000,
+            10_000,
+            Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
+        ));
+        let restored = stable_roundtrip(job);
+
+        assert_eq!(
+            relay_setup_resume_point(&restored),
+            RelaySetupResumePoint::ReconcileCycleTransfer
+        );
+        install_state_with_job(target, restored);
+        assert!(setup_recovery_view(target).cycle_transfer.is_some());
+    }
+
+    #[test]
+    fn relay_setup_upgrade_preserves_relay_canister_id_before_install() {
+        let target = Principal::from_slice(&[46]);
+        let relay_id = Principal::from_slice(&[47]);
+        let mut job = job_with_status(RelaySetupStatus::CanisterCreated);
+        job.target_canister_id = target;
+        job.cycles_minted = Some(1_000_000_000_000);
+        job.relay_canister_id = Some(relay_id);
+        job.relay_initial_cycles = Some(1_000_000_000_000);
+        let restored = stable_roundtrip(job);
+
+        assert_eq!(
+            relay_setup_resume_point(&restored),
+            RelaySetupResumePoint::InstallRelayCode { relay_id }
+        );
+        install_state_with_job(target, restored);
+        assert_eq!(
+            setup_recovery_view(target).relay_canister_id,
+            Some(relay_id)
+        );
+    }
+
+    #[test]
+    fn relay_setup_upgrade_preserves_code_installed_before_funding() {
+        let target = Principal::from_slice(&[48]);
+        let relay_id = Principal::from_slice(&[49]);
+        let mut job = job_with_status(RelaySetupStatus::CodeInstalled);
+        job.target_canister_id = target;
+        job.relay_canister_id = Some(relay_id);
+        job.code_installed = true;
+        let restored = stable_roundtrip(job);
+
+        assert_eq!(
+            relay_setup_resume_point(&restored),
+            RelaySetupResumePoint::FundRelaySubaccountOne { relay_id }
+        );
+        install_state_with_job(target, restored);
+        assert_eq!(
+            setup_recovery_view(target).relay_canister_id,
+            Some(relay_id)
+        );
+    }
+
+    #[test]
+    fn relay_setup_upgrade_preserves_relay_funding_incomplete() {
+        let target = Principal::from_slice(&[50]);
+        let relay_id = Principal::from_slice(&[51]);
+        let setup_account = setup_account_for(Principal::from_slice(&[42]), target);
+        let mut job = job_with_status(RelaySetupStatus::FundingRelaySubaccountOne);
+        job.target_canister_id = target;
+        job.relay_canister_id = Some(relay_id);
+        job.code_installed = true;
+        job.relay_funding_transfer = Some(transfer_record(
+            RelaySetupTransferKind::RelayFunding,
+            setup_account.subaccount,
+            setup_account,
+            relay_subaccount_one(relay_id),
+            100_000,
+            10_000,
+            None,
+        ));
+        let restored = stable_roundtrip(job);
+
+        assert_eq!(
+            relay_setup_resume_point(&restored),
+            RelaySetupResumePoint::FundRelaySubaccountOne { relay_id }
+        );
+        install_state_with_job(target, restored);
+        assert!(setup_recovery_view(target).relay_funding_transfer.is_some());
+    }
+
+    #[test]
+    fn relay_setup_upgrade_preserves_manual_recovery_required() {
+        let target = Principal::from_slice(&[52]);
+        let mut job = job_with_status(RelaySetupStatus::ManualRecoveryRequired);
+        job.target_canister_id = target;
+        job.last_error = Some(
+            "create_canister may have succeeded but relay_canister_id was not recorded".to_string(),
+        );
+        job.relay_create_attempt = Some(RelayCreateAttempt {
+            target_canister_id: target,
+            created_at_ts: 99,
+            initial_cycles: 1_000_000_000_000,
+            relay_wasm_hash_hex: relay_wasm_hash_hex(),
+        });
+        let restored = stable_roundtrip(job);
+
+        assert!(!resumable_job(&restored));
+        install_state_with_job(target, restored);
+        let view = setup_recovery_view(target);
+        assert_eq!(view.status, RelaySetupPublicStatus::ManualRecoveryRequired);
+        assert!(view.relay_create_attempt.is_some());
     }
 
     #[test]

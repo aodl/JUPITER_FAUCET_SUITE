@@ -316,6 +316,57 @@ test('relay setup hides payment details but still notifies funded blocked target
   });
 });
 
+test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_invite_payment', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const calls = [];
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            calls.push(['view']);
+            return setupView({
+              target,
+              historian: historianId,
+              status: { PaymentNotAllowed: null },
+              paymentAllowed: false,
+              paymentBlockedReason: ['relay factory is disabled'],
+              factoryAvailable: false,
+            });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            calls.push(['notify']);
+            throw new Error('notify should not be called when balance is below frontend notify threshold');
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          calls.push(['balance']);
+          return 0n;
+        },
+      }),
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    await controller.submitTarget();
+
+    assert.equal(nodes.get('relay-setup-factory').textContent, 'Unavailable');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'relay factory is disabled');
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-subaccount').textContent, bytesToHex(relaySetupSubaccount(target)));
+    assert.deepEqual(calls, [['view'], ['balance']]);
+  });
+});
+
 test('relay setup polling refreshes later balance and notifies above dust', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';

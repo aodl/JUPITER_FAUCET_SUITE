@@ -193,6 +193,13 @@ pub(super) fn get_relay_setup_view(args: GetRelaySetupViewArgs) -> RelaySetupVie
 }
 
 #[ic_cdk::query]
+pub(super) fn get_relay_setup_recovery_view(
+    args: GetRelaySetupRecoveryViewArgs,
+) -> RelaySetupRecoveryView {
+    crate::relay_setup::setup_recovery_view(args.target_canister_id)
+}
+
+#[ic_cdk::query]
 pub(super) fn list_relay_registrations(
     args: ListRelayRegistrationsArgs,
 ) -> ListRelayRegistrationsResponse {
