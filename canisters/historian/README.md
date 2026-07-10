@@ -315,9 +315,11 @@ This uses [`../../Dockerfile.repro`](../../Dockerfile.repro), which pins the bas
 
 It produces the canonical release artifacts under `release-artifacts/`, including:
 
-- `release-artifacts/jupiter_historian.wasm`
-- `release-artifacts/jupiter_historian.wasm.gz`
+- `release-artifacts/jupiter_historian_with_relay.wasm`
+- `release-artifacts/jupiter_historian_with_relay.wasm.gz`
 - corresponding `.sha256` files
+
+The checked-in production args enable `relay_factory_enabled = opt true`, so the canonical production Historian artifact is the with-relay artifact. The plain `jupiter_historian.wasm.gz` target remains available only for explicit local development/test builds.
 
 ### Deploy canonical release artifact on the IC
 
@@ -345,6 +347,14 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic 
 ```
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
+
+For live relay factory enablement, the temporary file contains only:
+
+```did
+(opt record {
+  relay_factory_enabled = opt true;
+})
+```
 
 ```bash
 cat > /tmp/historian-upgrade-args.did <<'EOF'

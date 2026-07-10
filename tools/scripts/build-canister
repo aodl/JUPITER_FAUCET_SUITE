@@ -269,6 +269,12 @@ build_one() {
 build_historian_with_relay() {
   build_selected jupiter-relay
 
+  rm -f \
+    release-artifacts/jupiter_historian.wasm \
+    release-artifacts/jupiter_historian.wasm.gz \
+    release-artifacts/jupiter_historian.wasm.sha256 \
+    release-artifacts/jupiter_historian.wasm.gz.sha256
+
   local relay_raw_wasm="release-artifacts/jupiter_relay.wasm"
   local relay_gz_wasm="release-artifacts/jupiter_relay.wasm.gz"
   if [[ ! -f "$relay_raw_wasm" ]]; then
@@ -329,8 +335,7 @@ build_selected() {
       build_selected jupiter-disburser
       build_selected jupiter-lifeline
       build_selected jupiter-faucet
-      build_selected jupiter-historian
-      build_selected jupiter-relay
+      build_selected jupiter-historian-with-relay
       build_selected jupiter-sns-rewards
       build_selected jupiter-faucet-frontend
       ;;

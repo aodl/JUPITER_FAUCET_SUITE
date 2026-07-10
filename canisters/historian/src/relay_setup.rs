@@ -1456,6 +1456,22 @@ async fn create_and_activate_relay(
     let relay_id = match relay_id {
         Some(relay_id) => relay_id,
         None => {
+            let cycles_minted = state::with_state(|st| {
+                st.relay_setup_jobs
+                    .get(&target)
+                    .and_then(|job| job.cycles_minted)
+            });
+            if let Some(cycles_minted) = cycles_minted {
+                if cycles_minted < cfg.relay_initial_cycles {
+                    return mark_manual_recovery_required(
+                        target,
+                        format!(
+                            "CMC notify minted {cycles_minted} cycles, below configured relay_initial_cycles {}; refusing create_canister to avoid historian subsidy after conversion",
+                            cfg.relay_initial_cycles
+                        ),
+                    );
+                }
+            }
             let create_args = jupiter_ic_clients::management::CreateCanisterArgs {
                 settings: Some(jupiter_ic_clients::management::CanisterSettings {
                     controllers: Some(vec![self_canister_id()]),
@@ -3319,6 +3335,59 @@ mod tests {
             job.last_error.as_deref(),
             Some("relay canister already has an unexpected module hash")
         );
+        assert!(state::with_state(|st| st
+            .relay_registry_by_target
+            .get(&target)
+            .is_none()));
+    }
+
+    #[test]
+    fn relay_setup_cycles_minted_below_initial_cycles_does_not_create_relay() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[42, 2]);
+        let relay_id = Principal::from_slice(&[42, 3]);
+        let mut job = job_with_status(RelaySetupStatus::CycleNotifySucceeded);
+        job.target_canister_id = target;
+        job.cycles_minted = Some(999_999_999_999);
+        install_state_with_job(target, job);
+        let management = FakeManagement::healthy(relay_id, None);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(*management.create_calls.lock().unwrap(), 0);
+        assert_eq!(*management.install_calls.lock().unwrap(), 0);
+        assert_eq!(*management.update_calls.lock().unwrap(), 0);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert!(job.relay_canister_id.is_none());
+        assert!(job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("below configured relay_initial_cycles"));
         assert!(state::with_state(|st| st
             .relay_registry_by_target
             .get(&target)

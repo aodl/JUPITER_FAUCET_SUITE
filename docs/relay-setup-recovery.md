@@ -56,6 +56,8 @@ The historian-with-relay build embeds `release-artifacts/jupiter_relay.wasm.gz` 
 - compressed embedded relay wasm.gz hash: `sha256sum release-artifacts/jupiter_relay.wasm.gz`
 - installed module hash: `canister_status.module_hash`, compared against the reviewed raw relay wasm hash
 
+The reviewed raw relay wasm hash is the reviewer verification and module-hash reconciliation value. The compressed relay wasm is embedded only to reduce the Historian artifact size. Release notes must also record the `release-artifacts/jupiter_historian_with_relay.wasm.gz` hash, which is the production Historian install package hash.
+
 If the module hash is missing, automatic setup may retry install while the historian is still controller.
 
 If the module hash exists but differs from the reviewed raw relay wasm hash, the job enters `ManualRecoveryRequired`. Operators must inspect the relay canister before any governance action.
@@ -87,18 +89,30 @@ Refund manually when:
 
 Tell users that setup is blocked for manual reconciliation, the setup account and public transaction evidence are being checked, and no new payment should be sent for the same target until operators resolve the job.
 
-## Future Factory Enablement
+## Public Notify Monitoring
 
-Mainnet install args currently keep `relay_factory_enabled = opt false`.
+`notify_relay_setup` is public and can consume historian cycles through ledger/index calls even when a caller has not funded a valid setup account. After enablement, monitor Historian cycle balance and call volume. The deployment accepts this bounded operational risk for now rather than adding stable-state rate-limit data; revisit if public no-fund notify traffic becomes material.
 
-A future enablement proposal should:
+## Factory-Enabled Production Deploys
+
+Mainnet install args enable `relay_factory_enabled = opt true`.
+
+Factory-enabled production Historian deploys must:
 
 1. Build the artifact with `./tools/scripts/build-canister jupiter-historian-with-relay`.
 2. Verify `release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256`.
 3. Verify `release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256`.
 4. Install the reviewed historian-with-relay artifact in a non-mainnet test environment with `relay_factory_enabled=true`.
 5. Confirm `get_relay_setup_view.relay_wasm_hash_hex` equals the recorded reviewed raw relay wasm hash.
-6. Update the mainnet validator allowlist for the reviewed raw relay wasm hash, if the validator is intentionally tightened for enabled factory artifacts.
-7. Include the raw relay wasm hash, gzip relay wasm hash, historian-with-relay artifact hash, and validator output in the final pre-deploy report.
-8. Use `release-artifacts/jupiter_historian_with_relay.wasm.gz` for the production deploy command and temporary upgrade args `(opt record { relay_factory_enabled = opt true; })`.
-9. Switch `relay_factory_enabled=true` only in a future governance proposal after reviewing recovery behavior, runbook evidence, and artifact hashes.
+6. Include the raw relay wasm hash, gzip relay wasm hash, historian-with-relay artifact hash, and validator output in the final pre-deploy report.
+7. Use `release-artifacts/jupiter_historian_with_relay.wasm.gz` for the production deploy command.
+
+For live enablement on an already-installed Historian, use a temporary `Option<UpgradeArgs>` file containing only:
+
+```did
+(opt record {
+  relay_factory_enabled = opt true;
+})
+```
+
+Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.

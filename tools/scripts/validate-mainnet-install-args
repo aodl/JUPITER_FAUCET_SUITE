@@ -91,7 +91,7 @@ PROD_CANISTER_ARTIFACTS = {
     "jupiter_faucet": ("jupiter-faucet", "jupiter_faucet"),
     "jupiter_sns_rewards": ("jupiter-sns-rewards", "jupiter_sns_rewards"),
     "jupiter_faucet_frontend": ("jupiter-faucet-frontend", "jupiter_faucet_frontend"),
-    "jupiter_historian": ("jupiter-historian", "jupiter_historian"),
+    "jupiter_historian": ("jupiter-historian-with-relay", "jupiter_historian_with_relay"),
     "jupiter_relay": ("jupiter-relay", "jupiter_relay"),
 }
 
@@ -305,6 +305,43 @@ def icp_yaml_prod_artifact_error(text: str, canister_name: str, target: str, art
             f"`release-artifacts/{artifact_stem}.wasm.gz` to `$ICP_WASM_OUTPUT_PATH`"
         )
     return None
+
+
+def validate_historian_factory_production_artifact_paths() -> None:
+    args_path = REPO_ROOT / "canisters" / "historian" / "mainnet-install-args.did"
+    factory_enabled = extract_opt_bool(args_path.read_text(), "relay_factory_enabled", args_path)
+    if not factory_enabled:
+        return
+
+    icp_path = REPO_ROOT / "icp.yaml"
+    icp_text = icp_path.read_text()
+    historian_error = icp_yaml_prod_artifact_error(
+        icp_text,
+        "jupiter_historian",
+        "jupiter-historian-with-relay",
+        "jupiter_historian_with_relay",
+    )
+    if historian_error:
+        fail(
+            "relay_factory_enabled=true requires jupiter-historian-with-relay; "
+            f"{historian_error}"
+        )
+    historian_block = icp_yaml_canister_block(icp_text, "jupiter_historian")
+    if historian_block and "jupiter_historian.wasm.gz" in historian_block:
+        fail(f"{icp_path} must not deploy release-artifacts/jupiter_historian.wasm.gz when relay factory is enabled")
+
+    build_path = REPO_ROOT / "tools" / "scripts" / "build-canister"
+    build_text = build_path.read_text()
+    all_case = re.search(r"(?ms)^\s+all\)\n(?P<body>.*?)^\s+;;", build_text)
+    if not all_case:
+        fail(f"{build_path} is missing an all build target")
+    all_body = all_case.group("body")
+    if "build_selected jupiter-historian-with-relay" not in all_body:
+        fail(f"{build_path} all target must build jupiter-historian-with-relay when relay factory is enabled")
+    if "build_selected jupiter-historian\n" in all_body:
+        fail(f"{build_path} all target must not build the plain jupiter-historian artifact when relay factory is enabled")
+
+    print("production historian deploy artifact path: release-artifacts/jupiter_historian_with_relay.wasm.gz")
 
 
 def validate_icp_yaml_uses_compressed_prod_artifacts() -> None:
@@ -781,6 +818,10 @@ def validate_relay_setup_recovery_runbook() -> None:
     for phrase in required:
         if phrase not in text:
             fail(f"{path} must mention {phrase!r}")
+    if "Mainnet install args enable `relay_factory_enabled = opt true`." not in text:
+        fail(f"{path} must mention the current factory-enabled mainnet state")
+    if "`notify_relay_setup` is public and can consume historian cycles" not in text:
+        fail(f"{path} must document the public notify cycle-spend monitoring risk")
 
 
 def extract_vec_principals(text: str, field: str, path: Path, *, optional: bool = False) -> list[str]:
@@ -1115,6 +1156,20 @@ canisters:
         "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
         "./tools/scripts/icp-build-canister jupiter-faucet wrong_artifact",
     )
+    plain_historian_icp_yaml = valid_icp_yaml.replace(
+        "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
+        "./tools/scripts/icp-build-canister jupiter-historian jupiter_historian",
+    ).replace(
+        "jupiter_faucet",
+        "jupiter_historian",
+    )
+    relay_historian_icp_yaml = valid_icp_yaml.replace(
+        "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
+        "./tools/scripts/icp-build-canister jupiter-historian-with-relay jupiter_historian_with_relay",
+    ).replace(
+        "jupiter_faucet",
+        "jupiter_historian",
+    )
     if icp_yaml_prod_artifact_error(valid_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
         fail("self-test unexpectedly rejected compressed icp.yaml production artifact path")
     if not icp_yaml_prod_artifact_error(stale_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
@@ -1125,6 +1180,20 @@ canisters:
         fail("self-test malformed wrong-stem icp.yaml fixture by removing the canister block")
     if not icp_yaml_prod_artifact_error(wrong_stem_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
         fail("self-test failed to reject wrong icp.yaml artifact stem")
+    if not icp_yaml_prod_artifact_error(
+        plain_historian_icp_yaml,
+        "jupiter_historian",
+        "jupiter-historian-with-relay",
+        "jupiter_historian_with_relay",
+    ):
+        fail("self-test failed to reject plain historian production deploy artifact path")
+    if icp_yaml_prod_artifact_error(
+        relay_historian_icp_yaml,
+        "jupiter_historian",
+        "jupiter-historian-with-relay",
+        "jupiter_historian_with_relay",
+    ):
+        fail("self-test unexpectedly rejected historian-with-relay production deploy artifact path")
     print("validate-mainnet-install-args self-tests OK")
 
 
@@ -1164,6 +1233,7 @@ def main() -> None:
     faucet_min_tx_e8s = validate_faucet()
     validate_icp_yaml_has_no_routine_prod_init_args()
     validate_icp_yaml_uses_compressed_prod_artifacts()
+    validate_historian_factory_production_artifact_paths()
     validate_public_verifier_links()
     validate_upgrade_docs_do_not_use_install_args_or_null_routine_args()
     validate_relay_docs_contain_full_init_args_upgrade()

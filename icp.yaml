@@ -34,7 +34,7 @@ canisters:
       steps:
         - type: script
           commands:
-            - ./tools/scripts/icp-build-canister jupiter-historian jupiter_historian
+            - ./tools/scripts/icp-build-canister jupiter-historian-with-relay jupiter_historian_with_relay
   - name: jupiter_relay
     build:
       steps:

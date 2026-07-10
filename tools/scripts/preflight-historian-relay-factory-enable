@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "$REPO_ROOT"
+
+artifact="release-artifacts/jupiter_historian_with_relay.wasm.gz"
+plain_artifact="release-artifacts/jupiter_historian.wasm.gz"
+
+./tools/scripts/build-canister jupiter-historian-with-relay
+
+if [[ ! -f "$artifact" ]]; then
+  echo "expected historian-with-relay artifact is missing: ${artifact}" >&2
+  exit 1
+fi
+
+python3 ./tools/scripts/validate-mainnet-install-args
+
+echo
+echo "Temporary historian upgrade args for live factory enablement:"
+cat <<'DID'
+(opt record {
+  relay_factory_enabled = opt true;
+})
+DID
+
+echo
+echo "Production historian deploy artifact path:"
+echo "$artifact"
+echo
+echo "Artifact hashes:"
+cat release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256
+cat release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256
+sha256sum "$artifact"
+
+if [[ -f "$plain_artifact" ]]; then
+  plain_hash="$(sha256sum "$plain_artifact" | awk '{print $1}')"
+  relay_hash="$(sha256sum "$artifact" | awk '{print $1}')"
+  if [[ "$plain_hash" != "$relay_hash" ]]; then
+    echo "refusing preflight: plain historian artifact exists with different bytes: ${plain_artifact}" >&2
+    exit 1
+  fi
+fi
+
+echo
+echo "Dry-run only. Later deploy command:"
+echo "JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade --args-file /tmp/historian-relay-factory-enable.did"
+echo
+echo "The command above resolves jupiter_historian through icp.yaml, which must build/copy:"
+echo "$artifact"

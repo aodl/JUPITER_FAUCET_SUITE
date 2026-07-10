@@ -4,6 +4,8 @@ Production deployment is a governance-controlled operation. Once Jupiter Faucet 
 
 Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
 
+Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the production historian deploy artifact is `release-artifacts/jupiter_historian_with_relay.wasm.gz`. The plain `release-artifacts/jupiter_historian.wasm.gz` artifact is not the canonical production artifact while the factory is enabled.
+
 ## Production release flow
 
 Recommended release sequence:
@@ -22,6 +24,8 @@ For routine no-config-change production upgrades, pass no args for Disburser, Fa
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet --environment ic --mode upgrade
 ```
 
+For Historian, that command path resolves through `icp.yaml` to `release-artifacts/jupiter_historian_with_relay.wasm.gz`. The validator fails if production tooling points `jupiter_historian` at the plain historian artifact while `relay_factory_enabled = opt true`.
+
 For config-changing upgrades, create a temporary deployment-specific `UpgradeArgs` file and pass it explicitly:
 
 ```bash
@@ -30,6 +34,16 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
   --mode upgrade \
   --args-file /tmp/jupiter-faucet-upgrade-args.did
 ```
+
+Live Historian relay factory enablement uses `Option<UpgradeArgs>`, not the fresh-install args file. If using an ad hoc temporary file solely for enablement, the complete file is:
+
+```did
+(opt record {
+  relay_factory_enabled = opt true;
+})
+```
+
+Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.
 
 For fresh install only, use the checked-in `mainnet-install-args.did` `InitArgs` file:
 
@@ -105,6 +119,8 @@ For fast local release artifacts and inspection, use:
 ```bash
 ./tools/scripts/build-canister all
 ```
+
+When the checked-in mainnet args enable the relay factory, `build-canister all` produces `release-artifacts/jupiter_historian_with_relay.wasm.gz` for the production Historian path. Build the plain Historian artifact only by explicitly requesting `./tools/scripts/build-canister jupiter-historian` for local development or tests.
 
 For local-toolchain deployment orchestration, omit `JUPITER_USE_CANONICAL_ARTIFACTS`:
 
