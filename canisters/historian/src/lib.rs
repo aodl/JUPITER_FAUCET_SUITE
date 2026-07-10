@@ -30,7 +30,10 @@ pub(crate) fn approved_self_service_relay_wasm() -> Option<&'static [u8]> {
     }
     #[cfg(not(test))]
     {
-        let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/self_service_relay.wasm"));
+        let bytes = include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/self_service_relay_install_payload.wasm"
+        ));
         (!bytes.is_empty()).then_some(bytes.as_slice())
     }
 }
