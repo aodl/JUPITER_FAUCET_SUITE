@@ -12,7 +12,6 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg};
 use jupiter_ic_clients::account::{principal_to_subaccount, relay_setup_subaccount};
 use jupiter_ic_clients::cmc::NotifyTopUpError;
 use jupiter_ic_clients::ledger::LegacyTransferError;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RELAY_SUBACCOUNT_ONE: [u8; 32] = {
@@ -55,10 +54,6 @@ pub(crate) fn relay_subaccount_one(relay_id: Principal) -> Account {
 
 pub(crate) fn relay_wasm_hash_hex() -> Option<String> {
     approved_self_service_relay_wasm_hash_hex()
-}
-
-fn approved_relay_wasm_hash() -> Option<[u8; 32]> {
-    approved_self_service_relay_wasm().map(|wasm| Sha256::digest(wasm).into())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

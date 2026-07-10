@@ -14,6 +14,7 @@ use jupiter_ic_clients::account::relay_setup_subaccount;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::constants as ic_constants;
 use num_traits::ToPrimitive;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
@@ -247,16 +248,44 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         "jupiter_historian_dbg" => run_cargo_build("jupiter-historian", &["debug_api"]),
         "jupiter_historian_args_dbg" => {
             run_cargo_build("jupiter-relay", &["debug_api"])?;
-            let relay_wasm = std::path::Path::new(&repo_root())
+            let relay_wasm_path = std::path::Path::new(&repo_root())
                 .join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm")
                 .canonicalize()
-                .context("failed to resolve local relay wasm for historian args roundtrip")?
-                .to_string_lossy()
-                .into_owned();
+                .context("failed to resolve local relay wasm for historian args roundtrip")?;
+            let relay_gz_wasm_path = relay_wasm_path.with_file_name("jupiter_relay.wasm.gz");
+            let gzip_output = Command::new("gzip")
+                .args(["-n", "-9", "-c"])
+                .arg(&relay_wasm_path)
+                .output()
+                .context("failed to gzip local relay wasm for historian args roundtrip")?;
+            if !gzip_output.status.success() {
+                bail!("gzip failed for local relay wasm used by historian args roundtrip");
+            }
+            fs::write(&relay_gz_wasm_path, gzip_output.stdout)
+                .context("failed to write gzip relay wasm for historian args roundtrip")?;
+            let raw_hash = hex::encode(Sha256::digest(
+                fs::read(&relay_wasm_path)
+                    .context("failed to read raw relay wasm for historian args roundtrip")?,
+            ));
+            let gz_hash = hex::encode(Sha256::digest(
+                fs::read(&relay_gz_wasm_path)
+                    .context("failed to read gzip relay wasm for historian args roundtrip")?,
+            ));
             run_cargo_build_with_env(
                 "jupiter-historian",
                 &["debug_api"],
-                &[("JUPITER_RELAY_WASM_PATH", relay_wasm)],
+                &[
+                    (
+                        "JUPITER_RELAY_WASM_PATH",
+                        relay_gz_wasm_path.to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "JUPITER_RELAY_RAW_WASM_PATH",
+                        relay_wasm_path.to_string_lossy().into_owned(),
+                    ),
+                    ("JUPITER_RELAY_RAW_WASM_SHA256", raw_hash),
+                    ("JUPITER_RELAY_GZ_WASM_SHA256", gz_hash),
+                ],
             )
         }
         "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => {

@@ -269,18 +269,30 @@ build_one() {
 build_historian_with_relay() {
   build_selected jupiter-relay
 
-  local relay_wasm="release-artifacts/jupiter_relay.wasm"
-  if [[ ! -f "$relay_wasm" ]]; then
-    echo "relay wasm artifact missing after jupiter-relay build: ${relay_wasm}" >&2
+  local relay_raw_wasm="release-artifacts/jupiter_relay.wasm"
+  local relay_gz_wasm="release-artifacts/jupiter_relay.wasm.gz"
+  if [[ ! -f "$relay_raw_wasm" ]]; then
+    echo "relay raw wasm artifact missing after jupiter-relay build: ${relay_raw_wasm}" >&2
+    exit 1
+  fi
+  if [[ ! -f "$relay_gz_wasm" ]]; then
+    echo "relay compressed wasm artifact missing after jupiter-relay build: ${relay_gz_wasm}" >&2
     exit 1
   fi
 
-  local relay_hash
-  relay_hash="$(sha256sum "$relay_wasm" | awk '{print $1}')"
-  printf '%s  %s\n' "$relay_hash" "$relay_wasm" > release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm.sha256
-  export JUPITER_RELAY_WASM_PATH="${REPO_ROOT}/${relay_wasm}"
+  local raw_hash
+  local gz_hash
+  raw_hash="$(sha256sum "$relay_raw_wasm" | awk '{print $1}')"
+  gz_hash="$(sha256sum "$relay_gz_wasm" | awk '{print $1}')"
+  printf '%s  %s\n' "$raw_hash" "$relay_raw_wasm" > release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256
+  printf '%s  %s\n' "$gz_hash" "$relay_gz_wasm" > release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256
+  export JUPITER_RELAY_WASM_PATH="${REPO_ROOT}/${relay_gz_wasm}"
+  export JUPITER_RELAY_RAW_WASM_PATH="${REPO_ROOT}/${relay_raw_wasm}"
+  export JUPITER_RELAY_RAW_WASM_SHA256="${raw_hash}"
+  export JUPITER_RELAY_GZ_WASM_SHA256="${gz_hash}"
   echo "Embedding relay wasm in jupiter-historian: ${JUPITER_RELAY_WASM_PATH}"
-  echo "Embedded relay wasm sha256: ${relay_hash}"
+  echo "Reviewed raw relay wasm sha256: ${raw_hash}"
+  echo "Embedded gzip relay wasm sha256: ${gz_hash}"
   build_one "jupiter-historian-with-relay" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian_with_relay" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
 }
 

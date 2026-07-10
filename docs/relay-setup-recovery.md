@@ -48,11 +48,17 @@ This is the explicit create_canister ambiguous relay ID loss case. The created c
 
 ## Install Code
 
-If `relay_canister_id` is known and `code_installed` was not recorded, automatic retry first checks the relay canister module hash. If the module hash matches the approved embedded self-service relay wasm hash, the historian marks code installed and resumes relay funding. This install_code module-hash reconciliation prevents a second `install_code` call in `Install` mode after a lost reply.
+If `relay_canister_id` is known and `code_installed` was not recorded, automatic retry first checks the relay canister module hash. The reviewed raw relay wasm hash is the review and reconciliation hash. If `canister_status.module_hash` matches that raw installed module hash, the historian marks code installed and resumes relay funding. This install_code module-hash reconciliation prevents a second `install_code` call in `Install` mode after a lost reply.
+
+The historian-with-relay build embeds `release-artifacts/jupiter_relay.wasm.gz` to keep the historian artifact smaller. `install_code` receives those compressed bytes directly; the IC accepts gzip-compressed Wasm modules and installs the decompressed module. Operators should keep these hashes distinct:
+
+- reviewed raw relay wasm hash: `sha256sum release-artifacts/jupiter_relay.wasm`
+- compressed embedded relay wasm.gz hash: `sha256sum release-artifacts/jupiter_relay.wasm.gz`
+- installed module hash: `canister_status.module_hash`, compared against the reviewed raw relay wasm hash
 
 If the module hash is missing, automatic setup may retry install while the historian is still controller.
 
-If the module hash exists but differs from the approved embedded relay wasm hash, the job enters `ManualRecoveryRequired`. Operators must inspect the relay canister before any governance action.
+If the module hash exists but differs from the reviewed raw relay wasm hash, the job enters `ManualRecoveryRequired`. Operators must inspect the relay canister before any governance action.
 
 ## Relay Funding
 
@@ -88,8 +94,11 @@ Mainnet install args currently keep `relay_factory_enabled = opt false`.
 A future enablement proposal should:
 
 1. Build the artifact with `./tools/scripts/build-canister jupiter-historian-with-relay`.
-2. Verify `release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm.sha256`.
-3. Install the reviewed historian-with-relay artifact in a non-mainnet test environment with `relay_factory_enabled=true`.
-4. Confirm `get_relay_setup_view.relay_wasm_hash_hex` equals the recorded embedded relay hash.
-5. Update the mainnet validator allowlist for the reviewed hash, if the validator is intentionally tightened for enabled factory artifacts.
-6. Switch `relay_factory_enabled=true` only in a future governance proposal after reviewing recovery behavior, runbook evidence, and artifact hashes.
+2. Verify `release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256`.
+3. Verify `release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256`.
+4. Install the reviewed historian-with-relay artifact in a non-mainnet test environment with `relay_factory_enabled=true`.
+5. Confirm `get_relay_setup_view.relay_wasm_hash_hex` equals the recorded reviewed raw relay wasm hash.
+6. Update the mainnet validator allowlist for the reviewed raw relay wasm hash, if the validator is intentionally tightened for enabled factory artifacts.
+7. Include the raw relay wasm hash, gzip relay wasm hash, historian-with-relay artifact hash, and validator output in the final pre-deploy report.
+8. Use `release-artifacts/jupiter_historian_with_relay.wasm.gz` for the production deploy command and temporary upgrade args `(opt record { relay_factory_enabled = opt true; })`.
+9. Switch `relay_factory_enabled=true` only in a future governance proposal after reviewing recovery behavior, runbook evidence, and artifact hashes.

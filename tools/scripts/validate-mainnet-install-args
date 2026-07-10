@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import gzip
+import hashlib
 import json
 import re
 import shlex
@@ -42,7 +44,7 @@ EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_INTERVAL_SECONDS = 3_600
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
-REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256 = (
+REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256 = (
     "354103788f8e24ccf474e7a3c4eaf43a2554ed5c26bb7cd8cb297ed21900c281"
 )
 EXPECTED_RELAY_MANAGED = {
@@ -645,24 +647,76 @@ def validate_historian() -> int:
             fail(
                 f"{path} enables relay_factory_enabled but reviewed historian-with-relay artifact is missing: {artifact_path}"
             )
-        hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.embedded-relay-wasm.sha256"
-        if not hash_path.exists():
+        raw_artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_relay.wasm"
+        gz_artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_relay.wasm.gz"
+        raw_hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256"
+        gz_hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256"
+        if not raw_artifact_path.exists():
             fail(
-                f"{path} enables relay_factory_enabled but embedded relay wasm hash record is missing: {hash_path}"
+                f"{path} enables relay_factory_enabled but raw relay wasm artifact is missing: {raw_artifact_path}"
             )
-        hash_text = hash_path.read_text().strip()
-        hash_match = re.fullmatch(r"([0-9a-f]{64})\s+release-artifacts/jupiter_relay\.wasm", hash_text)
-        if not hash_match:
-            fail(f"{hash_path} must record the embedded relay wasm sha256 and source path")
-        embedded_hash = hash_match.group(1)
-        if embedded_hash != REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256:
+        if not gz_artifact_path.exists():
             fail(
-                f"{path} enables relay_factory_enabled with embedded relay wasm sha256 {embedded_hash}; "
-                f"expected reviewed hash {REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256}"
+                f"{path} enables relay_factory_enabled but compressed embedded relay wasm artifact is missing: {gz_artifact_path}"
             )
+        if not raw_hash_path.exists():
+            fail(
+                f"{path} enables relay_factory_enabled but reviewed raw relay wasm hash record is missing: {raw_hash_path}"
+            )
+        if not gz_hash_path.exists():
+            fail(
+                f"{path} enables relay_factory_enabled but embedded gzip relay wasm hash record is missing: {gz_hash_path}"
+            )
+
+        raw_hash_text = raw_hash_path.read_text().strip()
+        raw_hash_match = re.fullmatch(r"([0-9a-f]{64})\s+release-artifacts/jupiter_relay\.wasm", raw_hash_text)
+        if not raw_hash_match:
+            fail(f"{raw_hash_path} must record the reviewed raw relay wasm sha256 and source path")
+        raw_recorded_hash = raw_hash_match.group(1)
+        gz_hash_text = gz_hash_path.read_text().strip()
+        gz_hash_match = re.fullmatch(r"([0-9a-f]{64})\s+release-artifacts/jupiter_relay\.wasm\.gz", gz_hash_text)
+        if not gz_hash_match:
+            fail(f"{gz_hash_path} must record the embedded gzip relay wasm sha256 and source path")
+        gz_recorded_hash = gz_hash_match.group(1)
+
+        raw_actual_hash = hashlib.sha256(raw_artifact_path.read_bytes()).hexdigest()
+        gz_actual_hash = hashlib.sha256(gz_artifact_path.read_bytes()).hexdigest()
+        if raw_actual_hash != raw_recorded_hash:
+            fail(
+                f"{raw_hash_path} records raw relay wasm sha256 {raw_recorded_hash}, "
+                f"but {raw_artifact_path} hashes to {raw_actual_hash}"
+            )
+        if gz_actual_hash != gz_recorded_hash:
+            fail(
+                f"{gz_hash_path} records embedded gzip relay wasm sha256 {gz_recorded_hash}, "
+                f"but {gz_artifact_path} hashes to {gz_actual_hash}"
+            )
+        try:
+            decompressed_hash = hashlib.sha256(gzip.decompress(gz_artifact_path.read_bytes())).hexdigest()
+        except OSError as err:
+            fail(f"{gz_artifact_path} is not a valid gzip-compressed relay wasm artifact: {err}")
+        if decompressed_hash != raw_actual_hash:
+            fail(
+                f"{gz_artifact_path} decompresses to sha256 {decompressed_hash}, "
+                f"but reviewed raw relay wasm sha256 is {raw_actual_hash}"
+            )
+        if raw_recorded_hash != REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256:
+            fail(
+                f"{path} enables relay_factory_enabled with reviewed raw relay wasm sha256 {raw_recorded_hash}; "
+                f"expected reviewed hash {REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256}"
+            )
+        historian_with_relay_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         print(
-            "reviewed historian-with-relay embedded relay wasm sha256: "
-            f"{REVIEWED_HISTORIAN_WITH_RELAY_EMBEDDED_RELAY_WASM_SHA256}"
+            "reviewed raw relay wasm sha256: "
+            f"{REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256}"
+        )
+        print(
+            "embedded gzip relay wasm sha256: "
+            f"{gz_recorded_hash}"
+        )
+        print(
+            "historian-with-relay artifact sha256: "
+            f"{historian_with_relay_hash}"
         )
 
     build_script = (REPO_ROOT / "tools" / "scripts" / "build-canister").read_text()

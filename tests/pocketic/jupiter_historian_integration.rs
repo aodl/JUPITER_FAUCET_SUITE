@@ -11,6 +11,7 @@ use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsResult,
 };
 use pocket_ic::PocketIc;
+use sha2::{Digest, Sha256};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
@@ -80,6 +81,19 @@ fn historian_with_relay_wasm() -> Result<Vec<u8>> {
     let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
     let relay_path =
         workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm");
+    let relay_gz_path =
+        workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm.gz");
+    let gzip_status = Command::new("gzip")
+        .args(["-n", "-9", "-c"])
+        .arg(&relay_path)
+        .current_dir(&workspace_root)
+        .output()?;
+    if !gzip_status.status.success() {
+        bail!("gzip failed for relay wasm embedded in historian PocketIC test");
+    }
+    std::fs::write(&relay_gz_path, gzip_status.stdout)?;
+    let raw_hash = hex::encode(Sha256::digest(std::fs::read(&relay_path)?));
+    let gz_hash = hex::encode(Sha256::digest(std::fs::read(&relay_gz_path)?));
     let status = Command::new("cargo")
         .args([
             "build",
@@ -90,7 +104,10 @@ fn historian_with_relay_wasm() -> Result<Vec<u8>> {
             "jupiter-historian",
             "--locked",
         ])
-        .env("JUPITER_RELAY_WASM_PATH", &relay_path)
+        .env("JUPITER_RELAY_WASM_PATH", &relay_gz_path)
+        .env("JUPITER_RELAY_RAW_WASM_PATH", &relay_path)
+        .env("JUPITER_RELAY_RAW_WASM_SHA256", &raw_hash)
+        .env("JUPITER_RELAY_GZ_WASM_SHA256", &gz_hash)
         .current_dir(&workspace_root)
         .status()?;
     if !status.success() {
@@ -1028,7 +1045,7 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
 
 #[test]
 #[ignore]
-fn historian_with_relay_artifact_exposes_embedded_relay_hash() -> Result<()> {
+fn historian_with_relay_artifact_exposes_reviewed_raw_relay_hash() -> Result<()> {
     require_ignored_flag()?;
     let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
     let status = Command::new("./tools/scripts/build-canister")
@@ -1038,16 +1055,26 @@ fn historian_with_relay_artifact_exposes_embedded_relay_hash() -> Result<()> {
     if !status.success() {
         bail!("tools/scripts/build-canister jupiter-historian-with-relay failed");
     }
-    let hash_record_path = workspace_root
-        .join("release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm.sha256");
-    let hash_record = std::fs::read_to_string(&hash_record_path)
-        .with_context(|| format!("read {}", hash_record_path.display()))?;
-    let recorded_hash = hash_record
+    let raw_hash_record_path = workspace_root
+        .join("release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256");
+    let raw_hash_record = std::fs::read_to_string(&raw_hash_record_path)
+        .with_context(|| format!("read {}", raw_hash_record_path.display()))?;
+    let recorded_raw_hash = raw_hash_record
         .split_whitespace()
         .next()
-        .context("embedded relay wasm hash record is empty")?
+        .context("reviewed raw relay wasm hash record is empty")?
         .to_string();
-    assert_eq!(recorded_hash.len(), 64);
+    assert_eq!(recorded_raw_hash.len(), 64);
+    let gz_hash_record_path = workspace_root
+        .join("release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256");
+    let gz_hash_record = std::fs::read_to_string(&gz_hash_record_path)
+        .with_context(|| format!("read {}", gz_hash_record_path.display()))?;
+    let recorded_gz_hash = gz_hash_record
+        .split_whitespace()
+        .next()
+        .context("embedded gzip relay wasm hash record is empty")?
+        .to_string();
+    assert_eq!(recorded_gz_hash.len(), 64);
     let artifact_path = workspace_root.join("release-artifacts/jupiter_historian_with_relay.wasm");
     let historian_artifact = std::fs::read(&artifact_path)
         .with_context(|| format!("read {}", artifact_path.display()))?;
@@ -1095,7 +1122,7 @@ fn historian_with_relay_artifact_exposes_embedded_relay_hash() -> Result<()> {
 
     assert_eq!(
         view.relay_wasm_hash_hex.as_deref(),
-        Some(recorded_hash.as_str())
+        Some(recorded_raw_hash.as_str())
     );
     assert!(view.factory_available);
     assert!(
