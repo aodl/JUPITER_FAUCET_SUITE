@@ -62,7 +62,7 @@ Use the canister-specific README for expected config fields.
 | Ordinary local `icp deploy` | `icp deploy <canister_name> --environment ic --mode upgrade` | Runs the configured local build helper and deploys the resulting package. Convenient, but not canonical reproducibility evidence. |
 | Same-environment determinism check | `npm run verify:reproducible-artifacts` | Two clean Docker builds compared on the same machine. |
 
-With `relay_factory_enabled = opt true` in the checked-in Historian mainnet args, both `build-canister all` and Docker builds produce `release-artifacts/jupiter_historian_with_relay.wasm.gz` as the production Historian package.
+With `relay_factory_enabled = opt true` in the checked-in Historian mainnet args, both `build-canister all` and Docker builds produce `release-artifacts/jupiter_historian.wasm.gz` as the production Historian package.
 
 ## Deploying Docker-built artifacts with icp deploy
 

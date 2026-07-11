@@ -49,7 +49,22 @@ type CanisterBurnSample = record {
   remaining_deficit_cycles : nat;
   skipped_reason : opt text;
 };
-type ProbeFailure = record { canister_id : principal; error : text };
+type TargetProbeClassification = variant {
+  Observable;
+  TransientProbeFailure : record { consecutive_failures : nat32 };
+  UnavailableAfterConsecutiveFailures : record { consecutive_failures : nat32 };
+};
+type TargetProbeStatus = record {
+  canister_id : principal;
+  consecutive_probe_failures : nat32;
+  classification : TargetProbeClassification;
+  skipped_reason : opt text;
+};
+type ProbeFailure = record {
+  canister_id : principal;
+  error : text;
+  consecutive_failures : nat32;
+};
 type SurplusTransferSample = record {
   target : SurplusTarget;
   account : Account;
@@ -86,11 +101,13 @@ type RelaySummary = record {
   ambiguous_transfers : nat32;
   partial_tick_count : nat32;
   probe_failures : vec ProbeFailure;
+  target_probe_statuses : vec TargetProbeStatus;
   canisters : vec CanisterBurnSample;
   conversion_estimate_used : opt ConversionEstimate;
   surplus_e8s_before_fees : nat64;
   surplus_transfers : vec SurplusTransferSample;
   skipped_surplus_reason : opt text;
+  surplus_allowed_despite_unavailable_targets : bool;
 };
 type DebugState = record {
   last_main_run_ts : nat64;
@@ -103,6 +120,7 @@ type DebugState = record {
   last_completed_cycles_count : nat32;
   relay_minted_cycles_since_sample_count : nat32;
   recovery_deficit_cycles_count : nat32;
+  consecutive_probe_failures : vec record { principal; nat32 };
   conversion_estimate_present : bool;
 };
 type DebugConfig = record {

@@ -44,8 +44,8 @@ EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_INTERVAL_SECONDS = 3_600
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
-REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256 = (
-    "354103788f8e24ccf474e7a3c4eaf43a2554ed5c26bb7cd8cb297ed21900c281"
+REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256 = (
+    "a4ae8a3932c9267f5a839fe304f968efefa198238cce6a95bf5a3c9226f0d05f"
 )
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
@@ -91,7 +91,7 @@ PROD_CANISTER_ARTIFACTS = {
     "jupiter_faucet": ("jupiter-faucet", "jupiter_faucet"),
     "jupiter_sns_rewards": ("jupiter-sns-rewards", "jupiter_sns_rewards"),
     "jupiter_faucet_frontend": ("jupiter-faucet-frontend", "jupiter_faucet_frontend"),
-    "jupiter_historian": ("jupiter-historian-with-relay", "jupiter_historian_with_relay"),
+    "jupiter_historian": ("jupiter-historian", "jupiter_historian"),
     "jupiter_relay": ("jupiter-relay", "jupiter_relay"),
 }
 
@@ -318,17 +318,17 @@ def validate_historian_factory_production_artifact_paths() -> None:
     historian_error = icp_yaml_prod_artifact_error(
         icp_text,
         "jupiter_historian",
-        "jupiter-historian-with-relay",
-        "jupiter_historian_with_relay",
+        "jupiter-historian",
+        "jupiter_historian",
     )
     if historian_error:
         fail(
-            "relay_factory_enabled=true requires jupiter-historian-with-relay; "
+            "relay_factory_enabled=true requires canonical jupiter-historian artifact; "
             f"{historian_error}"
         )
     historian_block = icp_yaml_canister_block(icp_text, "jupiter_historian")
-    if historian_block and "jupiter_historian.wasm.gz" in historian_block:
-        fail(f"{icp_path} must not deploy release-artifacts/jupiter_historian.wasm.gz when relay factory is enabled")
+    if historian_block and "jupiter_historian_with_relay" in historian_block:
+        fail(f"{icp_path} must not deploy deprecated release-artifacts/jupiter_historian_with_relay.wasm.gz")
 
     build_path = REPO_ROOT / "tools" / "scripts" / "build-canister"
     build_text = build_path.read_text()
@@ -336,12 +336,12 @@ def validate_historian_factory_production_artifact_paths() -> None:
     if not all_case:
         fail(f"{build_path} is missing an all build target")
     all_body = all_case.group("body")
-    if "build_selected jupiter-historian-with-relay" not in all_body:
-        fail(f"{build_path} all target must build jupiter-historian-with-relay when relay factory is enabled")
-    if "build_selected jupiter-historian\n" in all_body:
-        fail(f"{build_path} all target must not build the plain jupiter-historian artifact when relay factory is enabled")
+    if "build_selected jupiter-historian\n" not in all_body:
+        fail(f"{build_path} all target must build canonical jupiter-historian when relay factory is enabled")
+    if "build_selected jupiter-historian-with-relay" in all_body:
+        fail(f"{build_path} all target must not depend on deprecated jupiter-historian-with-relay")
 
-    print("production historian deploy artifact path: release-artifacts/jupiter_historian_with_relay.wasm.gz")
+    print("production historian deploy artifact path: release-artifacts/jupiter_historian.wasm.gz")
 
 
 def validate_icp_yaml_uses_compressed_prod_artifacts() -> None:
@@ -679,15 +679,16 @@ def validate_historian() -> int:
         fail(f"{path} configures min_tx_e8s below the supported floor of 10_000_000 e8s (0.1 ICP)")
     relay_factory_enabled = extract_opt_bool(text, "relay_factory_enabled", path)
     if relay_factory_enabled:
-        artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.wasm.gz"
+        artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_historian.wasm.gz"
+        deprecated_artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.wasm.gz"
         if not artifact_path.exists():
             fail(
-                f"{path} enables relay_factory_enabled but reviewed historian-with-relay artifact is missing: {artifact_path}"
+                f"{path} enables relay_factory_enabled but canonical reviewed historian artifact is missing: {artifact_path}"
             )
         raw_artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_relay.wasm"
         gz_artifact_path = REPO_ROOT / "release-artifacts" / "jupiter_relay.wasm.gz"
-        raw_hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256"
-        gz_hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256"
+        raw_hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian.reviewed-relay-wasm-raw.sha256"
+        gz_hash_path = REPO_ROOT / "release-artifacts" / "jupiter_historian.embedded-relay-wasm-gz.sha256"
         if not raw_artifact_path.exists():
             fail(
                 f"{path} enables relay_factory_enabled but raw relay wasm artifact is missing: {raw_artifact_path}"
@@ -728,6 +729,10 @@ def validate_historian() -> int:
                 f"{gz_hash_path} records embedded gzip relay wasm sha256 {gz_recorded_hash}, "
                 f"but {gz_artifact_path} hashes to {gz_actual_hash}"
             )
+        if artifact_path.stat().st_mtime_ns < gz_artifact_path.stat().st_mtime_ns:
+            fail(
+                f"{artifact_path} is older than {gz_artifact_path}; rebuild jupiter-historian after rebuilding jupiter-relay"
+            )
         try:
             decompressed_hash = hashlib.sha256(gzip.decompress(gz_artifact_path.read_bytes())).hexdigest()
         except OSError as err:
@@ -737,28 +742,36 @@ def validate_historian() -> int:
                 f"{gz_artifact_path} decompresses to sha256 {decompressed_hash}, "
                 f"but reviewed raw relay wasm sha256 is {raw_actual_hash}"
             )
-        if raw_recorded_hash != REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256:
+        if raw_recorded_hash != REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256:
             fail(
                 f"{path} enables relay_factory_enabled with reviewed raw relay wasm sha256 {raw_recorded_hash}; "
-                f"expected reviewed hash {REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256}"
+                f"expected reviewed hash {REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256}"
             )
-        historian_with_relay_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        if deprecated_artifact_path.exists():
+            deprecated_hash = hashlib.sha256(deprecated_artifact_path.read_bytes()).hexdigest()
+            canonical_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+            if deprecated_hash != canonical_hash:
+                fail(
+                    f"{deprecated_artifact_path} exists but differs from canonical {artifact_path}; "
+                    "deprecated aliases must be byte-identical or absent"
+                )
+        historian_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         print(
             "reviewed raw relay wasm sha256: "
-            f"{REVIEWED_HISTORIAN_WITH_RELAY_RAW_RELAY_WASM_SHA256}"
+            f"{REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256}"
         )
         print(
             "embedded gzip relay wasm sha256: "
             f"{gz_recorded_hash}"
         )
         print(
-            "historian-with-relay artifact sha256: "
-            f"{historian_with_relay_hash}"
+            "canonical historian artifact sha256: "
+            f"{historian_hash}"
         )
 
     build_script = (REPO_ROOT / "tools" / "scripts" / "build-canister").read_text()
-    if "jupiter-historian-with-relay" not in build_script or "JUPITER_RELAY_WASM_PATH" not in build_script:
-        fail("tools/scripts/build-canister is missing the historian-with-relay production build path")
+    if "build_historian()" not in build_script or "JUPITER_RELAY_WASM_PATH" not in build_script:
+        fail("tools/scripts/build-canister is missing the canonical relay-enabled historian production build path")
 
     setup_min = extract_nat64(text, "relay_setup_min_e8s", path)
     dust = extract_nat64(text, "relay_setup_dust_e8s", path)
@@ -1156,14 +1169,14 @@ canisters:
         "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
         "./tools/scripts/icp-build-canister jupiter-faucet wrong_artifact",
     )
-    plain_historian_icp_yaml = valid_icp_yaml.replace(
+    canonical_historian_icp_yaml = valid_icp_yaml.replace(
         "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
         "./tools/scripts/icp-build-canister jupiter-historian jupiter_historian",
     ).replace(
         "jupiter_faucet",
         "jupiter_historian",
     )
-    relay_historian_icp_yaml = valid_icp_yaml.replace(
+    deprecated_historian_icp_yaml = valid_icp_yaml.replace(
         "./tools/scripts/icp-build-canister jupiter-faucet jupiter_faucet",
         "./tools/scripts/icp-build-canister jupiter-historian-with-relay jupiter_historian_with_relay",
     ).replace(
@@ -1180,20 +1193,20 @@ canisters:
         fail("self-test malformed wrong-stem icp.yaml fixture by removing the canister block")
     if not icp_yaml_prod_artifact_error(wrong_stem_icp_yaml, "jupiter_faucet", "jupiter-faucet", "jupiter_faucet"):
         fail("self-test failed to reject wrong icp.yaml artifact stem")
-    if not icp_yaml_prod_artifact_error(
-        plain_historian_icp_yaml,
-        "jupiter_historian",
-        "jupiter-historian-with-relay",
-        "jupiter_historian_with_relay",
-    ):
-        fail("self-test failed to reject plain historian production deploy artifact path")
     if icp_yaml_prod_artifact_error(
-        relay_historian_icp_yaml,
+        canonical_historian_icp_yaml,
         "jupiter_historian",
-        "jupiter-historian-with-relay",
-        "jupiter_historian_with_relay",
+        "jupiter-historian",
+        "jupiter_historian",
     ):
-        fail("self-test unexpectedly rejected historian-with-relay production deploy artifact path")
+        fail("self-test unexpectedly rejected canonical historian production deploy artifact path")
+    if not icp_yaml_prod_artifact_error(
+        deprecated_historian_icp_yaml,
+        "jupiter_historian",
+        "jupiter-historian",
+        "jupiter_historian",
+    ):
+        fail("self-test failed to reject deprecated historian-with-relay production deploy artifact path")
     print("validate-mainnet-install-args self-tests OK")
 
 

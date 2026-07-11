@@ -37,7 +37,7 @@ static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
-static HISTORIAN_WITH_RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static RELAY_ENABLED_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -73,8 +73,8 @@ fn mock_cmc_wasm() -> Result<Vec<u8>> {
 fn mock_blackhole_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&MOCK_BLACKHOLE_WASM, "mock-blackhole", None)
 }
-fn historian_with_relay_wasm() -> Result<Vec<u8>> {
-    if let Some(bytes) = HISTORIAN_WITH_RELAY_WASM.get() {
+fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
+    if let Some(bytes) = RELAY_ENABLED_HISTORIAN_WASM.get() {
         return Ok(bytes.clone());
     }
     let relay = relay_wasm()?;
@@ -115,7 +115,7 @@ fn historian_with_relay_wasm() -> Result<Vec<u8>> {
     }
     let path = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_historian.wasm");
     let bytes = std::fs::read(&path)?;
-    let _ = HISTORIAN_WITH_RELAY_WASM.set(bytes.clone());
+    let _ = RELAY_ENABLED_HISTORIAN_WASM.set(bytes.clone());
     assert!(
         !relay.is_empty(),
         "non-debug relay wasm used for embedding must not be empty"
@@ -855,7 +855,7 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     set_controllers_exact(&pic, target, vec![blackhole])?;
     pic.install_canister(
         historian,
-        historian_with_relay_wasm()?,
+        relay_enabled_historian_wasm()?,
         encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
         None,
     );
@@ -1045,18 +1045,18 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
 
 #[test]
 #[ignore]
-fn historian_with_relay_artifact_exposes_reviewed_raw_relay_hash() -> Result<()> {
+fn historian_artifact_exposes_reviewed_raw_relay_hash() -> Result<()> {
     require_ignored_flag()?;
     let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
     let status = Command::new("./tools/scripts/build-canister")
-        .arg("jupiter-historian-with-relay")
+        .arg("jupiter-historian")
         .current_dir(&workspace_root)
         .status()?;
     if !status.success() {
-        bail!("tools/scripts/build-canister jupiter-historian-with-relay failed");
+        bail!("tools/scripts/build-canister jupiter-historian failed");
     }
-    let raw_hash_record_path = workspace_root
-        .join("release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256");
+    let raw_hash_record_path =
+        workspace_root.join("release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256");
     let raw_hash_record = std::fs::read_to_string(&raw_hash_record_path)
         .with_context(|| format!("read {}", raw_hash_record_path.display()))?;
     let recorded_raw_hash = raw_hash_record
@@ -1065,8 +1065,8 @@ fn historian_with_relay_artifact_exposes_reviewed_raw_relay_hash() -> Result<()>
         .context("reviewed raw relay wasm hash record is empty")?
         .to_string();
     assert_eq!(recorded_raw_hash.len(), 64);
-    let gz_hash_record_path = workspace_root
-        .join("release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256");
+    let gz_hash_record_path =
+        workspace_root.join("release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256");
     let gz_hash_record = std::fs::read_to_string(&gz_hash_record_path)
         .with_context(|| format!("read {}", gz_hash_record_path.display()))?;
     let recorded_gz_hash = gz_hash_record
@@ -1075,7 +1075,7 @@ fn historian_with_relay_artifact_exposes_reviewed_raw_relay_hash() -> Result<()>
         .context("embedded gzip relay wasm hash record is empty")?
         .to_string();
     assert_eq!(recorded_gz_hash.len(), 64);
-    let artifact_path = workspace_root.join("release-artifacts/jupiter_historian_with_relay.wasm");
+    let artifact_path = workspace_root.join("release-artifacts/jupiter_historian.wasm");
     let historian_artifact = std::fs::read(&artifact_path)
         .with_context(|| format!("read {}", artifact_path.display()))?;
 
@@ -1167,7 +1167,7 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
 
     pic.install_canister(
         historian,
-        historian_with_relay_wasm()?,
+        relay_enabled_historian_wasm()?,
         encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
         None,
     );

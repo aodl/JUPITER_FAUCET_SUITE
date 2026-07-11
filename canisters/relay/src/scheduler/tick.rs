@@ -16,8 +16,8 @@ use crate::scheduler::transfer::{
 };
 use crate::state::{
     self, ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, PendingFaucetCommitmentTransfer,
-    PendingTransfer, PendingTransferKind, PendingTransferPhase, RelayMode, RelaySummary,
-    SurplusTarget,
+    PendingTransfer, PendingTransferKind, PendingTransferPhase, ProbeFailure, RelayMode,
+    RelaySummary, SurplusTarget, TargetProbeClassification, TargetProbeStatus,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,7 +134,7 @@ async fn resume_or_start_faucet_commitment<L: LedgerClient, G: GovernanceClient>
     if state::with_state(|st| st.active_faucet_commitment_transfer.is_none()) {
         plan_faucet_commitment(now_nanos, ledger, governance).await;
     }
-    drive_pending_faucet_commitment_transfer(ledger, now_nanos).await
+    drive_pending_faucet_commitment_transfer(ledger, governance, now_nanos).await
 }
 
 async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
@@ -223,36 +223,66 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     cmc: &C,
     blackhole: &B,
 ) {
-    let cfg = state::with_state(|st| st.config.clone());
     let self_id = ic_cdk::api::canister_self();
+    let self_cycles = ic_cdk::api::canister_cycle_balance();
+    start_job_with_self(now_nanos, self_id, self_cycles, ledger, cmc, blackhole).await;
+}
+
+async fn start_job_with_self<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
+    now_nanos: u64,
+    self_id: candid::Principal,
+    self_cycles: u128,
+    ledger: &L,
+    cmc: &C,
+    blackhole: &B,
+) {
+    let cfg = state::with_state(|st| st.config.clone());
     let managed = logic::effective_managed_canisters(&cfg.managed_canisters, self_id);
     let (current_cycles, probe_failures) = probe_cycles(
         &managed,
         self_id,
+        self_cycles,
         cfg.blackhole_canister_id,
         now_nanos,
         blackhole,
     )
     .await;
+    let probe_update = update_consecutive_probe_failures(&managed, &current_cycles, probe_failures);
     let min_cycles = current_cycles
         .values()
         .map(|snapshot| snapshot.cycles)
         .min();
 
-    if !probe_failures.is_empty() {
+    let transient_failures = probe_update.statuses.iter().any(|status| {
+        matches!(
+            status.classification,
+            TargetProbeClassification::TransientProbeFailure { .. }
+        )
+    });
+    if transient_failures {
         let mut summary =
             RelaySummary::started(RelayMode::Degraded, now_nanos, managed.len() as u32);
         summary.completed_at_ts_nanos = Some(now_nanos);
         summary.min_cycles_balance = min_cycles;
-        summary.probe_failures = probe_failures;
-        summary.skipped_surplus_reason = Some("probe_failed".to_string());
+        summary.probe_failures = probe_update.failures;
+        summary.target_probe_statuses = probe_update.statuses;
+        summary.skipped_surplus_reason =
+            Some(logic::SKIP_REASON_TRANSIENT_PROBE_FAILURE.to_string());
         log_summary(&summary);
         state::with_state_mut(|st| st.last_summary = Some(summary));
         return;
     }
 
+    let allocation_managed = current_cycles.keys().copied().collect::<Vec<_>>();
+    let unavailable_targets_present = probe_update.statuses.iter().any(|status| {
+        matches!(
+            status.classification,
+            TargetProbeClassification::UnavailableAfterConsecutiveFailures { .. }
+        )
+    });
+
     let has_complete_previous = state::with_state(|st| {
-        managed
+        allocation_managed
             .iter()
             .all(|id| st.last_completed_cycles.contains_key(id))
     });
@@ -262,9 +292,11 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
         summary.completed_at_ts_nanos = Some(now_nanos);
         summary.min_cycles_balance = min_cycles;
         summary.skipped_surplus_reason = Some("missing_previous_sample".to_string());
+        summary.probe_failures = probe_update.failures;
+        summary.target_probe_statuses = probe_update.statuses;
         log_summary(&summary);
         state::with_state_mut(|st| {
-            complete_baseline_sample(st, current_cycles, &managed, summary);
+            complete_baseline_sample(st, current_cycles, &allocation_managed, summary);
         });
         return;
     }
@@ -278,10 +310,13 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
             summary.completed_at_ts_nanos = Some(now_nanos);
             summary.min_cycles_balance = min_cycles;
             summary.skipped_surplus_reason = Some("probe_failed".to_string());
-            summary.probe_failures.push(crate::state::ProbeFailure {
+            summary.probe_failures.push(ProbeFailure {
                 canister_id: cfg.ledger_canister_id,
                 error: format!("balance read failed: {err}"),
+                consecutive_failures: 0,
             });
+            summary.probe_failures.extend(probe_update.failures);
+            summary.target_probe_statuses = probe_update.statuses;
             log_summary(&summary);
             state::with_state_mut(|st| st.last_summary = Some(summary));
             return;
@@ -296,10 +331,13 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
             summary.default_account_balance_start_e8s = balance;
             summary.min_cycles_balance = min_cycles;
             summary.skipped_surplus_reason = Some("probe_failed".to_string());
-            summary.probe_failures.push(crate::state::ProbeFailure {
+            summary.probe_failures.push(ProbeFailure {
                 canister_id: cfg.ledger_canister_id,
                 error: format!("fee read failed: {err}"),
+                consecutive_failures: 0,
             });
+            summary.probe_failures.extend(probe_update.failures);
+            summary.target_probe_statuses = probe_update.statuses;
             log_summary(&summary);
             state::with_state_mut(|st| st.last_summary = Some(summary));
             return;
@@ -315,7 +353,7 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
                 st.recovery_deficit_cycles.clone(),
             )
         });
-        let summary = build_no_funds_summary(
+        let mut summary = build_no_funds_summary(
             now_nanos,
             managed.len() as u32,
             min_cycles,
@@ -327,6 +365,9 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
             &relay_minted,
             &recovery_deficits,
         );
+        summary.probe_failures = probe_update.failures;
+        summary.target_probe_statuses = probe_update.statuses;
+        summary.surplus_allowed_despite_unavailable_targets = unavailable_targets_present;
         log_summary(&summary);
         state::with_state_mut(|st| {
             complete_no_funds_sample(st, current_cycles, summary);
@@ -392,6 +433,8 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     summary.min_cycles_balance = min_cycles;
     summary.total_burn_cycles = total_burn_cycles;
     summary.canisters = canisters.clone();
+    summary.probe_failures = probe_update.failures;
+    summary.target_probe_statuses = probe_update.statuses;
     summary.refresh_canister_totals();
     summary.conversion_estimate_used = if has_raw_icp_recipients {
         conversion_estimate
@@ -401,6 +444,7 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
     summary.skipped_surplus_reason = allocation.skipped_surplus_reason;
     summary.planned_retained_e8s = retained_e8s(balance, &canisters, &[]);
     summary.known_unspent_e8s = summary.planned_retained_e8s;
+    summary.surplus_allowed_despite_unavailable_targets = unavailable_targets_present;
 
     let job = ActiveRelayJob {
         id,
@@ -420,6 +464,74 @@ async fn start_job<L: LedgerClient, C: CmcClient, B: BlackholeClient>(
         summary,
     };
     state::with_state_mut(|st| st.active_job = Some(job));
+}
+
+struct ProbeUpdate {
+    statuses: Vec<TargetProbeStatus>,
+    failures: Vec<ProbeFailure>,
+}
+
+fn update_consecutive_probe_failures(
+    managed: &[candid::Principal],
+    current_cycles: &std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
+    probe_failures: Vec<ProbeFailure>,
+) -> ProbeUpdate {
+    let failures = probe_failures
+        .into_iter()
+        .map(|failure| (failure.canister_id, failure.error))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    state::with_state_mut(|st| {
+        st.consecutive_probe_failures
+            .retain(|canister_id, _| managed.contains(canister_id));
+        let statuses = managed
+            .iter()
+            .map(|canister_id| {
+                let observed = current_cycles.contains_key(canister_id);
+                let consecutive_probe_failures = if observed {
+                    st.consecutive_probe_failures.insert(*canister_id, 0);
+                    0
+                } else {
+                    let next = st
+                        .consecutive_probe_failures
+                        .get(canister_id)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_add(1);
+                    st.consecutive_probe_failures.insert(*canister_id, next);
+                    next
+                };
+                let classification =
+                    logic::classify_target_probe(observed, consecutive_probe_failures);
+                let skipped_reason = match classification {
+                    TargetProbeClassification::Observable => None,
+                    TargetProbeClassification::TransientProbeFailure { .. } => {
+                        Some(logic::SKIP_REASON_TRANSIENT_PROBE_FAILURE.to_string())
+                    }
+                    TargetProbeClassification::UnavailableAfterConsecutiveFailures { .. } => Some(
+                        logic::SKIP_REASON_TARGET_UNAVAILABLE_AFTER_CONSECUTIVE_PROBE_FAILURES
+                            .to_string(),
+                    ),
+                };
+                TargetProbeStatus {
+                    canister_id: *canister_id,
+                    consecutive_probe_failures,
+                    classification,
+                    skipped_reason,
+                }
+            })
+            .collect::<Vec<_>>();
+        let failures = statuses
+            .iter()
+            .filter_map(|status| {
+                failures.get(&status.canister_id).map(|error| ProbeFailure {
+                    canister_id: status.canister_id,
+                    error: error.clone(),
+                    consecutive_failures: status.consecutive_probe_failures,
+                })
+            })
+            .collect();
+        ProbeUpdate { statuses, failures }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -834,7 +946,10 @@ fn complete_job(now_nanos: u64) {
         job.summary.completed_at_ts_nanos = Some(now_nanos);
         job.summary.refresh_canister_totals();
         log_summary(&job.summary);
-        st.last_completed_cycles = job.current_cycles;
+        retain_current_effective_targets(st, &job.summary);
+        for (canister_id, snapshot) in job.current_cycles {
+            st.last_completed_cycles.insert(canister_id, snapshot);
+        }
         persist_recovery_deficits_from_samples(st, &job.canisters);
         st.last_summary = Some(job.summary);
     });
@@ -846,7 +961,11 @@ fn complete_baseline_sample(
     managed: &[candid::Principal],
     summary: RelaySummary,
 ) {
-    st.last_completed_cycles = current_cycles;
+    st.last_completed_cycles
+        .retain(|canister_id, _| managed.contains(canister_id));
+    for (canister_id, snapshot) in current_cycles {
+        st.last_completed_cycles.insert(canister_id, snapshot);
+    }
     st.relay_minted_cycles_since_sample.clear();
     st.recovery_deficit_cycles
         .retain(|canister_id, _| managed.contains(canister_id));
@@ -858,10 +977,25 @@ fn complete_no_funds_sample(
     current_cycles: std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
     summary: RelaySummary,
 ) {
-    st.last_completed_cycles = current_cycles;
+    retain_current_effective_targets(st, &summary);
+    for (canister_id, snapshot) in current_cycles {
+        st.last_completed_cycles.insert(canister_id, snapshot);
+    }
     st.relay_minted_cycles_since_sample.clear();
     persist_recovery_deficits_from_samples(st, &summary.canisters);
     st.last_summary = Some(summary);
+}
+
+fn retain_current_effective_targets(st: &mut crate::state::State, summary: &RelaySummary) {
+    let effective = summary
+        .target_probe_statuses
+        .iter()
+        .map(|status| status.canister_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if !effective.is_empty() {
+        st.last_completed_cycles
+            .retain(|canister_id, _| effective.contains(canister_id));
+    }
 }
 
 fn persist_recovery_deficits_from_samples(
@@ -916,9 +1050,11 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-    use candid::Principal;
+    use candid::{Nat, Principal};
+    use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
 
     use super::*;
     use crate::clients::ClientError;
@@ -982,6 +1118,183 @@ mod tests {
             timestamp_nanos: 1,
             source: CyclesSampleSource::BlackholeStatus,
         }
+    }
+
+    fn probe_failure(canister_id: Principal) -> ProbeFailure {
+        ProbeFailure {
+            canister_id,
+            error: "mock probe failed".to_string(),
+            consecutive_failures: 0,
+        }
+    }
+
+    fn target_status<'a>(
+        statuses: &'a [TargetProbeStatus],
+        canister_id: Principal,
+    ) -> &'a TargetProbeStatus {
+        statuses
+            .iter()
+            .find(|status| status.canister_id == canister_id)
+            .expect("target status")
+    }
+
+    fn config_with_managed(managed: Vec<Principal>) -> Config {
+        let mut cfg = base_config();
+        cfg.managed_canisters = managed;
+        cfg.surplus_recipients = vec![crate::state::SurplusRecipient {
+            target: SurplusTarget::Canister(principal("jufzc-caaaa-aaaar-qb5da-cai")),
+            memo: None,
+        }];
+        cfg
+    }
+
+    fn relay_self() -> Principal {
+        principal("u2qkp-aqaaa-aaaar-qb7ea-cai")
+    }
+
+    struct MockSchedulerLedger {
+        default_balance_e8s: u64,
+        fee_e8s: u64,
+        transfers: Mutex<Vec<TransferArg>>,
+    }
+
+    impl MockSchedulerLedger {
+        fn new(default_balance_e8s: u64, fee_e8s: u64) -> Self {
+            Self {
+                default_balance_e8s,
+                fee_e8s,
+                transfers: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn transfer_count(&self) -> usize {
+            self.transfers.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for MockSchedulerLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(self.fee_e8s)
+        }
+
+        async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+            if account.subaccount == Some(logic::relay_subaccount_one()) {
+                Ok(0)
+            } else {
+                Ok(self.default_balance_e8s)
+            }
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            let mut transfers = self.transfers.lock().unwrap();
+            let block_index = transfers.len() as u64 + 1;
+            transfers.push(arg);
+            Ok(Ok(Nat::from(block_index)))
+        }
+    }
+
+    struct MockSchedulerCmc {
+        notify_calls: Mutex<Vec<Principal>>,
+        minted_cycles: u128,
+    }
+
+    impl MockSchedulerCmc {
+        fn new(minted_cycles: u128) -> Self {
+            Self {
+                notify_calls: Mutex::new(Vec::new()),
+                minted_cycles,
+            }
+        }
+
+        fn notify_calls(&self) -> Vec<Principal> {
+            self.notify_calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CmcClient for MockSchedulerCmc {
+        async fn get_icp_xdr_conversion_rate(
+            &self,
+        ) -> Result<crate::clients::CmcIcpXdrConversionRate, ClientError> {
+            Ok(crate::clients::CmcIcpXdrConversionRate {
+                timestamp_seconds: 1,
+                xdr_permyriad_per_icp: 10_000,
+            })
+        }
+
+        async fn notify_top_up(
+            &self,
+            canister_id: Principal,
+            _block_index: u64,
+        ) -> Result<u128, ClientError> {
+            self.notify_calls.lock().unwrap().push(canister_id);
+            Ok(self.minted_cycles)
+        }
+    }
+
+    struct MockSchedulerGovernance;
+
+    #[async_trait::async_trait]
+    impl GovernanceClient for MockSchedulerGovernance {
+        async fn neuron_staking_subaccount(
+            &self,
+            _neuron_id: u64,
+        ) -> Result<[u8; 32], ClientError> {
+            Ok([7; 32])
+        }
+
+        async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), ClientError> {
+            Ok(())
+        }
+    }
+
+    struct MockSchedulerBlackhole {
+        cycles: BTreeMap<Principal, u128>,
+    }
+
+    impl MockSchedulerBlackhole {
+        fn new(cycles: BTreeMap<Principal, u128>) -> Self {
+            Self { cycles }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BlackholeClient for MockSchedulerBlackhole {
+        async fn cycles_balance(&self, canister_id: Principal) -> Result<u128, ClientError> {
+            self.cycles
+                .get(&canister_id)
+                .copied()
+                .ok_or_else(|| ClientError::Call("mock probe failed".to_string()))
+        }
+    }
+
+    fn run_start_job_for_test(
+        target_cycles: Option<(Principal, u128)>,
+        ledger: &MockSchedulerLedger,
+        cmc: &MockSchedulerCmc,
+    ) -> (Principal, u128) {
+        block_on(async {
+            let now_nanos = 10_000_000_000;
+            let now_secs = 10;
+            let guard = MainGuard::acquire(now_secs).expect("main guard");
+            let self_id = relay_self();
+            let self_cycles = 9_000_000_u128;
+            let target_cycles = target_cycles.into_iter().collect::<BTreeMap<_, _>>();
+            let blackhole = MockSchedulerBlackhole::new(target_cycles);
+
+            start_job_with_self(now_nanos, self_id, self_cycles, ledger, cmc, &blackhole).await;
+
+            let governance = MockSchedulerGovernance;
+            if state::with_state(|st| st.active_job.is_some()) {
+                assert!(drive_active_job(now_nanos, ledger, cmc, &governance).await);
+            }
+            guard.finish(now_secs);
+            (self_id, self_cycles)
+        })
     }
 
     fn job_with_three_topups() -> ActiveRelayJob {
@@ -1080,6 +1393,348 @@ mod tests {
         let estimate = state::with_state(|st| st.conversion_estimate.clone()).unwrap();
         assert_eq!(estimate.cycles_per_e8, 42);
         assert_eq!(estimate.timestamp_nanos, 7_000_000_000);
+    }
+
+    #[test]
+    fn relay_probe_failures_below_threshold_do_not_route_surplus() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let relay = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let managed = vec![relay, target];
+        state::set_state(State::new(config_with_managed(vec![target]), 0));
+
+        let current = BTreeMap::from([(relay, snapshot(1_000_000))]);
+        let first =
+            update_consecutive_probe_failures(&managed, &current, vec![probe_failure(target)]);
+        let first_target = target_status(&first.statuses, target);
+        assert!(matches!(
+            first_target.classification,
+            TargetProbeClassification::TransientProbeFailure {
+                consecutive_failures: 1
+            }
+        ));
+        assert_eq!(
+            first_target.skipped_reason.as_deref(),
+            Some(logic::SKIP_REASON_TRANSIENT_PROBE_FAILURE)
+        );
+        assert!(
+            first.statuses.iter().any(|status| matches!(
+                status.classification,
+                TargetProbeClassification::TransientProbeFailure { .. }
+            )),
+            "transient failures keep the tick degraded and prevent surplus"
+        );
+
+        let second =
+            update_consecutive_probe_failures(&managed, &current, vec![probe_failure(target)]);
+        let second_target = target_status(&second.statuses, target);
+        assert!(matches!(
+            second_target.classification,
+            TargetProbeClassification::TransientProbeFailure {
+                consecutive_failures: 2
+            }
+        ));
+        assert_eq!(
+            second.failures[0].consecutive_failures, 2,
+            "probe failure summaries carry the updated count"
+        );
+    }
+
+    #[test]
+    fn relay_probe_failure_threshold_routes_surplus() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let relay = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let managed = vec![relay, target];
+        let mut st = State::new(config_with_managed(vec![target]), 0);
+        st.consecutive_probe_failures.insert(target, 2);
+        state::set_state(st);
+
+        let current = BTreeMap::from([(relay, snapshot(995_000))]);
+        let previous = BTreeMap::from([(relay, snapshot(1_000_000)), (target, snapshot(500_000))]);
+        let update =
+            update_consecutive_probe_failures(&managed, &current, vec![probe_failure(target)]);
+        let target_status = target_status(&update.statuses, target);
+        assert!(matches!(
+            target_status.classification,
+            TargetProbeClassification::UnavailableAfterConsecutiveFailures {
+                consecutive_failures: 3
+            }
+        ));
+        assert_eq!(
+            target_status.skipped_reason.as_deref(),
+            Some(logic::SKIP_REASON_TARGET_UNAVAILABLE_AFTER_CONSECUTIVE_PROBE_FAILURES)
+        );
+
+        let estimate = crate::state::ConversionEstimate {
+            cycles_per_e8: 1_000,
+            timestamp_nanos: 1,
+        };
+        let allocation = logic::build_allocation_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            300_000_000,
+            10_000,
+            Some(&estimate),
+            1,
+        );
+        assert_eq!(allocation.topups.len(), 1);
+        assert_eq!(allocation.topups[0].canister_id, relay);
+        assert!(allocation.topups[0].amount_e8s > 0);
+
+        let retained = retained_e8s(
+            300_000_000,
+            &allocation
+                .topups
+                .iter()
+                .map(CanisterBurnSample::from)
+                .collect::<Vec<_>>(),
+            &[],
+        );
+        let recipient = ResolvedSurplusRecipient {
+            target: SurplusTarget::Canister(principal("jufzc-caaaa-aaaar-qb5da-cai")),
+            account: Account {
+                owner: principal("jufzc-caaaa-aaaar-qb5da-cai"),
+                subaccount: None,
+            },
+            memo: None,
+        };
+        let (surplus, _, reason) =
+            logic::build_surplus_plan(&[recipient], retained, 10_000, Some(&estimate), 1);
+        assert_eq!(reason, None);
+        assert!(surplus[0].amount_e8s >= logic::MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S);
+    }
+
+    #[test]
+    fn relay_probe_success_resets_failure_count() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let relay = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let managed = vec![relay, target];
+        state::set_state(State::new(config_with_managed(vec![target]), 0));
+        let relay_only = BTreeMap::from([(relay, snapshot(1_000_000))]);
+
+        let _ =
+            update_consecutive_probe_failures(&managed, &relay_only, vec![probe_failure(target)]);
+        let failed_twice =
+            update_consecutive_probe_failures(&managed, &relay_only, vec![probe_failure(target)]);
+        assert_eq!(
+            target_status(&failed_twice.statuses, target).consecutive_probe_failures,
+            2
+        );
+
+        let success = update_consecutive_probe_failures(
+            &managed,
+            &BTreeMap::from([(relay, snapshot(1_000_000)), (target, snapshot(900_000))]),
+            Vec::new(),
+        );
+        assert!(matches!(
+            target_status(&success.statuses, target).classification,
+            TargetProbeClassification::Observable
+        ));
+        assert_eq!(
+            target_status(&success.statuses, target).consecutive_probe_failures,
+            0
+        );
+
+        let failed_again =
+            update_consecutive_probe_failures(&managed, &relay_only, vec![probe_failure(target)]);
+        assert_eq!(
+            target_status(&failed_again.statuses, target).consecutive_probe_failures,
+            1
+        );
+    }
+
+    #[test]
+    fn relay_unavailable_target_does_not_block_healthy_target() {
+        let unavailable = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let healthy = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let relay = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let managed = vec![relay, unavailable, healthy];
+        let mut st = State::new(config_with_managed(vec![unavailable, healthy]), 0);
+        st.consecutive_probe_failures.insert(unavailable, 2);
+        state::set_state(st);
+
+        let current = BTreeMap::from([(relay, snapshot(1_000_000)), (healthy, snapshot(800_000))]);
+        let previous = BTreeMap::from([
+            (relay, snapshot(1_000_000)),
+            (unavailable, snapshot(500_000)),
+            (healthy, snapshot(1_000_000)),
+        ]);
+        let update =
+            update_consecutive_probe_failures(&managed, &current, vec![probe_failure(unavailable)]);
+        assert!(matches!(
+            target_status(&update.statuses, unavailable).classification,
+            TargetProbeClassification::UnavailableAfterConsecutiveFailures { .. }
+        ));
+
+        let estimate = crate::state::ConversionEstimate {
+            cycles_per_e8: 1_000,
+            timestamp_nanos: 1,
+        };
+        let allocation = logic::build_allocation_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            300_000_000,
+            10_000,
+            Some(&estimate),
+            1,
+        );
+        assert!(allocation
+            .topups
+            .iter()
+            .any(|plan| plan.canister_id == healthy && plan.amount_e8s > 0));
+        assert!(!allocation
+            .topups
+            .iter()
+            .any(|plan| plan.canister_id == unavailable));
+    }
+
+    #[test]
+    fn relay_transient_probe_failure_still_degrades() {
+        let transient = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let healthy = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let relay = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let managed = vec![relay, transient, healthy];
+        state::set_state(State::new(config_with_managed(vec![transient, healthy]), 0));
+
+        let update = update_consecutive_probe_failures(
+            &managed,
+            &BTreeMap::from([(relay, snapshot(1_000_000)), (healthy, snapshot(800_000))]),
+            vec![probe_failure(transient)],
+        );
+
+        assert!(update.statuses.iter().any(|status| matches!(
+            status.classification,
+            TargetProbeClassification::TransientProbeFailure {
+                consecutive_failures: 1
+            }
+        )));
+        assert!(
+            update.statuses.iter().any(|status| matches!(
+                status.classification,
+                TargetProbeClassification::TransientProbeFailure { .. }
+            )),
+            "start_job keeps existing degraded safety behavior while any transient failure exists"
+        );
+    }
+
+    #[test]
+    fn relay_unavailable_target_is_rechecked_each_tick() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let relay = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let managed = vec![relay, target];
+        let mut st = State::new(config_with_managed(vec![target]), 0);
+        st.consecutive_probe_failures.insert(target, 3);
+        state::set_state(st);
+
+        let success = update_consecutive_probe_failures(
+            &managed,
+            &BTreeMap::from([(relay, snapshot(1_000_000)), (target, snapshot(900_000))]),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            target_status(&success.statuses, target).classification,
+            TargetProbeClassification::Observable
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_probe_failures.get(&target), Some(&0));
+        });
+    }
+
+    #[test]
+    fn relay_scheduler_third_probe_failure_routes_surplus() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let self_id = relay_self();
+        let self_cycles = 9_000_000_u128;
+        let mut st = State::new(config_with_managed(vec![target]), 0);
+        st.consecutive_probe_failures.insert(target, 2);
+        st.last_completed_cycles
+            .insert(self_id, snapshot(self_cycles + 1_000_000));
+        st.last_completed_cycles.insert(target, snapshot(5_000_000));
+        state::set_state(st);
+        let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
+        let cmc = MockSchedulerCmc::new(10_000_000_000_000);
+
+        let (self_id, _) = run_start_job_for_test(None, &ledger, &cmc);
+
+        let summary = state::with_state(|st| {
+            assert_eq!(st.consecutive_probe_failures.get(&target), Some(&3));
+            st.last_summary.clone().expect("scheduler summary")
+        });
+        let target_probe = target_status(&summary.target_probe_statuses, target);
+        assert!(matches!(
+            target_probe.classification,
+            TargetProbeClassification::UnavailableAfterConsecutiveFailures {
+                consecutive_failures: 3
+            }
+        ));
+        assert_ne!(summary.mode, RelayMode::Degraded);
+        assert!(!summary
+            .canisters
+            .iter()
+            .any(|sample| sample.canister_id == target));
+        assert!(!cmc.notify_calls().contains(&target));
+        let self_sample = summary
+            .canisters
+            .iter()
+            .find(|sample| sample.canister_id == self_id)
+            .expect("relay self top-up sample");
+        assert!(self_sample.target_topup_cycles > 0);
+        assert!(self_sample.sent_topup_e8s > 0);
+        assert!(self_sample.remaining_deficit_cycles == 0);
+        assert!(
+            summary
+                .surplus_transfers
+                .iter()
+                .any(|transfer| transfer.amount_e8s > 0),
+            "remaining default-account ICP should be routed as surplus"
+        );
+        assert!(ledger.transfer_count() >= 2);
+        assert!(summary.surplus_allowed_despite_unavailable_targets);
+        assert_ne!(
+            summary.skipped_surplus_reason.as_deref(),
+            Some(logic::SKIP_REASON_TRANSIENT_PROBE_FAILURE)
+        );
+    }
+
+    #[test]
+    fn relay_scheduler_probe_success_after_threshold_resets_and_resumes_target() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let self_id = relay_self();
+        let self_cycles = 9_000_000_u128;
+        let target_cycles = 4_000_000_u128;
+        let mut st = State::new(config_with_managed(vec![target]), 0);
+        st.consecutive_probe_failures.insert(target, 3);
+        st.last_completed_cycles
+            .insert(self_id, snapshot(self_cycles));
+        st.last_completed_cycles
+            .insert(target, snapshot(target_cycles + 1_000_000));
+        state::set_state(st);
+        let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
+        let cmc = MockSchedulerCmc::new(10_000_000_000_000);
+
+        run_start_job_for_test(Some((target, target_cycles)), &ledger, &cmc);
+
+        let summary = state::with_state(|st| {
+            assert_eq!(st.consecutive_probe_failures.get(&target), Some(&0));
+            st.last_summary.clone().expect("scheduler summary")
+        });
+        let target_probe = target_status(&summary.target_probe_statuses, target);
+        assert!(matches!(
+            target_probe.classification,
+            TargetProbeClassification::Observable
+        ));
+        let target_sample = summary
+            .canisters
+            .iter()
+            .find(|sample| sample.canister_id == target)
+            .expect("target resumes normal top-up planning");
+        assert!(target_sample.target_topup_cycles > 0);
+        assert!(target_sample.sent_topup_e8s > 0);
+        assert!(cmc.notify_calls().contains(&target));
     }
 
     #[test]

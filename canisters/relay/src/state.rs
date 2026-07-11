@@ -66,6 +66,22 @@ pub struct CyclesSnapshot {
 pub struct ProbeFailure {
     pub canister_id: Principal,
     pub error: String,
+    pub consecutive_failures: u32,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum TargetProbeClassification {
+    Observable,
+    TransientProbeFailure { consecutive_failures: u32 },
+    UnavailableAfterConsecutiveFailures { consecutive_failures: u32 },
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct TargetProbeStatus {
+    pub canister_id: Principal,
+    pub consecutive_probe_failures: u32,
+    pub classification: TargetProbeClassification,
+    pub skipped_reason: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -130,11 +146,13 @@ pub struct RelaySummary {
     pub ambiguous_transfers: u32,
     pub partial_tick_count: u32,
     pub probe_failures: Vec<ProbeFailure>,
+    pub target_probe_statuses: Vec<TargetProbeStatus>,
     pub canisters: Vec<CanisterBurnSample>,
     pub conversion_estimate_used: Option<ConversionEstimate>,
     pub surplus_e8s_before_fees: u64,
     pub surplus_transfers: Vec<SurplusTransferSample>,
     pub skipped_surplus_reason: Option<String>,
+    pub surplus_allowed_despite_unavailable_targets: bool,
 }
 
 impl RelaySummary {
@@ -171,11 +189,13 @@ impl RelaySummary {
             ambiguous_transfers: 0,
             partial_tick_count: 0,
             probe_failures: Vec::new(),
+            target_probe_statuses: Vec::new(),
             canisters: Vec::new(),
             conversion_estimate_used: None,
             surplus_e8s_before_fees: 0,
             surplus_transfers: Vec::new(),
             skipped_surplus_reason: None,
+            surplus_allowed_despite_unavailable_targets: false,
         }
     }
 
@@ -280,6 +300,7 @@ pub(crate) struct State {
     pub last_completed_cycles: BTreeMap<Principal, CyclesSnapshot>,
     pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
     pub recovery_deficit_cycles: BTreeMap<Principal, u128>,
+    pub consecutive_probe_failures: BTreeMap<Principal, u32>,
     pub conversion_estimate: Option<ConversionEstimate>,
     pub active_job: Option<ActiveRelayJob>,
     pub active_faucet_commitment_transfer: Option<PendingFaucetCommitmentTransfer>,
@@ -296,6 +317,7 @@ impl State {
             last_completed_cycles: BTreeMap::new(),
             relay_minted_cycles_since_sample: BTreeMap::new(),
             recovery_deficit_cycles: BTreeMap::new(),
+            consecutive_probe_failures: BTreeMap::new(),
             conversion_estimate: None,
             active_job: None,
             active_faucet_commitment_transfer: None,
@@ -366,7 +388,7 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
 
 pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
     format!(
-        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} total_burn_cycles={} total_target_topup_cycles={} total_actual_minted_cycles={} total_carried_deficit_cycles={} total_remaining_deficit_cycles={} deficit_canister_count={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={} conversion_cycles_per_e8={} surplus_e8s_before_fees={} skipped_surplus_reason={}",
+        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} total_burn_cycles={} total_target_topup_cycles={} total_actual_minted_cycles={} total_carried_deficit_cycles={} total_remaining_deficit_cycles={} deficit_canister_count={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={} conversion_cycles_per_e8={} surplus_e8s_before_fees={} skipped_surplus_reason={} surplus_allowed_despite_unavailable_targets={}",
         summary.mode,
         summary.started_at_ts_nanos,
         opt_u64(summary.completed_at_ts_nanos),
@@ -399,6 +421,7 @@ pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
             .unwrap_or_else(|| "null".to_string()),
         summary.surplus_e8s_before_fees,
         opt_text(summary.skipped_surplus_reason.as_deref()),
+        summary.surplus_allowed_despite_unavailable_targets,
     )
 }
 
@@ -422,9 +445,20 @@ pub(crate) fn relay_canister_log_line(sample: &CanisterBurnSample) -> String {
 
 pub(crate) fn relay_probe_failure_log_line(failure: &ProbeFailure) -> String {
     format!(
-        "RELAY_PROBE_FAILURE canister_id={} error={}",
+        "RELAY_PROBE_FAILURE canister_id={} consecutive_failures={} error={}",
         failure.canister_id.to_text(),
+        failure.consecutive_failures,
         escape_log_text(&failure.error),
+    )
+}
+
+pub(crate) fn relay_target_probe_status_log_line(status: &TargetProbeStatus) -> String {
+    format!(
+        "RELAY_TARGET_PROBE canister_id={} consecutive_probe_failures={} classification={} skipped_reason={}",
+        status.canister_id.to_text(),
+        status.consecutive_probe_failures,
+        target_probe_classification_text(&status.classification),
+        opt_text(status.skipped_reason.as_deref()),
     )
 }
 
@@ -501,6 +535,16 @@ fn opt_text(value: Option<&str>) -> String {
     value
         .map(escape_log_text)
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn target_probe_classification_text(classification: &TargetProbeClassification) -> &'static str {
+    match classification {
+        TargetProbeClassification::Observable => "observable",
+        TargetProbeClassification::TransientProbeFailure { .. } => "transient_probe_failure",
+        TargetProbeClassification::UnavailableAfterConsecutiveFailures { .. } => {
+            "target_unavailable_after_consecutive_probe_failures"
+        }
+    }
 }
 
 fn escape_log_text(text: &str) -> String {
@@ -674,6 +718,7 @@ mod tests {
         assert!(line.contains("balance_start_e8s=555"));
         assert!(line.contains("fee_e8s=10"));
         assert!(line.contains("partial_tick_count=1"));
+        assert!(line.contains("surplus_allowed_despite_unavailable_targets=false"));
         assert!(!line.contains('\n'));
     }
 
@@ -706,11 +751,29 @@ mod tests {
         let failure = ProbeFailure {
             canister_id: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
             error: "call failed\nretry".to_string(),
+            consecutive_failures: 2,
         };
         let failure_line = relay_probe_failure_log_line(&failure);
         assert!(failure_line.starts_with("RELAY_PROBE_FAILURE "));
+        assert!(failure_line.contains("consecutive_failures=2"));
         assert!(failure_line.contains("error=call%20failed%0Aretry"));
         assert!(!failure_line.contains('\n'));
+
+        let status = TargetProbeStatus {
+            canister_id: principal("uccpi-cqaaa-aaaar-qby3q-cai"),
+            consecutive_probe_failures: 3,
+            classification: TargetProbeClassification::UnavailableAfterConsecutiveFailures {
+                consecutive_failures: 3,
+            },
+            skipped_reason: Some("target_unavailable_after_consecutive_probe_failures".to_string()),
+        };
+        let status_line = relay_target_probe_status_log_line(&status);
+        assert!(status_line.starts_with("RELAY_TARGET_PROBE "));
+        assert!(status_line.contains("consecutive_probe_failures=3"));
+        assert!(status_line
+            .contains("classification=target_unavailable_after_consecutive_probe_failures"));
+        assert!(status_line
+            .contains("skipped_reason=target_unavailable_after_consecutive_probe_failures"));
     }
 
     #[test]
@@ -802,6 +865,7 @@ mod tests {
             );
             assert!(stored.relay_minted_cycles_since_sample.is_empty());
             assert!(stored.recovery_deficit_cycles.is_empty());
+            assert!(stored.consecutive_probe_failures.is_empty());
             assert!(stored.last_summary.is_none());
             assert!(stored.active_job.is_none());
             assert!(stored.active_faucet_commitment_transfer.is_none());

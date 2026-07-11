@@ -9,6 +9,7 @@ use crate::state::{CyclesSnapshot, ProbeFailure};
 pub(super) async fn probe_cycles<B: BlackholeClient>(
     canisters: &[Principal],
     self_id: Principal,
+    self_cycles: u128,
     configured_blackhole_canister_id: Principal,
     now_nanos: u64,
     blackhole: &B,
@@ -18,7 +19,7 @@ pub(super) async fn probe_cycles<B: BlackholeClient>(
     for canister_id in canisters {
         let source = logic::sample_source_for(*canister_id, self_id);
         let result = if *canister_id == self_id {
-            Ok(ic_cdk::api::canister_cycle_balance())
+            Ok(self_cycles)
         } else {
             let probe_canister_id =
                 logic::probe_canister_for(*canister_id, self_id, configured_blackhole_canister_id);
@@ -40,6 +41,7 @@ pub(super) async fn probe_cycles<B: BlackholeClient>(
             Err(err) => failures.push(ProbeFailure {
                 canister_id: *canister_id,
                 error: err.to_string(),
+                consecutive_failures: 0,
             }),
         }
     }

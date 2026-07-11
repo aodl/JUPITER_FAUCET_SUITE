@@ -266,14 +266,17 @@ build_one() {
   echo "Built ${target_name}: ${raw_out} ${gz_out}"
 }
 
-build_historian_with_relay() {
+build_historian() {
   build_selected jupiter-relay
 
   rm -f \
-    release-artifacts/jupiter_historian.wasm \
-    release-artifacts/jupiter_historian.wasm.gz \
-    release-artifacts/jupiter_historian.wasm.sha256 \
-    release-artifacts/jupiter_historian.wasm.gz.sha256
+    release-artifacts/jupiter_historian_with_relay.wasm \
+    release-artifacts/jupiter_historian_with_relay.wasm.gz \
+    release-artifacts/jupiter_historian_with_relay.wasm.sha256 \
+    release-artifacts/jupiter_historian_with_relay.wasm.gz.sha256 \
+    release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm.sha256 \
+    release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256 \
+    release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256
 
   local relay_raw_wasm="release-artifacts/jupiter_relay.wasm"
   local relay_gz_wasm="release-artifacts/jupiter_relay.wasm.gz"
@@ -290,8 +293,8 @@ build_historian_with_relay() {
   local gz_hash
   raw_hash="$(sha256sum "$relay_raw_wasm" | awk '{print $1}')"
   gz_hash="$(sha256sum "$relay_gz_wasm" | awk '{print $1}')"
-  printf '%s  %s\n' "$raw_hash" "$relay_raw_wasm" > release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256
-  printf '%s  %s\n' "$gz_hash" "$relay_gz_wasm" > release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256
+  printf '%s  %s\n' "$raw_hash" "$relay_raw_wasm" > release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256
+  printf '%s  %s\n' "$gz_hash" "$relay_gz_wasm" > release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256
   export JUPITER_RELAY_WASM_PATH="${REPO_ROOT}/${relay_gz_wasm}"
   export JUPITER_RELAY_RAW_WASM_PATH="${REPO_ROOT}/${relay_raw_wasm}"
   export JUPITER_RELAY_RAW_WASM_SHA256="${raw_hash}"
@@ -299,7 +302,16 @@ build_historian_with_relay() {
   echo "Embedding relay wasm in jupiter-historian: ${JUPITER_RELAY_WASM_PATH}"
   echo "Reviewed raw relay wasm sha256: ${raw_hash}"
   echo "Embedded gzip relay wasm sha256: ${gz_hash}"
-  build_one "jupiter-historian-with-relay" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian_with_relay" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+  build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+}
+
+build_historian_no_relay() {
+  build_one "jupiter-historian-no-relay" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian_no_relay" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+}
+
+build_historian_with_relay_alias() {
+  echo "Deprecated alias: jupiter-historian-with-relay now delegates to canonical jupiter-historian"
+  build_historian
 }
 
 build_selected() {
@@ -314,10 +326,13 @@ build_selected() {
       build_one "jupiter-faucet" "jupiter-faucet" "jupiter_faucet" "canisters/faucet/jupiter_faucet.did" "jupiter_faucet" "JUPITER_FAUCET_PROD_CANISTER_ID" "jupiter_faucet"
       ;;
     jupiter-historian)
-      build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
+      build_historian
+      ;;
+    jupiter-historian-no-relay)
+      build_historian_no_relay
       ;;
     jupiter-historian-with-relay)
-      build_historian_with_relay
+      build_historian_with_relay_alias
       ;;
     jupiter-relay)
       build_one "jupiter-relay" "jupiter-relay" "jupiter_relay" "canisters/relay/jupiter_relay.did" "jupiter_relay" "JUPITER_RELAY_PROD_CANISTER_ID" "jupiter_relay"
@@ -335,13 +350,13 @@ build_selected() {
       build_selected jupiter-disburser
       build_selected jupiter-lifeline
       build_selected jupiter-faucet
-      build_selected jupiter-historian-with-relay
+      build_selected jupiter-historian
       build_selected jupiter-sns-rewards
       build_selected jupiter-faucet-frontend
       ;;
     *)
       echo "unknown build target: $1" >&2
-      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-historian-with-relay, jupiter-relay, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
+      echo "expected one of: jupiter-disburser, jupiter-lifeline, jupiter-faucet, jupiter-historian, jupiter-historian-no-relay, jupiter-historian-with-relay, jupiter-relay, jupiter-sns-rewards, jupiter-faucet-frontend, all" >&2
       exit 1
       ;;
   esac

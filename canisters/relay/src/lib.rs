@@ -233,6 +233,7 @@ pub struct DebugState {
     pub last_completed_cycles_count: u32,
     pub relay_minted_cycles_since_sample_count: u32,
     pub recovery_deficit_cycles_count: u32,
+    pub consecutive_probe_failures: Vec<(Principal, u32)>,
     pub conversion_estimate_present: bool,
 }
 
@@ -270,6 +271,11 @@ fn debug_state() -> DebugState {
         last_completed_cycles_count: st.last_completed_cycles.len() as u32,
         relay_minted_cycles_since_sample_count: st.relay_minted_cycles_since_sample.len() as u32,
         recovery_deficit_cycles_count: st.recovery_deficit_cycles.len() as u32,
+        consecutive_probe_failures: st
+            .consecutive_probe_failures
+            .iter()
+            .map(|(canister_id, count)| (*canister_id, *count))
+            .collect(),
         conversion_estimate_present: st.conversion_estimate.is_some(),
     })
 }
@@ -530,6 +536,7 @@ mod tests {
         assert!(st.last_completed_cycles.is_empty());
         assert!(st.relay_minted_cycles_since_sample.is_empty());
         assert!(st.recovery_deficit_cycles.is_empty());
+        assert!(st.consecutive_probe_failures.is_empty());
         assert!(st.conversion_estimate.is_none());
         assert!(st.active_job.is_none());
         assert!(st.active_faucet_commitment_transfer.is_none());

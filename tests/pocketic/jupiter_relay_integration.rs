@@ -746,8 +746,15 @@ fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<
     if transfer.memo.as_deref() != Some(expected_memo.as_slice()) {
         bail!("expected compact Relay Faucet memo, got {transfer:?}");
     }
+    if env.claim_or_refresh_calls()? != 0 {
+        bail!("expected claim_or_refresh to be deferred until the accepted transfer is retried");
+    }
+    let _ = env.tick_relay()?;
     if env.claim_or_refresh_calls()? != 1 {
-        bail!("expected one Jupiter Faucet neuron claim_or_refresh call");
+        bail!("expected one deferred Jupiter Faucet neuron claim_or_refresh call");
+    }
+    if env.transfers()?.len() != 1 {
+        bail!("expected deferred refresh not to duplicate the ledger transfer");
     }
     if env.relay_balance()? != 0 || env.relay_subaccount_one_balance()? != 0 {
         bail!(
@@ -824,11 +831,18 @@ fn subaccount_one_commitment_treats_ledger_duplicate_as_accepted() -> Result<()>
     if summary.ledger_transfer_count != 0 || summary.cmc_notify_success_count != 0 {
         bail!("expected default-account job to stay idle, got {summary:?}");
     }
-    if env.claim_or_refresh_calls()? != 1 {
-        bail!("expected duplicate response to be accepted and followed by claim_or_refresh");
+    if env.claim_or_refresh_calls()? != 0 {
+        bail!("expected duplicate response refresh to be deferred until the accepted transfer is retried");
     }
     if !env.transfers()?.is_empty() {
         bail!("mock duplicate response should not create a second ledger transfer record");
+    }
+    let _ = env.tick_relay()?;
+    if env.claim_or_refresh_calls()? != 1 {
+        bail!("expected accepted duplicate response to be followed by deferred claim_or_refresh");
+    }
+    if !env.transfers()?.is_empty() {
+        bail!("mock duplicate response should not create a ledger transfer record after deferred refresh");
     }
     let logs = env.logs_text()?;
     if !logs.contains("RELAY_FAUCET_COMMITMENT ")
@@ -869,17 +883,6 @@ fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Re
         || !logs.contains("relay ERR message=faucet%20commitment%20neuron%20refresh%20failed")
     {
         bail!("expected accepted transfer and logged follow-up refresh failure, got {logs}");
-    }
-    let summary_pos = logs
-        .find("RELAY_SUMMARY ")
-        .context("expected allocation-job summary log")?;
-    let refresh_failure_pos = logs
-        .find("relay ERR message=faucet%20commitment%20neuron%20refresh%20failed")
-        .context("expected scheduled refresh failure log")?;
-    if refresh_failure_pos < summary_pos {
-        bail!(
-            "expected faucet commitment refresh failure to be logged after allocation-job summary, got {logs}"
-        );
     }
     Ok(())
 }

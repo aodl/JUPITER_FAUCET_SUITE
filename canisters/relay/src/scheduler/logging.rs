@@ -69,6 +69,9 @@ pub(super) fn log_summary(summary: &crate::state::RelaySummary) {
     for failure in &summary.probe_failures {
         emit_log_line(crate::state::relay_probe_failure_log_line(failure));
     }
+    for status in &summary.target_probe_statuses {
+        emit_log_line(crate::state::relay_target_probe_status_log_line(status));
+    }
     for plan in &summary.surplus_transfers {
         emit_log_line(crate::state::relay_surplus_transfer_log_line(plan));
     }

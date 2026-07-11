@@ -5,13 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "$REPO_ROOT"
 
-artifact="release-artifacts/jupiter_historian_with_relay.wasm.gz"
-plain_artifact="release-artifacts/jupiter_historian.wasm.gz"
+artifact="release-artifacts/jupiter_historian.wasm.gz"
+deprecated_artifact="release-artifacts/jupiter_historian_with_relay.wasm.gz"
 
-./tools/scripts/build-canister jupiter-historian-with-relay
+./tools/scripts/build-canister jupiter-historian
 
 if [[ ! -f "$artifact" ]]; then
-  echo "expected historian-with-relay artifact is missing: ${artifact}" >&2
+  echo "expected canonical relay-enabled historian artifact is missing: ${artifact}" >&2
   exit 1
 fi
 
@@ -30,15 +30,15 @@ echo "Production historian deploy artifact path:"
 echo "$artifact"
 echo
 echo "Artifact hashes:"
-cat release-artifacts/jupiter_historian_with_relay.reviewed-relay-wasm-raw.sha256
-cat release-artifacts/jupiter_historian_with_relay.embedded-relay-wasm-gz.sha256
+cat release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256
+cat release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256
 sha256sum "$artifact"
 
-if [[ -f "$plain_artifact" ]]; then
-  plain_hash="$(sha256sum "$plain_artifact" | awk '{print $1}')"
-  relay_hash="$(sha256sum "$artifact" | awk '{print $1}')"
-  if [[ "$plain_hash" != "$relay_hash" ]]; then
-    echo "refusing preflight: plain historian artifact exists with different bytes: ${plain_artifact}" >&2
+if [[ -f "$deprecated_artifact" ]]; then
+  deprecated_hash="$(sha256sum "$deprecated_artifact" | awk '{print $1}')"
+  canonical_hash="$(sha256sum "$artifact" | awk '{print $1}')"
+  if [[ "$deprecated_hash" != "$canonical_hash" ]]; then
+    echo "refusing preflight: deprecated historian-with-relay artifact exists with different bytes: ${deprecated_artifact}" >&2
     exit 1
   fi
 fi

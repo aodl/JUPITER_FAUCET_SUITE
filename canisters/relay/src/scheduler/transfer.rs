@@ -2,7 +2,7 @@ use candid::{Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, TransferError};
 
-use crate::clients::{ClientError, CmcClient, LedgerClient};
+use crate::clients::{ClientError, CmcClient, GovernanceClient, LedgerClient};
 use crate::logic;
 use crate::scheduler::logging::{emit_log_line, log_error};
 use crate::state::{
@@ -296,14 +296,19 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
     }
 }
 
-pub(super) async fn drive_pending_faucet_commitment_transfer<L: LedgerClient>(
+pub(super) async fn drive_pending_faucet_commitment_transfer<
+    L: LedgerClient,
+    G: GovernanceClient,
+>(
     ledger: &L,
+    #[cfg_attr(target_arch = "wasm32", allow(unused_variables))] governance: &G,
     now_nanos: u64,
 ) -> bool {
     let Some(staged) = state::with_state(|st| st.active_faucet_commitment_transfer.clone()) else {
         return true;
     };
 
+    let mut accepted_this_tick = false;
     let accepted = match staged.transfer.phase {
         PendingTransferPhase::AwaitingTransfer => {
             if !created_at_time_is_valid(staged.transfer.created_at_time_nanos, now_nanos) {
@@ -354,28 +359,52 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<L: LedgerClient>(
                 }
             }
             mark_faucet_commitment_ledger_accepted(block_index);
+            accepted_this_tick = true;
             state::with_state(|st| st.active_faucet_commitment_transfer.clone().unwrap())
         }
         PendingTransferPhase::TransferAccepted { .. } => staged,
     };
+    if accepted_this_tick {
+        return true;
+    }
 
     let neuron_id = match &accepted.transfer.kind {
         PendingTransferKind::FaucetCommitment { neuron_id, .. } => *neuron_id,
         _ => return true,
     };
-    mark_faucet_commitment_completed();
-    ic_cdk_timers::set_timer(std::time::Duration::from_secs(0), async move {
-        let governance_id = state::with_state(|st| st.config.governance_canister_id);
-        let governance = crate::clients::governance::NnsGovernanceCanister::new(governance_id);
-        if let Err(err) =
-            crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id).await
-        {
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        ic_cdk_timers::set_timer(std::time::Duration::from_secs(0), async move {
+            let governance_id = state::with_state(|st| st.config.governance_canister_id);
+            let governance = crate::clients::governance::NnsGovernanceCanister::new(governance_id);
+            match crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id)
+                .await
+            {
+                Ok(()) => mark_faucet_commitment_completed(),
+                Err(err) => {
+                    log_active_faucet_commitment(None);
+                    log_error(&format!(
+                        "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
+                    ));
+                }
+            }
+        });
+        true
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Err(err) = governance.claim_or_refresh_neuron(neuron_id).await {
+            log_active_faucet_commitment(None);
             log_error(&format!(
                 "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
             ));
+            return true;
         }
-    });
-    true
+        mark_faucet_commitment_completed();
+        true
+    }
 }
 
 fn mark_pending_ledger_accepted(block_index: u64) {
@@ -418,8 +447,12 @@ fn mark_pending_ledger_accepted(block_index: u64) {
 }
 
 fn log_faucet_commitment(transfer: &PendingFaucetCommitmentTransfer, skipped_reason: Option<&str>) {
+    #[cfg(target_arch = "wasm32")]
+    let source_owner = ic_cdk::api::canister_self();
+    #[cfg(not(target_arch = "wasm32"))]
+    let source_owner = Principal::anonymous();
     let source = Account {
-        owner: ic_cdk::api::canister_self(),
+        owner: source_owner,
         subaccount: from_subaccount_for_pending(&transfer.transfer),
     };
     let destination = destination_for_pending(Principal::management_canister(), &transfer.transfer);
@@ -447,6 +480,14 @@ fn mark_faucet_commitment_completed() {
     state::with_state_mut(|st| {
         if let Some(active) = st.active_faucet_commitment_transfer.take() {
             log_faucet_commitment(&active, None);
+        }
+    });
+}
+
+fn log_active_faucet_commitment(skipped_reason: Option<&str>) {
+    state::with_state(|st| {
+        if let Some(active) = st.active_faucet_commitment_transfer.as_ref() {
+            log_faucet_commitment(active, skipped_reason);
         }
     });
 }
@@ -578,6 +619,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::future::Future;
     use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use super::*;
@@ -624,6 +666,72 @@ mod tests {
             _arg: TransferArg,
         ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
             Ok(Ok(Nat::from(7u64)))
+        }
+    }
+
+    struct CountingLedger {
+        transfer_count: AtomicUsize,
+    }
+
+    impl CountingLedger {
+        fn new() -> Self {
+            Self {
+                transfer_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn transfer_count(&self) -> usize {
+            self.transfer_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for CountingLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10)
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
+            Ok(1_000)
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            let block_index = self.transfer_count.fetch_add(1, Ordering::SeqCst) as u64 + 1;
+            Ok(Ok(Nat::from(block_index)))
+        }
+    }
+
+    struct RefreshGovernance {
+        failures_before_success: AtomicUsize,
+    }
+
+    impl RefreshGovernance {
+        fn fail_times(count: usize) -> Self {
+            Self {
+                failures_before_success: AtomicUsize::new(count),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl GovernanceClient for RefreshGovernance {
+        async fn neuron_staking_subaccount(
+            &self,
+            _neuron_id: u64,
+        ) -> Result<[u8; 32], ClientError> {
+            Ok([7; 32])
+        }
+
+        async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), ClientError> {
+            let remaining = self.failures_before_success.load(Ordering::SeqCst);
+            if remaining == 0 {
+                return Ok(());
+            }
+            self.failures_before_success.fetch_sub(1, Ordering::SeqCst);
+            Err(ClientError::Call("mock refresh failed".to_string()))
         }
     }
 
@@ -717,6 +825,41 @@ mod tests {
         state::set_state(st);
     }
 
+    fn install_pending_faucet_commitment(phase: PendingTransferPhase) {
+        let cfg = Config {
+            managed_canisters: Vec::new(),
+            ledger_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
+            cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+            blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            main_interval_seconds: 60,
+            max_transfers_per_tick: None,
+            surplus_recipients: Vec::new(),
+        };
+        let destination = Account {
+            owner: cfg.governance_canister_id,
+            subaccount: Some([7; 32]),
+        };
+        let mut st = State::new(cfg, 1);
+        st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
+            transfer: PendingTransfer {
+                kind: PendingTransferKind::FaucetCommitment {
+                    neuron_id: logic::JUPITER_FAUCET_NEURON_ID,
+                    account: destination,
+                    from_subaccount: logic::relay_subaccount_one(),
+                    memo: b"relay-faucet-commitment".to_vec(),
+                },
+                gross_share_e8s: 100_010_000,
+                amount_e8s: 100_000_000,
+                created_at_time_nanos: 1,
+                phase,
+            },
+            fee_e8s: 10_000,
+            balance_start_e8s: 100_010_000,
+        });
+        state::set_state(st);
+    }
+
     #[test]
     fn ledger_acceptance_is_counted_before_cmc_notify_finishes() {
         install_pending_job(PendingTransferPhase::AwaitingTransfer);
@@ -798,6 +941,47 @@ mod tests {
             assert_eq!(summary.failed_transfers, 1);
             assert_eq!(summary.known_unspent_e8s, 100);
             assert_eq!(summary.ambiguous_e8s, 0);
+        });
+    }
+
+    #[test]
+    fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() {
+        install_pending_faucet_commitment(PendingTransferPhase::AwaitingTransfer);
+        let ledger = CountingLedger::new();
+        let governance = RefreshGovernance::fail_times(2);
+
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &governance,
+            2,
+        )));
+        assert_eq!(ledger.transfer_count(), 1);
+        state::with_state(|st| {
+            let active = st
+                .active_faucet_commitment_transfer
+                .as_ref()
+                .expect("accepted transfer remains staged after refresh failure");
+            assert!(matches!(
+                active.transfer.phase,
+                PendingTransferPhase::TransferAccepted { block_index: 1 }
+            ));
+        });
+
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &governance,
+            3,
+        )));
+        assert_eq!(ledger.transfer_count(), 1);
+        state::with_state(|st| {
+            let active = st
+                .active_faucet_commitment_transfer
+                .as_ref()
+                .expect("accepted transfer remains staged while refresh keeps failing");
+            assert!(matches!(
+                active.transfer.phase,
+                PendingTransferPhase::TransferAccepted { block_index: 1 }
+            ));
         });
     }
 }

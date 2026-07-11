@@ -7,7 +7,7 @@ use jupiter_ic_clients::account::principal_to_subaccount;
 
 use crate::state::{
     CanisterBurnSample, Config, ConversionEstimate, CyclesSampleSource, CyclesSnapshot,
-    SurplusRecipient, SurplusTarget, SurplusTransferSample,
+    SurplusRecipient, SurplusTarget, SurplusTransferSample, TargetProbeClassification,
 };
 
 pub(crate) const MEMO_TOP_UP_CANISTER_U64: u64 = 1_347_768_404;
@@ -28,6 +28,10 @@ pub(crate) const SKIP_REASON_NO_SURPLUS_RECIPIENTS: &str = "no_surplus_recipient
 pub(crate) const SKIP_REASON_NO_SURPLUS: &str = "no_surplus";
 pub(crate) const SKIP_REASON_RAW_ICP_SHARE_BELOW_1_ICP: &str = "raw_icp_share_below_1_icp";
 pub(crate) const SKIP_REASON_UNRECOVERED_CYCLE_DEFICIT: &str = "unrecovered_cycle_deficit";
+pub(crate) const SKIP_REASON_TRANSIENT_PROBE_FAILURE: &str = "transient_probe_failure";
+pub(crate) const SKIP_REASON_TARGET_UNAVAILABLE_AFTER_CONSECUTIVE_PROBE_FAILURES: &str =
+    "target_unavailable_after_consecutive_probe_failures";
+pub(crate) const TARGET_UNAVAILABLE_FAILURE_THRESHOLD: u32 = 3;
 pub(crate) const ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD: &str =
     "all_cycles_batch_below_fee_efficient_threshold";
 const BOOTSTRAP_CYCLES_PER_E8: u128 = 100_000;
@@ -218,6 +222,23 @@ pub(crate) fn conversion_estimate_from_cmc_rate(
         cycles_per_e8: u128::from(xdr_permyriad_per_icp),
         timestamp_nanos,
     })
+}
+
+pub(crate) fn classify_target_probe(
+    observed: bool,
+    consecutive_failures: u32,
+) -> TargetProbeClassification {
+    if observed {
+        TargetProbeClassification::Observable
+    } else if consecutive_failures >= TARGET_UNAVAILABLE_FAILURE_THRESHOLD {
+        TargetProbeClassification::UnavailableAfterConsecutiveFailures {
+            consecutive_failures,
+        }
+    } else {
+        TargetProbeClassification::TransientProbeFailure {
+            consecutive_failures,
+        }
+    }
 }
 
 pub(crate) fn effective_managed_canisters(
