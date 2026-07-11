@@ -151,7 +151,7 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .unwrap_or(100_020_000),
         self_service_relay_interval_seconds: args
             .self_service_relay_interval_seconds
-            .unwrap_or(3600)
+            .unwrap_or(86400)
             .max(60),
         self_service_relay_max_transfers_per_tick: Some(
             args.self_service_relay_max_transfers_per_tick.unwrap_or(10),
@@ -455,7 +455,7 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
         st.config.relay_min_subaccount_one_seed_e8s = 100_020_000;
     }
     if st.config.self_service_relay_interval_seconds == 0 {
-        st.config.self_service_relay_interval_seconds = 3600;
+        st.config.self_service_relay_interval_seconds = 86400;
     }
     if st.config.io_surplus_neuron_id == 0 {
         st.config.io_surplus_neuron_id = DEFAULT_IO_SURPLUS_NEURON_ID;

@@ -80,7 +80,7 @@ impl From<StableConfig> for Config {
                 .unwrap_or(100_020_000),
             self_service_relay_interval_seconds: value
                 .self_service_relay_interval_seconds
-                .unwrap_or(3600),
+                .unwrap_or(86400),
             self_service_relay_max_transfers_per_tick: value
                 .self_service_relay_max_transfers_per_tick
                 .unwrap_or(Some(10)),

@@ -1,6 +1,6 @@
 # Relay Setup Recovery Runbook
 
-This runbook covers self-service relay setup jobs that reach `ManualRecoveryRequired`.
+This runbook covers self-service relay setup jobs that reach `ManualRecoveryRequired`. Self-service relays use the canonical Relay daily cadence; their configuration differs from the canonical production Relay only by target canister and surplus recipient settings.
 
 `ManualRecoveryRequired` means the historian saw an operation whose outcome can no longer be recovered safely by automatic retry. Operators must inspect public ledger/index records and canister state before deciding whether to refund, register a relay, or leave the job blocked.
 
@@ -50,7 +50,7 @@ This is the explicit create_canister ambiguous relay ID loss case. The created c
 
 If `relay_canister_id` is known and `code_installed` was not recorded, automatic retry first checks the relay canister module hash. The reviewed raw relay wasm hash is the review and reconciliation hash. If `canister_status.module_hash` matches that raw installed module hash, the historian marks code installed and resumes relay funding. This install_code module-hash reconciliation prevents a second `install_code` call in `Install` mode after a lost reply.
 
-The canonical historian build embeds `release-artifacts/jupiter_relay.wasm.gz` to keep the historian artifact smaller. `install_code` receives those compressed bytes directly; the IC accepts gzip-compressed Wasm modules and installs the decompressed module. Operators should keep these hashes distinct:
+The canonical historian build embeds `release-artifacts/jupiter_relay.wasm.gz` to keep the historian artifact smaller. Release artifacts are generated review evidence and are not checked into source control, so their absence from a source archive is not a source-level failure. `install_code` receives those compressed bytes directly; the IC accepts gzip-compressed Wasm modules and installs the decompressed module. Operators should keep these hashes distinct:
 
 - reviewed raw relay wasm hash: `sha256sum release-artifacts/jupiter_relay.wasm`
 - compressed embedded relay wasm.gz hash: `sha256sum release-artifacts/jupiter_relay.wasm.gz`

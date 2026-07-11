@@ -4,7 +4,7 @@ Production deployment is a governance-controlled operation. Once Jupiter Faucet 
 
 Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
 
-Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`.
+Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and only diverge from the canonical production Relay in target canister and surplus-recipient configuration.
 
 ## Production release flow
 

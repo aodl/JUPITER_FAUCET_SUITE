@@ -387,18 +387,27 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
 }
 
 pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
+    let (max_remaining_deficit_canister_id, max_remaining_deficit_cycles) =
+        max_remaining_deficit(summary);
+    let (min_cycles_canister_id, min_cycles_balance) = min_cycles_sample(summary);
     format!(
-        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} total_burn_cycles={} total_target_topup_cycles={} total_actual_minted_cycles={} total_carried_deficit_cycles={} total_remaining_deficit_cycles={} deficit_canister_count={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={} conversion_cycles_per_e8={} surplus_e8s_before_fees={} skipped_surplus_reason={} surplus_allowed_despite_unavailable_targets={}",
+        "RELAY_SUMMARY mode={:?} started_at_ts_nanos={} completed_at_ts_nanos={} min_cycles_balance={} min_cycles_canister_id={} min_cycles_sample={} total_burn_cycles={} total_target_topup_cycles={} total_actual_minted_cycles={} total_carried_deficit_cycles={} total_remaining_deficit_cycles={} deficit_canister_count={} max_remaining_deficit_canister_id={} max_remaining_deficit_cycles={} balance_start_e8s={} fee_e8s={} transfer_count={} ledger_transfer_count={} ledger_sent_e8s={} ledger_fees_e8s={} cmc_notify_success_count={} cmc_notify_failed_count={} cmc_notify_ambiguous_count={} planned_retained_e8s={} known_unspent_e8s={} ambiguous_e8s={} failed_transfers={} ambiguous_transfers={} partial_tick_count={} conversion_cycles_per_e8={} surplus_e8s_before_fees={} skipped_surplus_reason={} canister_skip_counts={} surplus_allowed_despite_unavailable_targets={}",
         summary.mode,
         summary.started_at_ts_nanos,
         opt_u64(summary.completed_at_ts_nanos),
         opt_u128(summary.min_cycles_balance),
+        opt_principal(min_cycles_canister_id),
+        opt_u128(min_cycles_balance),
         summary.total_burn_cycles,
         summary.total_target_topup_cycles,
         summary.total_actual_minted_cycles,
         summary.total_carried_deficit_cycles,
         summary.total_remaining_deficit_cycles,
         summary.deficit_canister_count,
+        opt_principal(max_remaining_deficit_canister_id),
+        max_remaining_deficit_cycles
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "null".to_string()),
         summary.default_account_balance_start_e8s,
         summary.fee_e8s,
         summary.transfer_count,
@@ -421,8 +430,50 @@ pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
             .unwrap_or_else(|| "null".to_string()),
         summary.surplus_e8s_before_fees,
         opt_text(summary.skipped_surplus_reason.as_deref()),
+        canister_skip_counts(summary),
         summary.surplus_allowed_despite_unavailable_targets,
     )
+}
+
+fn max_remaining_deficit(summary: &RelaySummary) -> (Option<Principal>, Option<u128>) {
+    summary
+        .canisters
+        .iter()
+        .filter(|sample| sample.remaining_deficit_cycles > 0)
+        .max_by_key(|sample| sample.remaining_deficit_cycles)
+        .map(|sample| {
+            (
+                Some(sample.canister_id),
+                Some(sample.remaining_deficit_cycles),
+            )
+        })
+        .unwrap_or((None, None))
+}
+
+fn min_cycles_sample(summary: &RelaySummary) -> (Option<Principal>, Option<u128>) {
+    summary
+        .canisters
+        .iter()
+        .min_by_key(|sample| sample.current_cycles)
+        .map(|sample| (Some(sample.canister_id), Some(sample.current_cycles)))
+        .unwrap_or((None, None))
+}
+
+fn canister_skip_counts(summary: &RelaySummary) -> String {
+    let mut counts = BTreeMap::<&str, u32>::new();
+    for sample in &summary.canisters {
+        if let Some(reason) = sample.skipped_reason.as_deref() {
+            *counts.entry(reason).or_insert(0) += 1;
+        }
+    }
+    if counts.is_empty() {
+        return "none".to_string();
+    }
+    counts
+        .into_iter()
+        .map(|(reason, count)| format!("{}:{}", escape_log_text(reason), count))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 pub(crate) fn relay_canister_log_line(sample: &CanisterBurnSample) -> String {
@@ -528,6 +579,12 @@ fn opt_u64(value: Option<u64>) -> String {
 fn opt_u128(value: Option<u128>) -> String {
     value
         .map(|v| v.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn opt_principal(value: Option<Principal>) -> String {
+    value
+        .map(|v| v.to_text())
         .unwrap_or_else(|| "null".to_string())
 }
 

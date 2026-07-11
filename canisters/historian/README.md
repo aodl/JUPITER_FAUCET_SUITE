@@ -319,7 +319,7 @@ It produces the canonical release artifacts under `release-artifacts/`, includin
 - `release-artifacts/jupiter_historian.wasm.gz`
 - corresponding `.sha256` files
 
-The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
+The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Self-service relays created by Historian use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and differ from the canonical production Relay only in target canister and surplus-recipient configuration. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
 
 ### Deploy canonical release artifact on the IC
 

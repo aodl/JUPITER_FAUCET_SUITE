@@ -37,7 +37,7 @@
   relay_initial_cycles = opt (1000000000000 : nat);
   relay_cycle_safety_margin_e8s = opt (5000000 : nat64);
   relay_min_subaccount_one_seed_e8s = opt (100020000 : nat64);
-  self_service_relay_interval_seconds = opt (3600 : nat64);
+  self_service_relay_interval_seconds = opt (86400 : nat64);
   self_service_relay_max_transfers_per_tick = opt (10 : nat32);
   io_surplus_neuron_id = opt (10292412127977304661 : nat64);
   canonical_relay_canister_id = opt principal "u2qkp-aqaaa-aaaar-qb7ea-cai";

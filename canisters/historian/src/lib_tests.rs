@@ -161,7 +161,7 @@ mod tests {
                 relay_initial_cycles: 1_000_000_000_000,
                 relay_cycle_safety_margin_e8s: 5_000_000,
                 relay_min_subaccount_one_seed_e8s: 100_020_000,
-                self_service_relay_interval_seconds: 3600,
+                self_service_relay_interval_seconds: 86400,
                 self_service_relay_max_transfers_per_tick: Some(10),
                 io_surplus_neuron_id: DEFAULT_IO_SURPLUS_NEURON_ID,
                 canonical_relay_canister_id: Some(mainnet_relay_id()),
