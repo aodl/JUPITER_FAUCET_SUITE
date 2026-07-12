@@ -401,6 +401,11 @@ pub struct RelayCreateAttempt {
     pub target_canister_id: Principal,
     pub created_at_ts: u64,
     pub initial_cycles: u128,
+    #[serde(default)]
+    pub raw_relay_wasm_hash_hex: Option<String>,
+    #[serde(default)]
+    pub install_payload_hash_hex: Option<String>,
+    #[serde(default)]
     pub relay_wasm_hash_hex: Option<String>,
 }
 

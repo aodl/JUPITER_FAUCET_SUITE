@@ -187,14 +187,15 @@ type PublicStatus = record {
   relay_factory_enabled : opt bool;
   relay_setup_min_e8s : opt nat64;
   relay_setup_dust_e8s : opt nat64;
-  relay_wasm_hash_hex : opt text;
+  relay_raw_wasm_hash_hex : opt text;
+  relay_install_payload_hash_hex : opt text;
 };
 type RelayRegistryKind = variant { Canonical; SelfService };
 type RelayRegistration = record {
   target_canister_id : principal;
   relay_canister_id : principal;
   kind : RelayRegistryKind;
-  relay_wasm_hash_hex : opt text;
+  relay_install_payload_hash_hex : opt text;
   created_at_ts : opt nat64;
 };
 type RelaySetupPublicStatus = variant {
@@ -217,12 +218,15 @@ type RelaySetupView = record {
   setup_account : Account;
   setup_account_identifier : text;
   minimum_e8s : nat64;
+  current_required_e8s : opt nat64;
+  nominal_minimum_e8s : nat64;
   payment_allowed : bool;
   payment_blocked_reason : opt text;
   existing_relay : opt RelayRegistration;
   status : RelaySetupPublicStatus;
   factory_available : bool;
-  relay_wasm_hash_hex : opt text;
+  relay_raw_wasm_hash_hex : opt text;
+  relay_install_payload_hash_hex : opt text;
   warning_text : opt text;
 };
 type GetRelaySetupRecoveryViewArgs = record { target_canister_id : principal };
@@ -246,7 +250,9 @@ type RelayCreateAttemptView = record {
   target_canister_id : principal;
   created_at_ts : nat64;
   initial_cycles : nat;
-  relay_wasm_hash_hex : opt text;
+  create_attach_cycles : nat;
+  raw_relay_wasm_hash_hex : opt text;
+  install_payload_hash_hex : opt text;
 };
 type RelaySetupRecoveryView = record {
   target_canister_id : principal;
@@ -256,6 +262,12 @@ type RelaySetupRecoveryView = record {
   setup_account_identifier : text;
   setup_amount_seen_e8s : nat64;
   setup_amount_processed_e8s : nat64;
+  cycle_conversion_e8s : opt nat64;
+  cycles_minted : opt nat;
+  configured_relay_create_attach_cycles : nat;
+  relay_raw_wasm_hash_hex : opt text;
+  relay_install_payload_hash_hex : opt text;
+  relay_onchain_module_hash_hex : opt text;
   cycle_transfer : opt RedactedTransferRecord;
   relay_funding_transfer : opt RedactedTransferRecord;
   existing_relay_sweep_transfer : opt RedactedTransferRecord;

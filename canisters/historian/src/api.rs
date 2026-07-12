@@ -160,7 +160,8 @@ pub struct PublicStatus {
     pub relay_factory_enabled: Option<bool>,
     pub relay_setup_min_e8s: Option<u64>,
     pub relay_setup_dust_e8s: Option<u64>,
-    pub relay_wasm_hash_hex: Option<String>,
+    pub relay_raw_wasm_hash_hex: Option<String>,
+    pub relay_install_payload_hash_hex: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone)]
@@ -190,7 +191,7 @@ pub struct RelayRegistration {
     pub target_canister_id: Principal,
     pub relay_canister_id: Principal,
     pub kind: RelayRegistryKind,
-    pub relay_wasm_hash_hex: Option<String>,
+    pub relay_install_payload_hash_hex: Option<String>,
     pub created_at_ts: Option<u64>,
 }
 
@@ -200,7 +201,7 @@ impl From<RelayRegistryEntry> for RelayRegistration {
             target_canister_id: value.target_canister_id,
             relay_canister_id: value.relay_canister_id,
             kind: value.kind,
-            relay_wasm_hash_hex: value.relay_wasm_hash_hex,
+            relay_install_payload_hash_hex: value.relay_wasm_hash_hex,
             created_at_ts: value.created_at_ts,
         }
     }
@@ -263,12 +264,15 @@ pub struct RelaySetupView {
     pub setup_account: Account,
     pub setup_account_identifier: String,
     pub minimum_e8s: u64,
+    pub current_required_e8s: Option<u64>,
+    pub nominal_minimum_e8s: u64,
     pub payment_allowed: bool,
     pub payment_blocked_reason: Option<String>,
     pub existing_relay: Option<RelayRegistration>,
     pub status: RelaySetupPublicStatus,
     pub factory_available: bool,
-    pub relay_wasm_hash_hex: Option<String>,
+    pub relay_raw_wasm_hash_hex: Option<String>,
+    pub relay_install_payload_hash_hex: Option<String>,
     pub warning_text: Option<String>,
 }
 
@@ -289,7 +293,9 @@ pub struct RelayCreateAttemptView {
     pub target_canister_id: Principal,
     pub created_at_ts: u64,
     pub initial_cycles: u128,
-    pub relay_wasm_hash_hex: Option<String>,
+    pub create_attach_cycles: u128,
+    pub raw_relay_wasm_hash_hex: Option<String>,
+    pub install_payload_hash_hex: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -301,6 +307,12 @@ pub struct RelaySetupRecoveryView {
     pub setup_account_identifier: String,
     pub setup_amount_seen_e8s: u64,
     pub setup_amount_processed_e8s: u64,
+    pub cycle_conversion_e8s: Option<u64>,
+    pub cycles_minted: Option<u128>,
+    pub configured_relay_create_attach_cycles: u128,
+    pub relay_raw_wasm_hash_hex: Option<String>,
+    pub relay_install_payload_hash_hex: Option<String>,
+    pub relay_onchain_module_hash_hex: Option<String>,
     pub cycle_transfer: Option<RedactedTransferRecord>,
     pub relay_funding_transfer: Option<RedactedTransferRecord>,
     pub existing_relay_sweep_transfer: Option<RedactedTransferRecord>,

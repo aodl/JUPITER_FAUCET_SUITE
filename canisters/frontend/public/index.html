@@ -895,13 +895,18 @@
             <p class="nav-panel-content memo-builder-safety-notice" id="relay-setup-warning"></p>
             <dl class="pane-detail-grid tracker-summary-grid relay-setup-grid">
               <div><dt>Status</dt><dd class="pane-detail-value" id="relay-setup-status" role="status" aria-live="polite"></dd></div>
+              <div><dt>Status label</dt><dd class="pane-detail-value" id="relay-setup-status-label">—</dd></div>
               <div><dt>Factory</dt><dd class="pane-detail-value" id="relay-setup-factory">—</dd></div>
               <div><dt>Minimum</dt><dd class="pane-detail-value" id="relay-setup-minimum">—</dd></div>
               <div><dt>Setup balance</dt><dd class="pane-detail-value" id="relay-setup-balance">—</dd></div>
             </dl>
             <section id="relay-setup-payment-details">
               <div class="pane-inline-block">
-                <div class="pane-inline-header"><strong>ICRC setup subaccount</strong></div>
+                <div class="pane-inline-header"><strong>ICRC payment account</strong></div>
+                <code class="pane-inline-code mono" id="relay-setup-icrc-account">—</code>
+              </div>
+              <div class="pane-inline-block">
+                <div class="pane-inline-header"><strong>Raw setup subaccount</strong></div>
                 <code class="pane-inline-code mono" id="relay-setup-subaccount">—</code>
               </div>
               <div class="pane-inline-block">
@@ -912,6 +917,7 @@
               <p class="pane-status-note tracker-status-note">Refunds are sent back to the ledger account that sent the ICP. If you paid from an exchange or custodial wallet, the refund may return to that service’s wallet rather than directly to your exchange user balance.</p>
             </section>
             <section id="relay-setup-existing-relay" hidden></section>
+            <section id="relay-setup-recovery-details" hidden></section>
           </div>
         </article>
 

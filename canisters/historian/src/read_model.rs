@@ -183,7 +183,8 @@ pub(super) fn get_public_status() -> PublicStatus {
         relay_factory_enabled: Some(st.config.relay_factory_enabled),
         relay_setup_min_e8s: Some(st.config.relay_setup_min_e8s),
         relay_setup_dust_e8s: Some(st.config.relay_setup_dust_e8s),
-        relay_wasm_hash_hex: crate::relay_setup::relay_wasm_hash_hex(),
+        relay_raw_wasm_hash_hex: crate::relay_setup::relay_raw_wasm_hash_hex(),
+        relay_install_payload_hash_hex: crate::relay_setup::relay_install_payload_hash_hex(),
     })
 }
 

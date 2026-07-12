@@ -52,8 +52,25 @@ pub(crate) fn relay_subaccount_one(relay_id: Principal) -> Account {
     }
 }
 
-pub(crate) fn relay_wasm_hash_hex() -> Option<String> {
-    approved_self_service_relay_wasm_hash_hex()
+pub(crate) fn relay_raw_wasm_hash_hex() -> Option<String> {
+    approved_relay_raw_wasm_hash_hex()
+}
+
+pub(crate) fn relay_install_payload_hash_hex() -> Option<String> {
+    approved_relay_install_payload_hash_hex()
+}
+
+pub(crate) fn relay_onchain_module_hash_hex() -> Option<String> {
+    relay_install_payload_hash_hex()
+}
+
+fn log_relay_setup(target: Principal, status: RelaySetupStatus, message: impl AsRef<str>) {
+    ic_cdk::println!(
+        "RELAY_SETUP target={} status={:?} {}",
+        target.to_text(),
+        status,
+        message.as_ref()
+    );
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,6 +219,12 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
                 setup_account_identifier: job.setup_account_identifier.clone(),
                 setup_amount_seen_e8s: job.setup_amount_seen_e8s,
                 setup_amount_processed_e8s: job.setup_amount_processed_e8s,
+                cycle_conversion_e8s: job.cycle_conversion_e8s,
+                cycles_minted: job.cycles_minted,
+                configured_relay_create_attach_cycles: st.config.relay_initial_cycles,
+                relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
+                relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
+                relay_onchain_module_hash_hex: relay_onchain_module_hash_hex(),
                 cycle_transfer: job.cycle_transfer.as_ref().map(redacted_transfer),
                 relay_funding_transfer: job.relay_funding_transfer.as_ref().map(redacted_transfer),
                 existing_relay_sweep_transfer: job
@@ -214,7 +237,15 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
                         target_canister_id: attempt.target_canister_id,
                         created_at_ts: attempt.created_at_ts,
                         initial_cycles: attempt.initial_cycles,
-                        relay_wasm_hash_hex: attempt.relay_wasm_hash_hex.clone(),
+                        create_attach_cycles: attempt.initial_cycles,
+                        raw_relay_wasm_hash_hex: attempt
+                            .raw_relay_wasm_hash_hex
+                            .clone()
+                            .or_else(|| attempt.relay_wasm_hash_hex.clone()),
+                        install_payload_hash_hex: attempt
+                            .install_payload_hash_hex
+                            .clone()
+                            .or_else(relay_install_payload_hash_hex),
                     }
                 }),
                 created_at_ts: job.created_at_ts,
@@ -229,6 +260,12 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
             setup_account_identifier,
             setup_amount_seen_e8s: 0,
             setup_amount_processed_e8s: 0,
+            cycle_conversion_e8s: None,
+            cycles_minted: None,
+            configured_relay_create_attach_cycles: st.config.relay_initial_cycles,
+            relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
+            relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
+            relay_onchain_module_hash_hex: relay_onchain_module_hash_hex(),
             cycle_transfer: None,
             relay_funding_transfer: None,
             existing_relay_sweep_transfer: None,
@@ -288,14 +325,17 @@ pub(crate) fn setup_view_from_state(
         setup_account,
         setup_account_identifier,
         minimum_e8s: st.config.relay_setup_min_e8s,
+        current_required_e8s: None,
+        nominal_minimum_e8s: st.config.relay_setup_min_e8s,
         payment_allowed,
         payment_blocked_reason,
         existing_relay: existing_relay.map(Into::into),
         status,
         factory_available,
-        relay_wasm_hash_hex: relay_wasm_hash_hex(),
+        relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
+        relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
         warning_text: Some(
-            "This relay can only be created for canisters whose cycle balance is visible through the Jupiter blackhole canister. In practice, the configured blackhole canister must be able to call canister_status for the target.".to_string(),
+            "Nominal minimum: 3 ICP. The final required amount is checked immediately before spending and may be higher if CMC/XDR conditions change. This relay can only be created for canisters whose cycle balance is visible through the Jupiter blackhole canister. In practice, the configured blackhole canister must be able to call canister_status for the target.".to_string(),
         ),
     }
 }
@@ -396,13 +436,15 @@ fn reserve_job(
 }
 
 fn set_job_status(target: Principal, status: RelaySetupStatus, error: Option<String>) {
+    let log_message = error.clone().unwrap_or_else(|| "transition".to_string());
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
-            job.status = status;
+            job.status = status.clone();
             job.updated_at_ts = now_secs();
             job.last_error = error;
         }
     });
+    log_relay_setup(target, status, log_message);
 }
 
 fn set_job_failed_retryable(target: Principal, error: String) {
@@ -581,6 +623,39 @@ fn refund_eligible_status(job: &RelaySetupJob) -> bool {
         && refund_allowed_before_spend(job))
 }
 
+fn ceil_div_u128(numerator: u128, denominator: u128) -> Option<u128> {
+    if denominator == 0 {
+        return None;
+    }
+    Some(numerator.saturating_add(denominator - 1) / denominator)
+}
+
+fn cycles_per_e8(rate: &IcpXdrConversionRate) -> Option<u128> {
+    (rate.xdr_permyriad_per_icp > 0).then_some(u128::from(rate.xdr_permyriad_per_icp))
+}
+
+fn e8s_to_mint_cycles(cycles: u128, rate: &IcpXdrConversionRate) -> Option<u64> {
+    let e8s = ceil_div_u128(cycles, cycles_per_e8(rate)?)?;
+    u64::try_from(e8s).ok()
+}
+
+pub(crate) fn required_setup_e8s_for_rate(
+    cfg: &Config,
+    fee_e8s: u64,
+    rate: &IcpXdrConversionRate,
+) -> Option<u64> {
+    let create_conversion_e8s = e8s_to_mint_cycles(cfg.relay_initial_cycles, rate)?;
+    Some(
+        cfg.relay_setup_min_e8s.max(
+            create_conversion_e8s
+                .saturating_add(cfg.relay_cycle_safety_margin_e8s)
+                .saturating_add(cfg.relay_min_subaccount_one_seed_e8s)
+                .saturating_add(fee_e8s.saturating_mul(4)),
+        ),
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn required_setup_e8s(cfg: &Config, fee_e8s: u64) -> u64 {
     cfg.relay_setup_min_e8s.max(
         fee_e8s
@@ -590,16 +665,26 @@ pub(crate) fn required_setup_e8s(cfg: &Config, fee_e8s: u64) -> u64 {
     )
 }
 
-fn cycle_conversion_e8s(cfg: &Config, fee_e8s: u64, balance: u64) -> Option<u64> {
+fn cycle_conversion_e8s_for_rate(
+    cfg: &Config,
+    fee_e8s: u64,
+    balance: u64,
+    rate: &IcpXdrConversionRate,
+) -> Option<u64> {
+    let create_conversion_e8s = e8s_to_mint_cycles(cfg.relay_initial_cycles, rate)?;
     let keep = cfg
         .relay_min_subaccount_one_seed_e8s
         .saturating_add(cfg.relay_cycle_safety_margin_e8s)
         .saturating_add(fee_e8s.saturating_mul(3));
-    balance.checked_sub(keep).map(|amount| {
-        amount
-            .min(cfg.relay_setup_min_e8s / 2)
-            .max(fee_e8s.saturating_mul(2))
-    })
+    let spendable = balance.checked_sub(keep)?;
+    (spendable >= create_conversion_e8s).then_some(create_conversion_e8s.max(fee_e8s))
+}
+
+fn create_canister_insufficient_cycles_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("create_canister")
+        && lower.contains("cycles")
+        && (lower.contains("required") || lower.contains("insufficient") || lower.contains("only"))
 }
 
 fn transfer_arg(
@@ -1171,21 +1256,50 @@ async fn notify_relay_setup_with_clients_for_historian(
             });
         });
     }
-    let required = required_setup_e8s(&cfg, fee);
-    if balance < required {
+    let rate = match cmc.get_icp_xdr_conversion_rate().await {
+        Ok(rate) => rate,
+        Err(err) => {
+            set_job_failed_retryable(target, err.to_string());
+            return RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message: format!(
+                    "cannot compute current relay setup requirement before spending ICP: {err}"
+                ),
+            };
+        }
+    };
+    let Some(required) = required_setup_e8s_for_rate(&cfg, fee, &rate) else {
         set_job_status(
             target,
             RelaySetupStatus::InsufficientForCurrentRate,
-            Some("setup balance is below current relay setup requirement".to_string()),
+            Some("CMC returned an invalid ICP/XDR conversion rate".to_string()),
         );
         return auto_refund_pre_spend(
             historian,
             target,
-            "setup balance is below current relay setup requirement".to_string(),
+            "CMC returned an invalid ICP/XDR conversion rate".to_string(),
             ledger,
             index,
         )
         .await;
+    };
+    if balance < required {
+        let reason = format!(
+            "setup balance {balance} e8s is below current required {required} e8s; requirement covers configured create_canister attachment {} cycles, relay subaccount-1 seed, safety margin, and ledger fees at CMC xdr_permyriad_per_icp={}",
+            cfg.relay_initial_cycles, rate.xdr_permyriad_per_icp
+        );
+        set_job_status(
+            target,
+            RelaySetupStatus::InsufficientForCurrentRate,
+            Some(reason.clone()),
+        );
+        if balance > cfg.relay_setup_dust_e8s {
+            return auto_refund_pre_spend(historian, target, reason, ledger, index).await;
+        }
+        return RelaySetupNotifyResult::InsufficientForCurrentRate {
+            required_e8s: required,
+            current_balance_e8s: balance,
+        };
     }
     if let Err(err) = blackhole.canister_status(target).await {
         state::with_root_and_relay_factory_state_mut(target, |st| {
@@ -1262,16 +1376,16 @@ async fn notify_relay_setup_with_clients_for_historian(
         .await;
     }
 
-    let Some(conversion_e8s) = cycle_conversion_e8s(&cfg, fee, balance) else {
+    let Some(conversion_e8s) = cycle_conversion_e8s_for_rate(&cfg, fee, balance, &rate) else {
         set_job_status(
             target,
             RelaySetupStatus::InsufficientForCurrentRate,
-            Some("setup balance cannot leave useful relay subaccount-1 seed".to_string()),
+            Some("setup balance cannot mint the configured relay create attachment while preserving the relay subaccount-1 seed, safety margin, and ledger fees".to_string()),
         );
         return auto_refund_pre_spend(
             historian,
             target,
-            "setup balance cannot leave useful relay subaccount-1 seed".to_string(),
+            "setup balance cannot mint the configured relay create attachment while preserving the relay subaccount-1 seed, safety margin, and ledger fees".to_string(),
             ledger,
             index,
         )
@@ -1485,7 +1599,9 @@ async fn create_and_activate_relay(
                         target_canister_id: target,
                         created_at_ts: now_secs(),
                         initial_cycles: cfg.relay_initial_cycles,
-                        relay_wasm_hash_hex: relay_wasm_hash_hex(),
+                        relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
+                        raw_relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
+                        install_payload_hash_hex: relay_install_payload_hash_hex(),
                     });
                     job.updated_at_ts = now_secs();
                 }
@@ -1504,6 +1620,15 @@ async fn create_and_activate_relay(
                     );
                 }
                 Err(ManagementClientError::Failed(err)) => {
+                    if create_canister_insufficient_cycles_error(&err) {
+                        return mark_manual_recovery_required(
+                            target,
+                            format!(
+                                "create_canister failed deterministically with insufficient attached cycles; configured relay create attachment was {} cycles: {err}",
+                                cfg.relay_initial_cycles
+                            ),
+                        );
+                    }
                     set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
                     return RelaySetupNotifyResult::Failed {
                         status: RelaySetupStatus::FailedRetryable.into(),
@@ -1524,8 +1649,8 @@ async fn create_and_activate_relay(
         }
     };
     if !code_installed {
-        let expected_wasm_hash =
-            approved_relay_wasm_hash().expect("approved relay wasm exists when installing");
+        let expected_wasm_hash = approved_relay_onchain_module_hash()
+            .expect("approved relay wasm exists when installing");
         match reconcile_relay_code_installed(target, relay_id, expected_wasm_hash, management).await
         {
             Ok(RelayCodeInstallReconciliation::ExistingApprovedModule) => {}
@@ -1737,7 +1862,7 @@ async fn create_and_activate_relay(
                 .map(|job| job.setup_tx_ids.clone())
                 .unwrap_or_default()
         }),
-        relay_wasm_hash_hex: relay_wasm_hash_hex(),
+        relay_wasm_hash_hex: relay_install_payload_hash_hex(),
         final_controllers: Some(vec![cfg.blackhole_canister_id]),
         log_visibility_public: Some(true),
         created_at_ts: Some(now_secs()),
@@ -2166,10 +2291,10 @@ mod tests {
             max_index_pages_per_tick: 10,
             max_canisters_per_cycles_tick: 10,
             relay_factory_enabled: true,
-            relay_setup_min_e8s: 200_000_000,
+            relay_setup_min_e8s: 300_000_000,
             relay_setup_dust_e8s: 10_000,
             relay_setup_refund_cooldown_seconds: 0,
-            relay_initial_cycles: 1_000_000_000_000,
+            relay_initial_cycles: 2_000_000_000_000,
             relay_cycle_safety_margin_e8s: 5_000_000,
             relay_min_subaccount_one_seed_e8s: 100_020_000,
             self_service_relay_interval_seconds: 86400,
@@ -2299,6 +2424,7 @@ mod tests {
     struct FakeCmc {
         notify_results: Arc<Mutex<Vec<Result<u128, NotifyTopUpError>>>>,
         notify_calls: Arc<Mutex<Vec<u64>>>,
+        rate: Result<IcpXdrConversionRate, String>,
     }
 
     impl FakeCmc {
@@ -2306,6 +2432,10 @@ mod tests {
             Self {
                 notify_results: Arc::new(Mutex::new(Vec::new())),
                 notify_calls: Arc::new(Mutex::new(Vec::new())),
+                rate: Ok(IcpXdrConversionRate {
+                    timestamp_seconds: 0,
+                    xdr_permyriad_per_icp: 100_000,
+                }),
             }
         }
     }
@@ -2313,7 +2443,7 @@ mod tests {
     #[async_trait::async_trait]
     impl CmcClient for FakeCmc {
         async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
-            Err(ClientError::Call("not used".to_string()))
+            self.rate.clone().map_err(ClientError::Call)
         }
 
         async fn notify_top_up(
@@ -2324,7 +2454,7 @@ mod tests {
             self.notify_calls.lock().unwrap().push(block_index);
             let mut results = self.notify_results.lock().unwrap();
             if results.is_empty() {
-                return Ok(1_000_000_000_000);
+                return Ok(2_000_000_000_000);
             }
             results.remove(0)
         }
@@ -2334,6 +2464,7 @@ mod tests {
     struct FakeManagement {
         create_results: Arc<Mutex<Vec<Result<Principal, ManagementClientError>>>>,
         create_calls: Arc<Mutex<u32>>,
+        create_attached_cycles: Arc<Mutex<Vec<u128>>>,
         install_calls: Arc<Mutex<u32>>,
         update_calls: Arc<Mutex<u32>>,
         status_hashes: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
@@ -2344,6 +2475,7 @@ mod tests {
             Self {
                 create_results: Arc::new(Mutex::new(vec![Ok(relay_id)])),
                 create_calls: Arc::new(Mutex::new(0)),
+                create_attached_cycles: Arc::new(Mutex::new(Vec::new())),
                 install_calls: Arc::new(Mutex::new(0)),
                 update_calls: Arc::new(Mutex::new(0)),
                 status_hashes: Arc::new(Mutex::new(vec![module_hash])),
@@ -2356,10 +2488,14 @@ mod tests {
         async fn create_canister(
             &self,
             _arg: &jupiter_ic_clients::management::CreateCanisterArgs,
-            _cycles_to_attach: u128,
+            cycles_to_attach: u128,
         ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, ManagementClientError>
         {
             *self.create_calls.lock().unwrap() += 1;
+            self.create_attached_cycles
+                .lock()
+                .unwrap()
+                .push(cycles_to_attach);
             let result = self.create_results.lock().unwrap().remove(0)?;
             Ok(jupiter_ic_clients::management::CreateCanisterResult {
                 canister_id: result,
@@ -2622,7 +2758,7 @@ mod tests {
             .saturating_sub(cfg.relay_min_subaccount_one_seed_e8s)
             .saturating_sub(fee);
 
-        assert_eq!(required, 200_000_000);
+        assert_eq!(required, 300_000_000);
         assert!(required >= cfg.relay_setup_min_e8s);
         assert!(cycle_conversion >= cfg.relay_cycle_safety_margin_e8s + fee);
         assert!(
@@ -2827,7 +2963,7 @@ mod tests {
     fn index_catchup_blocks_pre_spend_conversion() {
         let target = Principal::from_slice(&[24]);
         state::set_state(State::new(config(), 0));
-        let ledger = FakeLedger::healthy(250_000_000);
+        let ledger = FakeLedger::healthy(350_000_000);
         let index = FakeIndex {
             response: GetAccountIdentifierTransactionsResponse {
                 balance: 0,
@@ -2894,6 +3030,62 @@ mod tests {
         assert!(ledger.transfers.lock().unwrap().is_empty());
         let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
         assert_eq!(job.status, RelaySetupStatus::Refunded);
+    }
+
+    #[test]
+    fn funded_setup_below_dynamic_rate_requirement_refunds_before_cmc_transfer() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 1]);
+        state::set_state(State::new(config(), 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            legacy_results: Arc::new(Mutex::new(vec![Ok(Ok(188))])),
+            ..FakeLedger::healthy(300_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    300_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let cmc = FakeCmc {
+            rate: Ok(IcpXdrConversionRate {
+                timestamp_seconds: 0,
+                xdr_permyriad_per_icp: 10_000,
+            }),
+            ..FakeCmc::healthy()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![188]
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(cmc.notify_calls.lock().unwrap().is_empty());
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::Refunded);
+        assert!(job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("current required"));
     }
 
     #[test]
@@ -3074,6 +3266,10 @@ mod tests {
                 "reply still lost".to_string(),
             ))])),
             notify_calls: Arc::new(Mutex::new(Vec::new())),
+            rate: Ok(IcpXdrConversionRate {
+                timestamp_seconds: 0,
+                xdr_permyriad_per_icp: 100_000,
+            }),
         };
         let index = FakeIndex {
             response: GetAccountIdentifierTransactionsResponse {
@@ -3252,10 +3448,10 @@ mod tests {
         let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
         job.target_canister_id = target;
         job.relay_canister_id = Some(relay_id);
-        job.cycles_minted = Some(1_000_000_000_000);
+        job.cycles_minted = Some(2_000_000_000_000);
         job.code_installed = false;
         install_state_with_job(target, job);
-        let expected_hash = approved_relay_wasm_hash().unwrap().to_vec();
+        let expected_hash = approved_relay_onchain_module_hash().unwrap().to_vec();
         let management = FakeManagement::healthy(relay_id, Some(expected_hash));
         let index = FakeIndex {
             response: GetAccountIdentifierTransactionsResponse {
@@ -3287,6 +3483,54 @@ mod tests {
     }
 
     #[test]
+    fn relay_setup_install_code_lost_reply_rejects_raw_hash_when_onchain_hash_is_install_payload() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[137]);
+        let relay_id = Principal::from_slice(&[138]);
+        let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
+        job.target_canister_id = target;
+        job.relay_canister_id = Some(relay_id);
+        job.cycles_minted = Some(2_000_000_000_000);
+        job.code_installed = false;
+        install_state_with_job(target, job);
+        let raw_hash = approved_relay_wasm_hash().unwrap().to_vec();
+        assert_ne!(
+            raw_hash,
+            approved_relay_onchain_module_hash().unwrap().to_vec()
+        );
+        let management = FakeManagement::healthy(relay_id, Some(raw_hash));
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(*management.install_calls.lock().unwrap(), 0);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+    }
+
+    #[test]
     fn relay_setup_install_code_unexpected_module_hash_enters_manual_recovery() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[41]);
@@ -3294,7 +3538,7 @@ mod tests {
         let mut job = job_with_status(RelaySetupStatus::FailedRetryable);
         job.target_canister_id = target;
         job.relay_canister_id = Some(relay_id);
-        job.cycles_minted = Some(1_000_000_000_000);
+        job.cycles_minted = Some(2_000_000_000_000);
         job.code_installed = false;
         install_state_with_job(target, job);
         let management = FakeManagement::healthy(relay_id, Some(vec![0xAA; 32]));
@@ -3348,7 +3592,7 @@ mod tests {
         let relay_id = Principal::from_slice(&[42, 3]);
         let mut job = job_with_status(RelaySetupStatus::CycleNotifySucceeded);
         job.target_canister_id = target;
-        job.cycles_minted = Some(999_999_999_999);
+        job.cycles_minted = Some(1_999_999_999_999);
         install_state_with_job(target, job);
         let management = FakeManagement::healthy(relay_id, None);
         let index = FakeIndex {
@@ -3400,13 +3644,14 @@ mod tests {
         let target = Principal::from_slice(&[39]);
         let mut job = job_with_status(RelaySetupStatus::CycleNotifySucceeded);
         job.target_canister_id = target;
-        job.cycles_minted = Some(1_000_000_000_000);
+        job.cycles_minted = Some(2_000_000_000_000);
         install_state_with_job(target, job);
         let management = FakeManagement {
             create_results: Arc::new(Mutex::new(vec![Err(ManagementClientError::Ambiguous(
                 "SYS_UNKNOWN".to_string(),
             ))])),
             create_calls: Arc::new(Mutex::new(0)),
+            create_attached_cycles: Arc::new(Mutex::new(Vec::new())),
             install_calls: Arc::new(Mutex::new(0)),
             update_calls: Arc::new(Mutex::new(0)),
             status_hashes: Arc::new(Mutex::new(Vec::new())),
@@ -3467,6 +3712,64 @@ mod tests {
     }
 
     #[test]
+    fn relay_setup_create_canister_insufficient_cycles_requires_operator_recovery() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[39, 1]);
+        let mut job = job_with_status(RelaySetupStatus::CycleNotifySucceeded);
+        job.target_canister_id = target;
+        job.cycles_minted = Some(2_000_000_000_000);
+        install_state_with_job(target, job);
+        let management = FakeManagement {
+            create_results: Arc::new(Mutex::new(vec![Err(ManagementClientError::Failed(
+                "create_canister required 1307692307692 cycles but only 1000000000000 cycles were attached".to_string(),
+            ))])),
+            create_calls: Arc::new(Mutex::new(0)),
+            create_attached_cycles: Arc::new(Mutex::new(Vec::new())),
+            install_calls: Arc::new(Mutex::new(0)),
+            update_calls: Arc::new(Mutex::new(0)),
+            status_hashes: Arc::new(Mutex::new(Vec::new())),
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(
+            management.create_attached_cycles.lock().unwrap().as_slice(),
+            &[2_000_000_000_000]
+        );
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert!(job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("insufficient attached cycles"));
+        assert!(job.relay_canister_id.is_none());
+    }
+
+    #[test]
     fn relay_setup_manual_recovery_view_exposes_stuck_job() {
         let target = Principal::from_slice(&[40]);
         let mut job = job_with_status(RelaySetupStatus::ManualRecoveryRequired);
@@ -3475,6 +3778,16 @@ mod tests {
             "create_canister may have succeeded but relay_canister_id was not recorded".to_string(),
         );
         job.setup_amount_seen_e8s = 250_000_000;
+        job.cycle_conversion_e8s = Some(94_950_000);
+        job.cycles_minted = Some(1_000_000_000_000);
+        job.relay_create_attempt = Some(RelayCreateAttempt {
+            target_canister_id: target,
+            created_at_ts: 123,
+            initial_cycles: 1_000_000_000_000,
+            raw_relay_wasm_hash_hex: Some("abcd".to_string()),
+            install_payload_hash_hex: Some("ef01".to_string()),
+            relay_wasm_hash_hex: Some("abcd".to_string()),
+        });
         job.cycle_transfer = Some(transfer_record(
             RelaySetupTransferKind::CmcConversion,
             Some([1; 32]),
@@ -3497,6 +3810,19 @@ mod tests {
         assert_eq!(view.target_canister_id, target);
         assert_eq!(view.status, RelaySetupPublicStatus::ManualRecoveryRequired);
         assert_eq!(view.setup_amount_seen_e8s, 250_000_000);
+        assert_eq!(view.cycle_conversion_e8s, Some(94_950_000));
+        assert_eq!(view.cycles_minted, Some(1_000_000_000_000));
+        assert_eq!(
+            view.configured_relay_create_attach_cycles,
+            2_000_000_000_000
+        );
+        assert_eq!(
+            view.relay_create_attempt
+                .as_ref()
+                .unwrap()
+                .create_attach_cycles,
+            1_000_000_000_000
+        );
         assert_eq!(view.refund_transfer_count, 0);
         assert!(view.cycle_transfer.is_some());
         assert!(view
@@ -3661,9 +3987,9 @@ mod tests {
         let relay_id = Principal::from_slice(&[47]);
         let mut job = job_with_status(RelaySetupStatus::CanisterCreated);
         job.target_canister_id = target;
-        job.cycles_minted = Some(1_000_000_000_000);
+        job.cycles_minted = Some(2_000_000_000_000);
         job.relay_canister_id = Some(relay_id);
-        job.relay_initial_cycles = Some(1_000_000_000_000);
+        job.relay_initial_cycles = Some(2_000_000_000_000);
         let restored = stable_roundtrip(job);
 
         assert_eq!(
@@ -3737,8 +4063,10 @@ mod tests {
         job.relay_create_attempt = Some(RelayCreateAttempt {
             target_canister_id: target,
             created_at_ts: 99,
-            initial_cycles: 1_000_000_000_000,
-            relay_wasm_hash_hex: relay_wasm_hash_hex(),
+            initial_cycles: 2_000_000_000_000,
+            raw_relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
+            install_payload_hash_hex: relay_install_payload_hash_hex(),
+            relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
         });
         let restored = stable_roundtrip(job);
 

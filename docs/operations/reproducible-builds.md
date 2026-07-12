@@ -20,6 +20,8 @@ The `Mainnet module-hash comparison targets (*.wasm.gz)` section contains the ha
 
 The decompressed `.wasm` hashes remain available in the sidecar files and full manifest as supporting release evidence, but the normal mainnet comparison uses the `.wasm.gz` installed package hashes.
 
+For self-service Relay setup, keep two Relay hashes distinct in release evidence. `release-artifacts/jupiter_relay.wasm` is the reviewed raw Relay Wasm evidence. `release-artifacts/jupiter_relay.wasm.gz` is the compressed Relay install payload embedded in Historian and passed to `install_code`; Historian compares spawned Relay `canister_status.module_hash` values to this compressed payload hash. The gzip payload must decompress to bytes matching the reviewed raw Relay Wasm hash. The production Historian deployment artifact remains `release-artifacts/jupiter_historian.wasm.gz`.
+
 ## Hash comparison with mainnet
 
 After a canonical artifact build or canonical-artifact deployment, compare each live canister module hash with the matching hash from the `Mainnet module-hash comparison targets (*.wasm.gz)` section printed by `./tools/scripts/docker-build`.

@@ -24,6 +24,19 @@ const STATUS_LABELS = {
   FailedRetryable: 'Retryable failure',
   ManualRecoveryRequired: 'Manual recovery required',
 };
+const RECOVERY_STATUSES = new Set([
+  'BelowMinimum',
+  'InsufficientForCurrentRate',
+  'TargetNotObservable',
+  'FailedRetryable',
+  'ManualRecoveryRequired',
+  'Ambiguous',
+  'Failed',
+  'RefundPending',
+  'Refunded',
+  'Refunding',
+]);
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
 function variantName(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
@@ -49,6 +62,70 @@ function principalText(value) {
   return typeof resolved.toText === 'function' ? resolved.toText() : String(resolved);
 }
 
+function crc32(bytes) {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value & 1) !== 0 ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function concatBytes(...parts) {
+  const size = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function base32NoPadding(bytes) {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return out;
+}
+
+export function icrcAccountText(account) {
+  if (!account?.owner) return '';
+  const owner = principalText(account.owner);
+  const subaccount = account.subaccount?.[0] ? Uint8Array.from(account.subaccount[0]) : new Uint8Array(32);
+  if (subaccount.every((byte) => byte === 0)) return owner;
+  const checksum = crc32(concatBytes(account.owner.toUint8Array(), subaccount));
+  const checksumBytes = new Uint8Array([
+    (checksum >>> 24) & 0xff,
+    (checksum >>> 16) & 0xff,
+    (checksum >>> 8) & 0xff,
+    checksum & 0xff,
+  ]);
+  return `${owner}-${base32NoPadding(checksumBytes)}.${bytesToHex(subaccount)}`;
+}
+
 function statusFromNotifyResult(result) {
   const kind = variantName(result);
   if (kind === 'TargetNotObservable') return 'TargetNotObservable';
@@ -62,6 +139,20 @@ function statusFromNotifyResult(result) {
   if (kind === 'Pending') return statusKey(result.Pending?.status) || 'Pending';
   if (kind === 'Failed') return statusKey(result.Failed?.status) || 'Failed';
   return kind || '';
+}
+
+function messageFromNotifyResult(result) {
+  const kind = variantName(result);
+  if (kind === 'Failed') return result.Failed?.message || '';
+  if (kind === 'RefundPending') return result.RefundPending?.reason || '';
+  if (kind === 'TargetNotObservable') return result.TargetNotObservable?.message || '';
+  if (kind === 'BelowMinimum') {
+    return `Current balance ${formatIcpE8s(result.BelowMinimum.current_balance_e8s)} is below required ${formatIcpE8s(result.BelowMinimum.minimum_e8s)}.`;
+  }
+  if (kind === 'InsufficientForCurrentRate') {
+    return `Current balance ${formatIcpE8s(result.InsufficientForCurrentRate.current_balance_e8s)} is below current required ${formatIcpE8s(result.InsufficientForCurrentRate.required_e8s)}.`;
+  }
+  return '';
 }
 
 function relayFromNotifyResult(result) {
@@ -87,6 +178,70 @@ function setHidden(id, hidden) {
   if (node) node.hidden = hidden;
 }
 
+function formatOptionalIcp(value) {
+  const resolved = readOptional(value);
+  return resolved === null || resolved === undefined ? DASH : formatIcpE8s(resolved);
+}
+
+function formatOptionalCycles(value) {
+  const resolved = readOptional(value);
+  return resolved === null || resolved === undefined ? DASH : String(resolved);
+}
+
+function formatTransfer(record) {
+  const resolved = readOptional(record);
+  if (!resolved) return DASH;
+  const block = readOptional(resolved.block_index);
+  return `${formatIcpE8s(resolved.amount_e8s)} / block ${block ?? DASH} / completed ${Boolean(resolved.completed)}`;
+}
+
+function renderRecoveryDetails(recoveryView) {
+  if (!recoveryView) return '';
+  const relayId = principalText(recoveryView.relay_canister_id) || DASH;
+  const createAttempt = readOptional(recoveryView.relay_create_attempt);
+  const rawRelayHash = readOptional(createAttempt?.raw_relay_wasm_hash_hex)
+    || readOptional(recoveryView.relay_raw_wasm_hash_hex);
+  const installPayloadHash = readOptional(createAttempt?.install_payload_hash_hex)
+    || readOptional(recoveryView.relay_install_payload_hash_hex);
+  const diagnostic = {
+    target_canister_id: principalText(recoveryView.target_canister_id),
+    status: statusText(recoveryView.status),
+    last_error: readOptional(recoveryView.last_error),
+    relay_canister_id: principalText(recoveryView.relay_canister_id) || null,
+    cycle_conversion_e8s: readOptional(recoveryView.cycle_conversion_e8s)?.toString?.() || null,
+    cycles_minted: readOptional(recoveryView.cycles_minted)?.toString?.() || null,
+    relay_create_attach_cycles: createAttempt?.create_attach_cycles?.toString?.() || createAttempt?.initial_cycles?.toString?.() || null,
+    configured_relay_create_attach_cycles: recoveryView.configured_relay_create_attach_cycles?.toString?.() || null,
+    raw_relay_wasm_hash_hex: rawRelayHash,
+    relay_install_payload_hash_hex: installPayloadHash,
+    relay_onchain_module_hash_hex: readOptional(recoveryView.relay_onchain_module_hash_hex),
+    relay_funding_e8s: readOptional(recoveryView.relay_funding_transfer)?.amount_e8s?.toString?.() || null,
+    setup_amount_seen_e8s: recoveryView.setup_amount_seen_e8s?.toString?.() || null,
+    setup_amount_processed_e8s: recoveryView.setup_amount_processed_e8s?.toString?.() || null,
+    refund_transfer_count: recoveryView.refund_transfer_count?.toString?.() || '0',
+  };
+  return `
+    <dl class="pane-detail-grid relay-setup-grid">
+      <div><dt>Status</dt><dd class="pane-detail-value">${escapeHtml(statusText(recoveryView.status) || DASH)}</dd></div>
+      <div><dt>Relay</dt><dd class="pane-detail-value">${relayId === DASH ? DASH : renderCanisterTrackerLink(relayId)}</dd></div>
+      <div><dt>Cycle conversion</dt><dd class="pane-detail-value">${escapeHtml(formatTransfer(recoveryView.cycle_transfer))}</dd></div>
+      <div><dt>Cycle conversion e8s</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.cycle_conversion_e8s))}</dd></div>
+      <div><dt>Cycles minted</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(recoveryView.cycles_minted))}</dd></div>
+      <div><dt>Create attachment</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(createAttempt?.create_attach_cycles ?? createAttempt?.initial_cycles))}</dd></div>
+      <div><dt>Configured create attachment</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(recoveryView.configured_relay_create_attach_cycles))}</dd></div>
+      <div><dt>Raw Relay Wasm review hash</dt><dd class="pane-detail-value">${escapeHtml(rawRelayHash || DASH)}</dd></div>
+      <div><dt>Relay install payload hash</dt><dd class="pane-detail-value">${escapeHtml(installPayloadHash || DASH)}</dd></div>
+      <div><dt>Relay funding</dt><dd class="pane-detail-value">${escapeHtml(formatTransfer(recoveryView.relay_funding_transfer))}</dd></div>
+      <div><dt>Setup seen</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.setup_amount_seen_e8s))}</dd></div>
+      <div><dt>Setup processed</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.setup_amount_processed_e8s))}</dd></div>
+      <div><dt>Refund transfers</dt><dd class="pane-detail-value">${escapeHtml(String(recoveryView.refund_transfer_count ?? 0))}</dd></div>
+    </dl>
+    <div class="pane-inline-block">
+      <div class="pane-inline-header"><strong>Operator diagnostic</strong></div>
+      <code class="pane-inline-code mono" id="relay-setup-operator-diagnostic">${escapeHtml(JSON.stringify(diagnostic, null, 2))}</code>
+    </div>`;
+}
+
 function renderRelayEntry(entry) {
   if (!entry) return '';
   const relayId = principalText(entry.relay_canister_id);
@@ -101,28 +256,36 @@ function renderRelayEntry(entry) {
     </dl>`;
 }
 
-function renderView({ view, balanceE8s = null, notifyResult = null }) {
+function renderView({ view, balanceE8s = null, notifyResult = null, recoveryView = null }) {
   const existingRelay = readOptional(view?.existing_relay) || relayFromNotifyResult(notifyResult);
   const setupAccount = view?.setup_account;
   const subaccount = setupAccount?.subaccount?.[0] || [];
   const subaccountHex = bytesToHex(subaccount);
+  const icrcAccount = setupAccount ? icrcAccountText(setupAccount) : '';
   const accountIdentifier = view?.setup_account_identifier || (setupAccount ? accountIdentifierHex(setupAccount) : '');
   const currentStatus = statusText(view?.status) || statusFromNotifyResult(notifyResult);
   const notifyStatus = statusFromNotifyResult(notifyResult);
   const status = statusText(notifyStatus) || currentStatus || (existingRelay ? 'Active' : 'Not funded');
-  const minimum = view?.minimum_e8s === undefined ? null : BigInt(view.minimum_e8s);
+  const requiredMinimum = readOptional(view?.current_required_e8s) ?? view?.minimum_e8s;
+  const minimum = requiredMinimum === undefined ? null : BigInt(requiredMinimum);
   const factoryAvailable = Boolean(view?.factory_available);
   const paymentBlockedReason = readOptional(view?.payment_blocked_reason);
 
-  setText('relay-setup-status', status);
+  const recoveryError = readOptional(recoveryView?.last_error);
+  const resultMessage = messageFromNotifyResult(notifyResult);
+  setText('relay-setup-status', recoveryError || resultMessage || status);
+  setText('relay-setup-status-label', recoveryError || resultMessage ? status : '');
   setText('relay-setup-minimum', minimum === null ? DASH : formatIcpE8s(minimum));
   setText('relay-setup-balance', balanceE8s === null || balanceE8s === undefined ? DASH : formatIcpE8s(balanceE8s));
+  setText('relay-setup-icrc-account', icrcAccount || DASH);
   setText('relay-setup-subaccount', subaccountHex || DASH);
   setText('relay-setup-account-identifier', accountIdentifier || DASH);
   setText('relay-setup-warning', readOptional(view?.warning_text) || '');
   setText('relay-setup-factory', factoryAvailable ? 'Available' : 'Unavailable');
   setHtml('relay-setup-existing-relay', existingRelay ? renderRelayEntry(existingRelay) : '');
   setHidden('relay-setup-existing-relay', !existingRelay);
+  setHtml('relay-setup-recovery-details', recoveryView ? renderRecoveryDetails(recoveryView) : '');
+  setHidden('relay-setup-recovery-details', !recoveryView);
 
   if (paymentBlockedReason && !notifyStatus) {
     setText('relay-setup-status', paymentBlockedReason);
@@ -147,6 +310,7 @@ export function createRelaySetupController({
     view: null,
     balanceE8s: null,
     notifyResult: null,
+    recoveryView: null,
     error: '',
     loaded: false,
     notifying: false,
@@ -154,6 +318,7 @@ export function createRelaySetupController({
   };
   let pollHandle = null;
   let pollTargetText = '';
+  let requestGeneration = 0;
 
   async function historianBundle() {
     return createHistorian({
@@ -175,6 +340,8 @@ export function createRelaySetupController({
       setText('relay-setup-status', state.error);
       setHtml('relay-setup-existing-relay', '');
       setHidden('relay-setup-existing-relay', true);
+      setHtml('relay-setup-recovery-details', '');
+      setHidden('relay-setup-recovery-details', true);
       return;
     }
     if (!state.loaded) {
@@ -204,6 +371,23 @@ export function createRelaySetupController({
     return state.targetText === targetText && String(input?.value || '').trim() === targetText;
   }
 
+  function shouldFetchRecoveryForCurrentState() {
+    const status = statusFromNotifyResult(state.notifyResult) || statusKey(state.view?.status);
+    return RECOVERY_STATUSES.has(status) || variantName(state.notifyResult) === 'Failed';
+  }
+
+  async function loadRecoveryIfNeeded({ historian, target, targetText, generation }) {
+    if (!shouldFetchRecoveryForCurrentState()) {
+      state.recoveryView = null;
+      return;
+    }
+    if (typeof historian.get_relay_setup_recovery_view !== 'function') return;
+    const recoveryView = await historian.get_relay_setup_recovery_view({ target_canister_id: target });
+    if (generation !== requestGeneration || !submittedTargetStillCurrent(targetText)) return;
+    if (principalText(recoveryView?.target_canister_id) !== targetText) return;
+    state.recoveryView = recoveryView;
+  }
+
   async function refreshBalanceAndMaybeNotify(expectedTargetText) {
     if (!state.target || state.targetText !== expectedTargetText || shouldStopForStatus()) {
       stopPolling();
@@ -231,7 +415,19 @@ export function createRelaySetupController({
         state.notifyResult = await historian.notify_relay_setup(state.target);
         state.notifying = false;
         state.view = await historian.get_relay_setup_view({ target_canister_id: state.target });
+        await loadRecoveryIfNeeded({
+          historian,
+          target: state.target,
+          targetText: expectedTargetText,
+          generation: requestGeneration,
+        });
       }
+      await loadRecoveryIfNeeded({
+        historian,
+        target: state.target,
+        targetText: expectedTargetText,
+        generation: requestGeneration,
+      });
       render();
       if (shouldStopForStatus()) {
         stopPolling();
@@ -260,12 +456,15 @@ export function createRelaySetupController({
   async function submitTarget() {
     const input = document.getElementById('relay-setup-target-input');
     const targetText = String(input?.value || '').trim();
+    requestGeneration += 1;
+    const generation = requestGeneration;
     state.error = '';
     state.targetText = targetText;
     state.target = null;
     state.view = null;
     state.balanceE8s = null;
     state.notifyResult = null;
+    state.recoveryView = null;
     state.loaded = false;
     state.notifying = false;
     stopPolling();
@@ -300,11 +499,12 @@ export function createRelaySetupController({
         state.notifying = true;
         render();
         state.notifyResult = await historian.notify_relay_setup(target);
-        if (!submittedTargetStillCurrent(targetText)) return;
+        if (generation !== requestGeneration || !submittedTargetStillCurrent(targetText)) return;
         state.notifying = false;
         state.view = await historian.get_relay_setup_view({ target_canister_id: target });
-        if (!submittedTargetStillCurrent(targetText)) return;
+        if (generation !== requestGeneration || !submittedTargetStillCurrent(targetText)) return;
       }
+      await loadRecoveryIfNeeded({ historian, target, targetText, generation });
       render();
       startPolling();
     } catch (error) {

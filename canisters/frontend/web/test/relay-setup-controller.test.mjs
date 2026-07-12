@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Principal } from '@icp-sdk/core/principal';
 
-import { createRelaySetupController } from '../src/app/relay-setup-controller.js';
+import { createRelaySetupController, icrcAccountText } from '../src/app/relay-setup-controller.js';
 import { accountIdentifierHex, bytesToHex, relaySetupSubaccount } from '../src/data/dashboard-transforms.js';
 
 class FakeElement {
@@ -33,13 +33,16 @@ async function withRelaySetupDom(fn) {
     'relay-setup-form',
     'relay-setup-target-input',
     'relay-setup-status',
+    'relay-setup-status-label',
     'relay-setup-factory',
     'relay-setup-minimum',
     'relay-setup-balance',
+    'relay-setup-icrc-account',
     'relay-setup-subaccount',
     'relay-setup-account-identifier',
     'relay-setup-warning',
     'relay-setup-existing-relay',
+    'relay-setup-recovery-details',
     'relay-setup-payment-details',
     'relay-setup-refund',
   ];
@@ -71,7 +74,7 @@ function setupView({
   historian,
   existingRelay = [],
   status = { NotFunded: null },
-  minimum = 200_000_000n,
+  minimum = 300_000_000n,
   paymentAllowed = true,
   paymentBlockedReason = [],
   factoryAvailable = true,
@@ -85,15 +88,76 @@ function setupView({
     setup_account: setupAccount,
     setup_account_identifier: accountIdentifierHex(setupAccount),
     minimum_e8s: minimum,
+    current_required_e8s: [],
+    nominal_minimum_e8s: 300_000_000n,
     payment_allowed: paymentAllowed,
     payment_blocked_reason: paymentBlockedReason,
     existing_relay: existingRelay,
     status,
     factory_available: factoryAvailable,
-    relay_wasm_hash_hex: ['a'.repeat(64)],
+    relay_raw_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
+    relay_install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
     warning_text: ['Blackhole visibility warning'],
   };
 }
+
+function recoveryView({ target, message }) {
+  return {
+    target_canister_id: Principal.fromText(target),
+    status: { ManualRecoveryRequired: null },
+    last_error: [message],
+    relay_canister_id: [],
+    setup_account_identifier: 'legacy-account',
+    setup_amount_seen_e8s: 300_000_000n,
+    setup_amount_processed_e8s: 0n,
+    cycle_conversion_e8s: [94_950_000n],
+    cycles_minted: [1_000_000_000_000n],
+    configured_relay_create_attach_cycles: 2_000_000_000_000n,
+    relay_raw_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
+    relay_install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
+    relay_onchain_module_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
+    cycle_transfer: [{
+      kind: { CmcConversion: null },
+      from_account_identifier: 'from',
+      to_account_identifier: 'to',
+      amount_e8s: 94_950_000n,
+      fee_e8s: 10_000n,
+      created_at_time_nanos: 1n,
+      block_index: [37_414_364n],
+      completed: true,
+    }],
+    relay_funding_transfer: [],
+    existing_relay_sweep_transfer: [],
+    refund_transfer_count: 0,
+    relay_create_attempt: [{
+      target_canister_id: Principal.fromText(target),
+      created_at_ts: 99n,
+      initial_cycles: 1_000_000_000_000n,
+      create_attach_cycles: 1_000_000_000_000n,
+      raw_relay_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
+      install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
+    }],
+    created_at_ts: 1n,
+    updated_at_ts: 2n,
+  };
+}
+
+test('relay setup renders full ICRC payment account fixture', () => {
+  const account = {
+    owner: Principal.fromText('j5gs6-uiaaa-aaaar-qb5cq-cai'),
+    subaccount: [[
+      0x6e, 0xb0, 0x38, 0xb9, 0x7c, 0x48, 0xa7, 0x47,
+      0xe0, 0x9a, 0x06, 0xfd, 0xfc, 0xba, 0x97, 0xee,
+      0x05, 0x1b, 0x34, 0xc6, 0x25, 0xce, 0x15, 0xac,
+      0x8e, 0x94, 0x66, 0xe8, 0x2d, 0x1b, 0x3d, 0xac,
+    ]],
+  };
+
+  assert.equal(
+    icrcAccountText(account),
+    'j5gs6-uiaaa-aaaar-qb5cq-cai-ij5xrtq.6eb038b97c48a747e09a06fdfcba97ee051b34c625ce15ac8e9466e82d1b3dac',
+  );
+});
 
 test('relay setup rejects invalid target without loading actors', async () => {
   await withRelaySetupDom(async (nodes) => {
@@ -162,10 +226,11 @@ test('relay setup renders setup account and does not notify below dust', async (
     await controller.submitTarget();
 
     assert.equal(nodes.get('relay-setup-status').textContent, 'Not funded');
-    assert.equal(nodes.get('relay-setup-minimum').textContent, '2 ICP');
+    assert.equal(nodes.get('relay-setup-minimum').textContent, '3 ICP');
     assert.equal(nodes.get('relay-setup-balance').textContent, '0.00000001 ICP');
     assert.equal(nodes.get('relay-setup-factory').textContent, 'Available');
     assert.equal(nodes.get('relay-setup-warning').textContent, 'Blackhole visibility warning');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, icrcAccountText(view.setup_account));
     assert.equal(nodes.get('relay-setup-subaccount').textContent, bytesToHex(relaySetupSubaccount(target)));
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, true);
     assert.equal(nodes.get('relay-setup-refund').hidden, true);
@@ -181,7 +246,7 @@ test('relay setup notifies above dust and renders active relay', async () => {
     relay_canister_id: relay,
     target_canister_id: Principal.fromText(target),
     kind: { SelfService: null },
-    relay_wasm_hash_hex: [],
+    relay_install_payload_hash_hex: [],
     created_at_ts: [],
   };
   const calls = [];
@@ -312,7 +377,8 @@ test('relay setup hides payment details but still notifies funded blocked target
 
     assert.deepEqual(calls, [['notify', target]]);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Refund pending');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'refund pending index catch-up');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Refund pending');
   });
 });
 
@@ -388,7 +454,7 @@ test('relay setup polling refreshes later balance and notifies above dust', asyn
           },
           async notify_relay_setup(arg) {
             calls.push(['notify', arg.toText()]);
-            return { BelowMinimum: { minimum_e8s: 200_000_000n, current_balance_e8s: 20_000n } };
+            return { BelowMinimum: { minimum_e8s: 300_000_000n, current_balance_e8s: 20_000n } };
           },
         },
       }),
@@ -442,7 +508,7 @@ test('relay setup polling cancels old target after target change', async () => {
           },
           async notify_relay_setup(arg) {
             calls.push(['notify', arg.toText()]);
-            return { BelowMinimum: { minimum_e8s: 200_000_000n, current_balance_e8s: 20_000n } };
+            return { BelowMinimum: { minimum_e8s: 300_000_000n, current_balance_e8s: 20_000n } };
           },
         },
       }),
@@ -497,7 +563,7 @@ test('relay setup late initial response for old target does not overwrite newer 
             return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
           },
           async notify_relay_setup(arg) {
-            return { BelowMinimum: { minimum_e8s: 200_000_000n, current_balance_e8s: 20_000n, target: arg } };
+            return { BelowMinimum: { minimum_e8s: 300_000_000n, current_balance_e8s: 20_000n, target: arg } };
           },
         },
       }),
@@ -604,8 +670,106 @@ test('relay setup polling stops after manual recovery required result', async ()
     nodes.get('relay-setup-target-input').value = target;
     await controller.submitTarget();
 
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'manual intervention required');
     assert.equal(controller.state.polling, false);
     assert.equal(cleared, 1);
+  });
+});
+
+test('relay setup shows concrete create_canister failure from recovery view', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const message = 'create_canister required 1307692307692 cycles but only 1000000000000 cycles were attached';
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            return setupView({ target, historian: historianId, status: { FailedRetryable: null } });
+          },
+          async get_relay_setup_recovery_view(request) {
+            assert.equal(request.target_canister_id.toText(), target);
+            return recoveryView({ target, message });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            return { Failed: { status: { FailedRetryable: null }, message: 'Retryable failure' } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 300_000_000n;
+        },
+      }),
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+    await controller.submitTarget();
+
+    assert.equal(nodes.get('relay-setup-status').textContent, message);
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Retryable failure');
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /1307692307692/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /37414364/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Operator diagnostic/);
+  });
+});
+
+test('relay setup discards stale recovery response after target change', async () => {
+  const targetA = '22255-zqaaa-aaaas-qf6uq-cai';
+  const targetB = 'br5f7-7uaaa-aaaaa-qaaca-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  let resolveRecoveryA;
+  const recoveryA = new Promise((resolve) => {
+    resolveRecoveryA = resolve;
+  });
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view(request) {
+            return setupView({ target: request.target_canister_id.toText(), historian: historianId });
+          },
+          async get_relay_setup_recovery_view(request) {
+            if (request.target_canister_id.toText() === targetA) {
+              await recoveryA;
+              return recoveryView({ target: targetA, message: 'target A leaked error' });
+            }
+            return recoveryView({ target: targetB, message: 'target B current error' });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            return { Failed: { status: { FailedRetryable: null }, message: 'failed' } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 300_000_000n;
+        },
+      }),
+      hostProvider: () => 'https://example.test',
+    });
+
+    nodes.get('relay-setup-target-input').value = targetA;
+    const submitA = controller.submitTarget();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    nodes.get('relay-setup-target-input').value = targetB;
+    await controller.submitTarget();
+    resolveRecoveryA();
+    await submitA;
+
+    assert.equal(nodes.get('relay-setup-status').textContent, 'target B current error');
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /target A leaked error/);
   });
 });

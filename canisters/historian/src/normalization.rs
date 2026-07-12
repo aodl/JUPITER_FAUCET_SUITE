@@ -77,8 +77,9 @@ pub(crate) fn validate_config(cfg: &Config) {
     if cfg.relay_factory_enabled {
         assert!(
             crate::approved_self_service_relay_wasm().is_some()
-                && crate::approved_self_service_relay_wasm_hash_hex().is_some(),
-            "relay_factory_enabled requires a nonempty approved relay wasm artifact and hash"
+                && crate::approved_relay_raw_wasm_hash_hex().is_some()
+                && crate::approved_relay_install_payload_hash_hex().is_some(),
+            "relay_factory_enabled requires a nonempty approved relay wasm artifact and raw/install payload hashes"
         );
     }
 }

@@ -317,9 +317,11 @@ It produces the canonical release artifacts under `release-artifacts/`, includin
 
 - `release-artifacts/jupiter_historian.wasm`
 - `release-artifacts/jupiter_historian.wasm.gz`
+- `release-artifacts/jupiter_relay.wasm`
+- `release-artifacts/jupiter_relay.wasm.gz`
 - corresponding `.sha256` files
 
-The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Self-service relays created by Historian use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and differ from the canonical production Relay only in target canister and surplus-recipient configuration. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
+The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Its embedded Relay install payload must correspond to the reviewed raw Relay Wasm from the same Docker/reproducible release build, recorded as `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`, and `release-artifacts/jupiter_relay.wasm.gz` must decompress to those reviewed raw bytes. Runtime self-service Relay module-hash reconciliation compares `canister_status.module_hash` to the compressed Relay install payload hash recorded in `release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256`, because Historian passes the compressed bytes to `install_code`. Self-service relays created by Historian use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and differ from the canonical production Relay only in target canister and surplus-recipient configuration. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
 
 ### Deploy canonical release artifact on the IC
 

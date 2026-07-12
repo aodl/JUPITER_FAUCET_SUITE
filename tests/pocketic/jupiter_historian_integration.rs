@@ -401,7 +401,7 @@ struct RelayRegistration {
     target_canister_id: Principal,
     relay_canister_id: Principal,
     kind: RelayRegistryKind,
-    relay_wasm_hash_hex: Option<String>,
+    relay_install_payload_hash_hex: Option<String>,
     created_at_ts: Option<u64>,
 }
 
@@ -472,7 +472,8 @@ struct RelaySetupView {
     existing_relay: Option<RelayRegistration>,
     status: RelaySetupPublicStatus,
     factory_available: bool,
-    relay_wasm_hash_hex: Option<String>,
+    relay_raw_wasm_hash_hex: Option<String>,
+    relay_install_payload_hash_hex: Option<String>,
     warning_text: Option<String>,
 }
 
@@ -875,8 +876,12 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
         "embedded relay wasm should enable factory in setup view: {view:?}"
     );
     assert!(
-        view.relay_wasm_hash_hex.is_some(),
-        "setup view should expose embedded relay wasm hash"
+        view.relay_raw_wasm_hash_hex.is_some(),
+        "setup view should expose reviewed raw relay wasm hash"
+    );
+    assert!(
+        view.relay_install_payload_hash_hex.is_some(),
+        "setup view should expose relay install payload hash"
     );
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let setup_amount = 300_000_000u64;
@@ -1121,8 +1126,12 @@ fn historian_artifact_exposes_reviewed_raw_relay_hash() -> Result<()> {
     )?;
 
     assert_eq!(
-        view.relay_wasm_hash_hex.as_deref(),
+        view.relay_raw_wasm_hash_hex.as_deref(),
         Some(recorded_raw_hash.as_str())
+    );
+    assert_eq!(
+        view.relay_install_payload_hash_hex.as_deref(),
+        Some(recorded_gz_hash.as_str())
     );
     assert!(view.factory_available);
     assert!(

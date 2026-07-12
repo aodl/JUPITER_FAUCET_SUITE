@@ -299,9 +299,10 @@ build_historian() {
   export JUPITER_RELAY_RAW_WASM_PATH="${REPO_ROOT}/${relay_raw_wasm}"
   export JUPITER_RELAY_RAW_WASM_SHA256="${raw_hash}"
   export JUPITER_RELAY_GZ_WASM_SHA256="${gz_hash}"
-  echo "Embedding relay wasm in jupiter-historian: ${JUPITER_RELAY_WASM_PATH}"
-  echo "Reviewed raw relay wasm sha256: ${raw_hash}"
-  echo "Embedded gzip relay wasm sha256: ${gz_hash}"
+  echo "Embedding relay install payload in jupiter-historian: ${JUPITER_RELAY_WASM_PATH}"
+  echo "Reviewed raw relay wasm sha256 (release-artifacts/jupiter_relay.wasm): ${raw_hash}"
+  echo "Reviewed compressed relay install payload sha256 (release-artifacts/jupiter_relay.wasm.gz): ${gz_hash}"
+  echo "Runtime relay module-hash reconciliation uses the compressed install payload hash because compressed bytes are passed to install_code."
   build_one "jupiter-historian" "jupiter-historian" "jupiter_historian" "canisters/historian/jupiter_historian.did" "jupiter_historian" "JUPITER_HISTORIAN_PROD_CANISTER_ID" "jupiter_historian"
 }
 

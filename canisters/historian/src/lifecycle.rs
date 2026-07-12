@@ -139,12 +139,12 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
         relay_factory_enabled: args
             .relay_factory_enabled
             .unwrap_or_else(|| crate::approved_self_service_relay_wasm().is_some()),
-        relay_setup_min_e8s: args.relay_setup_min_e8s.unwrap_or(200_000_000),
+        relay_setup_min_e8s: args.relay_setup_min_e8s.unwrap_or(300_000_000),
         relay_setup_dust_e8s: args.relay_setup_dust_e8s.unwrap_or(10_000),
         relay_setup_refund_cooldown_seconds: args
             .relay_setup_refund_cooldown_seconds
             .unwrap_or(300),
-        relay_initial_cycles: args.relay_initial_cycles.unwrap_or(1_000_000_000_000),
+        relay_initial_cycles: args.relay_initial_cycles.unwrap_or(2_000_000_000_000),
         relay_cycle_safety_margin_e8s: args.relay_cycle_safety_margin_e8s.unwrap_or(5_000_000),
         relay_min_subaccount_one_seed_e8s: args
             .relay_min_subaccount_one_seed_e8s
@@ -437,7 +437,7 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
         st.last_completed_route_sweep_ts = Some(0);
     }
     if st.config.relay_setup_min_e8s == 0 {
-        st.config.relay_setup_min_e8s = 200_000_000;
+        st.config.relay_setup_min_e8s = 300_000_000;
     }
     if st.config.relay_setup_dust_e8s == 0 {
         st.config.relay_setup_dust_e8s = 10_000;
@@ -446,7 +446,7 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
         st.config.relay_setup_refund_cooldown_seconds = 300;
     }
     if st.config.relay_initial_cycles == 0 {
-        st.config.relay_initial_cycles = 1_000_000_000_000;
+        st.config.relay_initial_cycles = 2_000_000_000_000;
     }
     if st.config.relay_cycle_safety_margin_e8s == 0 {
         st.config.relay_cycle_safety_margin_e8s = 5_000_000;

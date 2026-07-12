@@ -68,12 +68,12 @@ impl From<StableConfig> for Config {
             max_index_pages_per_tick: value.max_index_pages_per_tick,
             max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
             relay_factory_enabled: value.relay_factory_enabled.unwrap_or(false),
-            relay_setup_min_e8s: value.relay_setup_min_e8s.unwrap_or(200_000_000),
+            relay_setup_min_e8s: value.relay_setup_min_e8s.unwrap_or(300_000_000),
             relay_setup_dust_e8s: value.relay_setup_dust_e8s.unwrap_or(10_000),
             relay_setup_refund_cooldown_seconds: value
                 .relay_setup_refund_cooldown_seconds
                 .unwrap_or(300),
-            relay_initial_cycles: value.relay_initial_cycles.unwrap_or(1_000_000_000_000),
+            relay_initial_cycles: value.relay_initial_cycles.unwrap_or(2_000_000_000_000),
             relay_cycle_safety_margin_e8s: value.relay_cycle_safety_margin_e8s.unwrap_or(5_000_000),
             relay_min_subaccount_one_seed_e8s: value
                 .relay_min_subaccount_one_seed_e8s

@@ -36,15 +36,18 @@ EXPECTED_RELAY_IO_NEURON_CANONICAL = "10292412127977304661"
 EXPECTED_RELAY_JUPITER_FAUCET_NEURON = "11_614_578_985_374_291_210"
 EXPECTED_RELAY_JUPITER_FAUCET_NEURON_CANONICAL = "11614578985374291210"
 EXPECTED_RELAY_JUPITER_FAUCET_COMMITMENT_MEMO = "u2qkpaqaaaaaaarqb7eacai.Relay"
-EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S = 200_000_000
+EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S = 300_000_000
 EXPECTED_HISTORIAN_RELAY_SETUP_DUST_E8S = 10_000
 EXPECTED_HISTORIAN_RELAY_REFUND_COOLDOWN_SECONDS = 300
-EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES = 1_000_000_000_000
+EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES = 2_000_000_000_000
 EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
 REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256 = (
-    "b0b8835499d201b3d2d489def33cb420c8bc185b0b5a0f1c2ce02a9e6c73c534"
+    "7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844"
+)
+REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256 = (
+    "ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f"
 )
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
@@ -749,11 +752,16 @@ def validate_historian_relay_factory_artifacts(path: Path) -> None:
         return
 
     artifact_path = artifacts_dir / "jupiter_historian.wasm.gz"
+    historian_raw_artifact_path = artifacts_dir / "jupiter_historian.wasm"
     deprecated_artifact_path = artifacts_dir / "jupiter_historian_with_relay.wasm.gz"
     raw_artifact_path = artifacts_dir / "jupiter_relay.wasm"
     gz_artifact_path = artifacts_dir / "jupiter_relay.wasm.gz"
     raw_hash_path = artifacts_dir / "jupiter_historian.reviewed-relay-wasm-raw.sha256"
     gz_hash_path = artifacts_dir / "jupiter_historian.embedded-relay-wasm-gz.sha256"
+    if not historian_raw_artifact_path.exists():
+        fail(
+            f"{path} enables relay_factory_enabled but canonical reviewed historian raw artifact is missing: {historian_raw_artifact_path}"
+        )
     if not artifact_path.exists():
         fail(
             f"{path} enables relay_factory_enabled but canonical reviewed historian artifact is missing: {artifact_path}"
@@ -814,7 +822,12 @@ def validate_historian_relay_factory_artifacts(path: Path) -> None:
     if raw_recorded_hash != REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256:
         fail(
             f"{path} enables relay_factory_enabled with reviewed raw relay wasm sha256 {raw_recorded_hash}; "
-            f"expected reviewed hash {REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256}"
+            f"expected reviewed reproducible release artifact hash {REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256}"
+        )
+    if gz_recorded_hash != REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256:
+        fail(
+            f"{path} enables relay_factory_enabled with relay install payload sha256 {gz_recorded_hash}; "
+            f"expected reviewed compressed relay install payload hash {REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256}"
         )
     if deprecated_artifact_path.exists():
         deprecated_hash = hashlib.sha256(deprecated_artifact_path.read_bytes()).hexdigest()
@@ -824,14 +837,19 @@ def validate_historian_relay_factory_artifacts(path: Path) -> None:
                 f"{deprecated_artifact_path} exists but differs from canonical {artifact_path}; "
                 "deprecated aliases must be byte-identical or absent"
             )
+    historian_raw_hash = hashlib.sha256(historian_raw_artifact_path.read_bytes()).hexdigest()
     historian_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
     print(
         "reviewed raw relay wasm sha256: "
         f"{REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256}"
     )
     print(
-        "embedded gzip relay wasm sha256: "
-        f"{gz_recorded_hash}"
+        "reviewed compressed relay install payload sha256: "
+        f"{REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256}"
+    )
+    print(
+        "canonical historian raw artifact sha256: "
+        f"{historian_raw_hash}"
     )
     print(
         "canonical historian artifact sha256: "

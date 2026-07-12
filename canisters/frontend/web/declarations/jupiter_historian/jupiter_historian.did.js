@@ -117,7 +117,8 @@ export const idlFactory = ({ IDL }) => {
     relay_factory_enabled: IDL.Opt(IDL.Bool),
     relay_setup_min_e8s: IDL.Opt(IDL.Nat64),
     relay_setup_dust_e8s: IDL.Opt(IDL.Nat64),
-    relay_wasm_hash_hex: IDL.Opt(IDL.Text),
+    relay_raw_wasm_hash_hex: IDL.Opt(IDL.Text),
+    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
   });
   const RelayRegistryKind = IDL.Variant({
     Canonical: IDL.Null,
@@ -127,7 +128,7 @@ export const idlFactory = ({ IDL }) => {
     target_canister_id: IDL.Principal,
     relay_canister_id: IDL.Principal,
     kind: RelayRegistryKind,
-    relay_wasm_hash_hex: IDL.Opt(IDL.Text),
+    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
     created_at_ts: IDL.Opt(IDL.Nat64),
   });
   const RelaySetupPublicStatus = IDL.Variant({
@@ -152,12 +153,15 @@ export const idlFactory = ({ IDL }) => {
     setup_account: Account,
     setup_account_identifier: IDL.Text,
     minimum_e8s: IDL.Nat64,
+    current_required_e8s: IDL.Opt(IDL.Nat64),
+    nominal_minimum_e8s: IDL.Nat64,
     payment_allowed: IDL.Bool,
     payment_blocked_reason: IDL.Opt(IDL.Text),
     existing_relay: IDL.Opt(RelayRegistration),
     status: RelaySetupPublicStatus,
     factory_available: IDL.Bool,
-    relay_wasm_hash_hex: IDL.Opt(IDL.Text),
+    relay_raw_wasm_hash_hex: IDL.Opt(IDL.Text),
+    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
     warning_text: IDL.Opt(IDL.Text),
   });
   const GetRelaySetupRecoveryViewArgs = IDL.Record({
@@ -183,7 +187,9 @@ export const idlFactory = ({ IDL }) => {
     target_canister_id: IDL.Principal,
     created_at_ts: IDL.Nat64,
     initial_cycles: IDL.Nat,
-    relay_wasm_hash_hex: IDL.Opt(IDL.Text),
+    create_attach_cycles: IDL.Nat,
+    raw_relay_wasm_hash_hex: IDL.Opt(IDL.Text),
+    install_payload_hash_hex: IDL.Opt(IDL.Text),
   });
   const RelaySetupRecoveryView = IDL.Record({
     target_canister_id: IDL.Principal,
@@ -193,6 +199,12 @@ export const idlFactory = ({ IDL }) => {
     setup_account_identifier: IDL.Text,
     setup_amount_seen_e8s: IDL.Nat64,
     setup_amount_processed_e8s: IDL.Nat64,
+    cycle_conversion_e8s: IDL.Opt(IDL.Nat64),
+    cycles_minted: IDL.Opt(IDL.Nat),
+    configured_relay_create_attach_cycles: IDL.Nat,
+    relay_raw_wasm_hash_hex: IDL.Opt(IDL.Text),
+    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
+    relay_onchain_module_hash_hex: IDL.Opt(IDL.Text),
     cycle_transfer: IDL.Opt(RedactedTransferRecord),
     relay_funding_transfer: IDL.Opt(RedactedTransferRecord),
     existing_relay_sweep_transfer: IDL.Opt(RedactedTransferRecord),
