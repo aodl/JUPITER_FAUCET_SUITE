@@ -95,8 +95,8 @@ pub async fn main_tick(force: bool) {
     let sns_root = SnsRootCanister;
     let governance = NnsGovernanceCanister::new(governance_id);
     let xrc = XrcCanister::with_canister_id(xrc_id);
-    let result = if should_try_original_blackhole_first(blackhole_id) {
-        let blackhole = FallbackBlackholeClient::new(&original_blackhole, &configured_blackhole);
+    let result = if should_try_secure_blackhole_first(blackhole_id) {
+        let blackhole = FallbackBlackholeClient::new(&configured_blackhole, &original_blackhole);
         run_main_tick_with_clients(
             now_nanos,
             now_secs,

@@ -942,14 +942,14 @@ mod tests {
     }
 
     #[test]
-    fn original_blackhole_fallback_is_only_for_secure_mainnet_blackhole() {
-        assert!(should_try_original_blackhole_first(principal(
+    fn secure_blackhole_fallback_is_only_for_secure_mainnet_blackhole() {
+        assert!(should_try_secure_blackhole_first(principal(
             "77deu-baaaa-aaaar-qb6za-cai"
         )));
-        assert!(!should_try_original_blackhole_first(principal(
+        assert!(!should_try_secure_blackhole_first(principal(
             "e3mmv-5qaaa-aaaah-aadma-cai"
         )));
-        assert!(!should_try_original_blackhole_first(principal(
+        assert!(!should_try_secure_blackhole_first(principal(
             "ryjl3-tyaaa-aaaaa-aaaba-cai"
         )));
     }

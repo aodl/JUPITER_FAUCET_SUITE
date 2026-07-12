@@ -1,3 +1,4 @@
+import { Actor } from '@icp-sdk/core/agent';
 import { Principal } from '@icp-sdk/core/principal';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
 import { createHistorianClient, normalizeError } from './agent.js';
@@ -13,6 +14,11 @@ const TERMINAL_POLL_STATUSES = new Set([
 
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const FRONTEND_NOTIFY_MIN_E8S = 10_000n;
+const RELAY_SETUP_PROMPT_TEXT = 'Enter a canister ID to check whether Jupiter can create a relay for it. This creates a relay, not an emergency top-up; if the canister is close to freezing, top it up directly first.';
+const BLACKHOLE_CANISTER_IDS = [
+  '77deu-baaaa-aaaar-qb6za-cai',
+  'e3mmv-5qaaa-aaaah-aadma-cai',
+];
 const STATUS_LABELS = {
   NotFunded: 'Not funded',
   BelowMinimum: 'Below minimum',
@@ -24,6 +30,7 @@ const STATUS_LABELS = {
   FailedRetryable: 'Retryable failure',
   ManualRecoveryRequired: 'Manual recovery required',
 };
+const BLACKHOLE_PREFLIGHT_STATUS = 'Blackhole visibility required';
 const RECOVERY_STATUSES = new Set([
   'BelowMinimum',
   'InsufficientForCurrentRate',
@@ -36,7 +43,29 @@ const RECOVERY_STATUSES = new Set([
   'Refunded',
   'Refunding',
 ]);
+const PAYMENT_ACTIONABLE_RECOVERY_STATUSES = new Set([
+  'BelowMinimum',
+  'InsufficientForCurrentRate',
+]);
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+const blackholeIdlFactory = ({ IDL }) => {
+  const MemoryMetrics = IDL.Record({
+    wasm_memory_size: IDL.Nat,
+    stable_memory_size: IDL.Nat,
+  });
+  const Status = IDL.Record({
+    cycles: IDL.Nat,
+    memory_size: IDL.Opt(IDL.Nat),
+    memory_metrics: IDL.Opt(MemoryMetrics),
+    settings: IDL.Record({
+      controllers: IDL.Vec(IDL.Principal),
+    }),
+  });
+  return IDL.Service({
+    canister_status: IDL.Func([IDL.Record({ canister_id: IDL.Principal })], [Status], []),
+  });
+};
 
 function variantName(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
@@ -54,6 +83,34 @@ function statusKey(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
   return variantName(value);
+}
+
+function createBlackholeActor(canisterId, { agent }) {
+  if (!agent) throw new Error('Blackhole preflight requires an HttpAgent instance');
+  return Actor.createActor(blackholeIdlFactory, { agent, canisterId });
+}
+
+export async function preflightBlackholeVisibility({
+  target,
+  agent,
+  blackholeActorFactory = createBlackholeActor,
+} = {}) {
+  if (!target) throw new Error('Blackhole preflight requires a target canister ID');
+  const errors = [];
+  for (const canisterId of BLACKHOLE_CANISTER_IDS) {
+    try {
+      const blackhole = blackholeActorFactory(canisterId, { agent });
+      const status = await blackhole.canister_status({ canister_id: target });
+      return { Ok: { cycles: BigInt(status?.cycles ?? 0) } };
+    } catch (error) {
+      errors.push(`${canisterId}: ${normalizeError(error)}`);
+    }
+  }
+  return {
+    Err: {
+      message: `The target canister's cycle balance is not visible through a supported Jupiter blackhole canister. Add one of these controllers to the target canister, then check again: ${BLACKHOLE_CANISTER_IDS.join(', ')}. Probe details: ${errors.join('; ')}`,
+    },
+  };
 }
 
 function principalText(value) {
@@ -178,6 +235,59 @@ function setHidden(id, hidden) {
   if (node) node.hidden = hidden;
 }
 
+function setAccountLink(id, { dashboardAccount = '', title = '' } = {}) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  if (!dashboardAccount) {
+    node.removeAttribute?.('href');
+    node.title = '';
+    return;
+  }
+  node.href = `https://dashboard.internetcomputer.org/account/${dashboardAccount}`;
+  node.title = title || dashboardAccount;
+}
+
+function renderRelaySetupPrompt(message = RELAY_SETUP_PROMPT_TEXT) {
+  const result = document.getElementById('relay-setup-result');
+  if (!result) return;
+  setText('relay-setup-prompt-text', message);
+  result.hidden = false;
+}
+
+function clearRelaySetupPrompt() {
+  const result = document.getElementById('relay-setup-result');
+  if (!result) return;
+  result.hidden = true;
+}
+
+function clearRenderedView(status = '', { promptText = null } = {}) {
+  setHidden('relay-setup-summary', !status);
+  if (promptText !== null) {
+    renderRelaySetupPrompt(promptText);
+  } else if (status) {
+    clearRelaySetupPrompt();
+  } else {
+    renderRelaySetupPrompt();
+  }
+  setText('relay-setup-status', status);
+  setText('relay-setup-status-label', DASH);
+  setText('relay-setup-minimum', DASH);
+  setText('relay-setup-balance', DASH);
+  setText('relay-setup-icrc-account', DASH);
+  setText('relay-setup-account-identifier', DASH);
+  setAccountLink('relay-setup-icrc-account-link');
+  setAccountLink('relay-setup-account-identifier-link');
+  setText('relay-setup-warning', '');
+  setHidden('relay-setup-warning', true);
+  setText('relay-setup-factory', DASH);
+  setHtml('relay-setup-existing-relay', '');
+  setHidden('relay-setup-existing-relay', true);
+  setHtml('relay-setup-recovery-details', '');
+  setHidden('relay-setup-recovery-details', true);
+  setHidden('relay-setup-refund', true);
+  setHidden('relay-setup-payment-details', true);
+}
+
 function formatOptionalIcp(value) {
   const resolved = readOptional(value);
   return resolved === null || resolved === undefined ? DASH : formatIcpE8s(resolved);
@@ -195,15 +305,24 @@ function formatTransfer(record) {
   return `${formatIcpE8s(resolved.amount_e8s)} / block ${block ?? DASH} / completed ${Boolean(resolved.completed)}`;
 }
 
-function renderRecoveryDetails(recoveryView) {
-  if (!recoveryView) return '';
-  const relayId = principalText(recoveryView.relay_canister_id) || DASH;
+function formatConversion(record, fallbackAmountE8s) {
+  const resolved = readOptional(record);
+  if (resolved) {
+    const amount = formatIcpE8s(resolved.amount_e8s);
+    const block = readOptional(resolved.block_index);
+    return block === null || block === undefined ? amount : `${amount}, block ${block}`;
+  }
+  return formatOptionalIcp(fallbackAmountE8s);
+}
+
+function recoveryDiagnosticPayload(recoveryView) {
+  if (!recoveryView) return null;
   const createAttempt = readOptional(recoveryView.relay_create_attempt);
   const rawRelayHash = readOptional(createAttempt?.raw_relay_wasm_hash_hex)
     || readOptional(recoveryView.relay_raw_wasm_hash_hex);
   const installPayloadHash = readOptional(createAttempt?.install_payload_hash_hex)
     || readOptional(recoveryView.relay_install_payload_hash_hex);
-  const diagnostic = {
+  return {
     target_canister_id: principalText(recoveryView.target_canister_id),
     status: statusText(recoveryView.status),
     last_error: readOptional(recoveryView.last_error),
@@ -220,25 +339,29 @@ function renderRecoveryDetails(recoveryView) {
     setup_amount_processed_e8s: recoveryView.setup_amount_processed_e8s?.toString?.() || null,
     refund_transfer_count: recoveryView.refund_transfer_count?.toString?.() || '0',
   };
+}
+
+function renderRecoveryDetails(recoveryView) {
+  if (!recoveryView) return '';
+  const relayId = principalText(recoveryView.relay_canister_id) || DASH;
+  const createAttempt = readOptional(recoveryView.relay_create_attempt);
+  const relayRow = relayId === DASH
+    ? ''
+    : `<div><dt>Relay</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(relayId)}</dd></div>`;
   return `
     <dl class="pane-detail-grid relay-setup-grid">
-      <div><dt>Status</dt><dd class="pane-detail-value">${escapeHtml(statusText(recoveryView.status) || DASH)}</dd></div>
-      <div><dt>Relay</dt><dd class="pane-detail-value">${relayId === DASH ? DASH : renderCanisterTrackerLink(relayId)}</dd></div>
-      <div><dt>Cycle conversion</dt><dd class="pane-detail-value">${escapeHtml(formatTransfer(recoveryView.cycle_transfer))}</dd></div>
-      <div><dt>Cycle conversion e8s</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.cycle_conversion_e8s))}</dd></div>
+      ${relayRow}
+      <div><dt>CMC conversion</dt><dd class="pane-detail-value">${escapeHtml(formatConversion(recoveryView.cycle_transfer, recoveryView.cycle_conversion_e8s))}</dd></div>
       <div><dt>Cycles minted</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(recoveryView.cycles_minted))}</dd></div>
-      <div><dt>Create attachment</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(createAttempt?.create_attach_cycles ?? createAttempt?.initial_cycles))}</dd></div>
-      <div><dt>Configured create attachment</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(recoveryView.configured_relay_create_attach_cycles))}</dd></div>
-      <div><dt>Raw Relay Wasm review hash</dt><dd class="pane-detail-value">${escapeHtml(rawRelayHash || DASH)}</dd></div>
-      <div><dt>Relay install payload hash</dt><dd class="pane-detail-value">${escapeHtml(installPayloadHash || DASH)}</dd></div>
+      <div><dt>Cycles required for relay</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(recoveryView.configured_relay_create_attach_cycles))}</dd></div>
+      <div><dt>Cycles attached to create call</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalCycles(createAttempt?.create_attach_cycles ?? createAttempt?.initial_cycles))}</dd></div>
       <div><dt>Relay funding</dt><dd class="pane-detail-value">${escapeHtml(formatTransfer(recoveryView.relay_funding_transfer))}</dd></div>
-      <div><dt>Setup seen</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.setup_amount_seen_e8s))}</dd></div>
-      <div><dt>Setup processed</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.setup_amount_processed_e8s))}</dd></div>
+      <div><dt>Total received</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.setup_amount_seen_e8s))}</dd></div>
+      <div><dt>Amount converted</dt><dd class="pane-detail-value">${escapeHtml(formatOptionalIcp(recoveryView.setup_amount_processed_e8s))}</dd></div>
       <div><dt>Refund transfers</dt><dd class="pane-detail-value">${escapeHtml(String(recoveryView.refund_transfer_count ?? 0))}</dd></div>
     </dl>
     <div class="pane-inline-block">
-      <div class="pane-inline-header"><strong>Operator diagnostic</strong></div>
-      <code class="pane-inline-code mono" id="relay-setup-operator-diagnostic">${escapeHtml(JSON.stringify(diagnostic, null, 2))}</code>
+      <div class="pane-inline-header"><strong>Operator diagnostic</strong><button class="pane-page-button" id="relay-setup-copy-diagnostic" type="button">Copy details</button></div>
     </div>`;
 }
 
@@ -256,11 +379,18 @@ function renderRelayEntry(entry) {
     </dl>`;
 }
 
-function renderView({ view, balanceE8s = null, notifyResult = null, recoveryView = null }) {
+function renderView({
+  view,
+  balanceE8s = null,
+  notifyResult = null,
+  recoveryView = null,
+  preflightResult = null,
+  notifying = false,
+}) {
+  clearRelaySetupPrompt();
+  setHidden('relay-setup-summary', false);
   const existingRelay = readOptional(view?.existing_relay) || relayFromNotifyResult(notifyResult);
   const setupAccount = view?.setup_account;
-  const subaccount = setupAccount?.subaccount?.[0] || [];
-  const subaccountHex = bytesToHex(subaccount);
   const icrcAccount = setupAccount ? icrcAccountText(setupAccount) : '';
   const accountIdentifier = view?.setup_account_identifier || (setupAccount ? accountIdentifierHex(setupAccount) : '');
   const currentStatus = statusText(view?.status) || statusFromNotifyResult(notifyResult);
@@ -270,17 +400,43 @@ function renderView({ view, balanceE8s = null, notifyResult = null, recoveryView
   const minimum = requiredMinimum === undefined ? null : BigInt(requiredMinimum);
   const factoryAvailable = Boolean(view?.factory_available);
   const paymentBlockedReason = readOptional(view?.payment_blocked_reason);
+  const preflightError = preflightResult?.Err?.message || '';
+  const preflightOk = Boolean(preflightResult?.Ok);
+  const effectiveStatus = statusKey(recoveryView?.status) || notifyStatus || statusKey(view?.status);
+  const statusRequiresRecovery = RECOVERY_STATUSES.has(effectiveStatus);
+  const recoveryAllowsPayment = PAYMENT_ACTIONABLE_RECOVERY_STATUSES.has(effectiveStatus);
+  const paymentDetailsHidden = Boolean(existingRelay)
+    || view?.payment_allowed === false
+    || (statusRequiresRecovery && !recoveryAllowsPayment)
+    || (Boolean(preflightResult) && !preflightOk);
 
   const recoveryError = readOptional(recoveryView?.last_error);
   const resultMessage = messageFromNotifyResult(notifyResult);
-  setText('relay-setup-status', recoveryError || resultMessage || status);
-  setText('relay-setup-status-label', recoveryError || resultMessage ? status : '');
+  const displayStatus = notifying
+    ? 'Processing payment'
+    : recoveryView
+      ? (statusText(recoveryView.status) || status)
+      : status;
+  const notifyingMessage = notifying ? 'Notifying historian…' : '';
+  setText('relay-setup-status', preflightError && !recoveryView ? BLACKHOLE_PREFLIGHT_STATUS : displayStatus);
+  const pendingRecoveryMessage = statusRequiresRecovery && !recoveryAllowsPayment && !recoveryView && !resultMessage
+    ? 'Loading recovery details…'
+    : DASH;
+  setText('relay-setup-status-label', recoveryError || resultMessage || notifyingMessage || pendingRecoveryMessage);
   setText('relay-setup-minimum', minimum === null ? DASH : formatIcpE8s(minimum));
   setText('relay-setup-balance', balanceE8s === null || balanceE8s === undefined ? DASH : formatIcpE8s(balanceE8s));
-  setText('relay-setup-icrc-account', icrcAccount || DASH);
-  setText('relay-setup-subaccount', subaccountHex || DASH);
-  setText('relay-setup-account-identifier', accountIdentifier || DASH);
-  setText('relay-setup-warning', readOptional(view?.warning_text) || '');
+  setText('relay-setup-icrc-account', paymentDetailsHidden ? DASH : (icrcAccount || DASH));
+  setText('relay-setup-account-identifier', paymentDetailsHidden ? DASH : (accountIdentifier || DASH));
+  setAccountLink('relay-setup-icrc-account-link', paymentDetailsHidden ? {} : {
+    dashboardAccount: accountIdentifier,
+    title: icrcAccount,
+  });
+  setAccountLink('relay-setup-account-identifier-link', paymentDetailsHidden ? {} : {
+    dashboardAccount: accountIdentifier,
+    title: accountIdentifier,
+  });
+  setText('relay-setup-warning', preflightError);
+  setHidden('relay-setup-warning', !preflightError);
   setText('relay-setup-factory', factoryAvailable ? 'Available' : 'Unavailable');
   setHtml('relay-setup-existing-relay', existingRelay ? renderRelayEntry(existingRelay) : '');
   setHidden('relay-setup-existing-relay', !existingRelay);
@@ -288,10 +444,11 @@ function renderView({ view, balanceE8s = null, notifyResult = null, recoveryView
   setHidden('relay-setup-recovery-details', !recoveryView);
 
   if (paymentBlockedReason && !notifyStatus) {
-    setText('relay-setup-status', paymentBlockedReason);
+    setText('relay-setup-status', displayStatus);
+    setText('relay-setup-status-label', paymentBlockedReason);
   }
   setHidden('relay-setup-refund', true);
-  setHidden('relay-setup-payment-details', Boolean(existingRelay) || view?.payment_allowed === false);
+  setHidden('relay-setup-payment-details', notifying || paymentDetailsHidden);
 }
 
 export function createRelaySetupController({
@@ -299,6 +456,8 @@ export function createRelaySetupController({
   isLocalHost = () => false,
   createHistorian = createHistorianClient,
   ledgerActorFactory = createLedgerActor,
+  copyTextToClipboard = null,
+  blackholePreflight = preflightBlackholeVisibility,
   hostProvider = () => window.location.origin,
   setIntervalFn = (callback, delay) => window.setInterval(callback, delay),
   clearIntervalFn = (handle) => window.clearInterval(handle),
@@ -311,8 +470,10 @@ export function createRelaySetupController({
     balanceE8s: null,
     notifyResult: null,
     recoveryView: null,
+    preflightResult: null,
     error: '',
     loaded: false,
+    loading: false,
     notifying: false,
     polling: false,
   };
@@ -337,15 +498,15 @@ export function createRelaySetupController({
 
   function render() {
     if (state.error) {
-      setText('relay-setup-status', state.error);
-      setHtml('relay-setup-existing-relay', '');
-      setHidden('relay-setup-existing-relay', true);
-      setHtml('relay-setup-recovery-details', '');
-      setHidden('relay-setup-recovery-details', true);
+      clearRenderedView(state.error);
+      return;
+    }
+    if (state.loading) {
+      clearRenderedView('', { promptText: 'Checking relay setup…' });
       return;
     }
     if (!state.loaded) {
-      setText('relay-setup-status', '');
+      clearRenderedView('');
       return;
     }
     renderView(state);
@@ -409,6 +570,7 @@ export function createRelaySetupController({
       state.view = view;
       state.balanceE8s = BigInt(balance || 0);
       state.loaded = true;
+      state.loading = false;
       if (state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S && !state.notifying) {
         state.notifying = true;
         render();
@@ -435,6 +597,7 @@ export function createRelaySetupController({
     } catch (error) {
       state.notifying = false;
       state.error = normalizeError(error);
+      state.loading = false;
       stopPolling();
       render();
     }
@@ -465,7 +628,9 @@ export function createRelaySetupController({
     state.balanceE8s = null;
     state.notifyResult = null;
     state.recoveryView = null;
+    state.preflightResult = null;
     state.loaded = false;
+    state.loading = true;
     state.notifying = false;
     stopPolling();
     render();
@@ -475,25 +640,39 @@ export function createRelaySetupController({
       target = Principal.fromText(targetText);
     } catch {
       state.error = 'Enter a valid target canister ID.';
+      state.loading = false;
       input?.focus?.();
       render();
       return;
     }
 
     try {
-      setText('relay-setup-status', 'Loading setup account...');
       const { agent, historian } = await historianBundle();
       if (!submittedTargetStillCurrent(targetText)) return;
       const view = await historian.get_relay_setup_view({ target_canister_id: target });
       if (!submittedTargetStillCurrent(targetText)) return;
+      state.target = target;
+      state.view = view;
+      const existingRelay = readOptional(view?.existing_relay);
+      if (!existingRelay && view?.payment_allowed !== false) {
+        state.preflightResult = await blackholePreflight({ target, agent });
+        if (generation !== requestGeneration || !submittedTargetStillCurrent(targetText)) return;
+        if (state.preflightResult?.Err) {
+          state.balanceE8s = null;
+          state.loaded = true;
+          state.loading = false;
+          render();
+          return;
+        }
+      }
       const ledger = await loadLedger({ agent, historian });
       if (!submittedTargetStillCurrent(targetText)) return;
       const balance = await ledger.icrc1_balance_of(view.setup_account);
       if (!submittedTargetStillCurrent(targetText)) return;
-      state.target = target;
       state.view = view;
       state.balanceE8s = BigInt(balance || 0);
       state.loaded = true;
+      state.loading = false;
 
       if (state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S) {
         state.notifying = true;
@@ -511,6 +690,7 @@ export function createRelaySetupController({
       if (!submittedTargetStillCurrent(targetText)) return;
       state.notifying = false;
       state.error = normalizeError(error);
+      state.loading = false;
       stopPolling();
       render();
     }
@@ -523,6 +703,55 @@ export function createRelaySetupController({
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         void submitTarget();
+      });
+    }
+    const bindCopyValue = (buttonId, valueId) => {
+      const button = document.getElementById(buttonId);
+      if (!button || button.dataset.bound === 'true') return;
+      button.dataset.bound = 'true';
+      button.addEventListener('click', async () => {
+        if (typeof copyTextToClipboard !== 'function') return;
+        const value = document.getElementById(valueId)?.textContent || '';
+        if (!value || value === DASH) return;
+        const defaultText = button.textContent || 'Copy';
+        try {
+          await copyTextToClipboard(value);
+          button.textContent = 'Copied';
+          window.setTimeout(() => {
+            button.textContent = defaultText;
+          }, 1200);
+        } catch {
+          button.textContent = 'Copy failed';
+          window.setTimeout(() => {
+            button.textContent = defaultText;
+          }, 1500);
+        }
+      });
+    };
+    bindCopyValue('copy-relay-setup-icrc-account', 'relay-setup-icrc-account');
+    bindCopyValue('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
+    const recoveryDetails = document.getElementById('relay-setup-recovery-details');
+    if (recoveryDetails && recoveryDetails.dataset.copyBound !== 'true') {
+      recoveryDetails.dataset.copyBound = 'true';
+      recoveryDetails.addEventListener('click', async (event) => {
+        if (event.target?.id !== 'relay-setup-copy-diagnostic') return;
+        if (typeof copyTextToClipboard !== 'function') return;
+        const value = recoveryDiagnosticPayload(state.recoveryView);
+        if (!value) return;
+        const button = event.target;
+        const defaultText = button.textContent || 'Copy details';
+        try {
+          await copyTextToClipboard(JSON.stringify(value, null, 2));
+          button.textContent = 'Copied';
+          window.setTimeout(() => {
+            button.textContent = defaultText;
+          }, 1200);
+        } catch {
+          button.textContent = 'Copy failed';
+          window.setTimeout(() => {
+            button.textContent = defaultText;
+          }, 1500);
+        }
       });
     }
   }

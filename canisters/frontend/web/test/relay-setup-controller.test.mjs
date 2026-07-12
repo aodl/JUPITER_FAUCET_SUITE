@@ -1,8 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Principal } from '@icp-sdk/core/principal';
 
-import { createRelaySetupController, icrcAccountText } from '../src/app/relay-setup-controller.js';
+import {
+  createRelaySetupController,
+  icrcAccountText,
+  preflightBlackholeVisibility,
+} from '../src/app/relay-setup-controller.js';
 import { accountIdentifierHex, bytesToHex, relaySetupSubaccount } from '../src/data/dashboard-transforms.js';
 
 class FakeElement {
@@ -15,10 +20,16 @@ class FakeElement {
     this.value = '';
     this.hidden = false;
     this.focused = false;
+    this.href = '';
+    this.title = '';
   }
 
   addEventListener(type, listener) {
     this.listeners.set(type, listener);
+  }
+
+  removeAttribute(name) {
+    if (name === 'href') this.href = '';
   }
 
   focus() {
@@ -32,14 +43,20 @@ async function withRelaySetupDom(fn) {
   const ids = [
     'relay-setup-form',
     'relay-setup-target-input',
+    'relay-setup-result',
+    'relay-setup-prompt-text',
+    'relay-setup-summary',
     'relay-setup-status',
     'relay-setup-status-label',
     'relay-setup-factory',
     'relay-setup-minimum',
     'relay-setup-balance',
+    'relay-setup-icrc-account-link',
     'relay-setup-icrc-account',
-    'relay-setup-subaccount',
+    'copy-relay-setup-icrc-account',
+    'relay-setup-account-identifier-link',
     'relay-setup-account-identifier',
+    'copy-relay-setup-account-identifier',
     'relay-setup-warning',
     'relay-setup-existing-relay',
     'relay-setup-recovery-details',
@@ -56,6 +73,10 @@ async function withRelaySetupDom(fn) {
   globalThis.window = {
     location: { origin: 'https://example.test' },
     setInterval() {
+      return 1;
+    },
+    setTimeout(callback) {
+      callback();
       return 1;
     },
     clearInterval() {},
@@ -97,7 +118,7 @@ function setupView({
     factory_available: factoryAvailable,
     relay_raw_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
     relay_install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
-    warning_text: ['Blackhole visibility warning'],
+    warning_text: [],
   };
 }
 
@@ -142,6 +163,10 @@ function recoveryView({ target, message }) {
   };
 }
 
+async function preflightOk() {
+  return { Ok: { cycles: 1_000_000_000_000n } };
+}
+
 test('relay setup renders full ICRC payment account fixture', () => {
   const account = {
     owner: Principal.fromText('j5gs6-uiaaa-aaaar-qb5cq-cai'),
@@ -157,6 +182,65 @@ test('relay setup renders full ICRC payment account fixture', () => {
     icrcAccountText(account),
     'j5gs6-uiaaa-aaaar-qb5cq-cai-ij5xrtq.6eb038b97c48a747e09a06fdfcba97ee051b34c625ce15ac8e9466e82d1b3dac',
   );
+});
+
+test('relay setup payment markup focuses on useful account identifiers', () => {
+  const html = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /ICRC payment account/);
+  assert.match(html, /Alternative account identifier/);
+  assert.match(html, /id="copy-relay-setup-icrc-account"[^>]*>Copy<\/button>/);
+  assert.match(html, /id="relay-setup-icrc-account-link"/);
+  assert.match(html, /id="copy-relay-setup-account-identifier"[^>]*>Copy<\/button>/);
+  assert.match(html, /id="relay-setup-account-identifier-link"/);
+  assert.match(html, /placeholder="Canister ID"/);
+  assert.match(html, /id="relay-setup-warning" hidden/);
+  assert.match(html, /id="relay-setup-result"[\s\S]*tracker-empty-state[\s\S]*id="relay-setup-prompt-text"[\s\S]*Enter a canister ID to check/);
+  assert.match(html, /id="relay-setup-summary" hidden/);
+  assert.match(html, /id="relay-setup-payment-details" hidden/);
+  assert.doesNotMatch(html, /Raw setup subaccount/);
+  assert.doesNotMatch(html, /Legacy account identifier/);
+});
+
+test('relay setup blackhole preflight falls back to the 13-node blackhole', async () => {
+  const target = Principal.fromText('22255-zqaaa-aaaas-qf6uq-cai');
+  const calls = [];
+  const result = await preflightBlackholeVisibility({
+    target,
+    agent: { test: true },
+    blackholeActorFactory: (canisterId) => ({
+      async canister_status(request) {
+        calls.push([canisterId, request.canister_id.toText()]);
+        if (canisterId === '77deu-baaaa-aaaar-qb6za-cai') {
+          throw new Error('not a controller');
+        }
+        return { cycles: 123n };
+      },
+    }),
+  });
+
+  assert.deepEqual(result, { Ok: { cycles: 123n } });
+  assert.deepEqual(calls, [
+    ['77deu-baaaa-aaaar-qb6za-cai', target.toText()],
+    ['e3mmv-5qaaa-aaaah-aadma-cai', target.toText()],
+  ]);
+});
+
+test('relay setup blackhole preflight explains when both probes fail', async () => {
+  const target = Principal.fromText('22255-zqaaa-aaaas-qf6uq-cai');
+  const result = await preflightBlackholeVisibility({
+    target,
+    agent: { test: true },
+    blackholeActorFactory: (canisterId) => ({
+      async canister_status() {
+        throw new Error(`${canisterId} rejected status`);
+      },
+    }),
+  });
+
+  assert.match(result.Err.message, /not visible/);
+  assert.match(result.Err.message, /77deu-baaaa-aaaar-qb6za-cai/);
+  assert.match(result.Err.message, /e3mmv-5qaaa-aaaah-aadma-cai/);
+  assert.match(result.Err.message, /Probe details/);
 });
 
 test('relay setup rejects invalid target without loading actors', async () => {
@@ -179,11 +263,24 @@ test('relay setup rejects invalid target without loading actors', async () => {
   });
 });
 
+test('relay setup renders prompt before a target is checked', async () => {
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController();
+
+    controller.render();
+
+    assert.equal(nodes.get('relay-setup-summary').hidden, true);
+    assert.equal(nodes.get('relay-setup-result').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+  });
+});
+
 test('relay setup renders setup account and does not notify below dust', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const view = setupView({ target, historian: historianId });
   const calls = [];
+  const copiedValues = [];
 
   await withRelaySetupDom(async (nodes) => {
     const controller = createRelaySetupController({
@@ -218,6 +315,10 @@ test('relay setup renders setup account and does not notify below dust', async (
           },
         };
       },
+      copyTextToClipboard: async (value) => {
+        copiedValues.push(value);
+      },
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     controller.bindPane();
@@ -225,16 +326,140 @@ test('relay setup renders setup account and does not notify below dust', async (
 
     await controller.submitTarget();
 
+    assert.equal(nodes.get('relay-setup-result').hidden, true);
     assert.equal(nodes.get('relay-setup-status').textContent, 'Not funded');
     assert.equal(nodes.get('relay-setup-minimum').textContent, '3 ICP');
     assert.equal(nodes.get('relay-setup-balance').textContent, '0.00000001 ICP');
     assert.equal(nodes.get('relay-setup-factory').textContent, 'Available');
-    assert.equal(nodes.get('relay-setup-warning').textContent, 'Blackhole visibility warning');
+    assert.equal(nodes.get('relay-setup-warning').textContent, '');
     assert.equal(nodes.get('relay-setup-icrc-account').textContent, icrcAccountText(view.setup_account));
-    assert.equal(nodes.get('relay-setup-subaccount').textContent, bytesToHex(relaySetupSubaccount(target)));
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, view.setup_account_identifier);
+    assert.equal(
+      nodes.get('relay-setup-icrc-account-link').href,
+      `https://dashboard.internetcomputer.org/account/${view.setup_account_identifier}`,
+    );
+    assert.equal(
+      nodes.get('relay-setup-account-identifier-link').href,
+      `https://dashboard.internetcomputer.org/account/${view.setup_account_identifier}`,
+    );
+    await nodes.get('copy-relay-setup-icrc-account').listeners.get('click')();
+    await nodes.get('copy-relay-setup-account-identifier').listeners.get('click')();
+    assert.deepEqual(copiedValues, [
+      icrcAccountText(view.setup_account),
+      view.setup_account_identifier,
+    ]);
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, true);
     assert.equal(nodes.get('relay-setup-refund').hidden, true);
     assert.equal(calls.some((call) => call[0] === 'notify'), false);
+  });
+});
+
+test('relay setup hides payment details when blackhole preflight fails', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const message = 'Add the Jupiter blackhole controller, then check again.';
+  const calls = [];
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            calls.push(['view']);
+            return setupView({ target, historian: historianId });
+          },
+          async get_public_status() {
+            calls.push(['status']);
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            calls.push(['notify']);
+            throw new Error('notify should not run when preflight fails');
+          },
+        },
+      }),
+      ledgerActorFactory: () => {
+        calls.push(['ledger']);
+        throw new Error('ledger should not load when preflight fails');
+      },
+      blackholePreflight: async () => {
+        calls.push(['preflight']);
+        return { Err: { message } };
+      },
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+    await controller.submitTarget();
+
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Blackhole visibility required');
+    assert.equal(nodes.get('relay-setup-warning').textContent, message);
+    assert.equal(nodes.get('relay-setup-warning').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, '—');
+    assert.deepEqual(calls, [['view'], ['preflight']]);
+  });
+});
+
+test('relay setup clears stale details while loading a new target', async () => {
+  const targetA = '22255-zqaaa-aaaas-qf6uq-cai';
+  const targetB = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  let resolveTargetB;
+  const targetBView = new Promise((resolve) => {
+    resolveTargetB = resolve;
+  });
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view(request) {
+            const target = request.target_canister_id.toText();
+            if (target === targetB) await targetBView;
+            return setupView({ target, historian: historianId });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            return { BelowMinimum: { minimum_e8s: 300_000_000n, current_balance_e8s: 1n } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 1n;
+        },
+      }),
+      blackholePreflight: preflightOk,
+      hostProvider: () => 'https://example.test',
+    });
+
+    nodes.get('relay-setup-target-input').value = targetA;
+    await controller.submitTarget();
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, false);
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
+
+    nodes.get('relay-setup-target-input').value = targetB;
+    const submitB = controller.submitTarget();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(nodes.get('relay-setup-summary').hidden, true);
+    assert.equal(nodes.get('relay-setup-result').hidden, false);
+    assert.equal(nodes.get('relay-setup-prompt-text').textContent, 'Checking relay setup…');
+    assert.equal(nodes.get('relay-setup-warning').hidden, true);
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, '—');
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+
+    resolveTargetB();
+    await submitB;
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Not funded');
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
   });
 });
 
@@ -279,6 +504,7 @@ test('relay setup notifies above dust and renders active relay', async () => {
           return 200_010_000n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -290,6 +516,54 @@ test('relay setup notifies above dust and renders active relay', async () => {
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7-7uaaa-aaaaa-qaaca-cai/);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+  });
+});
+
+test('relay setup shows processing state instead of not funded after payment is detected', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  let resolveNotify;
+  const notifyStarted = new Promise((resolve) => {
+    resolveNotify = resolve;
+  });
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            return setupView({ target, historian: historianId });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            await notifyStarted;
+            return { BelowMinimum: { minimum_e8s: 300_000_000n, current_balance_e8s: 20_000n } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 300_000_000n;
+        },
+      }),
+      blackholePreflight: preflightOk,
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    const submit = controller.submitTarget();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Processing payment');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Notifying historian…');
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+
+    resolveNotify();
+    await submit;
   });
 });
 
@@ -325,6 +599,7 @@ test('relay setup has no refund button and renders automatic refunded result', a
           return 1n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -369,6 +644,7 @@ test('relay setup hides payment details but still notifies funded blocked target
           return 1_000_000_000n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -377,8 +653,8 @@ test('relay setup hides payment details but still notifies funded blocked target
 
     assert.deepEqual(calls, [['notify', target]]);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'refund pending index catch-up');
-    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Refund pending');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Refund pending');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'refund pending index catch-up');
   });
 });
 
@@ -419,6 +695,7 @@ test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_invite_
           return 0n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -426,10 +703,56 @@ test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_invite_
     await controller.submitTarget();
 
     assert.equal(nodes.get('relay-setup-factory').textContent, 'Unavailable');
-    assert.equal(nodes.get('relay-setup-status').textContent, 'relay factory is disabled');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Payment not allowed');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'relay factory is disabled');
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-    assert.equal(nodes.get('relay-setup-subaccount').textContent, bytesToHex(relaySetupSubaccount(target)));
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, '—');
     assert.deepEqual(calls, [['view'], ['balance']]);
+  });
+});
+
+test('relay setup hides payment details while manual recovery details are loading', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            return setupView({
+              target,
+              historian: historianId,
+              status: { ManualRecoveryRequired: null },
+            });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup() {
+            throw new Error('notify should not run below dust');
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          return 1n;
+        },
+      }),
+      blackholePreflight: preflightOk,
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    await controller.submitTarget();
+
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Loading recovery details…');
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, '—');
   });
 });
 
@@ -470,6 +793,7 @@ test('relay setup polling refreshes later balance and notifies above dust', asyn
         return intervals.length;
       },
       clearIntervalFn: () => {},
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -522,6 +846,7 @@ test('relay setup polling cancels old target after target change', async () => {
         return intervals.length;
       },
       clearIntervalFn: () => {},
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = targetA;
@@ -572,6 +897,7 @@ test('relay setup late initial response for old target does not overwrite newer 
           return 0n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
 
@@ -624,6 +950,7 @@ test('relay setup polling stops after active result', async () => {
       clearIntervalFn: () => {
         cleared += 1;
       },
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -665,12 +992,14 @@ test('relay setup polling stops after manual recovery required result', async ()
       clearIntervalFn: () => {
         cleared += 1;
       },
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
     await controller.submitTarget();
 
-    assert.equal(nodes.get('relay-setup-status').textContent, 'manual intervention required');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'manual intervention required');
     assert.equal(controller.state.polling, false);
     assert.equal(cleared, 1);
   });
@@ -680,10 +1009,14 @@ test('relay setup shows concrete create_canister failure from recovery view', as
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const message = 'create_canister required 1307692307692 cycles but only 1000000000000 cycles were attached';
+  let copiedDiagnostic = '';
 
   await withRelaySetupDom(async (nodes) => {
     const controller = createRelaySetupController({
       frontendConfig: { historianCanisterId: historianId },
+      copyTextToClipboard: async (value) => {
+        copiedDiagnostic = value;
+      },
       createHistorian: async () => ({
         agent: { test: true },
         historian: {
@@ -707,16 +1040,42 @@ test('relay setup shows concrete create_canister failure from recovery view', as
           return 300_000_000n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
+    controller.bindPane();
     nodes.get('relay-setup-target-input').value = target;
     await controller.submitTarget();
 
-    assert.equal(nodes.get('relay-setup-status').textContent, message);
-    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Retryable failure');
-    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /1307692307692/);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, message);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
     assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /37414364/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /CMC conversion/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Cycles required for relay/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Cycles attached to create call/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Total received/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Amount converted/);
     assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Operator diagnostic/);
+    assert.match(nodes.get('relay-setup-recovery-details').innerHTML, /Copy details/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /<dt>Status<\/dt>/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Cycle conversion e8s/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Create attachment/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Configured create attachment/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Setup seen/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Setup processed/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /<dt>Relay<\/dt><dd class="pane-detail-value">—<\/dd>/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Raw Relay Wasm review hash/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /Relay install payload hash/);
+    assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844/);
+
+    const copyButton = { id: 'relay-setup-copy-diagnostic', textContent: 'Copy details' };
+    await nodes.get('relay-setup-recovery-details').listeners.get('click')({ target: copyButton });
+    const parsedDiagnostic = JSON.parse(copiedDiagnostic);
+    assert.equal(parsedDiagnostic.last_error, message);
+    assert.match(parsedDiagnostic.last_error, /1307692307692/);
+    assert.equal(parsedDiagnostic.raw_relay_wasm_hash_hex, '7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844');
+    assert.equal(copyButton.textContent, 'Copy details');
   });
 });
 
@@ -758,6 +1117,7 @@ test('relay setup discards stale recovery response after target change', async (
           return 300_000_000n;
         },
       }),
+      blackholePreflight: preflightOk,
       hostProvider: () => 'https://example.test',
     });
 
@@ -769,7 +1129,8 @@ test('relay setup discards stale recovery response after target change', async (
     resolveRecoveryA();
     await submitA;
 
-    assert.equal(nodes.get('relay-setup-status').textContent, 'target B current error');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'target B current error');
     assert.doesNotMatch(nodes.get('relay-setup-recovery-details').innerHTML, /target A leaked error/);
   });
 });

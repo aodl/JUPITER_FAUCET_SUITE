@@ -64,11 +64,18 @@ export function createStakePaneController({
 }) {
   const renderHowItWorksAccount = () => {
     setCopyButton('copy-how-staking-account', () => JUPITER_STAKING_ACCOUNT.address);
+    setCopyButton('copy-how-staking-account-identifier', () => JUPITER_STAKING_ACCOUNT.explorerAccountHex);
     setText('how-staking-account-address', JUPITER_STAKING_ACCOUNT.address);
+    setText('how-staking-account-identifier', JUPITER_STAKING_ACCOUNT.explorerAccountHex);
     const stakingAccountLink = document.getElementById('how-staking-account-link');
     if (stakingAccountLink) {
       stakingAccountLink.href = `https://dashboard.internetcomputer.org/account/${JUPITER_STAKING_ACCOUNT.explorerAccountHex}`;
       stakingAccountLink.title = JUPITER_STAKING_ACCOUNT.address;
+    }
+    const stakingAccountIdentifierLink = document.getElementById('how-staking-account-identifier-link');
+    if (stakingAccountIdentifierLink) {
+      stakingAccountIdentifierLink.href = `https://dashboard.internetcomputer.org/account/${JUPITER_STAKING_ACCOUNT.explorerAccountHex}`;
+      stakingAccountIdentifierLink.title = JUPITER_STAKING_ACCOUNT.explorerAccountHex;
     }
   };
 

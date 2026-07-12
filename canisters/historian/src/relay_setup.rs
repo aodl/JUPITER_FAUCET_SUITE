@@ -3,6 +3,9 @@ use crate::clients::{
     BlackholeClient, ClientError, CmcCanister, CmcClient, IcpXdrConversionRate, IndexClient,
     LedgerClient,
 };
+use crate::scheduler::{
+    original_blackhole_id, should_try_secure_blackhole_first, FallbackBlackholeClient,
+};
 use crate::state::{self, Config, RelayRegistryStatus, State};
 use crate::*;
 use candid::{Encode, Principal};
@@ -334,9 +337,7 @@ pub(crate) fn setup_view_from_state(
         factory_available,
         relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
         relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
-        warning_text: Some(
-            "Nominal minimum: 3 ICP. The final required amount is checked immediately before spending and may be higher if CMC/XDR conditions change. This relay can only be created for canisters whose cycle balance is visible through the Jupiter blackhole canister. In practice, the configured blackhole canister must be able to call canister_status for the target.".to_string(),
-        ),
+        warning_text: None,
     }
 }
 
@@ -1314,7 +1315,7 @@ async fn notify_relay_setup_with_clients_for_historian(
         return auto_refund_pre_spend(
             historian,
             target,
-            "target is not observable through the configured blackhole canister".to_string(),
+            "target is not observable through a supported Jupiter blackhole canister".to_string(),
             ledger,
             index,
         )
@@ -1922,16 +1923,24 @@ pub(crate) async fn notify_relay_setup(target: Principal) -> RelaySetupNotifyRes
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let index = jupiter_ic_clients::index::IcpIndexCanister::new(cfg.index_canister_id);
-    let blackhole = clients::blackhole::BlackholeCanister::new(cfg.blackhole_canister_id);
+    let original_blackhole = clients::blackhole::BlackholeCanister::new(original_blackhole_id());
+    let configured_blackhole =
+        clients::blackhole::BlackholeCanister::new(cfg.blackhole_canister_id);
     let cmc = cfg.cmc_canister_id.map(CmcCanister::new);
     let missing_cmc = MissingCmcClient;
-    match cmc.as_ref() {
-        Some(cmc) => {
-            notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, cmc).await
-        }
-        None => {
-            notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, &missing_cmc).await
-        }
+    let cmc_client: &dyn CmcClient = cmc
+        .as_ref()
+        .map(|client| client as &dyn CmcClient)
+        .unwrap_or(&missing_cmc);
+    if should_try_secure_blackhole_first(cfg.blackhole_canister_id) {
+        let blackhole = FallbackBlackholeClient::new(&configured_blackhole, &original_blackhole);
+        notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, cmc_client).await
+    } else if cfg.blackhole_canister_id == original_blackhole_id() {
+        notify_relay_setup_with_clients(target, &ledger, &index, &original_blackhole, cmc_client)
+            .await
+    } else {
+        notify_relay_setup_with_clients(target, &ledger, &index, &configured_blackhole, cmc_client)
+            .await
     }
 }
 
@@ -2418,6 +2427,18 @@ mod tests {
                 memory_size: None,
                 memory_metrics: None,
             })
+        }
+    }
+
+    struct FailingBlackhole;
+
+    #[async_trait::async_trait]
+    impl BlackholeClient for FailingBlackhole {
+        async fn canister_status(
+            &self,
+            _canister_id: Principal,
+        ) -> Result<BlackholeCanisterStatus, ClientError> {
+            Err(ClientError::Call("not a controller".to_string()))
         }
     }
 
@@ -3086,6 +3107,60 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("current required"));
+    }
+
+    #[test]
+    fn relay_setup_observability_accepts_fallback_blackhole_before_spending() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 2]);
+        state::set_state(State::new(config(), 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            transfer_results: Arc::new(Mutex::new(vec![Ok(Ok(candid::Nat::from(1888u64)))])),
+            legacy_results: Arc::new(Mutex::new(Vec::new())),
+            ..FakeLedger::healthy(300_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    300_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let blackhole = FallbackBlackholeClient::new(&FailingBlackhole, &FakeBlackhole);
+        let cmc = FakeCmc {
+            notify_results: Arc::new(Mutex::new(vec![Ok(1_000_000_000_000)])),
+            ..FakeCmc::healthy()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian, target, &ledger, &index, &blackhole, &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.lock().unwrap().as_slice(), &[1888]);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert_ne!(job.status, RelaySetupStatus::TargetNotObservable);
+        assert!(!job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not observable"));
     }
 
     #[test]

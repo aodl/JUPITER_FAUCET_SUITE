@@ -367,6 +367,7 @@ async function getRelaySetupController() {
       const controller = createRelaySetupController({
         frontendConfig: FRONTEND_CONFIG,
         isLocalHost,
+        copyTextToClipboard,
       });
       controller.bindPane();
       return controller;

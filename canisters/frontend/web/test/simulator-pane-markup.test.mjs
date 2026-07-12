@@ -362,6 +362,10 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /how-it-works-guide-card is-optional/);
   assert.match(howItWorks, /href="https:\/\/nns\.ic0\.app\/address-book"[^>]*>[\s\S]*how-it-works-edit-address\.png/);
   assert.match(howItWorks, /with a nickname to make future commitments easier/);
+  assert.match(howItWorks, /<strong>ICRC staking account<\/strong>[\s\S]*id="copy-how-staking-account"[^>]*>Copy<\/button>/);
+  assert.match(howItWorks, /<strong>Alternative account identifier<\/strong>[\s\S]*id="copy-how-staking-account-identifier"[^>]*>Copy<\/button>/);
+  assert.match(howItWorks, /id="how-staking-account-identifier-link"[^>]*dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d/);
+  assert.doesNotMatch(howItWorks, /<strong>Staking account<\/strong>/);
   assert.match(indexCss, /\.how-it-works-guide-card\.is-send-step \{[\s\S]*grid-row: 1 \/ span 2;[\s\S]*\}/);
   assert.match(howItWorks, /set the transaction memo to your declared canister ID/);
   assert.doesNotMatch(howItWorks, /Transfer ICP to the long-form ICRC-1 staking account address displayed above/);

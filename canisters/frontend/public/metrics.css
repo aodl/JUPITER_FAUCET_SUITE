@@ -950,6 +950,10 @@
   margin: 0 0 14px;
 }
 
+#nav-panel-relay-setup [hidden] {
+  display: none !important;
+}
+
 .tracker-chart-wrapper {
   display: grid;
   gap: 14px;

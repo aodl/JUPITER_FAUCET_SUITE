@@ -1,7 +1,7 @@
 mod prelude;
 use prelude::*;
 mod guards;
-use guards::*;
+pub(crate) use guards::*;
 mod route_transfer_indexer_header;
 use route_transfer_indexer_header::*;
 mod commitment_lists;
