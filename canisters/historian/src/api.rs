@@ -52,6 +52,7 @@ pub struct UpgradeArgs {
     pub max_index_pages_per_tick: Option<u32>,
     pub max_canisters_per_cycles_tick: Option<u32>,
     pub blackhole_canister_id: Option<Principal>,
+    pub cycles_probe_policy: Option<CyclesProbePolicy>,
     pub sns_wasm_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
     pub faucet_canister_id: Option<Principal>,

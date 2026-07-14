@@ -79,60 +79,31 @@ pub async fn main_tick(force: bool) {
         }
     }
 
-    let (index_id, blackhole_id, sns_wasm_id, governance_id, xrc_id) = state::with_state(|st| {
+    let (index_id, sns_wasm_id, governance_id, xrc_id) = state::with_state(|st| {
         (
             st.config.index_canister_id,
-            st.config.blackhole_canister_id,
             st.config.sns_wasm_canister_id,
             st.config.staking_account.owner,
             st.config.xrc_canister_id,
         )
     });
     let index = IcpIndexCanister::new(index_id);
-    let original_blackhole = BlackholeCanister::new(original_blackhole_id());
-    let configured_blackhole = BlackholeCanister::new(blackhole_id);
+    let cycles_probe = IcCyclesProbeClient::new(sns_wasm_id);
     let sns_wasm = SnsWasmCanister::new(sns_wasm_id);
     let sns_root = SnsRootCanister;
     let governance = NnsGovernanceCanister::new(governance_id);
     let xrc = XrcCanister::with_canister_id(xrc_id);
-    let result = if should_try_secure_blackhole_first(blackhole_id) {
-        let blackhole = FallbackBlackholeClient::new(&configured_blackhole, &original_blackhole);
-        run_main_tick_with_clients(
-            now_nanos,
-            now_secs,
-            &index,
-            &blackhole,
-            &sns_wasm,
-            &sns_root,
-            &governance,
-            &xrc,
-        )
-        .await
-    } else if blackhole_id == original_blackhole_id() {
-        run_main_tick_with_clients(
-            now_nanos,
-            now_secs,
-            &index,
-            &original_blackhole,
-            &sns_wasm,
-            &sns_root,
-            &governance,
-            &xrc,
-        )
-        .await
-    } else {
-        run_main_tick_with_clients(
-            now_nanos,
-            now_secs,
-            &index,
-            &configured_blackhole,
-            &sns_wasm,
-            &sns_root,
-            &governance,
-            &xrc,
-        )
-        .await
-    };
+    let result = run_main_tick_with_clients(
+        now_nanos,
+        now_secs,
+        &index,
+        &cycles_probe,
+        &sns_wasm,
+        &sns_root,
+        &governance,
+        &xrc,
+    )
+    .await;
     if let Err(err) = result {
         log_error(&format!("historian main tick failed: {err}"));
         guard.finish(now_secs);
@@ -208,7 +179,7 @@ pub async fn debug_refresh_icp_xdr_rate_now(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_main_tick_with_clients<
     I: IndexClient,
-    B: BlackholeClient,
+    C: CyclesProbeClient,
     W: SnsWasmClient,
     R: SnsRootClient,
     G: GovernanceClient,
@@ -217,7 +188,7 @@ pub(super) async fn run_main_tick_with_clients<
     now_nanos: u64,
     now_secs: u64,
     index: &I,
-    blackhole: &B,
+    cycles_probe_client: &C,
     sns_wasm: &W,
     sns_root: &R,
     governance: &G,
@@ -254,17 +225,20 @@ pub(super) async fn run_main_tick_with_clients<
     let sns_due = enable_sns_tracking
         && (active_sns_present || now_secs.saturating_sub(last_sns_discovery_ts) >= interval_secs);
     if sns_due {
-        process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root).await?;
+        if let Err(err) = process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root).await {
+            log_error(&format!("historian SNS discovery degraded: {err}"));
+        }
     }
 
     if initial_cycles_probe_queue_present {
-        process_initial_cycles_probe_queue(now_nanos, now_secs, blackhole, governance).await?;
+        process_initial_cycles_probe_queue(now_nanos, now_secs, cycles_probe_client, governance)
+            .await?;
     }
 
     let cycles_due = active_cycles_present
         || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
     if cycles_due {
-        process_cycles_sweep(now_nanos, now_secs, blackhole).await?;
+        process_cycles_sweep(now_nanos, now_secs, cycles_probe_client).await?;
     }
 
     Ok(())

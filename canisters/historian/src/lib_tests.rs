@@ -102,6 +102,7 @@ mod tests {
             canonical_relay_canister_id: None,
             canonical_relay_targets: None,
             blackhole_canister_id: None,
+            cycles_probe_policy: None,
             sns_wasm_canister_id: None,
             cmc_canister_id: None,
             faucet_canister_id: None,
@@ -144,6 +145,7 @@ mod tests {
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
                 blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+                cycles_probe_policy: None,
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
                 xrc_canister_id: mainnet_xrc_id(),
                 enable_sns_tracking: false,
@@ -172,6 +174,7 @@ mod tests {
             commitment_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
+            cached_cycles_probe_routes: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
             registered_canister_summaries_cache: None,
@@ -259,6 +262,7 @@ mod tests {
         assert_eq!(cfg.ledger_canister_id, mainnet_ledger_id());
         assert_eq!(cfg.index_canister_id, mainnet_index_id());
         assert_eq!(cfg.blackhole_canister_id, mainnet_blackhole_id());
+        assert_eq!(cfg.effective_cycles_probe_policy(), CyclesProbePolicy::Auto);
         assert_eq!(
             cfg.output_source_account,
             mainnet_disburser_staging_account()
@@ -271,6 +275,51 @@ mod tests {
         assert_eq!(cfg.scan_interval_seconds, 600);
         assert_eq!(cfg.cycles_interval_seconds, 604800);
         assert_eq!(cfg.min_tx_e8s, 100_000_000);
+    }
+
+    #[test]
+    fn init_blackhole_argument_sets_fixed_cycles_probe_policy() {
+        let blackhole = principal("77deu-baaaa-aaaar-qb6za-cai");
+        let cfg = config_from_init_args(InitArgs {
+            staking_account: sample_account(),
+            output_source_account: None,
+            output_account: None,
+            rewards_account: None,
+            ledger_canister_id: None,
+            index_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+            blackhole_canister_id: Some(blackhole),
+            sns_wasm_canister_id: None,
+            xrc_canister_id: None,
+            enable_sns_tracking: None,
+            scan_interval_seconds: None,
+            cycles_interval_seconds: None,
+            min_tx_e8s: None,
+            max_cycles_entries_per_canister: None,
+            max_commitment_entries_per_canister: None,
+            max_index_pages_per_tick: None,
+            max_canisters_per_cycles_tick: None,
+            relay_factory_enabled: None,
+            relay_setup_min_e8s: None,
+            relay_setup_dust_e8s: None,
+            relay_setup_refund_cooldown_seconds: None,
+            relay_initial_cycles: None,
+            relay_cycle_safety_margin_e8s: None,
+            relay_min_subaccount_one_seed_e8s: None,
+            self_service_relay_interval_seconds: None,
+            self_service_relay_max_transfers_per_tick: None,
+            io_surplus_neuron_id: None,
+            canonical_relay_canister_id: None,
+            canonical_relay_targets: None,
+        });
+
+        assert_eq!(
+            cfg.effective_cycles_probe_policy(),
+            CyclesProbePolicy::FixedBlackhole {
+                canister_id: blackhole
+            }
+        );
     }
 
     #[test]
@@ -561,6 +610,60 @@ mod tests {
             Some(1)
         );
         assert_eq!(st.main_lock_state_ts, Some(0));
+    }
+
+    #[test]
+    fn upgrade_policy_semantics_clear_positive_route_cache_on_effective_change() {
+        let mut st = base_state();
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        st.config.cycles_probe_policy = None;
+        st.cached_cycles_probe_routes.insert(
+            target,
+            CyclesProbeRoute::SnsRoot {
+                root_canister_id: root,
+            },
+        );
+
+        apply_upgrade_args(
+            &mut st,
+            Some(UpgradeArgs {
+                cycles_probe_policy: Some(CyclesProbePolicy::Auto),
+                blackhole_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
+                ..UpgradeArgs::default()
+            }),
+        );
+
+        assert_eq!(
+            st.config.effective_cycles_probe_policy(),
+            CyclesProbePolicy::Auto
+        );
+        assert_eq!(
+            st.config.blackhole_canister_id,
+            principal("acjuz-liaaa-aaaar-qb4qq-cai")
+        );
+        assert!(st.cached_cycles_probe_routes.is_empty());
+
+        st.cached_cycles_probe_routes.insert(
+            target,
+            CyclesProbeRoute::SnsRoot {
+                root_canister_id: root,
+            },
+        );
+        let fixed = principal("77deu-baaaa-aaaar-qb6za-cai");
+        apply_upgrade_args(
+            &mut st,
+            Some(UpgradeArgs {
+                blackhole_canister_id: Some(fixed),
+                ..UpgradeArgs::default()
+            }),
+        );
+
+        assert_eq!(
+            st.config.effective_cycles_probe_policy(),
+            CyclesProbePolicy::FixedBlackhole { canister_id: fixed }
+        );
+        assert!(st.cached_cycles_probe_routes.is_empty());
     }
 
     #[test]

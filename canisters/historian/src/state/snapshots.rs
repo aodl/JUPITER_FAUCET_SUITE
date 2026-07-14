@@ -40,9 +40,11 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
         icp_xdr_rate: st.icp_xdr_rate.clone(),
         last_icp_xdr_rate_attempt_ts: st.last_icp_xdr_rate_attempt_ts,
         last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
+        cached_cycles_probe_routes: Some(st.cached_cycles_probe_routes.clone()),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn persist_snapshot_sections_scoped(
     st: &State,
     dirty_sections: u8,

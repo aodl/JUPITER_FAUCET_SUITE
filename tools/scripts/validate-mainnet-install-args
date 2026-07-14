@@ -679,7 +679,7 @@ def validate_historian() -> int:
     require_contains(text, f'index_canister_id = opt principal "{MAINNET["index"]}";', str(path))
     require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
     require_contains(text, f'faucet_canister_id = opt principal "{PROD["jupiter_faucet"]}";', str(path))
-    require_contains(text, f'blackhole_canister_id = opt principal "{MAINNET["blackhole"]}";', str(path))
+    require_contains(text, "blackhole_canister_id = null;", str(path))
     require_contains(text, f'sns_wasm_canister_id = opt principal "{MAINNET["sns_wasm"]}";', str(path))
     historian_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
     if historian_min_tx_e8s < 10_000_000:

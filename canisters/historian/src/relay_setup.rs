@@ -2289,6 +2289,7 @@ mod tests {
             cmc_canister_id: Some(Principal::from_slice(&[4])),
             faucet_canister_id: Some(Principal::from_slice(&[5])),
             blackhole_canister_id: Principal::from_slice(&[6]),
+            cycles_probe_policy: None,
             sns_wasm_canister_id: Principal::from_slice(&[7]),
             xrc_canister_id: Principal::from_slice(&[8]),
             enable_sns_tracking: true,
@@ -2320,15 +2321,18 @@ mod tests {
         state::set_state(st);
     }
 
+    type FakeTransferResults = Arc<Mutex<Vec<Result<Result<BlockIndex, TransferError>, String>>>>;
+    type FakeLegacyCalls = Arc<Mutex<Vec<(String, u64, Option<u64>)>>>;
+
     #[derive(Clone)]
     struct FakeLedger {
         fee: Result<u64, String>,
         balance: Result<u64, String>,
-        transfer_results: Arc<Mutex<Vec<Result<Result<BlockIndex, TransferError>, String>>>>,
+        transfer_results: FakeTransferResults,
         transfers: Arc<Mutex<Vec<TransferArg>>>,
         legacy_results:
             Arc<Mutex<Vec<Result<jupiter_ic_clients::ledger::LegacyTransferResult, String>>>>,
-        legacy_calls: Arc<Mutex<Vec<(String, u64, Option<u64>)>>>,
+        legacy_calls: FakeLegacyCalls,
     }
 
     impl FakeLedger {
@@ -3654,10 +3658,9 @@ mod tests {
             job.last_error.as_deref(),
             Some("relay canister already has an unexpected module hash")
         );
-        assert!(state::with_state(|st| st
+        assert!(state::with_state(|st| !st
             .relay_registry_by_target
-            .get(&target)
-            .is_none()));
+            .contains_key(&target)));
     }
 
     #[test]
@@ -3707,10 +3710,9 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("below configured relay_initial_cycles"));
-        assert!(state::with_state(|st| st
+        assert!(state::with_state(|st| !st
             .relay_registry_by_target
-            .get(&target)
-            .is_none()));
+            .contains_key(&target)));
     }
 
     #[test]
@@ -3762,10 +3764,9 @@ mod tests {
         assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
         assert!(job.relay_create_attempt.is_some());
         assert!(job.relay_canister_id.is_none());
-        assert!(state::with_state(|st| st
+        assert!(state::with_state(|st| !st
             .relay_registry_by_target
-            .get(&target)
-            .is_none()));
+            .contains_key(&target)));
 
         let ledger = FakeLedger::healthy(250_000_000);
         let retry = block_on(notify_relay_setup_with_clients_for_historian(

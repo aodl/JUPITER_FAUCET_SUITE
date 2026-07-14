@@ -1315,7 +1315,7 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
             transfer.from == relay_default
                 && transfer.to == cmc_deposit
                 && transfer.result == "Ok"
-                && transfer.amount > Nat::from(0u8)
+                && transfer.amount > 0u8
         }),
         "spawned relay should create a CMC top-up transfer for target; transfers={transfers:?}"
     );

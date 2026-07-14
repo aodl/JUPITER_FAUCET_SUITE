@@ -6,6 +6,7 @@ pub(super) use ic_stable_structures::{
 };
 pub(super) use icrc_ledger_types::icrc1::account::Account;
 pub(super) use jupiter_ic_clients::account::account_text;
+pub(crate) use jupiter_ic_clients::cycles_probe::{CyclesProbePolicy, CyclesProbeRoute};
 pub(super) use serde::{Deserialize, Serialize};
 pub(super) use std::borrow::Cow;
 pub(super) use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +24,8 @@ pub(crate) struct Config {
     #[serde(default)]
     pub faucet_canister_id: Option<Principal>,
     pub blackhole_canister_id: Principal,
+    #[serde(default)]
+    pub cycles_probe_policy: Option<CyclesProbePolicy>,
     pub sns_wasm_canister_id: Principal,
     pub xrc_canister_id: Principal,
     pub enable_sns_tracking: bool,
@@ -57,6 +60,16 @@ pub(crate) struct Config {
     pub canonical_relay_canister_id: Option<Principal>,
     #[serde(default)]
     pub canonical_relay_targets: Vec<Principal>,
+}
+
+impl Config {
+    pub(crate) fn effective_cycles_probe_policy(&self) -> CyclesProbePolicy {
+        self.cycles_probe_policy
+            .clone()
+            .unwrap_or(CyclesProbePolicy::FixedBlackhole {
+                canister_id: self.blackhole_canister_id,
+            })
+    }
 }
 
 fn opt_principal_text(principal: Option<Principal>) -> String {
@@ -251,6 +264,8 @@ pub(crate) struct StableConfig {
     #[serde(default)]
     pub faucet_canister_id: Option<Principal>,
     pub blackhole_canister_id: Principal,
+    #[serde(default)]
+    pub cycles_probe_policy: Option<CyclesProbePolicy>,
     pub sns_wasm_canister_id: Principal,
     #[serde(default)]
     pub xrc_canister_id: Option<Principal>,
@@ -538,6 +553,8 @@ pub(crate) struct StableRootState {
     pub last_icp_xdr_rate_attempt_ts: Option<u64>,
     #[serde(default)]
     pub last_icp_xdr_rate_error: Option<String>,
+    #[serde(default)]
+    pub cached_cycles_probe_routes: Option<BTreeMap<Principal, CyclesProbeRoute>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -868,6 +885,8 @@ pub(crate) struct State {
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
     #[serde(default)]
+    pub cached_cycles_probe_routes: BTreeMap<Principal, CyclesProbeRoute>,
+    #[serde(default)]
     pub relay_registry_by_target: BTreeMap<Principal, RelayRegistryEntry>,
     #[serde(default)]
     pub relay_setup_jobs: BTreeMap<Principal, RelaySetupJob>,
@@ -947,6 +966,7 @@ impl State {
             commitment_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
+            cached_cycles_probe_routes: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
             registered_canister_summaries_cache: Some(BTreeMap::new()),

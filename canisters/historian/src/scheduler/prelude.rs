@@ -2,7 +2,6 @@ pub(super) use async_trait::async_trait;
 pub(super) use candid::{Nat, Principal};
 pub(super) use std::time::Duration;
 
-pub(super) use crate::clients::blackhole::BlackholeCanister;
 pub(super) use crate::clients::governance::NnsGovernanceCanister;
 pub(super) use crate::clients::index::{account_identifier_text_for_account, IcpIndexCanister};
 pub(super) use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
@@ -19,6 +18,10 @@ pub(super) use crate::state::{
 pub(super) use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,
     MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS,
+};
+pub(super) use jupiter_ic_clients::cycles_probe::{
+    probe_cycles as shared_probe_cycles, CyclesProbeClient, CyclesProbePolicy, CyclesProbeRoute,
+    CyclesProbeSuccess, IcCyclesProbeClient,
 };
 pub(super) use jupiter_ic_clients::xrc::XrcCanister;
 

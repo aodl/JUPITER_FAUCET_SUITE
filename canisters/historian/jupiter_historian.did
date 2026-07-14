@@ -79,6 +79,10 @@ type InitArgs = record {
   canonical_relay_canister_id : opt principal;
   canonical_relay_targets : opt vec principal;
 };
+type CyclesProbePolicy = variant {
+  Auto;
+  FixedBlackhole : record { canister_id : principal };
+};
 type UpgradeArgs = record {
   staking_account : opt Account;
   ledger_canister_id : opt principal;
@@ -96,6 +100,7 @@ type UpgradeArgs = record {
   max_index_pages_per_tick : opt nat32;
   max_canisters_per_cycles_tick : opt nat32;
   blackhole_canister_id : opt principal;
+  cycles_probe_policy : opt CyclesProbePolicy;
   sns_wasm_canister_id : opt principal;
   xrc_canister_id : opt principal;
   cmc_canister_id : opt principal;

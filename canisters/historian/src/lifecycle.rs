@@ -102,6 +102,12 @@ pub(super) fn guard_debug_api_not_production() {
 }
 
 pub(super) fn config_from_init_args(args: InitArgs) -> Config {
+    let init_blackhole_canister_id = args.blackhole_canister_id;
+    let blackhole_canister_id = init_blackhole_canister_id.unwrap_or_else(mainnet_blackhole_id);
+    let cycles_probe_policy = Some(match init_blackhole_canister_id {
+        Some(canister_id) => CyclesProbePolicy::FixedBlackhole { canister_id },
+        None => CyclesProbePolicy::Auto,
+    });
     let cfg = Config {
         staking_account: args.staking_account,
         output_source_account: args
@@ -113,9 +119,8 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: Some(args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id)),
         faucet_canister_id: Some(args.faucet_canister_id.unwrap_or_else(mainnet_faucet_id)),
-        blackhole_canister_id: args
-            .blackhole_canister_id
-            .unwrap_or_else(mainnet_blackhole_id),
+        blackhole_canister_id,
+        cycles_probe_policy,
         sns_wasm_canister_id: args
             .sns_wasm_canister_id
             .unwrap_or_else(mainnet_sns_wasm_id),
@@ -678,6 +683,7 @@ pub(super) fn init(args: InitArgs) {
 }
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
+    let previous_policy = st.config.effective_cycles_probe_policy();
     if let Some(args) = args {
         if let Some(v) = args.staking_account {
             st.config.staking_account = v;
@@ -715,6 +721,12 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         }
         if let Some(v) = args.blackhole_canister_id {
             st.config.blackhole_canister_id = v;
+        }
+        if let Some(v) = args.cycles_probe_policy {
+            st.config.cycles_probe_policy = Some(v);
+        } else if let Some(v) = args.blackhole_canister_id {
+            st.config.cycles_probe_policy =
+                Some(CyclesProbePolicy::FixedBlackhole { canister_id: v });
         }
         if let Some(v) = args.sns_wasm_canister_id {
             st.config.sns_wasm_canister_id = v;
@@ -781,6 +793,9 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     normalize_runtime_state(st);
     ensure_canonical_relay_registry(st);
     validate_config(&st.config);
+    if st.config.effective_cycles_probe_policy() != previous_policy {
+        st.cached_cycles_probe_routes.clear();
+    }
     st.main_lock_state_ts = Some(0);
 }
 

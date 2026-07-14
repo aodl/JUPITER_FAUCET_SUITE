@@ -53,6 +53,7 @@ mod tests {
             cmc_canister_id: Some(principal(&[4])),
             faucet_canister_id: Some(principal(&[5])),
             blackhole_canister_id: principal(&[6]),
+            cycles_probe_policy: None,
             sns_wasm_canister_id: principal(&[7]),
             xrc_canister_id: principal(&[8]),
             enable_sns_tracking: true,

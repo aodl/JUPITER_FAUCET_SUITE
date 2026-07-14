@@ -84,6 +84,7 @@ pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn with_state_mut_sections_scoped<R>(
     dirty_sections: u8,
     registry_principal: Option<Principal>,
