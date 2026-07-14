@@ -1,4 +1,4 @@
-mod cycles_probe;
+pub(crate) mod cycles_probe;
 mod guards;
 mod logging;
 mod tick;

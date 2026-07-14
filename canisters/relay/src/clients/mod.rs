@@ -1,10 +1,9 @@
-pub(crate) mod blackhole;
 pub(crate) mod cmc;
 pub(crate) mod governance;
 pub(crate) mod ledger;
 
 use async_trait::async_trait;
-use candid::{Nat, Principal};
+use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
 
@@ -31,11 +30,6 @@ impl From<jupiter_ic_clients::ClientError> for ClientError {
     }
 }
 
-pub(crate) fn nat_to_u128(n: &Nat) -> Result<u128, ClientError> {
-    u128::try_from(n.0.clone())
-        .map_err(|_| ClientError::Convert(format!("Nat does not fit u128: {n}")))
-}
-
 #[async_trait]
 pub(crate) trait LedgerClient: Send + Sync {
     async fn fee_e8s(&self) -> Result<u64, ClientError>;
@@ -55,20 +49,6 @@ pub(crate) trait CmcClient: Send + Sync {
         canister_id: Principal,
         block_index: u64,
     ) -> Result<u128, ClientError>;
-}
-
-#[async_trait]
-pub(crate) trait BlackholeClient: Send + Sync {
-    async fn cycles_balance(&self, canister_id: Principal) -> Result<u128, ClientError>;
-
-    async fn cycles_balance_via(
-        &self,
-        probe_canister_id: Principal,
-        target_canister_id: Principal,
-    ) -> Result<u128, ClientError> {
-        let _ = probe_canister_id;
-        self.cycles_balance(target_canister_id).await
-    }
 }
 
 #[async_trait]

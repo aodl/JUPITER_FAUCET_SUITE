@@ -5,6 +5,7 @@ mod state;
 
 use candid::{CandidType, Deserialize, Principal};
 use jupiter_ic_clients::constants;
+use jupiter_ic_clients::cycles_probe::CyclesProbePolicy;
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -138,6 +139,12 @@ fn public_surplus_recipients_from_args(
 }
 
 fn config_from_init_args(args: InitArgs) -> crate::state::Config {
+    let configured_blackhole = args.blackhole_canister_id;
+    let blackhole_canister_id = configured_blackhole.unwrap_or_else(mainnet_blackhole_id);
+    let cycles_probe_policy = match configured_blackhole {
+        Some(canister_id) => CyclesProbePolicy::FixedBlackhole { canister_id },
+        None => CyclesProbePolicy::Auto,
+    };
     crate::state::Config {
         managed_canisters: args.managed_canisters,
         ledger_canister_id: args.ledger_canister_id.unwrap_or_else(mainnet_ledger_id),
@@ -145,9 +152,8 @@ fn config_from_init_args(args: InitArgs) -> crate::state::Config {
         governance_canister_id: args
             .governance_canister_id
             .unwrap_or_else(mainnet_governance_id),
-        blackhole_canister_id: args
-            .blackhole_canister_id
-            .unwrap_or_else(mainnet_blackhole_id),
+        blackhole_canister_id,
+        cycles_probe_policy,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60).max(60),
         max_transfers_per_tick: args.max_transfers_per_tick,
         surplus_recipients: public_surplus_recipients_from_args(
@@ -246,6 +252,7 @@ pub struct DebugConfig {
     pub cmc_canister_id: Principal,
     pub governance_canister_id: Principal,
     pub blackhole_canister_id: Principal,
+    pub cycles_probe_policy: CyclesProbePolicy,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
     pub surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
@@ -294,6 +301,7 @@ fn debug_config() -> DebugConfig {
         cmc_canister_id: st.config.cmc_canister_id,
         governance_canister_id: st.config.governance_canister_id,
         blackhole_canister_id: st.config.blackhole_canister_id,
+        cycles_probe_policy: st.config.cycles_probe_policy.clone(),
         main_interval_seconds: st.config.main_interval_seconds,
         max_transfers_per_tick: st.config.max_transfers_per_tick,
         surplus_canister_recipients: surplus_canister_recipients_to_public(
@@ -323,14 +331,20 @@ fn debug_last_summary() -> Option<crate::state::RelaySummary> {
 #[ic_cdk::update]
 fn debug_set_cycles_sample(canister_id: Principal, cycles: u128) {
     guard_debug_api_not_production();
-    let now = ic_cdk::api::time() as u64;
+    let now = ic_cdk::api::time();
+    let self_id = ic_cdk::api::canister_self();
     crate::state::with_state_mut(|st| {
+        let route = (canister_id != self_id).then_some(
+            jupiter_ic_clients::cycles_probe::CyclesProbeRoute::Blackhole {
+                canister_id: st.config.blackhole_canister_id,
+            },
+        );
         st.last_completed_cycles.insert(
             canister_id,
             crate::state::CyclesSnapshot {
                 cycles,
                 timestamp_nanos: now,
-                source: crate::logic::sample_source_for(canister_id, ic_cdk::api::canister_self()),
+                source: crate::scheduler::cycles_probe::sample_source_from_route(route.as_ref()),
             },
         );
     });
@@ -465,6 +479,13 @@ mod tests {
             args.surplus_neuron_recipients[1].memo.as_slice(),
             b"10292412127977304661"
         );
+        let cfg = config_from_init_args(args.clone());
+        assert_eq!(
+            cfg.cycles_probe_policy,
+            CyclesProbePolicy::FixedBlackhole {
+                canister_id: principal("77deu-baaaa-aaaar-qb6za-cai")
+            }
+        );
 
         let roundtrip = encode_args((args,)).expect("decoded Rust InitArgs should re-encode");
         let (_decoded_again,): (InitArgs,) =
@@ -527,6 +548,52 @@ mod tests {
             cfg.surplus_recipients[0].target,
             crate::state::SurplusTarget::Neuron(42)
         );
+    }
+
+    #[test]
+    fn config_from_init_args_some_blackhole_uses_fixed_policy_and_legacy_field() {
+        let fiduciary = principal("77deu-baaaa-aaaar-qb6za-cai");
+        let mut args = sample_init_args();
+        args.blackhole_canister_id = Some(fiduciary);
+
+        let cfg = config_from_init_args(args);
+
+        assert_eq!(cfg.blackhole_canister_id, fiduciary);
+        assert_eq!(
+            cfg.cycles_probe_policy,
+            CyclesProbePolicy::FixedBlackhole {
+                canister_id: fiduciary
+            }
+        );
+    }
+
+    #[test]
+    fn config_from_init_args_none_uses_auto_policy_and_legacy_default_only() {
+        let mut args = sample_init_args();
+        args.blackhole_canister_id = None;
+
+        let cfg = config_from_init_args(args);
+
+        assert_eq!(
+            cfg.blackhole_canister_id,
+            principal("77deu-baaaa-aaaar-qb6za-cai")
+        );
+        assert_eq!(cfg.cycles_probe_policy, CyclesProbePolicy::Auto);
+    }
+
+    #[test]
+    fn self_service_shaped_init_args_with_no_blackhole_decode_to_auto() {
+        let args = InitArgs {
+            blackhole_canister_id: None,
+            ..sample_init_args()
+        };
+
+        let encoded = encode_args((args,)).expect("self-service-shaped init args should encode");
+        let (decoded,): (InitArgs,) =
+            decode_args(&encoded).expect("self-service-shaped init args should decode");
+        let cfg = config_from_init_args(decoded);
+
+        assert_eq!(cfg.cycles_probe_policy, CyclesProbePolicy::Auto);
     }
 
     #[test]

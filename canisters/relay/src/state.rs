@@ -4,6 +4,7 @@ use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 #[cfg(test)]
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::cycles_probe::{CyclesProbePolicy, CyclesProbeRoute};
 use serde::Serialize;
 
 const PRODUCTION_JUPITER_MANAGED_CANISTERS: [&str; 8] = [
@@ -24,6 +25,7 @@ pub struct Config {
     pub cmc_canister_id: Principal,
     pub governance_canister_id: Principal,
     pub blackhole_canister_id: Principal,
+    pub cycles_probe_policy: CyclesProbePolicy,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
     pub surplus_recipients: Vec<SurplusRecipient>,
@@ -53,6 +55,8 @@ pub enum RelayMode {
 pub enum CyclesSampleSource {
     SelfCanister,
     BlackholeStatus,
+    SnsRootStatus,
+    SnsSwapStatus,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -301,6 +305,7 @@ pub(crate) struct State {
     pub relay_minted_cycles_since_sample: BTreeMap<Principal, u128>,
     pub recovery_deficit_cycles: BTreeMap<Principal, u128>,
     pub consecutive_probe_failures: BTreeMap<Principal, u32>,
+    pub cached_cycles_probe_routes: BTreeMap<Principal, CyclesProbeRoute>,
     pub conversion_estimate: Option<ConversionEstimate>,
     pub active_job: Option<ActiveRelayJob>,
     pub active_faucet_commitment_transfer: Option<PendingFaucetCommitmentTransfer>,
@@ -318,6 +323,7 @@ impl State {
             relay_minted_cycles_since_sample: BTreeMap::new(),
             recovery_deficit_cycles: BTreeMap::new(),
             consecutive_probe_failures: BTreeMap::new(),
+            cached_cycles_probe_routes: BTreeMap::new(),
             conversion_estimate: None,
             active_job: None,
             active_faucet_commitment_transfer: None,
@@ -367,7 +373,7 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         .collect::<Vec<_>>()
         .join("|");
     format!(
-        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, production_managed_set_match={}",
+        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, cycles_probe_policy={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, production_managed_set_match={}",
         self_id.to_text(),
         principal_list(&cfg.managed_canisters),
         principal_list(&effective),
@@ -375,6 +381,7 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         cfg.cmc_canister_id.to_text(),
         cfg.governance_canister_id.to_text(),
         cfg.blackhole_canister_id.to_text(),
+        cycles_probe_policy_text(&cfg.cycles_probe_policy),
         cfg.main_interval_seconds,
         cfg.max_transfers_per_tick
             .map(|v| v.to_string())
@@ -384,6 +391,15 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         if surplus_recipient_memos.is_empty() { "none" } else { &surplus_recipient_memos },
         production_managed_set_matches(&cfg.managed_canisters),
     )
+}
+
+fn cycles_probe_policy_text(policy: &CyclesProbePolicy) -> String {
+    match policy {
+        CyclesProbePolicy::Auto => "Auto".to_string(),
+        CyclesProbePolicy::FixedBlackhole { canister_id } => {
+            format!("FixedBlackhole({})", canister_id.to_text())
+        }
+    }
 }
 
 pub(crate) fn relay_summary_log_line(summary: &RelaySummary) -> String {
@@ -695,6 +711,9 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
+                canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            },
             main_interval_seconds: 86_400,
             max_transfers_per_tick: Some(10),
             surplus_recipients: Vec::new(),
@@ -715,6 +734,7 @@ mod tests {
         assert!(line.contains("cmc_canister_id=rkp4c-7iaaa-aaaaa-aaaca-cai"));
         assert!(line.contains("governance_canister_id=rrkah-fqaaa-aaaaa-aaaaq-cai"));
         assert!(line.contains("blackhole_canister_id=77deu-baaaa-aaaar-qb6za-cai"));
+        assert!(line.contains("cycles_probe_policy=FixedBlackhole(77deu-baaaa-aaaar-qb6za-cai)"));
         assert!(line.contains("main_interval_seconds=86400"));
         assert!(line.contains("max_transfers_per_tick=10"));
         assert!(line.contains("surplus_recipient_count=0"));
@@ -923,6 +943,7 @@ mod tests {
             assert!(stored.relay_minted_cycles_since_sample.is_empty());
             assert!(stored.recovery_deficit_cycles.is_empty());
             assert!(stored.consecutive_probe_failures.is_empty());
+            assert!(stored.cached_cycles_probe_routes.is_empty());
             assert!(stored.last_summary.is_none());
             assert!(stored.active_job.is_none());
             assert!(stored.active_faucet_commitment_transfer.is_none());
