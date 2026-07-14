@@ -446,6 +446,53 @@ mod tests {
     }
 
     #[test]
+    fn fixed_fiduciary_canonical_targets_probe_each_blackhole_through_itself() {
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let managed_targets = constants::ordered_production_blackhole_canister_ids();
+        let client = RecordingClient {
+            blackhole: BTreeMap::from([
+                (fiduciary, TestResponse::Ok(77)),
+                (thirteen, TestResponse::Ok(13)),
+            ]),
+            ..Default::default()
+        };
+
+        let batch = block_on(probe_cycles_batch(
+            &managed_targets,
+            &CyclesProbePolicy::FixedBlackhole {
+                canister_id: fiduciary,
+            },
+            BTreeMap::new(),
+            123,
+            &relay_client(&client, principal("u2qkp-aqaaa-aaaar-qb7ea-cai"), 9_000),
+        ));
+
+        assert!(batch.failures.is_empty());
+        assert_eq!(batch.snapshots[&thirteen].cycles, 13);
+        assert_eq!(batch.snapshots[&fiduciary].cycles, 77);
+        assert_eq!(
+            batch.route_updates[&thirteen],
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: thirteen
+            })
+        );
+        assert_eq!(
+            batch.route_updates[&fiduciary],
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: fiduciary
+            })
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                blackhole_call(thirteen, thirteen),
+                blackhole_call(fiduciary, fiduciary),
+            ]
+        );
+    }
+
+    #[test]
     fn cached_route_success_stops_without_fallback_calls() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
