@@ -1393,19 +1393,6 @@ mod tests {
     }
 
     #[test]
-    fn secure_blackhole_fallback_is_only_for_secure_mainnet_blackhole() {
-        assert!(should_try_secure_blackhole_first(principal(
-            "77deu-baaaa-aaaar-qb6za-cai"
-        )));
-        assert!(!should_try_secure_blackhole_first(principal(
-            "e3mmv-5qaaa-aaaah-aadma-cai"
-        )));
-        assert!(!should_try_secure_blackhole_first(principal(
-            "ryjl3-tyaaa-aaaaa-aaaba-cai"
-        )));
-    }
-
-    #[test]
     fn cycles_sweep_targets_memo_canisters_with_lazy_stable_commitment_history() {
         let _staking_id = configure_state(10);
         let self_id = principal("aaaaa-aa");
@@ -1435,6 +1422,43 @@ mod tests {
             assert_eq!(
                 build_cycles_sweep_canisters(st, self_id),
                 vec![self_id, beneficiary]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_includes_active_self_service_target_without_source() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        state::with_state_mut(|st| {
+            st.distinct_canisters.insert(target);
+            st.relay_registry_by_target.insert(
+                target,
+                crate::state::RelayRegistryEntry {
+                    relay_canister_id: relay,
+                    target_canister_id: target,
+                    kind: crate::state::RelayRegistryKind::SelfService,
+                    status: crate::state::RelayRegistryStatus::Active,
+                    setup_account: None,
+                    setup_account_identifier: None,
+                    setup_amount_e8s: None,
+                    setup_tx_ids: Vec::new(),
+                    relay_wasm_hash_hex: None,
+                    final_controllers: None,
+                    log_visibility_public: None,
+                    created_at_ts: None,
+                    activated_at_ts: None,
+                },
+            );
+        });
+
+        state::with_state(|st| {
+            assert!(!st.canister_sources.contains_key(&target));
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id),
+                vec![self_id, target]
             );
         });
     }

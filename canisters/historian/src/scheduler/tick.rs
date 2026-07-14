@@ -169,7 +169,7 @@ pub(super) async fn refresh_icp_xdr_rate_if_due<X: ExchangeRateClient>(
 #[cfg(feature = "debug_api")]
 pub async fn debug_refresh_icp_xdr_rate_now(
     now_secs: u64,
-    xrc_canister_id: Principal,
+    xrc_canister_id: candid::Principal,
 ) -> Result<(), String> {
     let xrc = XrcCanister::with_canister_id(xrc_canister_id);
     refresh_icp_xdr_rate(now_secs, &xrc).await

@@ -1,5 +1,5 @@
 use super::*;
-pub(super) fn enqueue_initial_cycles_probe(
+pub(crate) fn enqueue_initial_cycles_probe(
     st: &mut crate::state::State,
     canister_id: candid::Principal,
 ) {
@@ -19,6 +19,9 @@ pub(super) fn should_probe_memo_registered_canister(
     st: &crate::state::State,
     canister_id: candid::Principal,
 ) -> bool {
+    if active_self_service_relay_target(st, canister_id) {
+        return true;
+    }
     let Some(sources) = st.canister_sources.get(&canister_id) else {
         return false;
     };
@@ -33,6 +36,7 @@ pub(super) fn build_cycles_sweep_canisters(
     self_id: candid::Principal,
 ) -> Vec<candid::Principal> {
     let mut canisters = vec![self_id];
+    let mut seen = std::collections::BTreeSet::from([self_id]);
     for canister_id in st.distinct_canisters.iter().copied() {
         let sources = st
             .canister_sources
@@ -46,7 +50,35 @@ pub(super) fn build_cycles_sweep_canisters(
         if logic::should_skip_blackhole_for_sources(&sources) {
             continue;
         }
-        canisters.push(canister_id);
+        if seen.insert(canister_id) {
+            canisters.push(canister_id);
+        }
+    }
+    for canister_id in st
+        .relay_registry_by_target
+        .iter()
+        .filter_map(|(target, entry)| {
+            (entry.kind == crate::state::RelayRegistryKind::SelfService
+                && entry.status == crate::state::RelayRegistryStatus::Active)
+                .then_some(*target)
+        })
+    {
+        if seen.insert(canister_id) {
+            canisters.push(canister_id);
+        }
     }
     canisters
+}
+
+fn active_self_service_relay_target(
+    st: &crate::state::State,
+    canister_id: candid::Principal,
+) -> bool {
+    st.relay_registry_by_target
+        .get(&canister_id)
+        .map(|entry| {
+            entry.kind == crate::state::RelayRegistryKind::SelfService
+                && entry.status == crate::state::RelayRegistryStatus::Active
+        })
+        .unwrap_or(false)
 }

@@ -472,6 +472,7 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
         st.config.canonical_relay_targets = mainnet_canonical_relay_targets();
     }
     ensure_canonical_relay_registry(st);
+    ensure_active_self_service_relay_targets_tracked(st, 0);
 }
 
 pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
@@ -498,6 +499,39 @@ pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
         st.relay_registry_by_target
             .entry(target_canister_id)
             .or_insert(entry);
+    }
+}
+
+pub(crate) fn ensure_active_self_service_relay_targets_tracked(st: &mut State, now_secs: u64) {
+    let stable_cycles_targets = state::stable_cycles_history_keys();
+    let active_targets: Vec<_> = st
+        .relay_registry_by_target
+        .iter()
+        .filter_map(|(target, entry)| {
+            (entry.kind == RelayRegistryKind::SelfService
+                && entry.status == RelayRegistryStatus::Active)
+                .then_some(*target)
+        })
+        .collect();
+
+    for target in active_targets {
+        st.distinct_canisters.insert(target);
+        let meta = st.per_canister_meta.entry(target).or_default();
+        if meta.first_seen_ts.is_none() {
+            meta.first_seen_ts = Some(now_secs);
+        }
+        let has_cycles_history = st
+            .cycles_history
+            .get(&target)
+            .map(|history| !history.is_empty())
+            .unwrap_or(false)
+            || stable_cycles_targets.contains(&target);
+        if !has_cycles_history
+            && meta.last_cycles_probe_ts.is_none()
+            && !st.initial_cycles_probe_queue.contains(&target)
+        {
+            scheduler::enqueue_initial_cycles_probe(st, target);
+        }
     }
 }
 
@@ -819,6 +853,7 @@ pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
+    ensure_active_self_service_relay_targets_tracked(&mut st, ic_cdk::api::time() / 1_000_000_000);
     // Persist only the historian root on upgrade. Commitment/cycles histories are
     // restored lazily from stable entry/index maps, so rewriting all durable sections
     // here would clobber those bulk histories with an intentionally sparse heap view.
