@@ -472,7 +472,6 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
         st.config.canonical_relay_targets = mainnet_canonical_relay_targets();
     }
     ensure_canonical_relay_registry(st);
-    ensure_active_self_service_relay_targets_tracked(st, 0);
 }
 
 pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
@@ -848,18 +847,39 @@ pub(super) fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
 
 #[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
 pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
+    post_upgrade_with_backfill_timestamp(args, ic_cdk::api::time() / 1_000_000_000);
+}
+
+pub(crate) fn post_upgrade_with_backfill_timestamp(args: Option<UpgradeArgs>, now_secs: u64) {
+    restore_post_upgrade_state_with_backfill_timestamp(args, now_secs);
+    scheduler::install_timers();
+    log_lifecycle("post_upgrade_complete");
+}
+
+pub(crate) fn restore_post_upgrade_state_with_backfill_timestamp(
+    args: Option<UpgradeArgs>,
+    now_secs: u64,
+) {
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    ensure_active_self_service_relay_targets_tracked(&mut st, ic_cdk::api::time() / 1_000_000_000);
+    ensure_active_self_service_relay_targets_tracked(&mut st, now_secs);
+    let tracked_self_service_targets: std::collections::BTreeSet<_> = st
+        .relay_registry_by_target
+        .iter()
+        .filter_map(|(target, entry)| {
+            (entry.kind == RelayRegistryKind::SelfService
+                && entry.status == RelayRegistryStatus::Active
+                && st.per_canister_meta.contains_key(target))
+            .then_some(*target)
+        })
+        .collect();
     // Persist only the historian root on upgrade. Commitment/cycles histories are
     // restored lazily from stable entry/index maps, so rewriting all durable sections
     // here would clobber those bulk histories with an intentionally sparse heap view.
-    state::set_state_root_only(st);
-    scheduler::install_timers();
-    log_lifecycle("post_upgrade_complete");
+    state::set_state_root_and_registry_principals(st, &tracked_self_service_targets);
 }
 
 fn log_lifecycle(event: &str) {

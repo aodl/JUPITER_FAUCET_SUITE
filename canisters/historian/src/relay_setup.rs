@@ -1879,7 +1879,7 @@ async fn create_and_activate_relay(
         created_at_ts: Some(now_secs()),
         activated_at_ts: Some(now_secs()),
     };
-    state::with_root_and_relay_factory_state_mut(target, |st| {
+    state::with_root_registry_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
             job.status = RelaySetupStatus::Active;
             job.phase = Some(RelaySetupPhase::Active);
@@ -3795,6 +3795,88 @@ mod tests {
         assert!(state::with_state(|st| st
             .relay_registry_by_target
             .is_empty()));
+    }
+
+    #[test]
+    fn observable_target_continues_into_existing_post_probe_recovery_path() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 8]);
+        let mut cfg = config();
+        cfg.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
+        state::set_state(State::new(cfg, 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            transfer_results: Arc::new(Mutex::new(vec![Ok(Ok(candid::Nat::from(1888u64)))])),
+            legacy_results: Arc::new(Mutex::new(Vec::new())),
+            ..FakeLedger::healthy(300_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    300_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([(thirteen, ProbeResponse::Ok(100))]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc {
+            notify_results: Arc::new(Mutex::new(vec![Ok(1_000_000_000_000)])),
+            ..FakeCmc::healthy()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(
+            cycles_probe.calls(),
+            vec![
+                ProbeCall::SelfCycles(target),
+                ProbeCall::Blackhole {
+                    probe: thirteen,
+                    target
+                },
+            ]
+        );
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.lock().unwrap().as_slice(), &[1888]);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert_ne!(job.status, RelaySetupStatus::TargetNotObservable);
+        assert!(job.refund_transfers.is_empty());
+        assert!(job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("create_canister"));
+        assert!(!job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not observable"));
     }
 
     #[test]

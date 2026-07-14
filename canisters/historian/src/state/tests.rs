@@ -21,6 +21,8 @@ mod tests {
         with_raw_icp_commitment_entry_map(|map| map.clear_new());
         with_neuron_commitment_history_index_map(|map| map.clear_new());
         with_neuron_commitment_entry_map(|map| map.clear_new());
+        with_relay_registry_by_target_map(|map| map.clear_new());
+        with_relay_setup_jobs_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
         clear_persistence_dirty();
         STATE.with(|s| *s.borrow_mut() = None);
@@ -272,6 +274,85 @@ mod tests {
         sync_relay_factory_maps(&registry, &BTreeMap::new(), Some(&BTreeSet::from([target])));
 
         assert!(snapshot_relay_registry_by_target_map().is_empty());
+    }
+
+    #[test]
+    fn post_upgrade_backfill_persists_real_timestamp_without_public_source() {
+        reset_test_storage();
+        let target = principal(&[35]);
+        let relay = principal(&[36]);
+        let history_target = principal(&[37]);
+        let mut st = State::new(sample_config(), 100);
+        st.config.cmc_canister_id = Some(crate::mainnet_cmc_id());
+        st.config.faucet_canister_id = Some(crate::mainnet_faucet_id());
+        st.relay_registry_by_target
+            .insert(target, relay_entry(target, relay));
+        st.cycles_history.insert(
+            history_target,
+            vec![CyclesSample {
+                timestamp_nanos: 12,
+                cycles: 34,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+        set_state(st);
+        STATE.with(|s| *s.borrow_mut() = None);
+
+        crate::restore_post_upgrade_state_with_backfill_timestamp(None, 987_654);
+
+        STATE.with(|s| *s.borrow_mut() = None);
+        let restored = restore_state_from_stable().expect("expected stable state after upgrade");
+        let meta = restored
+            .per_canister_meta
+            .get(&target)
+            .expect("backfilled target metadata should persist");
+        assert_eq!(meta.first_seen_ts, Some(987_654));
+        assert_eq!(
+            restored
+                .initial_cycles_probe_queue
+                .iter()
+                .filter(|queued| **queued == target)
+                .count(),
+            1
+        );
+        assert!(restored.relay_registry_by_target.contains_key(&target));
+        assert!(!restored.canister_sources.contains_key(&target));
+        assert_eq!(stable_cycles_history_for(history_target)[0].cycles, 34);
+    }
+
+    #[test]
+    fn activation_tracking_persists_metadata_before_first_cycles_probe() {
+        reset_test_storage();
+        let target = principal(&[38]);
+        let relay = principal(&[39]);
+        set_state(State::new(sample_config(), 100));
+
+        with_root_registry_and_relay_factory_state_mut(target, |st| {
+            st.relay_registry_by_target
+                .insert(target, relay_entry(target, relay));
+            crate::ensure_active_self_service_relay_targets_tracked(st, 456_789);
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+
+        let restored = restore_state_from_stable().expect("expected persisted activation state");
+        assert_eq!(
+            restored
+                .per_canister_meta
+                .get(&target)
+                .expect("activation metadata should persist")
+                .first_seen_ts,
+            Some(456_789)
+        );
+        assert_eq!(
+            restored
+                .initial_cycles_probe_queue
+                .iter()
+                .filter(|queued| **queued == target)
+                .count(),
+            1
+        );
+        assert!(restored.relay_registry_by_target.contains_key(&target));
+        assert!(!restored.canister_sources.contains_key(&target));
     }
 
     #[test]
