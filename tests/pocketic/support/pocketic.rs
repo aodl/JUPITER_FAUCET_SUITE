@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 const SERVER_HARD_TTL_SECS: u64 = 3 * 60 * 60;
+const SERVER_IDLE_TTL_SECS: u64 = 15 * 60;
 const SERVER_VERSION: &str = "13.0.0";
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
@@ -57,8 +58,10 @@ pub fn builder() -> PocketIcBuilder {
         let (_, url) = runtime.block_on(start_server(StartServerParams {
             server_binary: Some(server_binary),
             reuse: true,
+            // This suite reuses one PocketIC server while some tests perform long
+            // release-artifact builds before creating their next instance.
+            ttl: Some(Duration::from_secs(SERVER_IDLE_TTL_SECS)),
             hard_ttl: Some(Duration::from_secs(SERVER_HARD_TTL_SECS)),
-            ..Default::default()
         }));
         url.to_string()
     });
