@@ -40,8 +40,11 @@ Live Historian relay factory enablement uses `Option<UpgradeArgs>`, not the fres
 ```did
 (opt record {
   relay_factory_enabled = opt true;
+  cycles_probe_policy = opt variant { Auto };
 })
 ```
+
+The explicit `cycles_probe_policy = opt variant { Auto }` is intentional for existing Historian upgrades. Omitting it preserves the legacy fixed-proxy behavior already stored by the canister.
 
 Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.
 

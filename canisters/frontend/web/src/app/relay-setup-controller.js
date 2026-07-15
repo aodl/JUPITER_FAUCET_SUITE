@@ -597,7 +597,6 @@ export function createRelaySetupController({
       if (!submittedTargetStillCurrent(targetText)) return;
       state.target = target;
       state.view = view;
-      const existingRelay = readOptional(view?.existing_relay);
       if (view?.payment_allowed === false) {
         state.loaded = true;
         state.loading = false;
@@ -615,7 +614,7 @@ export function createRelaySetupController({
 
       const viewStatus = statusKey(view?.status);
       const terminalView = TERMINAL_POLL_STATUSES.has(viewStatus);
-      if (!terminalView && (!existingRelay || state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S)) {
+      if (!terminalView && state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S) {
         state.notifying = true;
         render();
         state.notifyResult = await historian.notify_relay_setup(target);

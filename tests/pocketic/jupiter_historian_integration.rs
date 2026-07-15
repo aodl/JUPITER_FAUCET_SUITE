@@ -41,6 +41,8 @@ static RELAY_ENABLED_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
@@ -72,6 +74,12 @@ fn mock_cmc_wasm() -> Result<Vec<u8>> {
 }
 fn mock_blackhole_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&MOCK_BLACKHOLE_WASM, "mock-blackhole", None)
+}
+fn status_proxy_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&STATUS_PROXY_WASM, "mock-status-proxy", None)
+}
+fn cycle_burner_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&CYCLE_BURNER_WASM, "mock-cycle-burner", None)
 }
 fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
     if let Some(bytes) = RELAY_ENABLED_HISTORIAN_WASM.get() {
@@ -435,9 +443,62 @@ struct TransferRecord {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct DebugBlackholeCall {
+struct DebugStatusProxyCall {
     canister_id: Principal,
     caller: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugSnsRootCall {
+    method: String,
+    canister_id: Option<Principal>,
+    caller: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct SnsExtensions {
+    extension_canister_ids: Vec<Principal>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct ListSnsCanistersResponse {
+    root: Option<Principal>,
+    governance: Option<Principal>,
+    ledger: Option<Principal>,
+    swap: Option<Principal>,
+    index: Option<Principal>,
+    dapps: Vec<Principal>,
+    archives: Vec<Principal>,
+    extensions: Option<SnsExtensions>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct ListDeployedSnsesArgs {}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DeployedSns {
+    root_canister_id: Option<Principal>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListDeployedSnsesResponse {
+    instances: Vec<DeployedSns>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct SnsRootCanisterStatusArgs {
+    canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct SnsRootCanisterStatusResult {
+    cycles: Nat,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct BurnCyclesArgs {
+    sink: Principal,
+    amount: u128,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -637,6 +698,287 @@ fn self_service_historian_init(
         canonical_relay_canister_id: None,
         canonical_relay_targets: Some(Vec::new()),
     }
+}
+
+fn auto_self_service_historian_init(
+    ledger: Principal,
+    index: Principal,
+    cmc: Principal,
+    sns_wasm: Principal,
+) -> HistorianInitArg {
+    let mut init = self_service_historian_init(
+        ledger,
+        index,
+        cmc,
+        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+    );
+    init.blackhole_canister_id = None;
+    init.sns_wasm_canister_id = Some(sns_wasm);
+    init.xrc_canister_id = Some(jupiter_ic_clients::constants::fiduciary_blackhole_canister_id());
+    init.faucet_canister_id =
+        Some(jupiter_ic_clients::constants::fiduciary_blackhole_canister_id());
+    init
+}
+
+fn create_fixed_canister(pic: &PocketIc, canister_id: Principal) -> Result<()> {
+    pic.create_canister_with_id(None, None, canister_id)
+        .map(|_| ())
+        .map_err(anyhow::Error::msg)
+}
+
+fn install_status_proxy(pic: &PocketIc, canister_id: Principal) -> Result<()> {
+    create_fixed_canister(pic, canister_id)?;
+    pic.add_cycles(canister_id, 5_000_000_000_000);
+    pic.install_canister(canister_id, status_proxy_wasm()?, vec![], None);
+    Ok(())
+}
+
+fn install_sns_wasm_mock(pic: &PocketIc) -> Result<Principal> {
+    let sns_wasm = pic.create_canister();
+    pic.add_cycles(sns_wasm, 5_000_000_000_000);
+    pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+    Ok(sns_wasm)
+}
+
+fn install_sns_wasm_mock_at(pic: &PocketIc, canister_id: Principal) -> Result<Principal> {
+    create_fixed_canister(pic, canister_id)?;
+    pic.add_cycles(canister_id, 5_000_000_000_000);
+    pic.install_canister(canister_id, sns_wasm_wasm()?, vec![], None);
+    Ok(canister_id)
+}
+
+fn credit_setup_account(
+    pic: &PocketIc,
+    ledger: Principal,
+    index: Principal,
+    view: &RelaySetupView,
+    setup_amount: u64,
+) -> Result<()> {
+    let _: () = update_bytes(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((view.setup_account, setup_amount))?,
+    )?;
+    let _: u64 = update_bytes(
+        pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer_from",
+        encode_args((
+            "setup-source".to_string(),
+            view.setup_account_identifier.clone(),
+            setup_amount,
+            Option::<Vec<u8>>::None,
+        ))?,
+    )?;
+    Ok(())
+}
+
+fn activate_self_service_relay(
+    pic: &PocketIc,
+    historian: Principal,
+    ledger: Principal,
+    index: Principal,
+    target: Principal,
+) -> Result<RelayRegistration> {
+    let view: RelaySetupView = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_setup_view",
+        GetRelaySetupViewArgs {
+            target_canister_id: target,
+        },
+    )?;
+    assert!(
+        view.payment_allowed,
+        "self-service setup should be allowed before activation: {view:?}"
+    );
+    credit_setup_account(pic, ledger, index, &view, 300_000_000)?;
+    let result: RelaySetupNotifyResult = update_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_setup",
+        target,
+    )?;
+    match result {
+        RelaySetupNotifyResult::Active { relay } => Ok(relay),
+        other => bail!("expected self-service setup to activate relay, got {other:?}"),
+    }
+}
+
+fn relay_default_account(relay_id: Principal) -> Account {
+    Account {
+        owner: relay_id,
+        subaccount: None,
+    }
+}
+
+fn fund_relay_default_account(
+    pic: &PocketIc,
+    ledger: Principal,
+    relay_id: Principal,
+) -> Result<()> {
+    let _: () = update_bytes(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((relay_default_account(relay_id), 200_000_000u64))?,
+    )?;
+    Ok(())
+}
+
+fn wait_for_cmc_notification(
+    pic: &PocketIc,
+    cmc: Principal,
+    target: Principal,
+    step_seconds: u64,
+) -> Result<Vec<NotifyRecord>> {
+    let mut notifications = Vec::<NotifyRecord>::new();
+    for _ in 0..5 {
+        pic.advance_time(Duration::from_secs(step_seconds));
+        tick_n(pic, 30);
+        notifications = query_one(pic, cmc, Principal::anonymous(), "debug_notifications", ())?;
+        if notifications
+            .iter()
+            .any(|notification| notification.canister_id == target)
+        {
+            return Ok(notifications);
+        }
+    }
+    bail!("expected CMC notification for {target}; notifications={notifications:?}")
+}
+
+fn assert_target_topup_transfer(
+    pic: &PocketIc,
+    ledger: Principal,
+    cmc: Principal,
+    relay_id: Principal,
+    target: Principal,
+) -> Result<()> {
+    let cmc_deposit = Account {
+        owner: cmc,
+        subaccount: Some(jupiter_ic_clients::account::principal_to_subaccount(target)),
+    };
+    let transfers: Vec<TransferRecord> =
+        query_one(pic, ledger, Principal::anonymous(), "debug_transfers", ())?;
+    assert!(
+        transfers.iter().any(|transfer| {
+            transfer.from == relay_default_account(relay_id)
+                && transfer.to == cmc_deposit
+                && transfer.result == "Ok"
+                && transfer.amount > 0u8
+        }),
+        "spawned relay should create a positive CMC top-up transfer for target; transfers={transfers:?}"
+    );
+    Ok(())
+}
+
+fn assert_historian_tracks_target(
+    pic: &PocketIc,
+    historian: Principal,
+    target: Principal,
+) -> Result<()> {
+    let registrations: ListRelayRegistrationsResponse = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
+    )?;
+    assert!(
+        registrations
+            .items
+            .iter()
+            .any(|entry| entry.target_canister_id == target
+                && entry.kind == RelayRegistryKind::SelfService),
+        "historian registry should contain active self-service relay; registrations={registrations:?}"
+    );
+
+    let canisters: ListCanistersResponse = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            source_filter: None,
+        },
+    )?;
+    assert!(
+        canisters
+            .items
+            .iter()
+            .all(|item| item.canister_id != target),
+        "self-service tracking should not fabricate a public canister source: {canisters:?}"
+    );
+    Ok(())
+}
+
+fn run_historian_cycles_tick(pic: &PocketIc, historian: Principal) -> Result<()> {
+    pic.advance_time(Duration::from_secs(61));
+    let _ = historian;
+    tick_n(pic, 30);
+    Ok(())
+}
+
+fn assert_historian_cycles_sample(
+    pic: &PocketIc,
+    historian: Principal,
+    target: Principal,
+) -> Result<()> {
+    let cycles: CyclesHistoryPage = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_cycles_history",
+        GetCyclesHistoryArgs {
+            canister_id: target,
+            start_after_ts: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    assert!(
+        cycles.items.iter().any(|sample| sample.cycles > 0),
+        "historian should record a positive cycles sample for target; cycles={cycles:?}"
+    );
+    Ok(())
+}
+
+fn upgrade_historian_without_config_changes(pic: &PocketIc, historian: Principal) -> Result<()> {
+    let args = HistorianUpgradeArg {
+        enable_sns_tracking: None,
+        scan_interval_seconds: None,
+        cycles_interval_seconds: None,
+        min_tx_e8s: None,
+        max_cycles_entries_per_canister: None,
+        max_commitment_entries_per_canister: None,
+        max_index_pages_per_tick: None,
+        max_canisters_per_cycles_tick: None,
+        blackhole_canister_id: None,
+        sns_wasm_canister_id: None,
+        xrc_canister_id: None,
+        cmc_canister_id: None,
+        faucet_canister_id: None,
+    };
+    pic.upgrade_canister(
+        historian,
+        relay_enabled_historian_wasm()?,
+        encode_one(args)?,
+        None,
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
+    tick_n(pic, 10);
+    Ok(())
 }
 
 struct Harness {
@@ -1145,39 +1487,38 @@ fn historian_artifact_exposes_reviewed_raw_relay_hash() -> Result<()> {
 #[ignore]
 fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
     require_ignored_flag()?;
+    let historian_wasm = relay_enabled_historian_wasm()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();
+    let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+    let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+    install_status_proxy(&pic, thirteen)?;
+    install_status_proxy(&pic, fiduciary)?;
+    let sns_wasm = install_sns_wasm_mock(&pic)?;
+
     let ledger = pic.create_canister();
     let index = pic.create_canister();
     let cmc = pic.create_canister();
-    let blackhole = pic.create_canister();
     let historian = pic.create_canister();
     let target = pic.create_canister();
-    for canister in [ledger, index, cmc, blackhole, historian, target] {
+    let sink = pic.create_canister();
+    for canister in [ledger, index, cmc, historian, target, sink] {
         pic.add_cycles(canister, 10_000_000_000_000);
     }
     pic.install_canister(ledger, mock_ledger_wasm()?, vec![], None);
     pic.install_canister(index, index_wasm()?, vec![], None);
     pic.install_canister(cmc, mock_cmc_wasm()?, vec![], None);
-    pic.install_canister(blackhole, mock_blackhole_wasm()?, vec![], None);
-    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
-    let _: () = update_bytes(
-        &pic,
-        blackhole,
-        Principal::anonymous(),
-        "debug_set_status",
-        encode_args((
-            target,
-            Some(Nat::from(10_000_000_000_000u128)),
-            vec![blackhole],
-        ))?,
-    )?;
+    pic.install_canister(target, cycle_burner_wasm()?, vec![], None);
+    pic.install_canister(sink, cycle_burner_wasm()?, vec![], None);
+    set_controllers_exact(&pic, target, vec![thirteen])?;
 
     pic.install_canister(
         historian,
-        relay_enabled_historian_wasm()?,
-        encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
+        historian_wasm,
+        encode_one(auto_self_service_historian_init(
+            ledger, index, cmc, sns_wasm,
+        ))?,
         None,
     );
     pic.add_cycles(historian, 20_000_000_000_000);
@@ -1230,15 +1571,28 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
     let relay_id = relay.relay_canister_id;
     assert_ne!(relay_id, historian);
     assert_ne!(relay_id, target);
+    let setup_calls: Vec<DebugStatusProxyCall> =
+        query_one(&pic, thirteen, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        setup_calls
+            .iter()
+            .any(|call| call.caller == historian && call.canister_id == target),
+        "historian setup should probe target through 13-node before spending; calls={setup_calls:?}"
+    );
+    let setup_fiduciary_calls: Vec<DebugStatusProxyCall> =
+        query_one(&pic, fiduciary, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        setup_fiduciary_calls.is_empty(),
+        "Fiduciary should not be called after 13-node setup success; calls={setup_fiduciary_calls:?}"
+    );
     let relay_status = pic
-        .canister_status(relay_id, Some(blackhole))
+        .canister_status(relay_id, Some(fiduciary))
         .map_err(|err| anyhow!("spawned relay canister_status failed: {err:?}"))?;
     assert!(
         relay_status.module_hash.is_some(),
         "spawned relay should have installed code"
     );
-    assert_eq!(pic.get_controllers(relay_id), vec![blackhole]);
-
+    assert_eq!(pic.get_controllers(relay_id), vec![fiduciary]);
     let relay_default = Account {
         owner: relay_id,
         subaccount: None,
@@ -1250,31 +1604,36 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
         "debug_credit",
         encode_args((relay_default, 200_000_000u64))?,
     )?;
-    let _: () = update_bytes(
-        &pic,
-        blackhole,
-        Principal::anonymous(),
-        "debug_set_status",
-        encode_args((
-            relay_id,
-            Some(Nat::from(10_000_000_000_000u128)),
-            vec![blackhole],
-        ))?,
-    )?;
 
+    let _: () = update_noargs(&pic, thirteen, Principal::anonymous(), "debug_reset")?;
+    let _: () = update_noargs(&pic, fiduciary, Principal::anonymous(), "debug_reset")?;
     pic.advance_time(Duration::from_secs(3_605));
     tick_n(&pic, 20);
-    let _: () = update_bytes(
+    let baseline_calls: Vec<DebugStatusProxyCall> =
+        query_one(&pic, thirteen, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        baseline_calls
+            .iter()
+            .any(|call| call.caller == relay_id && call.canister_id == target),
+        "spawned relay should establish target baseline through 13-node; calls={baseline_calls:?}"
+    );
+
+    let before = pic.cycle_balance(target);
+    let _: () = update_one(
         &pic,
-        blackhole,
+        target,
         Principal::anonymous(),
-        "debug_set_status",
-        encode_args((
-            target,
-            Some(Nat::from(1_000_000_000_000u128)),
-            vec![blackhole],
-        ))?,
+        "burn_cycles",
+        BurnCyclesArgs {
+            sink,
+            amount: 5_000_000_000_000,
+        },
     )?;
+    let after = pic.cycle_balance(target);
+    assert!(
+        after < before,
+        "target should have a real high-to-low cycles transition; before={before} after={after}"
+    );
 
     let mut notifications = Vec::<NotifyRecord>::new();
     for _ in 0..3 {
@@ -1295,13 +1654,13 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
         "spawned relay should notify CMC for the low-cycle target; notifications={notifications:?}"
     );
 
-    let calls: Vec<DebugBlackholeCall> =
-        query_one(&pic, blackhole, Principal::anonymous(), "debug_calls", ())?;
+    let calls: Vec<DebugStatusProxyCall> =
+        query_one(&pic, thirteen, Principal::anonymous(), "debug_calls", ())?;
     assert!(
         calls
             .iter()
             .any(|call| call.caller == relay_id && call.canister_id == target),
-        "spawned relay should probe target cycles through blackhole; calls={calls:?}"
+        "spawned relay should probe target cycles through 13-node; calls={calls:?}"
     );
 
     let cmc_deposit = Account {
@@ -1337,6 +1696,15 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
         .collect::<Vec<_>>();
     assert_eq!(target_registrations.len(), 1);
     assert_eq!(target_registrations[0].relay_canister_id, relay_id);
+    assert_eq!(target_registrations[0].kind, RelayRegistryKind::SelfService);
+
+    run_historian_cycles_tick(&pic, historian)?;
+    assert_historian_tracks_target(&pic, historian, target)?;
+    assert_historian_cycles_sample(&pic, historian, target)?;
+    upgrade_historian_without_config_changes(&pic, historian)?;
+    assert_historian_tracks_target(&pic, historian, target)?;
+    run_historian_cycles_tick(&pic, historian)?;
+    assert_historian_cycles_sample(&pic, historian, target)?;
 
     let repeated: RelaySetupNotifyResult = update_one(
         &pic,
@@ -1371,6 +1739,305 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
         .collect::<Vec<_>>();
     assert_eq!(after_target_registrations.len(), 1);
     assert_eq!(after_target_registrations[0].relay_canister_id, relay_id);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn canonical_sns_wasm_mock_is_installed_on_nns_subnet() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = support::pocketic::sns_topology_builder().build();
+    let topology = pic.topology();
+    let nns_subnet = topology.get_nns().context("NNS subnet missing")?;
+    let sns_subnet = topology.get_sns().context("SNS subnet missing")?;
+    let app_subnet = topology
+        .get_app_subnets()
+        .into_iter()
+        .next()
+        .context("application subnet missing")?;
+    assert_ne!(nns_subnet, sns_subnet);
+    assert_ne!(nns_subnet, app_subnet);
+    assert_ne!(sns_subnet, app_subnet);
+
+    let sns_wasm_id = jupiter_ic_clients::constants::sns_wasm_id();
+    assert_eq!(sns_wasm_id.to_text(), "qaa6y-5yaaa-aaaaa-aaafa-cai");
+    let created = pic
+        .create_canister_with_id(None, None, sns_wasm_id)
+        .map_err(anyhow::Error::msg)?;
+    assert_eq!(created, sns_wasm_id);
+    assert_eq!(pic.get_subnet(sns_wasm_id), Some(nns_subnet));
+    pic.add_cycles(sns_wasm_id, 5_000_000_000_000);
+    pic.install_canister(sns_wasm_id, sns_wasm_wasm()?, vec![], None);
+
+    let root = pic.create_canister_on_subnet(None, None, sns_subnet);
+    let _: () = update_one(
+        &pic,
+        sns_wasm_id,
+        Principal::anonymous(),
+        "debug_set_roots",
+        vec![root],
+    )?;
+    let response: ListDeployedSnsesResponse = update_one(
+        &pic,
+        sns_wasm_id,
+        Principal::anonymous(),
+        "list_deployed_snses",
+        ListDeployedSnsesArgs::default(),
+    )?;
+    assert_eq!(response.instances.len(), 1);
+    assert_eq!(response.instances[0].root_canister_id, Some(root));
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn sns_root_proxy_reads_real_application_dapp_status_cross_subnet() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = support::pocketic::sns_topology_builder().build();
+    let topology = pic.topology();
+    let sns_subnet = topology.get_sns().context("SNS subnet missing")?;
+    let app_subnet = topology
+        .get_app_subnets()
+        .into_iter()
+        .next()
+        .context("application subnet missing")?;
+
+    let root = pic.create_canister_on_subnet(None, None, sns_subnet);
+    let other_root = pic.create_canister_on_subnet(None, None, sns_subnet);
+    let target = pic.create_canister_on_subnet(None, None, app_subnet);
+    for canister in [root, other_root, target] {
+        pic.add_cycles(canister, 5_000_000_000_000);
+    }
+    pic.install_canister(root, sns_root_wasm()?, vec![], None);
+    pic.install_canister(other_root, sns_root_wasm()?, vec![], None);
+    pic.install_canister(target, cycle_burner_wasm()?, vec![], None);
+    set_controllers_exact(&pic, target, vec![root])?;
+    let _: () = update_one(
+        &pic,
+        root,
+        Principal::anonymous(),
+        "debug_set_canisters",
+        ListSnsCanistersResponse {
+            root: Some(root),
+            dapps: vec![target],
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(pic.get_subnet(root), Some(sns_subnet));
+    assert_eq!(pic.get_subnet(target), Some(app_subnet));
+    assert_eq!(pic.get_controllers(target), vec![root]);
+    let observed: SnsRootCanisterStatusResult = update_one(
+        &pic,
+        root,
+        Principal::anonymous(),
+        "canister_status",
+        SnsRootCanisterStatusArgs {
+            canister_id: target,
+        },
+    )?;
+    assert_eq!(observed.cycles, Nat::from(pic.cycle_balance(target)));
+
+    let denied = update_one::<_, SnsRootCanisterStatusResult>(
+        &pic,
+        other_root,
+        Principal::anonymous(),
+        "canister_status",
+        SnsRootCanisterStatusArgs {
+            canister_id: target,
+        },
+    );
+    assert!(
+        denied.is_err(),
+        "unrelated SNS Root must not read target canister_status"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn self_service_auto_discovers_sns_dapp_route_without_blackhole_controller() -> Result<()> {
+    require_ignored_flag()?;
+    let historian_wasm = relay_enabled_historian_wasm()?;
+    let pic = support::pocketic::sns_topology_builder().build();
+    let topology = pic.topology();
+    let nns_subnet = topology.get_nns().expect("NNS subnet");
+    let sns_subnet = topology.get_sns().expect("SNS subnet");
+    let app_subnet = topology
+        .get_app_subnets()
+        .into_iter()
+        .next()
+        .expect("application subnet");
+    let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+    let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+    install_status_proxy(&pic, thirteen)?;
+    install_status_proxy(&pic, fiduciary)?;
+    let sns_wasm = install_sns_wasm_mock_at(&pic, jupiter_ic_clients::constants::sns_wasm_id())?;
+    assert_eq!(pic.get_subnet(sns_wasm), Some(nns_subnet));
+
+    let sns_root = pic.create_canister_on_subnet(None, None, sns_subnet);
+    let target = pic.create_canister_on_subnet(None, None, app_subnet);
+    let ledger = pic.create_canister_on_subnet(None, None, app_subnet);
+    let index = pic.create_canister_on_subnet(None, None, app_subnet);
+    let cmc = pic.create_canister_on_subnet(None, None, app_subnet);
+    let historian = pic.create_canister_on_subnet(None, None, app_subnet);
+    let sink = pic.create_canister_on_subnet(None, None, app_subnet);
+    for canister in [ledger, index, cmc, historian, sns_root, target, sink] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(ledger, mock_ledger_wasm()?, vec![], None);
+    pic.install_canister(index, index_wasm()?, vec![], None);
+    pic.install_canister(cmc, mock_cmc_wasm()?, vec![], None);
+    pic.install_canister(sns_root, sns_root_wasm()?, vec![], None);
+    pic.install_canister(target, cycle_burner_wasm()?, vec![], None);
+    pic.install_canister(sink, cycle_burner_wasm()?, vec![], None);
+    set_controllers_exact(&pic, target, vec![sns_root])?;
+    assert_eq!(pic.get_subnet(sns_root), Some(sns_subnet));
+    assert_eq!(pic.get_subnet(target), Some(app_subnet));
+    assert_eq!(pic.get_subnet(historian), Some(app_subnet));
+    assert_eq!(pic.get_controllers(target), vec![sns_root]);
+
+    let _: () = update_one(
+        &pic,
+        sns_wasm,
+        Principal::anonymous(),
+        "debug_set_roots",
+        vec![sns_root],
+    )?;
+    let _: () = update_one(
+        &pic,
+        sns_root,
+        Principal::anonymous(),
+        "debug_set_canisters",
+        ListSnsCanistersResponse {
+            root: Some(sns_root),
+            dapps: vec![target],
+            ..Default::default()
+        },
+    )?;
+
+    pic.install_canister(
+        historian,
+        historian_wasm,
+        encode_one(auto_self_service_historian_init(
+            ledger, index, cmc, sns_wasm,
+        ))?,
+        None,
+    );
+    pic.add_cycles(historian, 20_000_000_000_000);
+
+    let relay = activate_self_service_relay(&pic, historian, ledger, index, target)?;
+    let relay_id = relay.relay_canister_id;
+    assert_eq!(pic.get_controllers(relay_id), vec![fiduciary]);
+
+    for probe in [thirteen, fiduciary] {
+        let calls: Vec<DebugStatusProxyCall> =
+            query_one(&pic, probe, Principal::anonymous(), "debug_calls", ())?;
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.caller == historian && call.canister_id == target),
+            "historian should try blackhole probe {probe} before SNS route; calls={calls:?}"
+        );
+    }
+    let sns_wasm_calls: Vec<Principal> =
+        query_one(&pic, sns_wasm, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        sns_wasm_calls.contains(&historian),
+        "historian should query SNS-W during route discovery; calls={sns_wasm_calls:?}"
+    );
+    let root_calls: Vec<DebugSnsRootCall> =
+        query_one(&pic, sns_root, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        root_calls
+            .iter()
+            .any(|call| call.method == "list_sns_canisters" && call.caller == historian),
+        "historian should verify SNS root membership; calls={root_calls:?}"
+    );
+    assert!(
+        root_calls
+            .iter()
+            .any(|call| call.method == "canister_status"
+                && call.caller == historian
+                && call.canister_id == Some(target)),
+        "historian should read target status through SNS root; calls={root_calls:?}"
+    );
+
+    fund_relay_default_account(&pic, ledger, relay_id)?;
+    let _: () = update_noargs(&pic, thirteen, Principal::anonymous(), "debug_reset")?;
+    let _: () = update_noargs(&pic, fiduciary, Principal::anonymous(), "debug_reset")?;
+    let _: () = update_noargs(&pic, sns_root, Principal::anonymous(), "debug_reset_calls")?;
+
+    pic.advance_time(Duration::from_secs(3_605));
+    tick_n(&pic, 30);
+    let relay_blackhole_calls: Vec<DebugStatusProxyCall> =
+        query_one(&pic, thirteen, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        relay_blackhole_calls
+            .iter()
+            .any(|call| call.caller == relay_id && call.canister_id == target),
+        "relay should independently try 13-node before SNS root route; calls={relay_blackhole_calls:?}"
+    );
+    let relay_fiduciary_calls: Vec<DebugStatusProxyCall> =
+        query_one(&pic, fiduciary, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        relay_fiduciary_calls
+            .iter()
+            .any(|call| call.caller == relay_id && call.canister_id == target),
+        "relay should independently try Fiduciary before SNS root route; calls={relay_fiduciary_calls:?}"
+    );
+    let relay_root_calls: Vec<DebugSnsRootCall> =
+        query_one(&pic, sns_root, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        relay_root_calls
+            .iter()
+            .any(|call| call.method == "canister_status"
+                && call.caller == relay_id
+                && call.canister_id == Some(target)),
+        "relay should independently discover and use SNS root; calls={relay_root_calls:?}"
+    );
+
+    let before = pic.cycle_balance(target);
+    let _: () = update_one(
+        &pic,
+        target,
+        Principal::anonymous(),
+        "burn_cycles",
+        BurnCyclesArgs {
+            sink,
+            amount: 5_000_000_000_000,
+        },
+    )?;
+    let after = pic.cycle_balance(target);
+    assert!(
+        after < before,
+        "SNS dapp target should have a real high-to-low cycles transition; before={before} after={after}"
+    );
+
+    let notifications = wait_for_cmc_notification(&pic, cmc, target, 3_605)?;
+    assert!(
+        notifications
+            .iter()
+            .any(|notification| notification.canister_id == target),
+        "relay should notify CMC for low SNS dapp target; notifications={notifications:?}"
+    );
+    let post_burn_root_calls: Vec<DebugSnsRootCall> =
+        query_one(&pic, sns_root, Principal::anonymous(), "debug_calls", ())?;
+    assert!(
+        post_burn_root_calls
+            .iter()
+            .filter(|call| call.method == "canister_status"
+                && call.caller == relay_id
+                && call.canister_id == Some(target))
+            .count()
+            >= 2,
+        "timer-driven relay operation should observe the lower target balance through SNS root; calls={post_burn_root_calls:?}"
+    );
+    assert_target_topup_transfer(&pic, ledger, cmc, relay_id, target)?;
+
+    run_historian_cycles_tick(&pic, historian)?;
+    assert_historian_tracks_target(&pic, historian, target)?;
+    assert_historian_cycles_sample(&pic, historian, target)?;
     Ok(())
 }
 

@@ -69,3 +69,10 @@ pub fn builder() -> PocketIcBuilder {
             .expect("PocketIC server URL from start_server should parse"),
     )
 }
+
+pub fn sns_topology_builder() -> PocketIcBuilder {
+    builder()
+        .with_nns_subnet()
+        .with_sns_subnet()
+        .with_application_subnet()
+}

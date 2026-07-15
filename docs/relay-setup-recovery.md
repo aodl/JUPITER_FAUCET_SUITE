@@ -142,7 +142,10 @@ For live enablement on an already-installed Historian, use a temporary `Option<U
 ```did
 (opt record {
   relay_factory_enabled = opt true;
+  cycles_probe_policy = opt variant { Auto };
 })
 ```
+
+The explicit Auto policy is required for an existing Historian upgrade. Omitting `cycles_probe_policy` intentionally preserves the legacy fixed-proxy policy already stored by the canister.
 
 Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.

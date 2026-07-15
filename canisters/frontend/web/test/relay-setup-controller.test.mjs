@@ -228,7 +228,7 @@ test('relay setup renders prompt before a target is checked', async () => {
   });
 });
 
-test('relay setup notifies a new unfunded target once before displaying payment details', async () => {
+test('relay setup displays payment details for a new unfunded target without notifying', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const view = setupView({ target, historian: historianId });
@@ -279,7 +279,7 @@ test('relay setup notifies a new unfunded target once before displaying payment 
     await controller.submitTarget();
 
     assert.equal(nodes.get('relay-setup-result').hidden, true);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Below minimum');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Not funded');
     assert.equal(nodes.get('relay-setup-minimum').textContent, '3 ICP');
     assert.equal(nodes.get('relay-setup-balance').textContent, '0.00000001 ICP');
     assert.equal(nodes.get('relay-setup-factory').textContent, 'Available');
@@ -302,7 +302,7 @@ test('relay setup notifies a new unfunded target once before displaying payment 
     ]);
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, true);
     assert.equal(nodes.get('relay-setup-refund').hidden, true);
-    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), []);
   });
 });
 
@@ -337,7 +337,7 @@ test('relay setup hides payment details when backend reports target not observab
         return {
           async icrc1_balance_of() {
             calls.push(['balance']);
-            return 0n;
+            return 300_000_000n;
           },
         };
       },
@@ -378,7 +378,7 @@ test('relay setup displays current requirement after insufficient-rate notify re
             return {
               InsufficientForCurrentRate: {
                 required_e8s: 425_000_000n,
-                current_balance_e8s: 0n,
+                current_balance_e8s: 300_000_000n,
               },
             };
           },
@@ -386,7 +386,7 @@ test('relay setup displays current requirement after insufficient-rate notify re
       }),
       ledgerActorFactory: () => ({
         async icrc1_balance_of() {
-          return 0n;
+          return 300_000_000n;
         },
       }),
       hostProvider: () => 'https://example.test',
@@ -396,7 +396,7 @@ test('relay setup displays current requirement after insufficient-rate notify re
     await controller.submitTarget();
 
     assert.equal(nodes.get('relay-setup-status').textContent, 'Below current requirement');
-    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Current balance 0 ICP is below current required 4.25 ICP.');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'Current balance 3 ICP is below current required 4.25 ICP.');
     assert.equal(nodes.get('relay-setup-minimum').textContent, '3 ICP');
     assert.equal(nodes.get('relay-setup-payment-details').hidden, false);
     assert.equal(nodes.get('relay-setup-account-identifier').textContent, view.setup_account_identifier);
@@ -426,7 +426,7 @@ test('relay setup transient notify rejection displays error without payment deta
       }),
       ledgerActorFactory: () => ({
         async icrc1_balance_of() {
-          return 0n;
+          return 300_000_000n;
         },
       }),
       hostProvider: () => 'https://example.test',
@@ -495,7 +495,7 @@ test('relay setup clears stale details while loading a new target', async () => 
 
     resolveTargetB();
     await submitB;
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Below minimum');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Not funded');
     assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
   });
 });
@@ -887,15 +887,12 @@ test('relay setup polling refreshes later balance and notifies above dust', asyn
 
     await controller.submitTarget();
     assert.equal(nodes.get('relay-setup-balance').textContent, '0 ICP');
-    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), []);
 
     assert.equal(intervals.length, 1);
     await controller.refreshBalanceAndMaybeNotify(target);
 
-    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [
-      ['notify', target],
-      ['notify', target],
-    ]);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
     assert.equal(nodes.get('relay-setup-balance').textContent, '0.0002 ICP');
   });
 });
@@ -939,7 +936,7 @@ test('relay setup polling does not repeatedly notify an unfunded account', async
     await controller.refreshBalanceAndMaybeNotify(target);
     await controller.refreshBalanceAndMaybeNotify(target);
 
-    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), []);
     assert.equal(calls.filter((call) => call[0] === 'balance').length, 3);
   });
 });
@@ -990,7 +987,7 @@ test('relay setup polling cancels old target after target change', async () => {
     assert.equal(intervals.length, 2);
     await controller.refreshBalanceAndMaybeNotify(targetA);
 
-    assert.equal(calls.filter((call) => call[0] === 'notify' && call[1] === targetA).length, 1);
+    assert.equal(calls.filter((call) => call[0] === 'notify' && call[1] === targetA).length, 0);
     assert.equal(controller.state.targetText, targetB);
   });
 });
@@ -1268,7 +1265,6 @@ test('relay setup controller does not construct browser blackhole actors', () =>
   assert.doesNotMatch(source, /Actor\.createActor/);
   assert.doesNotMatch(source, /canister_status/);
   assert.doesNotMatch(source, /BLACKHOLE_CANISTER_IDS/);
-  assert.doesNotMatch(source, /preflightBlackholeVisibility/);
 });
 
 test('relay setup generated declarations do not require check_cycles_visibility', () => {

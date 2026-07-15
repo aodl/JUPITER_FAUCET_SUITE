@@ -88,6 +88,8 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
   --args-file /tmp/jupiter-faucet-upgrade-args.did
 ```
 
+Existing Historian upgrades that enable self-service Relay setup must include `cycles_probe_policy = opt variant { Auto }` in that temporary `Option<UpgradeArgs>` file. Omitting that field preserves the legacy fixed-proxy policy already stored by the canister.
+
 For fresh install or reinstall only, use the checked-in `mainnet-install-args.did` `InitArgs` file:
 
 ```bash

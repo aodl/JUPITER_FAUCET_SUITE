@@ -742,6 +742,13 @@ def validate_historian() -> int:
     return historian_min_tx_e8s
 
 
+def validate_historian_relay_factory_enablement_fixture() -> None:
+    path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable"
+    text = path.read_text()
+    require_contains(text, "relay_factory_enabled = opt true;", str(path))
+    require_contains(text, "cycles_probe_policy = opt variant { Auto };", str(path))
+
+
 def validate_historian_relay_factory_artifacts(path: Path) -> None:
     artifacts_dir = REPO_ROOT / "release-artifacts"
     if not artifacts_dir.exists():
@@ -1289,6 +1296,7 @@ def main() -> None:
     validate_upgrade_docs_do_not_use_install_args_or_null_routine_args()
     validate_relay_docs_contain_full_init_args_upgrade()
     validate_docs_do_not_use_stale_privileged_deployment_framing()
+    validate_historian_relay_factory_enablement_fixture()
     historian_min_tx_e8s = validate_historian()
     validate_relay_setup_recovery_runbook()
     validate_relay()

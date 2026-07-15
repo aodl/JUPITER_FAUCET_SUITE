@@ -355,8 +355,11 @@ For live relay factory enablement, the temporary file contains only:
 ```did
 (opt record {
   relay_factory_enabled = opt true;
+  cycles_probe_policy = opt variant { Auto };
 })
 ```
+
+The explicit Auto policy is required for existing Historian upgrades that enable self-service Relay setup. Omitting `cycles_probe_policy` intentionally preserves the legacy fixed-proxy policy already stored by the canister.
 
 ```bash
 cat > /tmp/historian-upgrade-args.did <<'EOF'

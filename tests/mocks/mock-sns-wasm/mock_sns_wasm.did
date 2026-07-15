@@ -4,4 +4,5 @@ service : {
   list_deployed_snses : (record {}) -> (ListDeployedSnsesResponse);
   debug_reset : () -> ();
   debug_set_roots : (vec principal) -> ();
+  debug_calls : () -> (vec principal) query;
 }

@@ -1229,34 +1229,6 @@ async fn notify_relay_setup_with_clients_for_historian<C: CyclesProbeClient>(
             message,
         };
     }
-    let policy = cfg.effective_cycles_probe_policy();
-    let cached_route = match policy {
-        CyclesProbePolicy::Auto => {
-            state::with_state(|st| st.cached_cycles_probe_routes.get(&target).cloned())
-        }
-        CyclesProbePolicy::FixedBlackhole { .. } => None,
-    };
-    if let Err(err) = probe_cycles(&policy, target, cached_route, cycles_probe_client).await {
-        let reason = "no supported cycles-observation route could read the target balance";
-        let message = if err.message.is_empty() {
-            reason.to_string()
-        } else {
-            format!("{reason}: {}", err.message)
-        };
-        if balance > cfg.relay_setup_dust_e8s {
-            state::with_root_and_relay_factory_state_mut(target, |st| {
-                let job = st.relay_setup_jobs.entry(target).or_insert_with(|| {
-                    reserve_job(target, setup_account, setup_account_identifier.clone())
-                });
-                job.status = RelaySetupStatus::RefundAvailable;
-                job.last_error = Some(message.clone());
-                job.updated_at_ts = now_secs();
-            });
-            return auto_refund_pre_spend(historian, target, reason.to_string(), ledger, index)
-                .await;
-        }
-        return RelaySetupNotifyResult::TargetNotObservable { message };
-    }
     if balance < cfg.relay_setup_min_e8s {
         if balance > cfg.relay_setup_dust_e8s {
             state::with_root_and_relay_factory_state_mut(target, |st| {
@@ -1330,6 +1302,34 @@ async fn notify_relay_setup_with_clients_for_historian<C: CyclesProbeClient>(
             required_e8s: required,
             current_balance_e8s: balance,
         };
+    }
+    let policy = cfg.effective_cycles_probe_policy();
+    let cached_route = match policy {
+        CyclesProbePolicy::Auto => {
+            state::with_state(|st| st.cached_cycles_probe_routes.get(&target).cloned())
+        }
+        CyclesProbePolicy::FixedBlackhole { .. } => None,
+    };
+    if let Err(err) = probe_cycles(&policy, target, cached_route, cycles_probe_client).await {
+        let reason = "no supported cycles-observation route could read the target balance";
+        let message = if err.message.is_empty() {
+            reason.to_string()
+        } else {
+            format!("{reason}: {}", err.message)
+        };
+        if balance > cfg.relay_setup_dust_e8s {
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                let job = st.relay_setup_jobs.entry(target).or_insert_with(|| {
+                    reserve_job(target, setup_account, setup_account_identifier.clone())
+                });
+                job.status = RelaySetupStatus::RefundAvailable;
+                job.last_error = Some(message.clone());
+                job.updated_at_ts = now_secs();
+            });
+            return auto_refund_pre_spend(historian, target, reason.to_string(), ledger, index)
+                .await;
+        }
+        return RelaySetupNotifyResult::TargetNotObservable { message };
     }
     let indexed = match index_setup_payments(target, setup_account_identifier.clone(), index).await
     {
@@ -3466,13 +3466,14 @@ mod tests {
             }),
             ..FakeCmc::healthy()
         };
+        let cycles_probe = FakeCyclesProbe::blackhole_ok(config().blackhole_canister_id);
 
         let result = block_on(notify_relay_setup_with_clients_for_historian(
             historian,
             target,
             &ledger,
             &index,
-            &FakeCyclesProbe::blackhole_ok(config().blackhole_canister_id),
+            &cycles_probe,
             &FakeBlackhole,
             &cmc,
         ));
@@ -3481,6 +3482,7 @@ mod tests {
             result,
             RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![188]
         ));
+        assert!(cycles_probe.calls().is_empty());
         assert!(ledger.transfers.lock().unwrap().is_empty());
         assert!(cmc.notify_calls.lock().unwrap().is_empty());
         let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
@@ -3493,7 +3495,7 @@ mod tests {
     }
 
     #[test]
-    fn unfunded_target_visible_through_13_node_returns_below_minimum_without_spending() {
+    fn zero_balance_notify_returns_below_minimum_without_cycles_probe_or_job() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[25, 2]);
         let mut cfg = config();
@@ -3508,9 +3510,11 @@ mod tests {
             },
             pages: Arc::new(Mutex::new(Vec::new())),
         };
-        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
         let cycles_probe = FakeCyclesProbe {
-            blackhole: BTreeMap::from([(thirteen, ProbeResponse::Ok(100))]),
+            blackhole: BTreeMap::from([(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+                ProbeResponse::Ok(100),
+            )]),
             ..Default::default()
         };
         let cmc = FakeCmc::healthy();
@@ -3535,29 +3539,20 @@ mod tests {
         assert!(ledger.transfers.lock().unwrap().is_empty());
         assert!(cmc.notify_calls.lock().unwrap().is_empty());
         assert!(state::with_state(|st| st.relay_setup_jobs.is_empty()));
-        assert_eq!(
-            cycles_probe.calls(),
-            vec![
-                ProbeCall::SelfCycles(target),
-                ProbeCall::Blackhole {
-                    probe: thirteen,
-                    target
-                },
-            ]
-        );
+        assert!(cycles_probe.calls().is_empty());
     }
 
     #[test]
-    fn unfunded_target_visible_only_through_fiduciary_tries_13_node_first() {
+    fn below_minimum_notify_returns_below_minimum_without_cycles_probe() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[25, 3]);
         let mut cfg = config();
         cfg.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
         state::set_state(State::new(cfg, 0));
-        let ledger = FakeLedger::healthy(0);
+        let ledger = FakeLedger::healthy(10_000);
         let index = FakeIndex {
             response: GetAccountIdentifierTransactionsResponse {
-                balance: 0,
+                balance: 10_000,
                 transactions: Vec::new(),
                 oldest_tx_id: None,
             },
@@ -3587,30 +3582,17 @@ mod tests {
         assert!(matches!(
             result,
             RelaySetupNotifyResult::BelowMinimum {
-                current_balance_e8s: 0,
+                current_balance_e8s: 10_000,
                 ..
             }
         ));
         assert!(ledger.transfers.lock().unwrap().is_empty());
         assert!(cmc.notify_calls.lock().unwrap().is_empty());
-        assert_eq!(
-            cycles_probe.calls(),
-            vec![
-                ProbeCall::SelfCycles(target),
-                ProbeCall::Blackhole {
-                    probe: thirteen,
-                    target
-                },
-                ProbeCall::Blackhole {
-                    probe: fiduciary,
-                    target
-                },
-            ]
-        );
+        assert!(cycles_probe.calls().is_empty());
     }
 
     #[test]
-    fn unfunded_sns_dapp_probe_succeeds_without_spending() {
+    fn zero_balance_sns_dapp_returns_below_minimum_without_discovery() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[25, 4]);
         let root = Principal::from_slice(&[25, 40]);
@@ -3672,28 +3654,11 @@ mod tests {
         ));
         assert!(ledger.transfers.lock().unwrap().is_empty());
         assert!(cmc.notify_calls.lock().unwrap().is_empty());
-        assert_eq!(
-            cycles_probe.calls(),
-            vec![
-                ProbeCall::SelfCycles(target),
-                ProbeCall::Blackhole {
-                    probe: thirteen,
-                    target
-                },
-                ProbeCall::Blackhole {
-                    probe: fiduciary,
-                    target
-                },
-                ProbeCall::ListDeployedSnses,
-                ProbeCall::CanisterInfo(target),
-                ProbeCall::ListSnsCanisters(root),
-                ProbeCall::SnsRootStatus { root, target },
-            ]
-        );
+        assert!(cycles_probe.calls().is_empty());
     }
 
     #[test]
-    fn unfunded_unobservable_target_returns_target_not_observable_without_job() {
+    fn zero_balance_unobservable_target_returns_below_minimum_without_job_or_probe() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[25, 5]);
         let mut cfg = config();
@@ -3730,12 +3695,15 @@ mod tests {
 
         assert!(matches!(
             result,
-            RelaySetupNotifyResult::TargetNotObservable { ref message }
-                if message.contains("no supported cycles-observation route")
+            RelaySetupNotifyResult::BelowMinimum {
+                current_balance_e8s: 0,
+                ..
+            }
         ));
         assert!(state::with_state(|st| st.relay_setup_jobs.is_empty()));
         assert!(ledger.transfers.lock().unwrap().is_empty());
         assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        assert!(cycles_probe.calls().is_empty());
     }
 
     #[test]
@@ -3880,7 +3848,106 @@ mod tests {
     }
 
     #[test]
-    fn fixed_policy_uses_only_configured_route_for_ordinary_target() {
+    fn funded_sns_dapp_probe_continues_into_existing_post_probe_path() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 9]);
+        let root = Principal::from_slice(&[25, 90]);
+        let mut cfg = config();
+        cfg.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
+        state::set_state(State::new(cfg, 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            transfer_results: Arc::new(Mutex::new(vec![Ok(Ok(candid::Nat::from(1889u64)))])),
+            legacy_results: Arc::new(Mutex::new(Vec::new())),
+            ..FakeLedger::healthy(300_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    300_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([
+                (thirteen, ProbeResponse::Err("not controller")),
+                (fiduciary, ProbeResponse::Err("not controller")),
+            ]),
+            deployed: Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse {
+                instances: vec![jupiter_ic_clients::sns::DeployedSns {
+                    root_canister_id: Some(root),
+                    ..Default::default()
+                }],
+            }),
+            controllers: Ok(vec![root]),
+            root_lists: BTreeMap::from([(
+                root,
+                Ok(jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                    root: Some(root),
+                    dapps: vec![target],
+                    ..Default::default()
+                }),
+            )]),
+            sns_root: BTreeMap::from([(root, ProbeResponse::Ok(100))]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc {
+            notify_results: Arc::new(Mutex::new(vec![Ok(1_000_000_000_000)])),
+            ..FakeCmc::healthy()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(
+            cycles_probe.calls(),
+            vec![
+                ProbeCall::SelfCycles(target),
+                ProbeCall::Blackhole {
+                    probe: thirteen,
+                    target
+                },
+                ProbeCall::Blackhole {
+                    probe: fiduciary,
+                    target
+                },
+                ProbeCall::ListDeployedSnses,
+                ProbeCall::CanisterInfo(target),
+                ProbeCall::ListSnsCanisters(root),
+                ProbeCall::SnsRootStatus { root, target },
+            ]
+        );
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.lock().unwrap().as_slice(), &[1889]);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+    }
+
+    #[test]
+    fn fixed_policy_zero_balance_returns_below_minimum_without_probe() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[25, 7]);
         let fixed = Principal::from_slice(&[99]);
@@ -3919,16 +3986,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(
-            cycles_probe.calls(),
-            vec![
-                ProbeCall::SelfCycles(target),
-                ProbeCall::Blackhole {
-                    probe: fixed,
-                    target
-                },
-            ]
-        );
+        assert!(cycles_probe.calls().is_empty());
     }
 
     #[test]

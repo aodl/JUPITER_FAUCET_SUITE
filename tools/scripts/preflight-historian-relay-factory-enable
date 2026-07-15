@@ -22,6 +22,7 @@ echo "Temporary historian upgrade args for live factory enablement:"
 cat <<'DID'
 (opt record {
   relay_factory_enabled = opt true;
+  cycles_probe_policy = opt variant { Auto };
 })
 DID
 
