@@ -1223,6 +1223,51 @@ mod tests {
         }
     }
 
+    struct RejectingSchedulerLedger {
+        default_balance_e8s: u64,
+        fee_e8s: u64,
+        transfers: Mutex<Vec<TransferArg>>,
+    }
+
+    impl RejectingSchedulerLedger {
+        fn new(default_balance_e8s: u64, fee_e8s: u64) -> Self {
+            Self {
+                default_balance_e8s,
+                fee_e8s,
+                transfers: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn transfer_count(&self) -> usize {
+            self.transfers.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for RejectingSchedulerLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(self.fee_e8s)
+        }
+
+        async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+            if account.subaccount == Some(logic::relay_subaccount_one()) {
+                Ok(0)
+            } else {
+                Ok(self.default_balance_e8s)
+            }
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            self.transfers.lock().unwrap().push(arg);
+            Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(self.fee_e8s),
+            }))
+        }
+    }
+
     struct MockSchedulerCmc {
         notify_calls: Mutex<Vec<Principal>>,
         minted_cycles: u128,
@@ -1285,6 +1330,91 @@ mod tests {
     impl MockSchedulerCyclesProbe {
         fn new(cycles: BTreeMap<Principal, u128>) -> Self {
             Self { cycles }
+        }
+    }
+
+    struct RecordingSchedulerCyclesProbe {
+        blackhole: BTreeMap<Principal, Result<u128, String>>,
+        calls: Mutex<Vec<(Principal, Principal)>>,
+    }
+
+    impl RecordingSchedulerCyclesProbe {
+        fn new(blackhole: BTreeMap<Principal, Result<u128, String>>) -> Self {
+            Self {
+                blackhole,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<(Principal, Principal)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl CyclesProbeClient for RecordingSchedulerCyclesProbe {
+        async fn self_cycles(&self, _target: Principal) -> Option<u128> {
+            None
+        }
+
+        async fn blackhole_cycles(
+            &self,
+            probe_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((probe_canister_id, target_canister_id));
+            self.blackhole
+                .get(&probe_canister_id)
+                .cloned()
+                .unwrap_or_else(|| Err("mock probe failed".to_string()))
+                .map_err(jupiter_ic_clients::ClientError::Call)
+        }
+
+        async fn list_deployed_snses(
+            &self,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListDeployedSnsesResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse::default())
+        }
+
+        async fn canister_info_controllers(
+            &self,
+            _target: Principal,
+        ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_sns_canisters(
+            &self,
+            _root_canister_id: Principal,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListSnsCanistersResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            Ok(jupiter_ic_clients::sns::ListSnsCanistersResponse::default())
+        }
+
+        async fn sns_root_cycles(
+            &self,
+            _root_canister_id: Principal,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "mock SNS root probe failed".to_string(),
+            ))
+        }
+
+        async fn sns_swap_cycles(
+            &self,
+            _swap_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "mock SNS swap probe failed".to_string(),
+            ))
         }
     }
 
@@ -1838,6 +1968,70 @@ mod tests {
                     }
                 )
             );
+        });
+    }
+
+    #[test]
+    fn relay_scheduler_keeps_cached_route_after_transfer_failure() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cached = jupiter_ic_clients::cycles_probe::CyclesProbeRoute::Blackhole {
+            canister_id: fiduciary,
+        };
+        let mut st = State::new(config_with_managed(vec![target]), 0);
+        st.config.cycles_probe_policy = CyclesProbePolicy::Auto;
+        st.cached_cycles_probe_routes.insert(target, cached.clone());
+        st.last_completed_cycles.insert(target, snapshot(9_000_000));
+        st.last_completed_cycles
+            .insert(relay_self(), snapshot(9_000_000));
+        state::set_state(st);
+
+        let ledger = RejectingSchedulerLedger::new(1_000_000_000, 10_000);
+        let cmc = MockSchedulerCmc::new(10_000_000_000_000);
+        let cycles_probe = RecordingSchedulerCyclesProbe::new(BTreeMap::from([
+            (fiduciary, Ok(5_000_000)),
+            (thirteen, Ok(4_000_000)),
+        ]));
+        block_on(start_job_with_self(
+            10_000_000_000,
+            relay_self(),
+            9_000_000,
+            &ledger,
+            &cmc,
+            &cycles_probe,
+        ));
+        block_on(drive_active_job(
+            10_000_000_000,
+            &ledger,
+            &cmc,
+            &MockSchedulerGovernance,
+        ));
+
+        assert_eq!(ledger.transfer_count(), 1);
+        assert_eq!(cycles_probe.calls(), vec![(fiduciary, target)]);
+        state::with_state(|st| {
+            assert_eq!(st.cached_cycles_probe_routes.get(&target), Some(&cached));
+        });
+
+        let ledger = MockSchedulerLedger::new(0, 10_000);
+        let cmc = MockSchedulerCmc::new(10_000_000_000_000);
+        let cycles_probe = RecordingSchedulerCyclesProbe::new(BTreeMap::from([
+            (fiduciary, Ok(4_900_000)),
+            (thirteen, Ok(4_000_000)),
+        ]));
+        block_on(start_job_with_self(
+            20_000_000_000,
+            relay_self(),
+            9_000_000,
+            &ledger,
+            &cmc,
+            &cycles_probe,
+        ));
+
+        assert_eq!(cycles_probe.calls(), vec![(fiduciary, target)]);
+        state::with_state(|st| {
+            assert_eq!(st.cached_cycles_probe_routes.get(&target), Some(&cached));
         });
     }
 

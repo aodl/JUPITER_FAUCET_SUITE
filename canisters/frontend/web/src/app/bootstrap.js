@@ -11,6 +11,7 @@ import { readOpt } from '../candid-opt.js';
 import { buildCommitmentIndexFaultBannerText } from '../historian-fault.js';
 import { initAdvancedMemoBuilder } from './advanced-memo-controller.js';
 import { GOVERNANCE_CANISTER_ID, JUPITER_NEURON_ID } from './config.js';
+import { dashboardCountDisplays } from './count-displays.js';
 import { createDashboardTablesController } from './dashboard-tables-controller.js';
 import { SIMULATOR_HASH_PREFIX, simulatorHashForPrefill } from './hash-routes.js';
 import { createSimulatorController } from './simulator-controller.js';
@@ -30,7 +31,7 @@ const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
       <p>Cycles balances are sampled periodically by historian.</p>
-      <p>For ordinary canisters, cycles observability is attempted automatically through direct status, recognized controller probes, cached positive routes, and SNS discovery. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
+      <p>For ordinary canisters, cycles observability is attempted automatically through direct self status, recognized blackhole routes, cached positive routes, and SNS routes. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
     </div>`,
 };
 
@@ -113,10 +114,11 @@ function nextRunLabel(status) {
 }
 
 function renderLandingSummary(data) {
+  const countDisplays = dashboardCountDisplays(data.counts);
   setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8s(data.stakeE8s) });
   setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
   setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
-  setMetricStatus('landing-registered-canisters', data.counts?.tracked_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Tracked canisters unavailable' } : { value: formatInteger(data.counts.tracked_canister_count) });
+  setMetricStatus('landing-registered-canisters', data.counts?.tracked_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Tracked canisters unavailable' } : { value: countDisplays.trackedCanisterMetric });
   setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Patron commitments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
   setHidden('landing-live-unavailable', true);
 }
@@ -149,13 +151,10 @@ function renderHistorianFaultBanner(data) {
 
 function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
-  const trackedCount = data?.counts?.tracked_canister_count;
+  const countDisplays = dashboardCountDisplays(data?.counts);
   const optionalCountValue = (value) => (Array.isArray(value) ? value[0] : value);
   const rawIcpDeclaredCanisterCount = optionalCountValue(data?.counts?.raw_icp_declared_canister_count);
   const declaredNeuronCount = optionalCountValue(data?.counts?.declared_neuron_count);
-  const commitmentsCanisterCount = trackedCount === undefined || trackedCount === null
-    ? ''
-    : `(${formatInteger(trackedCount)})`;
   const commitmentsRawCanisterCount = rawIcpDeclaredCanisterCount === undefined || rawIcpDeclaredCanisterCount === null
     ? ''
     : `(${formatInteger(rawIcpDeclaredCanisterCount)})`;
@@ -165,7 +164,7 @@ function renderPaneSubtitles(data) {
   setText('landing-next-run', subtitle);
   setText('registered-pane-subtitle', subtitle);
   setText('commitments-pane-subtitle', subtitle);
-  setText('commitments-canister-count', commitmentsCanisterCount);
+  setText('commitments-canister-count', countDisplays.declaredCanisterBadge);
   setText('commitments-raw-canister-count', commitmentsRawCanisterCount);
   setText('commitments-neuron-count', commitmentsNeuronCount);
   setText('output-pane-subtitle', 'Historian tracks the aggregate; recent rows are queried live from the ICP index canister.');

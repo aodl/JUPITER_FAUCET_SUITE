@@ -127,7 +127,7 @@ function cyclesProbeStatusInfo(data) {
       kind: 'notAvailable',
       label: 'not available',
       chartMessage: 'Cycles data not available.',
-      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Historian probes supported direct, blackhole, Relay, and SNS observation routes automatically.`,
+      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Historian probes supported direct self, recognized blackhole, and SNS routes automatically.`,
     };
   }
 

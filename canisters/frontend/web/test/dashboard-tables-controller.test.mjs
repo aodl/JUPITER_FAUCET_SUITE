@@ -37,6 +37,15 @@ function commitmentPaneNodes() {
   ]);
 }
 
+function registeredPaneNodes() {
+  return new Map([
+    ['registered-pane-body', { innerHTML: '' }],
+    ['registered-page-info', { textContent: '' }],
+    ['registered-prev-page', { disabled: false }],
+    ['registered-next-page', { disabled: false }],
+  ]);
+}
+
 test('raw and neuron commitment rows link full declared memos to tracker', () => {
   const nodes = commitmentPaneNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
@@ -122,4 +131,36 @@ test('raw ICP declared memo links keep compact canister memo text within the mem
   assert.match(html, /r5m5ydiaaaaaaaaqanaacai\.2r3eo-5q/);
   assert.match(html, /data-tracker-memo="r5m5ydiaaaaaaaaqanaacai\.2r3eo-5q"/);
   assert.doesNotMatch(html, /r5m5y-diaaa-aaaaa-qanaa-cai\.2r3eo-5q/);
+});
+
+test('declared canister table uses memo-registered unavailable and empty wording', () => {
+  const emptyNodes = registeredPaneNodes();
+  withDashboardTableDom(emptyNodes, () => {
+    createDashboardTablesController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      getLandingData: () => ({}),
+    }).renderRegisteredPane({ errors: {} });
+  });
+
+  assert.match(
+    emptyNodes.get('registered-pane-body').innerHTML,
+    /No memo-registered canisters indexed yet\./
+  );
+  assert.doesNotMatch(emptyNodes.get('registered-pane-body').innerHTML, /tracked canisters/i);
+
+  const errorNodes = registeredPaneNodes();
+  withDashboardTableDom(errorNodes, () => {
+    createDashboardTablesController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      getLandingData: () => ({}),
+    }).renderRegisteredPane({ errors: { registered: 'index unavailable' } });
+  });
+
+  assert.match(
+    errorNodes.get('registered-pane-body').innerHTML,
+    /Declared canisters unavailable \(index unavailable\)/
+  );
+  assert.doesNotMatch(errorNodes.get('registered-pane-body').innerHTML, /Tracked canisters unavailable/);
 });

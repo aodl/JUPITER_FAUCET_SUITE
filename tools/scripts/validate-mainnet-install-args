@@ -116,6 +116,16 @@ def require_contains(text: str, needle: str, context: str) -> None:
         fail(f"{context} is missing `{needle}`")
 
 
+def non_comment_command_lines(text: str) -> list[str]:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        lines.append(stripped)
+    return lines
+
+
 def extract_nat64(text: str, field: str, path: Path) -> int:
     match = re.search(rf"{re.escape(field)}\s*=\s*(?:opt\s*)?(?:\()?\s*(\d+)(?:\s*:\s*nat64)?\s*\)?\s*;", text)
     if not match:
@@ -744,6 +754,10 @@ def validate_historian() -> int:
 def validate_historian_relay_factory_enablement_fixture() -> None:
     path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable"
     text = path.read_text()
+    require_contains(text, 'manifest="release-artifacts/release-artifacts.sha256"', str(path))
+    require_contains(text, 'sha256sum -c "$manifest"', str(path))
+    require_contains(text, "python3 ./tools/scripts/validate-mainnet-install-args", str(path))
+    require_contains(text, "Historian reinstall args must be complete:", str(path))
     require_contains(text, "JUPITER_USE_CANONICAL_ARTIFACTS=1 \\", str(path))
     require_contains(text, "icp deploy jupiter_historian \\", str(path))
     require_contains(text, "--environment ic \\", str(path))
@@ -753,6 +767,16 @@ def validate_historian_relay_factory_enablement_fixture() -> None:
         fail(f"{path} must not recommend --mode upgrade for this development-phase reinstall release")
     if "/tmp/historian-relay-factory-enable.did" in text:
         fail(f"{path} must use the checked-in Historian InitArgs file, not a temporary args file")
+    for line in non_comment_command_lines(text):
+        command = line.removeprefix("env ").strip()
+        if command.startswith("echo ") or command.startswith("cat ") or command.startswith("printf "):
+            continue
+        if "tools/scripts/build-canister" in command:
+            fail(f"{path} must be read-only and must not invoke tools/scripts/build-canister")
+        if re.search(r"(^|[;&|]\s*)cargo\s+build\b", command):
+            fail(f"{path} must be read-only and must not invoke cargo build")
+        if re.search(r"(^|[;&|]\s*)(?:\./)?tools/scripts/docker-build\b", command):
+            fail(f"{path} must be read-only and must not invoke docker-build")
 
 
 def validate_historian_relay_factory_artifacts(path: Path) -> None:

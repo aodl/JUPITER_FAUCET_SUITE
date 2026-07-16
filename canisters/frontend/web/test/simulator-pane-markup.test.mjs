@@ -16,6 +16,7 @@ const metricsCss = readFileSync(resolve(__dirname, '../../public/metrics.css'), 
 const bootstrapJs = readFileSync(resolve(__dirname, '../src/app/bootstrap.js'), 'utf8');
 const advancedMemoControllerJs = readFileSync(resolve(__dirname, '../src/app/advanced-memo-controller.js'), 'utf8');
 const configJs = readFileSync(resolve(__dirname, '../src/app/config.js'), 'utf8');
+const countDisplaysJs = readFileSync(resolve(__dirname, '../src/app/count-displays.js'), 'utf8');
 const hashRoutesJs = readFileSync(resolve(__dirname, '../src/app/hash-routes.js'), 'utf8');
 const dashboardTablesControllerJs = readFileSync(resolve(__dirname, '../src/app/dashboard-tables-controller.js'), 'utf8');
 const responsiveTablesJs = readFileSync(resolve(__dirname, '../src/app/responsive-tables.js'), 'utf8');
@@ -28,6 +29,7 @@ const mainJs = [
   bootstrapJs,
   advancedMemoControllerJs,
   configJs,
+  countDisplaysJs,
   hashRoutesJs,
   dashboardTablesControllerJs,
   responsiveTablesJs,
@@ -726,10 +728,12 @@ test('Patron Commitments table omits redundant category column', () => {
   assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
   assert.doesNotMatch(commitments, /<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
-  assert.match(mainJs, /const trackedCount = data\?\.counts\?\.tracked_canister_count;/);
+  assert.match(mainJs, /const countDisplays = dashboardCountDisplays\(data\?\.counts\);/);
+  assert.match(countDisplaysJs, /tracked_canister_count/);
+  assert.match(countDisplaysJs, /memo_registered_canister_count/);
   assert.match(mainJs, /setText\('commitments-pane-subtitle', subtitle\);/);
   assert.doesNotMatch(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);
-  assert.match(mainJs, /setText\('commitments-canister-count', commitmentsCanisterCount\);/);
+  assert.match(mainJs, /setText\('commitments-canister-count', countDisplays\.declaredCanisterBadge\);/);
   assert.match(mainJs, /const optionalCountValue = \(value\) => \(Array\.isArray\(value\) \? value\[0\] : value\);/);
   assert.match(mainJs, /const rawIcpDeclaredCanisterCount = optionalCountValue\(data\?\.counts\?\.raw_icp_declared_canister_count\);/);
   assert.match(mainJs, /const declaredNeuronCount = optionalCountValue\(data\?\.counts\?\.declared_neuron_count\);/);

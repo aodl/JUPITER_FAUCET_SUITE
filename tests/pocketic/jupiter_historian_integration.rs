@@ -1432,7 +1432,7 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
 
 #[test]
 #[ignore]
-fn retained_gzip_relay_payload_module_hash_matches_exact_supplied_bytes() -> Result<()> {
+fn gzip_install_payload_module_hash_matches_exact_supplied_bytes() -> Result<()> {
     require_ignored_flag()?;
     let relay = relay_wasm()?;
     let unique = format!(

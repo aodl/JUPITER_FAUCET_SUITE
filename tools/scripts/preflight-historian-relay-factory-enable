@@ -7,14 +7,34 @@ cd "$REPO_ROOT"
 
 artifact="release-artifacts/jupiter_historian.wasm.gz"
 deprecated_artifact="release-artifacts/jupiter_historian_with_relay.wasm.gz"
+manifest="release-artifacts/release-artifacts.sha256"
 
-./tools/scripts/build-canister jupiter-historian
-
-if [[ ! -f "$artifact" ]]; then
-  echo "expected canonical relay-enabled historian artifact is missing: ${artifact}" >&2
+if [[ ! -f "$manifest" ]]; then
+  echo "missing canonical release artifact manifest: ${manifest}" >&2
+  echo "run the sanctioned Docker build separately before this read-only preflight: ./tools/scripts/docker-build" >&2
   exit 1
 fi
 
+if [[ ! -f "$artifact" ]]; then
+  echo "expected canonical relay-enabled historian artifact is missing: ${artifact}" >&2
+  echo "run the sanctioned Docker build separately before this read-only preflight: ./tools/scripts/docker-build" >&2
+  exit 1
+fi
+
+missing_manifest_artifacts=0
+while read -r _hash path _rest; do
+  [[ -z "${path:-}" ]] && continue
+  if [[ ! -f "$path" ]]; then
+    echo "manifest artifact is missing: ${path}" >&2
+    missing_manifest_artifacts=1
+  fi
+done < "$manifest"
+if [[ "$missing_manifest_artifacts" -ne 0 ]]; then
+  echo "run the sanctioned Docker build separately before this read-only preflight: ./tools/scripts/docker-build" >&2
+  exit 1
+fi
+
+sha256sum -c "$manifest"
 python3 ./tools/scripts/validate-mainnet-install-args
 
 echo

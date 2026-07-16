@@ -739,11 +739,15 @@ mod tests {
     }
 
     #[test]
-    fn auto_13_node_success_stops_immediately() {
+    fn no_cached_route_stops_after_13_node_success() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
-            blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(77))]),
+            blackhole: BTreeMap::from([
+                (thirteen, TestResponse::Ok(77)),
+                (fiduciary, TestResponse::Ok(88)),
+            ]),
             ..Default::default()
         };
 
@@ -760,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_fiduciary_fallback_calls_13_node_then_fiduciary_and_no_sns() {
+    fn no_cached_route_discovers_13_node_before_fiduciary() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
@@ -957,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_route_success_stops_immediately() {
+    fn cached_sns_root_success_stops_immediately() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let cached_root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
         let cached = CyclesProbeRoute::SnsRoot {
@@ -983,6 +987,216 @@ mod tests {
                 TestCall::SelfCycles(target),
                 root_status(cached_root, target),
             ]
+        );
+    }
+
+    #[test]
+    fn cached_fiduciary_success_is_used_directly() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let cached = CyclesProbeRoute::Blackhole {
+            canister_id: fiduciary,
+        };
+        let client = RecordingClient {
+            blackhole: BTreeMap::from([
+                (thirteen, TestResponse::Ok(1313)),
+                (fiduciary, TestResponse::Ok(88)),
+            ]),
+            ..Default::default()
+        };
+
+        let outcome = probe_auto(target, Some(cached), &client).unwrap();
+
+        assert_eq!(outcome.cycles, 88);
+        assert_eq!(
+            outcome.route,
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: fiduciary,
+            })
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                blackhole_call(fiduciary, target),
+            ]
+        );
+    }
+
+    #[test]
+    fn cached_fiduciary_failure_rediscovers_from_13_node() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let cached = CyclesProbeRoute::Blackhole {
+            canister_id: fiduciary,
+        };
+        let client = RecordingClient {
+            blackhole: BTreeMap::from([
+                (fiduciary, TestResponse::Err("stale")),
+                (thirteen, TestResponse::Ok(1313)),
+            ]),
+            ..Default::default()
+        };
+
+        let outcome = probe_auto(target, Some(cached), &client).unwrap();
+
+        assert_eq!(outcome.cycles, 1313);
+        assert_eq!(
+            outcome.route,
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: thirteen,
+            })
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                blackhole_call(fiduciary, target),
+                blackhole_call(thirteen, target),
+            ]
+        );
+        assert_eq!(
+            client
+                .calls()
+                .into_iter()
+                .filter(|call| *call == blackhole_call(fiduciary, target))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn cached_fiduciary_failure_then_13_node_failure_reaches_sns() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let cached = CyclesProbeRoute::Blackhole {
+            canister_id: fiduciary,
+        };
+        let client = RecordingClient {
+            blackhole: BTreeMap::from([
+                (fiduciary, TestResponse::Err("stale")),
+                (thirteen, TestResponse::Err("not controller")),
+            ]),
+            deployed: Ok(ListDeployedSnsesResponse {
+                instances: vec![deployed(root)],
+            }),
+            controllers: Ok(vec![root]),
+            root_lists: BTreeMap::from([(
+                root,
+                Ok(ListSnsCanistersResponse {
+                    root: Some(root),
+                    dapps: vec![target],
+                    ..Default::default()
+                }),
+            )]),
+            sns_root: BTreeMap::from([(root, TestResponse::Ok(313))]),
+            ..Default::default()
+        };
+
+        let outcome = probe_auto(target, Some(cached), &client).unwrap();
+
+        assert_eq!(outcome.cycles, 313);
+        assert_eq!(
+            outcome.route,
+            Some(CyclesProbeRoute::SnsRoot {
+                root_canister_id: root,
+            })
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                blackhole_call(fiduciary, target),
+                blackhole_call(thirteen, target),
+                TestCall::ListDeployedSnses,
+                TestCall::CanisterInfo(target),
+                TestCall::ListSnsCanisters(root),
+                root_status(root, target),
+            ]
+        );
+        assert_eq!(
+            client
+                .calls()
+                .into_iter()
+                .filter(|call| *call == blackhole_call(fiduciary, target))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn cached_sns_swap_success_stops_immediately() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let swap = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let cached = CyclesProbeRoute::SnsSwap {
+            root_canister_id: root,
+            swap_canister_id: swap,
+        };
+        let client = RecordingClient {
+            sns_swap: BTreeMap::from([(swap, TestResponse::Ok(99))]),
+            ..Default::default()
+        };
+
+        let outcome = probe_auto(target, Some(cached.clone()), &client).unwrap();
+
+        assert_eq!(
+            outcome,
+            CyclesProbeSuccess {
+                cycles: 99,
+                route: Some(cached),
+            }
+        );
+        assert_eq!(
+            client.calls(),
+            vec![TestCall::SelfCycles(target), TestCall::SnsSwapStatus(swap),]
+        );
+    }
+
+    #[test]
+    fn cached_13_node_failure_falls_back_to_fiduciary_without_duplicate() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let cached = CyclesProbeRoute::Blackhole {
+            canister_id: thirteen,
+        };
+        let client = RecordingClient {
+            blackhole: BTreeMap::from([
+                (thirteen, TestResponse::Err("stale")),
+                (fiduciary, TestResponse::Ok(88)),
+            ]),
+            ..Default::default()
+        };
+
+        let outcome = probe_auto(target, Some(cached), &client).unwrap();
+
+        assert_eq!(outcome.cycles, 88);
+        assert_eq!(
+            outcome.route,
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: fiduciary,
+            })
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                blackhole_call(thirteen, target),
+                blackhole_call(fiduciary, target),
+            ]
+        );
+        assert_eq!(
+            client
+                .calls()
+                .into_iter()
+                .filter(|call| *call == blackhole_call(thirteen, target))
+                .count(),
+            1
         );
     }
 
