@@ -18,10 +18,8 @@ fi
 python3 ./tools/scripts/validate-mainnet-install-args
 
 echo
-echo "Historian reinstall args must be complete. Factory enablement excerpt:"
-cat <<'DID'
-relay_factory_enabled = opt true;
-DID
+echo "Historian reinstall args must be complete:"
+echo "canisters/historian/mainnet-install-args.did"
 
 echo
 echo "Production historian deploy artifact path:"
@@ -42,8 +40,14 @@ if [[ -f "$deprecated_artifact" ]]; then
 fi
 
 echo
-echo "Dry-run only. Later deploy command:"
-echo "JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade --args-file /tmp/historian-relay-factory-enable.did"
+echo "Dry-run only. Canonical release reinstall command after live controller-authority signoff:"
+cat <<'CMD'
+JUPITER_USE_CANONICAL_ARTIFACTS=1 \
+icp deploy jupiter_historian \
+  --environment ic \
+  --mode reinstall \
+  --args-file canisters/historian/mainnet-install-args.did
+CMD
 echo
 echo "The command above resolves jupiter_historian through icp.yaml, which must build/copy:"
 echo "$artifact"

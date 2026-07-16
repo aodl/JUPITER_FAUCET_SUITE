@@ -334,7 +334,6 @@ export async function loadRawIcpCanisterTrackerData({
     ? historian.find_canisters_by_memo_prefix({
         prefix,
         limit: [prefixLimit],
-        tracking_reason_filter: [{ MemoCommitment: null }],
       })
     : Promise.resolve({ items: [], truncated: false });
   const [statusResult, relayRegistrationsResult, transfersResult, candidatesResult] = await Promise.allSettled([

@@ -4,7 +4,7 @@ use super::*;
 #[allow(clippy::module_inception, clippy::unnecessary_get_then_check)]
 mod tests {
     use super::*;
-    use crate::RegisteredCanisterSummary;
+    use crate::MemoRegisteredCanisterSummary;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn reset_test_storage() {
@@ -383,7 +383,7 @@ mod tests {
         let mut cache = BTreeMap::new();
         cache.insert(
             canister_id,
-            RegisteredCanisterSummary {
+            MemoRegisteredCanisterSummary {
                 canister_id,
                 tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
                 qualifying_commitment_count: 1,
@@ -393,8 +393,8 @@ mod tests {
                 last_cycles_probe_ts: Some(88),
             },
         );
-        st.registered_canister_summaries_cache = Some(cache);
-        st.registered_canister_summaries_total_desc_index = Some(vec![canister_id]);
+        st.memo_registered_canister_summaries_cache = Some(cache);
+        st.memo_registered_canister_summaries_total_desc_index = Some(vec![canister_id]);
         set_state(st);
 
         let root_snapshot = with_root_stable_cell(|cell| cell.get().clone());
@@ -428,9 +428,9 @@ mod tests {
                 .burned_e8s,
             42
         );
-        assert!(restored.registered_canister_summaries_cache.is_none());
+        assert!(restored.memo_registered_canister_summaries_cache.is_none());
         assert!(restored
-            .registered_canister_summaries_total_desc_index
+            .memo_registered_canister_summaries_total_desc_index
             .is_none());
     }
 

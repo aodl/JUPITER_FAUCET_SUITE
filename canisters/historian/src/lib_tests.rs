@@ -172,8 +172,8 @@ mod tests {
             cached_cycles_probe_routes: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
-            registered_canister_summaries_cache: None,
-            registered_canister_summaries_total_desc_index: None,
+            memo_registered_canister_summaries_cache: None,
+            memo_registered_canister_summaries_total_desc_index: None,
             last_indexed_staking_tx_id: None,
             oldest_indexed_staking_tx_id: None,
             staking_index_descending: None,
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_registered_canister_summary_updates_cache_incrementally() {
+    fn refresh_memo_registered_canister_summary_updates_cache_incrementally() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.canister_tracking_reasons.insert(
@@ -347,9 +347,9 @@ mod tests {
             }],
         );
 
-        refresh_registered_canister_summary(&mut st, canister);
+        refresh_memo_registered_canister_summary(&mut st, canister);
         let cached = st
-            .registered_canister_summaries_cache
+            .memo_registered_canister_summaries_cache
             .as_ref()
             .and_then(|cache| cache.get(&canister))
             .cloned()
@@ -362,13 +362,13 @@ mod tests {
         assert_eq!(cached.latest_cycles, Some(777));
         assert_eq!(cached.last_cycles_probe_ts, Some(10));
         assert_eq!(
-            st.registered_canister_summaries_total_desc_index,
+            st.memo_registered_canister_summaries_total_desc_index,
             Some(vec![canister]),
         );
     }
 
     #[test]
-    fn refresh_registered_canister_summary_keeps_total_desc_index_in_dashboard_order() {
+    fn refresh_memo_registered_canister_summary_keeps_total_desc_index_in_dashboard_order() {
         let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let second = principal("uxrrr-q7777-77774-qaaaq-cai");
         let mut st = base_state();
@@ -387,11 +387,11 @@ mod tests {
                     counts_toward_faucet: true,
                 }],
             );
-            refresh_registered_canister_summary(&mut st, canister);
+            refresh_memo_registered_canister_summary(&mut st, canister);
         }
 
         assert_eq!(
-            st.registered_canister_summaries_total_desc_index,
+            st.memo_registered_canister_summaries_total_desc_index,
             Some(vec![second, first]),
         );
 
@@ -404,22 +404,23 @@ mod tests {
                 counts_toward_faucet: true,
             }],
         );
-        refresh_registered_canister_summary(&mut st, first);
+        refresh_memo_registered_canister_summary(&mut st, first);
 
         assert_eq!(
-            st.registered_canister_summaries_total_desc_index,
+            st.memo_registered_canister_summaries_total_desc_index,
             Some(vec![first, second]),
         );
     }
 
     #[test]
-    fn list_registered_canister_summaries_falls_back_to_slow_path_when_total_desc_index_drifts() {
+    fn list_memo_registered_canister_summaries_falls_back_to_slow_path_when_total_desc_index_drifts(
+    ) {
         let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let second = principal("uxrrr-q7777-77774-qaaaq-cai");
         let mut cache = BTreeMap::new();
         cache.insert(
             first,
-            RegisteredCanisterSummary {
+            MemoRegisteredCanisterSummary {
                 canister_id: first,
                 tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
                 qualifying_commitment_count: 1,
@@ -431,7 +432,7 @@ mod tests {
         );
         cache.insert(
             second,
-            RegisteredCanisterSummary {
+            MemoRegisteredCanisterSummary {
                 canister_id: second,
                 tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
                 qualifying_commitment_count: 2,
@@ -443,14 +444,15 @@ mod tests {
         );
 
         let mut st = base_state();
-        st.registered_canister_summaries_cache = Some(cache);
-        st.registered_canister_summaries_total_desc_index = Some(vec![first]);
+        st.memo_registered_canister_summaries_cache = Some(cache);
+        st.memo_registered_canister_summaries_total_desc_index = Some(vec![first]);
         state::set_state(st);
 
-        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-            page: Some(0),
-            page_size: Some(10),
-        });
+        let response =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(0),
+                page_size: Some(10),
+            });
 
         assert_eq!(response.total, 2);
         assert_eq!(
@@ -708,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn tracked_canister_count_requires_qualifying_memo_commitment_history() {
+    fn memo_registered_count_requires_qualifying_memo_commitment_history() {
         let memo_only = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let sns_only = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let both = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
@@ -749,6 +751,42 @@ mod tests {
         );
 
         assert_eq!(count_registered_canisters(&st), 2);
+    }
+
+    #[test]
+    fn public_counts_count_unique_principals_once_and_reasons_independently() {
+        let overlapping = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
+        let relay = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
+        let mut st = base_state();
+        st.canister_tracking_reasons.insert(
+            overlapping,
+            BTreeSet::from([
+                CanisterTrackingReason::MemoCommitment,
+                CanisterTrackingReason::SnsDiscovery,
+                CanisterTrackingReason::RelayTarget,
+            ]),
+        );
+        st.canister_tracking_reasons.insert(
+            relay,
+            BTreeSet::from([CanisterTrackingReason::RelayInstance]),
+        );
+        st.commitment_history.insert(
+            overlapping,
+            vec![CommitmentSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 80_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+        state::set_state(st);
+
+        let counts = get_public_counts();
+        assert_eq!(counts.tracked_canister_count, 2);
+        assert_eq!(counts.memo_registered_canister_count, 1);
+        assert_eq!(counts.sns_discovered_canister_count, 1);
+        assert_eq!(counts.relay_target_canister_count, 1);
+        assert_eq!(counts.relay_instance_canister_count, 1);
     }
 
     #[test]
@@ -875,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn list_registered_canister_summaries_excludes_sns_only_canisters() {
+    fn list_memo_registered_canister_summaries_excludes_sns_only_canisters() {
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
         st.canister_tracking_reasons.insert(
@@ -884,16 +922,17 @@ mod tests {
         );
         state::set_state(st);
 
-        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-            page: Some(0),
-            page_size: Some(10),
-        });
+        let response =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(0),
+                page_size: Some(10),
+            });
         assert_eq!(response.total, 0);
         assert!(response.items.is_empty());
     }
 
     #[test]
-    fn list_registered_canister_summaries_excludes_non_qualifying_memo_only_canisters() {
+    fn list_memo_registered_canister_summaries_excludes_non_qualifying_memo_only_canisters() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.canister_tracking_reasons.insert(
@@ -911,10 +950,11 @@ mod tests {
         );
         state::set_state(st);
 
-        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-            page: Some(0),
-            page_size: Some(10),
-        });
+        let response =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(0),
+                page_size: Some(10),
+            });
         assert_eq!(response.total, 0);
         assert!(response.items.is_empty());
     }
@@ -983,13 +1023,14 @@ mod tests {
         state::set_state_root_only(restored);
 
         let overview =
-            get_canister_overview(canister).expect("registered canister should be visible");
+            get_canister_overview(canister).expect("memo registered canister should be visible");
         assert_eq!(overview.commitment_points, 2);
         assert_eq!(overview.cycles_points, 1);
     }
 
     #[test]
-    fn list_registered_canister_summaries_uses_canister_id_as_tie_breaker_for_stable_pagination() {
+    fn list_memo_registered_canister_summaries_uses_canister_id_as_tie_breaker_for_stable_pagination(
+    ) {
         let a = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let b = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
         let mut st = base_state();
@@ -1017,14 +1058,16 @@ mod tests {
         }
         state::set_state(st);
 
-        let first_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-            page: Some(0),
-            page_size: Some(1),
-        });
-        let second_page = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-            page: Some(1),
-            page_size: Some(1),
-        });
+        let first_page =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(0),
+                page_size: Some(1),
+            });
+        let second_page =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(1),
+                page_size: Some(1),
+            });
 
         assert_eq!(first_page.total, 2);
         assert_eq!(second_page.total, 2);
@@ -1035,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn list_registered_canister_summaries_returns_empty_pages_past_the_end() {
+    fn list_memo_registered_canister_summaries_returns_empty_pages_past_the_end() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.canister_tracking_reasons.insert(
@@ -1053,10 +1096,11 @@ mod tests {
         );
         state::set_state(st);
 
-        let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
-            page: Some(5),
-            page_size: Some(1),
-        });
+        let response =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(5),
+                page_size: Some(1),
+            });
         assert_eq!(response.total, 1);
         assert!(response.items.is_empty());
     }
@@ -1089,7 +1133,6 @@ mod tests {
         let first_group = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "2225".to_string(),
             limit: Some(10),
-            tracking_reason_filter: Some(CanisterTrackingReason::MemoCommitment),
         });
 
         assert!(!first_group.truncated);
@@ -1101,7 +1144,6 @@ mod tests {
             let response = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
                 prefix: prefix.to_string(),
                 limit: Some(10),
-                tracking_reason_filter: Some(CanisterTrackingReason::MemoCommitment),
             });
 
             assert!(!response.truncated, "prefix {prefix}");
@@ -1116,7 +1158,6 @@ mod tests {
         let rejected = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "22255zz".to_string(),
             limit: Some(10),
-            tracking_reason_filter: Some(CanisterTrackingReason::MemoCommitment),
         });
         assert!(rejected.items.is_empty());
         assert!(!rejected.truncated);
@@ -1148,14 +1189,12 @@ mod tests {
         let short = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "bay".to_string(),
             limit: Some(10),
-            tracking_reason_filter: None,
         });
         assert!(short.items.is_empty());
 
         let limited = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "bayw".to_string(),
             limit: Some(1),
-            tracking_reason_filter: None,
         });
         assert_eq!(limited.items.len(), 1);
         assert!(limited.truncated);
@@ -1926,7 +1965,7 @@ mod tests {
     }
 
     #[test]
-    fn registered_canister_summaries_roll_up_qualifying_only() {
+    fn memo_registered_canister_summaries_roll_up_qualifying_only() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.canister_tracking_reasons.insert(
@@ -1982,7 +2021,7 @@ mod tests {
             },
         );
 
-        let summaries = registered_canister_summaries(&st);
+        let summaries = memo_registered_canister_summaries(&st);
         assert_eq!(summaries.len(), 1);
         let item = &summaries[0];
         assert_eq!(item.qualifying_commitment_count, 2);

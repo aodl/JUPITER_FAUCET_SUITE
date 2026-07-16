@@ -53,10 +53,6 @@ pub(crate) fn relay_subaccount_one(relay_id: Principal) -> Account {
     }
 }
 
-pub(crate) fn relay_onchain_module_hash_hex() -> Option<String> {
-    approved_relay_onchain_module_hash().map(|hash| format_module_hash_hex(&hash))
-}
-
 fn log_relay_setup(target: Principal, status: RelaySetupStatus, message: impl AsRef<str>) {
     ic_cdk::println!(
         "RELAY_SETUP target={} status={:?} {}",
@@ -215,7 +211,6 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
                 cycle_conversion_e8s: job.cycle_conversion_e8s,
                 cycles_minted: job.cycles_minted,
                 configured_relay_create_attach_cycles: st.config.relay_initial_cycles,
-                relay_onchain_module_hash_hex: relay_onchain_module_hash_hex(),
                 cycle_transfer: job.cycle_transfer.as_ref().map(redacted_transfer),
                 relay_funding_transfer: job.relay_funding_transfer.as_ref().map(redacted_transfer),
                 existing_relay_sweep_transfer: job
@@ -246,7 +241,6 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
             cycle_conversion_e8s: None,
             cycles_minted: None,
             configured_relay_create_attach_cycles: st.config.relay_initial_cycles,
-            relay_onchain_module_hash_hex: relay_onchain_module_hash_hex(),
             cycle_transfer: None,
             relay_funding_transfer: None,
             existing_relay_sweep_transfer: None,
@@ -2934,6 +2928,19 @@ mod tests {
         let mut st = State::new(config(), 0);
         st.relay_registry_by_target
             .insert(target, active_relay(target, relay));
+        st.canister_tracking_reasons.insert(
+            target,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
+        st.commitment_history.insert(
+            target,
+            vec![CommitmentSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 80_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
 
         mark_active_relay_tracked(&mut st, target, relay, Some(123));
         mark_active_relay_tracked(&mut st, target, relay, Some(456));
@@ -2949,6 +2956,14 @@ mod tests {
         assert!(
             st.canister_tracking_reasons[&relay].contains(&CanisterTrackingReason::RelayInstance)
         );
+        let summary = st
+            .memo_registered_canister_summaries_cache
+            .as_ref()
+            .and_then(|cache| cache.get(&target))
+            .expect("memo summary cache should refresh after adding RelayTarget");
+        assert!(summary
+            .tracking_reasons
+            .contains(&CanisterTrackingReason::RelayTarget));
     }
 
     #[test]
@@ -2990,7 +3005,7 @@ mod tests {
         st.config.canonical_relay_canister_id = Some(relay);
         st.config.canonical_relay_targets = vec![target, target];
 
-        ensure_canonical_relay_registry(&mut st);
+        ensure_canonical_relay_registry_with_first_seen(&mut st, Some(789));
 
         assert!(
             st.canister_tracking_reasons[&target].contains(&CanisterTrackingReason::RelayTarget)
@@ -2998,6 +3013,8 @@ mod tests {
         assert!(
             st.canister_tracking_reasons[&relay].contains(&CanisterTrackingReason::RelayInstance)
         );
+        assert_eq!(st.per_canister_meta[&target].first_seen_ts, Some(789));
+        assert_eq!(st.per_canister_meta[&relay].first_seen_ts, Some(789));
         assert_eq!(st.initial_cycles_probe_queue, vec![target, relay]);
     }
 
@@ -3047,6 +3064,38 @@ mod tests {
             RelaySetupStatus::ManualRecoveryRequired,
         ] {
             assert!(!in_flight_job(&job_with_status(status)));
+        }
+    }
+
+    #[test]
+    fn failed_or_refunded_setup_state_adds_no_relay_tracking_reasons() {
+        for (index, status) in [
+            RelaySetupStatus::Refunded,
+            RelaySetupStatus::FailedRetryable,
+            RelaySetupStatus::FailedTerminal,
+            RelaySetupStatus::ManualRecoveryRequired,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let target = Principal::from_slice(&[32, index as u8]);
+            let relay = Principal::from_slice(&[33, index as u8]);
+            let mut st = State::new(config(), 0);
+            let mut job = job_with_status(status);
+            job.target_canister_id = target;
+            job.relay_canister_id = Some(relay);
+            st.relay_setup_jobs.insert(target, job);
+
+            assert!(!st
+                .canister_tracking_reasons
+                .get(&target)
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayTarget))
+                .unwrap_or(false));
+            assert!(!st
+                .canister_tracking_reasons
+                .get(&relay)
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayInstance))
+                .unwrap_or(false));
         }
     }
 

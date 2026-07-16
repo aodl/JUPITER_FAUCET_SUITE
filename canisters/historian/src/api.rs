@@ -303,7 +303,6 @@ pub struct RelaySetupRecoveryView {
     pub cycle_conversion_e8s: Option<u64>,
     pub cycles_minted: Option<u128>,
     pub configured_relay_create_attach_cycles: u128,
-    pub relay_onchain_module_hash_hex: Option<String>,
     pub cycle_transfer: Option<RedactedTransferRecord>,
     pub relay_funding_transfer: Option<RedactedTransferRecord>,
     pub existing_relay_sweep_transfer: Option<RedactedTransferRecord>,
@@ -363,13 +362,13 @@ pub enum RelaySetupRefundResult {
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
-pub struct ListRegisteredCanisterSummariesArgs {
+pub struct ListMemoRegisteredCanisterSummariesArgs {
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RegisteredCanisterSummary {
+pub struct MemoRegisteredCanisterSummary {
     pub canister_id: Principal,
     pub tracking_reasons: Vec<CanisterTrackingReason>,
     pub qualifying_commitment_count: u64,
@@ -380,8 +379,8 @@ pub struct RegisteredCanisterSummary {
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct ListRegisteredCanisterSummariesResponse {
-    pub items: Vec<RegisteredCanisterSummary>,
+pub struct ListMemoRegisteredCanisterSummariesResponse {
+    pub items: Vec<MemoRegisteredCanisterSummary>,
     pub page: u32,
     pub page_size: u32,
     pub total: u64,
@@ -391,7 +390,6 @@ pub struct ListRegisteredCanisterSummariesResponse {
 pub struct FindCanistersByMemoPrefixArgs {
     pub prefix: String,
     pub limit: Option<u32>,
-    pub tracking_reason_filter: Option<CanisterTrackingReason>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]

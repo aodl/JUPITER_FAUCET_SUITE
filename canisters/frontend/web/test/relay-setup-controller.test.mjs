@@ -131,7 +131,6 @@ function recoveryView({ target, message }) {
     cycle_conversion_e8s: [94_950_000n],
     cycles_minted: [1_000_000_000_000n],
     configured_relay_create_attach_cycles: 2_000_000_000_000n,
-    relay_onchain_module_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
     cycle_transfer: [{
       kind: { CmcConversion: null },
       from_account_identifier: 'from',
@@ -1192,7 +1191,6 @@ test('relay setup shows concrete create_canister failure from recovery view', as
     const parsedDiagnostic = JSON.parse(copiedDiagnostic);
     assert.equal(parsedDiagnostic.last_error, message);
     assert.match(parsedDiagnostic.last_error, /1307692307692/);
-    assert.equal(parsedDiagnostic.relay_onchain_module_hash_hex, 'ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f');
     assert.equal(copyButton.textContent, 'Copy details');
   });
 });

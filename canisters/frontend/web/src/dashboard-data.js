@@ -8,7 +8,7 @@ export {
 export {
   loadCanisterModuleHashes,
   loadDashboardData,
-  loadRegisteredCanisterSummaryPage,
+  loadMemoRegisteredCanisterSummaryPage,
 } from './data/dashboard-loaders.js';
 export {
   FRONTEND_HINT,

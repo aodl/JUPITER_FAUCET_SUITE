@@ -572,6 +572,8 @@ struct HistorianCommitmentHistoryPage {
 enum HistorianCyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    SnsRootStatus,
+    SnsSwapStatus,
     SnsRootSummary,
 }
 
@@ -846,7 +848,7 @@ struct MockXrcCall {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct HistorianRegisteredCanisterSummary {
+struct HistorianMemoRegisteredCanisterSummary {
     canister_id: Principal,
     qualifying_commitment_count: u64,
     total_qualifying_committed_e8s: u64,
@@ -856,8 +858,8 @@ struct HistorianRegisteredCanisterSummary {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct ListRegisteredCanisterSummariesResponse {
-    items: Vec<HistorianRegisteredCanisterSummary>,
+struct ListMemoRegisteredCanisterSummariesResponse {
+    items: Vec<HistorianMemoRegisteredCanisterSummary>,
     page: u32,
     page_size: u32,
     total: u64,
@@ -894,7 +896,8 @@ struct FrontendDashboardExpected {
 #[allow(non_snake_case)]
 #[derive(Debug, serde::Serialize)]
 struct FrontendDashboardExpectedCounts {
-    registeredCanisterCount: String,
+    trackedCanisterCount: String,
+    memoRegisteredCanisterCount: String,
     qualifyingCommitmentCount: String,
     totalOutputE8s: String,
     totalRewardsE8s: String,
@@ -3568,9 +3571,9 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
             let status: HistorianPublicStatus =
                 call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-            let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
                 "jupiter_historian_dbg",
-                "list_registered_canister_summaries",
+                "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
             let recent: ListRecentCommitmentsResponse = call_raw(
@@ -3590,7 +3593,8 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
             let expected = FrontendDashboardExpected {
                 stakeE8s: "123000000".to_string(),
                 counts: FrontendDashboardExpectedCounts {
-                    registeredCanisterCount: counts.tracked_canister_count.to_string(),
+                    trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                    memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                     qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                     totalOutputE8s: counts.total_output_e8s.to_string(),
                     totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4405,9 +4409,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let status: HistorianPublicStatus =
                 call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-            let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
                 "jupiter_historian_dbg",
-                "list_registered_canister_summaries",
+                "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
             let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4427,7 +4431,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let expected = FrontendDashboardExpected {
                 stakeE8s: "123000000".to_string(),
                 counts: FrontendDashboardExpectedCounts {
-                    registeredCanisterCount: counts.tracked_canister_count.to_string(),
+                    trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                    memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                     qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                     totalOutputE8s: counts.total_output_e8s.to_string(),
                     totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4547,9 +4552,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         }
 
         let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+        let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_registered_canister_summaries",
+            "list_memo_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4561,7 +4566,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         let expected = FrontendDashboardExpected {
             stakeE8s: "123000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
-                registeredCanisterCount: counts.tracked_canister_count.to_string(),
+                trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                 qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4684,9 +4690,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         }
 
         let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+        let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_registered_canister_summaries",
+            "list_memo_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4706,7 +4712,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         let expected = FrontendDashboardExpected {
             stakeE8s: "5000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
-                registeredCanisterCount: counts.tracked_canister_count.to_string(),
+                trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                 qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4813,9 +4820,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let status: HistorianPublicStatus =
                 call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-            let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
                 "jupiter_historian_dbg",
-                "list_registered_canister_summaries",
+                "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
             let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4827,7 +4834,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let expected = FrontendDashboardExpected {
                 stakeE8s: "0".to_string(),
                 counts: FrontendDashboardExpectedCounts {
-                    registeredCanisterCount: counts.tracked_canister_count.to_string(),
+                    trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                    memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                     qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                     totalOutputE8s: counts.total_output_e8s.to_string(),
                     totalRewardsE8s: counts.total_rewards_e8s.to_string(),

@@ -9,7 +9,7 @@ import {
   bytesToHex,
   loadDashboardData,
   loadRecentRouteTransfersFromIndex,
-  loadRegisteredCanisterSummaryPage,
+  loadMemoRegisteredCanisterSummaryPage,
   loadCanisterLogs,
   loadTrackerData,
   loadRawIcpCanisterTrackerData,
@@ -67,7 +67,7 @@ function historianStatus(overrides = {}) {
 
 function historianCounts(overrides = {}) {
   return {
-    tracked_canister_count: 2n,
+    tracked_canister_count: 4n,
     raw_icp_declared_canister_count: [1n],
     declared_neuron_count: [1n],
     qualifying_commitment_count: 3n,
@@ -149,7 +149,7 @@ test('loadDashboardData uses historian counts and status plus the native ledger 
     historianActor: {
       async get_public_counts() { calls.push(['counts']); return historianCounts(); },
       async get_public_status() { calls.push(['status']); return historianStatus(); },
-      async list_registered_canister_summaries(args) { calls.push(['registered', args]); return registeredResponse(); },
+      async list_memo_registered_canister_summaries(args) { calls.push(['registered', args]); return registeredResponse(); },
       async list_recent_commitments(args) { calls.push(['recent', args]); return recentResponse(); },
     },
     ledgerActorFactory: (canisterId, options) => {
@@ -214,7 +214,7 @@ test('loadDashboardData skips recent route transfer lookups when route config is
     historianActor: {
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -257,7 +257,7 @@ test('loadDashboardData queries the ICP index directly for recent maturity route
           index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
         });
       },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -355,7 +355,7 @@ test('loadDashboardData keeps route transfer lookup failures out of the global f
           index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
         });
       },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -413,7 +413,7 @@ test('loadRecentRouteTransfersFromIndex de-duplicates rows before applying the l
   assert.deepEqual(data.items.map((item) => item.amount_e8s), [100_000_000n, 200_000_000n]);
 });
 
-test('loadDashboardData requests only the configured registered canister summary page', async () => {
+test('loadDashboardData requests only the configured memo registered canister summary page', async () => {
   const registeredCalls = [];
   const data = await loadDashboardData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
@@ -424,7 +424,7 @@ test('loadDashboardData requests only the configured registered canister summary
     historianActor: {
       async get_public_counts() { return historianCounts({ tracked_canister_count: 18n }); },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries(args) {
+      async list_memo_registered_canister_summaries(args) {
         registeredCalls.push(args);
         return { items: registeredResponse().items, page: 2n, page_size: 6n, total: 18n };
       },
@@ -439,14 +439,14 @@ test('loadDashboardData requests only the configured registered canister summary
   assert.equal(data.registered.total, 18n);
 });
 
-test('loadRegisteredCanisterSummaryPage uses the shared frontend query shape for server-side pagination', async () => {
+test('loadMemoRegisteredCanisterSummaryPage uses the shared frontend query shape for server-side pagination', async () => {
   const calls = [];
-  const response = await loadRegisteredCanisterSummaryPage({
+  const response = await loadMemoRegisteredCanisterSummaryPage({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
     agent: { test: true },
     historianActor: {
-      async list_registered_canister_summaries(args) {
+      async list_memo_registered_canister_summaries(args) {
         calls.push(args);
         return { items: registeredResponse().items, page: 3n, page_size: 6n, total: 17n };
       },
@@ -470,7 +470,7 @@ test('loadDashboardData falls back to icrc1_balance_of when native ledger accoun
     historianActor: {
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({
@@ -494,7 +494,7 @@ test('loadDashboardData flags an outdated historian interface when every public 
     historianActor: {
       async get_public_counts() { throw methodMissing; },
       async get_public_status() { throw new Error('Method get_public_status not found'); },
-      async list_registered_canister_summaries() { throw new Error('Method list_registered_canister_summaries is not part of the service'); },
+      async list_memo_registered_canister_summaries() { throw new Error('Method list_memo_registered_canister_summaries is not part of the service'); },
       async list_recent_commitments() { throw new Error('Method list_recent_commitments not found'); },
     },
     ledgerActorFactory: () => { throw new Error('ledger actor should not be created'); },
@@ -522,7 +522,7 @@ test('loadDashboardData enables query signature verification when it creates an 
       historianActorFactory: (_canisterId, { agent }) => ({
         async get_public_counts() { return historianCounts(); },
         async get_public_status() { return historianStatus(); },
-        async list_registered_canister_summaries() { return registeredResponse(); },
+        async list_memo_registered_canister_summaries() { return registeredResponse(); },
         async list_recent_commitments() { return recentResponse(); },
       }),
       ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -559,7 +559,7 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
       historianActorFactory: () => ({
         async get_public_counts() { return historianCounts(); },
         async get_public_status() { return historianStatus(); },
-        async list_registered_canister_summaries() { return registeredResponse(); },
+        async list_memo_registered_canister_summaries() { return registeredResponse(); },
         async list_recent_commitments() { return recentResponse(); },
       }),
       ledgerActorFactory: () => ({ async account_balance() { return { e8s: 1n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -574,7 +574,7 @@ test('loadDashboardData evicts failed agent initialization from cache so the nex
       historianActorFactory: () => ({
         async get_public_counts() { return historianCounts(); },
         async get_public_status() { return historianStatus(); },
-        async list_registered_canister_summaries() { return registeredResponse(); },
+        async list_memo_registered_canister_summaries() { return registeredResponse(); },
         async list_recent_commitments() { return recentResponse(); },
       }),
       ledgerActorFactory: () => ({ async account_balance() { return { e8s: 2n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -596,7 +596,7 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
     historianActor: {
       async get_public_counts() {
         return historianCounts({
-          tracked_canister_count: 0n,
+          tracked_canister_count: 3n,
           qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 0n,
           total_output_e8s: 0n,
@@ -604,7 +604,7 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
         });
       },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
+      async list_memo_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
       async list_recent_commitments() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 0n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
@@ -633,7 +633,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
         });
       },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() {
+      async list_memo_registered_canister_summaries() {
         return {
           items: [{
             canister_id: target,
@@ -683,7 +683,7 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
     historianActor: {
       async get_public_counts() {
         return historianCounts({
-          tracked_canister_count: 0n,
+          tracked_canister_count: 3n,
           qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 3n,
           total_output_e8s: 0n,
@@ -691,14 +691,14 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
         });
       },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
+      async list_memo_registered_canister_summaries() { return { items: [], page: 0n, page_size: BigInt(REGISTERED_SUMMARY_PAGE_SIZE), total: 0n }; },
       async list_recent_commitments() { return { items: [] }; },
     },
     ledgerActorFactory: () => ({ async account_balance() { return { e8s: 0n }; }, async icrc1_balance_of() { throw new Error('fallback should not be used'); } }),
   });
 
   assert.equal(data.stakeE8s, 0n);
-  assert.equal(data.counts.tracked_canister_count, 0n);
+  assert.equal(data.counts.tracked_canister_count, 3n);
   assert.equal(data.counts.qualifying_commitment_count, 0n);
   assert.equal(data.counts.total_output_e8s, 0n);
   assert.equal(data.counts.total_rewards_e8s, 0n);
@@ -741,7 +741,7 @@ test('loadDashboardData preserves partial dashboard data when get_public_status 
     historianActor: {
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { throw new Error('status temporarily unavailable'); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => {
@@ -768,7 +768,7 @@ test('loadDashboardData surfaces both native and icrc stake failures in one norm
     historianActor: {
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => ({
@@ -793,7 +793,7 @@ test('loadDashboardData preserves historian data when ledger actor construction 
     historianActor: {
       async get_public_counts() { return historianCounts(); },
       async get_public_status() { return historianStatus(); },
-      async list_registered_canister_summaries() { return registeredResponse(); },
+      async list_memo_registered_canister_summaries() { return registeredResponse(); },
       async list_recent_commitments() { return recentResponse(); },
     },
     ledgerActorFactory: () => { throw new Error('ledger actor construction failed'); },

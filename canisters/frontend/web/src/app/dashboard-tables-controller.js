@@ -1,7 +1,7 @@
 import {
   accountIdentifierHex,
   dquorumStakingAccount,
-  loadRegisteredCanisterSummaryPage,
+  loadMemoRegisteredCanisterSummaryPage,
   normalizeError,
 } from '../dashboard-data.js';
 import { setPaneValueText, setText } from '../dom-helpers.js';
@@ -263,7 +263,7 @@ export function createDashboardTablesController({
     state.error = null;
     renderRegisteredPane(getLandingData() || null);
     try {
-      const response = await loadRegisteredCanisterSummaryPage({
+      const response = await loadMemoRegisteredCanisterSummaryPage({
         historianCanisterId: frontendConfig?.historianCanisterId,
         host: window.location.origin,
         local: isLocalHost(),
@@ -278,7 +278,7 @@ export function createDashboardTablesController({
       }));
     } catch (error) {
       state.error = normalizeError(error);
-      console.warn('Registered canister page failed', error);
+      console.warn('Memo registered canister page failed', error);
       const current = getLandingData() || {};
       setLandingData(mergeRegisteredLandingData(current, {
         registeredError: state.error,

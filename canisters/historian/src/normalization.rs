@@ -335,5 +335,5 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
         .chain(cycles_history_canister_ids(st))
         .collect();
     st.distinct_canisters = distinct_canisters;
-    rebuild_registered_canister_summaries_cache(st);
+    rebuild_memo_registered_canister_summaries_cache(st);
 }

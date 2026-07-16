@@ -206,8 +206,8 @@ pub(super) fn debug_reset_derived_state() {
         st.last_icp_xdr_rate_error = None;
         st.relay_registry_by_target.clear();
         st.relay_setup_jobs.clear();
-        st.registered_canister_summaries_cache = Some(BTreeMap::new());
-        st.registered_canister_summaries_total_desc_index = Some(Vec::new());
+        st.memo_registered_canister_summaries_cache = Some(BTreeMap::new());
+        st.memo_registered_canister_summaries_total_desc_index = Some(Vec::new());
     });
 }
 

@@ -44,7 +44,8 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
   assert.equal(asString(data.stakeE8s), expected.stakeE8s);
   assert.equal(asString(data.counts?.total_output_e8s), expected.counts?.totalOutputE8s);
   assert.equal(asString(data.counts?.total_rewards_e8s), expected.counts?.totalRewardsE8s);
-  assert.equal(asString(data.counts?.tracked_canister_count), expected.counts?.registeredCanisterCount);
+  assert.equal(asString(data.counts?.tracked_canister_count), expected.counts?.trackedCanisterCount);
+  assert.equal(asString(data.counts?.memo_registered_canister_count), expected.counts?.memoRegisteredCanisterCount);
   assert.equal(asString(data.counts?.qualifying_commitment_count), expected.counts?.qualifyingCommitmentCount);
 
   if (expected.status) {
@@ -58,7 +59,7 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
   }
 
   if (expected.registered) {
-    assert.ok(data.registered, 'expected registered canister summaries to be present');
+    assert.ok(data.registered, 'expected memo registered canister summaries to be present');
     assert.equal(asString(data.registered.total), expected.registered.total);
     assert.equal(data.registered.items.length, expected.registered.items.length);
     for (let i = 0; i < expected.registered.items.length; i += 1) {

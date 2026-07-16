@@ -402,21 +402,23 @@ pub(super) fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
 }
 
 #[ic_cdk::query]
-pub(super) fn list_registered_canister_summaries(
-    args: ListRegisteredCanisterSummariesArgs,
-) -> ListRegisteredCanisterSummariesResponse {
+pub(super) fn list_memo_registered_canister_summaries(
+    args: ListMemoRegisteredCanisterSummariesArgs,
+) -> ListMemoRegisteredCanisterSummariesResponse {
     state::with_state(|st| {
         let page = args.page.unwrap_or(0);
         let page_size = args.page_size.unwrap_or(25).clamp(1, 100);
-        if let Some(response) = registered_canister_summaries_total_desc_page(st, page, page_size) {
+        if let Some(response) =
+            memo_registered_canister_summaries_total_desc_page(st, page, page_size)
+        {
             return response;
         }
         // Slow compatibility fallback for states whose derived ranking cache is
         // missing or drifted. Normal init/upgrade/timer paths rebuild and refresh
         // this cache; a future maintenance pass should repair drift outside public
         // queries before removing this full sort.
-        let mut items = registered_canister_summaries(st);
-        items.sort_by_key(registered_canister_summary_total_desc_key);
+        let mut items = memo_registered_canister_summaries(st);
+        items.sort_by_key(memo_registered_canister_summary_total_desc_key);
         let total = items.len() as u64;
         let start = page.saturating_mul(page_size) as usize;
         let end = start.saturating_add(page_size as usize).min(items.len());
@@ -425,7 +427,7 @@ pub(super) fn list_registered_canister_summaries(
         } else {
             items[start..end].to_vec()
         };
-        ListRegisteredCanisterSummariesResponse {
+        ListMemoRegisteredCanisterSummariesResponse {
             items: page_items,
             page,
             page_size,
@@ -447,9 +449,6 @@ pub(super) fn find_canisters_by_memo_prefix(
             };
         }
         let limit = clamp_public_limit(args.limit, 20).min(50);
-        let tracking_reason_filter = args
-            .tracking_reason_filter
-            .unwrap_or(CanisterTrackingReason::MemoCommitment);
         let mut items = Vec::new();
         let mut matched = 0usize;
         for canister_id in st.distinct_canisters.iter().copied() {
@@ -460,10 +459,10 @@ pub(super) fn find_canisters_by_memo_prefix(
             else {
                 continue;
             };
-            if !tracking_reasons.contains(&tracking_reason_filter) {
+            if !tracking_reasons.contains(&CanisterTrackingReason::MemoCommitment) {
                 continue;
             }
-            let Some(summary) = registered_canister_summary_for(st, canister_id) else {
+            let Some(summary) = memo_registered_canister_summary_for(st, canister_id) else {
                 continue;
             };
             matched += 1;

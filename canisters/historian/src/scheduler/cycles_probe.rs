@@ -4,11 +4,8 @@ fn cycles_sample_source_for_route(route: Option<&CyclesProbeRoute>) -> CyclesSam
     match route {
         None => CyclesSampleSource::SelfCanister,
         Some(CyclesProbeRoute::Blackhole { .. }) => CyclesSampleSource::BlackholeStatus,
-        // Public history compatibility: targeted SNS Root and SNS Swap status calls both
-        // retain the existing SNS source variant until the public output shape is changed.
-        Some(CyclesProbeRoute::SnsRoot { .. } | CyclesProbeRoute::SnsSwap { .. }) => {
-            CyclesSampleSource::SnsRootSummary
-        }
+        Some(CyclesProbeRoute::SnsRoot { .. }) => CyclesSampleSource::SnsRootStatus,
+        Some(CyclesProbeRoute::SnsSwap { .. }) => CyclesSampleSource::SnsSwapStatus,
     }
 }
 
@@ -33,17 +30,10 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
             }
             let source = cycles_sample_source_for_route(route.as_ref());
             state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
-                match policy {
-                    CyclesProbePolicy::Auto => {
-                        if let Some(route) = route.clone() {
-                            st.cached_cycles_probe_routes.insert(canister_id, route);
-                        } else {
-                            st.cached_cycles_probe_routes.remove(&canister_id);
-                        }
-                    }
-                    CyclesProbePolicy::FixedBlackhole { .. } => {
-                        st.cached_cycles_probe_routes.remove(&canister_id);
-                    }
+                if let Some(route) = route.clone() {
+                    st.cached_cycles_probe_routes.insert(canister_id, route);
+                } else {
+                    st.cached_cycles_probe_routes.remove(&canister_id);
                 }
                 crate::state::ensure_cycles_history_loaded(st, canister_id);
                 let history = st.cycles_history.entry(canister_id).or_default();
@@ -66,7 +56,7 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
                         CyclesProbeResult::Ok(source),
                     );
                 }
-                crate::refresh_registered_canister_summary(st, canister_id);
+                crate::refresh_memo_registered_canister_summary(st, canister_id);
             });
         }
         Err(err) => {
@@ -85,7 +75,7 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
                     timestamp_nanos,
                     CyclesProbeResult::Error(message),
                 );
-                crate::refresh_registered_canister_summary(st, canister_id);
+                crate::refresh_memo_registered_canister_summary(st, canister_id);
             });
         }
     }
@@ -116,7 +106,7 @@ pub(super) async fn process_initial_cycles_probe_queue<
             if already_probed {
                 continue;
             }
-            if should_probe_memo_registered_canister(st, canister_id) {
+            if should_probe_tracked_canister(st, canister_id) {
                 selected.push(canister_id);
             }
         }

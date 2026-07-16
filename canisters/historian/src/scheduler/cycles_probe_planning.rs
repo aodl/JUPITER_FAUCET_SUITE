@@ -15,7 +15,7 @@ pub(crate) fn enqueue_initial_cycles_probe(
     st.initial_cycles_probe_queue.push(canister_id);
 }
 
-pub(super) fn should_probe_memo_registered_canister(
+pub(super) fn should_probe_tracked_canister(
     st: &crate::state::State,
     canister_id: candid::Principal,
 ) -> bool {

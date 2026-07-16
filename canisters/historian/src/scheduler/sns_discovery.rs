@@ -62,7 +62,7 @@ pub(super) fn apply_sns_canister_summary(
                 CyclesProbeResult::NotAvailable,
             );
         }
-        crate::refresh_registered_canister_summary(st, canister_id);
+        crate::refresh_memo_registered_canister_summary(st, canister_id);
     });
 }
 

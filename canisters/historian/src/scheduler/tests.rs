@@ -1279,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn sns_root_success_records_existing_sns_source_for_compatibility() {
+    fn sns_root_success_records_root_status_source() {
         configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
@@ -1309,12 +1309,12 @@ mod tests {
                 .get(&target)
                 .and_then(|history| history.last())
                 .expect("SNS root sample");
-            assert_eq!(sample.source, CyclesSampleSource::SnsRootSummary);
+            assert_eq!(sample.source, CyclesSampleSource::SnsRootStatus);
         });
     }
 
     #[test]
-    fn sns_swap_success_records_existing_sns_source_for_compatibility() {
+    fn sns_swap_success_records_swap_status_source() {
         configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
@@ -1346,7 +1346,7 @@ mod tests {
                 .get(&target)
                 .and_then(|history| history.last())
                 .expect("SNS swap sample");
-            assert_eq!(sample.source, CyclesSampleSource::SnsRootSummary);
+            assert_eq!(sample.source, CyclesSampleSource::SnsSwapStatus);
             assert_eq!(cycles_probe.swap_calls(), vec![swap]);
         });
     }

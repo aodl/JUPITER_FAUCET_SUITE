@@ -233,6 +233,8 @@ struct CommitmentHistoryPage {
 enum CyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    SnsRootStatus,
+    SnsSwapStatus,
     SnsRootSummary,
 }
 
@@ -325,13 +327,13 @@ struct PublicStatus {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-struct ListRegisteredCanisterSummariesArgs {
+struct ListMemoRegisteredCanisterSummariesArgs {
     page: Option<u32>,
     page_size: Option<u32>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct RegisteredCanisterSummary {
+struct MemoRegisteredCanisterSummary {
     canister_id: Principal,
     tracking_reasons: Vec<CanisterTrackingReason>,
     qualifying_commitment_count: u64,
@@ -342,8 +344,8 @@ struct RegisteredCanisterSummary {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct ListRegisteredCanisterSummariesResponse {
-    items: Vec<RegisteredCanisterSummary>,
+struct ListMemoRegisteredCanisterSummariesResponse {
+    items: Vec<MemoRegisteredCanisterSummary>,
     page: u32,
     page_size: u32,
     total: u64,
@@ -925,6 +927,25 @@ fn assert_historian_tracks_target(
         }),
         "self-service relay should be publicly tracked as RelayInstance: {canisters:?}"
     );
+    let counts: PublicCounts = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert!(
+        counts.relay_target_canister_count >= 1,
+        "public counts should include the self-service target as RelayTarget; counts={counts:?}"
+    );
+    assert!(
+        counts.relay_instance_canister_count >= 1,
+        "public counts should include the self-service relay as RelayInstance; counts={counts:?}"
+    );
+    assert!(
+        counts.tracked_canister_count >= 2,
+        "public counts should include target and relay as unique tracked principals; counts={counts:?}"
+    );
     Ok(())
 }
 
@@ -956,6 +977,34 @@ fn assert_historian_cycles_sample(
         cycles.items.iter().any(|sample| sample.cycles > 0),
         "historian should record a positive cycles sample for target; cycles={cycles:?}"
     );
+    Ok(())
+}
+
+fn assert_historian_cycles_samples_for_target_and_relay(
+    pic: &PocketIc,
+    historian: Principal,
+    target: Principal,
+) -> Result<()> {
+    let registrations: ListRelayRegistrationsResponse = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
+    )?;
+    let relay_id = registrations
+        .items
+        .iter()
+        .find(|entry| entry.target_canister_id == target && entry.kind == RelayRegistryKind::SelfService)
+        .map(|entry| entry.relay_canister_id)
+        .with_context(|| {
+            format!("historian registry should contain active self-service relay; registrations={registrations:?}")
+        })?;
+    assert_historian_cycles_sample(pic, historian, target)?;
+    assert_historian_cycles_sample(pic, historian, relay_id)?;
     Ok(())
 }
 
@@ -1385,49 +1434,83 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
 #[ignore]
 fn retained_gzip_relay_payload_module_hash_matches_exact_supplied_bytes() -> Result<()> {
     require_ignored_flag()?;
-    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    let payload_path = workspace_root.join("release-artifacts/jupiter_relay.wasm.gz");
+    let relay = relay_wasm()?;
+    let unique = format!(
+        "jupiter-relay-module-hash-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    let raw_path = std::env::temp_dir().join(format!("{unique}.wasm"));
+    let gzip_path = std::env::temp_dir().join(format!("{unique}.wasm.gz"));
+    std::fs::write(&raw_path, relay)?;
+    let gzip_status = Command::new("gzip")
+        .args(["-n", "-9", "-c"])
+        .arg(&raw_path)
+        .output()
+        .context("spawn deterministic gzip for relay semantic module-hash test")?;
+    if !gzip_status.status.success() {
+        let _ = std::fs::remove_file(&raw_path);
+        bail!(
+            "gzip failed for relay semantic module-hash test: {}",
+            String::from_utf8_lossy(&gzip_status.stderr)
+        );
+    }
+    std::fs::write(&gzip_path, gzip_status.stdout)?;
     let payload =
-        std::fs::read(&payload_path).with_context(|| format!("read {}", payload_path.display()))?;
+        std::fs::read(&gzip_path).with_context(|| format!("read {}", gzip_path.display()))?;
     let expected_hash = Sha256::digest(&payload).to_vec();
 
-    let pic = support::pocketic::builder()
-        .with_application_subnet()
-        .build();
-    let relay = pic.create_canister();
-    pic.add_cycles(relay, 10_000_000_000_000);
-    #[derive(CandidType)]
-    struct MinimalRelaySurplusNeuronRecipient {
-        neuron_id: u64,
-        memo: Option<Vec<u8>>,
-    }
-    #[derive(CandidType)]
-    struct MinimalRelayInitArg {
-        managed_canisters: Vec<Principal>,
-        ledger_canister_id: Option<Principal>,
-        cmc_canister_id: Option<Principal>,
-        governance_canister_id: Option<Principal>,
-        blackhole_canister_id: Option<Principal>,
-        surplus_neuron_recipients: Vec<MinimalRelaySurplusNeuronRecipient>,
-    }
-    let relay_args = MinimalRelayInitArg {
-        managed_canisters: Vec::new(),
-        ledger_canister_id: None,
-        cmc_canister_id: None,
-        governance_canister_id: None,
-        blackhole_canister_id: None,
-        surplus_neuron_recipients: Vec::new(),
-    };
-    pic.install_canister(relay, payload, encode_one(relay_args)?, None);
+    let result = (|| {
+        let pic = support::pocketic::builder()
+            .with_application_subnet()
+            .build();
+        let relay = pic.create_canister();
+        pic.add_cycles(relay, 10_000_000_000_000);
+        #[derive(CandidType)]
+        struct MinimalRelaySurplusNeuronRecipient {
+            neuron_id: u64,
+            memo: Option<Vec<u8>>,
+        }
+        #[derive(CandidType)]
+        struct MinimalRelayInitArg {
+            managed_canisters: Vec<Principal>,
+            ledger_canister_id: Option<Principal>,
+            cmc_canister_id: Option<Principal>,
+            governance_canister_id: Option<Principal>,
+            blackhole_canister_id: Option<Principal>,
+            surplus_neuron_recipients: Vec<MinimalRelaySurplusNeuronRecipient>,
+        }
+        let relay_args = MinimalRelayInitArg {
+            managed_canisters: Vec::new(),
+            ledger_canister_id: None,
+            cmc_canister_id: None,
+            governance_canister_id: None,
+            blackhole_canister_id: None,
+            surplus_neuron_recipients: Vec::new(),
+        };
+        pic.install_canister(relay, payload, encode_one(relay_args)?, None);
 
-    let status = pic
-        .canister_status(relay, Some(Principal::anonymous()))
-        .map_err(|err| anyhow!("relay canister_status failed: {err:?}"))?;
-    assert_eq!(
-        status.module_hash.as_deref(),
-        Some(expected_hash.as_slice()),
-        "PocketIC should report the module hash for the exact gzip bytes supplied to install_canister"
-    );
+        let status = pic
+            .canister_status(relay, Some(Principal::anonymous()))
+            .map_err(|err| anyhow!("relay canister_status failed: {err:?}"))?;
+        if status.module_hash.as_deref() != Some(expected_hash.as_slice()) {
+            bail!(
+                "PocketIC should report the module hash for the exact gzip bytes supplied to install_canister: expected {}, got {:?}",
+                hex::encode(&expected_hash),
+                status.module_hash.map(hex::encode)
+            );
+        }
+        Ok(())
+    })();
+    let remove_raw =
+        std::fs::remove_file(&raw_path).with_context(|| format!("remove {}", raw_path.display()));
+    let remove_gzip =
+        std::fs::remove_file(&gzip_path).with_context(|| format!("remove {}", gzip_path.display()));
+    result?;
+    remove_raw?;
+    remove_gzip?;
     Ok(())
 }
 
@@ -1648,11 +1731,11 @@ fn self_service_spawned_relay_runs_after_time_advance() -> Result<()> {
 
     run_historian_cycles_tick(&pic, historian)?;
     assert_historian_tracks_target(&pic, historian, target)?;
-    assert_historian_cycles_sample(&pic, historian, target)?;
+    assert_historian_cycles_samples_for_target_and_relay(&pic, historian, target)?;
     upgrade_historian_without_config_changes(&pic, historian)?;
     assert_historian_tracks_target(&pic, historian, target)?;
     run_historian_cycles_tick(&pic, historian)?;
-    assert_historian_cycles_sample(&pic, historian, target)?;
+    assert_historian_cycles_samples_for_target_and_relay(&pic, historian, target)?;
 
     let repeated: RelaySetupNotifyResult = update_one(
         &pic,
@@ -1985,7 +2068,7 @@ fn self_service_auto_discovers_sns_dapp_route_without_blackhole_controller() -> 
 
     run_historian_cycles_tick(&pic, historian)?;
     assert_historian_tracks_target(&pic, historian, target)?;
-    assert_historian_cycles_sample(&pic, historian, target)?;
+    assert_historian_cycles_samples_for_target_and_relay(&pic, historian, target)?;
     Ok(())
 }
 
@@ -2348,12 +2431,12 @@ fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Resu
     )?;
     assert!(canisters.items.is_empty());
 
-    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+    let registered: ListMemoRegisteredCanisterSummariesResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        ListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        ListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },
@@ -2731,12 +2814,12 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
     )?;
     assert!(canisters.items.is_empty());
 
-    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+    let registered: ListMemoRegisteredCanisterSummariesResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        ListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        ListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },
@@ -3136,12 +3219,12 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
         bail!("expected paginated pre-upgrade list to return all tracked canisters without skips, got {:?}", before_ids);
     }
 
-    let registered_before: ListRegisteredCanisterSummariesResponse = query_one(
+    let registered_before: ListMemoRegisteredCanisterSummariesResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        ListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        ListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },
@@ -3193,12 +3276,12 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
         bail!("expected paginated post-upgrade list to preserve all tracked canisters without skips, got {:?}", after_ids);
     }
 
-    let registered_after: ListRegisteredCanisterSummariesResponse = query_one(
+    let registered_after: ListMemoRegisteredCanisterSummariesResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        ListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        ListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },
@@ -3372,12 +3455,12 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     assert!(status.stable_memory_bytes.is_some());
     assert!(status.total_memory_bytes.is_some());
 
-    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+    let registered: ListMemoRegisteredCanisterSummariesResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        ListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        ListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },
@@ -3509,12 +3592,12 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
     assert_eq!(counts.total_rewards_e8s, 0);
     assert!(counts.sns_discovered_canister_count >= 3);
 
-    let registered: ListRegisteredCanisterSummariesResponse = query_one(
+    let registered: ListMemoRegisteredCanisterSummariesResponse = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        ListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        ListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },

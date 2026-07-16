@@ -34,7 +34,7 @@ If the ICP index has not caught up, wait for the indexed transactions to explain
 
 ## CMC Conversion
 
-The nominal self-service setup policy minimum is now 3 ICP. The canister does not rely only on that static policy floor. Before any CMC transfer, it fetches the current CMC ICP/XDR conversion rate and computes the current required setup amount from:
+The nominal self-service setup policy minimum is now 3 ICP. That amount funds the overall service: Relay creation and initialization, Relay seed funding, and ongoing Historian observation of both the target and Relay. It is not a literal 1 ICP allocation per task. The canister does not rely only on that static policy floor. Before any CMC transfer, it fetches the current CMC ICP/XDR conversion rate and computes the current required setup amount from:
 
 - configured `create_canister` attachment cycles,
 - relay subaccount-1 seed requirement,
@@ -66,9 +66,9 @@ The canonical historian build embeds `release-artifacts/jupiter_relay.wasm.gz` c
 
 - reviewed reproducible raw relay wasm hash: `sha256sum release-artifacts/jupiter_relay.wasm`
 - compressed Relay install payload hash: `sha256sum release-artifacts/jupiter_relay.wasm.gz`
-- installed module hash: management `canister_info(relay_id).module_hash`, compared against the exact embedded Relay install payload hash
+- installed module hash: management `canister_info(relay_id).module_hash`, obtained live from IC system state and compared against the exact embedded Relay install payload hash
 
-The reviewed raw relay wasm hash is reviewer verification evidence and must come from the Docker/reproducible release artifact, not an arbitrary local build. The gzip payload must decompress to that reviewed raw Wasm. The compressed relay wasm hash is the install payload hash and the runtime module-hash reconciliation value. Release notes must also record the `release-artifacts/jupiter_historian.wasm.gz` hash, which is the production Historian install package hash.
+The reviewed raw relay wasm hash is reviewer verification evidence and must come from the Docker/reproducible release artifact, not an arbitrary local build. The gzip payload must decompress to that reviewed raw Wasm. Reviewed release hashes establish source-to-artifact reproducibility; per-instance module hashes are obtained live from IC system state. The compressed relay wasm hash is the install payload hash and the runtime module-hash reconciliation value. Release notes must also record the `release-artifacts/jupiter_historian.wasm.gz` hash, which is the production Historian install package hash.
 
 If the module hash exists but differs from the reviewed compressed Relay install payload hash, the job enters `ManualRecoveryRequired`. Operators must inspect the relay canister before any governance action.
 
@@ -136,4 +136,4 @@ Factory-enabled production Historian deploys must:
 7. Include the raw relay wasm hash, compressed relay install payload hash, canonical historian artifact hash, and validator output in the final pre-deploy report.
 8. Use `release-artifacts/jupiter_historian.wasm.gz` for the production deploy command.
 
-This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian state and canonical Relay runtime state, requires complete `InitArgs`, and does not modify already blackholed self-service Relays.
+This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian state and canonical Relay runtime state, requires complete `InitArgs`, and does not modify already blackholed self-service Relays. Before release, operators must either confirm production has zero completed self-service Relays or provide fresh-init seed data that restores every existing target-to-Relay relationship; a fresh Historian will not rediscover those relationships from inventory alone.

@@ -115,8 +115,10 @@ pub enum CanisterTrackingReason {
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum CyclesSampleSource {
-    BlackholeStatus,
     SelfCanister,
+    BlackholeStatus,
+    SnsRootStatus,
+    SnsSwapStatus,
     SnsRootSummary,
 }
 
@@ -873,10 +875,10 @@ pub(crate) struct State {
     #[serde(default)]
     pub relay_setup_jobs: BTreeMap<Principal, RelaySetupJob>,
     #[serde(default)]
-    pub registered_canister_summaries_cache:
-        Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
+    pub memo_registered_canister_summaries_cache:
+        Option<BTreeMap<Principal, crate::MemoRegisteredCanisterSummary>>,
     #[serde(default)]
-    pub registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
+    pub memo_registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
     pub last_indexed_staking_tx_id: Option<u64>,
     #[serde(default)]
     pub oldest_indexed_staking_tx_id: Option<u64>,
@@ -951,8 +953,8 @@ impl State {
             cached_cycles_probe_routes: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
-            registered_canister_summaries_cache: Some(BTreeMap::new()),
-            registered_canister_summaries_total_desc_index: Some(Vec::new()),
+            memo_registered_canister_summaries_cache: Some(BTreeMap::new()),
+            memo_registered_canister_summaries_total_desc_index: Some(Vec::new()),
             last_indexed_staking_tx_id: None,
             oldest_indexed_staking_tx_id: None,
             staking_index_descending: None,

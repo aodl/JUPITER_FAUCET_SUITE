@@ -52,7 +52,7 @@ pub(super) fn apply_verified_qualifying_commitment(
         }
     }
     if inserted || st.canister_tracking_reasons.contains_key(&canister_id) {
-        crate::refresh_registered_canister_summary(st, canister_id);
+        crate::refresh_memo_registered_canister_summary(st, canister_id);
     }
 }
 

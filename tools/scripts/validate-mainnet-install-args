@@ -744,7 +744,15 @@ def validate_historian() -> int:
 def validate_historian_relay_factory_enablement_fixture() -> None:
     path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable"
     text = path.read_text()
-    require_contains(text, "relay_factory_enabled = opt true;", str(path))
+    require_contains(text, "JUPITER_USE_CANONICAL_ARTIFACTS=1 \\", str(path))
+    require_contains(text, "icp deploy jupiter_historian \\", str(path))
+    require_contains(text, "--environment ic \\", str(path))
+    require_contains(text, "--mode reinstall \\", str(path))
+    require_contains(text, "--args-file canisters/historian/mainnet-install-args.did", str(path))
+    if "--mode upgrade" in text:
+        fail(f"{path} must not recommend --mode upgrade for this development-phase reinstall release")
+    if "/tmp/historian-relay-factory-enable.did" in text:
+        fail(f"{path} must use the checked-in Historian InitArgs file, not a temporary args file")
 
 
 def validate_historian_relay_factory_artifacts(path: Path) -> None:

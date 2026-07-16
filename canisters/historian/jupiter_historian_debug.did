@@ -23,7 +23,13 @@ type RecentCommitmentListItem = record {
   counts_toward_faucet : bool;
   outcome_category : RecentCommitmentOutcomeCategory;
 };
-type CyclesSampleSource = variant { BlackholeStatus; SelfCanister; SnsRootSummary };
+type CyclesSampleSource = variant {
+  SelfCanister;
+  BlackholeStatus;
+  SnsRootStatus;
+  SnsSwapStatus;
+  SnsRootSummary;
+};
 type CyclesSample = record {
   timestamp_nanos : nat64;
   cycles : nat;
@@ -314,7 +320,6 @@ type RelaySetupRecoveryView = record {
   cycle_conversion_e8s : opt nat64;
   cycles_minted : opt nat;
   configured_relay_create_attach_cycles : nat;
-  relay_onchain_module_hash_hex : opt text;
   cycle_transfer : opt RedactedTransferRecord;
   relay_funding_transfer : opt RedactedTransferRecord;
   existing_relay_sweep_transfer : opt RedactedTransferRecord;
@@ -350,11 +355,11 @@ type RelaySetupRefundResult = variant {
   NoRefundableAmount;
   Failed : record { message : text };
 };
-type ListRegisteredCanisterSummariesArgs = record {
+type ListMemoRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
   page_size : opt nat32;
 };
-type RegisteredCanisterSummary = record {
+type MemoRegisteredCanisterSummary = record {
   canister_id : principal;
   tracking_reasons : vec CanisterTrackingReason;
   qualifying_commitment_count : nat64;
@@ -363,8 +368,8 @@ type RegisteredCanisterSummary = record {
   latest_cycles : opt nat;
   last_cycles_probe_ts : opt nat64;
 };
-type ListRegisteredCanisterSummariesResponse = record {
-  items : vec RegisteredCanisterSummary;
+type ListMemoRegisteredCanisterSummariesResponse = record {
+  items : vec MemoRegisteredCanisterSummary;
   page : nat32;
   page_size : nat32;
   total : nat64;
@@ -372,7 +377,6 @@ type ListRegisteredCanisterSummariesResponse = record {
 type FindCanistersByMemoPrefixArgs = record {
   prefix : text;
   limit : opt nat32;
-  tracking_reason_filter : opt CanisterTrackingReason;
 };
 type CanisterPrefixMatch = record {
   canister_id : principal;
@@ -451,7 +455,7 @@ service : (InitArgs) -> {
   list_relay_registrations : (ListRelayRegistrationsArgs) -> (ListRelayRegistrationsResponse) query;
   notify_relay_setup : (principal) -> (RelaySetupNotifyResult);
   find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;
-  list_registered_canister_summaries : (ListRegisteredCanisterSummariesArgs) -> (ListRegisteredCanisterSummariesResponse) query;
+  list_memo_registered_canister_summaries : (ListMemoRegisteredCanisterSummariesArgs) -> (ListMemoRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;

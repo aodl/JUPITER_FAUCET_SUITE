@@ -965,6 +965,8 @@ struct HistorianCommitmentHistoryPage {
 enum HistorianCyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    SnsRootStatus,
+    SnsSwapStatus,
     SnsRootSummary,
 }
 
@@ -1015,13 +1017,13 @@ struct HistorianPublicStatus {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
-struct HistorianListRegisteredCanisterSummariesArgs {
+struct HistorianListMemoRegisteredCanisterSummariesArgs {
     page: Option<u32>,
     page_size: Option<u32>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianRegisteredCanisterSummary {
+struct HistorianMemoRegisteredCanisterSummary {
     canister_id: Principal,
     tracking_reasons: Vec<CanisterTrackingReason>,
     qualifying_commitment_count: u64,
@@ -1032,8 +1034,8 @@ struct HistorianRegisteredCanisterSummary {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct HistorianListRegisteredCanisterSummariesResponse {
-    items: Vec<HistorianRegisteredCanisterSummary>,
+struct HistorianListMemoRegisteredCanisterSummariesResponse {
+    items: Vec<HistorianMemoRegisteredCanisterSummary>,
     page: u32,
     page_size: u32,
     total: u64,
@@ -1436,12 +1438,12 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert!(status.stable_memory_bytes.is_some());
     assert!(status.total_memory_bytes.is_some());
 
-    let registered: HistorianListRegisteredCanisterSummariesResponse = query_one(
+    let registered: HistorianListMemoRegisteredCanisterSummariesResponse = query_one(
         &pic,
         historian,
         Principal::anonymous(),
-        "list_registered_canister_summaries",
-        HistorianListRegisteredCanisterSummariesArgs {
+        "list_memo_registered_canister_summaries",
+        HistorianListMemoRegisteredCanisterSummariesArgs {
             page: Some(0),
             page_size: Some(10),
         },

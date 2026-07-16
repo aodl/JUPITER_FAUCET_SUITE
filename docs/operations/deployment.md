@@ -10,7 +10,7 @@ This development-phase release intentionally reinstalls the Historian and canoni
 
 ## Production release flow
 
-Recommended release sequence:
+Generic release sequence for routine production upgrades:
 
 ```bash
 python3 ./tools/scripts/validate-mainnet-install-args
@@ -20,7 +20,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --
 
 `./tools/scripts/docker-build` produces canonical `.wasm.gz` install packages and `release-artifacts/release-artifacts.sha256`. `JUPITER_USE_CANONICAL_ARTIFACTS=1` tells the `icp.yaml` build helper to verify that manifest and deploy those existing packages instead of rebuilding with the local toolchain.
 
-For this development-phase Historian/Relay release, use reinstall for `jupiter_historian` and the canonical `jupiter_relay` after explicit operator signoff:
+Do not use the generic upgrade command for this development-phase Historian/Relay release. For this release, use reinstall for `jupiter_historian` and the canonical `jupiter_relay` only after explicit operator signoff and live controller-authority checks:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
@@ -34,7 +34,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --args-file canisters/relay/mainnet-install-args.did
 ```
 
-Before reinstall, operators must disable the self-service factory, verify no in-flight setup job has created a child Relay, verify no setup payment is mid-processing, inventory existing blackholed self-service Relays, and accept loss of development-phase Historian histories and registrations.
+Before reinstall, operators must disable the self-service factory; verify no in-flight setup job, no setup payment mid-processing, and no child Relay created by a job the fresh Historian would forget; confirm the current Historian controller permits reinstall; and confirm the canonical Relay controller permits reinstall if it is also being reinstalled. Operators must either confirm production has zero completed self-service Relays or provide fresh-init seed data or another intentional restore path for every existing target-to-Relay relationship. Inventory alone is not enough because a fresh Historian state will not know those registrations.
 
 After reinstall, verify Historian cycles probing is Auto, canonical Relay remains fixed to the Fiduciary blackhole route, a self-service Relay is created in Auto mode, target and Relay both appear in `list_canisters`, `tracked_canister_count` includes both, and cycles history is recorded for both.
 

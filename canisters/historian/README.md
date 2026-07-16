@@ -69,12 +69,16 @@ The historian records cycles samples from these observation routes:
 
 - `BlackholeStatus`
   - for tracked canisters that expose public `canister_status` through a recognized blackhole route
+- `SnsRootStatus`
+  - for targeted SNS Root `canister_status` calls
+- `SnsSwapStatus`
+  - for SNS swap `get_canister_status` calls
 - `SnsRootSummary`
-  - for SNS canisters discovered through SNS root summaries
+  - for actual cycles values reported by SNS Root `get_sns_canisters_summary`
 - `SelfCanister`
   - for the historian canister’s own balance sample
 
-The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses blackhole status plus SNS root summaries instead.
+The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses supported status and SNS summary routes instead.
 
 Historian probing is always Auto. For each target it attempts direct self balance, canonical-blackhole target self-status, cached positive route, 13-node blackhole, Fiduciary blackhole, and SNS discovery in that order. SNS-governed targets do not need blackhole control for discovery or SNS-root-summary cycles observations. Each cycles sweep also includes the historian canister **itself** as a `SelfCanister` sample target.
 
@@ -84,7 +88,7 @@ Tracked principals carry one or more `CanisterTrackingReason` values: `MemoCommi
 
 When `enable_sns_tracking = true`, the historian periodically:
 
-1. calls SNS-WASM `list_deployed_snses`
+1. calls SNS-W (`qaa6y-5yaaa-aaaaa-aaafa-cai`) `list_deployed_snses`
 2. reads each SNS root canister summary
 3. adds all discovered SNS canister IDs to its tracked set with source `SnsDiscovery`
 4. records any cycles values available in the SNS root summary as `SnsRootSummary` samples
@@ -128,7 +132,7 @@ Production methods:
   - top-level dashboard counts
 - `get_public_status`
   - dashboard status, including staking account and configured ledger canister ID
-- `list_registered_canister_summaries`
+- `list_memo_registered_canister_summaries`
   - paged summary list used by the frontend registry table
   - always ordered by total qualifying committed ICP descending, with canister id as the stable tie-breaker
 - `list_recent_commitments`
@@ -144,7 +148,7 @@ The main public queries use these code-backed defaults:
 - `list_canisters`: default `limit = 50`, clamped to `1..=100`
 - `get_cycles_history`: default `limit = 100`, clamped to `1..=100`
 - `get_commitment_history`: default `limit = 100`, clamped to `1..=100`
-- `list_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
+- `list_memo_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
 - `list_recent_commitments`: default `limit = 20`, clamped to `1..=100`
 
 ## Timers and driver model
@@ -174,7 +178,7 @@ The historian logs its own `Cycles: <amount>` line only once per completed sweep
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time and upgrade-time config from public canister logs. The historian emits a single `CONFIG ...` line on the cycles-sweep cadence when it records the historian canister's own cycles sample, alongside its regular `Cycles: ...` line. The line is comma-separated `key=value` text and includes the staking, output, rewards, ledger/index/CMC/faucet/blackhole/SNS-WASM/XRC settings, SNS tracking flag, scan and cycles intervals, minimum tracked commitment, retention caps, and per-tick work limits.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time and upgrade-time config from public canister logs. The historian emits a single `CONFIG ...` line on the cycles-sweep cadence when it records the historian canister's own cycles sample, alongside its regular `Cycles: ...` line. The line is comma-separated `key=value` text and includes the staking, output, rewards, ledger/index/CMC/faucet/SNS-W/XRC settings, SNS tracking flag, scan and cycles intervals, minimum tracked commitment, retention caps, and per-tick work limits.
 
 ### Sweep batching
 
@@ -295,7 +299,7 @@ Coverage includes, among other things:
 - frontend-facing public query surfaces such as:
   - `get_public_counts`
   - `get_public_status`
-  - `list_registered_canister_summaries`
+  - `list_memo_registered_canister_summaries`
   - `list_recent_commitments`
 
 For the broader test matrix, see [`../../tools/xtask/README.md`](../../tools/xtask/README.md).
@@ -336,7 +340,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --args-file canisters/historian/mainnet-install-args.did
 ```
 
-This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian heap and stable state, requires current controller authority and complete `InitArgs`, and accepts loss of development-phase histories and registrations. Before reinstall, disable the self-service factory, verify no in-flight setup job created a child Relay, verify no setup payment is mid-processing, and inventory existing blackholed self-service Relays. After reinstall, verify Auto probing, `RelayTarget` plus `RelayInstance` tracking, `tracked_canister_count`, and cycles history for both target and Relay.
+This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian heap and stable state, requires current controller authority and complete `InitArgs`, and accepts loss of development-phase histories and registrations. Before reinstall, disable the self-service factory; verify no in-flight setup job, no setup payment mid-processing, and no child Relay created by a job the fresh Historian would forget; then either confirm production has zero completed self-service Relays or provide fresh-init seed data that restores every existing target-to-Relay relationship. If the canonical Relay is also being reinstalled, first prove its current controller permits reinstall; a genuinely blackholed Relay cannot be reinstalled. After reinstall, verify Auto probing, `RelayTarget` plus `RelayInstance` tracking, `tracked_canister_count`, and cycles history for both target and Relay.
 
 ### Production upgrades outside this development-phase reinstall
 
