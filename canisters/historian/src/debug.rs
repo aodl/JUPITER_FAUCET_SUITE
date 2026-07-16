@@ -27,7 +27,6 @@ pub struct DebugConfig {
     pub index_canister_id: Principal,
     pub cmc_canister_id: Option<Principal>,
     pub faucet_canister_id: Option<Principal>,
-    pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
     pub xrc_canister_id: Principal,
     pub enable_sns_tracking: bool,
@@ -80,7 +79,6 @@ pub(super) fn debug_config() -> DebugConfig {
         index_canister_id: st.config.index_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
         faucet_canister_id: st.config.faucet_canister_id,
-        blackhole_canister_id: st.config.blackhole_canister_id,
         sns_wasm_canister_id: st.config.sns_wasm_canister_id,
         xrc_canister_id: st.config.xrc_canister_id,
         enable_sns_tracking: st.config.enable_sns_tracking,
@@ -168,7 +166,7 @@ pub(super) fn debug_reset_derived_state() {
     guard_debug_api_not_production();
     state::with_state_mut(|st| {
         st.distinct_canisters.clear();
-        st.canister_sources.clear();
+        st.canister_tracking_reasons.clear();
         st.commitment_history.clear();
         st.cycles_history.clear();
         st.per_canister_meta.clear();

@@ -3,9 +3,11 @@ export const idlFactory = ({ IDL }) => {
     owner: IDL.Principal,
     subaccount: IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
-  const CanisterSource = IDL.Variant({
+  const CanisterTrackingReason = IDL.Variant({
     MemoCommitment: IDL.Null,
     SnsDiscovery: IDL.Null,
+    RelayTarget: IDL.Null,
+    RelayInstance: IDL.Null,
   });
   const CommitmentSample = IDL.Record({
     tx_id: IDL.Nat64,
@@ -43,11 +45,11 @@ export const idlFactory = ({ IDL }) => {
   const ListCanistersArgs = IDL.Record({
     start_after: IDL.Opt(IDL.Principal),
     limit: IDL.Opt(IDL.Nat32),
-    source_filter: IDL.Opt(CanisterSource),
+    tracking_reason_filter: IDL.Opt(CanisterTrackingReason),
   });
   const CanisterListItem = IDL.Record({
     canister_id: IDL.Principal,
-    sources: IDL.Vec(CanisterSource),
+    tracking_reasons: IDL.Vec(CanisterTrackingReason),
   });
   const ListCanistersResponse = IDL.Record({
     items: IDL.Vec(CanisterListItem),
@@ -75,17 +77,20 @@ export const idlFactory = ({ IDL }) => {
   });
   const CanisterOverview = IDL.Record({
     canister_id: IDL.Principal,
-    sources: IDL.Vec(CanisterSource),
+    tracking_reasons: IDL.Vec(CanisterTrackingReason),
     meta: CanisterMeta,
     cycles_points: IDL.Nat32,
     commitment_points: IDL.Nat32,
   });
   const PublicCounts = IDL.Record({
-    registered_canister_count: IDL.Nat64,
+    tracked_canister_count: IDL.Nat64,
+    memo_registered_canister_count: IDL.Nat64,
     raw_icp_declared_canister_count: IDL.Opt(IDL.Nat64),
     declared_neuron_count: IDL.Opt(IDL.Nat64),
     qualifying_commitment_count: IDL.Nat64,
     sns_discovered_canister_count: IDL.Nat64,
+    relay_target_canister_count: IDL.Nat64,
+    relay_instance_canister_count: IDL.Nat64,
     total_output_e8s: IDL.Nat64,
     total_rewards_e8s: IDL.Nat64,
   });
@@ -117,8 +122,6 @@ export const idlFactory = ({ IDL }) => {
     relay_factory_enabled: IDL.Opt(IDL.Bool),
     relay_setup_min_e8s: IDL.Opt(IDL.Nat64),
     relay_setup_dust_e8s: IDL.Opt(IDL.Nat64),
-    relay_raw_wasm_hash_hex: IDL.Opt(IDL.Text),
-    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
   });
   const RelayRegistryKind = IDL.Variant({
     Canonical: IDL.Null,
@@ -128,7 +131,6 @@ export const idlFactory = ({ IDL }) => {
     target_canister_id: IDL.Principal,
     relay_canister_id: IDL.Principal,
     kind: RelayRegistryKind,
-    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
     created_at_ts: IDL.Opt(IDL.Nat64),
   });
   const RelaySetupPublicStatus = IDL.Variant({
@@ -160,8 +162,6 @@ export const idlFactory = ({ IDL }) => {
     existing_relay: IDL.Opt(RelayRegistration),
     status: RelaySetupPublicStatus,
     factory_available: IDL.Bool,
-    relay_raw_wasm_hash_hex: IDL.Opt(IDL.Text),
-    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
     warning_text: IDL.Opt(IDL.Text),
   });
   const GetRelaySetupRecoveryViewArgs = IDL.Record({
@@ -188,8 +188,6 @@ export const idlFactory = ({ IDL }) => {
     created_at_ts: IDL.Nat64,
     initial_cycles: IDL.Nat,
     create_attach_cycles: IDL.Nat,
-    raw_relay_wasm_hash_hex: IDL.Opt(IDL.Text),
-    install_payload_hash_hex: IDL.Opt(IDL.Text),
   });
   const RelaySetupRecoveryView = IDL.Record({
     target_canister_id: IDL.Principal,
@@ -202,8 +200,6 @@ export const idlFactory = ({ IDL }) => {
     cycle_conversion_e8s: IDL.Opt(IDL.Nat64),
     cycles_minted: IDL.Opt(IDL.Nat),
     configured_relay_create_attach_cycles: IDL.Nat,
-    relay_raw_wasm_hash_hex: IDL.Opt(IDL.Text),
-    relay_install_payload_hash_hex: IDL.Opt(IDL.Text),
     relay_onchain_module_hash_hex: IDL.Opt(IDL.Text),
     cycle_transfer: IDL.Opt(RedactedTransferRecord),
     relay_funding_transfer: IDL.Opt(RedactedTransferRecord),
@@ -239,7 +235,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const RegisteredCanisterSummary = IDL.Record({
     canister_id: IDL.Principal,
-    sources: IDL.Vec(CanisterSource),
+    tracking_reasons: IDL.Vec(CanisterTrackingReason),
     qualifying_commitment_count: IDL.Nat64,
     total_qualifying_committed_e8s: IDL.Nat64,
     last_commitment_ts: IDL.Opt(IDL.Nat64),
@@ -255,11 +251,11 @@ export const idlFactory = ({ IDL }) => {
   const FindCanistersByMemoPrefixArgs = IDL.Record({
     prefix: IDL.Text,
     limit: IDL.Opt(IDL.Nat32),
-    source_filter: IDL.Opt(CanisterSource),
+    tracking_reason_filter: IDL.Opt(CanisterTrackingReason),
   });
   const CanisterPrefixMatch = IDL.Record({
     canister_id: IDL.Principal,
-    sources: IDL.Vec(CanisterSource),
+    tracking_reasons: IDL.Vec(CanisterTrackingReason),
     matched_prefix: IDL.Text,
     qualifying_commitment_count: IDL.Nat64,
     total_qualifying_committed_e8s: IDL.Nat64,
@@ -350,7 +346,6 @@ export const init = ({ IDL }) => {
     index_canister_id: IDL.Opt(IDL.Principal),
     cmc_canister_id: IDL.Opt(IDL.Principal),
     faucet_canister_id: IDL.Opt(IDL.Principal),
-    blackhole_canister_id: IDL.Opt(IDL.Principal),
     sns_wasm_canister_id: IDL.Opt(IDL.Principal),
     xrc_canister_id: IDL.Opt(IDL.Principal),
     enable_sns_tracking: IDL.Opt(IDL.Bool),

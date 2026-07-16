@@ -62,10 +62,10 @@ function timestampNanosToDate(value) {
   return new Date(asNumber);
 }
 
-function sourceNames(sources) {
-  if (!Array.isArray(sources)) return [];
-  return sources
-    .map((source) => source && typeof source === 'object' && !Array.isArray(source) ? Object.keys(source)[0] : '')
+function trackingReasonNames(trackingReasons) {
+  if (!Array.isArray(trackingReasons)) return [];
+  return trackingReasons
+    .map((reason) => reason && typeof reason === 'object' && !Array.isArray(reason) ? Object.keys(reason)[0] : '')
     .filter(Boolean);
 }
 
@@ -764,7 +764,7 @@ export function createTrackerController({
     const fullSummary = trackerMetricSummary(classifiedData);
     const cycleSamples = sortedCycleSamples(classifiedData);
     const rangeLabel = trackerRangeLabel();
-    const sources = sourceNames(classifiedData.overview?.sources).join(', ') || DASH;
+    const trackingReasons = trackingReasonNames(classifiedData.overview?.tracking_reasons).join(', ') || DASH;
     const firstSeen = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.first_seen_ts));
     const lastCommitment = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.last_commitment_ts));
     const cyclesStatus = cyclesProbeStatusInfo(classifiedData);
@@ -805,7 +805,7 @@ export function createTrackerController({
         <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
         <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
         ${protocolHtml}
-        <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
+        <div><dt>Tracking reasons</dt><dd class="pane-detail-value">${escapeHtml(trackingReasons)}</dd></div>
         <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
         <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
         <div><dt>Patron commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.commitmentCount))}</dd></div>

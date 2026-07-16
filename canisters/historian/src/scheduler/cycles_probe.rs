@@ -19,14 +19,9 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
     max_entries: u32,
     cycles_probe_client: &C,
 ) -> Result<(), String> {
-    let (policy, cached_route) = state::with_state(|st| {
-        let policy = st.config.effective_cycles_probe_policy();
-        let cached_route = match policy {
-            CyclesProbePolicy::Auto => st.cached_cycles_probe_routes.get(&canister_id).cloned(),
-            CyclesProbePolicy::FixedBlackhole { .. } => None,
-        };
-        (policy, cached_route)
-    });
+    let policy = CyclesProbePolicy::Auto;
+    let cached_route =
+        state::with_state(|st| st.cached_cycles_probe_routes.get(&canister_id).cloned());
 
     let outcome =
         shared_probe_cycles(&policy, canister_id, cached_route, cycles_probe_client).await;

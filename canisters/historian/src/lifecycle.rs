@@ -10,10 +10,6 @@ pub(super) fn mainnet_index_id() -> Principal {
     jupiter_ic_clients::constants::icp_index_id()
 }
 
-pub(super) fn mainnet_blackhole_id() -> Principal {
-    jupiter_ic_clients::constants::blackhole_canister_id()
-}
-
 pub(crate) fn mainnet_disburser_id() -> Principal {
     Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai")
         .expect("invalid hardcoded disburser principal")
@@ -102,12 +98,6 @@ pub(super) fn guard_debug_api_not_production() {
 }
 
 pub(super) fn config_from_init_args(args: InitArgs) -> Config {
-    let init_blackhole_canister_id = args.blackhole_canister_id;
-    let blackhole_canister_id = init_blackhole_canister_id.unwrap_or_else(mainnet_blackhole_id);
-    let cycles_probe_policy = Some(match init_blackhole_canister_id {
-        Some(canister_id) => CyclesProbePolicy::FixedBlackhole { canister_id },
-        None => CyclesProbePolicy::Auto,
-    });
     let cfg = Config {
         staking_account: args.staking_account,
         output_source_account: args
@@ -119,8 +109,6 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
         index_canister_id: args.index_canister_id.unwrap_or_else(mainnet_index_id),
         cmc_canister_id: Some(args.cmc_canister_id.unwrap_or_else(mainnet_cmc_id)),
         faucet_canister_id: Some(args.faucet_canister_id.unwrap_or_else(mainnet_faucet_id)),
-        blackhole_canister_id,
-        cycles_probe_policy,
         sns_wasm_canister_id: args
             .sns_wasm_canister_id
             .unwrap_or_else(mainnet_sns_wasm_id),
@@ -177,9 +165,16 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
 }
 
 pub(super) fn count_registered_canisters(st: &State) -> u64 {
-    st.canister_sources
+    st.canister_tracking_reasons
         .iter()
         .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
+        .count() as u64
+}
+
+pub(super) fn count_tracked_canisters(st: &State) -> u64 {
+    st.canister_tracking_reasons
+        .keys()
+        .filter(|canister_id| visible_tracking_reasons_for_canister(st, canister_id).is_some())
         .count() as u64
 }
 
@@ -202,9 +197,23 @@ pub(super) fn count_declared_neurons(st: &State) -> u64 {
 }
 
 pub(super) fn count_sns_discovered_canisters(st: &State) -> u64 {
-    st.canister_sources
+    st.canister_tracking_reasons
         .values()
-        .filter(|sources| sources.contains(&CanisterSource::SnsDiscovery))
+        .filter(|sources| sources.contains(&CanisterTrackingReason::SnsDiscovery))
+        .count() as u64
+}
+
+pub(super) fn count_relay_target_canisters(st: &State) -> u64 {
+    st.canister_tracking_reasons
+        .values()
+        .filter(|reasons| reasons.contains(&CanisterTrackingReason::RelayTarget))
+        .count() as u64
+}
+
+pub(super) fn count_relay_instance_canisters(st: &State) -> u64 {
+    st.canister_tracking_reasons
+        .values()
+        .filter(|reasons| reasons.contains(&CanisterTrackingReason::RelayInstance))
         .count() as u64
 }
 
@@ -465,12 +474,6 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.io_surplus_neuron_id == 0 {
         st.config.io_surplus_neuron_id = DEFAULT_IO_SURPLUS_NEURON_ID;
     }
-    if st.config.canonical_relay_canister_id.is_none() {
-        st.config.canonical_relay_canister_id = Some(mainnet_relay_id());
-    }
-    if st.config.canonical_relay_targets.is_empty() {
-        st.config.canonical_relay_targets = mainnet_canonical_relay_targets();
-    }
     ensure_canonical_relay_registry(st);
 }
 
@@ -489,7 +492,6 @@ pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
             setup_account_identifier: None,
             setup_amount_e8s: None,
             setup_tx_ids: Vec::new(),
-            relay_wasm_hash_hex: None,
             final_controllers: None,
             log_visibility_public: Some(true),
             created_at_ts: None,
@@ -498,38 +500,39 @@ pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
         st.relay_registry_by_target
             .entry(target_canister_id)
             .or_insert(entry);
+        mark_active_relay_tracked(st, target_canister_id, relay_canister_id, None);
     }
 }
 
-pub(crate) fn ensure_active_self_service_relay_targets_tracked(st: &mut State, now_secs: u64) {
+pub(crate) fn mark_active_relay_tracked(
+    st: &mut State,
+    target: Principal,
+    relay_id: Principal,
+    now_secs: Option<u64>,
+) {
     let stable_cycles_targets = state::stable_cycles_history_keys();
-    let active_targets: Vec<_> = st
-        .relay_registry_by_target
-        .iter()
-        .filter_map(|(target, entry)| {
-            (entry.kind == RelayRegistryKind::SelfService
-                && entry.status == RelayRegistryStatus::Active)
-                .then_some(*target)
-        })
-        .collect();
 
-    for target in active_targets {
-        st.distinct_canisters.insert(target);
-        let meta = st.per_canister_meta.entry(target).or_default();
+    for (canister_id, reason) in [
+        (target, CanisterTrackingReason::RelayTarget),
+        (relay_id, CanisterTrackingReason::RelayInstance),
+    ] {
+        st.distinct_canisters.insert(canister_id);
+        st.canister_tracking_reasons
+            .entry(canister_id)
+            .or_default()
+            .insert(reason);
+        let meta = st.per_canister_meta.entry(canister_id).or_default();
         if meta.first_seen_ts.is_none() {
-            meta.first_seen_ts = Some(now_secs);
+            meta.first_seen_ts = now_secs;
         }
         let has_cycles_history = st
             .cycles_history
-            .get(&target)
+            .get(&canister_id)
             .map(|history| !history.is_empty())
             .unwrap_or(false)
-            || stable_cycles_targets.contains(&target);
-        if !has_cycles_history
-            && meta.last_cycles_probe_ts.is_none()
-            && !st.initial_cycles_probe_queue.contains(&target)
-        {
-            scheduler::enqueue_initial_cycles_probe(st, target);
+            || stable_cycles_targets.contains(&canister_id);
+        if !has_cycles_history && meta.last_cycles_probe_ts.is_none() {
+            scheduler::enqueue_initial_cycles_probe(st, canister_id);
         }
     }
 }
@@ -568,7 +571,7 @@ pub(super) fn registered_canister_summary_for(
     st: &State,
     canister_id: Principal,
 ) -> Option<RegisteredCanisterSummary> {
-    let sources = visible_sources_for_canister(st, &canister_id)?;
+    let tracking_reasons = visible_tracking_reasons_for_canister(st, &canister_id)?;
     let history = commitment_history_snapshot(st, canister_id);
     if history.is_empty() {
         return None;
@@ -583,7 +586,7 @@ pub(super) fn registered_canister_summary_for(
     let cycles_history = cycles_history_snapshot(st, canister_id);
     Some(RegisteredCanisterSummary {
         canister_id,
-        sources: sources.into_iter().collect(),
+        tracking_reasons: tracking_reasons.into_iter().collect(),
         qualifying_commitment_count,
         total_qualifying_committed_e8s,
         last_commitment_ts: meta.last_commitment_ts.or(rollup_last_ts),
@@ -682,7 +685,7 @@ pub(crate) fn refresh_registered_canister_summary(st: &mut State, canister_id: P
 }
 
 pub(crate) fn rebuild_registered_canister_summaries_cache(st: &mut State) {
-    let canister_ids: Vec<_> = st.canister_sources.keys().copied().collect();
+    let canister_ids: Vec<_> = st.canister_tracking_reasons.keys().copied().collect();
     st.registered_canister_summaries_cache = Some(BTreeMap::new());
     st.registered_canister_summaries_total_desc_index = Some(Vec::new());
     for canister_id in canister_ids {
@@ -695,7 +698,7 @@ pub(super) fn registered_canister_summaries(st: &State) -> Vec<RegisteredCaniste
         return cache.values().cloned().collect();
     }
 
-    st.canister_sources
+    st.canister_tracking_reasons
         .keys()
         .copied()
         .filter_map(|canister_id| registered_canister_summary_for(st, canister_id))
@@ -716,7 +719,6 @@ pub(super) fn init(args: InitArgs) {
 }
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
-    let previous_policy = st.config.effective_cycles_probe_policy();
     if let Some(args) = args {
         if let Some(v) = args.staking_account {
             st.config.staking_account = v;
@@ -751,15 +753,6 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         }
         if let Some(v) = args.max_canisters_per_cycles_tick {
             st.config.max_canisters_per_cycles_tick = clamp_canisters_per_cycles_tick(v);
-        }
-        if let Some(v) = args.blackhole_canister_id {
-            st.config.blackhole_canister_id = v;
-        }
-        if let Some(v) = args.cycles_probe_policy {
-            st.config.cycles_probe_policy = Some(v);
-        } else if let Some(v) = args.blackhole_canister_id {
-            st.config.cycles_probe_policy =
-                Some(CyclesProbePolicy::FixedBlackhole { canister_id: v });
         }
         if let Some(v) = args.sns_wasm_canister_id {
             st.config.sns_wasm_canister_id = v;
@@ -826,9 +819,6 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     normalize_runtime_state(st);
     ensure_canonical_relay_registry(st);
     validate_config(&st.config);
-    if st.config.effective_cycles_probe_policy() != previous_policy {
-        st.cached_cycles_probe_routes.clear();
-    }
     st.main_lock_state_ts = Some(0);
 }
 
@@ -847,39 +837,26 @@ pub(super) fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
 
 #[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
 pub(super) fn post_upgrade(args: Option<UpgradeArgs>) {
-    post_upgrade_with_backfill_timestamp(args, ic_cdk::api::time() / 1_000_000_000);
+    post_upgrade_with_timestamp(args, ic_cdk::api::time() / 1_000_000_000);
 }
 
-pub(crate) fn post_upgrade_with_backfill_timestamp(args: Option<UpgradeArgs>, now_secs: u64) {
-    restore_post_upgrade_state_with_backfill_timestamp(args, now_secs);
+pub(crate) fn post_upgrade_with_timestamp(args: Option<UpgradeArgs>, now_secs: u64) {
+    restore_post_upgrade_state_with_timestamp(args, now_secs);
     scheduler::install_timers();
     log_lifecycle("post_upgrade_complete");
 }
 
-pub(crate) fn restore_post_upgrade_state_with_backfill_timestamp(
-    args: Option<UpgradeArgs>,
-    now_secs: u64,
-) {
+pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs>, _now_secs: u64) {
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    ensure_active_self_service_relay_targets_tracked(&mut st, now_secs);
-    let tracked_self_service_targets: std::collections::BTreeSet<_> = st
-        .relay_registry_by_target
-        .iter()
-        .filter_map(|(target, entry)| {
-            (entry.kind == RelayRegistryKind::SelfService
-                && entry.status == RelayRegistryStatus::Active
-                && st.per_canister_meta.contains_key(target))
-            .then_some(*target)
-        })
-        .collect();
+    let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only the historian root on upgrade. Commitment/cycles histories are
     // restored lazily from stable entry/index maps, so rewriting all durable sections
     // here would clobber those bulk histories with an intentionally sparse heap view.
-    state::set_state_root_and_registry_principals(st, &tracked_self_service_targets);
+    state::set_state_root_and_registry_principals(st, &registry_principals);
 }
 
 fn log_lifecycle(event: &str) {

@@ -60,17 +60,15 @@ This is the explicit create_canister ambiguous relay ID loss case. The created c
 
 ## Install Code
 
-If `relay_canister_id` is known and `code_installed` was not recorded, automatic retry first checks the relay canister module hash. The compressed Relay install payload hash is the on-chain reconciliation hash because Historian passes `release-artifacts/jupiter_relay.wasm.gz` bytes to `install_code`. If `canister_status.module_hash` matches that install payload hash, the historian marks code installed and resumes relay funding. This install_code module-hash reconciliation prevents a second `install_code` call in `Install` mode after a lost reply.
+If `relay_canister_id` is known and `code_installed` was not recorded, automatic retry first calls management `canister_info(relay_id)` and checks the live module hash. The expected hash is derived from the exact embedded Relay install payload bytes supplied by Historian. If the live module hash is empty, automatic setup may retry install while the historian is still controller. If it matches the embedded payload hash, the historian marks code installed and resumes relay funding. This install-code reconciliation prevents a second `install_code` call in `Install` mode after a lost reply.
 
 The canonical historian build embeds `release-artifacts/jupiter_relay.wasm.gz` corresponding to the reviewed raw Relay Wasm from `./tools/scripts/docker-build`. Release artifacts are generated review evidence and are not checked into source control, so their absence from a source archive is not a source-level failure. `install_code` receives those compressed bytes directly; the IC accepts gzip-compressed Wasm modules and installs the decompressed module. Operators should keep these hashes distinct:
 
 - reviewed reproducible raw relay wasm hash: `sha256sum release-artifacts/jupiter_relay.wasm`
 - compressed Relay install payload hash: `sha256sum release-artifacts/jupiter_relay.wasm.gz`
-- installed module hash: `canister_status.module_hash`, compared against the compressed Relay install payload hash
+- installed module hash: management `canister_info(relay_id).module_hash`, compared against the exact embedded Relay install payload hash
 
 The reviewed raw relay wasm hash is reviewer verification evidence and must come from the Docker/reproducible release artifact, not an arbitrary local build. The gzip payload must decompress to that reviewed raw Wasm. The compressed relay wasm hash is the install payload hash and the runtime module-hash reconciliation value. Release notes must also record the `release-artifacts/jupiter_historian.wasm.gz` hash, which is the production Historian install package hash.
-
-If the module hash is missing, automatic setup may retry install while the historian is still controller.
 
 If the module hash exists but differs from the reviewed compressed Relay install payload hash, the job enters `ManualRecoveryRequired`. Operators must inspect the relay canister before any governance action.
 
@@ -84,7 +82,7 @@ For a stale relay funding transfer, compare `relay_funding_transfer` against the
 
 ## Blackhole Update
 
-Final blackhole control is complete only when the relay canister controllers are the configured blackhole canister and logs are public as expected. If `blackhole_update_attempted` was recorded but activation did not finish, inspect canister status through the blackhole or management tooling available to the current controller.
+Final blackhole control is complete only when the relay canister controllers are the canonical Fiduciary blackhole canister and logs are public as expected. If `blackhole_update_attempted` was recorded but activation did not finish, inspect canister status through the blackhole or management tooling available to the current controller.
 
 Register or supersede a relay manually only after confirming the relay canister runs the reviewed wasm, targets the intended canister, has expected funding, and is controlled by the blackhole.
 
@@ -125,7 +123,7 @@ Recovery recommendation for that target:
 
 ## Factory-Enabled Production Deploys
 
-Mainnet install args enable `relay_factory_enabled = opt true`.
+Mainnet install args enable `relay_factory_enabled = opt true`. Historian probing is always Auto; there is no deployment field that selects a fixed Historian probe route. The Auto route order is direct self balance, canonical-blackhole target self-status, cached positive route, 13-node blackhole, Fiduciary blackhole, then SNS discovery. SNS-W and controller-based SNS discovery do not require blackhole control of SNS-governed targets.
 
 Factory-enabled production Historian deploys must:
 
@@ -133,19 +131,9 @@ Factory-enabled production Historian deploys must:
 2. Verify `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`.
 3. Verify `release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256`.
 4. Install the reviewed canonical historian artifact in a non-mainnet test environment with `relay_factory_enabled=true`.
-5. Confirm `get_relay_setup_view.relay_raw_wasm_hash_hex` equals the recorded reviewed raw Relay Wasm hash and `get_relay_setup_view.relay_install_payload_hash_hex` equals the compressed Relay install payload hash.
-6. Include the raw relay wasm hash, compressed relay install payload hash, canonical historian artifact hash, and validator output in the final pre-deploy report.
-7. Use `release-artifacts/jupiter_historian.wasm.gz` for the production deploy command.
+5. Confirm live module-hash reconciliation reads the Relay module hash from the IC and does not depend on persisted per-instance expected hashes.
+6. Confirm an activated setup adds `RelayTarget` to the target canister and `RelayInstance` to the Relay canister, both appear in `list_canisters`, and `tracked_canister_count` includes both unique principals.
+7. Include the raw relay wasm hash, compressed relay install payload hash, canonical historian artifact hash, and validator output in the final pre-deploy report.
+8. Use `release-artifacts/jupiter_historian.wasm.gz` for the production deploy command.
 
-For live enablement on an already-installed Historian, use a temporary `Option<UpgradeArgs>` file containing only:
-
-```did
-(opt record {
-  relay_factory_enabled = opt true;
-  cycles_probe_policy = opt variant { Auto };
-})
-```
-
-The explicit Auto policy is required for an existing Historian upgrade. Omitting `cycles_probe_policy` intentionally preserves the legacy fixed-proxy policy already stored by the canister.
-
-Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.
+This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian state and canonical Relay runtime state, requires complete `InitArgs`, and does not modify already blackholed self-service Relays.

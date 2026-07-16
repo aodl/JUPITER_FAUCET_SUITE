@@ -369,13 +369,13 @@ pub(crate) fn with_root_and_relay_factory_state_mut<R>(
     )
 }
 
-pub(crate) fn with_root_registry_and_relay_factory_state_mut<R>(
+pub(crate) fn with_root_all_registry_and_relay_factory_state_mut<R>(
     target: Principal,
     f: impl FnOnce(&mut State) -> R,
 ) -> R {
     with_state_mut_sections_scoped(
         DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_RELAY_FACTORY,
-        Some(target),
+        None,
         None,
         None,
         None,

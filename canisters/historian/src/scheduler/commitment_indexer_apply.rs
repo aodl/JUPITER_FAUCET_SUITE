@@ -9,11 +9,11 @@ pub(super) fn apply_verified_qualifying_commitment(
         return;
     };
     st.distinct_canisters.insert(canister_id);
-    st.canister_sources.insert(
+    st.canister_tracking_reasons.insert(
         canister_id,
-        logic::merge_sources(
-            st.canister_sources.get(&canister_id),
-            CanisterSource::MemoCommitment,
+        logic::merge_tracking_reasons(
+            st.canister_tracking_reasons.get(&canister_id),
+            CanisterTrackingReason::MemoCommitment,
         ),
     );
     let recent_item = RecentCommitment {
@@ -51,7 +51,7 @@ pub(super) fn apply_verified_qualifying_commitment(
             enqueue_initial_cycles_probe(st, canister_id);
         }
     }
-    if inserted || st.canister_sources.contains_key(&canister_id) {
+    if inserted || st.canister_tracking_reasons.contains_key(&canister_id) {
         crate::refresh_registered_canister_summary(st, canister_id);
     }
 }

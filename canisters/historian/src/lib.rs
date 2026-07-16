@@ -80,9 +80,8 @@ pub(crate) fn approved_relay_install_payload_hash_hex() -> Option<String> {
 }
 
 pub(crate) fn approved_relay_onchain_module_hash() -> Option<[u8; 32]> {
-    let hash = approved_relay_install_payload_hash_hex()?;
-    let bytes = hex::decode(hash).ok()?;
-    bytes.try_into().ok()
+    use sha2::{Digest, Sha256};
+    approved_self_service_relay_wasm().map(|bytes| Sha256::digest(bytes).into())
 }
 
 #[allow(dead_code)]

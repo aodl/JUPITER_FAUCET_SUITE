@@ -44,7 +44,7 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
   assert.equal(asString(data.stakeE8s), expected.stakeE8s);
   assert.equal(asString(data.counts?.total_output_e8s), expected.counts?.totalOutputE8s);
   assert.equal(asString(data.counts?.total_rewards_e8s), expected.counts?.totalRewardsE8s);
-  assert.equal(asString(data.counts?.registered_canister_count), expected.counts?.registeredCanisterCount);
+  assert.equal(asString(data.counts?.tracked_canister_count), expected.counts?.registeredCanisterCount);
   assert.equal(asString(data.counts?.qualifying_commitment_count), expected.counts?.qualifyingCommitmentCount);
 
   if (expected.status) {

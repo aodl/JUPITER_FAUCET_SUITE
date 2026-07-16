@@ -115,8 +115,6 @@ function setupView({
     existing_relay: existingRelay,
     status,
     factory_available: factoryAvailable,
-    relay_raw_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
-    relay_install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
     warning_text: [],
   };
 }
@@ -133,8 +131,6 @@ function recoveryView({ target, message }) {
     cycle_conversion_e8s: [94_950_000n],
     cycles_minted: [1_000_000_000_000n],
     configured_relay_create_attach_cycles: 2_000_000_000_000n,
-    relay_raw_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
-    relay_install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
     relay_onchain_module_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
     cycle_transfer: [{
       kind: { CmcConversion: null },
@@ -154,8 +150,6 @@ function recoveryView({ target, message }) {
       created_at_ts: 99n,
       initial_cycles: 1_000_000_000_000n,
       create_attach_cycles: 1_000_000_000_000n,
-      raw_relay_wasm_hash_hex: ['7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844'],
-      install_payload_hash_hex: ['ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f'],
     }],
     created_at_ts: 1n,
     updated_at_ts: 2n,
@@ -508,7 +502,6 @@ test('relay setup notifies above dust and renders active relay', async () => {
     relay_canister_id: relay,
     target_canister_id: Principal.fromText(target),
     kind: { SelfService: null },
-    relay_install_payload_hash_hex: [],
     created_at_ts: [],
   };
   const calls = [];
@@ -563,7 +556,6 @@ test('relay setup existing active relay sweeps only when balance is above thresh
     relay_canister_id: relay,
     target_canister_id: Principal.fromText(target),
     kind: { SelfService: null },
-    relay_install_payload_hash_hex: [],
     created_at_ts: [],
   };
   const calls = [];
@@ -1200,7 +1192,7 @@ test('relay setup shows concrete create_canister failure from recovery view', as
     const parsedDiagnostic = JSON.parse(copiedDiagnostic);
     assert.equal(parsedDiagnostic.last_error, message);
     assert.match(parsedDiagnostic.last_error, /1307692307692/);
-    assert.equal(parsedDiagnostic.raw_relay_wasm_hash_hex, '7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844');
+    assert.equal(parsedDiagnostic.relay_onchain_module_hash_hex, 'ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f');
     assert.equal(copyButton.textContent, 'Copy details');
   });
 });

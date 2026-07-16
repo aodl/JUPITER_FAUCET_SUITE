@@ -20,7 +20,7 @@ The `Mainnet module-hash comparison targets (*.wasm.gz)` section contains the ha
 
 The decompressed `.wasm` hashes remain available in the sidecar files and full manifest as supporting release evidence, but the normal mainnet comparison uses the `.wasm.gz` installed package hashes.
 
-For self-service Relay setup, keep two Relay hashes distinct in release evidence. `release-artifacts/jupiter_relay.wasm` is the reviewed raw Relay Wasm evidence. `release-artifacts/jupiter_relay.wasm.gz` is the compressed Relay install payload embedded in Historian and passed to `install_code`; Historian compares spawned Relay `canister_status.module_hash` values to this compressed payload hash. The gzip payload must decompress to bytes matching the reviewed raw Relay Wasm hash. The production Historian deployment artifact remains `release-artifacts/jupiter_historian.wasm.gz`.
+For self-service Relay setup, keep two Relay hashes distinct in release evidence. `release-artifacts/jupiter_relay.wasm` is the reviewed raw Relay Wasm evidence. `release-artifacts/jupiter_relay.wasm.gz` is the compressed Relay install payload embedded in Historian and passed to `install_code`; Historian derives the expected setup reconciliation hash from the exact embedded bytes and compares live management `canister_info(relay_id).module_hash` values before retrying install or handing off final control. The gzip payload must decompress to bytes matching the reviewed raw Relay Wasm hash. The production Historian deployment artifact remains `release-artifacts/jupiter_historian.wasm.gz`.
 
 ## Hash comparison with mainnet
 
@@ -88,7 +88,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
   --args-file /tmp/jupiter-faucet-upgrade-args.did
 ```
 
-Existing Historian upgrades that enable self-service Relay setup must include `cycles_probe_policy = opt variant { Auto }` in that temporary `Option<UpgradeArgs>` file. Omitting that field preserves the legacy fixed-proxy policy already stored by the canister.
+Historian probing is always Auto. There is no `cycles_probe_policy` deployment field.
 
 For fresh install or reinstall only, use the checked-in `mainnet-install-args.did` `InitArgs` file:
 
@@ -105,7 +105,8 @@ Lifecycle summary:
 
 | Canister group | Routine upgrade args | Config-changing upgrade args | State behavior |
 | --- | --- | --- | --- |
-| Disburser/Faucet/Historian | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
+| Disburser/Faucet/Historian outside this development-phase release | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
+| Historian for this development-phase release | Complete checked-in `InitArgs` with `--mode reinstall` | Not applicable | Heap and stable state reset |
 | Relay | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
 | Frontend/Lifeline/SNS Rewards | No args | No args | No install args |
 

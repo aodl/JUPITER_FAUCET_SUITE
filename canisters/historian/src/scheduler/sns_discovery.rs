@@ -15,11 +15,11 @@ pub(super) fn apply_sns_canister_summary(
     let dirty_canister_id = canister_id;
     state::with_root_registry_and_cycles_canister_state_mut(dirty_canister_id, |st| {
         st.distinct_canisters.insert(canister_id);
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
             canister_id,
-            logic::merge_sources(
-                st.canister_sources.get(&canister_id),
-                CanisterSource::SnsDiscovery,
+            logic::merge_tracking_reasons(
+                st.canister_tracking_reasons.get(&canister_id),
+                CanisterTrackingReason::SnsDiscovery,
             ),
         );
         if let Some(cycles) = cycles {

@@ -19,7 +19,6 @@
   index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
   cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
   faucet_canister_id = opt principal "acjuz-liaaa-aaaar-qb4qq-cai";
-  blackhole_canister_id = null;
   sns_wasm_canister_id = opt principal "qaa6y-5yaaa-aaaaa-aaafa-cai";
   xrc_canister_id = opt principal "uf6dk-hyaaa-aaaaq-qaaaq-cai";
   enable_sns_tracking = opt false;

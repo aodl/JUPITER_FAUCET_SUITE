@@ -11,7 +11,7 @@ mod tests {
         with_root_stable_cell(|cell| {
             cell.set(VersionedStableState::Uninitialized);
         });
-        with_canister_sources_map(|map| map.clear_new());
+        with_canister_tracking_reasons_map(|map| map.clear_new());
         with_canister_meta_map(|map| map.clear_new());
         with_commitment_history_index_map(|map| map.clear_new());
         with_commitment_entry_map(|map| map.clear_new());
@@ -54,8 +54,6 @@ mod tests {
             index_canister_id: principal(&[3]),
             cmc_canister_id: Some(principal(&[4])),
             faucet_canister_id: Some(principal(&[5])),
-            blackhole_canister_id: principal(&[6]),
-            cycles_probe_policy: None,
             sns_wasm_canister_id: principal(&[7]),
             xrc_canister_id: principal(&[8]),
             enable_sns_tracking: true,
@@ -93,7 +91,6 @@ mod tests {
         assert!(line.contains("index_canister_id="));
         assert!(line.contains("cmc_canister_id="));
         assert!(line.contains("faucet_canister_id="));
-        assert!(line.contains("blackhole_canister_id="));
         assert!(line.contains("sns_wasm_canister_id="));
         assert!(line.contains("xrc_canister_id="));
         assert!(line.contains("enable_sns_tracking=true"));
@@ -106,8 +103,8 @@ mod tests {
         assert!(line.contains("max_canisters_per_cycles_tick=10"));
     }
 
-    fn snapshot_sources_map() -> BTreeMap<Principal, BTreeSet<CanisterSource>> {
-        with_canister_sources_map(|map| {
+    fn snapshot_sources_map() -> BTreeMap<Principal, BTreeSet<CanisterTrackingReason>> {
+        with_canister_tracking_reasons_map(|map| {
             let mut out = BTreeMap::new();
             for entry in map.iter() {
                 let (key, value) = entry.into_pair();
@@ -236,7 +233,6 @@ mod tests {
             setup_account_identifier: None,
             setup_amount_e8s: None,
             setup_tx_ids: Vec::new(),
-            relay_wasm_hash_hex: None,
             final_controllers: None,
             log_visibility_public: None,
             created_at_ts: None,
@@ -277,60 +273,16 @@ mod tests {
     }
 
     #[test]
-    fn post_upgrade_backfill_persists_real_timestamp_without_public_source() {
-        reset_test_storage();
-        let target = principal(&[35]);
-        let relay = principal(&[36]);
-        let history_target = principal(&[37]);
-        let mut st = State::new(sample_config(), 100);
-        st.config.cmc_canister_id = Some(crate::mainnet_cmc_id());
-        st.config.faucet_canister_id = Some(crate::mainnet_faucet_id());
-        st.relay_registry_by_target
-            .insert(target, relay_entry(target, relay));
-        st.cycles_history.insert(
-            history_target,
-            vec![CyclesSample {
-                timestamp_nanos: 12,
-                cycles: 34,
-                source: CyclesSampleSource::BlackholeStatus,
-            }],
-        );
-        set_state(st);
-        STATE.with(|s| *s.borrow_mut() = None);
-
-        crate::restore_post_upgrade_state_with_backfill_timestamp(None, 987_654);
-
-        STATE.with(|s| *s.borrow_mut() = None);
-        let restored = restore_state_from_stable().expect("expected stable state after upgrade");
-        let meta = restored
-            .per_canister_meta
-            .get(&target)
-            .expect("backfilled target metadata should persist");
-        assert_eq!(meta.first_seen_ts, Some(987_654));
-        assert_eq!(
-            restored
-                .initial_cycles_probe_queue
-                .iter()
-                .filter(|queued| **queued == target)
-                .count(),
-            1
-        );
-        assert!(restored.relay_registry_by_target.contains_key(&target));
-        assert!(!restored.canister_sources.contains_key(&target));
-        assert_eq!(stable_cycles_history_for(history_target)[0].cycles, 34);
-    }
-
-    #[test]
     fn activation_tracking_persists_metadata_before_first_cycles_probe() {
         reset_test_storage();
         let target = principal(&[38]);
         let relay = principal(&[39]);
         set_state(State::new(sample_config(), 100));
 
-        with_root_registry_and_relay_factory_state_mut(target, |st| {
+        with_root_all_registry_and_relay_factory_state_mut(target, |st| {
             st.relay_registry_by_target
                 .insert(target, relay_entry(target, relay));
-            crate::ensure_active_self_service_relay_targets_tracked(st, 456_789);
+            crate::mark_active_relay_tracked(st, target, relay, Some(456_789));
         });
         STATE.with(|s| *s.borrow_mut() = None);
 
@@ -352,139 +304,16 @@ mod tests {
             1
         );
         assert!(restored.relay_registry_by_target.contains_key(&target));
-        assert!(!restored.canister_sources.contains_key(&target));
-    }
-
-    #[test]
-    fn cleaned_historian_root_decodes_current_root_with_removed_legacy_fields() {
-        #[derive(CandidType)]
-        struct RootWithRemovedLegacyHistoryFields {
-            config: StableConfig,
-            last_indexed_staking_tx_id: Option<u64>,
-            oldest_indexed_staking_tx_id: Option<u64>,
-            staking_index_descending: Option<bool>,
-            staking_backfill_complete: Option<bool>,
-            last_indexed_output_tx_id: Option<u64>,
-            oldest_indexed_output_tx_id: Option<u64>,
-            output_route_index_descending: Option<bool>,
-            output_route_backfill_complete: Option<bool>,
-            last_indexed_rewards_tx_id: Option<u64>,
-            oldest_indexed_rewards_tx_id: Option<u64>,
-            rewards_route_index_descending: Option<bool>,
-            rewards_route_backfill_complete: Option<bool>,
-            last_sns_discovery_ts: u64,
-            last_completed_cycles_sweep_ts: u64,
-            last_completed_route_sweep_ts: Option<u64>,
-            active_cycles_sweep: Option<ActiveCyclesSweep>,
-            initial_cycles_probe_queue: Vec<Principal>,
-            active_route_sweep: Option<ActiveRouteSweep>,
-            active_sns_discovery: Option<ActiveSnsDiscovery>,
-            main_lock_state_ts: Option<u64>,
-            last_main_run_ts: u64,
-            qualifying_commitment_count: Option<u64>,
-            raw_icp_commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
-            neuron_commitment_history: BTreeMap<u64, Vec<CommitmentSample>>,
-            total_output_e8s: Option<u64>,
-            total_rewards_e8s: Option<u64>,
-            icp_burned_e8s: Option<u64>,
-            recent_commitments: Option<Vec<RecentCommitment>>,
-            recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
-            recent_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
-            recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
-            recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
-            recent_burns: Option<Vec<RecentBurn>>,
-            last_index_run_ts: Option<u64>,
-            commitment_index_fault: Option<CommitmentIndexFault>,
-            icp_xdr_rate: Option<IcpXdrRateSnapshot>,
-            last_icp_xdr_rate_attempt_ts: Option<u64>,
-            last_icp_xdr_rate_error: Option<String>,
-        }
-
-        #[derive(CandidType)]
-        enum VersionedRootWithRemovedLegacyHistoryFields {
-            Current(RootWithRemovedLegacyHistoryFields),
-        }
-
-        let mut st = State::new(sample_config(), 12_345);
-        st.last_indexed_staking_tx_id = Some(99);
-        st.last_sns_discovery_ts = 88;
-        st.last_main_run_ts = 12_345;
-        st.qualifying_commitment_count = Some(77);
-        let root = build_root_snapshot(&st);
-        let old_root = RootWithRemovedLegacyHistoryFields {
-            config: root.config,
-            last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,
-            oldest_indexed_staking_tx_id: root.oldest_indexed_staking_tx_id,
-            staking_index_descending: root.staking_index_descending,
-            staking_backfill_complete: root.staking_backfill_complete,
-            last_indexed_output_tx_id: root.last_indexed_output_tx_id,
-            oldest_indexed_output_tx_id: root.oldest_indexed_output_tx_id,
-            output_route_index_descending: root.output_route_index_descending,
-            output_route_backfill_complete: root.output_route_backfill_complete,
-            last_indexed_rewards_tx_id: root.last_indexed_rewards_tx_id,
-            oldest_indexed_rewards_tx_id: root.oldest_indexed_rewards_tx_id,
-            rewards_route_index_descending: root.rewards_route_index_descending,
-            rewards_route_backfill_complete: root.rewards_route_backfill_complete,
-            last_sns_discovery_ts: root.last_sns_discovery_ts,
-            last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
-            last_completed_route_sweep_ts: root.last_completed_route_sweep_ts,
-            active_cycles_sweep: root.active_cycles_sweep,
-            initial_cycles_probe_queue: root.initial_cycles_probe_queue,
-            active_route_sweep: root.active_route_sweep,
-            active_sns_discovery: root.active_sns_discovery,
-            main_lock_state_ts: root.main_lock_state_ts,
-            last_main_run_ts: root.last_main_run_ts,
-            qualifying_commitment_count: root.qualifying_commitment_count,
-            raw_icp_commitment_history: BTreeMap::from([(
-                principal(&[90]),
-                vec![CommitmentSample {
-                    tx_id: 1,
-                    timestamp_nanos: Some(10),
-                    amount_e8s: 100,
-                    counts_toward_faucet: true,
-                }],
-            )]),
-            neuron_commitment_history: BTreeMap::from([(
-                123,
-                vec![CommitmentSample {
-                    tx_id: 2,
-                    timestamp_nanos: Some(20),
-                    amount_e8s: 200,
-                    counts_toward_faucet: true,
-                }],
-            )]),
-            total_output_e8s: root.total_output_e8s,
-            total_rewards_e8s: root.total_rewards_e8s,
-            icp_burned_e8s: root.icp_burned_e8s,
-            recent_commitments: root.recent_commitments,
-            recent_under_threshold_commitments: root.recent_under_threshold_commitments,
-            recent_neuron_commitments: root.recent_neuron_commitments,
-            recent_under_threshold_neuron_commitments: root
-                .recent_under_threshold_neuron_commitments,
-            recent_invalid_commitments: root.recent_invalid_commitments,
-            recent_burns: root.recent_burns,
-            last_index_run_ts: root.last_index_run_ts,
-            commitment_index_fault: root.commitment_index_fault,
-            icp_xdr_rate: root.icp_xdr_rate,
-            last_icp_xdr_rate_attempt_ts: root.last_icp_xdr_rate_attempt_ts,
-            last_icp_xdr_rate_error: root.last_icp_xdr_rate_error,
-        };
-        let bytes = candid::encode_one(VersionedRootWithRemovedLegacyHistoryFields::Current(
-            old_root,
-        ))
-        .expect("failed to encode root with removed legacy fields");
-        let decoded: VersionedStableState = candid::decode_one(&bytes)
-            .expect("cleaned historian root should decode extra legacy fields");
-
-        match decoded {
-            VersionedStableState::Current(root) => {
-                assert_eq!(root.last_indexed_staking_tx_id, Some(99));
-                assert_eq!(root.last_sns_discovery_ts, 88);
-                assert_eq!(root.last_main_run_ts, 12_345);
-                assert_eq!(root.qualifying_commitment_count, Some(77));
-            }
-            VersionedStableState::Uninitialized => panic!("expected decoded current root"),
-        }
+        assert!(restored
+            .canister_tracking_reasons
+            .get(&target)
+            .expect("target tracking reason")
+            .contains(&CanisterTrackingReason::RelayTarget));
+        assert!(restored
+            .canister_tracking_reasons
+            .get(&relay)
+            .expect("relay tracking reason")
+            .contains(&CanisterTrackingReason::RelayInstance));
     }
 
     #[test]
@@ -500,8 +329,8 @@ mod tests {
         let mut st = State::new(sample_config(), 5_000);
         st.distinct_canisters.insert(canister_id);
         let mut sources = BTreeSet::new();
-        sources.insert(CanisterSource::MemoCommitment);
-        st.canister_sources.insert(canister_id, sources);
+        sources.insert(CanisterTrackingReason::MemoCommitment);
+        st.canister_tracking_reasons.insert(canister_id, sources);
         st.commitment_history.insert(
             canister_id,
             vec![CommitmentSample {
@@ -556,7 +385,7 @@ mod tests {
             canister_id,
             RegisteredCanisterSummary {
                 canister_id,
-                sources: vec![CanisterSource::MemoCommitment],
+                tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
                 qualifying_commitment_count: 1,
                 total_qualifying_committed_e8s: 100_000_000,
                 last_commitment_ts: Some(77),
@@ -677,9 +506,9 @@ mod tests {
         reset_test_storage();
         let canister_id = principal(&[12]);
         let mut st = State::new(sample_config(), 9_000);
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
             canister_id,
-            BTreeSet::from([CanisterSource::MemoCommitment]),
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
         );
         st.commitment_history.insert(
             canister_id,
@@ -1030,9 +859,9 @@ mod tests {
         reset_test_storage();
         let canister_id = principal(&[31]);
         let mut st = State::new(sample_config(), 10_000);
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
             canister_id,
-            BTreeSet::from([CanisterSource::MemoCommitment]),
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
         );
         st.commitment_history.insert(
             canister_id,
@@ -1067,9 +896,9 @@ mod tests {
         let canister_b = principal(&[22]);
         let mut st = State::new(sample_config(), 9_500);
         for canister_id in [canister_a, canister_b] {
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 canister_id,
-                BTreeSet::from([CanisterSource::MemoCommitment]),
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
             );
             st.per_canister_meta
                 .insert(canister_id, CanisterMeta::default());

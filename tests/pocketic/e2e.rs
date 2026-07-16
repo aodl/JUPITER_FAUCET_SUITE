@@ -901,7 +901,6 @@ struct HistorianInitArg {
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
     faucet_canister_id: Option<Principal>,
-    blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
     enable_sns_tracking: Option<bool>,
     scan_interval_seconds: Option<u64>,
@@ -913,23 +912,25 @@ struct HistorianInitArg {
     max_canisters_per_cycles_tick: Option<u32>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum CanisterSource {
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum CanisterTrackingReason {
     MemoCommitment,
     SnsDiscovery,
+    RelayTarget,
+    RelayInstance,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianListCanistersArgs {
     start_after: Option<Principal>,
     limit: Option<u32>,
-    source_filter: Option<CanisterSource>,
+    tracking_reason_filter: Option<CanisterTrackingReason>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianCanisterListItem {
     canister_id: Principal,
-    sources: Vec<CanisterSource>,
+    tracking_reasons: Vec<CanisterTrackingReason>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -990,9 +991,12 @@ struct HistorianGetCyclesHistoryArgs {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianPublicCounts {
-    registered_canister_count: u64,
+    tracked_canister_count: u64,
+    memo_registered_canister_count: u64,
     qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
+    relay_target_canister_count: u64,
+    relay_instance_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
 }
@@ -1019,7 +1023,7 @@ struct HistorianListRegisteredCanisterSummariesArgs {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HistorianRegisteredCanisterSummary {
     canister_id: Principal,
-    sources: Vec<CanisterSource>,
+    tracking_reasons: Vec<CanisterTrackingReason>,
     qualifying_commitment_count: u64,
     total_qualifying_committed_e8s: u64,
     last_commitment_ts: Option<u64>,
@@ -1258,7 +1262,6 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         faucet_canister_id: Some(faucet),
-        blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: None,
         enable_sns_tracking: Some(false),
         scan_interval_seconds: Some(60),
@@ -1294,7 +1297,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     };
     pic.install_canister(disburser, disburser_wasm, encode_one(disburser_init)?, None);
 
-    let target = blackhole;
+    let target = historian;
     let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
     let _: () = update_bytes(
         &pic,
@@ -1354,11 +1357,17 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         HistorianListCanistersArgs {
             start_after: None,
             limit: Some(10),
-            source_filter: None,
+            tracking_reason_filter: None,
         },
     )?;
-    assert_eq!(listed.items.len(), 1);
-    assert_eq!(listed.items[0].canister_id, target);
+    let listed_target = listed
+        .items
+        .iter()
+        .find(|item| item.canister_id == target)
+        .expect("historian should list the memo-derived target");
+    assert!(listed_target
+        .tracking_reasons
+        .contains(&CanisterTrackingReason::MemoCommitment));
 
     let commitments: HistorianCommitmentHistoryPage = query_one(
         &pic,
@@ -1391,7 +1400,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     assert!(cycles.items[0].cycles > 0);
     assert!(matches!(
         cycles.items[0].source,
-        HistorianCyclesSampleSource::BlackholeStatus
+        HistorianCyclesSampleSource::SelfCanister
     ));
 
     let expected_output_e8s = 0u64;
@@ -1403,7 +1412,8 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 1);
+    assert!(counts.tracked_canister_count >= 1);
+    assert_eq!(counts.memo_registered_canister_count, 1);
     assert_eq!(counts.qualifying_commitment_count, 1);
     assert_eq!(counts.total_output_e8s, expected_output_e8s);
     assert_eq!(counts.total_rewards_e8s, 0);

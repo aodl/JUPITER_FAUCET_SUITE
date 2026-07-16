@@ -49,8 +49,6 @@ mod tests {
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
-                blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
-                cycles_probe_policy: None,
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
                 xrc_canister_id: principal("uf6dk-hyaaa-aaaaq-qaaaq-cai"),
                 enable_sns_tracking: false,
@@ -862,13 +860,13 @@ mod tests {
             });
             st.distinct_canisters.insert(initial_target);
             st.distinct_canisters.insert(sweep_target);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 initial_target,
-                std::iter::once(CanisterSource::MemoCommitment).collect(),
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
             );
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 sweep_target,
-                std::iter::once(CanisterSource::MemoCommitment).collect(),
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
             );
             st.commitment_history.insert(
                 initial_target,
@@ -1025,10 +1023,10 @@ mod tests {
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.last_index_run_ts, Some(200));
             assert!(st
-                .canister_sources
+                .canister_tracking_reasons
                 .get(&beneficiary)
                 .unwrap()
-                .contains(&CanisterSource::MemoCommitment));
+                .contains(&CanisterTrackingReason::MemoCommitment));
         });
     }
 
@@ -1089,9 +1087,9 @@ mod tests {
                 next_index: 0,
             });
             st.distinct_canisters.insert(beneficiary);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 beneficiary,
-                std::iter::once(CanisterSource::MemoCommitment).collect(),
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
             );
             st.commitment_history.insert(
                 beneficiary,
@@ -1161,7 +1159,7 @@ mod tests {
                     .get(&target_a)
                     .and_then(|meta| meta.last_cycles_probe_result.clone()),
                 Some(CyclesProbeResult::Error(
-                    "fixed blackhole probe failed: inter-canister call failed: target a down"
+                    "no cycles probe route could observe target; previous errors: blackhole e3mmv-5qaaa-aaaah-aadma-cai failed: inter-canister call failed: target a down; blackhole 77deu-baaaa-aaaar-qb6za-cai failed: inter-canister call failed: target a down"
                         .into()
                 ))
             );
@@ -1181,7 +1179,6 @@ mod tests {
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         state::with_state_mut(|st| {
-            st.config.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
             st.cached_cycles_probe_routes.insert(
                 target,
                 CyclesProbeRoute::SnsRoot {
@@ -1220,7 +1217,6 @@ mod tests {
         let stale_root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let blackhole = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
         state::with_state_mut(|st| {
-            st.config.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
             st.cached_cycles_probe_routes.insert(
                 target,
                 CyclesProbeRoute::SnsRoot {
@@ -1258,41 +1254,6 @@ mod tests {
     }
 
     #[test]
-    fn fixed_mode_ignores_and_clears_cached_route() {
-        configure_state(10);
-        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
-        let fixed = principal("77deu-baaaa-aaaar-qb6za-cai");
-        state::with_state_mut(|st| {
-            st.config.cycles_probe_policy =
-                Some(CyclesProbePolicy::FixedBlackhole { canister_id: fixed });
-            st.cached_cycles_probe_routes.insert(
-                target,
-                CyclesProbeRoute::SnsRoot {
-                    root_canister_id: root,
-                },
-            );
-        });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(555)
-            .with_root_response(root, ProbeResponse::Ok(999));
-
-        block_on(probe_and_record_cycles(
-            123_000_000_000,
-            123,
-            target,
-            100,
-            &cycles_probe,
-        ))
-        .unwrap();
-
-        state::with_state(|st| {
-            assert!(!st.cached_cycles_probe_routes.contains_key(&target));
-            assert!(cycles_probe.root_calls().is_empty());
-            assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
-        });
-    }
-
-    #[test]
     fn direct_self_balance_records_self_canister_source() {
         configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
@@ -1323,7 +1284,6 @@ mod tests {
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         state::with_state_mut(|st| {
-            st.config.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
             st.cached_cycles_probe_routes.insert(
                 target,
                 CyclesProbeRoute::SnsRoot {
@@ -1360,7 +1320,6 @@ mod tests {
         let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let swap = principal("acjuz-liaaa-aaaar-qb4qq-cai");
         state::with_state_mut(|st| {
-            st.config.cycles_probe_policy = Some(CyclesProbePolicy::Auto);
             st.cached_cycles_probe_routes.insert(
                 target,
                 CyclesProbeRoute::SnsSwap {
@@ -1399,9 +1358,9 @@ mod tests {
         let beneficiary = principal("uccpi-cqaaa-aaaar-qby3q-cai");
         state::with_state_mut(|st| {
             st.distinct_canisters.insert(beneficiary);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 beneficiary,
-                crate::logic::merge_sources(None, CanisterSource::MemoCommitment),
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::MemoCommitment),
             );
             st.commitment_history.insert(
                 beneficiary,
@@ -1433,7 +1392,6 @@ mod tests {
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
         state::with_state_mut(|st| {
-            st.distinct_canisters.insert(target);
             st.relay_registry_by_target.insert(
                 target,
                 crate::state::RelayRegistryEntry {
@@ -1445,20 +1403,21 @@ mod tests {
                     setup_account_identifier: None,
                     setup_amount_e8s: None,
                     setup_tx_ids: Vec::new(),
-                    relay_wasm_hash_hex: None,
                     final_controllers: None,
                     log_visibility_public: None,
                     created_at_ts: None,
                     activated_at_ts: None,
                 },
             );
+            crate::mark_active_relay_tracked(st, target, relay, Some(123));
         });
 
         state::with_state(|st| {
-            assert!(!st.canister_sources.contains_key(&target));
+            assert!(st.canister_tracking_reasons[&target]
+                .contains(&CanisterTrackingReason::RelayTarget));
             assert_eq!(
                 build_cycles_sweep_canisters(st, self_id),
-                vec![self_id, target]
+                vec![self_id, target, relay]
             );
         });
     }
@@ -1901,7 +1860,7 @@ mod tests {
                 st.recent_under_threshold_commitments.as_ref().unwrap()[0].tx_id,
                 43
             );
-            assert!(!st.canister_sources.contains_key(&low_amount));
+            assert!(!st.canister_tracking_reasons.contains_key(&low_amount));
             assert!(!st.distinct_canisters.contains(&low_amount));
             assert!(!st.commitment_history.contains_key(&low_amount));
             let invalid = &st.recent_invalid_commitments.as_ref().unwrap()[0];
@@ -1939,7 +1898,7 @@ mod tests {
                 st.recent_commitments.as_ref().map(|items| items.len()),
                 Some(0)
             );
-            assert_eq!(st.canister_sources.len(), 0);
+            assert_eq!(st.canister_tracking_reasons.len(), 0);
             assert_eq!(st.distinct_canisters.len(), 0);
             assert!(st.commitment_history.is_empty());
             assert_eq!(st.qualifying_commitment_count, Some(0));
@@ -1952,9 +1911,9 @@ mod tests {
         let existing = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
         state::with_state_mut(|st| {
             st.distinct_canisters.insert(existing);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 existing,
-                crate::logic::merge_sources(None, CanisterSource::MemoCommitment),
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::MemoCommitment),
             );
             st.commitment_history.insert(
                 existing,
@@ -1989,7 +1948,7 @@ mod tests {
                 Some(1)
             );
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 9_999);
-            assert!(st.canister_sources.contains_key(&new_canister));
+            assert!(st.canister_tracking_reasons.contains_key(&new_canister));
             assert!(st.commitment_history.contains_key(&new_canister));
             assert!(st.distinct_canisters.contains(&new_canister));
             assert!(st.distinct_canisters.contains(&existing));

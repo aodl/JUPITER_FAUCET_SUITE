@@ -40,7 +40,6 @@ static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_ENABLED_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
-static MOCK_BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
@@ -71,9 +70,6 @@ fn mock_ledger_wasm() -> Result<Vec<u8>> {
 }
 fn mock_cmc_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&MOCK_CMC_WASM, "mock-cmc", None)
-}
-fn mock_blackhole_wasm() -> Result<Vec<u8>> {
-    support::wasm::build_wasm_cached_for_test(&MOCK_BLACKHOLE_WASM, "mock-blackhole", None)
 }
 fn status_proxy_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&STATUS_PROXY_WASM, "mock-status-proxy", None)
@@ -144,7 +140,6 @@ struct HistorianInitArg {
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
     faucet_canister_id: Option<Principal>,
-    blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
     xrc_canister_id: Option<Principal>,
     enable_sns_tracking: Option<bool>,
@@ -179,7 +174,6 @@ struct HistorianUpgradeArg {
     max_commitment_entries_per_canister: Option<u32>,
     max_index_pages_per_tick: Option<u32>,
     max_canisters_per_cycles_tick: Option<u32>,
-    blackhole_canister_id: Option<Principal>,
     sns_wasm_canister_id: Option<Principal>,
     xrc_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
@@ -187,22 +181,24 @@ struct HistorianUpgradeArg {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-enum CanisterSource {
+enum CanisterTrackingReason {
     MemoCommitment,
     SnsDiscovery,
+    RelayTarget,
+    RelayInstance,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct ListCanistersArgs {
     start_after: Option<Principal>,
     limit: Option<u32>,
-    source_filter: Option<CanisterSource>,
+    tracking_reason_filter: Option<CanisterTrackingReason>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct CanisterListItem {
     canister_id: Principal,
-    sources: Vec<CanisterSource>,
+    tracking_reasons: Vec<CanisterTrackingReason>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -296,9 +292,12 @@ struct GetSnsCanistersSummaryResponse {
 }
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PublicCounts {
-    registered_canister_count: u64,
+    tracked_canister_count: u64,
+    memo_registered_canister_count: u64,
     qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
+    relay_target_canister_count: u64,
+    relay_instance_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
 }
@@ -334,7 +333,7 @@ struct ListRegisteredCanisterSummariesArgs {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RegisteredCanisterSummary {
     canister_id: Principal,
-    sources: Vec<CanisterSource>,
+    tracking_reasons: Vec<CanisterTrackingReason>,
     qualifying_commitment_count: u64,
     total_qualifying_committed_e8s: u64,
     last_commitment_ts: Option<u64>,
@@ -368,7 +367,7 @@ struct CanisterMeta {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct CanisterOverview {
     canister_id: Principal,
-    sources: Vec<CanisterSource>,
+    tracking_reasons: Vec<CanisterTrackingReason>,
     meta: CanisterMeta,
     cycles_points: u32,
     commitment_points: u32,
@@ -409,7 +408,6 @@ struct RelayRegistration {
     target_canister_id: Principal,
     relay_canister_id: Principal,
     kind: RelayRegistryKind,
-    relay_install_payload_hash_hex: Option<String>,
     created_at_ts: Option<u64>,
 }
 
@@ -533,8 +531,6 @@ struct RelaySetupView {
     existing_relay: Option<RelayRegistration>,
     status: RelaySetupPublicStatus,
     factory_available: bool,
-    relay_raw_wasm_hash_hex: Option<String>,
-    relay_install_payload_hash_hex: Option<String>,
     warning_text: Option<String>,
 }
 
@@ -674,7 +670,6 @@ fn self_service_historian_init(
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         faucet_canister_id: Some(blackhole),
-        blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: Some(blackhole),
         xrc_canister_id: Some(blackhole),
         enable_sns_tracking: Some(false),
@@ -712,7 +707,6 @@ fn auto_self_service_historian_init(
         cmc,
         jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
     );
-    init.blackhole_canister_id = None;
     init.sns_wasm_canister_id = Some(sns_wasm);
     init.xrc_canister_id = Some(jupiter_ic_clients::constants::fiduciary_blackhole_canister_id());
     init.faucet_canister_id =
@@ -893,14 +887,14 @@ fn assert_historian_tracks_target(
             limit: Some(100),
         },
     )?;
-    assert!(
-        registrations
-            .items
-            .iter()
-            .any(|entry| entry.target_canister_id == target
-                && entry.kind == RelayRegistryKind::SelfService),
-        "historian registry should contain active self-service relay; registrations={registrations:?}"
-    );
+    let relay_id = registrations
+        .items
+        .iter()
+        .find(|entry| entry.target_canister_id == target && entry.kind == RelayRegistryKind::SelfService)
+        .map(|entry| entry.relay_canister_id)
+        .with_context(|| {
+            format!("historian registry should contain active self-service relay; registrations={registrations:?}")
+        })?;
 
     let canisters: ListCanistersResponse = query_one(
         pic,
@@ -910,15 +904,26 @@ fn assert_historian_tracks_target(
         ListCanistersArgs {
             start_after: None,
             limit: Some(100),
-            source_filter: None,
+            tracking_reason_filter: None,
         },
     )?;
     assert!(
-        canisters
-            .items
-            .iter()
-            .all(|item| item.canister_id != target),
-        "self-service tracking should not fabricate a public canister source: {canisters:?}"
+        canisters.items.iter().any(|item| {
+            item.canister_id == target
+                && item
+                    .tracking_reasons
+                    .contains(&CanisterTrackingReason::RelayTarget)
+        }),
+        "self-service target should be publicly tracked as RelayTarget: {canisters:?}"
+    );
+    assert!(
+        canisters.items.iter().any(|item| {
+            item.canister_id == relay_id
+                && item
+                    .tracking_reasons
+                    .contains(&CanisterTrackingReason::RelayInstance)
+        }),
+        "self-service relay should be publicly tracked as RelayInstance: {canisters:?}"
     );
     Ok(())
 }
@@ -964,7 +969,6 @@ fn upgrade_historian_without_config_changes(pic: &PocketIc, historian: Principal
         max_commitment_entries_per_canister: None,
         max_index_pages_per_tick: None,
         max_canisters_per_cycles_tick: None,
-        blackhole_canister_id: None,
         sns_wasm_canister_id: None,
         xrc_canister_id: None,
         cmc_canister_id: None,
@@ -1027,7 +1031,6 @@ impl Harness {
             index_canister_id: Some(index),
             cmc_canister_id: Some(cmc),
             faucet_canister_id: Some(blackhole),
-            blackhole_canister_id: Some(blackhole),
             sns_wasm_canister_id: Some(sns_wasm),
             xrc_canister_id: Some(xrc),
             enable_sns_tracking: Some(enable_sns_tracking),
@@ -1038,7 +1041,7 @@ impl Harness {
             max_commitment_entries_per_canister: Some(100),
             max_index_pages_per_tick: Some(10),
             max_canisters_per_cycles_tick: Some(10),
-            relay_factory_enabled: None,
+            relay_factory_enabled: Some(false),
             relay_setup_min_e8s: None,
             relay_setup_dust_e8s: None,
             relay_setup_refund_cooldown_seconds: None,
@@ -1049,7 +1052,7 @@ impl Harness {
             self_service_relay_max_transfers_per_tick: None,
             io_surplus_neuron_id: None,
             canonical_relay_canister_id: None,
-            canonical_relay_targets: None,
+            canonical_relay_targets: Some(Vec::new()),
         };
         pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
         Ok(Self {
@@ -1182,24 +1185,20 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
     let cmc = support::principals::cycles_minting_canister();
-    let blackhole = pic.create_canister();
+    let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+    let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+    install_status_proxy(&pic, thirteen)?;
+    install_status_proxy(&pic, fiduciary)?;
     let historian = pic.create_canister();
     let target = pic.create_canister();
-    for canister in [blackhole, historian, target] {
+    for canister in [historian, target] {
         pic.add_cycles(canister, 10_000_000_000_000);
     }
-    pic.install_canister(
-        blackhole,
-        real_blackhole::real_blackhole_wasm()?,
-        vec![],
-        None,
-    );
-    set_controllers_exact(&pic, blackhole, vec![blackhole])?;
-    set_controllers_exact(&pic, target, vec![blackhole])?;
+    set_controllers_exact(&pic, target, vec![thirteen])?;
     pic.install_canister(
         historian,
         relay_enabled_historian_wasm()?,
-        encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
+        encode_one(self_service_historian_init(ledger, index, cmc, fiduciary))?,
         None,
     );
     pic.add_cycles(historian, 20_000_000_000_000);
@@ -1216,14 +1215,6 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     assert!(
         view.factory_available,
         "embedded relay wasm should enable factory in setup view: {view:?}"
-    );
-    assert!(
-        view.relay_raw_wasm_hash_hex.is_some(),
-        "setup view should expose reviewed raw relay wasm hash"
-    );
-    assert!(
-        view.relay_install_payload_hash_hex.is_some(),
-        "setup view should expose relay install payload hash"
     );
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let setup_amount = 300_000_000u64;
@@ -1284,7 +1275,7 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     assert_eq!(registered.relay_canister_id, relay.relay_canister_id);
 
     let relay_status = pic
-        .canister_status(relay.relay_canister_id, Some(blackhole))
+        .canister_status(relay.relay_canister_id, Some(fiduciary))
         .map_err(|err| anyhow!("relay canister_status failed: {err:?}"))?;
     assert!(
         relay_status.module_hash.is_some(),
@@ -1292,7 +1283,7 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
     );
     assert_eq!(
         pic.get_controllers(relay.relay_canister_id),
-        vec![blackhole]
+        vec![fiduciary]
     );
 
     let post_setup_page =
@@ -1392,93 +1383,50 @@ fn self_service_relay_notify_creates_installs_funds_blackholes_relay() -> Result
 
 #[test]
 #[ignore]
-fn historian_artifact_exposes_reviewed_raw_relay_hash() -> Result<()> {
+fn retained_gzip_relay_payload_module_hash_matches_exact_supplied_bytes() -> Result<()> {
     require_ignored_flag()?;
     let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    let status = Command::new("./tools/scripts/build-canister")
-        .arg("jupiter-historian")
-        .current_dir(&workspace_root)
-        .status()?;
-    if !status.success() {
-        bail!("tools/scripts/build-canister jupiter-historian failed");
-    }
-    let raw_hash_record_path =
-        workspace_root.join("release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256");
-    let raw_hash_record = std::fs::read_to_string(&raw_hash_record_path)
-        .with_context(|| format!("read {}", raw_hash_record_path.display()))?;
-    let recorded_raw_hash = raw_hash_record
-        .split_whitespace()
-        .next()
-        .context("reviewed raw relay wasm hash record is empty")?
-        .to_string();
-    assert_eq!(recorded_raw_hash.len(), 64);
-    let gz_hash_record_path =
-        workspace_root.join("release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256");
-    let gz_hash_record = std::fs::read_to_string(&gz_hash_record_path)
-        .with_context(|| format!("read {}", gz_hash_record_path.display()))?;
-    let recorded_gz_hash = gz_hash_record
-        .split_whitespace()
-        .next()
-        .context("embedded gzip relay wasm hash record is empty")?
-        .to_string();
-    assert_eq!(recorded_gz_hash.len(), 64);
-    let artifact_path = workspace_root.join("release-artifacts/jupiter_historian.wasm");
-    let historian_artifact = std::fs::read(&artifact_path)
-        .with_context(|| format!("read {}", artifact_path.display()))?;
+    let payload_path = workspace_root.join("release-artifacts/jupiter_relay.wasm.gz");
+    let payload =
+        std::fs::read(&payload_path).with_context(|| format!("read {}", payload_path.display()))?;
+    let expected_hash = Sha256::digest(&payload).to_vec();
 
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();
-    let ledger = pic.create_canister();
-    let index = pic.create_canister();
-    let cmc = pic.create_canister();
-    let blackhole = pic.create_canister();
-    let historian = pic.create_canister();
-    let target = pic.create_canister();
-    for canister in [ledger, index, cmc, blackhole, historian, target] {
-        pic.add_cycles(canister, 10_000_000_000_000);
+    let relay = pic.create_canister();
+    pic.add_cycles(relay, 10_000_000_000_000);
+    #[derive(CandidType)]
+    struct MinimalRelaySurplusNeuronRecipient {
+        neuron_id: u64,
+        memo: Option<Vec<u8>>,
     }
-    pic.install_canister(blackhole, mock_blackhole_wasm()?, vec![], None);
-    let _: () = update_bytes(
-        &pic,
-        blackhole,
-        Principal::anonymous(),
-        "debug_set_status",
-        encode_args((
-            target,
-            Some(Nat::from(10_000_000_000_000u128)),
-            vec![blackhole],
-        ))?,
-    )?;
-    pic.install_canister(
-        historian,
-        historian_artifact,
-        encode_one(self_service_historian_init(ledger, index, cmc, blackhole))?,
-        None,
-    );
+    #[derive(CandidType)]
+    struct MinimalRelayInitArg {
+        managed_canisters: Vec<Principal>,
+        ledger_canister_id: Option<Principal>,
+        cmc_canister_id: Option<Principal>,
+        governance_canister_id: Option<Principal>,
+        blackhole_canister_id: Option<Principal>,
+        surplus_neuron_recipients: Vec<MinimalRelaySurplusNeuronRecipient>,
+    }
+    let relay_args = MinimalRelayInitArg {
+        managed_canisters: Vec::new(),
+        ledger_canister_id: None,
+        cmc_canister_id: None,
+        governance_canister_id: None,
+        blackhole_canister_id: None,
+        surplus_neuron_recipients: Vec::new(),
+    };
+    pic.install_canister(relay, payload, encode_one(relay_args)?, None);
 
-    let view: RelaySetupView = query_one(
-        &pic,
-        historian,
-        Principal::anonymous(),
-        "get_relay_setup_view",
-        GetRelaySetupViewArgs {
-            target_canister_id: target,
-        },
-    )?;
-
+    let status = pic
+        .canister_status(relay, Some(Principal::anonymous()))
+        .map_err(|err| anyhow!("relay canister_status failed: {err:?}"))?;
     assert_eq!(
-        view.relay_raw_wasm_hash_hex.as_deref(),
-        Some(recorded_raw_hash.as_str())
-    );
-    assert_eq!(
-        view.relay_install_payload_hash_hex.as_deref(),
-        Some(recorded_gz_hash.as_str())
-    );
-    assert!(view.factory_available);
-    assert!(
-        view.payment_allowed,
-        "valid observable target should allow payment when CMC is configured: {view:?}"
+        status.module_hash.as_deref(),
+        Some(expected_hash.as_slice()),
+        "PocketIC should report the module hash for the exact gzip bytes supplied to install_canister"
     );
     Ok(())
 }
@@ -2081,7 +2029,6 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         faucet_canister_id: Some(blackhole),
-        blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: Some(sns_wasm),
         xrc_canister_id: Some(xrc),
         enable_sns_tracking: Some(false),
@@ -2103,7 +2050,7 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
         self_service_relay_max_transfers_per_tick: None,
         io_surplus_neuron_id: None,
         canonical_relay_canister_id: None,
-        canonical_relay_targets: None,
+        canonical_relay_targets: Some(Vec::new()),
     };
     pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
 
@@ -2293,7 +2240,6 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         faucet_canister_id: Some(blackhole),
-        blackhole_canister_id: Some(blackhole),
         sns_wasm_canister_id: Some(sns_wasm),
         xrc_canister_id: Some(xrc),
         enable_sns_tracking: Some(false),
@@ -2315,7 +2261,7 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         self_service_relay_max_transfers_per_tick: None,
         io_surplus_neuron_id: None,
         canonical_relay_canister_id: None,
-        canonical_relay_targets: None,
+        canonical_relay_targets: Some(Vec::new()),
     };
     pic.install_canister(historian, historian_wasm()?, encode_one(init)?, None);
 
@@ -2386,7 +2332,7 @@ fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Resu
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.tracked_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 0);
 
     let canisters: ListCanistersResponse = query_one(
@@ -2397,7 +2343,7 @@ fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Resu
         ListCanistersArgs {
             start_after: None,
             limit: Some(10),
-            source_filter: None,
+            tracking_reason_filter: None,
         },
     )?;
     assert!(canisters.items.is_empty());
@@ -2474,7 +2420,7 @@ fn historian_ignores_missing_icrc1_memo_even_when_legacy_numeric_memo_exists() -
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.tracked_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 0);
 
     let recent: ListRecentCommitmentsResponse = query_one(
@@ -2526,7 +2472,7 @@ fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Re
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.tracked_canister_count, 1);
     assert_eq!(counts.qualifying_commitment_count, 1);
 
     let recent: ListRecentCommitmentsResponse = query_one(
@@ -2584,7 +2530,7 @@ fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> 
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.tracked_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 1);
 
     let recent: ListRecentCommitmentsResponse = query_one(
@@ -2642,7 +2588,7 @@ fn historian_indexes_numeric_neuron_id_commitment_without_registering_canister()
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.tracked_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 1);
 
     let recent: ListRecentCommitmentsResponse = query_one(
@@ -2698,7 +2644,7 @@ fn historian_indexes_dotted_neuron_id_commitment_with_right_memo_segment() -> Re
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.tracked_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 1);
 
     let recent: ListRecentCommitmentsResponse = query_one(
@@ -2769,7 +2715,7 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(counts.tracked_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 0);
 
     let canisters: ListCanistersResponse = query_one(
@@ -2780,7 +2726,7 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
         ListCanistersArgs {
             start_after: None,
             limit: Some(10),
-            source_filter: None,
+            tracking_reason_filter: None,
         },
     )?;
     assert!(canisters.items.is_empty());
@@ -2872,7 +2818,7 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
 fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = h.blackhole;
+    let target = h.historian;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(
         &h.pic,
@@ -2912,14 +2858,14 @@ fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
         ListCanistersArgs {
             start_after: None,
             limit: Some(10),
-            source_filter: None,
+            tracking_reason_filter: None,
         },
     )?;
     assert_eq!(canisters.items.len(), 1);
     assert_eq!(canisters.items[0].canister_id, target);
     assert_eq!(
-        canisters.items[0].sources,
-        vec![CanisterSource::MemoCommitment]
+        canisters.items[0].tracking_reasons,
+        vec![CanisterTrackingReason::MemoCommitment]
     );
 
     let commitments: CommitmentHistoryPage = query_one(
@@ -2954,7 +2900,7 @@ fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
     assert!(cycles.items[0].cycles > 0);
     assert!(matches!(
         cycles.items[0].source,
-        CyclesSampleSource::BlackholeStatus
+        CyclesSampleSource::SelfCanister
     ));
     Ok(())
 }
@@ -3033,7 +2979,7 @@ fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> 
         ListCanistersArgs {
             start_after: None,
             limit: Some(10),
-            source_filter: Some(CanisterSource::SnsDiscovery),
+            tracking_reason_filter: Some(CanisterTrackingReason::SnsDiscovery),
         },
     )?;
     let ids: Vec<_> = canisters.items.iter().map(|i| i.canister_id).collect();
@@ -3068,7 +3014,7 @@ fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> 
 fn historian_upgrade_preserves_histories() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = h.blackhole;
+    let target = h.historian;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(
         &h.pic,
@@ -3175,7 +3121,7 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
             ListCanistersArgs {
                 start_after: cursor,
                 limit: Some(2),
-                source_filter: None,
+                tracking_reason_filter: None,
             },
         )?;
         before_ids.extend(page.items.iter().map(|item| item.canister_id));
@@ -3234,7 +3180,7 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
             ListCanistersArgs {
                 start_after: cursor,
                 limit: Some(2),
-                source_filter: None,
+                tracking_reason_filter: None,
             },
         )?;
         after_ids.extend(page.items.iter().map(|item| item.canister_id));
@@ -3294,7 +3240,7 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
 fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = h.blackhole;
+    let target = h.historian;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(
         &h.pic,
@@ -3330,7 +3276,7 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts_before.registered_canister_count, 0);
+    assert_eq!(counts_before.tracked_canister_count, 0);
     assert_eq!(counts_before.qualifying_commitment_count, 0);
 
     h.pic.advance_time(Duration::from_secs(31));
@@ -3349,7 +3295,7 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts_after.registered_canister_count, 1);
+    assert_eq!(counts_after.tracked_canister_count, 1);
     assert_eq!(counts_after.qualifying_commitment_count, 1);
     Ok(())
 }
@@ -3359,7 +3305,7 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
-    let target = h.blackhole;
+    let target = h.historian;
     let staking_id = h.staking_identifier()?;
 
     let _: u64 = update_bytes(
@@ -3400,7 +3346,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 1);
+    assert_eq!(counts.tracked_canister_count, 1);
     assert_eq!(counts.qualifying_commitment_count, 1);
     assert_eq!(counts.total_output_e8s, 0);
     assert_eq!(counts.total_rewards_e8s, 0);
@@ -3440,8 +3386,8 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     assert_eq!(registered.items.len(), 1);
     assert_eq!(registered.items[0].canister_id, target);
     assert_eq!(
-        registered.items[0].sources,
-        vec![CanisterSource::MemoCommitment]
+        registered.items[0].tracking_reasons,
+        vec![CanisterTrackingReason::MemoCommitment]
     );
     assert_eq!(registered.items[0].qualifying_commitment_count, 1);
     assert_eq!(
@@ -3553,7 +3499,11 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
         "get_public_counts",
         (),
     )?;
-    assert_eq!(counts.registered_canister_count, 0);
+    assert_eq!(
+        counts.tracked_canister_count,
+        counts.sns_discovered_canister_count
+    );
+    assert_eq!(counts.memo_registered_canister_count, 0);
     assert_eq!(counts.qualifying_commitment_count, 0);
     assert_eq!(counts.total_output_e8s, 0);
     assert_eq!(counts.total_rewards_e8s, 0);

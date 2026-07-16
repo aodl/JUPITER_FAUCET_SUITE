@@ -217,8 +217,8 @@ export function createDashboardTablesController({
     const body = document.getElementById('registered-pane-body');
     const items = state.items || [];
     const emptyMessage = state.error
-      ? `Declared canisters unavailable (${state.error})`
-      : paneEmptyMessage(data, 'registered', 'No declared canisters indexed yet.');
+      ? `Tracked canisters unavailable (${state.error})`
+      : paneEmptyMessage(data, 'registered', 'No tracked canisters indexed yet.');
     if (body) {
       body.innerHTML = items.length
         ? items.map((item) => `

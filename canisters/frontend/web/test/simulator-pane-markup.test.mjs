@@ -726,7 +726,7 @@ test('Patron Commitments table omits redundant category column', () => {
   assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
   assert.doesNotMatch(commitments, /<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
-  assert.match(mainJs, /const registeredCount = data\?\.counts\?\.registered_canister_count;/);
+  assert.match(mainJs, /const trackedCount = data\?\.counts\?\.tracked_canister_count;/);
   assert.match(mainJs, /setText\('commitments-pane-subtitle', subtitle\);/);
   assert.doesNotMatch(mainJs, /\$\{formatInteger\(registeredCount\)\} declared canisters\./);
   assert.match(mainJs, /setText\('commitments-canister-count', commitmentsCanisterCount\);/);

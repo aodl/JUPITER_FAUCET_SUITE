@@ -38,7 +38,6 @@ mod tests {
             index_canister_id: None,
             cmc_canister_id: None,
             faucet_canister_id: None,
-            blackhole_canister_id: None,
             sns_wasm_canister_id: None,
             xrc_canister_id: None,
             enable_sns_tracking: None,
@@ -101,8 +100,6 @@ mod tests {
             io_surplus_neuron_id: None,
             canonical_relay_canister_id: None,
             canonical_relay_targets: None,
-            blackhole_canister_id: None,
-            cycles_probe_policy: None,
             sns_wasm_canister_id: None,
             cmc_canister_id: None,
             faucet_canister_id: None,
@@ -144,8 +141,6 @@ mod tests {
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
-                blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
-                cycles_probe_policy: None,
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
                 xrc_canister_id: mainnet_xrc_id(),
                 enable_sns_tracking: false,
@@ -170,7 +165,7 @@ mod tests {
                 canonical_relay_targets: mainnet_canonical_relay_targets(),
             },
             distinct_canisters: BTreeSet::new(),
-            canister_sources: BTreeMap::new(),
+            canister_tracking_reasons: BTreeMap::new(),
             commitment_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
@@ -234,7 +229,6 @@ mod tests {
             index_canister_id: None,
             cmc_canister_id: None,
             faucet_canister_id: None,
-            blackhole_canister_id: None,
             sns_wasm_canister_id: None,
             xrc_canister_id: None,
             enable_sns_tracking: None,
@@ -261,8 +255,6 @@ mod tests {
 
         assert_eq!(cfg.ledger_canister_id, mainnet_ledger_id());
         assert_eq!(cfg.index_canister_id, mainnet_index_id());
-        assert_eq!(cfg.blackhole_canister_id, mainnet_blackhole_id());
-        assert_eq!(cfg.effective_cycles_probe_policy(), CyclesProbePolicy::Auto);
         assert_eq!(
             cfg.output_source_account,
             mainnet_disburser_staging_account()
@@ -278,51 +270,6 @@ mod tests {
     }
 
     #[test]
-    fn init_blackhole_argument_sets_fixed_cycles_probe_policy() {
-        let blackhole = principal("77deu-baaaa-aaaar-qb6za-cai");
-        let cfg = config_from_init_args(InitArgs {
-            staking_account: sample_account(),
-            output_source_account: None,
-            output_account: None,
-            rewards_account: None,
-            ledger_canister_id: None,
-            index_canister_id: None,
-            cmc_canister_id: None,
-            faucet_canister_id: None,
-            blackhole_canister_id: Some(blackhole),
-            sns_wasm_canister_id: None,
-            xrc_canister_id: None,
-            enable_sns_tracking: None,
-            scan_interval_seconds: None,
-            cycles_interval_seconds: None,
-            min_tx_e8s: None,
-            max_cycles_entries_per_canister: None,
-            max_commitment_entries_per_canister: None,
-            max_index_pages_per_tick: None,
-            max_canisters_per_cycles_tick: None,
-            relay_factory_enabled: None,
-            relay_setup_min_e8s: None,
-            relay_setup_dust_e8s: None,
-            relay_setup_refund_cooldown_seconds: None,
-            relay_initial_cycles: None,
-            relay_cycle_safety_margin_e8s: None,
-            relay_min_subaccount_one_seed_e8s: None,
-            self_service_relay_interval_seconds: None,
-            self_service_relay_max_transfers_per_tick: None,
-            io_surplus_neuron_id: None,
-            canonical_relay_canister_id: None,
-            canonical_relay_targets: None,
-        });
-
-        assert_eq!(
-            cfg.effective_cycles_probe_policy(),
-            CyclesProbePolicy::FixedBlackhole {
-                canister_id: blackhole
-            }
-        );
-    }
-
-    #[test]
     fn config_validation_accepts_minimum_supported_threshold() {
         let mut cfg = config_from_init_args(InitArgs {
             staking_account: sample_account(),
@@ -333,7 +280,6 @@ mod tests {
             index_canister_id: None,
             cmc_canister_id: None,
             faucet_canister_id: None,
-            blackhole_canister_id: None,
             sns_wasm_canister_id: None,
             xrc_canister_id: None,
             enable_sns_tracking: None,
@@ -371,8 +317,10 @@ mod tests {
     fn refresh_registered_canister_summary_updates_cache_incrementally() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -426,8 +374,10 @@ mod tests {
         let mut st = base_state();
 
         for (canister, amount_e8s) in [(first, 123_000_000), (second, 456_000_000)] {
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -471,7 +421,7 @@ mod tests {
             first,
             RegisteredCanisterSummary {
                 canister_id: first,
-                sources: vec![CanisterSource::MemoCommitment],
+                tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
                 qualifying_commitment_count: 1,
                 total_qualifying_committed_e8s: 123_000_000,
                 last_commitment_ts: Some(1),
@@ -483,7 +433,7 @@ mod tests {
             second,
             RegisteredCanisterSummary {
                 canister_id: second,
-                sources: vec![CanisterSource::MemoCommitment],
+                tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
                 qualifying_commitment_count: 2,
                 total_qualifying_committed_e8s: 456_000_000,
                 last_commitment_ts: Some(2),
@@ -525,7 +475,6 @@ mod tests {
             index_canister_id: None,
             cmc_canister_id: None,
             faucet_canister_id: None,
-            blackhole_canister_id: None,
             sns_wasm_canister_id: None,
             xrc_canister_id: None,
             enable_sns_tracking: None,
@@ -588,7 +537,6 @@ mod tests {
                 max_commitment_entries_per_canister: Some(12),
                 max_index_pages_per_tick: Some(13),
                 max_canisters_per_cycles_tick: Some(14),
-                blackhole_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
                 sns_wasm_canister_id: Some(principal("qaa6y-5yaaa-aaaaa-aaafa-cai")),
                 ..UpgradeArgs::default()
             }),
@@ -610,60 +558,6 @@ mod tests {
             Some(1)
         );
         assert_eq!(st.main_lock_state_ts, Some(0));
-    }
-
-    #[test]
-    fn upgrade_policy_semantics_clear_positive_route_cache_on_effective_change() {
-        let mut st = base_state();
-        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
-        st.config.cycles_probe_policy = None;
-        st.cached_cycles_probe_routes.insert(
-            target,
-            CyclesProbeRoute::SnsRoot {
-                root_canister_id: root,
-            },
-        );
-
-        apply_upgrade_args(
-            &mut st,
-            Some(UpgradeArgs {
-                cycles_probe_policy: Some(CyclesProbePolicy::Auto),
-                blackhole_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
-                ..UpgradeArgs::default()
-            }),
-        );
-
-        assert_eq!(
-            st.config.effective_cycles_probe_policy(),
-            CyclesProbePolicy::Auto
-        );
-        assert_eq!(
-            st.config.blackhole_canister_id,
-            principal("acjuz-liaaa-aaaar-qb4qq-cai")
-        );
-        assert!(st.cached_cycles_probe_routes.is_empty());
-
-        st.cached_cycles_probe_routes.insert(
-            target,
-            CyclesProbeRoute::SnsRoot {
-                root_canister_id: root,
-            },
-        );
-        let fixed = principal("77deu-baaaa-aaaar-qb6za-cai");
-        apply_upgrade_args(
-            &mut st,
-            Some(UpgradeArgs {
-                blackhole_canister_id: Some(fixed),
-                ..UpgradeArgs::default()
-            }),
-        );
-
-        assert_eq!(
-            st.config.effective_cycles_probe_policy(),
-            CyclesProbePolicy::FixedBlackhole { canister_id: fixed }
-        );
-        assert!(st.cached_cycles_probe_routes.is_empty());
     }
 
     #[test]
@@ -814,19 +708,26 @@ mod tests {
     }
 
     #[test]
-    fn registered_canister_count_requires_qualifying_memo_commitment_history() {
+    fn tracked_canister_count_requires_qualifying_memo_commitment_history() {
         let memo_only = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let sns_only = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let both = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
         let mut st = base_state();
-        st.canister_sources
-            .insert(memo_only, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.canister_sources
-            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
+            memo_only,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
+        st.canister_tracking_reasons.insert(
+            sns_only,
+            BTreeSet::from([CanisterTrackingReason::SnsDiscovery]),
+        );
+        st.canister_tracking_reasons.insert(
             both,
-            BTreeSet::from([CanisterSource::MemoCommitment, CanisterSource::SnsDiscovery]),
+            BTreeSet::from([
+                CanisterTrackingReason::MemoCommitment,
+                CanisterTrackingReason::SnsDiscovery,
+            ]),
         );
         st.commitment_history.insert(
             memo_only,
@@ -855,12 +756,14 @@ mod tests {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
             memo_canister,
-            BTreeSet::from([CanisterSource::MemoCommitment]),
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
         );
-        st.canister_sources
-            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_tracking_reasons.insert(
+            sns_only,
+            BTreeSet::from([CanisterTrackingReason::SnsDiscovery]),
+        );
         st.commitment_history.insert(
             memo_canister,
             vec![
@@ -881,11 +784,14 @@ mod tests {
         state::set_state(st);
 
         let counts = get_public_counts();
-        assert_eq!(counts.registered_canister_count, 1);
+        assert_eq!(counts.tracked_canister_count, 2);
+        assert_eq!(counts.memo_registered_canister_count, 1);
         assert_eq!(counts.raw_icp_declared_canister_count, Some(0));
         assert_eq!(counts.declared_neuron_count, Some(0));
         assert_eq!(counts.qualifying_commitment_count, 1);
         assert_eq!(counts.sns_discovered_canister_count, 1);
+        assert_eq!(counts.relay_target_canister_count, 0);
+        assert_eq!(counts.relay_instance_canister_count, 0);
         assert_eq!(counts.total_output_e8s, 0);
         assert_eq!(counts.total_rewards_e8s, 0);
     }
@@ -894,9 +800,9 @@ mod tests {
     fn get_public_counts_excludes_non_qualifying_memo_canisters_from_registered_totals() {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut st = base_state();
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
             memo_canister,
-            BTreeSet::from([CanisterSource::MemoCommitment]),
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
         );
         st.commitment_history.insert(
             memo_canister,
@@ -910,7 +816,7 @@ mod tests {
         state::set_state(st);
 
         let counts = get_public_counts();
-        assert_eq!(counts.registered_canister_count, 0);
+        assert_eq!(counts.tracked_canister_count, 0);
         assert_eq!(counts.raw_icp_declared_canister_count, Some(0));
         assert_eq!(counts.declared_neuron_count, Some(0));
         assert_eq!(counts.qualifying_commitment_count, 0);
@@ -962,7 +868,7 @@ mod tests {
         state::set_state(st);
 
         let counts = get_public_counts();
-        assert_eq!(counts.registered_canister_count, 0);
+        assert_eq!(counts.tracked_canister_count, 0);
         assert_eq!(counts.raw_icp_declared_canister_count, Some(2));
         assert_eq!(counts.declared_neuron_count, Some(2));
         assert_eq!(counts.qualifying_commitment_count, 4);
@@ -972,8 +878,10 @@ mod tests {
     fn list_registered_canister_summaries_excludes_sns_only_canisters() {
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
-        st.canister_sources
-            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_tracking_reasons.insert(
+            sns_only,
+            BTreeSet::from([CanisterTrackingReason::SnsDiscovery]),
+        );
         state::set_state(st);
 
         let response = list_registered_canister_summaries(ListRegisteredCanisterSummariesArgs {
@@ -988,8 +896,10 @@ mod tests {
     fn list_registered_canister_summaries_excludes_non_qualifying_memo_only_canisters() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1013,8 +923,10 @@ mod tests {
     fn get_canister_overview_hides_non_qualifying_memo_only_canisters() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1034,8 +946,10 @@ mod tests {
         let canister = principal("uccpi-cqaaa-aaaar-qby3q-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![
@@ -1080,8 +994,10 @@ mod tests {
         let b = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
         let mut st = base_state();
         for canister in [a, b] {
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1122,8 +1038,10 @@ mod tests {
     fn list_registered_canister_summaries_returns_empty_pages_past_the_end() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1149,10 +1067,14 @@ mod tests {
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
         st.distinct_canisters.extend([canister, sns_only]);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
-        st.canister_sources
-            .insert(sns_only, BTreeSet::from([CanisterSource::SnsDiscovery]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
+        st.canister_tracking_reasons.insert(
+            sns_only,
+            BTreeSet::from([CanisterTrackingReason::SnsDiscovery]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1167,7 +1089,7 @@ mod tests {
         let first_group = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "2225".to_string(),
             limit: Some(10),
-            source_filter: Some(CanisterSource::MemoCommitment),
+            tracking_reason_filter: Some(CanisterTrackingReason::MemoCommitment),
         });
 
         assert!(!first_group.truncated);
@@ -1179,7 +1101,7 @@ mod tests {
             let response = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
                 prefix: prefix.to_string(),
                 limit: Some(10),
-                source_filter: Some(CanisterSource::MemoCommitment),
+                tracking_reason_filter: Some(CanisterTrackingReason::MemoCommitment),
             });
 
             assert!(!response.truncated, "prefix {prefix}");
@@ -1194,7 +1116,7 @@ mod tests {
         let rejected = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "22255zz".to_string(),
             limit: Some(10),
-            source_filter: Some(CanisterSource::MemoCommitment),
+            tracking_reason_filter: Some(CanisterTrackingReason::MemoCommitment),
         });
         assert!(rejected.items.is_empty());
         assert!(!rejected.truncated);
@@ -1207,8 +1129,10 @@ mod tests {
         let mut st = base_state();
         for canister in [a, b] {
             st.distinct_canisters.insert(canister);
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1224,14 +1148,14 @@ mod tests {
         let short = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "bay".to_string(),
             limit: Some(10),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         assert!(short.items.is_empty());
 
         let limited = find_canisters_by_memo_prefix(FindCanistersByMemoPrefixArgs {
             prefix: "bayw".to_string(),
             limit: Some(1),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         assert_eq!(limited.items.len(), 1);
         assert!(limited.truncated);
@@ -1440,8 +1364,10 @@ mod tests {
         let mut st = base_state();
         st.config.max_commitment_entries_per_canister = 1;
         st.distinct_canisters.insert(canister);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![
@@ -1510,8 +1436,10 @@ mod tests {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1525,7 +1453,7 @@ mod tests {
         normalize_runtime_state(&mut st);
 
         assert_eq!(count_registered_canisters(&st), 0);
-        assert!(!st.canister_sources.contains_key(&canister));
+        assert!(!st.canister_tracking_reasons.contains_key(&canister));
         assert!(!st.distinct_canisters.contains(&canister));
         assert!(!st.commitment_history.contains_key(&canister));
         assert!(!st.cycles_history.contains_key(&canister));
@@ -1545,8 +1473,10 @@ mod tests {
             let canister =
                 Principal::from_slice(&[((idx % 250) + 1) as u8, ((idx / 250) + 1) as u8]);
             st.distinct_canisters.insert(canister);
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1561,7 +1491,7 @@ mod tests {
         normalize_runtime_state(&mut st);
 
         assert_eq!(st.distinct_canisters.len(), 2_101);
-        assert_eq!(st.canister_sources.len(), 2_101);
+        assert_eq!(st.canister_tracking_reasons.len(), 2_101);
         assert_eq!(st.commitment_history.len(), 2_101);
     }
 
@@ -1602,8 +1532,10 @@ mod tests {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             (1..=150)
@@ -1630,7 +1562,7 @@ mod tests {
         let canisters = list_canisters(ListCanistersArgs {
             start_after: None,
             limit: Some(5_000),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         assert_eq!(canisters.items.len(), 1);
 
@@ -1663,8 +1595,10 @@ mod tests {
         let mut st = base_state();
         for canister in canisters {
             st.distinct_canisters.insert(canister);
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1680,12 +1614,12 @@ mod tests {
         let first = list_canisters(ListCanistersArgs {
             start_after: None,
             limit: Some(2),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         let second = list_canisters(ListCanistersArgs {
             start_after: first.next_start_after,
             limit: Some(2),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         let returned: Vec<_> = first
             .items
@@ -1717,8 +1651,10 @@ mod tests {
         let mut st = base_state();
         for canister in canisters.iter().copied() {
             st.distinct_canisters.insert(canister);
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1734,7 +1670,7 @@ mod tests {
         let first = list_canisters(ListCanistersArgs {
             start_after: None,
             limit: Some(5_000),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         assert_eq!(first.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
         assert_eq!(
@@ -1753,7 +1689,7 @@ mod tests {
         let after_first = list_canisters(ListCanistersArgs {
             start_after: Some(expected[0]),
             limit: Some(10),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         assert_eq!(
             after_first
@@ -1772,7 +1708,7 @@ mod tests {
         let after_synthetic_cursor = list_canisters(ListCanistersArgs {
             start_after: Some(between_third_and_fourth),
             limit: Some(1),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
         assert_eq!(
             after_synthetic_cursor
@@ -1796,8 +1732,10 @@ mod tests {
         let mut st = base_state();
         for canister in canisters {
             st.distinct_canisters.insert(canister);
-            st.canister_sources
-                .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+            );
             st.commitment_history.insert(
                 canister,
                 vec![CommitmentSample {
@@ -1813,7 +1751,7 @@ mod tests {
         let response = list_canisters(ListCanistersArgs {
             start_after: None,
             limit: Some(5_000),
-            source_filter: None,
+            tracking_reason_filter: None,
         });
 
         assert_eq!(response.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
@@ -1836,8 +1774,10 @@ mod tests {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![CommitmentSample {
@@ -1915,8 +1855,10 @@ mod tests {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.distinct_canisters.insert(canister);
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![
@@ -1987,8 +1929,10 @@ mod tests {
     fn registered_canister_summaries_roll_up_qualifying_only() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
-        st.canister_sources
-            .insert(canister, BTreeSet::from([CanisterSource::MemoCommitment]));
+        st.canister_tracking_reasons.insert(
+            canister,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
         st.commitment_history.insert(
             canister,
             vec![

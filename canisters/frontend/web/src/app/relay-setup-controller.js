@@ -269,10 +269,6 @@ function formatConversion(record, fallbackAmountE8s) {
 function recoveryDiagnosticPayload(recoveryView) {
   if (!recoveryView) return null;
   const createAttempt = readOptional(recoveryView.relay_create_attempt);
-  const rawRelayHash = readOptional(createAttempt?.raw_relay_wasm_hash_hex)
-    || readOptional(recoveryView.relay_raw_wasm_hash_hex);
-  const installPayloadHash = readOptional(createAttempt?.install_payload_hash_hex)
-    || readOptional(recoveryView.relay_install_payload_hash_hex);
   return {
     target_canister_id: principalText(recoveryView.target_canister_id),
     status: statusText(recoveryView.status),
@@ -282,8 +278,6 @@ function recoveryDiagnosticPayload(recoveryView) {
     cycles_minted: readOptional(recoveryView.cycles_minted)?.toString?.() || null,
     relay_create_attach_cycles: createAttempt?.create_attach_cycles?.toString?.() || createAttempt?.initial_cycles?.toString?.() || null,
     configured_relay_create_attach_cycles: recoveryView.configured_relay_create_attach_cycles?.toString?.() || null,
-    raw_relay_wasm_hash_hex: rawRelayHash,
-    relay_install_payload_hash_hex: installPayloadHash,
     relay_onchain_module_hash_hex: readOptional(recoveryView.relay_onchain_module_hash_hex),
     relay_funding_e8s: readOptional(recoveryView.relay_funding_transfer)?.amount_e8s?.toString?.() || null,
     setup_amount_seen_e8s: recoveryView.setup_amount_seen_e8s?.toString?.() || null,

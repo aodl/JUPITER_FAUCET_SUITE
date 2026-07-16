@@ -21,7 +21,7 @@ thread_local! {
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     pub(super) static STABLE_ROOT_STATE: std::cell::RefCell<Option<StableCell<VersionedStableState, Memory>>> =
         const { std::cell::RefCell::new(None) };
-    pub(super) static STABLE_CANISTER_SOURCES_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableSourceSet, Memory>>> =
+    pub(super) static STABLE_CANISTER_SOURCES_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableTrackingReasonSet, Memory>>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_CANISTER_META_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, StableCanisterMeta, Memory>>> =
         const { std::cell::RefCell::new(None) };
@@ -89,8 +89,8 @@ pub(super) fn with_root_stable_cell<R>(
     })
 }
 
-pub(super) fn with_canister_sources_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableSourceSet, Memory>) -> R,
+pub(super) fn with_canister_tracking_reasons_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, StableTrackingReasonSet, Memory>) -> R,
 ) -> R {
     STABLE_CANISTER_SOURCES_MAP.with(|map| {
         if map.borrow().is_none() {
@@ -103,7 +103,7 @@ pub(super) fn with_canister_sources_map<R>(
         let mut borrow = map.borrow_mut();
         f(borrow
             .as_mut()
-            .expect("historian canister-sources stable map not initialized"))
+            .expect("historian canister tracking-reasons stable map not initialized"))
     })
 }
 

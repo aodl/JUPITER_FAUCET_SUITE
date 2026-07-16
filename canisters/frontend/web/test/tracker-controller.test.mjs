@@ -167,7 +167,7 @@ function minimalTrackerData() {
     isCommitmentBeneficiary: true,
     isRecognized: true,
     overview: {
-      sources: [{ Commitment: null }],
+      tracking_reasons: [{ MemoCommitment: null }],
       meta: {
         first_seen_ts: [1n],
         last_commitment_ts: [1n],

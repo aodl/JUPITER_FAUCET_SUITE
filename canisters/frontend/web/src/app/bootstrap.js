@@ -30,7 +30,7 @@ const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
       <p>Cycles balances are sampled periodically by historian.</p>
-      <p>For ordinary canisters, cycles observability requires the canister to expose public status through the <a class="pane-external-link" href="https://github.com/ninegua/ic-blackhole" target="_blank" rel="noopener noreferrer">blackhole controller</a>. Newly registered canisters may show as pending until the next cycles sweep completes.</p>
+      <p>For ordinary canisters, cycles observability is attempted automatically through direct status, recognized controller probes, cached positive routes, and SNS discovery. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
     </div>`,
 };
 
@@ -116,7 +116,7 @@ function renderLandingSummary(data) {
   setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8s(data.stakeE8s) });
   setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
   setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
-  setMetricStatus('landing-registered-canisters', data.counts?.registered_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Declared canisters unavailable' } : { value: formatInteger(data.counts.registered_canister_count) });
+  setMetricStatus('landing-registered-canisters', data.counts?.tracked_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Tracked canisters unavailable' } : { value: formatInteger(data.counts.tracked_canister_count) });
   setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Patron commitments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
   setHidden('landing-live-unavailable', true);
 }
@@ -149,13 +149,13 @@ function renderHistorianFaultBanner(data) {
 
 function renderPaneSubtitles(data) {
   const subtitle = nextRunLabel(data?.status);
-  const registeredCount = data?.counts?.registered_canister_count;
+  const trackedCount = data?.counts?.tracked_canister_count;
   const optionalCountValue = (value) => (Array.isArray(value) ? value[0] : value);
   const rawIcpDeclaredCanisterCount = optionalCountValue(data?.counts?.raw_icp_declared_canister_count);
   const declaredNeuronCount = optionalCountValue(data?.counts?.declared_neuron_count);
-  const commitmentsCanisterCount = registeredCount === undefined || registeredCount === null
+  const commitmentsCanisterCount = trackedCount === undefined || trackedCount === null
     ? ''
-    : `(${formatInteger(registeredCount)})`;
+    : `(${formatInteger(trackedCount)})`;
   const commitmentsRawCanisterCount = rawIcpDeclaredCanisterCount === undefined || rawIcpDeclaredCanisterCount === null
     ? ''
     : `(${formatInteger(rawIcpDeclaredCanisterCount)})`;

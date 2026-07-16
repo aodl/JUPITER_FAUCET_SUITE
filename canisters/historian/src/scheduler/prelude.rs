@@ -9,9 +9,9 @@ pub(super) use crate::clients::{
     ExchangeRateClient, GovernanceClient, IndexClient, SnsRootClient, SnsWasmClient,
 };
 pub(super) use crate::state::{
-    self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta, CanisterSource,
-    CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource, IndexedRouteKind,
-    InvalidCommitment, RecentCommitment, RecentNeuronCommitment,
+    self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta,
+    CanisterTrackingReason, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource,
+    IndexedRouteKind, InvalidCommitment, RecentCommitment, RecentNeuronCommitment,
 };
 pub(super) use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,

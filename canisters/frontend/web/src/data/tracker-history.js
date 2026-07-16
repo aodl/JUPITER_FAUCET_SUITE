@@ -9,7 +9,7 @@ import { loadPublicNeuronStakingAccount } from './nns-neurons.js';
 import {
   MAINNET_CMC_CANISTER_ID,
   fulfilledOrNull,
-  hasCanisterSource,
+  hasCanisterTrackingReason,
   principalToText,
   readOptional,
 } from './dashboard-transforms.js';
@@ -212,7 +212,7 @@ export async function loadTrackerData({
 
   const overview = await historian.get_canister_overview(canisterId);
   const overviewValue = readOptional(overview);
-  const isCommitmentBeneficiary = hasCanisterSource(overviewValue?.sources, 'MemoCommitment');
+  const isCommitmentBeneficiary = hasCanisterTrackingReason(overviewValue?.tracking_reasons, 'MemoCommitment');
 
   if (!overviewValue || !isCommitmentBeneficiary) {
     return {
@@ -334,7 +334,7 @@ export async function loadRawIcpCanisterTrackerData({
     ? historian.find_canisters_by_memo_prefix({
         prefix,
         limit: [prefixLimit],
-        source_filter: [{ MemoCommitment: null }],
+        tracking_reason_filter: [{ MemoCommitment: null }],
       })
     : Promise.resolve({ items: [], truncated: false });
   const [statusResult, relayRegistrationsResult, transfersResult, candidatesResult] = await Promise.allSettled([

@@ -4,7 +4,7 @@ pub(crate) fn init_stable_storage() {
 }
 
 pub(super) fn restore_state_current(root: StableRootState) -> State {
-    let canister_sources = with_canister_sources_map(|map| {
+    let canister_tracking_reasons = with_canister_tracking_reasons_map(|map| {
         let mut out = BTreeMap::new();
         for entry in map.iter() {
             let (key, value) = entry.into_pair();
@@ -42,7 +42,7 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
     let mut st = State {
         config: root.config.into(),
         distinct_canisters: BTreeSet::new(),
-        canister_sources,
+        canister_tracking_reasons,
         commitment_history,
         cycles_history,
         per_canister_meta,

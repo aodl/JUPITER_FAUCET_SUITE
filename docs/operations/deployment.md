@@ -4,7 +4,9 @@ Production deployment is a governance-controlled operation. Once Jupiter Faucet 
 
 Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
 
-Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and only diverge from the canonical production Relay in target canister and surplus-recipient configuration.
+Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and only diverge from the canonical production Relay in target canister, automatic probe routing, and surplus-recipient configuration.
+
+This development-phase release intentionally reinstalls the Historian and canonical Relay instead of upgrading their existing state. Reinstall wipes Historian heap and stable state and wipes canonical Relay runtime state. It requires current controller authority and complete `InitArgs`. It does not modify already blackholed self-service Relays, and a genuinely blackholed Relay cannot be reinstalled.
 
 ## Production release flow
 
@@ -18,33 +20,31 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --
 
 `./tools/scripts/docker-build` produces canonical `.wasm.gz` install packages and `release-artifacts/release-artifacts.sha256`. `JUPITER_USE_CANONICAL_ARTIFACTS=1` tells the `icp.yaml` build helper to verify that manifest and deploy those existing packages instead of rebuilding with the local toolchain.
 
-For routine no-config-change production upgrades, pass no args for Disburser, Faucet, and Historian. Those stateful canisters decode omitted upgrade args as no config change. Relay is replacement-style and requires full `InitArgs` on every upgrade.
+For this development-phase Historian/Relay release, use reinstall for `jupiter_historian` and the canonical `jupiter_relay` after explicit operator signoff:
 
 ```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet --environment ic --mode upgrade
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
+  --environment ic \
+  --mode reinstall \
+  --args-file canisters/historian/mainnet-install-args.did
+
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
+  --mode reinstall \
+  --args-file canisters/relay/mainnet-install-args.did
 ```
 
-For Historian, that command path resolves through `icp.yaml` to the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. The validator fails if production tooling points `jupiter_historian` at a deprecated `jupiter_historian_with_relay` artifact path while `relay_factory_enabled = opt true`.
+Before reinstall, operators must disable the self-service factory, verify no in-flight setup job has created a child Relay, verify no setup payment is mid-processing, inventory existing blackholed self-service Relays, and accept loss of development-phase Historian histories and registrations.
 
-For config-changing upgrades, create a temporary deployment-specific `UpgradeArgs` file and pass it explicitly:
+After reinstall, verify Historian cycles probing is Auto, canonical Relay remains fixed to the Fiduciary blackhole route, a self-service Relay is created in Auto mode, target and Relay both appear in `list_canisters`, `tracked_canister_count` includes both, and cycles history is recorded for both.
+
+For unrelated routine no-config-change production upgrades, pass no args for Disburser, Faucet, and Historian. Those stateful canisters decode omitted upgrade args as no config change. Relay is replacement-style and requires full `InitArgs` on every upgrade.
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
   --environment ic \
-  --mode upgrade \
-  --args-file /tmp/jupiter-faucet-upgrade-args.did
+  --mode upgrade
 ```
-
-Live Historian relay factory enablement uses `Option<UpgradeArgs>`, not the fresh-install args file. If using an ad hoc temporary file solely for enablement, the complete file is:
-
-```did
-(opt record {
-  relay_factory_enabled = opt true;
-  cycles_probe_policy = opt variant { Auto };
-})
-```
-
-The explicit `cycles_probe_policy = opt variant { Auto }` is intentional for existing Historian upgrades. Omitting it preserves the legacy fixed-proxy behavior already stored by the canister.
 
 Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.
 
@@ -52,10 +52,10 @@ If operators need to install a reviewed local artifact directly instead of using
 
 ```bash
 icp canister install --environment ic jupiter_historian \
-  --mode upgrade \
+  --mode reinstall \
   --wasm release-artifacts/jupiter_historian.wasm.gz \
   --args-format candid \
-  --args-file /tmp/jupiter-historian-enable-relay-factory.did \
+  --args-file canisters/historian/mainnet-install-args.did \
   --yes
 ```
 
@@ -118,7 +118,7 @@ For config-changing upgrades, Disburser, Faucet, and Historian use the canister'
 | --- | --- | --- | --- | --- |
 | `jupiter_disburser` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | `jupiter_faucet` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
-| `jupiter_historian` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
+| `jupiter_historian` | `InitArgs` from checked-in `mainnet-install-args.did` | No args outside this development-phase release | Temporary `Option<UpgradeArgs>` outside this development-phase release | This release reinstalls and resets heap/stable state |
 | `jupiter_relay` | `InitArgs` from checked-in `mainnet-install-args.did` | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
 | `jupiter_faucet_frontend` | No install args | No args | No args | Asset canister state managed by frontend asset lifecycle |
 | `jupiter_lifeline` | No install args | No args | No args | Minimal support canister state |

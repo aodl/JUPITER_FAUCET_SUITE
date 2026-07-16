@@ -18,7 +18,7 @@ import {
   dquorumStakingAccount,
   relaySetupAccount,
   relaySetupSubaccount,
-  hasCanisterSource,
+  hasCanisterTrackingReason,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
   RAW_ICP_TRACKER_TRANSFER_LIMIT,
@@ -67,11 +67,14 @@ function historianStatus(overrides = {}) {
 
 function historianCounts(overrides = {}) {
   return {
-    registered_canister_count: 2n,
+    tracked_canister_count: 2n,
     raw_icp_declared_canister_count: [1n],
     declared_neuron_count: [1n],
     qualifying_commitment_count: 3n,
+    memo_registered_canister_count: 1n,
     sns_discovered_canister_count: 4n,
+    relay_target_canister_count: 0n,
+    relay_instance_canister_count: 0n,
     total_output_e8s: 400_000_000n,
     total_rewards_e8s: 50_000_000n,
     ...overrides,
@@ -82,7 +85,7 @@ function registeredResponse() {
   return {
     items: [{
       canister_id: principal('aaaaa-aa'),
-      sources: [{ MemoCommitment: null }],
+      tracking_reasons: [{ MemoCommitment: null }],
       qualifying_commitment_count: 2n,
       total_qualifying_committed_e8s: 300_000_000n,
       last_commitment_ts: [1000n],
@@ -419,7 +422,7 @@ test('loadDashboardData requests only the configured registered canister summary
     registeredPage: 2,
     registeredPageSize: 6,
     historianActor: {
-      async get_public_counts() { return historianCounts({ registered_canister_count: 18n }); },
+      async get_public_counts() { return historianCounts({ tracked_canister_count: 18n }); },
       async get_public_status() { return historianStatus(); },
       async list_registered_canister_summaries(args) {
         registeredCalls.push(args);
@@ -593,7 +596,7 @@ test('loadDashboardData preserves zero values as loaded metrics instead of treat
     historianActor: {
       async get_public_counts() {
         return historianCounts({
-          registered_canister_count: 0n,
+          tracked_canister_count: 0n,
           qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 0n,
           total_output_e8s: 0n,
@@ -622,7 +625,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
     historianActor: {
       async get_public_counts() {
         return historianCounts({
-          registered_canister_count: 1n,
+          tracked_canister_count: 1n,
           qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 0n,
           total_output_e8s: 0n,
@@ -634,7 +637,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
         return {
           items: [{
             canister_id: target,
-            sources: [{ MemoCommitment: null }],
+            tracking_reasons: [{ MemoCommitment: null }],
             qualifying_commitment_count: 0n,
             total_qualifying_committed_e8s: 0n,
             last_commitment_ts: [2000n],
@@ -663,7 +666,7 @@ test('loadDashboardData can represent a registered-but-non-qualifying canister w
   });
 
   assert.equal(data.stakeE8s, 5_000_000n);
-  assert.equal(data.counts.registered_canister_count, 1n);
+  assert.equal(data.counts.tracked_canister_count, 1n);
   assert.equal(data.counts.qualifying_commitment_count, 0n);
   assert.equal(data.counts.total_output_e8s, 0n);
   assert.equal(data.counts.total_rewards_e8s, 0n);
@@ -680,7 +683,7 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
     historianActor: {
       async get_public_counts() {
         return historianCounts({
-          registered_canister_count: 0n,
+          tracked_canister_count: 0n,
           qualifying_commitment_count: 0n,
           sns_discovered_canister_count: 3n,
           total_output_e8s: 0n,
@@ -695,7 +698,7 @@ test('loadDashboardData keeps SNS-only discovery out of registered frontend tota
   });
 
   assert.equal(data.stakeE8s, 0n);
-  assert.equal(data.counts.registered_canister_count, 0n);
+  assert.equal(data.counts.tracked_canister_count, 0n);
   assert.equal(data.counts.qualifying_commitment_count, 0n);
   assert.equal(data.counts.total_output_e8s, 0n);
   assert.equal(data.counts.total_rewards_e8s, 0n);
@@ -805,10 +808,10 @@ test('loadDashboardData preserves historian data when ledger actor construction 
   assert.equal(data.hasAnyFailure, true);
 });
 
-test('hasCanisterSource detects candid variant-style source values', () => {
-  assert.equal(hasCanisterSource([{ MemoCommitment: null }], 'MemoCommitment'), true);
-  assert.equal(hasCanisterSource([{ SnsDiscovery: null }], 'MemoCommitment'), false);
-  assert.equal(hasCanisterSource([], 'MemoCommitment'), false);
+test('hasCanisterTrackingReason detects candid variant-style source values', () => {
+  assert.equal(hasCanisterTrackingReason([{ MemoCommitment: null }], 'MemoCommitment'), true);
+  assert.equal(hasCanisterTrackingReason([{ SnsDiscovery: null }], 'MemoCommitment'), false);
+  assert.equal(hasCanisterTrackingReason([], 'MemoCommitment'), false);
 });
 
 test('loadCanisterLogs queries management canister using target as effective canister id', async () => {
@@ -884,7 +887,7 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
         calls.push(['overview', canisterId.toText()]);
         return [{
           canister_id: target,
-          sources: [{ MemoCommitment: null }],
+          tracking_reasons: [{ MemoCommitment: null }],
           meta: {
             first_seen_ts: [100n],
             last_commitment_ts: [200n],
@@ -1000,7 +1003,7 @@ test('loadTrackerData pages relay registrations for tracker classification', asy
       async get_canister_overview() {
         return [{
           canister_id: target,
-          sources: [{ MemoCommitment: null }],
+          tracking_reasons: [{ MemoCommitment: null }],
           meta: {},
           cycles_points: 0,
           commitment_points: 0,
@@ -1095,7 +1098,7 @@ test('loadTrackerData pages recent historian histories until the timestamp cutof
       async get_canister_overview() {
         return [{
           canister_id: target,
-          sources: [{ MemoCommitment: null }],
+          tracking_reasons: [{ MemoCommitment: null }],
           meta: {},
           cycles_points: 4,
           commitment_points: 4,
@@ -1148,7 +1151,7 @@ test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries'
       async get_canister_overview() {
         return [{
           canister_id: target,
-          sources: [{ SnsDiscovery: null }],
+          tracking_reasons: [{ SnsDiscovery: null }],
           meta: {
             first_seen_ts: [100n],
             last_commitment_ts: [],

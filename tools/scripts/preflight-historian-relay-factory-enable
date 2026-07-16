@@ -18,12 +18,9 @@ fi
 python3 ./tools/scripts/validate-mainnet-install-args
 
 echo
-echo "Temporary historian upgrade args for live factory enablement:"
+echo "Historian reinstall args must be complete. Factory enablement excerpt:"
 cat <<'DID'
-(opt record {
-  relay_factory_enabled = opt true;
-  cycles_probe_policy = opt variant { Auto };
-})
+relay_factory_enabled = opt true;
 DID
 
 echo

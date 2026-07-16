@@ -18,7 +18,7 @@ export {
   accountIdentifierHex,
   bytesToHex,
   dquorumStakingAccount,
-  hasCanisterSource,
+  hasCanisterTrackingReason,
   relaySetupAccount,
   relaySetupSubaccount,
   summaryMetricsUnavailable,

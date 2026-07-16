@@ -44,10 +44,10 @@ EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
 REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256 = (
-    "7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844"
+    "6fe40931a3d3d6a35d219d80a52c267d5471a35c4d138c723a841b42a3b9b0cc"
 )
 REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256 = (
-    "ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f"
+    "7b509f03a6e3e838ddab6a379329949b5ebd8bb660dc69ed88eb89a88f22d206"
 )
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
@@ -679,7 +679,6 @@ def validate_historian() -> int:
     require_contains(text, f'index_canister_id = opt principal "{MAINNET["index"]}";', str(path))
     require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
     require_contains(text, f'faucet_canister_id = opt principal "{PROD["jupiter_faucet"]}";', str(path))
-    require_contains(text, "blackhole_canister_id = null;", str(path))
     require_contains(text, f'sns_wasm_canister_id = opt principal "{MAINNET["sns_wasm"]}";', str(path))
     historian_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
     if historian_min_tx_e8s < 10_000_000:
@@ -746,7 +745,6 @@ def validate_historian_relay_factory_enablement_fixture() -> None:
     path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable"
     text = path.read_text()
     require_contains(text, "relay_factory_enabled = opt true;", str(path))
-    require_contains(text, "cycles_probe_policy = opt variant { Auto };", str(path))
 
 
 def validate_historian_relay_factory_artifacts(path: Path) -> None:
