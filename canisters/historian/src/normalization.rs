@@ -73,6 +73,10 @@ pub(crate) fn validate_config(cfg: &Config) {
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
     );
+    assert!(
+        cfg.relay_setup_min_e8s > cfg.relay_setup_dust_e8s,
+        "relay_setup_min_e8s must be greater than relay_setup_dust_e8s"
+    );
     if cfg.relay_factory_enabled {
         assert!(
             crate::approved_self_service_relay_wasm().is_some()

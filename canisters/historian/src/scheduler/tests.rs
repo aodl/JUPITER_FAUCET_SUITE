@@ -1133,6 +1133,93 @@ mod tests {
     }
 
     #[test]
+    fn initial_cycles_probe_for_relay_target_does_not_refresh_staking_neuron() {
+        let _staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some([7u8; 32]);
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                std::iter::once(CanisterTrackingReason::RelayTarget).collect(),
+            );
+            st.initial_cycles_probe_queue.push(target);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+        assert!(governance.calls().is_empty());
+    }
+
+    #[test]
+    fn initial_cycles_probe_for_relay_instance_does_not_refresh_staking_neuron() {
+        let _staking_id = configure_state(10);
+        let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some([7u8; 32]);
+            st.distinct_canisters.insert(relay);
+            st.canister_tracking_reasons.insert(
+                relay,
+                std::iter::once(CanisterTrackingReason::RelayInstance).collect(),
+            );
+            st.initial_cycles_probe_queue.push(relay);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        assert_eq!(cycles_probe.blackhole_targets(), vec![relay]);
+        assert!(governance.calls().is_empty());
+    }
+
+    #[test]
+    fn initial_cycles_probe_for_sns_discovery_does_not_refresh_staking_neuron() {
+        let _staking_id = configure_state(10);
+        let target = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some([7u8; 32]);
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                std::iter::once(CanisterTrackingReason::SnsDiscovery).collect(),
+            );
+            st.initial_cycles_probe_queue.push(target);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+        assert!(governance.calls().is_empty());
+    }
+
+    #[test]
     fn failed_target_does_not_prevent_later_cycles_sweep_target() {
         configure_state(10);
         let target_a = principal("jufzc-caaaa-aaaar-qb5da-cai");
@@ -1379,7 +1466,7 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(
-                build_cycles_sweep_canisters(st, self_id),
+                build_cycles_sweep_canisters(st, self_id, 123),
                 vec![self_id, beneficiary]
             );
         });
@@ -1416,8 +1503,152 @@ mod tests {
             assert!(st.canister_tracking_reasons[&target]
                 .contains(&CanisterTrackingReason::RelayTarget));
             assert_eq!(
-                build_cycles_sweep_canisters(st, self_id),
+                build_cycles_sweep_canisters(st, self_id, 123),
                 vec![self_id, target, relay]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_sns_discovery_when_sns_tracking_enabled() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let sns_canister = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.distinct_canisters.insert(sns_canister);
+            st.canister_tracking_reasons.insert(
+                sns_canister,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::SnsDiscovery),
+            );
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_sns_discovery_mixed_with_relay_target_when_sns_tracking_enabled() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.distinct_canisters.insert(target);
+            let reasons =
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::SnsDiscovery);
+            st.canister_tracking_reasons.insert(
+                target,
+                crate::logic::merge_tracking_reasons(
+                    Some(&reasons),
+                    CanisterTrackingReason::RelayTarget,
+                ),
+            );
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_includes_retained_sns_discovery_when_sns_tracking_disabled() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let sns_canister = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = false;
+            st.distinct_canisters.insert(sns_canister);
+            st.canister_tracking_reasons.insert(
+                sns_canister,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::SnsDiscovery),
+            );
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id, sns_canister]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_same_tick_initial_probe_target() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::RelayTarget),
+            );
+            st.per_canister_meta
+                .entry(target)
+                .or_default()
+                .last_cycles_probe_ts = Some(123);
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 124),
+                vec![self_id, target]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_target_after_initial_probe_in_same_second() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::RelayTarget),
+            );
+            st.initial_cycles_probe_queue.push(target);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            123_456_789_000,
+            123,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+            assert_eq!(
+                st.per_canister_meta
+                    .get(&target)
+                    .and_then(|meta| meta.last_cycles_probe_ts),
+                Some(123)
+            );
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 124),
+                vec![self_id, target]
             );
         });
     }

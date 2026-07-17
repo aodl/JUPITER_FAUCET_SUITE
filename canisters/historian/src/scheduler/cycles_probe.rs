@@ -91,10 +91,11 @@ pub(super) async fn process_initial_cycles_probe_queue<
     cycles_probe_client: &C,
     governance: &G,
 ) -> Result<(), String> {
-    let (targets, max_entries) = state::with_root_state_mut(|st| {
+    let (targets, max_entries, should_refresh_stake) = state::with_root_state_mut(|st| {
         let max_per_tick = st.config.max_canisters_per_cycles_tick.max(1) as usize;
         let mut pending = std::mem::take(&mut st.initial_cycles_probe_queue);
         let mut selected = Vec::new();
+        let mut should_refresh_stake = false;
 
         while selected.len() < max_per_tick && !pending.is_empty() {
             let canister_id = pending.remove(0);
@@ -107,15 +108,20 @@ pub(super) async fn process_initial_cycles_probe_queue<
                 continue;
             }
             if should_probe_tracked_canister(st, canister_id) {
+                if should_refresh_staking_neuron_for_canister(st, &canister_id) {
+                    should_refresh_stake = true;
+                }
                 selected.push(canister_id);
             }
         }
 
         st.initial_cycles_probe_queue = pending;
-        (selected, st.config.max_cycles_entries_per_canister)
+        (
+            selected,
+            st.config.max_cycles_entries_per_canister,
+            should_refresh_stake,
+        )
     });
-
-    let should_refresh_stake = !targets.is_empty();
 
     for canister_id in targets {
         if let Err(err) = probe_and_record_cycles(
@@ -169,7 +175,7 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
     let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
         if st.active_cycles_sweep.is_none() {
             let self_id = ic_cdk::api::canister_self();
-            let canisters = build_cycles_sweep_canisters(st, self_id);
+            let canisters = build_cycles_sweep_canisters(st, self_id, now_secs);
             st.active_cycles_sweep = Some(ActiveCyclesSweep {
                 started_at_ts_nanos: timestamp_nanos,
                 canisters,

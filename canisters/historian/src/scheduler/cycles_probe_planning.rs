@@ -22,14 +22,48 @@ pub(super) fn should_probe_tracked_canister(
     crate::visible_tracking_reasons_for_canister(st, &canister_id).is_some()
 }
 
+pub(super) fn should_refresh_staking_neuron_for_canister(
+    st: &crate::state::State,
+    canister_id: &candid::Principal,
+) -> bool {
+    crate::visible_tracking_reasons_for_canister(st, canister_id)
+        .map(|reasons| reasons.contains(&crate::state::CanisterTrackingReason::MemoCommitment))
+        .unwrap_or(false)
+}
+
+fn ordinary_cycles_sweep_eligible(
+    st: &crate::state::State,
+    canister_id: &candid::Principal,
+    now_secs: u64,
+) -> bool {
+    let Some(reasons) = crate::visible_tracking_reasons_for_canister(st, canister_id) else {
+        return false;
+    };
+    if st.config.enable_sns_tracking
+        && reasons.contains(&crate::state::CanisterTrackingReason::SnsDiscovery)
+    {
+        return false;
+    }
+    if st
+        .per_canister_meta
+        .get(canister_id)
+        .and_then(|meta| meta.last_cycles_probe_ts)
+        == Some(now_secs)
+    {
+        return false;
+    }
+    true
+}
+
 pub(super) fn build_cycles_sweep_canisters(
     st: &crate::state::State,
     self_id: candid::Principal,
+    now_secs: u64,
 ) -> Vec<candid::Principal> {
     let mut canisters = vec![self_id];
     let mut seen = std::collections::BTreeSet::from([self_id]);
     for canister_id in st.distinct_canisters.iter().copied() {
-        if crate::visible_tracking_reasons_for_canister(st, &canister_id).is_none() {
+        if !ordinary_cycles_sweep_eligible(st, &canister_id, now_secs) {
             continue;
         }
         if seen.insert(canister_id) {

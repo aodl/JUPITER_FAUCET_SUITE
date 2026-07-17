@@ -214,11 +214,11 @@ export async function loadTrackerData({
   const overviewValue = readOptional(overview);
   const isCommitmentBeneficiary = hasCanisterTrackingReason(overviewValue?.tracking_reasons, 'MemoCommitment');
 
-  if (!overviewValue || !isCommitmentBeneficiary) {
+  if (!overviewValue) {
     return {
       canisterId,
       overview: overviewValue,
-      isRecognized: Boolean(overviewValue),
+      isRecognized: false,
       isCommitmentBeneficiary,
       commitments: { items: [] },
       cycles: { items: [] },
@@ -228,11 +228,13 @@ export async function loadTrackerData({
     };
   }
 
-  const commitmentsPromise = loadTrackerCommitments(historian, {
-    canisterId,
-    historyLimit,
-    minTimestampNanos,
-  });
+  const commitmentsPromise = isCommitmentBeneficiary
+    ? loadTrackerCommitments(historian, {
+        canisterId,
+        historyLimit,
+        minTimestampNanos,
+      })
+    : Promise.resolve({ items: [] });
   const cyclesPromise = loadTrackerCycles(historian, {
     canisterId,
     historyLimit,
@@ -270,7 +272,7 @@ export async function loadTrackerData({
     status: fulfilledOrNull(statusResult),
     relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
     isRecognized: true,
-    isCommitmentBeneficiary: true,
+    isCommitmentBeneficiary,
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
     cycles: fulfilledOrNull(cyclesResult) || { items: [] },
     logs: fulfilledOrNull(logsResult) || { items: [] },

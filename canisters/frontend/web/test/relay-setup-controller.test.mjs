@@ -299,7 +299,7 @@ test('relay setup displays payment details for a new unfunded target without not
   });
 });
 
-test('relay setup hides payment details when backend reports target not observable', async () => {
+test('relay setup hides payment details when backend reports funded target recovery failure', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const message = 'no supported cycles-observation route could read the target balance';
@@ -321,7 +321,7 @@ test('relay setup hides payment details when backend reports target not observab
           },
           async notify_relay_setup() {
             calls.push(['notify']);
-            return { TargetNotObservable: { message } };
+            return { Failed: { status: { ManualRecoveryRequired: null }, message } };
           },
         },
       }),
@@ -339,7 +339,7 @@ test('relay setup hides payment details when backend reports target not observab
     nodes.get('relay-setup-target-input').value = target;
     await controller.submitTarget();
 
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Target not observable');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
     assert.equal(nodes.get('relay-setup-status-label').textContent, message);
     assert.equal(nodes.get('relay-setup-warning').hidden, true);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
@@ -723,7 +723,7 @@ test('relay setup renders payment-blocked view without notifying', async () => {
       ledgerActorFactory: () => ({
         async icrc1_balance_of() {
           calls.push(['balance']);
-          return 1_000_000_000n;
+          return 0n;
         },
       }),
       hostProvider: () => 'https://example.test',
@@ -735,11 +735,11 @@ test('relay setup renders payment-blocked view without notifying', async () => {
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
     assert.equal(nodes.get('relay-setup-status').textContent, 'Not funded');
     assert.equal(nodes.get('relay-setup-status-label').textContent, 'target must not be a configured protocol dependency');
-    assert.deepEqual(calls, []);
+    assert.deepEqual(calls, [['balance']]);
   });
 });
 
-test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_invite_payment', async () => {
+test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_notify_when_unfunded', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const calls = [];
@@ -766,7 +766,7 @@ test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_invite_
           },
           async notify_relay_setup() {
             calls.push(['notify']);
-            throw new Error('notify should not be called for a payment-blocked view');
+            throw new Error('notify should not be called for an unfunded payment-blocked view');
           },
         },
       }),
@@ -787,7 +787,75 @@ test('relay_setup_factory_unavailable_hides_payment_details_and_does_not_invite_
     assert.equal(nodes.get('relay-setup-status-label').textContent, 'relay factory is disabled');
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
     assert.equal(nodes.get('relay-setup-account-identifier').textContent, '—');
-    assert.deepEqual(calls, [['view']]);
+    assert.deepEqual(calls, [['view'], ['balance']]);
+  });
+});
+
+test('relay_setup_factory_unavailable_notifies_funded_blocked_account_for_refund_recovery', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const calls = [];
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            calls.push(['view']);
+            return setupView({
+              target,
+              historian: historianId,
+              status: calls.some((call) => call[0] === 'notify')
+                ? { Refunding: null }
+                : { PaymentNotAllowed: null },
+              paymentAllowed: false,
+              paymentBlockedReason: ['relay factory is disabled'],
+              factoryAvailable: false,
+            });
+          },
+          async get_relay_setup_recovery_view() {
+            calls.push(['recovery']);
+            return {
+              ...recoveryView({ target, message: 'refund in progress' }),
+              status: { Refunding: null },
+              last_error: [],
+            };
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup(arg) {
+            calls.push(['notify', arg.toText()]);
+            return { RefundPending: { reason: 'refund in progress' } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          calls.push(['balance']);
+          return 50_000n;
+        },
+      }),
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    await controller.submitTarget();
+
+    assert.equal(nodes.get('relay-setup-factory').textContent, 'Unavailable');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Refund pending');
+    assert.equal(nodes.get('relay-setup-status-label').textContent, 'refund in progress');
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, '—');
+    assert.deepEqual(calls, [
+      ['view'],
+      ['balance'],
+      ['notify', target],
+      ['view'],
+      ['recovery'],
+    ]);
   });
 });
 

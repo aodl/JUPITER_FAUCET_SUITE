@@ -9,7 +9,6 @@ const TERMINAL_POLL_STATUSES = new Set([
   'Active',
   'Refunded',
   'ManualRecoveryRequired',
-  'TargetNotObservable',
 ]);
 
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
@@ -19,11 +18,11 @@ const STATUS_LABELS = {
   NotFunded: 'Not funded',
   BelowMinimum: 'Below minimum',
   InsufficientForCurrentRate: 'Below current requirement',
-  TargetNotObservable: 'Target not observable',
   PaymentNotAllowed: 'Payment not allowed',
   IndexNotReady: 'Index not ready',
   CreatingRelay: 'Creating relay',
   SweepingToExistingRelay: 'Sweeping to existing relay',
+  Refunding: 'Refund pending',
   RefundPending: 'Refund pending',
   FailedRetryable: 'Retryable failure',
   ManualRecoveryRequired: 'Manual recovery required',
@@ -31,7 +30,6 @@ const STATUS_LABELS = {
 const RECOVERY_STATUSES = new Set([
   'BelowMinimum',
   'InsufficientForCurrentRate',
-  'TargetNotObservable',
   'FailedRetryable',
   'ManualRecoveryRequired',
   'Ambiguous',
@@ -136,7 +134,6 @@ export function icrcAccountText(account) {
 
 function statusFromNotifyResult(result) {
   const kind = variantName(result);
-  if (kind === 'TargetNotObservable') return 'TargetNotObservable';
   if (kind === 'BelowMinimum') return 'BelowMinimum';
   if (kind === 'InsufficientForCurrentRate') return 'InsufficientForCurrentRate';
   if (kind === 'Active') return 'Active';
@@ -153,7 +150,6 @@ function messageFromNotifyResult(result) {
   const kind = variantName(result);
   if (kind === 'Failed') return result.Failed?.message || '';
   if (kind === 'RefundPending') return result.RefundPending?.reason || '';
-  if (kind === 'TargetNotObservable') return result.TargetNotObservable?.message || '';
   if (kind === 'BelowMinimum') {
     return `Current balance ${formatIcpE8s(result.BelowMinimum.current_balance_e8s)} is below required ${formatIcpE8s(result.BelowMinimum.minimum_e8s)}.`;
   }
@@ -590,12 +586,6 @@ export function createRelaySetupController({
       if (!submittedTargetStillCurrent(targetText)) return;
       state.target = target;
       state.view = view;
-      if (view?.payment_allowed === false) {
-        state.loaded = true;
-        state.loading = false;
-        render();
-        return;
-      }
       const ledger = await loadLedger({ agent, historian });
       if (!submittedTargetStillCurrent(targetText)) return;
       const balance = await ledger.icrc1_balance_of(view.setup_account);

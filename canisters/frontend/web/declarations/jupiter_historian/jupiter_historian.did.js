@@ -338,7 +338,6 @@ export const idlFactory = ({ IDL }) => {
       'message' : IDL.Text,
     }),
     'Refunded' : IDL.Record({ 'blocks' : IDL.Vec(IDL.Nat64) }),
-    'TargetNotObservable' : IDL.Record({ 'message' : IDL.Text }),
     'Active' : IDL.Record({ 'relay' : RelayRegistration }),
     'InsufficientForCurrentRate' : IDL.Record({
       'current_balance_e8s' : IDL.Nat64,

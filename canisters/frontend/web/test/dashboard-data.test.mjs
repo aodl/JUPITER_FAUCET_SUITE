@@ -1140,8 +1140,9 @@ test('loadTrackerData pages recent historian histories until the timestamp cutof
   );
 });
 
-test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries', async () => {
+test('loadTrackerData treats SNS-only canisters as cycles-tracked without commitment history', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const calls = [];
   const data = await loadTrackerData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
@@ -1165,16 +1166,119 @@ test('loadTrackerData treats SNS-only canisters as not commitment beneficiaries'
       async get_commitment_history() {
         throw new Error('SNS-only canisters should not query commitment history');
       },
-      async get_cycles_history() {
-        throw new Error('SNS-only canisters should not query cycles history');
+      async get_cycles_history(args) {
+        calls.push(['cycles', args]);
+        return {
+          items: [{ timestamp_nanos: 300_000_000_000n, cycles: 1_000_000n, source: { SnsRootSummary: null } }],
+          next_start_after_ts: [],
+        };
+      },
+      async get_public_status() {
+        return historianStatus({});
       },
     },
+    canisterLogsLoader: async () => ({ items: [] }),
   });
 
   assert.equal(data.isRecognized, true);
   assert.equal(data.isCommitmentBeneficiary, false);
   assert.deepEqual(data.commitments.items, []);
-  assert.deepEqual(data.cycles.items, []);
+  assert.deepEqual(data.cycles.items.map((item) => item.cycles), [1_000_000n]);
+  assert.deepEqual(calls.map(([kind]) => kind), ['cycles']);
+});
+
+test('loadTrackerData loads RelayTarget cycles without commitment history', async () => {
+  const target = principal('jufzc-caaaa-aaaar-qb5da-cai');
+  const calls = [];
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_canister_overview() {
+        return [{
+          canister_id: target,
+          tracking_reasons: [{ RelayTarget: null }],
+          meta: {
+            first_seen_ts: [100n],
+            last_commitment_ts: [],
+            last_cycles_probe_ts: [300n],
+            last_cycles_probe_result: [{ Ok: { BlackholeStatus: null } }],
+          },
+          cycles_points: 1,
+          commitment_points: 0,
+        }];
+      },
+      async get_commitment_history() {
+        throw new Error('RelayTarget should not query commitment history');
+      },
+      async get_cycles_history(args) {
+        calls.push(['cycles', args]);
+        return {
+          items: [{ timestamp_nanos: 300_000_000_000n, cycles: 2_000_000n, source: { BlackholeStatus: null } }],
+          next_start_after_ts: [],
+        };
+      },
+      async get_public_status() {
+        return historianStatus({});
+      },
+    },
+    canisterLogsLoader: async () => ({ items: [] }),
+  });
+
+  assert.equal(data.isRecognized, true);
+  assert.equal(data.isCommitmentBeneficiary, false);
+  assert.deepEqual(data.commitments.items, []);
+  assert.deepEqual(data.cycles.items.map((item) => item.cycles), [2_000_000n]);
+  assert.deepEqual(calls.map(([kind]) => kind), ['cycles']);
+});
+
+test('loadTrackerData loads RelayInstance cycles without commitment history', async () => {
+  const target = principal('u2qkp-aqaaa-aaaar-qb7ea-cai');
+  const calls = [];
+  const data = await loadTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_canister_overview() {
+        return [{
+          canister_id: target,
+          tracking_reasons: [{ RelayInstance: null }],
+          meta: {
+            first_seen_ts: [100n],
+            last_commitment_ts: [],
+            last_cycles_probe_ts: [300n],
+            last_cycles_probe_result: [{ Ok: { BlackholeStatus: null } }],
+          },
+          cycles_points: 1,
+          commitment_points: 0,
+        }];
+      },
+      async get_commitment_history() {
+        throw new Error('RelayInstance should not query commitment history');
+      },
+      async get_cycles_history(args) {
+        calls.push(['cycles', args]);
+        return {
+          items: [{ timestamp_nanos: 300_000_000_000n, cycles: 3_000_000n, source: { BlackholeStatus: null } }],
+          next_start_after_ts: [],
+        };
+      },
+      async get_public_status() {
+        return historianStatus({});
+      },
+    },
+    canisterLogsLoader: async () => ({ items: [] }),
+  });
+
+  assert.equal(data.isRecognized, true);
+  assert.equal(data.isCommitmentBeneficiary, false);
+  assert.deepEqual(data.commitments.items, []);
+  assert.deepEqual(data.cycles.items.map((item) => item.cycles), [3_000_000n]);
+  assert.deepEqual(calls.map(([kind]) => kind), ['cycles']);
 });
 
 test('loadRawIcpCanisterTrackerData uses the large raw ICP transfer limit by default', async () => {

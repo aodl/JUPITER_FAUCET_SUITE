@@ -46,7 +46,7 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         commitment_history,
         cycles_history,
         per_canister_meta,
-        cached_cycles_probe_routes: root.cached_cycles_probe_routes.unwrap_or_default(),
+        cached_cycles_probe_routes: BTreeMap::new(),
         relay_registry_by_target,
         relay_setup_jobs,
         memo_registered_canister_summaries_cache: None,

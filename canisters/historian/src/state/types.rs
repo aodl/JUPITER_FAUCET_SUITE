@@ -325,7 +325,6 @@ pub enum RelaySetupStatus {
     NotFunded,
     BelowMinimum,
     InsufficientForCurrentRate,
-    TargetNotObservable,
     Pending,
     ConvertingCycles,
     CycleTransferAccepted,
@@ -533,8 +532,6 @@ pub(crate) struct StableRootState {
     pub last_icp_xdr_rate_attempt_ts: Option<u64>,
     #[serde(default)]
     pub last_icp_xdr_rate_error: Option<String>,
-    #[serde(default)]
-    pub cached_cycles_probe_routes: Option<BTreeMap<Principal, CyclesProbeRoute>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

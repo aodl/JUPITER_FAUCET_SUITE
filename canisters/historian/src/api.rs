@@ -225,9 +225,7 @@ impl From<RelaySetupStatus> for RelaySetupPublicStatus {
         match value {
             RelaySetupStatus::NotFunded => Self::NotFunded,
             RelaySetupStatus::BelowMinimum | RelaySetupStatus::SweepBelowDust => Self::BelowMinimum,
-            RelaySetupStatus::TargetNotObservable | RelaySetupStatus::FailedTerminal => {
-                Self::ManualRecoveryRequired
-            }
+            RelaySetupStatus::FailedTerminal => Self::ManualRecoveryRequired,
             RelaySetupStatus::RefundAvailable | RelaySetupStatus::Refunding => Self::Refunding,
             RelaySetupStatus::Refunded => Self::Refunded,
             RelaySetupStatus::IndexNotReady => Self::IndexNotReady,
@@ -321,9 +319,6 @@ pub enum RelaySetupNotifyResult {
     InsufficientForCurrentRate {
         required_e8s: u64,
         current_balance_e8s: u64,
-    },
-    TargetNotObservable {
-        message: String,
     },
     Pending {
         status: RelaySetupPublicStatus,

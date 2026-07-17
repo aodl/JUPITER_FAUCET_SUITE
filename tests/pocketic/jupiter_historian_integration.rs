@@ -546,9 +546,6 @@ enum RelaySetupNotifyResult {
         required_e8s: u64,
         current_balance_e8s: u64,
     },
-    TargetNotObservable {
-        message: String,
-    },
     Pending {
         status: RelaySetupPublicStatus,
     },

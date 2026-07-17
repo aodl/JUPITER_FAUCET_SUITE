@@ -182,7 +182,6 @@ type RelaySetupStatus = variant {
   NotFunded;
   BelowMinimum;
   InsufficientForCurrentRate;
-  TargetNotObservable;
   Pending;
   ConvertingCycles;
   CycleTransferAccepted;
@@ -339,7 +338,6 @@ type ListRelayRegistrationsResponse = record {
 type RelaySetupNotifyResult = variant {
   BelowMinimum : record { minimum_e8s : nat64; current_balance_e8s : nat64 };
   InsufficientForCurrentRate : record { required_e8s : nat64; current_balance_e8s : nat64 };
-  TargetNotObservable : record { message : text };
   Pending : record { status : RelaySetupPublicStatus };
   Active : record { relay : RelayRegistration };
   SweptToExistingRelay : record { relay : RelayRegistration; amount_e8s : nat64; block_index : nat64 };
