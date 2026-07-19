@@ -9,6 +9,8 @@ const TERMINAL_POLL_STATUSES = new Set([
   'Active',
   'Refunded',
   'ManualRecoveryRequired',
+  'SweptToExistingRelay',
+  'SweepBelowDust',
 ]);
 
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
@@ -22,6 +24,8 @@ const STATUS_LABELS = {
   IndexNotReady: 'Index not ready',
   CreatingRelay: 'Creating relay',
   SweepingToExistingRelay: 'Sweeping to existing relay',
+  SweptToExistingRelay: 'Swept to existing relay',
+  SweepBelowDust: 'Balance below sweep minimum',
   Refunding: 'Refund pending',
   RefundPending: 'Refund pending',
   FailedRetryable: 'Retryable failure',
@@ -595,9 +599,7 @@ export function createRelaySetupController({
       state.loaded = true;
       state.loading = false;
 
-      const viewStatus = statusKey(view?.status);
-      const terminalView = TERMINAL_POLL_STATUSES.has(viewStatus);
-      if (!terminalView && state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S) {
+      if (state.balanceE8s > FRONTEND_NOTIFY_MIN_E8S) {
         state.notifying = true;
         render();
         state.notifyResult = await historian.notify_relay_setup(target);

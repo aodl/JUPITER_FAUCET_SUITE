@@ -155,6 +155,15 @@ function recoveryView({ target, message }) {
   };
 }
 
+function activeRelayRecord({ relay, target }) {
+  return {
+    relay_canister_id: relay,
+    target_canister_id: Principal.fromText(target),
+    kind: { SelfService: null },
+    created_at_ts: [],
+  };
+}
+
 test('relay setup renders full ICRC payment account fixture', () => {
   const account = {
     owner: Principal.fromText('j5gs6-uiaaa-aaaar-qb5cq-cai'),
@@ -497,12 +506,7 @@ test('relay setup notifies above dust and renders active relay', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const relay = Principal.fromText('br5f7-7uaaa-aaaaa-qaaca-cai');
-  const activeRelay = {
-    relay_canister_id: relay,
-    target_canister_id: Principal.fromText(target),
-    kind: { SelfService: null },
-    created_at_ts: [],
-  };
+  const activeRelay = activeRelayRecord({ relay, target });
   const calls = [];
 
   await withRelaySetupDom(async (nodes) => {
@@ -517,6 +521,7 @@ test('relay setup notifies above dust and renders active relay', async () => {
               target,
               historian: historianId,
               existingRelay: calls.some((call) => call[0] === 'notify') ? [activeRelay] : [],
+              status: calls.some((call) => call[0] === 'notify') ? { Active: null } : { NotFunded: null },
             });
           },
           async get_public_status() {
@@ -547,18 +552,13 @@ test('relay setup notifies above dust and renders active relay', async () => {
   });
 });
 
-test('relay setup existing active relay sweeps only when balance is above threshold', async () => {
+test('relay setup existing active relay with dust displays relay and stops polling without notify', async () => {
   const target = '22255-zqaaa-aaaas-qf6uq-cai';
   const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
   const relay = Principal.fromText('br5f7-7uaaa-aaaaa-qaaca-cai');
-  const activeRelay = {
-    relay_canister_id: relay,
-    target_canister_id: Principal.fromText(target),
-    kind: { SelfService: null },
-    created_at_ts: [],
-  };
+  const activeRelay = activeRelayRecord({ relay, target });
   const calls = [];
-  let balance = 1n;
+  let cleared = 0;
 
   await withRelaySetupDom(async (nodes) => {
     const controller = createRelaySetupController({
@@ -568,23 +568,32 @@ test('relay setup existing active relay sweeps only when balance is above thresh
         historian: {
           async get_relay_setup_view() {
             calls.push(['view']);
-            return setupView({ target, historian: historianId, existingRelay: [activeRelay] });
+            return setupView({
+              target,
+              historian: historianId,
+              existingRelay: [activeRelay],
+              status: { Active: null },
+            });
           },
           async get_public_status() {
             return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
           },
           async notify_relay_setup(arg) {
             calls.push(['notify', arg.toText()]);
-            return { SweptToExistingRelay: { relay: activeRelay, amount_e8s: balance, block_index: 99n } };
+            throw new Error('notify should not run for zero or dust balance');
           },
         },
       }),
       ledgerActorFactory: () => ({
         async icrc1_balance_of() {
           calls.push(['balance']);
-          return balance;
+          return 10_000n;
         },
       }),
+      setIntervalFn: () => 7,
+      clearIntervalFn: () => {
+        cleared += 1;
+      },
       hostProvider: () => 'https://example.test',
     });
     nodes.get('relay-setup-target-input').value = target;
@@ -592,13 +601,131 @@ test('relay setup existing active relay sweeps only when balance is above thresh
     await controller.submitTarget();
     assert.deepEqual(calls.filter((call) => call[0] === 'notify'), []);
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
+    assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7-7uaaa-aaaaa-qaaca-cai/);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(controller.state.polling, false);
+    assert.equal(cleared, 1);
+  });
+});
 
-    calls.length = 0;
-    balance = 20_000n;
+test('relay setup existing active relay renders below-dust sweep result and stops polling', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const relay = Principal.fromText('br5f7-7uaaa-aaaaa-qaaca-cai');
+  const activeRelay = activeRelayRecord({ relay, target });
+  const calls = [];
+  let cleared = 0;
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            calls.push(['view']);
+            return setupView({
+              target,
+              historian: historianId,
+              existingRelay: [activeRelay],
+              status: { Active: null },
+            });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup(arg) {
+            calls.push(['notify', arg.toText()]);
+            return {
+              SweepBelowDust: {
+                relay: activeRelay,
+                current_balance_e8s: 15_000n,
+              },
+            };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          calls.push(['balance']);
+          return 15_000n;
+        },
+      }),
+      setIntervalFn: () => 7,
+      clearIntervalFn: () => {
+        cleared += 1;
+      },
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
     await controller.submitTarget();
     assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'SweptToExistingRelay');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Balance below sweep minimum');
+    assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
+    assert.equal(controller.state.polling, false);
+    assert.equal(cleared, 1);
+
+    await controller.refreshBalanceAndMaybeNotify(target);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
+  });
+});
+
+test('relay setup existing active relay renders successful sweep result and stops polling', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const relay = Principal.fromText('br5f7-7uaaa-aaaaa-qaaca-cai');
+  const activeRelay = activeRelayRecord({ relay, target });
+  const calls = [];
+  let cleared = 0;
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            calls.push(['view']);
+            return setupView({
+              target,
+              historian: historianId,
+              existingRelay: [activeRelay],
+              status: { Active: null },
+            });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup(arg) {
+            calls.push(['notify', arg.toText()]);
+            return { SweptToExistingRelay: { relay: activeRelay, amount_e8s: 50_000n, block_index: 99n } };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          calls.push(['balance']);
+          return 50_000n;
+        },
+      }),
+      setIntervalFn: () => 7,
+      clearIntervalFn: () => {
+        cleared += 1;
+      },
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    await controller.submitTarget();
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Swept to existing relay');
+    assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
+    assert.equal(controller.state.polling, false);
+    assert.equal(cleared, 1);
+
+    await controller.refreshBalanceAndMaybeNotify(target);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
   });
 });
 
@@ -689,6 +816,69 @@ test('relay setup has no refund button and renders automatic refunded result', a
     assert.equal(nodes.get('relay-setup-refund').hidden, true);
     assert.equal(nodes.get('relay-setup-status').textContent, 'Refunded');
     assert.deepEqual(calls, []);
+  });
+});
+
+test('relay setup refunded target with late funds notifies once and uses backend result', async () => {
+  const target = '22255-zqaaa-aaaas-qf6uq-cai';
+  const historianId = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+  const calls = [];
+  let cleared = 0;
+
+  await withRelaySetupDom(async (nodes) => {
+    const controller = createRelaySetupController({
+      frontendConfig: { historianCanisterId: historianId },
+      createHistorian: async () => ({
+        agent: { test: true },
+        historian: {
+          async get_relay_setup_view() {
+            calls.push(['view']);
+            return setupView({
+              target,
+              historian: historianId,
+              existingRelay: [],
+              status: { Refunded: null },
+            });
+          },
+          async get_public_status() {
+            return { ledger_canister_id: Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai') };
+          },
+          async notify_relay_setup(arg) {
+            calls.push(['notify', arg.toText()]);
+            return {
+              Refunded: {
+                blocks: [100n],
+              },
+            };
+          },
+        },
+      }),
+      ledgerActorFactory: () => ({
+        async icrc1_balance_of() {
+          calls.push(['balance']);
+          return 50_000n;
+        },
+      }),
+      setIntervalFn: () => 7,
+      clearIntervalFn: () => {
+        cleared += 1;
+      },
+      hostProvider: () => 'https://example.test',
+    });
+    nodes.get('relay-setup-target-input').value = target;
+
+    await controller.submitTarget();
+
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Refunded');
+    assert.equal(nodes.get('relay-setup-existing-relay').hidden, true);
+    assert.equal(nodes.get('relay-setup-refund').hidden, true);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(controller.state.polling, false);
+    assert.equal(cleared, 1);
+
+    await controller.refreshBalanceAndMaybeNotify(target);
+    assert.deepEqual(calls.filter((call) => call[0] === 'notify'), [['notify', target]]);
   });
 });
 
