@@ -19,10 +19,15 @@ type Config = record {
   cmc_canister_id : principal;
   governance_canister_id : principal;
   blackhole_canister_id : principal;
+  cycles_probe_policy : CyclesProbePolicy;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
+};
+type CyclesProbePolicy = variant {
+  FixedBlackhole : record { canister_id : principal };
+  Auto;
 };
 type RelayMode = variant {
   BaselineOnly;
@@ -130,6 +135,7 @@ type DebugConfig = record {
   cmc_canister_id : principal;
   governance_canister_id : principal;
   blackhole_canister_id : principal;
+  cycles_probe_policy : CyclesProbePolicy;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;

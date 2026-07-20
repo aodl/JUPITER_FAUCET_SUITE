@@ -15,11 +15,11 @@ pub(super) fn apply_sns_canister_summary(
     let dirty_canister_id = canister_id;
     state::with_root_registry_and_cycles_canister_state_mut(dirty_canister_id, |st| {
         st.distinct_canisters.insert(canister_id);
-        st.canister_sources.insert(
+        st.canister_tracking_reasons.insert(
             canister_id,
-            logic::merge_sources(
-                st.canister_sources.get(&canister_id),
-                CanisterSource::SnsDiscovery,
+            logic::merge_tracking_reasons(
+                st.canister_tracking_reasons.get(&canister_id),
+                CanisterTrackingReason::SnsDiscovery,
             ),
         );
         if let Some(cycles) = cycles {
@@ -62,7 +62,7 @@ pub(super) fn apply_sns_canister_summary(
                 CyclesProbeResult::NotAvailable,
             );
         }
-        crate::refresh_registered_canister_summary(st, canister_id);
+        crate::refresh_memo_registered_canister_summary(st, canister_id);
     });
 }
 
@@ -120,10 +120,16 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     let end = (snapshot.next_index + max_per_tick as u64)
         .min(snapshot.root_canister_ids.len() as u64) as usize;
     for root_id in snapshot.root_canister_ids[start..end].iter().copied() {
-        let summary = sns_root
-            .get_sns_canisters_summary(root_id)
-            .await
-            .map_err(|e| format!("get_sns_canisters_summary failed: {e}"))?;
+        let summary = match sns_root.get_sns_canisters_summary(root_id).await {
+            Ok(summary) => summary,
+            Err(err) => {
+                log_error(&format!(
+                    "historian SNS discovery skipped root {} after get_sns_canisters_summary failed: {err}",
+                    root_id.to_text()
+                ));
+                continue;
+            }
+        };
         if let Some(summary) = summary.root {
             apply_sns_canister_summary(
                 discovery_timestamp_nanos,

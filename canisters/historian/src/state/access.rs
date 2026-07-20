@@ -5,8 +5,27 @@ pub(crate) fn set_state(st: State) {
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
+#[cfg(test)]
 pub(crate) fn set_state_root_only(st: State) {
     persist_snapshot_sections(&st, DIRTY_ROOT);
+    clear_persistence_dirty();
+    STATE.with(|s| *s.borrow_mut() = Some(st));
+}
+
+pub(crate) fn set_state_root_and_registry_principals(
+    st: State,
+    registry_principals: &BTreeSet<Principal>,
+) {
+    persist_snapshot_sections_scoped(
+        &st,
+        DIRTY_ROOT | DIRTY_REGISTRY,
+        (!registry_principals.is_empty()).then_some(registry_principals),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
     clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
@@ -84,6 +103,7 @@ pub(crate) fn begin_persistence_batch() -> PersistenceBatch {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn with_state_mut_sections_scoped<R>(
     dirty_sections: u8,
     registry_principal: Option<Principal>,
@@ -339,6 +359,22 @@ pub(crate) fn with_root_and_relay_factory_state_mut<R>(
 ) -> R {
     with_state_mut_sections_scoped(
         DIRTY_ROOT | DIRTY_RELAY_FACTORY,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(target),
+        f,
+    )
+}
+
+pub(crate) fn with_root_all_registry_and_relay_factory_state_mut<R>(
+    target: Principal,
+    f: impl FnOnce(&mut State) -> R,
+) -> R {
+    with_state_mut_sections_scoped(
+        DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_RELAY_FACTORY,
         None,
         None,
         None,

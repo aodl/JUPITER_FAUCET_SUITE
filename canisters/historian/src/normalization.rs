@@ -8,8 +8,8 @@ pub(crate) use std::collections::{BTreeMap, BTreeSet};
 
 #[allow(unused_imports)]
 pub(crate) use crate::state::{
-    CanisterMeta, CanisterSource, CommitmentIndexFault, CommitmentSample, Config, CyclesSample,
-    IcpXdrRateSnapshot, InvalidCommitment, RecentCommitment, State,
+    CanisterMeta, CanisterTrackingReason, CommitmentIndexFault, CommitmentSample, Config,
+    CyclesSample, IcpXdrRateSnapshot, InvalidCommitment, RecentCommitment, State,
 };
 
 pub(crate) const MAX_PUBLIC_QUERY_LIMIT: u32 = 100;
@@ -41,7 +41,6 @@ pub(crate) fn validate_config(cfg: &Config) {
     assert_non_anonymous_account("rewards_account", &cfg.rewards_account);
     assert_non_anonymous_principal("ledger_canister_id", cfg.ledger_canister_id);
     assert_non_anonymous_principal("index_canister_id", cfg.index_canister_id);
-    assert_non_anonymous_principal("blackhole_canister_id", cfg.blackhole_canister_id);
     assert_non_anonymous_principal("sns_wasm_canister_id", cfg.sns_wasm_canister_id);
     assert_non_anonymous_principal("xrc_canister_id", cfg.xrc_canister_id);
     if let Some(cmc_canister_id) = cfg.cmc_canister_id {
@@ -73,6 +72,10 @@ pub(crate) fn validate_config(cfg: &Config) {
     assert!(
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
+    );
+    assert!(
+        cfg.relay_setup_min_e8s > cfg.relay_setup_dust_e8s,
+        "relay_setup_min_e8s must be greater than relay_setup_dust_e8s"
     );
     if cfg.relay_factory_enabled {
         assert!(
@@ -162,21 +165,21 @@ pub(crate) fn normalize_recent_invalid_commitments(items: &mut Vec<InvalidCommit
 pub(crate) fn memo_source_is_registered(
     st: &State,
     canister_id: &Principal,
-    sources: &BTreeSet<CanisterSource>,
+    sources: &BTreeSet<CanisterTrackingReason>,
 ) -> bool {
-    sources.contains(&CanisterSource::MemoCommitment)
+    sources.contains(&CanisterTrackingReason::MemoCommitment)
         && commitment_history_snapshot(st, *canister_id)
             .into_iter()
             .any(|item| item.counts_toward_faucet)
 }
 
-pub(crate) fn visible_sources_for_canister(
+pub(crate) fn visible_tracking_reasons_for_canister(
     st: &State,
     canister_id: &Principal,
-) -> Option<BTreeSet<CanisterSource>> {
-    let mut sources = st.canister_sources.get(canister_id)?.clone();
+) -> Option<BTreeSet<CanisterTrackingReason>> {
+    let mut sources = st.canister_tracking_reasons.get(canister_id)?.clone();
     if !memo_source_is_registered(st, canister_id, &sources) {
-        sources.remove(&CanisterSource::MemoCommitment);
+        sources.remove(&CanisterTrackingReason::MemoCommitment);
     }
     if sources.is_empty() {
         return None;
@@ -265,10 +268,10 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
         .retain(|_, history| !history.is_empty());
 
     let stale_memo_only_canisters: Vec<_> = st
-        .canister_sources
+        .canister_tracking_reasons
         .iter()
         .filter_map(|(canister_id, sources)| {
-            if sources.contains(&CanisterSource::MemoCommitment)
+            if sources.contains(&CanisterTrackingReason::MemoCommitment)
                 && !memo_source_is_registered(st, canister_id, sources)
             {
                 Some(*canister_id)
@@ -278,14 +281,15 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
         })
         .collect();
     for canister_id in stale_memo_only_canisters {
-        let remove_entry = if let Some(sources) = st.canister_sources.get_mut(&canister_id) {
-            sources.remove(&CanisterSource::MemoCommitment);
+        let remove_entry = if let Some(sources) = st.canister_tracking_reasons.get_mut(&canister_id)
+        {
+            sources.remove(&CanisterTrackingReason::MemoCommitment);
             sources.is_empty()
         } else {
             false
         };
         if remove_entry {
-            st.canister_sources.remove(&canister_id);
+            st.canister_tracking_reasons.remove(&canister_id);
             st.cycles_history.remove(&canister_id);
             st.per_canister_meta.remove(&canister_id);
         }
@@ -328,12 +332,12 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
     }
 
     let distinct_canisters: BTreeSet<_> = st
-        .canister_sources
+        .canister_tracking_reasons
         .keys()
         .copied()
         .chain(commitment_history_canister_ids(st))
         .chain(cycles_history_canister_ids(st))
         .collect();
     st.distinct_canisters = distinct_canisters;
-    rebuild_registered_canister_summaries_cache(st);
+    rebuild_memo_registered_canister_summaries_cache(st);
 }

@@ -44,10 +44,10 @@ EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 EXPECTED_HISTORIAN_SELF_SERVICE_RELAY_MAX_TRANSFERS_PER_TICK = 10
 REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256 = (
-    "7e1f98468e68235cd003e537016d298527387077f7b48faed893bc94f984d844"
+    "6fe40931a3d3d6a35d219d80a52c267d5471a35c4d138c723a841b42a3b9b0cc"
 )
 REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256 = (
-    "ec58eeae59de2abe29fa9c2c3d916dded91d4a886b63cf26ab6b2591fe00975f"
+    "7b509f03a6e3e838ddab6a379329949b5ebd8bb660dc69ed88eb89a88f22d206"
 )
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
@@ -114,6 +114,16 @@ def fail(msg: str) -> None:
 def require_contains(text: str, needle: str, context: str) -> None:
     if needle not in text:
         fail(f"{context} is missing `{needle}`")
+
+
+def non_comment_command_lines(text: str) -> list[str]:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        lines.append(stripped)
+    return lines
 
 
 def extract_nat64(text: str, field: str, path: Path) -> int:
@@ -679,7 +689,6 @@ def validate_historian() -> int:
     require_contains(text, f'index_canister_id = opt principal "{MAINNET["index"]}";', str(path))
     require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
     require_contains(text, f'faucet_canister_id = opt principal "{PROD["jupiter_faucet"]}";', str(path))
-    require_contains(text, f'blackhole_canister_id = opt principal "{MAINNET["blackhole"]}";', str(path))
     require_contains(text, f'sns_wasm_canister_id = opt principal "{MAINNET["sns_wasm"]}";', str(path))
     historian_min_tx_e8s = extract_nat64(text, "min_tx_e8s", path)
     if historian_min_tx_e8s < 10_000_000:
@@ -740,6 +749,34 @@ def validate_historian() -> int:
     if forbidden:
         fail(f"{path} canonical_relay_targets contains forbidden system/self principal(s): {forbidden}")
     return historian_min_tx_e8s
+
+
+def validate_historian_relay_factory_enablement_fixture() -> None:
+    path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable"
+    text = path.read_text()
+    require_contains(text, 'manifest="release-artifacts/release-artifacts.sha256"', str(path))
+    require_contains(text, 'sha256sum -c "$manifest"', str(path))
+    require_contains(text, "python3 ./tools/scripts/validate-mainnet-install-args", str(path))
+    require_contains(text, "Historian reinstall args must be complete:", str(path))
+    require_contains(text, "JUPITER_USE_CANONICAL_ARTIFACTS=1 \\", str(path))
+    require_contains(text, "icp deploy jupiter_historian \\", str(path))
+    require_contains(text, "--environment ic \\", str(path))
+    require_contains(text, "--mode reinstall \\", str(path))
+    require_contains(text, "--args-file canisters/historian/mainnet-install-args.did", str(path))
+    if "--mode upgrade" in text:
+        fail(f"{path} must not recommend --mode upgrade for this development-phase reinstall release")
+    if "/tmp/historian-relay-factory-enable.did" in text:
+        fail(f"{path} must use the checked-in Historian InitArgs file, not a temporary args file")
+    for line in non_comment_command_lines(text):
+        command = line.removeprefix("env ").strip()
+        if command.startswith("echo ") or command.startswith("cat ") or command.startswith("printf "):
+            continue
+        if "tools/scripts/build-canister" in command:
+            fail(f"{path} must be read-only and must not invoke tools/scripts/build-canister")
+        if re.search(r"(^|[;&|]\s*)cargo\s+build\b", command):
+            fail(f"{path} must be read-only and must not invoke cargo build")
+        if re.search(r"(^|[;&|]\s*)(?:\./)?tools/scripts/docker-build\b", command):
+            fail(f"{path} must be read-only and must not invoke docker-build")
 
 
 def validate_historian_relay_factory_artifacts(path: Path) -> None:
@@ -1289,6 +1326,7 @@ def main() -> None:
     validate_upgrade_docs_do_not_use_install_args_or_null_routine_args()
     validate_relay_docs_contain_full_init_args_upgrade()
     validate_docs_do_not_use_stale_privileged_deployment_framing()
+    validate_historian_relay_factory_enablement_fixture()
     historian_min_tx_e8s = validate_historian()
     validate_relay_setup_recovery_runbook()
     validate_relay()

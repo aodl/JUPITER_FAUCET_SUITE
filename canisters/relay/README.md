@@ -150,7 +150,14 @@ relay, auto-included       u2qkp-aqaaa-aaaar-qb7ea-cai
 
 Install args include `managed_canisters : vec principal`. The runtime set is the sorted unique union of that list and the relay canister itself. The relay is always included even when omitted from config.
 
-Anonymous and management canister principals are rejected. Duplicate configured managed canisters are rejected. The relay probes its own cycles directly with `canister_cycle_balance`; ordinary non-self managed canisters must be readable through the configured blackhole canister. Known managed blackhole canisters are probed through themselves by calling their own `canister_status` endpoint with their own principal as the target.
+Anonymous and management canister principals are rejected. Duplicate configured managed canisters are rejected. The relay probes its own cycles directly with `canister_cycle_balance`.
+
+Relay supports two cycles-observation modes:
+
+- **Fixed mode** is used when `blackhole_canister_id` is configured. Non-self managed targets are probed through that configured blackhole canister. Known managed blackhole canisters are probed through themselves by calling their own `canister_status` endpoint with their own principal as the target.
+- **Auto mode** is used when no `blackhole_canister_id` is configured. Relay first checks direct self balance and recognized blackhole self-status. For ordinary targets, Auto mode first reuses the target's previously successful positive route, whether that route is the 13-node blackhole, the Fiduciary blackhole, SNS Root, or SNS Swap. If that route is absent or fails, route discovery tries the 13-node blackhole, then the Fiduciary blackhole, then SNS discovery. The 13-node blackhole is preferred when selecting an unknown blackhole route, while a healthy positive route is reused to avoid predictable failed calls and unnecessary cycles burn. Route failure triggers immediate rediscovery. No route TTL or negative cache is used. SNS-governed targets do not need the SNS root or target to be controlled by a blackhole; Relay can use SNS root status routes when the target is an SNS dapp.
+
+The canonical production Relay remains Fixed mode through the Fiduciary blackhole route. Self-service Relays created by Historian use Auto mode and are immutable after controller handoff.
 
 A failed probe does not immediately mean a managed target is deleted. Relay keeps an in-memory consecutive probe failure count per effective managed target. One or two consecutive failures preserve the conservative fail-closed behavior: Relay records a degraded summary and spends no default-account ICP. After three consecutive scheduled runs fail to probe the same target, Relay treats that target as unavailable for allocation in that run only. This is an availability classification after consecutive probe failures, not cryptographic proof of deletion. Relay excludes the unavailable target from target top-up planning, continues probing it on every later schedule, and resets the count to zero after any successful probe. Targets are never permanently marked deleted by this policy.
 
@@ -316,13 +323,13 @@ Subaccount-1 Jupiter Faucet commitment forwarding uses the same deterministic tr
 
 ## Operational Warning
 
-A non-self managed canister that is not blackhole-readable prevents spending for that tick. This preserves funds for the next tick and prevents allocation from partial or stale cycle data.
+A non-self managed canister that is not observable through the configured Fixed route or through Auto route discovery prevents spending for that tick. This preserves funds for the next tick and prevents allocation from partial or stale cycle data.
 
 If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks the affected amount ambiguous rather than blindly changing transfer identity. If ledger acceptance never happened, the amount remains known-unspent.
 
 ## Production Operations Checklist
 
-1. Verify the blackhole can read every configured managed canister.
+1. For Fixed mode, verify the configured blackhole can read every configured managed canister. For Auto mode, verify the target is observable through its previously successful positive route, or through rediscovery in 13-node blackhole, Fiduciary blackhole, then SNS status order.
 2. Verify canister settings: logs public, log memory limit `2MiB`, canonical blackhole as an additional controller, and the current operational/admin controller retained until handoff is complete.
 3. Compare `CONFIG` public logs with [`mainnet-install-args.did`](mainnet-install-args.did).
 4. Observe a first complete baseline tick and confirm it spends no ICP.

@@ -9,7 +9,6 @@ pub struct InitArgs {
     pub index_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
     pub faucet_canister_id: Option<Principal>,
-    pub blackhole_canister_id: Option<Principal>,
     pub sns_wasm_canister_id: Option<Principal>,
     pub xrc_canister_id: Option<Principal>,
     pub enable_sns_tracking: Option<bool>,
@@ -51,7 +50,6 @@ pub struct UpgradeArgs {
     pub max_commitment_entries_per_canister: Option<u32>,
     pub max_index_pages_per_tick: Option<u32>,
     pub max_canisters_per_cycles_tick: Option<u32>,
-    pub blackhole_canister_id: Option<Principal>,
     pub sns_wasm_canister_id: Option<Principal>,
     pub cmc_canister_id: Option<Principal>,
     pub faucet_canister_id: Option<Principal>,
@@ -74,13 +72,13 @@ pub struct UpgradeArgs {
 pub struct ListCanistersArgs {
     pub start_after: Option<Principal>,
     pub limit: Option<u32>,
-    pub source_filter: Option<CanisterSource>,
+    pub tracking_reason_filter: Option<CanisterTrackingReason>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct CanisterListItem {
     pub canister_id: Principal,
-    pub sources: Vec<CanisterSource>,
+    pub tracking_reasons: Vec<CanisterTrackingReason>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -120,7 +118,7 @@ pub struct CommitmentHistoryPage {
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct CanisterOverview {
     pub canister_id: Principal,
-    pub sources: Vec<CanisterSource>,
+    pub tracking_reasons: Vec<CanisterTrackingReason>,
     pub meta: CanisterMeta,
     pub cycles_points: u32,
     pub commitment_points: u32,
@@ -128,11 +126,14 @@ pub struct CanisterOverview {
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct PublicCounts {
-    pub registered_canister_count: u64,
+    pub tracked_canister_count: u64,
+    pub memo_registered_canister_count: u64,
     pub raw_icp_declared_canister_count: Option<u64>,
     pub declared_neuron_count: Option<u64>,
     pub qualifying_commitment_count: u64,
     pub sns_discovered_canister_count: u64,
+    pub relay_target_canister_count: u64,
+    pub relay_instance_canister_count: u64,
     pub total_output_e8s: u64,
     pub total_rewards_e8s: u64,
 }
@@ -160,8 +161,6 @@ pub struct PublicStatus {
     pub relay_factory_enabled: Option<bool>,
     pub relay_setup_min_e8s: Option<u64>,
     pub relay_setup_dust_e8s: Option<u64>,
-    pub relay_raw_wasm_hash_hex: Option<String>,
-    pub relay_install_payload_hash_hex: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone)]
@@ -191,7 +190,6 @@ pub struct RelayRegistration {
     pub target_canister_id: Principal,
     pub relay_canister_id: Principal,
     pub kind: RelayRegistryKind,
-    pub relay_install_payload_hash_hex: Option<String>,
     pub created_at_ts: Option<u64>,
 }
 
@@ -201,7 +199,6 @@ impl From<RelayRegistryEntry> for RelayRegistration {
             target_canister_id: value.target_canister_id,
             relay_canister_id: value.relay_canister_id,
             kind: value.kind,
-            relay_install_payload_hash_hex: value.relay_wasm_hash_hex,
             created_at_ts: value.created_at_ts,
         }
     }
@@ -228,9 +225,7 @@ impl From<RelaySetupStatus> for RelaySetupPublicStatus {
         match value {
             RelaySetupStatus::NotFunded => Self::NotFunded,
             RelaySetupStatus::BelowMinimum | RelaySetupStatus::SweepBelowDust => Self::BelowMinimum,
-            RelaySetupStatus::TargetNotObservable | RelaySetupStatus::FailedTerminal => {
-                Self::ManualRecoveryRequired
-            }
+            RelaySetupStatus::FailedTerminal => Self::ManualRecoveryRequired,
             RelaySetupStatus::RefundAvailable | RelaySetupStatus::Refunding => Self::Refunding,
             RelaySetupStatus::Refunded => Self::Refunded,
             RelaySetupStatus::IndexNotReady => Self::IndexNotReady,
@@ -271,8 +266,6 @@ pub struct RelaySetupView {
     pub existing_relay: Option<RelayRegistration>,
     pub status: RelaySetupPublicStatus,
     pub factory_available: bool,
-    pub relay_raw_wasm_hash_hex: Option<String>,
-    pub relay_install_payload_hash_hex: Option<String>,
     pub warning_text: Option<String>,
 }
 
@@ -294,8 +287,6 @@ pub struct RelayCreateAttemptView {
     pub created_at_ts: u64,
     pub initial_cycles: u128,
     pub create_attach_cycles: u128,
-    pub raw_relay_wasm_hash_hex: Option<String>,
-    pub install_payload_hash_hex: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
@@ -310,9 +301,6 @@ pub struct RelaySetupRecoveryView {
     pub cycle_conversion_e8s: Option<u64>,
     pub cycles_minted: Option<u128>,
     pub configured_relay_create_attach_cycles: u128,
-    pub relay_raw_wasm_hash_hex: Option<String>,
-    pub relay_install_payload_hash_hex: Option<String>,
-    pub relay_onchain_module_hash_hex: Option<String>,
     pub cycle_transfer: Option<RedactedTransferRecord>,
     pub relay_funding_transfer: Option<RedactedTransferRecord>,
     pub existing_relay_sweep_transfer: Option<RedactedTransferRecord>,
@@ -331,9 +319,6 @@ pub enum RelaySetupNotifyResult {
     InsufficientForCurrentRate {
         required_e8s: u64,
         current_balance_e8s: u64,
-    },
-    TargetNotObservable {
-        message: String,
     },
     Pending {
         status: RelaySetupPublicStatus,
@@ -372,15 +357,15 @@ pub enum RelaySetupRefundResult {
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
-pub struct ListRegisteredCanisterSummariesArgs {
+pub struct ListMemoRegisteredCanisterSummariesArgs {
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RegisteredCanisterSummary {
+pub struct MemoRegisteredCanisterSummary {
     pub canister_id: Principal,
-    pub sources: Vec<CanisterSource>,
+    pub tracking_reasons: Vec<CanisterTrackingReason>,
     pub qualifying_commitment_count: u64,
     pub total_qualifying_committed_e8s: u64,
     pub last_commitment_ts: Option<u64>,
@@ -389,8 +374,8 @@ pub struct RegisteredCanisterSummary {
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct ListRegisteredCanisterSummariesResponse {
-    pub items: Vec<RegisteredCanisterSummary>,
+pub struct ListMemoRegisteredCanisterSummariesResponse {
+    pub items: Vec<MemoRegisteredCanisterSummary>,
     pub page: u32,
     pub page_size: u32,
     pub total: u64,
@@ -400,13 +385,12 @@ pub struct ListRegisteredCanisterSummariesResponse {
 pub struct FindCanistersByMemoPrefixArgs {
     pub prefix: String,
     pub limit: Option<u32>,
-    pub source_filter: Option<CanisterSource>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct CanisterPrefixMatch {
     pub canister_id: Principal,
-    pub sources: Vec<CanisterSource>,
+    pub tracking_reasons: Vec<CanisterTrackingReason>,
     pub matched_prefix: String,
     pub qualifying_commitment_count: u64,
     pub total_qualifying_committed_e8s: u64,

@@ -1,7 +1,7 @@
 use super::*;
 pub(super) fn rebuild_distinct_canisters(st: &mut State) {
     st.distinct_canisters = st
-        .canister_sources
+        .canister_tracking_reasons
         .keys()
         .copied()
         .chain(st.commitment_history.keys().copied())
@@ -12,17 +12,17 @@ pub(super) fn rebuild_distinct_canisters(st: &mut State) {
         .collect();
 }
 
-pub(super) fn sync_canister_sources_map(
-    current: &BTreeMap<Principal, BTreeSet<CanisterSource>>,
+pub(super) fn sync_canister_tracking_reasons_map(
+    current: &BTreeMap<Principal, BTreeSet<CanisterTrackingReason>>,
     scope: Option<&BTreeSet<Principal>>,
 ) {
-    with_canister_sources_map(|map| match scope {
+    with_canister_tracking_reasons_map(|map| match scope {
         Some(principals) => {
             for principal in principals {
                 let key = PrincipalKey::from(principal);
                 match current.get(principal) {
                     Some(sources) => {
-                        let desired = StableSourceSet(sources.clone());
+                        let desired = StableTrackingReasonSet(sources.clone());
                         let needs_update = map
                             .get(&key)
                             .map(|existing| existing != desired)
@@ -46,7 +46,7 @@ pub(super) fn sync_canister_sources_map(
             }
             for (principal, sources) in current {
                 let key = PrincipalKey::from(principal);
-                let desired = StableSourceSet(sources.clone());
+                let desired = StableTrackingReasonSet(sources.clone());
                 let needs_update = map
                     .get(&key)
                     .map(|existing| existing != desired)

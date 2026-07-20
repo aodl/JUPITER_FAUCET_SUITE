@@ -9,7 +9,7 @@ import { loadPublicNeuronStakingAccount } from './nns-neurons.js';
 import {
   MAINNET_CMC_CANISTER_ID,
   fulfilledOrNull,
-  hasCanisterSource,
+  hasCanisterTrackingReason,
   principalToText,
   readOptional,
 } from './dashboard-transforms.js';
@@ -212,13 +212,13 @@ export async function loadTrackerData({
 
   const overview = await historian.get_canister_overview(canisterId);
   const overviewValue = readOptional(overview);
-  const isCommitmentBeneficiary = hasCanisterSource(overviewValue?.sources, 'MemoCommitment');
+  const isCommitmentBeneficiary = hasCanisterTrackingReason(overviewValue?.tracking_reasons, 'MemoCommitment');
 
-  if (!overviewValue || !isCommitmentBeneficiary) {
+  if (!overviewValue) {
     return {
       canisterId,
       overview: overviewValue,
-      isRecognized: Boolean(overviewValue),
+      isRecognized: false,
       isCommitmentBeneficiary,
       commitments: { items: [] },
       cycles: { items: [] },
@@ -228,11 +228,13 @@ export async function loadTrackerData({
     };
   }
 
-  const commitmentsPromise = loadTrackerCommitments(historian, {
-    canisterId,
-    historyLimit,
-    minTimestampNanos,
-  });
+  const commitmentsPromise = isCommitmentBeneficiary
+    ? loadTrackerCommitments(historian, {
+        canisterId,
+        historyLimit,
+        minTimestampNanos,
+      })
+    : Promise.resolve({ items: [] });
   const cyclesPromise = loadTrackerCycles(historian, {
     canisterId,
     historyLimit,
@@ -270,7 +272,7 @@ export async function loadTrackerData({
     status: fulfilledOrNull(statusResult),
     relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
     isRecognized: true,
-    isCommitmentBeneficiary: true,
+    isCommitmentBeneficiary,
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
     cycles: fulfilledOrNull(cyclesResult) || { items: [] },
     logs: fulfilledOrNull(logsResult) || { items: [] },
@@ -334,7 +336,6 @@ export async function loadRawIcpCanisterTrackerData({
     ? historian.find_canisters_by_memo_prefix({
         prefix,
         limit: [prefixLimit],
-        source_filter: [{ MemoCommitment: null }],
       })
     : Promise.resolve({ items: [], truncated: false });
   const [statusResult, relayRegistrationsResult, transfersResult, candidatesResult] = await Promise.allSettled([

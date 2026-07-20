@@ -627,6 +627,7 @@ mod tests {
         ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, Config, CyclesSampleSource,
         CyclesSnapshot, RelayMode, RelaySummary, State,
     };
+    use jupiter_ic_clients::cycles_probe::CyclesProbePolicy;
 
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
@@ -764,6 +765,9 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
+                canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            },
             main_interval_seconds: 60,
             max_transfers_per_tick: None,
             surplus_recipients: Vec::new(),
@@ -832,6 +836,9 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
+                canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            },
             main_interval_seconds: 60,
             max_transfers_per_tick: None,
             surplus_recipients: Vec::new(),

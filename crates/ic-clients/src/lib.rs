@@ -2,12 +2,14 @@ pub mod account;
 pub mod account_identifier;
 pub mod cmc;
 pub mod constants;
+pub mod cycles_probe;
 pub mod generated;
 pub mod governance;
 pub mod index;
 pub mod ledger;
 pub mod lifecycle;
 pub mod management;
+pub mod sns;
 pub mod timer_guard;
 pub mod xrc;
 

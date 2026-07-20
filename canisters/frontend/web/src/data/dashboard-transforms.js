@@ -17,7 +17,7 @@ export function summaryMetricsUnavailable(data) {
     data.stakeE8s === null &&
     data.counts?.total_output_e8s === undefined &&
     data.counts?.total_rewards_e8s === undefined &&
-    data.counts?.registered_canister_count === undefined &&
+    data.counts?.tracked_canister_count === undefined &&
     data.counts?.qualifying_commitment_count === undefined
   );
 }
@@ -149,8 +149,8 @@ export function variantName(value) {
   return Object.keys(value)[0] || '';
 }
 
-export function hasCanisterSource(sources, sourceName) {
-  return Array.isArray(sources) && sources.some((source) => variantName(source) === sourceName);
+export function hasCanisterTrackingReason(trackingReasons, reasonName) {
+  return Array.isArray(trackingReasons) && trackingReasons.some((reason) => variantName(reason) === reasonName);
 }
 
 export function fulfilledOrNull(result) {

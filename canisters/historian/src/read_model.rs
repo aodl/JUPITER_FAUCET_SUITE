@@ -15,11 +15,12 @@ pub(super) fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
             None => Box::new(st.distinct_canisters.range(..)),
         };
         for canister_id in iter.copied() {
-            let Some(sources) = visible_sources_for_canister(st, &canister_id) else {
+            let Some(tracking_reasons) = visible_tracking_reasons_for_canister(st, &canister_id)
+            else {
                 continue;
             };
-            if let Some(filter) = &args.source_filter {
-                if !sources.contains(filter) {
+            if let Some(filter) = &args.tracking_reason_filter {
+                if !tracking_reasons.contains(filter) {
                     continue;
                 }
             }
@@ -29,7 +30,7 @@ pub(super) fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
             }
             items.push(CanisterListItem {
                 canister_id,
-                sources: sources.into_iter().collect(),
+                tracking_reasons: tracking_reasons.into_iter().collect(),
             });
         }
         ListCanistersResponse {
@@ -118,7 +119,7 @@ pub(super) fn get_commitment_history(args: GetCommitmentHistoryArgs) -> Commitme
 #[ic_cdk::query]
 pub(super) fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
     state::with_state(|st| {
-        let sources = visible_sources_for_canister(st, &canister_id)?
+        let tracking_reasons = visible_tracking_reasons_for_canister(st, &canister_id)?
             .into_iter()
             .collect();
         let meta = st
@@ -130,7 +131,7 @@ pub(super) fn get_canister_overview(canister_id: Principal) -> Option<CanisterOv
         let commitment_points = commitment_history_snapshot(st, canister_id).len() as u32;
         Some(CanisterOverview {
             canister_id,
-            sources,
+            tracking_reasons,
             meta,
             cycles_points,
             commitment_points,
@@ -141,13 +142,16 @@ pub(super) fn get_canister_overview(canister_id: Principal) -> Option<CanisterOv
 #[ic_cdk::query]
 pub(super) fn get_public_counts() -> PublicCounts {
     state::with_state(|st| PublicCounts {
-        registered_canister_count: count_registered_canisters(st),
+        tracked_canister_count: count_tracked_canisters(st),
+        memo_registered_canister_count: count_registered_canisters(st),
         raw_icp_declared_canister_count: Some(count_raw_icp_declared_canisters(st)),
         declared_neuron_count: Some(count_declared_neurons(st)),
         qualifying_commitment_count: st
             .qualifying_commitment_count
             .unwrap_or_else(|| fallback_qualifying_commitment_count(st)),
         sns_discovered_canister_count: count_sns_discovered_canisters(st),
+        relay_target_canister_count: count_relay_target_canisters(st),
+        relay_instance_canister_count: count_relay_instance_canisters(st),
         total_output_e8s: st.total_output_e8s.unwrap_or(0),
         total_rewards_e8s: st.total_rewards_e8s.unwrap_or(0),
     })
@@ -183,8 +187,6 @@ pub(super) fn get_public_status() -> PublicStatus {
         relay_factory_enabled: Some(st.config.relay_factory_enabled),
         relay_setup_min_e8s: Some(st.config.relay_setup_min_e8s),
         relay_setup_dust_e8s: Some(st.config.relay_setup_dust_e8s),
-        relay_raw_wasm_hash_hex: crate::relay_setup::relay_raw_wasm_hash_hex(),
-        relay_install_payload_hash_hex: crate::relay_setup::relay_install_payload_hash_hex(),
     })
 }
 
@@ -261,7 +263,9 @@ pub(crate) fn source_module_hash_canister_ids() -> Vec<Principal> {
 
 async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let canister_ids = source_module_hash_canister_ids();
-    let blackhole = clients::blackhole::BlackholeCanister::new(mainnet_blackhole_id());
+    let blackhole = clients::blackhole::BlackholeCanister::new(
+        jupiter_ic_clients::constants::blackhole_canister_id(),
+    );
     let mut hashes = Vec::with_capacity(canister_ids.len());
     for canister_id in canister_ids {
         let request = jupiter_ic_clients::management::CanisterInfoArgs {
@@ -398,21 +402,23 @@ pub(super) fn get_canister_module_hashes() -> Vec<CanisterModuleHash> {
 }
 
 #[ic_cdk::query]
-pub(super) fn list_registered_canister_summaries(
-    args: ListRegisteredCanisterSummariesArgs,
-) -> ListRegisteredCanisterSummariesResponse {
+pub(super) fn list_memo_registered_canister_summaries(
+    args: ListMemoRegisteredCanisterSummariesArgs,
+) -> ListMemoRegisteredCanisterSummariesResponse {
     state::with_state(|st| {
         let page = args.page.unwrap_or(0);
         let page_size = args.page_size.unwrap_or(25).clamp(1, 100);
-        if let Some(response) = registered_canister_summaries_total_desc_page(st, page, page_size) {
+        if let Some(response) =
+            memo_registered_canister_summaries_total_desc_page(st, page, page_size)
+        {
             return response;
         }
         // Slow compatibility fallback for states whose derived ranking cache is
         // missing or drifted. Normal init/upgrade/timer paths rebuild and refresh
         // this cache; a future maintenance pass should repair drift outside public
         // queries before removing this full sort.
-        let mut items = registered_canister_summaries(st);
-        items.sort_by_key(registered_canister_summary_total_desc_key);
+        let mut items = memo_registered_canister_summaries(st);
+        items.sort_by_key(memo_registered_canister_summary_total_desc_key);
         let total = items.len() as u64;
         let start = page.saturating_mul(page_size) as usize;
         let end = start.saturating_add(page_size as usize).min(items.len());
@@ -421,7 +427,7 @@ pub(super) fn list_registered_canister_summaries(
         } else {
             items[start..end].to_vec()
         };
-        ListRegisteredCanisterSummariesResponse {
+        ListMemoRegisteredCanisterSummariesResponse {
             items: page_items,
             page,
             page_size,
@@ -443,27 +449,27 @@ pub(super) fn find_canisters_by_memo_prefix(
             };
         }
         let limit = clamp_public_limit(args.limit, 20).min(50);
-        let source_filter = args.source_filter.unwrap_or(CanisterSource::MemoCommitment);
         let mut items = Vec::new();
         let mut matched = 0usize;
         for canister_id in st.distinct_canisters.iter().copied() {
             if !principal_matches_compact_prefix(canister_id, &prefix) {
                 continue;
             }
-            let Some(sources) = visible_sources_for_canister(st, &canister_id) else {
+            let Some(tracking_reasons) = visible_tracking_reasons_for_canister(st, &canister_id)
+            else {
                 continue;
             };
-            if !sources.contains(&source_filter) {
+            if !tracking_reasons.contains(&CanisterTrackingReason::MemoCommitment) {
                 continue;
             }
-            let Some(summary) = registered_canister_summary_for(st, canister_id) else {
+            let Some(summary) = memo_registered_canister_summary_for(st, canister_id) else {
                 continue;
             };
             matched += 1;
             if items.len() < limit {
                 items.push(CanisterPrefixMatch {
                     canister_id,
-                    sources: summary.sources,
+                    tracking_reasons: summary.tracking_reasons,
                     matched_prefix: prefix.clone(),
                     qualifying_commitment_count: summary.qualifying_commitment_count,
                     total_qualifying_committed_e8s: summary.total_qualifying_committed_e8s,

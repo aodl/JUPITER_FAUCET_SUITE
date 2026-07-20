@@ -1,5 +1,5 @@
 use super::*;
-pub(super) fn enqueue_initial_cycles_probe(
+pub(crate) fn enqueue_initial_cycles_probe(
     st: &mut crate::state::State,
     canister_id: candid::Principal,
 ) {
@@ -15,38 +15,60 @@ pub(super) fn enqueue_initial_cycles_probe(
     st.initial_cycles_probe_queue.push(canister_id);
 }
 
-pub(super) fn should_probe_memo_registered_canister(
+pub(super) fn should_probe_tracked_canister(
     st: &crate::state::State,
     canister_id: candid::Principal,
 ) -> bool {
-    let Some(sources) = st.canister_sources.get(&canister_id) else {
+    crate::visible_tracking_reasons_for_canister(st, &canister_id).is_some()
+}
+
+pub(super) fn should_refresh_staking_neuron_for_canister(
+    st: &crate::state::State,
+    canister_id: &candid::Principal,
+) -> bool {
+    crate::visible_tracking_reasons_for_canister(st, canister_id)
+        .map(|reasons| reasons.contains(&crate::state::CanisterTrackingReason::MemoCommitment))
+        .unwrap_or(false)
+}
+
+fn ordinary_cycles_sweep_eligible(
+    st: &crate::state::State,
+    canister_id: &candid::Principal,
+    now_secs: u64,
+) -> bool {
+    let Some(reasons) = crate::visible_tracking_reasons_for_canister(st, canister_id) else {
         return false;
     };
-    if logic::should_skip_blackhole_for_sources(sources) {
+    if st.config.enable_sns_tracking
+        && reasons.contains(&crate::state::CanisterTrackingReason::SnsDiscovery)
+    {
         return false;
     }
-    crate::memo_source_is_registered(st, &canister_id, sources)
+    if st
+        .per_canister_meta
+        .get(canister_id)
+        .and_then(|meta| meta.last_cycles_probe_ts)
+        == Some(now_secs)
+    {
+        return false;
+    }
+    true
 }
 
 pub(super) fn build_cycles_sweep_canisters(
     st: &crate::state::State,
     self_id: candid::Principal,
+    now_secs: u64,
 ) -> Vec<candid::Principal> {
     let mut canisters = vec![self_id];
+    let mut seen = std::collections::BTreeSet::from([self_id]);
     for canister_id in st.distinct_canisters.iter().copied() {
-        let sources = st
-            .canister_sources
-            .get(&canister_id)
-            .cloned()
-            .unwrap_or_default();
-        let memo_registered = crate::memo_source_is_registered(st, &canister_id, &sources);
-        if !memo_registered && !sources.contains(&CanisterSource::SnsDiscovery) {
+        if !ordinary_cycles_sweep_eligible(st, &canister_id, now_secs) {
             continue;
         }
-        if logic::should_skip_blackhole_for_sources(&sources) {
-            continue;
+        if seen.insert(canister_id) {
+            canisters.push(canister_id);
         }
-        canisters.push(canister_id);
     }
     canisters
 }

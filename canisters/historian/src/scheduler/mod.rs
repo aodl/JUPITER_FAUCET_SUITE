@@ -1,7 +1,5 @@
 mod prelude;
 use prelude::*;
-mod guards;
-pub(crate) use guards::*;
 mod route_transfer_indexer_header;
 use route_transfer_indexer_header::*;
 mod commitment_lists;
@@ -11,7 +9,7 @@ use logging::*;
 mod tick;
 pub use tick::*;
 mod cycles_probe_planning;
-use cycles_probe_planning::*;
+pub(crate) use cycles_probe_planning::*;
 mod commitment_indexer_apply;
 use commitment_indexer_apply::*;
 mod commitment_indexer;

@@ -1815,6 +1815,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mock-cycle-burner"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "serde",
+]
+
+[[package]]
 name = "mock-icp-index"
 version = "0.1.0"
 dependencies = [
@@ -1856,6 +1865,15 @@ dependencies = [
 
 [[package]]
 name = "mock-sns-wasm"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "serde",
+]
+
+[[package]]
+name = "mock-status-proxy"
 version = "0.1.0"
 dependencies = [
  "candid",

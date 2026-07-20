@@ -62,10 +62,10 @@ function timestampNanosToDate(value) {
   return new Date(asNumber);
 }
 
-function sourceNames(sources) {
-  if (!Array.isArray(sources)) return [];
-  return sources
-    .map((source) => source && typeof source === 'object' && !Array.isArray(source) ? Object.keys(source)[0] : '')
+function trackingReasonNames(trackingReasons) {
+  if (!Array.isArray(trackingReasons)) return [];
+  return trackingReasons
+    .map((reason) => reason && typeof reason === 'object' && !Array.isArray(reason) ? Object.keys(reason)[0] : '')
     .filter(Boolean);
 }
 
@@ -127,7 +127,7 @@ function cyclesProbeStatusInfo(data) {
       kind: 'notAvailable',
       label: 'not available',
       chartMessage: 'Cycles data not available.',
-      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Ordinary canisters must expose public status through the blackhole controller for cycles observability.`,
+      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Historian probes supported direct self, recognized blackhole, and SNS routes automatically.`,
     };
   }
 
@@ -575,6 +575,9 @@ export function createTrackerController({
     const cyclesText = cyclesCadence === DASH
       ? `Cycles balances are sampled by historian cycles sweeps${lastCanisterProbe !== DASH ? `; this canister was last probed ${lastCanisterProbe}` : ''}.`
       : `Cycles balances are sampled by historian cycles sweeps about every ${cyclesCadence}${lastSweep !== DASH ? `; last completed sweep ${lastSweep}` : ''}${lastCanisterProbe !== DASH ? `; this canister was last probed ${lastCanisterProbe}` : ''}.`;
+    if (!data?.isCommitmentBeneficiary) {
+      return `<p class="pane-status-note tracker-status-note">${escapeHtml(cyclesText)}</p>`;
+    }
     return `<p class="pane-status-note tracker-status-note">${escapeHtml(`${indexText} Observed CMC top-ups are queried from the ICP index when this pane loads. ${cyclesText}`)}</p>`;
   };
 
@@ -735,6 +738,28 @@ export function createTrackerController({
       </div>`;
   };
 
+  const renderCyclesOnlyCharts = (data, fullData = data) => {
+    const wrapper = document.getElementById('tracker-chart-wrapper');
+    if (!wrapper) return;
+    const buckets = aggregateTrackerData(data, state.range);
+    if (buckets.length === 0) {
+      const hasOlderLoadedData = state.range !== 'all' && trackerHasAnyDatedItems(fullData);
+      const message = state.range === 'all'
+        ? 'No dated cycles data is available for this tracked canister yet.'
+        : `No dated cycles data is available in ${trackerRangeLabel()}.${hasOlderLoadedData ? ' Select All to view older loaded history.' : ''}`;
+      wrapper.innerHTML = renderTrackerEmptyChart(message);
+      return;
+    }
+
+    wrapper.innerHTML = `
+      <div class="tracker-chart-card">
+        <div class="tracker-chart-header">
+          <h3>Cycles balance</h3>
+        </div>
+        ${renderTrackerCyclesChart(data, buckets, fullData)}
+      </div>`;
+  };
+
   const renderRecognitionMessage = (data, principalText) => {
     const result = document.getElementById('tracker-result');
     if (!result) return;
@@ -750,12 +775,63 @@ export function createTrackerController({
       </div>`;
   };
 
+  const renderCyclesOnlyData = (data, principalText) => {
+    const result = document.getElementById('tracker-result');
+    if (!result) return;
+    const visibleData = filterTrackerDataByRange(data, state.range);
+    const summary = trackerMetricSummary(visibleData);
+    const cycleSamples = sortedCycleSamples(data);
+    const rangeLabel = trackerRangeLabel();
+    const trackingReasons = trackingReasonNames(data.overview?.tracking_reasons).join(', ') || DASH;
+    const firstSeen = formatTimestampSeconds(optValue(data.overview?.meta?.first_seen_ts));
+    const cyclesStatus = cyclesProbeStatusInfo(data);
+    const usingLogCycles = cycleSamples[0]?.source === 'log';
+    const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
+      ? escapeHtml(formatCycles(summary.latestCycles))
+      : renderCyclesStatusCell(cyclesStatus.label);
+    const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay(data);
+    const estimatedCyclesBurnHtml = estimatedObservedCyclesBurnedPerDay === null
+      ? null
+      : escapeHtml(formatTrillionCyclesPerDay(estimatedObservedCyclesBurnedPerDay));
+    const cyclesError = data.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(data.errors.cycles)}</p>` : '';
+    const hasCyclesOutsideRange = (data?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
+    const cyclesStatusNote = summary.latestCycles === null || summary.latestCycles === undefined
+      ? `<p class="pane-status-note tracker-status-note">${escapeHtml(hasCyclesOutsideRange ? `No cycles samples are available in ${rangeLabel}.` : cyclesStatus.note)}</p>`
+      : '';
+    const cyclesProbeIssueNote = summary.latestCycles !== null && summary.latestCycles !== undefined
+      ? renderCyclesProbeInfoNote(cyclesStatus, usingLogCycles)
+      : '';
+
+    result.innerHTML = `
+      ${renderTrackerRangeControls()}
+      <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>
+      ${cyclesProbeIssueNote}
+      ${renderTrackerLogs(data)}
+      <dl class="pane-detail-grid tracker-summary-grid">
+        <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
+        <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
+        <div><dt>Tracking reasons</dt><dd class="pane-detail-value">${escapeHtml(trackingReasons)}</dd></div>
+        <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
+        <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
+        ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
+      </dl>
+      <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. This canister is tracked by historian for cycles observability, not memo-registered commitment history.</p>
+      ${cyclesStatusNote}
+      ${cyclesError}
+      ${renderTrackerCadenceNote(data)}`;
+    renderCyclesOnlyCharts(visibleData, data);
+  };
+
   const renderData = (data, principalText) => {
     const result = document.getElementById('tracker-result');
     if (!result) return;
     const classifiedData = classifyTrackerData(data, state.protocolCanisterId);
     if (!classifiedData?.isCommitmentBeneficiary) {
-      renderRecognitionMessage(classifiedData, principalText);
+      if (classifiedData?.isRecognized) {
+        renderCyclesOnlyData(classifiedData, principalText);
+      } else {
+        renderRecognitionMessage(classifiedData, principalText);
+      }
       return;
     }
 
@@ -764,7 +840,7 @@ export function createTrackerController({
     const fullSummary = trackerMetricSummary(classifiedData);
     const cycleSamples = sortedCycleSamples(classifiedData);
     const rangeLabel = trackerRangeLabel();
-    const sources = sourceNames(classifiedData.overview?.sources).join(', ') || DASH;
+    const trackingReasons = trackingReasonNames(classifiedData.overview?.tracking_reasons).join(', ') || DASH;
     const firstSeen = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.first_seen_ts));
     const lastCommitment = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.last_commitment_ts));
     const cyclesStatus = cyclesProbeStatusInfo(classifiedData);
@@ -805,7 +881,7 @@ export function createTrackerController({
         <div><dt>Canister</dt><dd class="pane-detail-value">${renderCanisterTrackerLink(principalText)}</dd></div>
         <div><dt>Dashboard</dt><dd class="pane-detail-value">${renderCanisterDashboardLink(principalText)}</dd></div>
         ${protocolHtml}
-        <div><dt>Sources</dt><dd class="pane-detail-value">${escapeHtml(sources)}</dd></div>
+        <div><dt>Tracking reasons</dt><dd class="pane-detail-value">${escapeHtml(trackingReasons)}</dd></div>
         <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
         <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
         <div><dt>Patron commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.commitmentCount))}</dd></div>

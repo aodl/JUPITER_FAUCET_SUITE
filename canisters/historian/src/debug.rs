@@ -27,7 +27,6 @@ pub struct DebugConfig {
     pub index_canister_id: Principal,
     pub cmc_canister_id: Option<Principal>,
     pub faucet_canister_id: Option<Principal>,
-    pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
     pub xrc_canister_id: Principal,
     pub enable_sns_tracking: bool,
@@ -72,15 +71,14 @@ pub(super) fn debug_state() -> DebugState {
 pub(super) fn debug_config() -> DebugConfig {
     guard_debug_api_not_production();
     state::with_state(|st| DebugConfig {
-        staking_account: st.config.staking_account.clone(),
-        output_source_account: st.config.output_source_account.clone(),
-        output_account: st.config.output_account.clone(),
-        rewards_account: st.config.rewards_account.clone(),
+        staking_account: st.config.staking_account,
+        output_source_account: st.config.output_source_account,
+        output_account: st.config.output_account,
+        rewards_account: st.config.rewards_account,
         ledger_canister_id: st.config.ledger_canister_id,
         index_canister_id: st.config.index_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
         faucet_canister_id: st.config.faucet_canister_id,
-        blackhole_canister_id: st.config.blackhole_canister_id,
         sns_wasm_canister_id: st.config.sns_wasm_canister_id,
         xrc_canister_id: st.config.xrc_canister_id,
         enable_sns_tracking: st.config.enable_sns_tracking,
@@ -105,7 +103,7 @@ pub(super) async fn debug_driver_tick() {
 #[ic_cdk::update]
 pub(super) async fn debug_refresh_icp_xdr_rate_cache() -> DebugRefreshIcpXdrRateResult {
     guard_debug_api_not_production();
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     let xrc_canister_id = state::with_state(|st| st.config.xrc_canister_id);
     match scheduler::debug_refresh_icp_xdr_rate_now(now_secs, xrc_canister_id).await {
         Ok(()) => DebugRefreshIcpXdrRateResult::Ok,
@@ -168,7 +166,7 @@ pub(super) fn debug_reset_derived_state() {
     guard_debug_api_not_production();
     state::with_state_mut(|st| {
         st.distinct_canisters.clear();
-        st.canister_sources.clear();
+        st.canister_tracking_reasons.clear();
         st.commitment_history.clear();
         st.cycles_history.clear();
         st.per_canister_meta.clear();
@@ -208,8 +206,8 @@ pub(super) fn debug_reset_derived_state() {
         st.last_icp_xdr_rate_error = None;
         st.relay_registry_by_target.clear();
         st.relay_setup_jobs.clear();
-        st.registered_canister_summaries_cache = Some(BTreeMap::new());
-        st.registered_canister_summaries_total_desc_index = Some(Vec::new());
+        st.memo_registered_canister_summaries_cache = Some(BTreeMap::new());
+        st.memo_registered_canister_summaries_total_desc_index = Some(Vec::new());
     });
 }
 

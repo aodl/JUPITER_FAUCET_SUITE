@@ -6,6 +6,7 @@ pub(super) use ic_stable_structures::{
 };
 pub(super) use icrc_ledger_types::icrc1::account::Account;
 pub(super) use jupiter_ic_clients::account::account_text;
+pub(crate) use jupiter_ic_clients::cycles_probe::CyclesProbeRoute;
 pub(super) use serde::{Deserialize, Serialize};
 pub(super) use std::borrow::Cow;
 pub(super) use std::collections::{BTreeMap, BTreeSet};
@@ -22,7 +23,6 @@ pub(crate) struct Config {
     pub cmc_canister_id: Option<Principal>,
     #[serde(default)]
     pub faucet_canister_id: Option<Principal>,
-    pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
     pub xrc_canister_id: Principal,
     pub enable_sns_tracking: bool,
@@ -67,7 +67,7 @@ fn opt_principal_text(principal: Option<Principal>) -> String {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, blackhole_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}, relay_factory_enabled={}, relay_setup_min_e8s={}, relay_setup_dust_e8s={}, relay_setup_refund_cooldown_seconds={}, relay_initial_cycles={}, relay_cycle_safety_margin_e8s={}, relay_min_subaccount_one_seed_e8s={}, self_service_relay_interval_seconds={}, self_service_relay_max_transfers_per_tick={:?}, io_surplus_neuron_id={}, canonical_relay_canister_id={}, canonical_relay_targets={}",
+        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}, relay_factory_enabled={}, relay_setup_min_e8s={}, relay_setup_dust_e8s={}, relay_setup_refund_cooldown_seconds={}, relay_initial_cycles={}, relay_cycle_safety_margin_e8s={}, relay_min_subaccount_one_seed_e8s={}, self_service_relay_interval_seconds={}, self_service_relay_max_transfers_per_tick={:?}, io_surplus_neuron_id={}, canonical_relay_canister_id={}, canonical_relay_targets={}",
         account_text(&cfg.staking_account),
         account_text(&cfg.output_source_account),
         account_text(&cfg.output_account),
@@ -76,7 +76,6 @@ pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
         cfg.index_canister_id.to_text(),
         opt_principal_text(cfg.cmc_canister_id),
         opt_principal_text(cfg.faucet_canister_id),
-        cfg.blackhole_canister_id.to_text(),
         cfg.sns_wasm_canister_id.to_text(),
         cfg.xrc_canister_id.to_text(),
         cfg.enable_sns_tracking,
@@ -107,15 +106,19 @@ pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CanisterSource {
+pub enum CanisterTrackingReason {
     MemoCommitment,
     SnsDiscovery,
+    RelayTarget,
+    RelayInstance,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum CyclesSampleSource {
-    BlackholeStatus,
     SelfCanister,
+    BlackholeStatus,
+    SnsRootStatus,
+    SnsSwapStatus,
     SnsRootSummary,
 }
 
@@ -250,7 +253,6 @@ pub(crate) struct StableConfig {
     pub cmc_canister_id: Option<Principal>,
     #[serde(default)]
     pub faucet_canister_id: Option<Principal>,
-    pub blackhole_canister_id: Principal,
     pub sns_wasm_canister_id: Principal,
     #[serde(default)]
     pub xrc_canister_id: Option<Principal>,
@@ -312,7 +314,6 @@ pub struct RelayRegistryEntry {
     pub setup_account_identifier: Option<String>,
     pub setup_amount_e8s: Option<u64>,
     pub setup_tx_ids: Vec<u64>,
-    pub relay_wasm_hash_hex: Option<String>,
     pub final_controllers: Option<Vec<Principal>>,
     pub log_visibility_public: Option<bool>,
     pub created_at_ts: Option<u64>,
@@ -324,7 +325,6 @@ pub enum RelaySetupStatus {
     NotFunded,
     BelowMinimum,
     InsufficientForCurrentRate,
-    TargetNotObservable,
     Pending,
     ConvertingCycles,
     CycleTransferAccepted,
@@ -401,12 +401,6 @@ pub struct RelayCreateAttempt {
     pub target_canister_id: Principal,
     pub created_at_ts: u64,
     pub initial_cycles: u128,
-    #[serde(default)]
-    pub raw_relay_wasm_hash_hex: Option<String>,
-    #[serde(default)]
-    pub install_payload_hash_hex: Option<String>,
-    #[serde(default)]
-    pub relay_wasm_hash_hex: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -581,19 +575,23 @@ impl Storable for PrincipalKey {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-pub(super) struct StableSourceSet(pub BTreeSet<CanisterSource>);
+pub(super) struct StableTrackingReasonSet(pub BTreeSet<CanisterTrackingReason>);
 
-impl Storable for StableSourceSet {
+impl Storable for StableTrackingReasonSet {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian stable source set"))
+        Cow::Owned(
+            candid::encode_one(self)
+                .expect("failed to encode historian stable tracking reason set"),
+        )
     }
 
     fn into_bytes(self) -> Vec<u8> {
-        candid::encode_one(self).expect("failed to encode historian stable source set")
+        candid::encode_one(self).expect("failed to encode historian stable tracking reason set")
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian stable source set")
+        candid::decode_one(bytes.as_ref())
+            .expect("failed to decode historian stable tracking reason set")
     }
 
     const BOUND: Bound = Bound::Unbounded;
@@ -863,19 +861,21 @@ impl Storable for RelaySetupJob {
 pub(crate) struct State {
     pub config: Config,
     pub distinct_canisters: BTreeSet<Principal>,
-    pub canister_sources: BTreeMap<Principal, BTreeSet<CanisterSource>>,
+    pub canister_tracking_reasons: BTreeMap<Principal, BTreeSet<CanisterTrackingReason>>,
     pub commitment_history: BTreeMap<Principal, Vec<CommitmentSample>>,
     pub cycles_history: BTreeMap<Principal, Vec<CyclesSample>>,
     pub per_canister_meta: BTreeMap<Principal, CanisterMeta>,
+    #[serde(default)]
+    pub cached_cycles_probe_routes: BTreeMap<Principal, CyclesProbeRoute>,
     #[serde(default)]
     pub relay_registry_by_target: BTreeMap<Principal, RelayRegistryEntry>,
     #[serde(default)]
     pub relay_setup_jobs: BTreeMap<Principal, RelaySetupJob>,
     #[serde(default)]
-    pub registered_canister_summaries_cache:
-        Option<BTreeMap<Principal, crate::RegisteredCanisterSummary>>,
+    pub memo_registered_canister_summaries_cache:
+        Option<BTreeMap<Principal, crate::MemoRegisteredCanisterSummary>>,
     #[serde(default)]
-    pub registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
+    pub memo_registered_canister_summaries_total_desc_index: Option<Vec<Principal>>,
     pub last_indexed_staking_tx_id: Option<u64>,
     #[serde(default)]
     pub oldest_indexed_staking_tx_id: Option<u64>,
@@ -943,14 +943,15 @@ impl State {
         Self {
             config,
             distinct_canisters: BTreeSet::new(),
-            canister_sources: BTreeMap::new(),
+            canister_tracking_reasons: BTreeMap::new(),
             commitment_history: BTreeMap::new(),
             cycles_history: BTreeMap::new(),
             per_canister_meta: BTreeMap::new(),
+            cached_cycles_probe_routes: BTreeMap::new(),
             relay_registry_by_target: BTreeMap::new(),
             relay_setup_jobs: BTreeMap::new(),
-            registered_canister_summaries_cache: Some(BTreeMap::new()),
-            registered_canister_summaries_total_desc_index: Some(Vec::new()),
+            memo_registered_canister_summaries_cache: Some(BTreeMap::new()),
+            memo_registered_canister_summaries_total_desc_index: Some(Vec::new()),
             last_indexed_staking_tx_id: None,
             oldest_indexed_staking_tx_id: None,
             staking_index_descending: None,

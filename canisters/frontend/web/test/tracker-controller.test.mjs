@@ -167,7 +167,7 @@ function minimalTrackerData() {
     isCommitmentBeneficiary: true,
     isRecognized: true,
     overview: {
-      sources: [{ Commitment: null }],
+      tracking_reasons: [{ MemoCommitment: null }],
       meta: {
         first_seen_ts: [1n],
         last_commitment_ts: [1n],
@@ -192,6 +192,58 @@ function minimalTrackerData() {
     errors: {},
   };
 }
+
+test('tracker renders cycles-only data for recognized relay instances', async () => {
+  const nodes = trackerNodes();
+  const relay = 'u2qkp-aqaaa-aaaar-qb7ea-cai';
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => ({
+        isCommitmentBeneficiary: false,
+        isRecognized: true,
+        overview: {
+          tracking_reasons: [{ RelayInstance: null }],
+          meta: {
+            first_seen_ts: [123n],
+            last_cycles_probe_ts: [456n],
+          },
+        },
+        status: {
+          cycles_interval_seconds: 3600n,
+          last_completed_cycles_sweep_ts: [456n],
+        },
+        commitments: { items: [] },
+        cycles: {
+          items: [{
+            timestamp_nanos: 1_700_000_000_000_000_000n,
+            source: { BlackholeStatus: null },
+            cycles: 4_200_000_000_000n,
+          }],
+        },
+        cmcTransfers: { items: [] },
+        logs: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = relay;
+
+    await controller.submitPrincipal();
+
+    const html = `${nodeMap.get('tracker-result').innerHTML}${nodeMap.get('tracker-chart-wrapper').innerHTML}`;
+    assert.match(html, /Cycles balance/);
+    assert.match(html, /RelayInstance/);
+    assert.match(html, /4\.2000T cycles/);
+    assert.doesNotMatch(html, /Total committed/);
+    assert.doesNotMatch(html, /Qualifying commitments/);
+    assert.doesNotMatch(html, /not a recognised commitment beneficiary/);
+    assert.doesNotMatch(html, /Commitment history is updated/);
+    assert.match(html, /Cycles balances are sampled by historian cycles sweeps/);
+  });
+});
 
 function rawTransfer(id, from, amountE8s, isMatchingMemo = false) {
   return {

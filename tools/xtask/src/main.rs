@@ -535,15 +535,17 @@ struct FaucetSummary {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-enum HistorianCanisterSource {
+enum HistorianCanisterTrackingReason {
     MemoCommitment,
     SnsDiscovery,
+    RelayTarget,
+    RelayInstance,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
 struct HistorianCanisterListItem {
     canister_id: Principal,
-    sources: Vec<HistorianCanisterSource>,
+    tracking_reasons: Vec<HistorianCanisterTrackingReason>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -570,6 +572,8 @@ struct HistorianCommitmentHistoryPage {
 enum HistorianCyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    SnsRootStatus,
+    SnsSwapStatus,
     SnsRootSummary,
 }
 
@@ -588,9 +592,12 @@ struct HistorianCyclesHistoryPage {
 
 #[derive(Debug, CandidType, Deserialize)]
 struct HistorianPublicCounts {
-    registered_canister_count: u64,
+    tracked_canister_count: u64,
+    memo_registered_canister_count: u64,
     qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
+    relay_target_canister_count: u64,
+    relay_instance_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
 }
@@ -622,7 +629,6 @@ struct HistorianDebugConfig {
     index_canister_id: Principal,
     cmc_canister_id: Option<Principal>,
     faucet_canister_id: Option<Principal>,
-    blackhole_canister_id: Principal,
     sns_wasm_canister_id: Principal,
     xrc_canister_id: Principal,
     enable_sns_tracking: bool,
@@ -646,7 +652,6 @@ struct RelayRegistration {
     target_canister_id: Principal,
     relay_canister_id: Principal,
     kind: RelayRegistryKind,
-    relay_wasm_hash_hex: Option<String>,
     created_at_ts: Option<u64>,
 }
 
@@ -683,7 +688,6 @@ struct RelaySetupView {
     existing_relay: Option<RelayRegistration>,
     status: RelaySetupPublicStatus,
     factory_available: bool,
-    relay_wasm_hash_hex: Option<String>,
     warning_text: Option<String>,
 }
 
@@ -696,9 +700,6 @@ enum RelaySetupNotifyResult {
     InsufficientForCurrentRate {
         required_e8s: u64,
         current_balance_e8s: u64,
-    },
-    TargetNotObservable {
-        message: String,
     },
     Pending {
         status: RelaySetupPublicStatus,
@@ -844,7 +845,7 @@ struct MockXrcCall {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct HistorianRegisteredCanisterSummary {
+struct HistorianMemoRegisteredCanisterSummary {
     canister_id: Principal,
     qualifying_commitment_count: u64,
     total_qualifying_committed_e8s: u64,
@@ -854,8 +855,8 @@ struct HistorianRegisteredCanisterSummary {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct ListRegisteredCanisterSummariesResponse {
-    items: Vec<HistorianRegisteredCanisterSummary>,
+struct ListMemoRegisteredCanisterSummariesResponse {
+    items: Vec<HistorianMemoRegisteredCanisterSummary>,
     page: u32,
     page_size: u32,
     total: u64,
@@ -892,7 +893,8 @@ struct FrontendDashboardExpected {
 #[allow(non_snake_case)]
 #[derive(Debug, serde::Serialize)]
 struct FrontendDashboardExpectedCounts {
-    registeredCanisterCount: String,
+    trackedCanisterCount: String,
+    memoRegisteredCanisterCount: String,
     qualifyingCommitmentCount: String,
     totalOutputE8s: String,
     totalRewardsE8s: String,
@@ -1458,7 +1460,6 @@ fn cmd_setup_historian_local() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             faucet_canister_id = opt principal "{faucet_id}";
-            blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
             xrc_canister_id = opt principal "{xrc_id}";
             enable_sns_tracking = opt true;
@@ -1483,7 +1484,6 @@ fn cmd_setup_historian_local() -> Result<()> {
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
         faucet_id = faucet_id.trim(),
-        blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
         xrc_id = xrc_id.trim(),
     );
@@ -1655,7 +1655,6 @@ fn cmd_setup() -> Result<()> {
             index_canister_id = opt principal "{index_id}";
             cmc_canister_id = opt principal "{cmc_id}";
             faucet_canister_id = opt principal "{faucet_id}";
-            blackhole_canister_id = opt principal "{blackhole_id}";
             sns_wasm_canister_id = opt principal "{sns_wasm_id}";
             xrc_canister_id = opt principal "{xrc_id}";
             enable_sns_tracking = opt true;
@@ -1680,7 +1679,6 @@ fn cmd_setup() -> Result<()> {
         index_id = index_id.trim(),
         cmc_id = cmc_id.trim(),
         faucet_id = faucet_id.trim(),
-        blackhole_id = blackhole_id.trim(),
         sns_wasm_id = sns_wasm_id.trim(),
         xrc_id = xrc_id.trim(),
     );
@@ -3552,14 +3550,16 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
             let counts: HistorianPublicCounts =
                 call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-            if counts.registered_canister_count != 1
+            if counts.memo_registered_canister_count != 1
+                || counts.tracked_canister_count < counts.memo_registered_canister_count
                 || counts.qualifying_commitment_count != 1
                 || counts.total_output_e8s != 0
                 || counts.total_rewards_e8s != 0
             {
                 bail!(
-                "unexpected historian public counts fixture: registered={} qualifying={} output={} rewards={}",
-                counts.registered_canister_count,
+                "unexpected historian public counts fixture: tracked={} memo_registered={} qualifying={} output={} rewards={}",
+                counts.tracked_canister_count,
+                counts.memo_registered_canister_count,
                 counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
@@ -3568,9 +3568,9 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
             let status: HistorianPublicStatus =
                 call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-            let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
                 "jupiter_historian_dbg",
-                "list_registered_canister_summaries",
+                "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
             let recent: ListRecentCommitmentsResponse = call_raw(
@@ -3590,7 +3590,8 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
             let expected = FrontendDashboardExpected {
                 stakeE8s: "123000000".to_string(),
                 counts: FrontendDashboardExpectedCounts {
-                    registeredCanisterCount: counts.registered_canister_count.to_string(),
+                    trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                    memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                     qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                     totalOutputE8s: counts.total_output_e8s.to_string(),
                     totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -3854,7 +3855,6 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                         setup_account_identifier = null;
                         setup_amount_e8s = null;
                         setup_tx_ids = vec {{}};
-                        relay_wasm_hash_hex = null;
                         final_controllers = null;
                         log_visibility_public = null;
                         created_at_ts = null;
@@ -4061,7 +4061,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let listed_before: HistorianListCanistersResponse = call_raw(
                 "jupiter_historian_dbg",
                 "list_canisters",
-                "(record { start_after = null; limit = opt (10:nat32); source_filter = null })",
+                "(record { start_after = null; limit = opt (10:nat32); tracking_reason_filter = null })",
             )?;
             if !listed_before.items.is_empty() {
                 bail!("expected empty historian canister list at scenario start");
@@ -4090,7 +4090,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let listed: HistorianListCanistersResponse = call_raw(
                 "jupiter_historian_dbg",
                 "list_canisters",
-                "(record { start_after = null; limit = opt (10:nat32); source_filter = null })",
+                "(record { start_after = null; limit = opt (10:nat32); tracking_reason_filter = null })",
             )?;
             if listed.items.len() != 1 || listed.items[0].canister_id != target {
                 bail!(
@@ -4169,10 +4169,10 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let counts: HistorianPublicCounts =
                 call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-            if counts.registered_canister_count != 0 || counts.qualifying_commitment_count != 2 {
+            if counts.tracked_canister_count != 0 || counts.qualifying_commitment_count != 2 {
                 bail!(
                     "unexpected raw/neuron commitment counts: registered={} qualifying={}",
-                    counts.registered_canister_count,
+                    counts.tracked_canister_count,
                     counts.qualifying_commitment_count,
                 );
             }
@@ -4232,15 +4232,21 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "debug_append_transfer",
                 &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, memo),
             )?;
-            let blackhole_id = canister_id("mock_blackhole")?;
-            let _: () = call_raw(
-                "mock_blackhole",
-                "debug_set_status",
-                &format!(
-                    r#"(principal "{}", opt (1234:nat), vec {{ principal "{}" }})"#,
-                    target.to_text(),
-                    blackhole_id.trim()
-                ),
+            let cycles_target = Principal::from_text(canister_id("jupiter_historian_dbg")?.trim())?;
+            let cycles_memo = format!(
+                "opt vec {{ {} }}",
+                cycles_target
+                    .to_text()
+                    .as_bytes()
+                    .iter()
+                    .map(|b| b.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+            let _: u64 = call_raw(
+                "mock_icp_index",
+                "debug_append_transfer",
+                &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, cycles_memo),
             )?;
             let _: () = call_raw(
                 "jupiter_historian_dbg",
@@ -4253,14 +4259,14 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "get_cycles_history",
                 &format!(
                     r#"(record {{ canister_id = principal "{}"; start_after_ts = null; limit = opt (10:nat32); descending = opt false }})"#,
-                    target.to_text()
+                    cycles_target.to_text()
                 ),
             )?;
             if cycles.items.is_empty() {
                 bail!("expected historian cycles history entry");
             }
-            if cycles.items[0].cycles != Nat::from(1234u64) {
-                bail!("unexpected cycles value: {:?}", cycles.items[0].cycles);
+            if cycles.items[0].cycles == Nat::from(0u64) {
+                bail!("unexpected zero cycles value");
             }
             Ok(())
         },
@@ -4297,7 +4303,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let listed: HistorianListCanistersResponse = call_raw(
             "jupiter_historian_dbg",
             "list_canisters",
-            "(record { start_after = null; limit = opt (20:nat32); source_filter = opt variant { SnsDiscovery } })",
+            "(record { start_after = null; limit = opt (20:nat32); tracking_reason_filter = opt variant { SnsDiscovery } })",
         )?;
             if listed
                 .items
@@ -4382,14 +4388,16 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let counts: HistorianPublicCounts =
                 call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-            if counts.registered_canister_count != 1
+            if counts.memo_registered_canister_count != 1
+                || counts.tracked_canister_count < counts.memo_registered_canister_count
                 || counts.qualifying_commitment_count != 1
                 || counts.total_output_e8s != 0
                 || counts.total_rewards_e8s != 0
             {
                 bail!(
-                "unexpected historian public counts fixture: registered={} qualifying={} output={} rewards={}",
-                counts.registered_canister_count,
+                "unexpected historian public counts fixture: tracked={} memo_registered={} qualifying={} output={} rewards={}",
+                counts.tracked_canister_count,
+                counts.memo_registered_canister_count,
                 counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
@@ -4398,9 +4406,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let status: HistorianPublicStatus =
                 call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-            let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
                 "jupiter_historian_dbg",
-                "list_registered_canister_summaries",
+                "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
             let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4420,7 +4428,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let expected = FrontendDashboardExpected {
                 stakeE8s: "123000000".to_string(),
                 counts: FrontendDashboardExpectedCounts {
-                    registeredCanisterCount: counts.registered_canister_count.to_string(),
+                    trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                    memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                     qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                     totalOutputE8s: counts.total_output_e8s.to_string(),
                     totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4523,14 +4532,16 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-        if counts.registered_canister_count != 1
+        if counts.memo_registered_canister_count != 1
+            || counts.tracked_canister_count < counts.memo_registered_canister_count
             || counts.qualifying_commitment_count != 1
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected commitment-only fixture public counts: registered={} qualifying={} output={} rewards={}",
-                counts.registered_canister_count,
+                "unexpected commitment-only fixture public counts: tracked={} memo_registered={} qualifying={} output={} rewards={}",
+                counts.tracked_canister_count,
+                counts.memo_registered_canister_count,
                 counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
@@ -4538,9 +4549,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         }
 
         let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+        let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_registered_canister_summaries",
+            "list_memo_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4552,7 +4563,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         let expected = FrontendDashboardExpected {
             stakeE8s: "123000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
-                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                 qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4659,14 +4671,15 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
 
         let counts: HistorianPublicCounts = call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-        if counts.registered_canister_count != 0
+        if counts.memo_registered_canister_count != 0
             || counts.qualifying_commitment_count != 0
             || counts.total_output_e8s != 0
             || counts.total_rewards_e8s != 0
         {
             bail!(
-                "unexpected non-qualifying fixture public counts: registered={} qualifying={} output={} rewards={}",
-                counts.registered_canister_count,
+                "unexpected non-qualifying fixture public counts: tracked={} memo_registered={} qualifying={} output={} rewards={}",
+                counts.tracked_canister_count,
+                counts.memo_registered_canister_count,
                 counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
@@ -4674,9 +4687,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         }
 
         let status: HistorianPublicStatus = call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-        let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+        let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
             "jupiter_historian_dbg",
-            "list_registered_canister_summaries",
+            "list_memo_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
         let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4696,7 +4709,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         let expected = FrontendDashboardExpected {
             stakeE8s: "5000000".to_string(),
             counts: FrontendDashboardExpectedCounts {
-                registeredCanisterCount: counts.registered_canister_count.to_string(),
+                trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                 qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                 totalOutputE8s: counts.total_output_e8s.to_string(),
                 totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4781,14 +4795,14 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let counts: HistorianPublicCounts =
                 call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-            if counts.registered_canister_count != 0
+            if counts.tracked_canister_count < 2
                 || counts.qualifying_commitment_count != 0
                 || counts.total_output_e8s != 0
                 || counts.total_rewards_e8s != 0
             {
                 bail!(
-                "unexpected SNS-only fixture public counts: registered={} qualifying={} output={} rewards={}",
-                counts.registered_canister_count,
+                "unexpected SNS-only fixture public counts: tracked={} qualifying={} output={} rewards={}",
+                counts.tracked_canister_count,
                 counts.qualifying_commitment_count,
                 counts.total_output_e8s,
                 counts.total_rewards_e8s
@@ -4803,9 +4817,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let status: HistorianPublicStatus =
                 call_raw("jupiter_historian_dbg", "get_public_status", "()")?;
-            let registered: ListRegisteredCanisterSummariesResponse = call_raw(
+            let registered: ListMemoRegisteredCanisterSummariesResponse = call_raw(
                 "jupiter_historian_dbg",
-                "list_registered_canister_summaries",
+                "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
             let recent: ListRecentCommitmentsResponse = call_raw(
@@ -4817,7 +4831,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let expected = FrontendDashboardExpected {
                 stakeE8s: "0".to_string(),
                 counts: FrontendDashboardExpectedCounts {
-                    registeredCanisterCount: counts.registered_canister_count.to_string(),
+                    trackedCanisterCount: counts.tracked_canister_count.to_string(),
+                    memoRegisteredCanisterCount: counts.memo_registered_canister_count.to_string(),
                     qualifyingCommitmentCount: counts.qualifying_commitment_count.to_string(),
                     totalOutputE8s: counts.total_output_e8s.to_string(),
                     totalRewardsE8s: counts.total_rewards_e8s.to_string(),
@@ -4900,7 +4915,6 @@ fn run_local_historian_config_roundtrip_scenario(
                 || cfg.index_canister_id != mainnet_index_principal()
                 || cfg.cmc_canister_id != Some(mainnet_cmc_principal())
                 || cfg.faucet_canister_id != Some(prod_faucet_principal())
-                || cfg.blackhole_canister_id != mainnet_blackhole_principal()
                 || cfg.sns_wasm_canister_id != mainnet_sns_wasm_principal()
                 || cfg.xrc_canister_id != mainnet_xrc_principal()
                 || cfg.enable_sns_tracking

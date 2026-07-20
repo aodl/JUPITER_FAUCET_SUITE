@@ -21,11 +21,13 @@ members = [
 
   "tests/mocks/mock-blackhole",
   "tests/mocks/mock-cmc",
+  "tests/mocks/mock-cycle-burner",
   "tests/mocks/mock-icp-index",
   "tests/mocks/mock-icrc-ledger",
   "tests/mocks/mock-nns-governance",
   "tests/mocks/mock-sns-root",
   "tests/mocks/mock-sns-wasm",
+  "tests/mocks/mock-status-proxy",
   "tests/mocks/mock-xrc",
 ]
 

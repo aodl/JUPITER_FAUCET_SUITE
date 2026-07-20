@@ -1,5 +1,5 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
-type CanisterSource = variant { MemoCommitment; SnsDiscovery };
+type CanisterTrackingReason = variant { MemoCommitment; SnsDiscovery; RelayTarget; RelayInstance };
 type CommitmentSample = record {
   tx_id : nat64;
   timestamp_nanos : opt nat64;
@@ -23,7 +23,13 @@ type RecentCommitmentListItem = record {
   counts_toward_faucet : bool;
   outcome_category : RecentCommitmentOutcomeCategory;
 };
-type CyclesSampleSource = variant { BlackholeStatus; SelfCanister; SnsRootSummary };
+type CyclesSampleSource = variant {
+  SelfCanister;
+  BlackholeStatus;
+  SnsRootStatus;
+  SnsSwapStatus;
+  SnsRootSummary;
+};
 type CyclesSample = record {
   timestamp_nanos : nat64;
   cycles : nat;
@@ -55,7 +61,6 @@ type InitArgs = record {
   index_canister_id : opt principal;
   cmc_canister_id : opt principal;
   faucet_canister_id : opt principal;
-  blackhole_canister_id : opt principal;
   sns_wasm_canister_id : opt principal;
   xrc_canister_id : opt principal;
   enable_sns_tracking : opt bool;
@@ -95,7 +100,6 @@ type UpgradeArgs = record {
   max_commitment_entries_per_canister : opt nat32;
   max_index_pages_per_tick : opt nat32;
   max_canisters_per_cycles_tick : opt nat32;
-  blackhole_canister_id : opt principal;
   sns_wasm_canister_id : opt principal;
   xrc_canister_id : opt principal;
   cmc_canister_id : opt principal;
@@ -116,9 +120,9 @@ type UpgradeArgs = record {
 type ListCanistersArgs = record {
   start_after : opt principal;
   limit : opt nat32;
-  source_filter : opt CanisterSource;
+  tracking_reason_filter : opt CanisterTrackingReason;
 };
-type CanisterListItem = record { canister_id : principal; sources : vec CanisterSource };
+type CanisterListItem = record { canister_id : principal; tracking_reasons : vec CanisterTrackingReason };
 type ListCanistersResponse = record {
   items : vec CanisterListItem;
   next_start_after : opt principal;
@@ -145,17 +149,20 @@ type CommitmentHistoryPage = record {
 };
 type CanisterOverview = record {
   canister_id : principal;
-  sources : vec CanisterSource;
+  tracking_reasons : vec CanisterTrackingReason;
   meta : CanisterMeta;
   cycles_points : nat32;
   commitment_points : nat32;
 };
 type PublicCounts = record {
-  registered_canister_count : nat64;
+  tracked_canister_count : nat64;
+  memo_registered_canister_count : nat64;
   raw_icp_declared_canister_count : opt nat64;
   declared_neuron_count : opt nat64;
   qualifying_commitment_count : nat64;
   sns_discovered_canister_count : nat64;
+  relay_target_canister_count : nat64;
+  relay_instance_canister_count : nat64;
   total_output_e8s : nat64;
   total_rewards_e8s : nat64;
 };
@@ -187,15 +194,12 @@ type PublicStatus = record {
   relay_factory_enabled : opt bool;
   relay_setup_min_e8s : opt nat64;
   relay_setup_dust_e8s : opt nat64;
-  relay_raw_wasm_hash_hex : opt text;
-  relay_install_payload_hash_hex : opt text;
 };
 type RelayRegistryKind = variant { Canonical; SelfService };
 type RelayRegistration = record {
   target_canister_id : principal;
   relay_canister_id : principal;
   kind : RelayRegistryKind;
-  relay_install_payload_hash_hex : opt text;
   created_at_ts : opt nat64;
 };
 type RelaySetupPublicStatus = variant {
@@ -225,8 +229,6 @@ type RelaySetupView = record {
   existing_relay : opt RelayRegistration;
   status : RelaySetupPublicStatus;
   factory_available : bool;
-  relay_raw_wasm_hash_hex : opt text;
-  relay_install_payload_hash_hex : opt text;
   warning_text : opt text;
 };
 type GetRelaySetupRecoveryViewArgs = record { target_canister_id : principal };
@@ -251,8 +253,6 @@ type RelayCreateAttemptView = record {
   created_at_ts : nat64;
   initial_cycles : nat;
   create_attach_cycles : nat;
-  raw_relay_wasm_hash_hex : opt text;
-  install_payload_hash_hex : opt text;
 };
 type RelaySetupRecoveryView = record {
   target_canister_id : principal;
@@ -265,9 +265,6 @@ type RelaySetupRecoveryView = record {
   cycle_conversion_e8s : opt nat64;
   cycles_minted : opt nat;
   configured_relay_create_attach_cycles : nat;
-  relay_raw_wasm_hash_hex : opt text;
-  relay_install_payload_hash_hex : opt text;
-  relay_onchain_module_hash_hex : opt text;
   cycle_transfer : opt RedactedTransferRecord;
   relay_funding_transfer : opt RedactedTransferRecord;
   existing_relay_sweep_transfer : opt RedactedTransferRecord;
@@ -287,7 +284,6 @@ type ListRelayRegistrationsResponse = record {
 type RelaySetupNotifyResult = variant {
   BelowMinimum : record { minimum_e8s : nat64; current_balance_e8s : nat64 };
   InsufficientForCurrentRate : record { required_e8s : nat64; current_balance_e8s : nat64 };
-  TargetNotObservable : record { message : text };
   Pending : record { status : RelaySetupPublicStatus };
   Active : record { relay : RelayRegistration };
   SweptToExistingRelay : record { relay : RelayRegistration; amount_e8s : nat64; block_index : nat64 };
@@ -296,21 +292,21 @@ type RelaySetupNotifyResult = variant {
   RefundPending : record { reason : text };
   Failed : record { status : RelaySetupPublicStatus; message : text };
 };
-type ListRegisteredCanisterSummariesArgs = record {
+type ListMemoRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
   page_size : opt nat32;
 };
-type RegisteredCanisterSummary = record {
+type MemoRegisteredCanisterSummary = record {
   canister_id : principal;
-  sources : vec CanisterSource;
+  tracking_reasons : vec CanisterTrackingReason;
   qualifying_commitment_count : nat64;
   total_qualifying_committed_e8s : nat64;
   last_commitment_ts : opt nat64;
   latest_cycles : opt nat;
   last_cycles_probe_ts : opt nat64;
 };
-type ListRegisteredCanisterSummariesResponse = record {
-  items : vec RegisteredCanisterSummary;
+type ListMemoRegisteredCanisterSummariesResponse = record {
+  items : vec MemoRegisteredCanisterSummary;
   page : nat32;
   page_size : nat32;
   total : nat64;
@@ -318,11 +314,10 @@ type ListRegisteredCanisterSummariesResponse = record {
 type FindCanistersByMemoPrefixArgs = record {
   prefix : text;
   limit : opt nat32;
-  source_filter : opt CanisterSource;
 };
 type CanisterPrefixMatch = record {
   canister_id : principal;
-  sources : vec CanisterSource;
+  tracking_reasons : vec CanisterTrackingReason;
   matched_prefix : text;
   qualifying_commitment_count : nat64;
   total_qualifying_committed_e8s : nat64;
@@ -362,6 +357,6 @@ service : (InitArgs) -> {
   list_relay_registrations : (ListRelayRegistrationsArgs) -> (ListRelayRegistrationsResponse) query;
   notify_relay_setup : (principal) -> (RelaySetupNotifyResult);
   find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;
-  list_registered_canister_summaries : (ListRegisteredCanisterSummariesArgs) -> (ListRegisteredCanisterSummariesResponse) query;
+  list_memo_registered_canister_summaries : (ListMemoRegisteredCanisterSummariesArgs) -> (ListMemoRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
 }

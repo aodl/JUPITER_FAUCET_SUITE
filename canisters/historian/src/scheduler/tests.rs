@@ -49,7 +49,6 @@ mod tests {
                 index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
                 cmc_canister_id: Some(principal("rkp4c-7iaaa-aaaaa-aaaca-cai")),
                 faucet_canister_id: Some(principal("acjuz-liaaa-aaaar-qb4qq-cai")),
-                blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
                 sns_wasm_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
                 xrc_canister_id: principal("uf6dk-hyaaa-aaaaq-qaaaq-cai"),
                 enable_sns_tracking: false,
@@ -322,90 +321,180 @@ mod tests {
         }
     }
 
-    struct MockBlackholeClient;
-
-    #[async_trait]
-    impl BlackholeClient for MockBlackholeClient {
-        async fn canister_status(
-            &self,
-            canister_id: Principal,
-        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError>
-        {
-            Ok(crate::clients::blackhole::BlackholeCanisterStatus {
-                cycles: Nat::from(0u64),
-                settings: crate::clients::blackhole::BlackholeSettings {
-                    controllers: vec![canister_id],
-                },
-                memory_size: None,
-                memory_metrics: None,
-            })
-        }
+    #[derive(Clone)]
+    enum ProbeResponse {
+        Ok(u128),
+        Err(String),
     }
 
-    struct RecordingBlackholeClient {
-        cycles: u64,
-        calls: Mutex<Vec<Principal>>,
+    struct RecordingCyclesProbeClient {
+        self_cycles: Mutex<BTreeMap<Principal, u128>>,
+        default_blackhole_response: Mutex<ProbeResponse>,
+        blackhole_responses_by_target: Mutex<BTreeMap<Principal, ProbeResponse>>,
+        root_responses: Mutex<BTreeMap<Principal, ProbeResponse>>,
+        swap_responses: Mutex<BTreeMap<Principal, ProbeResponse>>,
+        blackhole_calls: Mutex<Vec<(Principal, Principal)>>,
+        root_calls: Mutex<Vec<(Principal, Principal)>>,
+        swap_calls: Mutex<Vec<Principal>>,
     }
 
-    impl RecordingBlackholeClient {
-        fn new(cycles: u64) -> Self {
+    impl RecordingCyclesProbeClient {
+        fn blackhole(cycles: u128) -> Self {
             Self {
-                cycles,
-                calls: Mutex::new(Vec::new()),
+                self_cycles: Mutex::new(BTreeMap::new()),
+                default_blackhole_response: Mutex::new(ProbeResponse::Ok(cycles)),
+                blackhole_responses_by_target: Mutex::new(BTreeMap::new()),
+                root_responses: Mutex::new(BTreeMap::new()),
+                swap_responses: Mutex::new(BTreeMap::new()),
+                blackhole_calls: Mutex::new(Vec::new()),
+                root_calls: Mutex::new(Vec::new()),
+                swap_calls: Mutex::new(Vec::new()),
             }
         }
 
-        fn calls(&self) -> Vec<Principal> {
-            self.calls.lock().unwrap().clone()
+        fn failing_blackhole(message: &str) -> Self {
+            let client = Self::blackhole(0);
+            *client.default_blackhole_response.lock().unwrap() =
+                ProbeResponse::Err(message.to_string());
+            client
+        }
+
+        fn with_self_cycles(self, target: Principal, cycles: u128) -> Self {
+            self.self_cycles.lock().unwrap().insert(target, cycles);
+            self
+        }
+
+        fn with_blackhole_target_response(
+            self,
+            target: Principal,
+            response: ProbeResponse,
+        ) -> Self {
+            self.blackhole_responses_by_target
+                .lock()
+                .unwrap()
+                .insert(target, response);
+            self
+        }
+
+        fn with_root_response(self, root: Principal, response: ProbeResponse) -> Self {
+            self.root_responses.lock().unwrap().insert(root, response);
+            self
+        }
+
+        fn with_swap_response(self, swap: Principal, response: ProbeResponse) -> Self {
+            self.swap_responses.lock().unwrap().insert(swap, response);
+            self
+        }
+
+        fn blackhole_targets(&self) -> Vec<Principal> {
+            self.blackhole_calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(_, target)| *target)
+                .collect()
+        }
+
+        fn root_calls(&self) -> Vec<(Principal, Principal)> {
+            self.root_calls.lock().unwrap().clone()
+        }
+
+        fn swap_calls(&self) -> Vec<Principal> {
+            self.swap_calls.lock().unwrap().clone()
         }
     }
 
-    #[async_trait]
-    impl BlackholeClient for RecordingBlackholeClient {
-        async fn canister_status(
+    impl CyclesProbeClient for RecordingCyclesProbeClient {
+        async fn self_cycles(&self, target: Principal) -> Option<u128> {
+            self.self_cycles.lock().unwrap().get(&target).copied()
+        }
+
+        async fn blackhole_cycles(
             &self,
-            canister_id: Principal,
-        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError>
-        {
-            self.calls.lock().unwrap().push(canister_id);
-            Ok(crate::clients::blackhole::BlackholeCanisterStatus {
-                cycles: Nat::from(self.cycles),
-                settings: crate::clients::blackhole::BlackholeSettings {
-                    controllers: vec![canister_id],
-                },
-                memory_size: None,
-                memory_metrics: None,
-            })
-        }
-    }
-
-    struct FailingBlackholeClient {
-        calls: Mutex<Vec<Principal>>,
-    }
-
-    impl FailingBlackholeClient {
-        fn new() -> Self {
-            Self {
-                calls: Mutex::new(Vec::new()),
+            probe_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.blackhole_calls
+                .lock()
+                .unwrap()
+                .push((probe_canister_id, target_canister_id));
+            let response = self
+                .blackhole_responses_by_target
+                .lock()
+                .unwrap()
+                .get(&target_canister_id)
+                .cloned()
+                .unwrap_or_else(|| self.default_blackhole_response.lock().unwrap().clone());
+            match response {
+                ProbeResponse::Ok(cycles) => Ok(cycles),
+                ProbeResponse::Err(message) => Err(jupiter_ic_clients::ClientError::Call(message)),
             }
         }
 
-        fn calls(&self) -> Vec<Principal> {
-            self.calls.lock().unwrap().clone()
-        }
-    }
-
-    #[async_trait]
-    impl BlackholeClient for FailingBlackholeClient {
-        async fn canister_status(
+        async fn list_deployed_snses(
             &self,
-            canister_id: Principal,
-        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, crate::clients::ClientError>
-        {
-            self.calls.lock().unwrap().push(canister_id);
-            Err(crate::clients::ClientError::Call(
-                "blackhole status unavailable".into(),
-            ))
+        ) -> Result<
+            jupiter_ic_clients::sns::ListDeployedSnsesResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse::default())
+        }
+
+        async fn canister_info_controllers(
+            &self,
+            _target: Principal,
+        ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_sns_canisters(
+            &self,
+            _root_canister_id: Principal,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListSnsCanistersResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            Ok(jupiter_ic_clients::sns::ListSnsCanistersResponse::default())
+        }
+
+        async fn sns_root_cycles(
+            &self,
+            root_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.root_calls
+                .lock()
+                .unwrap()
+                .push((root_canister_id, target_canister_id));
+            match self
+                .root_responses
+                .lock()
+                .unwrap()
+                .get(&root_canister_id)
+                .cloned()
+                .unwrap_or_else(|| ProbeResponse::Err("missing root response".to_string()))
+            {
+                ProbeResponse::Ok(cycles) => Ok(cycles),
+                ProbeResponse::Err(message) => Err(jupiter_ic_clients::ClientError::Call(message)),
+            }
+        }
+
+        async fn sns_swap_cycles(
+            &self,
+            swap_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.swap_calls.lock().unwrap().push(swap_canister_id);
+            match self
+                .swap_responses
+                .lock()
+                .unwrap()
+                .get(&swap_canister_id)
+                .cloned()
+                .unwrap_or_else(|| ProbeResponse::Err("missing swap response".to_string()))
+            {
+                ProbeResponse::Ok(cycles) => Ok(cycles),
+                ProbeResponse::Err(message) => Err(jupiter_ic_clients::ClientError::Call(message)),
+            }
         }
     }
 
@@ -704,6 +793,147 @@ mod tests {
     }
 
     #[test]
+    fn sns_discovery_skips_failing_root_summary_and_continues_batch() {
+        let _staking_id = configure_state(10);
+        let root_a = candid::Principal::from_slice(&[1]);
+        let root_b = candid::Principal::from_slice(&[2]);
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.config.max_canisters_per_cycles_tick = 2;
+            st.last_sns_discovery_ts = 0;
+        });
+        let sns_wasm = MockSnsWasmClient::new(vec![Ok(
+            crate::clients::sns_wasm::ListDeployedSnsesResponse {
+                instances: vec![
+                    crate::clients::sns_wasm::DeployedSns {
+                        root_canister_id: Some(root_a),
+                    },
+                    crate::clients::sns_wasm::DeployedSns {
+                        root_canister_id: Some(root_b),
+                    },
+                ],
+            },
+        )]);
+        let mut summaries = BTreeMap::new();
+        summaries.insert(
+            root_b,
+            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
+                root: Some(sns_summary(root_b, 20)),
+                governance: None,
+                ledger: None,
+                swap: None,
+                index: None,
+                dapps: Vec::new(),
+                archives: Vec::new(),
+            },
+        );
+        let sns_root = MockSnsRootClient::new(summaries);
+
+        block_on(process_sns_discovery(123, 100, &sns_wasm, &sns_root)).unwrap();
+
+        state::with_state(|st| {
+            assert!(st.active_sns_discovery.is_none());
+            assert_eq!(st.last_sns_discovery_ts, 100);
+            assert!(!st.distinct_canisters.contains(&root_a));
+            assert!(st.distinct_canisters.contains(&root_b));
+        });
+        assert_eq!(sns_root.calls(), vec![root_a, root_b]);
+    }
+
+    #[test]
+    fn global_sns_discovery_failure_does_not_block_cycle_processing() {
+        let _staking_id = configure_state(10);
+        let initial_target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let sweep_target = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+        let staking_subaccount = [9u8; 32];
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.config.cycles_interval_seconds = 10;
+            st.config.max_canisters_per_cycles_tick = 10;
+            st.config.staking_account.subaccount = Some(staking_subaccount);
+            st.last_sns_discovery_ts = 0;
+            st.last_completed_cycles_sweep_ts = 0;
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 123_000_000_000,
+                canisters: vec![sweep_target],
+                next_index: 0,
+            });
+            st.distinct_canisters.insert(initial_target);
+            st.distinct_canisters.insert(sweep_target);
+            st.canister_tracking_reasons.insert(
+                initial_target,
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
+            );
+            st.canister_tracking_reasons.insert(
+                sweep_target,
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
+            );
+            st.commitment_history.insert(
+                initial_target,
+                vec![crate::state::CommitmentSample {
+                    tx_id: 10,
+                    timestamp_nanos: Some(10),
+                    amount_e8s: 150,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.commitment_history.insert(
+                sweep_target,
+                vec![crate::state::CommitmentSample {
+                    tx_id: 11,
+                    timestamp_nanos: Some(11),
+                    amount_e8s: 150,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.initial_cycles_probe_queue.push(initial_target);
+        });
+        let index = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            transactions: Vec::new(),
+            oldest_tx_id: None,
+        }]);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0)
+            .with_blackhole_target_response(initial_target, ProbeResponse::Ok(111))
+            .with_blackhole_target_response(sweep_target, ProbeResponse::Ok(222));
+        let sns_wasm = MockSnsWasmClient::new(vec![Err(crate::clients::ClientError::Call(
+            "SNS-W unavailable".into(),
+        ))]);
+        let sns_root = MockSnsRootClient::new(BTreeMap::new());
+        let governance = RecordingGovernanceClient::new();
+        let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
+
+        block_on(run_main_tick_with_clients(
+            123_000_000_000,
+            123,
+            &index,
+            &cycles_probe,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(
+                st.cycles_history
+                    .get(&initial_target)
+                    .and_then(|history| history.last())
+                    .map(|sample| sample.cycles),
+                Some(111)
+            );
+            assert_eq!(
+                st.cycles_history
+                    .get(&sweep_target)
+                    .and_then(|history| history.last())
+                    .map(|sample| sample.cycles),
+                Some(222)
+            );
+        });
+    }
+
+    #[test]
     fn active_sns_discovery_resumes_even_when_interval_is_not_due() {
         let _staking_id = configure_state(10);
         let root_a = candid::Principal::from_slice(&[1]);
@@ -725,7 +955,7 @@ mod tests {
             transactions: Vec::new(),
             oldest_tx_id: None,
         }]);
-        let blackhole = MockBlackholeClient;
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
         let sns_wasm = MockSnsWasmClient::new(vec![]);
         let mut summaries = BTreeMap::new();
         summaries.insert(
@@ -748,7 +978,7 @@ mod tests {
             999,
             10_000,
             &index,
-            &blackhole,
+            &cycles_probe,
             &sns_wasm,
             &sns_root,
             &governance,
@@ -793,10 +1023,10 @@ mod tests {
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 42);
             assert_eq!(st.last_index_run_ts, Some(200));
             assert!(st
-                .canister_sources
+                .canister_tracking_reasons
                 .get(&beneficiary)
                 .unwrap()
-                .contains(&CanisterSource::MemoCommitment));
+                .contains(&CanisterTrackingReason::MemoCommitment));
         });
     }
 
@@ -857,9 +1087,9 @@ mod tests {
                 next_index: 0,
             });
             st.distinct_canisters.insert(beneficiary);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 beneficiary,
-                std::iter::once(CanisterSource::MemoCommitment).collect(),
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
             );
             st.commitment_history.insert(
                 beneficiary,
@@ -872,19 +1102,19 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(beneficiary);
         });
-        let blackhole = RecordingBlackholeClient::new(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
             999_000_000_000,
             999,
-            &blackhole,
+            &cycles_probe,
             &governance,
         ))
         .unwrap();
 
         state::with_state(|st| {
-            assert_eq!(blackhole.calls(), vec![beneficiary]);
+            assert_eq!(cycles_probe.blackhole_targets(), vec![beneficiary]);
             assert_eq!(governance.calls(), vec![staking_subaccount], "targeted registration probe should refresh the staking neuron directly via NNS governance");
             assert!(st.initial_cycles_probe_queue.is_empty());
             assert_eq!(st.last_completed_cycles_sweep_ts, 10_000);
@@ -903,55 +1133,309 @@ mod tests {
     }
 
     #[test]
-    fn cycles_probe_falls_back_from_original_to_configured_blackhole() {
-        configure_state(10);
-        let canister_id = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        let original = FailingBlackholeClient::new();
-        let configured = RecordingBlackholeClient::new(888);
-        let blackhole = FallbackBlackholeClient::new(&original, &configured);
+    fn initial_cycles_probe_for_relay_target_does_not_refresh_staking_neuron() {
+        let _staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some([7u8; 32]);
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                std::iter::once(CanisterTrackingReason::RelayTarget).collect(),
+            );
+            st.initial_cycles_probe_queue.push(target);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
 
-        block_on(probe_and_record_cycles(
-            123_000_000_000,
-            123,
-            canister_id,
-            100,
-            None,
-            &blackhole,
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            &governance,
         ))
         .unwrap();
 
+        assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+        assert!(governance.calls().is_empty());
+    }
+
+    #[test]
+    fn initial_cycles_probe_for_relay_instance_does_not_refresh_staking_neuron() {
+        let _staking_id = configure_state(10);
+        let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some([7u8; 32]);
+            st.distinct_canisters.insert(relay);
+            st.canister_tracking_reasons.insert(
+                relay,
+                std::iter::once(CanisterTrackingReason::RelayInstance).collect(),
+            );
+            st.initial_cycles_probe_queue.push(relay);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        assert_eq!(cycles_probe.blackhole_targets(), vec![relay]);
+        assert!(governance.calls().is_empty());
+    }
+
+    #[test]
+    fn initial_cycles_probe_for_sns_discovery_does_not_refresh_staking_neuron() {
+        let _staking_id = configure_state(10);
+        let target = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.config.staking_account.subaccount = Some([7u8; 32]);
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                std::iter::once(CanisterTrackingReason::SnsDiscovery).collect(),
+            );
+            st.initial_cycles_probe_queue.push(target);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+        assert!(governance.calls().is_empty());
+    }
+
+    #[test]
+    fn failed_target_does_not_prevent_later_cycles_sweep_target() {
+        configure_state(10);
+        let target_a = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let target_b = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 2;
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 123_000_000_000,
+                canisters: vec![target_a, target_b],
+                next_index: 0,
+            });
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0)
+            .with_blackhole_target_response(target_a, ProbeResponse::Err("target a down".into()))
+            .with_blackhole_target_response(target_b, ProbeResponse::Ok(222));
+
+        block_on(process_cycles_sweep(999_000_000_000, 999, &cycles_probe)).unwrap();
+
         state::with_state(|st| {
-            assert_eq!(original.calls(), vec![canister_id]);
-            assert_eq!(configured.calls(), vec![canister_id]);
+            assert!(st.active_cycles_sweep.is_none());
+            assert!(!st.cycles_history.contains_key(&target_a));
+            assert_eq!(
+                st.per_canister_meta
+                    .get(&target_a)
+                    .and_then(|meta| meta.last_cycles_probe_result.clone()),
+                Some(CyclesProbeResult::Error(
+                    "no cycles probe route could observe target; previous errors: blackhole e3mmv-5qaaa-aaaah-aadma-cai failed: inter-canister call failed: target a down; blackhole 77deu-baaaa-aaaar-qb6za-cai failed: inter-canister call failed: target a down"
+                        .into()
+                ))
+            );
             assert_eq!(
                 st.cycles_history
-                    .get(&canister_id)
+                    .get(&target_b)
                     .and_then(|history| history.last())
                     .map(|sample| sample.cycles),
-                Some(888)
-            );
-            let meta = st
-                .per_canister_meta
-                .get(&canister_id)
-                .expect("probe metadata should be recorded");
-            assert_eq!(
-                meta.last_cycles_probe_result,
-                Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus))
+                Some(222)
             );
         });
     }
 
     #[test]
-    fn secure_blackhole_fallback_is_only_for_secure_mainnet_blackhole() {
-        assert!(should_try_secure_blackhole_first(principal(
-            "77deu-baaaa-aaaar-qb6za-cai"
-        )));
-        assert!(!should_try_secure_blackhole_first(principal(
-            "e3mmv-5qaaa-aaaah-aadma-cai"
-        )));
-        assert!(!should_try_secure_blackhole_first(principal(
-            "ryjl3-tyaaa-aaaaa-aaaba-cai"
-        )));
+    fn failed_cached_route_is_removed() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.cached_cycles_probe_routes.insert(
+                target,
+                CyclesProbeRoute::SnsRoot {
+                    root_canister_id: root,
+                },
+            );
+        });
+        let cycles_probe = RecordingCyclesProbeClient::failing_blackhole("not controller")
+            .with_root_response(root, ProbeResponse::Err("stale root".into()));
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            target,
+            100,
+            &cycles_probe,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert!(!st.cached_cycles_probe_routes.contains_key(&target));
+            assert_eq!(cycles_probe.root_calls(), vec![(root, target)]);
+            assert!(matches!(
+                st.per_canister_meta
+                    .get(&target)
+                    .and_then(|meta| meta.last_cycles_probe_result.as_ref()),
+                Some(CyclesProbeResult::Error(message)) if message.contains("stale root")
+            ));
+        });
+    }
+
+    #[test]
+    fn newly_successful_route_replaces_cache() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let stale_root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let blackhole = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        state::with_state_mut(|st| {
+            st.cached_cycles_probe_routes.insert(
+                target,
+                CyclesProbeRoute::SnsRoot {
+                    root_canister_id: stale_root,
+                },
+            );
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(444)
+            .with_root_response(stale_root, ProbeResponse::Err("stale root".into()));
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            target,
+            100,
+            &cycles_probe,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(
+                st.cached_cycles_probe_routes.get(&target),
+                Some(&CyclesProbeRoute::Blackhole {
+                    canister_id: blackhole
+                })
+            );
+            assert_eq!(
+                st.cycles_history
+                    .get(&target)
+                    .and_then(|history| history.last())
+                    .map(|sample| sample.cycles),
+                Some(444)
+            );
+        });
+    }
+
+    #[test]
+    fn direct_self_balance_records_self_canister_source() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0).with_self_cycles(target, 777);
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            target,
+            100,
+            &cycles_probe,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            let sample = st
+                .cycles_history
+                .get(&target)
+                .and_then(|history| history.last())
+                .expect("self cycles sample");
+            assert_eq!(sample.source, CyclesSampleSource::SelfCanister);
+        });
+    }
+
+    #[test]
+    fn sns_root_success_records_root_status_source() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.cached_cycles_probe_routes.insert(
+                target,
+                CyclesProbeRoute::SnsRoot {
+                    root_canister_id: root,
+                },
+            );
+        });
+        let cycles_probe = RecordingCyclesProbeClient::failing_blackhole("not controller")
+            .with_root_response(root, ProbeResponse::Ok(888));
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            target,
+            100,
+            &cycles_probe,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            let sample = st
+                .cycles_history
+                .get(&target)
+                .and_then(|history| history.last())
+                .expect("SNS root sample");
+            assert_eq!(sample.source, CyclesSampleSource::SnsRootStatus);
+        });
+    }
+
+    #[test]
+    fn sns_swap_success_records_swap_status_source() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let swap = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+        state::with_state_mut(|st| {
+            st.cached_cycles_probe_routes.insert(
+                target,
+                CyclesProbeRoute::SnsSwap {
+                    root_canister_id: root,
+                    swap_canister_id: swap,
+                },
+            );
+        });
+        let cycles_probe = RecordingCyclesProbeClient::failing_blackhole("not controller")
+            .with_swap_response(swap, ProbeResponse::Ok(999));
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            target,
+            100,
+            &cycles_probe,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            let sample = st
+                .cycles_history
+                .get(&target)
+                .and_then(|history| history.last())
+                .expect("SNS swap sample");
+            assert_eq!(sample.source, CyclesSampleSource::SnsSwapStatus);
+            assert_eq!(cycles_probe.swap_calls(), vec![swap]);
+        });
     }
 
     #[test]
@@ -961,9 +1445,9 @@ mod tests {
         let beneficiary = principal("uccpi-cqaaa-aaaar-qby3q-cai");
         state::with_state_mut(|st| {
             st.distinct_canisters.insert(beneficiary);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 beneficiary,
-                crate::logic::merge_sources(None, CanisterSource::MemoCommitment),
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::MemoCommitment),
             );
             st.commitment_history.insert(
                 beneficiary,
@@ -982,8 +1466,189 @@ mod tests {
 
         state::with_state(|st| {
             assert_eq!(
-                build_cycles_sweep_canisters(st, self_id),
+                build_cycles_sweep_canisters(st, self_id, 123),
                 vec![self_id, beneficiary]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_includes_active_self_service_target_without_source() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        state::with_state_mut(|st| {
+            st.relay_registry_by_target.insert(
+                target,
+                crate::state::RelayRegistryEntry {
+                    relay_canister_id: relay,
+                    target_canister_id: target,
+                    kind: crate::state::RelayRegistryKind::SelfService,
+                    status: crate::state::RelayRegistryStatus::Active,
+                    setup_account: None,
+                    setup_account_identifier: None,
+                    setup_amount_e8s: None,
+                    setup_tx_ids: Vec::new(),
+                    final_controllers: None,
+                    log_visibility_public: None,
+                    created_at_ts: None,
+                    activated_at_ts: None,
+                },
+            );
+            crate::mark_active_relay_tracked(st, target, relay, Some(123));
+        });
+
+        state::with_state(|st| {
+            assert!(st.canister_tracking_reasons[&target]
+                .contains(&CanisterTrackingReason::RelayTarget));
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id, target, relay]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_sns_discovery_when_sns_tracking_enabled() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let sns_canister = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.distinct_canisters.insert(sns_canister);
+            st.canister_tracking_reasons.insert(
+                sns_canister,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::SnsDiscovery),
+            );
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_sns_discovery_mixed_with_relay_target_when_sns_tracking_enabled() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.distinct_canisters.insert(target);
+            let reasons =
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::SnsDiscovery);
+            st.canister_tracking_reasons.insert(
+                target,
+                crate::logic::merge_tracking_reasons(
+                    Some(&reasons),
+                    CanisterTrackingReason::RelayTarget,
+                ),
+            );
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_includes_retained_sns_discovery_when_sns_tracking_disabled() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let sns_canister = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = false;
+            st.distinct_canisters.insert(sns_canister);
+            st.canister_tracking_reasons.insert(
+                sns_canister,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::SnsDiscovery),
+            );
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id, sns_canister]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_same_tick_initial_probe_target() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::RelayTarget),
+            );
+            st.per_canister_meta
+                .entry(target)
+                .or_default()
+                .last_cycles_probe_ts = Some(123);
+        });
+
+        state::with_state(|st| {
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 124),
+                vec![self_id, target]
+            );
+        });
+    }
+
+    #[test]
+    fn cycles_sweep_excludes_target_after_initial_probe_in_same_second() {
+        configure_state(10);
+        let self_id = principal("aaaaa-aa");
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::RelayTarget),
+            );
+            st.initial_cycles_probe_queue.push(target);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            123_456_789_000,
+            123,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+            assert_eq!(
+                st.per_canister_meta
+                    .get(&target)
+                    .and_then(|meta| meta.last_cycles_probe_ts),
+                Some(123)
+            );
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 123),
+                vec![self_id]
+            );
+            assert_eq!(
+                build_cycles_sweep_canisters(st, self_id, 124),
+                vec![self_id, target]
             );
         });
     }
@@ -1426,7 +2091,7 @@ mod tests {
                 st.recent_under_threshold_commitments.as_ref().unwrap()[0].tx_id,
                 43
             );
-            assert!(!st.canister_sources.contains_key(&low_amount));
+            assert!(!st.canister_tracking_reasons.contains_key(&low_amount));
             assert!(!st.distinct_canisters.contains(&low_amount));
             assert!(!st.commitment_history.contains_key(&low_amount));
             let invalid = &st.recent_invalid_commitments.as_ref().unwrap()[0];
@@ -1464,7 +2129,7 @@ mod tests {
                 st.recent_commitments.as_ref().map(|items| items.len()),
                 Some(0)
             );
-            assert_eq!(st.canister_sources.len(), 0);
+            assert_eq!(st.canister_tracking_reasons.len(), 0);
             assert_eq!(st.distinct_canisters.len(), 0);
             assert!(st.commitment_history.is_empty());
             assert_eq!(st.qualifying_commitment_count, Some(0));
@@ -1477,9 +2142,9 @@ mod tests {
         let existing = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
         state::with_state_mut(|st| {
             st.distinct_canisters.insert(existing);
-            st.canister_sources.insert(
+            st.canister_tracking_reasons.insert(
                 existing,
-                crate::logic::merge_sources(None, CanisterSource::MemoCommitment),
+                crate::logic::merge_tracking_reasons(None, CanisterTrackingReason::MemoCommitment),
             );
             st.commitment_history.insert(
                 existing,
@@ -1514,7 +2179,7 @@ mod tests {
                 Some(1)
             );
             assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 9_999);
-            assert!(st.canister_sources.contains_key(&new_canister));
+            assert!(st.canister_tracking_reasons.contains_key(&new_canister));
             assert!(st.commitment_history.contains_key(&new_canister));
             assert!(st.distinct_canisters.contains(&new_canister));
             assert!(st.distinct_canisters.contains(&existing));

@@ -13,7 +13,7 @@ import {
   readOptional,
 } from './dashboard-transforms.js';
 
-export async function loadRegisteredCanisterSummaryPage({
+export async function loadMemoRegisteredCanisterSummaryPage({
   historianCanisterId,
   host,
   local = false,
@@ -31,7 +31,7 @@ export async function loadRegisteredCanisterSummaryPage({
     historianActor,
     historianActorFactory,
   });
-  return historian.list_registered_canister_summaries(
+  return historian.list_memo_registered_canister_summaries(
     buildRegisteredCanisterSummariesRequest({ page, pageSize }),
   );
 }
@@ -145,7 +145,7 @@ export async function loadDashboardData({
   const [countsResult, statusResult, registeredResult, recentResult] = await Promise.allSettled([
     historian.get_public_counts(),
     historian.get_public_status(),
-    historian.list_registered_canister_summaries(
+    historian.list_memo_registered_canister_summaries(
       buildRegisteredCanisterSummariesRequest({
         page: registeredPage,
         pageSize: registeredPageSize,

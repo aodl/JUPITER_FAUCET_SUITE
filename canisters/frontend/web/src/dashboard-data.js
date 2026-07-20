@@ -8,7 +8,7 @@ export {
 export {
   loadCanisterModuleHashes,
   loadDashboardData,
-  loadRegisteredCanisterSummaryPage,
+  loadMemoRegisteredCanisterSummaryPage,
 } from './data/dashboard-loaders.js';
 export {
   FRONTEND_HINT,
@@ -18,7 +18,7 @@ export {
   accountIdentifierHex,
   bytesToHex,
   dquorumStakingAccount,
-  hasCanisterSource,
+  hasCanisterTrackingReason,
   relaySetupAccount,
   relaySetupSubaccount,
   summaryMetricsUnavailable,

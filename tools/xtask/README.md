@@ -207,7 +207,7 @@ Examples covered by the current PocketIC suites include:
 - historian public-read-model assertions for:
   - `get_public_counts`
   - `get_public_status`
-  - `list_registered_canister_summaries`
+  - `list_memo_registered_canister_summaries`
   - `list_recent_commitments`
 
 ### PocketIC maturity and reward caveats

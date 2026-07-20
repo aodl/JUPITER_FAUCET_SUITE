@@ -1,0 +1,13 @@
+[package]
+name = "mock-status-proxy"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid = { workspace = true }
+serde = { workspace = true }
+ic-cdk = { workspace = true }

@@ -65,24 +65,30 @@ These are Jupiter routing metrics, not downstream burn metrics. They remain mean
 
 Cycles history is recorded periodically rather than on every driver tick.
 
-The historian supports three observation sources:
+The historian records cycles samples from these observation routes:
 
 - `BlackholeStatus`
-  - for memo-tracked canisters that expose public `canister_status` through the canonical blackhole canister
+  - for tracked canisters that expose public `canister_status` through a recognized blackhole route
+- `SnsRootStatus`
+  - for targeted SNS dapp/framework observation through SNS Root `canister_status` calls
+- `SnsSwapStatus`
+  - for SNS swap `get_canister_status` calls
 - `SnsRootSummary`
-  - for SNS canisters discovered through SNS root summaries
+  - for actual cycles values reported by SNS Root `get_sns_canisters_summary`
 - `SelfCanister`
   - for the historian canister’s own balance sample
 
-The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses blackhole status plus SNS root summaries instead.
+The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses supported status and SNS summary routes instead.
 
-One subtle but important implementation detail: each cycles sweep always includes the historian canister **itself** as a `SelfCanister` sample target, while canisters whose source set includes `SnsDiscovery` are skipped by the normal blackhole sweep and are expected to get their cycles observations from SNS root summaries instead.
+Historian probing is always Auto. For each target it attempts direct self balance first, and recognized blackhole canisters are probed through their own self-status before any fallback. For ordinary targets, Auto mode first reuses the target's previously successful positive route, whether that route is the 13-node blackhole, the Fiduciary blackhole, SNS Root, or SNS Swap. This sticky route cache is heap-only runtime state and is rebuilt after upgrade as targets are probed again. If that route is absent or fails, route discovery tries the 13-node blackhole, then the Fiduciary blackhole, then SNS discovery. The 13-node blackhole is preferred when selecting an unknown blackhole route, while a healthy positive route is reused to avoid predictable failed calls and unnecessary cycles burn. Route failure triggers immediate rediscovery. No route TTL, negative cache, or stable route map is used. SNS-governed targets do not need blackhole control for discovery or SNS-root-summary cycles observations. Each cycles sweep also includes the historian canister **itself** as a `SelfCanister` sample target.
+
+Tracked principals carry one or more `CanisterTrackingReason` values: `MemoCommitment`, `SnsDiscovery`, `RelayTarget`, and `RelayInstance`. `tracked_canister_count` is the number of unique principals with at least one currently visible tracking reason. The specialized counts `memo_registered_canister_count`, `sns_discovered_canister_count`, `relay_target_canister_count`, and `relay_instance_canister_count` are per-reason counts and do not change the unique-principal rule for `tracked_canister_count`. When a Relay registration becomes active, Historian tracks both the target canister (`RelayTarget`) and the Relay canister (`RelayInstance`) and records independent cycles history for both.
 
 ### SNS discovery
 
 When `enable_sns_tracking = true`, the historian periodically:
 
-1. calls SNS-WASM `list_deployed_snses`
+1. calls SNS-W (`qaa6y-5yaaa-aaaaa-aaafa-cai`) `list_deployed_snses`
 2. reads each SNS root canister summary
 3. adds all discovered SNS canister IDs to its tracked set with source `SnsDiscovery`
 4. records any cycles values available in the SNS root summary as `SnsRootSummary` samples
@@ -126,7 +132,7 @@ Production methods:
   - top-level dashboard counts
 - `get_public_status`
   - dashboard status, including staking account and configured ledger canister ID
-- `list_registered_canister_summaries`
+- `list_memo_registered_canister_summaries`
   - paged summary list used by the frontend registry table
   - always ordered by total qualifying committed ICP descending, with canister id as the stable tie-breaker
 - `list_recent_commitments`
@@ -142,7 +148,7 @@ The main public queries use these code-backed defaults:
 - `list_canisters`: default `limit = 50`, clamped to `1..=100`
 - `get_cycles_history`: default `limit = 100`, clamped to `1..=100`
 - `get_commitment_history`: default `limit = 100`, clamped to `1..=100`
-- `list_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
+- `list_memo_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
 - `list_recent_commitments`: default `limit = 20`, clamped to `1..=100`
 
 ## Timers and driver model
@@ -172,7 +178,7 @@ The historian logs its own `Cycles: <amount>` line only once per completed sweep
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time and upgrade-time config from public canister logs. The historian emits a single `CONFIG ...` line on the cycles-sweep cadence when it records the historian canister's own cycles sample, alongside its regular `Cycles: ...` line. The line is comma-separated `key=value` text and includes the staking, output, rewards, ledger/index/CMC/faucet/blackhole/SNS-WASM/XRC settings, SNS tracking flag, scan and cycles intervals, minimum tracked commitment, retention caps, and per-tick work limits.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time and upgrade-time config from public canister logs. The historian emits a single `CONFIG ...` line on the cycles-sweep cadence when it records the historian canister's own cycles sample, alongside its regular `Cycles: ...` line. The line is comma-separated `key=value` text and includes the staking, output, rewards, ledger/index/CMC/faucet/SNS-W/XRC settings, SNS tracking flag, scan and cycles intervals, minimum tracked commitment, retention caps, and per-tick work limits.
 
 ### Sweep batching
 
@@ -198,7 +204,6 @@ Optional:
 - `index_canister_id` (defaults to ICP Index)
 - `cmc_canister_id` (defaults to CMC)
 - `faucet_canister_id` (defaults to production [`jupiter-faucet`](../faucet) canister ID)
-- `blackhole_canister_id` (defaults to canonical blackhole)
 - `sns_wasm_canister_id` (defaults to SNS-WASM)
 - `enable_sns_tracking` (defaults to `false`)
 - `scan_interval_seconds` (defaults to `600`)
@@ -228,7 +233,6 @@ Upgrades can change:
 - `max_commitment_entries_per_canister`
 - `max_index_pages_per_tick`
 - `max_canisters_per_cycles_tick`
-- `blackhole_canister_id`
 - `sns_wasm_canister_id`
 - `xrc_canister_id`
 - `cmc_canister_id`
@@ -241,7 +245,7 @@ Inspect the current `UpgradeArgs` definition in [`src/lifecycle.rs`](src/lifecyc
 The committed [`mainnet-install-args.did`](mainnet-install-args.did) configures:
 
 - the Jupiter staking account as the commitment source
-- default ICP Ledger, ICP Index, canonical blackhole, CMC, faucet, and SNS-WASM IDs by leaving those principals as `null`
+- default ICP Ledger, ICP Index, CMC, faucet, and SNS-WASM IDs by leaving those principals as `null`
 - `enable_sns_tracking = false`
 - `scan_interval_seconds = 600`
 - `cycles_interval_seconds = 604800`
@@ -295,7 +299,7 @@ Coverage includes, among other things:
 - frontend-facing public query surfaces such as:
   - `get_public_counts`
   - `get_public_status`
-  - `list_registered_canister_summaries`
+  - `list_memo_registered_canister_summaries`
   - `list_recent_commitments`
 
 For the broader test matrix, see [`../../tools/xtask/README.md`](../../tools/xtask/README.md).
@@ -321,22 +325,24 @@ It produces the canonical release artifacts under `release-artifacts/`, includin
 - `release-artifacts/jupiter_relay.wasm.gz`
 - corresponding `.sha256` files
 
-The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Its embedded Relay install payload must correspond to the reviewed raw Relay Wasm from the same Docker/reproducible release build, recorded as `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`, and `release-artifacts/jupiter_relay.wasm.gz` must decompress to those reviewed raw bytes. Runtime self-service Relay module-hash reconciliation compares `canister_status.module_hash` to the compressed Relay install payload hash recorded in `release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256`, because Historian passes the compressed bytes to `install_code`. Self-service relays created by Historian use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and differ from the canonical production Relay only in target canister and surplus-recipient configuration. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
+The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Its embedded Relay install payload must correspond to the reviewed raw Relay Wasm from the same Docker/reproducible release build, recorded as `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`, and `release-artifacts/jupiter_relay.wasm.gz` must decompress to those reviewed raw bytes. Runtime self-service Relay reconciliation reads the live module hash from management `canister_info(relay_id)` and compares it with the hash derived from the exact embedded Relay install payload bytes. Historian does not persist per-instance expected Relay hashes. Self-service relays created by Historian use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and differ from the canonical production Relay in target canister, automatic probe route, and surplus-recipient configuration. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
 
 ### Deploy canonical release artifact on the IC
 
 Production canister: `jupiter_historian` / `j5gs6-uiaaa-aaaar-qb5cq-cai`
 
-Fresh install:
+Fresh install or development-phase reinstall:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --environment ic \
-  --mode install \
+  --mode reinstall \
   --args-file canisters/historian/mainnet-install-args.did
 ```
 
-### Production upgrades
+This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian heap and stable state, requires current controller authority and complete `InitArgs`, and accepts loss of development-phase histories and registrations. Before reinstall, disable the self-service factory; verify no in-flight setup job, no setup payment mid-processing, and no child Relay created by a job the fresh Historian would forget; then either confirm production has zero completed self-service Relays or provide fresh-init seed data that restores every existing target-to-Relay relationship. If the canonical Relay is also being reinstalled, first prove its current controller permits reinstall; a genuinely blackholed Relay cannot be reinstalled. After reinstall, verify Auto probing, `RelayTarget` plus `RelayInstance` tracking, `tracked_canister_count`, and cycles history for both target and Relay.
+
+### Production upgrades outside this development-phase reinstall
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
@@ -350,13 +356,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic 
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
 
-For live relay factory enablement, the temporary file contains only:
-
-```did
-(opt record {
-  relay_factory_enabled = opt true;
-})
-```
+Historian probing is always Auto. There is no `cycles_probe_policy` upgrade field.
 
 ```bash
 cat > /tmp/historian-upgrade-args.did <<'EOF'

@@ -26,7 +26,7 @@ pub(crate) fn approved_self_service_relay_wasm() -> Option<&'static [u8]> {
     // compressed Wasm in install_code and installs the decompressed module.
     #[cfg(test)]
     {
-        return Some(b"jupiter-historian-test-relay-wasm");
+        Some(b"jupiter-historian-test-relay-wasm")
     }
     #[cfg(not(test))]
     {
@@ -46,9 +46,9 @@ pub(crate) fn approved_relay_raw_wasm_hash_hex() -> Option<String> {
     #[cfg(test)]
     {
         use sha2::{Digest, Sha256};
-        return Some(hex::encode(Sha256::digest(
+        Some(hex::encode(Sha256::digest(
             b"jupiter-historian-test-relay-raw-wasm",
-        )));
+        )))
     }
     #[cfg(not(test))]
     {
@@ -67,7 +67,7 @@ pub(crate) fn approved_relay_install_payload_hash_hex() -> Option<String> {
     #[cfg(test)]
     {
         use sha2::{Digest, Sha256};
-        return approved_self_service_relay_wasm().map(|bytes| hex::encode(Sha256::digest(bytes)));
+        approved_self_service_relay_wasm().map(|bytes| hex::encode(Sha256::digest(bytes)))
     }
     #[cfg(not(test))]
     {
@@ -80,9 +80,8 @@ pub(crate) fn approved_relay_install_payload_hash_hex() -> Option<String> {
 }
 
 pub(crate) fn approved_relay_onchain_module_hash() -> Option<[u8; 32]> {
-    let hash = approved_relay_install_payload_hash_hex()?;
-    let bytes = hex::decode(hash).ok()?;
-    bytes.try_into().ok()
+    use sha2::{Digest, Sha256};
+    approved_self_service_relay_wasm().map(|bytes| Sha256::digest(bytes).into())
 }
 
 #[allow(dead_code)]
@@ -95,7 +94,7 @@ pub(crate) fn approved_relay_wasm_hash() -> Option<[u8; 32]> {
     #[cfg(test)]
     {
         use sha2::{Digest, Sha256};
-        return Some(Sha256::digest(b"jupiter-historian-test-relay-raw-wasm").into());
+        Some(Sha256::digest(b"jupiter-historian-test-relay-raw-wasm").into())
     }
     #[cfg(not(test))]
     {

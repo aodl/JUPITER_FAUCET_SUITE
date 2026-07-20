@@ -1,64 +1,45 @@
 use super::*;
-pub(super) async fn probe_and_record_cycles<B: BlackholeClient>(
+
+fn cycles_sample_source_for_route(route: Option<&CyclesProbeRoute>) -> CyclesSampleSource {
+    match route {
+        None => CyclesSampleSource::SelfCanister,
+        Some(CyclesProbeRoute::Blackhole { .. }) => CyclesSampleSource::BlackholeStatus,
+        Some(CyclesProbeRoute::SnsRoot { .. }) => CyclesSampleSource::SnsRootStatus,
+        Some(CyclesProbeRoute::SnsSwap { .. }) => CyclesSampleSource::SnsSwapStatus,
+    }
+}
+
+pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     canister_id: candid::Principal,
     max_entries: u32,
-    self_canister_id: Option<candid::Principal>,
-    blackhole: &B,
+    cycles_probe_client: &C,
 ) -> Result<(), String> {
-    if self_canister_id
-        .map(|self_id| canister_id == self_id)
-        .unwrap_or(false)
-    {
-        let cycles = ic_cdk::api::canister_cycle_balance();
-        log_cycles_once_per_week(cycles);
-        log_current_config();
-        state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
-            crate::state::ensure_cycles_history_loaded(st, canister_id);
-            let history = st.cycles_history.entry(canister_id).or_default();
-            let inserted = logic::push_cycles_sample(
-                history,
-                logic::make_cycles_sample(
-                    timestamp_nanos,
-                    cycles,
-                    CyclesSampleSource::SelfCanister,
-                ),
-                max_entries,
-            );
-            let meta = st
-                .per_canister_meta
-                .entry(canister_id)
-                .or_insert_with(CanisterMeta::default);
-            if meta.first_seen_ts.is_none() {
-                meta.first_seen_ts = Some(now_secs);
-            }
-            if inserted {
-                logic::apply_cycles_probe_result(
-                    meta,
-                    timestamp_nanos,
-                    CyclesProbeResult::Ok(CyclesSampleSource::SelfCanister),
-                );
-            }
-            crate::refresh_registered_canister_summary(st, canister_id);
-        });
-        return Ok(());
-    }
+    let policy = CyclesProbePolicy::Auto;
+    let cached_route =
+        state::with_state(|st| st.cached_cycles_probe_routes.get(&canister_id).cloned());
 
-    match blackhole.canister_status(canister_id).await {
-        Ok(status) => {
-            let cycles = nat_to_u128(&status.cycles)
-                .ok_or_else(|| "cycles overflow converting nat to u128".to_string())?;
+    let outcome =
+        shared_probe_cycles(&policy, canister_id, cached_route, cycles_probe_client).await;
+    match outcome {
+        Ok(CyclesProbeSuccess { cycles, route }) => {
+            if route.is_none() {
+                log_cycles_once_per_week(cycles);
+                log_current_config();
+            }
+            let source = cycles_sample_source_for_route(route.as_ref());
             state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+                if let Some(route) = route.clone() {
+                    st.cached_cycles_probe_routes.insert(canister_id, route);
+                } else {
+                    st.cached_cycles_probe_routes.remove(&canister_id);
+                }
                 crate::state::ensure_cycles_history_loaded(st, canister_id);
                 let history = st.cycles_history.entry(canister_id).or_default();
                 let inserted = logic::push_cycles_sample(
                     history,
-                    logic::make_cycles_sample(
-                        timestamp_nanos,
-                        cycles,
-                        CyclesSampleSource::BlackholeStatus,
-                    ),
+                    logic::make_cycles_sample(timestamp_nanos, cycles, source.clone()),
                     max_entries,
                 );
                 let meta = st
@@ -72,14 +53,16 @@ pub(super) async fn probe_and_record_cycles<B: BlackholeClient>(
                     logic::apply_cycles_probe_result(
                         meta,
                         timestamp_nanos,
-                        CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus),
+                        CyclesProbeResult::Ok(source),
                     );
                 }
-                crate::refresh_registered_canister_summary(st, canister_id);
+                crate::refresh_memo_registered_canister_summary(st, canister_id);
             });
         }
         Err(err) => {
+            let message = err.message;
             state::with_root_and_registry_canister_state_mut(canister_id, |st| {
+                st.cached_cycles_probe_routes.remove(&canister_id);
                 let meta = st
                     .per_canister_meta
                     .entry(canister_id)
@@ -90,25 +73,29 @@ pub(super) async fn probe_and_record_cycles<B: BlackholeClient>(
                 logic::apply_cycles_probe_result(
                     meta,
                     timestamp_nanos,
-                    CyclesProbeResult::Error(err.to_string()),
+                    CyclesProbeResult::Error(message),
                 );
-                crate::refresh_registered_canister_summary(st, canister_id);
+                crate::refresh_memo_registered_canister_summary(st, canister_id);
             });
         }
     }
     Ok(())
 }
 
-pub(super) async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: GovernanceClient>(
+pub(super) async fn process_initial_cycles_probe_queue<
+    C: CyclesProbeClient,
+    G: GovernanceClient,
+>(
     timestamp_nanos: u64,
     now_secs: u64,
-    blackhole: &B,
+    cycles_probe_client: &C,
     governance: &G,
 ) -> Result<(), String> {
-    let (targets, max_entries) = state::with_root_state_mut(|st| {
+    let (targets, max_entries, should_refresh_stake) = state::with_root_state_mut(|st| {
         let max_per_tick = st.config.max_canisters_per_cycles_tick.max(1) as usize;
         let mut pending = std::mem::take(&mut st.initial_cycles_probe_queue);
         let mut selected = Vec::new();
+        let mut should_refresh_stake = false;
 
         while selected.len() < max_per_tick && !pending.is_empty() {
             let canister_id = pending.remove(0);
@@ -120,17 +107,21 @@ pub(super) async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: Go
             if already_probed {
                 continue;
             }
-            if should_probe_memo_registered_canister(st, canister_id) {
+            if should_probe_tracked_canister(st, canister_id) {
+                if should_refresh_staking_neuron_for_canister(st, &canister_id) {
+                    should_refresh_stake = true;
+                }
                 selected.push(canister_id);
             }
         }
 
         st.initial_cycles_probe_queue = pending;
-        (selected, st.config.max_cycles_entries_per_canister)
+        (
+            selected,
+            st.config.max_cycles_entries_per_canister,
+            should_refresh_stake,
+        )
     });
-
-    let should_refresh_stake = !targets.is_empty();
-    let mut first_probe_error = None;
 
     for canister_id in targets {
         if let Err(err) = probe_and_record_cycles(
@@ -138,14 +129,14 @@ pub(super) async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: Go
             now_secs,
             canister_id,
             max_entries,
-            None,
-            blackhole,
+            cycles_probe_client,
         )
         .await
         {
-            if first_probe_error.is_none() {
-                first_probe_error = Some(err);
-            }
+            log_error(&format!(
+                "historian initial cycles probe degraded for {}: {err}",
+                canister_id.to_text()
+            ));
         }
     }
 
@@ -153,9 +144,6 @@ pub(super) async fn process_initial_cycles_probe_queue<B: BlackholeClient, G: Go
         refresh_staking_neuron_after_registration(governance).await;
     }
 
-    if let Some(err) = first_probe_error {
-        return Err(err);
-    }
     Ok(())
 }
 
@@ -179,15 +167,15 @@ pub(super) async fn refresh_staking_neuron_after_registration<G: GovernanceClien
     }
 }
 
-pub(super) async fn process_cycles_sweep<B: BlackholeClient>(
+pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
     timestamp_nanos: u64,
     now_secs: u64,
-    blackhole: &B,
+    cycles_probe_client: &C,
 ) -> Result<(), String> {
     let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
         if st.active_cycles_sweep.is_none() {
             let self_id = ic_cdk::api::canister_self();
-            let canisters = build_cycles_sweep_canisters(st, self_id);
+            let canisters = build_cycles_sweep_canisters(st, self_id, now_secs);
             st.active_cycles_sweep = Some(ActiveCyclesSweep {
                 started_at_ts_nanos: timestamp_nanos,
                 canisters,
@@ -201,21 +189,25 @@ pub(super) async fn process_cycles_sweep<B: BlackholeClient>(
         )
     });
 
-    let self_id = ic_cdk::api::canister_self();
     let started_at_ts_nanos = snapshot.started_at_ts_nanos;
     let start = snapshot.next_index as usize;
     let end =
         (snapshot.next_index + max_per_tick as u64).min(snapshot.canisters.len() as u64) as usize;
     for canister_id in snapshot.canisters[start..end].iter().copied() {
-        probe_and_record_cycles(
+        if let Err(err) = probe_and_record_cycles(
             started_at_ts_nanos,
             now_secs,
             canister_id,
             max_entries,
-            Some(self_id),
-            blackhole,
+            cycles_probe_client,
         )
-        .await?;
+        .await
+        {
+            log_error(&format!(
+                "historian cycles sweep degraded for {}: {err}",
+                canister_id.to_text()
+            ));
+        }
     }
 
     state::with_root_state_mut(|st| {

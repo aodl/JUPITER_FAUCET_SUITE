@@ -213,6 +213,6 @@ test('generated historian declaration marks get_canister_module_hashes as a quer
 
   assert.match(
     declaration,
-    /get_canister_module_hashes:\s*IDL\.Func\(\[\],\s*\[IDL\.Vec\(CanisterModuleHash\)\],\s*\['query'\]\)/,
+    /'get_canister_module_hashes'\s*:\s*IDL\.Func\(\s*\[\],\s*\[IDL\.Vec\(CanisterModuleHash\)\],\s*\['query'\],\s*\)/,
   );
 });

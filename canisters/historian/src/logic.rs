@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::clients::index::{IndexOperation, IndexTransactionWithId};
 use crate::state::{
-    CanisterMeta, CanisterSource, CommitmentSample, CyclesProbeResult, CyclesSample,
+    CanisterMeta, CanisterTrackingReason, CommitmentSample, CyclesProbeResult, CyclesSample,
     CyclesSampleSource,
 };
 
@@ -128,10 +128,10 @@ pub(crate) fn indexed_commitment_from_tx(
     }
 }
 
-pub(crate) fn merge_sources(
-    existing: Option<&BTreeSet<CanisterSource>>,
-    add: CanisterSource,
-) -> BTreeSet<CanisterSource> {
+pub(crate) fn merge_tracking_reasons(
+    existing: Option<&BTreeSet<CanisterTrackingReason>>,
+    add: CanisterTrackingReason,
+) -> BTreeSet<CanisterTrackingReason> {
     let mut out = existing.cloned().unwrap_or_default();
     out.insert(add);
     out
@@ -208,10 +208,6 @@ pub(crate) fn apply_commitment_seen(
             .map(|ts| ts / 1_000_000_000)
             .unwrap_or(now_secs),
     );
-}
-
-pub(crate) fn should_skip_blackhole_for_sources(sources: &BTreeSet<CanisterSource>) -> bool {
-    sources.contains(&CanisterSource::SnsDiscovery)
 }
 
 pub(crate) fn make_cycles_sample(
@@ -649,11 +645,11 @@ mod tests {
     }
 
     #[test]
-    fn source_merge_and_blackhole_skip_behave() {
-        let merged = merge_sources(None, CanisterSource::MemoCommitment);
-        let merged = merge_sources(Some(&merged), CanisterSource::SnsDiscovery);
-        assert!(merged.contains(&CanisterSource::MemoCommitment));
-        assert!(should_skip_blackhole_for_sources(&merged));
+    fn tracking_reason_merge_keeps_multiple_reasons() {
+        let merged = merge_tracking_reasons(None, CanisterTrackingReason::MemoCommitment);
+        let merged = merge_tracking_reasons(Some(&merged), CanisterTrackingReason::SnsDiscovery);
+        assert!(merged.contains(&CanisterTrackingReason::MemoCommitment));
+        assert!(merged.contains(&CanisterTrackingReason::SnsDiscovery));
     }
     #[test]
     fn transfer_from_transactions_do_not_count_as_staking_commitments() {

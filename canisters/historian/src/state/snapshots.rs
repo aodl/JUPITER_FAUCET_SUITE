@@ -43,6 +43,7 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn persist_snapshot_sections_scoped(
     st: &State,
     dirty_sections: u8,
@@ -54,7 +55,7 @@ pub(super) fn persist_snapshot_sections_scoped(
     relay_target_scope: Option<&BTreeSet<Principal>>,
 ) {
     if dirty_sections & DIRTY_REGISTRY != 0 {
-        sync_canister_sources_map(&st.canister_sources, registry_scope);
+        sync_canister_tracking_reasons_map(&st.canister_tracking_reasons, registry_scope);
         sync_canister_meta_map(&st.per_canister_meta, registry_scope);
     }
     if dirty_sections & DIRTY_COMMITMENTS != 0 {

@@ -80,7 +80,7 @@ Used for:
 
 - `get_public_counts`
 - `get_public_status`
-- `list_registered_canister_summaries`
+- `list_memo_registered_canister_summaries`
 - `list_recent_commitments`
 
 These power the registry table, commitment feed, and historian-backed status surface.

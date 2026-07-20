@@ -1,4 +1,3 @@
-import { Actor } from '@icp-sdk/core/agent';
 import { Principal } from '@icp-sdk/core/principal';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
 import { createHistorianClient, normalizeError } from './agent.js';
@@ -10,31 +9,31 @@ const TERMINAL_POLL_STATUSES = new Set([
   'Active',
   'Refunded',
   'ManualRecoveryRequired',
+  'SweptToExistingRelay',
+  'SweepBelowDust',
 ]);
 
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const FRONTEND_NOTIFY_MIN_E8S = 10_000n;
 const RELAY_SETUP_PROMPT_TEXT = 'Enter a canister ID to check whether Jupiter can create a relay for it. This creates a relay, not an emergency top-up; if the canister is close to freezing, top it up directly first.';
-const BLACKHOLE_CANISTER_IDS = [
-  '77deu-baaaa-aaaar-qb6za-cai',
-  'e3mmv-5qaaa-aaaah-aadma-cai',
-];
 const STATUS_LABELS = {
   NotFunded: 'Not funded',
   BelowMinimum: 'Below minimum',
+  InsufficientForCurrentRate: 'Below current requirement',
   PaymentNotAllowed: 'Payment not allowed',
   IndexNotReady: 'Index not ready',
   CreatingRelay: 'Creating relay',
   SweepingToExistingRelay: 'Sweeping to existing relay',
+  SweptToExistingRelay: 'Swept to existing relay',
+  SweepBelowDust: 'Balance below sweep minimum',
+  Refunding: 'Refund pending',
   RefundPending: 'Refund pending',
   FailedRetryable: 'Retryable failure',
   ManualRecoveryRequired: 'Manual recovery required',
 };
-const BLACKHOLE_PREFLIGHT_STATUS = 'Blackhole visibility required';
 const RECOVERY_STATUSES = new Set([
   'BelowMinimum',
   'InsufficientForCurrentRate',
-  'TargetNotObservable',
   'FailedRetryable',
   'ManualRecoveryRequired',
   'Ambiguous',
@@ -48,24 +47,6 @@ const PAYMENT_ACTIONABLE_RECOVERY_STATUSES = new Set([
   'InsufficientForCurrentRate',
 ]);
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
-
-const blackholeIdlFactory = ({ IDL }) => {
-  const MemoryMetrics = IDL.Record({
-    wasm_memory_size: IDL.Nat,
-    stable_memory_size: IDL.Nat,
-  });
-  const Status = IDL.Record({
-    cycles: IDL.Nat,
-    memory_size: IDL.Opt(IDL.Nat),
-    memory_metrics: IDL.Opt(MemoryMetrics),
-    settings: IDL.Record({
-      controllers: IDL.Vec(IDL.Principal),
-    }),
-  });
-  return IDL.Service({
-    canister_status: IDL.Func([IDL.Record({ canister_id: IDL.Principal })], [Status], []),
-  });
-};
 
 function variantName(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
@@ -83,34 +64,6 @@ function statusKey(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
   return variantName(value);
-}
-
-function createBlackholeActor(canisterId, { agent }) {
-  if (!agent) throw new Error('Blackhole preflight requires an HttpAgent instance');
-  return Actor.createActor(blackholeIdlFactory, { agent, canisterId });
-}
-
-export async function preflightBlackholeVisibility({
-  target,
-  agent,
-  blackholeActorFactory = createBlackholeActor,
-} = {}) {
-  if (!target) throw new Error('Blackhole preflight requires a target canister ID');
-  const errors = [];
-  for (const canisterId of BLACKHOLE_CANISTER_IDS) {
-    try {
-      const blackhole = blackholeActorFactory(canisterId, { agent });
-      const status = await blackhole.canister_status({ canister_id: target });
-      return { Ok: { cycles: BigInt(status?.cycles ?? 0) } };
-    } catch (error) {
-      errors.push(`${canisterId}: ${normalizeError(error)}`);
-    }
-  }
-  return {
-    Err: {
-      message: `The target canister's cycle balance is not visible through a supported Jupiter blackhole canister. Add one of these controllers to the target canister, then check again: ${BLACKHOLE_CANISTER_IDS.join(', ')}. Probe details: ${errors.join('; ')}`,
-    },
-  };
 }
 
 function principalText(value) {
@@ -185,7 +138,6 @@ export function icrcAccountText(account) {
 
 function statusFromNotifyResult(result) {
   const kind = variantName(result);
-  if (kind === 'TargetNotObservable') return 'TargetNotObservable';
   if (kind === 'BelowMinimum') return 'BelowMinimum';
   if (kind === 'InsufficientForCurrentRate') return 'InsufficientForCurrentRate';
   if (kind === 'Active') return 'Active';
@@ -202,7 +154,6 @@ function messageFromNotifyResult(result) {
   const kind = variantName(result);
   if (kind === 'Failed') return result.Failed?.message || '';
   if (kind === 'RefundPending') return result.RefundPending?.reason || '';
-  if (kind === 'TargetNotObservable') return result.TargetNotObservable?.message || '';
   if (kind === 'BelowMinimum') {
     return `Current balance ${formatIcpE8s(result.BelowMinimum.current_balance_e8s)} is below required ${formatIcpE8s(result.BelowMinimum.minimum_e8s)}.`;
   }
@@ -318,10 +269,6 @@ function formatConversion(record, fallbackAmountE8s) {
 function recoveryDiagnosticPayload(recoveryView) {
   if (!recoveryView) return null;
   const createAttempt = readOptional(recoveryView.relay_create_attempt);
-  const rawRelayHash = readOptional(createAttempt?.raw_relay_wasm_hash_hex)
-    || readOptional(recoveryView.relay_raw_wasm_hash_hex);
-  const installPayloadHash = readOptional(createAttempt?.install_payload_hash_hex)
-    || readOptional(recoveryView.relay_install_payload_hash_hex);
   return {
     target_canister_id: principalText(recoveryView.target_canister_id),
     status: statusText(recoveryView.status),
@@ -331,9 +278,6 @@ function recoveryDiagnosticPayload(recoveryView) {
     cycles_minted: readOptional(recoveryView.cycles_minted)?.toString?.() || null,
     relay_create_attach_cycles: createAttempt?.create_attach_cycles?.toString?.() || createAttempt?.initial_cycles?.toString?.() || null,
     configured_relay_create_attach_cycles: recoveryView.configured_relay_create_attach_cycles?.toString?.() || null,
-    raw_relay_wasm_hash_hex: rawRelayHash,
-    relay_install_payload_hash_hex: installPayloadHash,
-    relay_onchain_module_hash_hex: readOptional(recoveryView.relay_onchain_module_hash_hex),
     relay_funding_e8s: readOptional(recoveryView.relay_funding_transfer)?.amount_e8s?.toString?.() || null,
     setup_amount_seen_e8s: recoveryView.setup_amount_seen_e8s?.toString?.() || null,
     setup_amount_processed_e8s: recoveryView.setup_amount_processed_e8s?.toString?.() || null,
@@ -384,7 +328,6 @@ function renderView({
   balanceE8s = null,
   notifyResult = null,
   recoveryView = null,
-  preflightResult = null,
   notifying = false,
 }) {
   clearRelaySetupPrompt();
@@ -400,15 +343,12 @@ function renderView({
   const minimum = requiredMinimum === undefined ? null : BigInt(requiredMinimum);
   const factoryAvailable = Boolean(view?.factory_available);
   const paymentBlockedReason = readOptional(view?.payment_blocked_reason);
-  const preflightError = preflightResult?.Err?.message || '';
-  const preflightOk = Boolean(preflightResult?.Ok);
   const effectiveStatus = statusKey(recoveryView?.status) || notifyStatus || statusKey(view?.status);
   const statusRequiresRecovery = RECOVERY_STATUSES.has(effectiveStatus);
   const recoveryAllowsPayment = PAYMENT_ACTIONABLE_RECOVERY_STATUSES.has(effectiveStatus);
   const paymentDetailsHidden = Boolean(existingRelay)
     || view?.payment_allowed === false
-    || (statusRequiresRecovery && !recoveryAllowsPayment)
-    || (Boolean(preflightResult) && !preflightOk);
+    || (statusRequiresRecovery && !recoveryAllowsPayment);
 
   const recoveryError = readOptional(recoveryView?.last_error);
   const resultMessage = messageFromNotifyResult(notifyResult);
@@ -418,7 +358,7 @@ function renderView({
       ? (statusText(recoveryView.status) || status)
       : status;
   const notifyingMessage = notifying ? 'Notifying historian…' : '';
-  setText('relay-setup-status', preflightError && !recoveryView ? BLACKHOLE_PREFLIGHT_STATUS : displayStatus);
+  setText('relay-setup-status', displayStatus);
   const pendingRecoveryMessage = statusRequiresRecovery && !recoveryAllowsPayment && !recoveryView && !resultMessage
     ? 'Loading recovery details…'
     : DASH;
@@ -435,8 +375,8 @@ function renderView({
     dashboardAccount: accountIdentifier,
     title: accountIdentifier,
   });
-  setText('relay-setup-warning', preflightError);
-  setHidden('relay-setup-warning', !preflightError);
+  setText('relay-setup-warning', '');
+  setHidden('relay-setup-warning', true);
   setText('relay-setup-factory', factoryAvailable ? 'Available' : 'Unavailable');
   setHtml('relay-setup-existing-relay', existingRelay ? renderRelayEntry(existingRelay) : '');
   setHidden('relay-setup-existing-relay', !existingRelay);
@@ -457,7 +397,6 @@ export function createRelaySetupController({
   createHistorian = createHistorianClient,
   ledgerActorFactory = createLedgerActor,
   copyTextToClipboard = null,
-  blackholePreflight = preflightBlackholeVisibility,
   hostProvider = () => window.location.origin,
   setIntervalFn = (callback, delay) => window.setInterval(callback, delay),
   clearIntervalFn = (handle) => window.clearInterval(handle),
@@ -470,7 +409,6 @@ export function createRelaySetupController({
     balanceE8s: null,
     notifyResult: null,
     recoveryView: null,
-    preflightResult: null,
     error: '',
     loaded: false,
     loading: false,
@@ -628,7 +566,6 @@ export function createRelaySetupController({
     state.balanceE8s = null;
     state.notifyResult = null;
     state.recoveryView = null;
-    state.preflightResult = null;
     state.loaded = false;
     state.loading = true;
     state.notifying = false;
@@ -653,18 +590,6 @@ export function createRelaySetupController({
       if (!submittedTargetStillCurrent(targetText)) return;
       state.target = target;
       state.view = view;
-      const existingRelay = readOptional(view?.existing_relay);
-      if (!existingRelay && view?.payment_allowed !== false) {
-        state.preflightResult = await blackholePreflight({ target, agent });
-        if (generation !== requestGeneration || !submittedTargetStillCurrent(targetText)) return;
-        if (state.preflightResult?.Err) {
-          state.balanceE8s = null;
-          state.loaded = true;
-          state.loading = false;
-          render();
-          return;
-        }
-      }
       const ledger = await loadLedger({ agent, historian });
       if (!submittedTargetStillCurrent(targetText)) return;
       const balance = await ledger.icrc1_balance_of(view.setup_account);

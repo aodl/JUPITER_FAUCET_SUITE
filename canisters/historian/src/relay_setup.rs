@@ -3,9 +3,6 @@ use crate::clients::{
     BlackholeClient, ClientError, CmcCanister, CmcClient, IcpXdrConversionRate, IndexClient,
     LedgerClient,
 };
-use crate::scheduler::{
-    original_blackhole_id, should_try_secure_blackhole_first, FallbackBlackholeClient,
-};
 use crate::state::{self, Config, RelayRegistryStatus, State};
 use crate::*;
 use candid::{Encode, Principal};
@@ -14,6 +11,7 @@ use icrc_ledger_types::icrc1::transfer::TransferError;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg};
 use jupiter_ic_clients::account::{principal_to_subaccount, relay_setup_subaccount};
 use jupiter_ic_clients::cmc::NotifyTopUpError;
+use jupiter_ic_clients::cycles_probe::{probe_cycles, CyclesProbeClient, CyclesProbePolicy};
 use jupiter_ic_clients::ledger::LegacyTransferError;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -53,18 +51,6 @@ pub(crate) fn relay_subaccount_one(relay_id: Principal) -> Account {
         owner: relay_id,
         subaccount: Some(RELAY_SUBACCOUNT_ONE),
     }
-}
-
-pub(crate) fn relay_raw_wasm_hash_hex() -> Option<String> {
-    approved_relay_raw_wasm_hash_hex()
-}
-
-pub(crate) fn relay_install_payload_hash_hex() -> Option<String> {
-    approved_relay_install_payload_hash_hex()
-}
-
-pub(crate) fn relay_onchain_module_hash_hex() -> Option<String> {
-    relay_install_payload_hash_hex()
 }
 
 fn log_relay_setup(target: Principal, status: RelaySetupStatus, message: impl AsRef<str>) {
@@ -112,10 +98,10 @@ trait ManagementClient: Send + Sync {
         &self,
         arg: &jupiter_ic_clients::management::InstallCodeArgs,
     ) -> Result<(), ManagementClientError>;
-    async fn canister_status(
+    async fn canister_info(
         &self,
-        arg: &jupiter_ic_clients::management::CanisterStatusArgs,
-    ) -> Result<jupiter_ic_clients::management::CanisterStatusResult, ManagementClientError>;
+        arg: &jupiter_ic_clients::management::CanisterInfoArgs,
+    ) -> Result<jupiter_ic_clients::management::CanisterInfoResult, ManagementClientError>;
     async fn update_settings(
         &self,
         arg: &jupiter_ic_clients::management::UpdateSettingsArgs,
@@ -145,11 +131,11 @@ impl ManagementClient for IcManagementClient {
             .map_err(Into::into)
     }
 
-    async fn canister_status(
+    async fn canister_info(
         &self,
-        arg: &jupiter_ic_clients::management::CanisterStatusArgs,
-    ) -> Result<jupiter_ic_clients::management::CanisterStatusResult, ManagementClientError> {
-        jupiter_ic_clients::management::canister_status(arg)
+        arg: &jupiter_ic_clients::management::CanisterInfoArgs,
+    ) -> Result<jupiter_ic_clients::management::CanisterInfoResult, ManagementClientError> {
+        jupiter_ic_clients::management::canister_info(arg)
             .await
             .map_err(Into::into)
     }
@@ -225,9 +211,6 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
                 cycle_conversion_e8s: job.cycle_conversion_e8s,
                 cycles_minted: job.cycles_minted,
                 configured_relay_create_attach_cycles: st.config.relay_initial_cycles,
-                relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
-                relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
-                relay_onchain_module_hash_hex: relay_onchain_module_hash_hex(),
                 cycle_transfer: job.cycle_transfer.as_ref().map(redacted_transfer),
                 relay_funding_transfer: job.relay_funding_transfer.as_ref().map(redacted_transfer),
                 existing_relay_sweep_transfer: job
@@ -241,14 +224,6 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
                         created_at_ts: attempt.created_at_ts,
                         initial_cycles: attempt.initial_cycles,
                         create_attach_cycles: attempt.initial_cycles,
-                        raw_relay_wasm_hash_hex: attempt
-                            .raw_relay_wasm_hash_hex
-                            .clone()
-                            .or_else(|| attempt.relay_wasm_hash_hex.clone()),
-                        install_payload_hash_hex: attempt
-                            .install_payload_hash_hex
-                            .clone()
-                            .or_else(relay_install_payload_hash_hex),
                     }
                 }),
                 created_at_ts: job.created_at_ts,
@@ -266,9 +241,6 @@ pub(crate) fn setup_recovery_view(target: Principal) -> RelaySetupRecoveryView {
             cycle_conversion_e8s: None,
             cycles_minted: None,
             configured_relay_create_attach_cycles: st.config.relay_initial_cycles,
-            relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
-            relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
-            relay_onchain_module_hash_hex: relay_onchain_module_hash_hex(),
             cycle_transfer: None,
             relay_funding_transfer: None,
             existing_relay_sweep_transfer: None,
@@ -293,20 +265,15 @@ pub(crate) fn setup_view_from_state(
         .get(&target)
         .filter(|entry| entry.status == RelayRegistryStatus::Active)
         .cloned();
-    let factory_available =
-        st.config.relay_factory_enabled && approved_self_service_relay_wasm().is_some();
+    let factory_available = st.config.relay_factory_enabled
+        && st.config.cmc_canister_id.is_some()
+        && approved_self_service_relay_wasm().is_some();
     let payment_blocked_reason = if existing_relay.is_some() {
         None
     } else if let Some(message) = invalid_target(target, &st.config, historian) {
         Some(message)
-    } else if !st.config.relay_factory_enabled {
-        Some("relay factory is disabled".to_string())
-    } else if st.config.cmc_canister_id.is_none() {
-        Some("CMC canister is not configured".to_string())
-    } else if approved_self_service_relay_wasm().is_none() {
-        Some("approved relay wasm is not embedded".to_string())
     } else {
-        None
+        relay_setup_blocked_reason_for_new_relay(&st.config)
     };
     let payment_allowed = existing_relay.is_some() || payment_blocked_reason.is_none();
     let status = if existing_relay.is_some() {
@@ -335,9 +302,19 @@ pub(crate) fn setup_view_from_state(
         existing_relay: existing_relay.map(Into::into),
         status,
         factory_available,
-        relay_raw_wasm_hash_hex: relay_raw_wasm_hash_hex(),
-        relay_install_payload_hash_hex: relay_install_payload_hash_hex(),
         warning_text: None,
+    }
+}
+
+fn relay_setup_blocked_reason_for_new_relay(cfg: &Config) -> Option<String> {
+    if !cfg.relay_factory_enabled {
+        Some("relay factory is disabled".to_string())
+    } else if cfg.cmc_canister_id.is_none() {
+        Some("CMC canister is not configured".to_string())
+    } else if approved_self_service_relay_wasm().is_none() {
+        Some("approved relay wasm is not embedded".to_string())
+    } else {
+        None
     }
 }
 
@@ -384,7 +361,7 @@ fn invalid_target(target: Principal, cfg: &Config, historian: Principal) -> Opti
     if target == historian {
         return Some("target must not be the historian canister".to_string());
     }
-    if target == cfg.blackhole_canister_id
+    if target == jupiter_ic_clients::constants::fiduciary_blackhole_canister_id()
         || target == cfg.ledger_canister_id
         || target == cfg.index_canister_id
         || Some(target) == cfg.cmc_canister_id
@@ -616,7 +593,6 @@ fn refund_eligible_status(job: &RelaySetupJob) -> bool {
     matches!(
         job.status,
         RelaySetupStatus::BelowMinimum
-            | RelaySetupStatus::TargetNotObservable
             | RelaySetupStatus::InsufficientForCurrentRate
             | RelaySetupStatus::IndexNotReady
             | RelaySetupStatus::RefundAvailable
@@ -1034,10 +1010,11 @@ async fn sweep_existing(
     }
 }
 
-pub(crate) async fn notify_relay_setup_with_clients(
+pub(crate) async fn notify_relay_setup_with_clients<C: CyclesProbeClient>(
     target: Principal,
     ledger: &dyn LedgerClient,
     index: &dyn IndexClient,
+    cycles_probe_client: &C,
     blackhole: &dyn BlackholeClient,
     cmc: &dyn CmcClient,
 ) -> RelaySetupNotifyResult {
@@ -1046,17 +1023,19 @@ pub(crate) async fn notify_relay_setup_with_clients(
         target,
         ledger,
         index,
+        cycles_probe_client,
         blackhole,
         cmc,
     )
     .await
 }
 
-async fn notify_relay_setup_with_clients_for_historian(
+async fn notify_relay_setup_with_clients_for_historian<C: CyclesProbeClient>(
     historian: Principal,
     target: Principal,
     ledger: &dyn LedgerClient,
     index: &dyn IndexClient,
+    cycles_probe_client: &C,
     blackhole: &dyn BlackholeClient,
     cmc: &dyn CmcClient,
 ) -> RelaySetupNotifyResult {
@@ -1250,12 +1229,56 @@ async fn notify_relay_setup_with_clients_for_historian(
             current_balance_e8s: balance,
         };
     }
+    if let Some(reason) = relay_setup_blocked_reason_for_new_relay(&cfg) {
+        state::with_root_and_relay_factory_state_mut(target, |st| {
+            st.relay_setup_jobs.entry(target).or_insert_with(|| {
+                reserve_job(target, setup_account, setup_account_identifier.clone())
+            });
+        });
+        return auto_refund_pre_spend(historian, target, reason, ledger, index).await;
+    }
     if !has_resume_job {
         state::with_root_and_relay_factory_state_mut(target, |st| {
             st.relay_setup_jobs.entry(target).or_insert_with(|| {
                 reserve_job(target, setup_account, setup_account_identifier.clone())
             });
         });
+    }
+    let indexed = match index_setup_payments(target, setup_account_identifier.clone(), index).await
+    {
+        Ok(indexed) => indexed,
+        Err(err) => {
+            set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
+            return RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message: err,
+            };
+        }
+    };
+    state::with_root_and_relay_factory_state_mut(target, |st| {
+        if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
+            merge_payments(job, indexed.payments);
+            job.updated_at_ts = now_secs();
+        }
+    });
+    let indexed_total = state::with_state(|st| {
+        st.relay_setup_jobs
+            .get(&target)
+            .map(indexed_inbound_total_for_job)
+            .unwrap_or(0)
+    });
+    if indexed_total.saturating_add(cfg.relay_setup_dust_e8s) < balance {
+        set_job_status(
+            target,
+            RelaySetupStatus::IndexNotReady,
+            Some(
+                "setup account balance is visible on ledger but ICP index has not caught up"
+                    .to_string(),
+            ),
+        );
+        return RelaySetupNotifyResult::Pending {
+            status: RelaySetupPublicStatus::IndexNotReady,
+        };
     }
     let rate = match cmc.get_icp_xdr_conversion_rate().await {
         Ok(rate) => rate,
@@ -1302,81 +1325,32 @@ async fn notify_relay_setup_with_clients_for_historian(
             current_balance_e8s: balance,
         };
     }
-    if let Err(err) = blackhole.canister_status(target).await {
-        state::with_root_and_relay_factory_state_mut(target, |st| {
-            let mut job = st.relay_setup_jobs.remove(&target).unwrap_or_else(|| {
-                reserve_job(target, setup_account, setup_account_identifier.clone())
+    let policy = CyclesProbePolicy::Auto;
+    let cached_route = state::with_state(|st| st.cached_cycles_probe_routes.get(&target).cloned());
+    if let Err(err) = probe_cycles(&policy, target, cached_route, cycles_probe_client).await {
+        let reason = "no supported cycles-observation route could read the target balance";
+        let message = if err.message.is_empty() {
+            reason.to_string()
+        } else {
+            format!("{reason}: {}", err.message)
+        };
+        if balance > cfg.relay_setup_dust_e8s {
+            state::with_root_and_relay_factory_state_mut(target, |st| {
+                let job = st.relay_setup_jobs.entry(target).or_insert_with(|| {
+                    reserve_job(target, setup_account, setup_account_identifier.clone())
+                });
+                job.status = RelaySetupStatus::RefundAvailable;
+                job.last_error = Some(message.clone());
+                job.updated_at_ts = now_secs();
             });
-            job.status = RelaySetupStatus::RefundAvailable;
-            job.last_error = Some(err.to_string());
-            job.updated_at_ts = now_secs();
-            st.relay_setup_jobs.insert(target, job);
-        });
-        return auto_refund_pre_spend(
-            historian,
-            target,
-            "target is not observable through a supported Jupiter blackhole canister".to_string(),
-            ledger,
-            index,
-        )
-        .await;
-    }
-    let indexed = match index_setup_payments(target, setup_account_identifier.clone(), index).await
-    {
-        Ok(indexed) => indexed,
-        Err(err) => {
-            set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
-            return RelaySetupNotifyResult::Failed {
-                status: RelaySetupStatus::FailedRetryable.into(),
-                message: err,
-            };
+            return auto_refund_pre_spend(historian, target, reason.to_string(), ledger, index)
+                .await;
         }
-    };
-    state::with_root_and_relay_factory_state_mut(target, |st| {
-        if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
-            merge_payments(job, indexed.payments);
-            job.updated_at_ts = now_secs();
-        }
-    });
-    let indexed_total = state::with_state(|st| {
-        st.relay_setup_jobs
-            .get(&target)
-            .map(indexed_inbound_total_for_job)
-            .unwrap_or(0)
-    });
-    if indexed_total.saturating_add(cfg.relay_setup_dust_e8s) < balance {
-        set_job_status(
-            target,
-            RelaySetupStatus::IndexNotReady,
-            Some(
-                "setup account balance is visible on ledger but ICP index has not caught up"
-                    .to_string(),
-            ),
-        );
-        if indexed.hit_page_cap {
-            return RelaySetupNotifyResult::Pending {
-                status: RelaySetupPublicStatus::IndexNotReady,
-            };
-        }
-        return RelaySetupNotifyResult::Pending {
-            status: RelaySetupPublicStatus::IndexNotReady,
+        return RelaySetupNotifyResult::Failed {
+            status: RelaySetupStatus::FailedTerminal.into(),
+            message,
         };
     }
-    if !cfg.relay_factory_enabled
-        || approved_self_service_relay_wasm().is_none()
-        || cfg.cmc_canister_id.is_none()
-    {
-        return auto_refund_pre_spend(
-            historian,
-            target,
-            "relay factory is disabled, approved relay wasm is not embedded, or CMC canister is not configured"
-                .to_string(),
-            ledger,
-            index,
-        )
-        .await;
-    }
-
     let Some(conversion_e8s) = cycle_conversion_e8s_for_rate(&cfg, fee, balance, &rate) else {
         set_job_status(
             target,
@@ -1512,13 +1486,14 @@ async fn reconcile_relay_code_installed(
     expected_wasm_hash: [u8; 32],
     management: &dyn ManagementClient,
 ) -> Result<RelayCodeInstallReconciliation, String> {
-    let status = management
-        .canister_status(&jupiter_ic_clients::management::CanisterStatusArgs {
+    let info = management
+        .canister_info(&jupiter_ic_clients::management::CanisterInfoArgs {
             canister_id: relay_id,
+            num_requested_changes: Some(0),
         })
         .await
-        .map_err(|err| format!("relay canister_status failed before install retry: {err}"))?;
-    match status.module_hash.as_deref() {
+        .map_err(|err| format!("relay canister_info failed before install retry: {err}"))?;
+    match info.module_hash.as_deref() {
         Some(hash) if hash == expected_wasm_hash.as_slice() => {
             state::with_root_and_relay_factory_state_mut(target, |st| {
                 if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
@@ -1533,7 +1508,7 @@ async fn reconcile_relay_code_installed(
         Some(_) => Ok(RelayCodeInstallReconciliation::ManualRecoveryRequired(
             mark_manual_recovery_required(
                 target,
-                "relay canister already has an unexpected module hash".to_string(),
+                "relay canister already has an unexpected live module hash".to_string(),
             ),
         )),
         None => Ok(RelayCodeInstallReconciliation::EmptyCanister),
@@ -1600,9 +1575,6 @@ async fn create_and_activate_relay(
                         target_canister_id: target,
                         created_at_ts: now_secs(),
                         initial_cycles: cfg.relay_initial_cycles,
-                        relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
-                        raw_relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
-                        install_payload_hash_hex: relay_install_payload_hash_hex(),
                     });
                     job.updated_at_ts = now_secs();
                 }
@@ -1696,6 +1668,26 @@ async fn create_and_activate_relay(
         }
     }
     set_job_status(target, RelaySetupStatus::CodeInstalled, None);
+    let expected_wasm_hash =
+        approved_relay_onchain_module_hash().expect("approved relay wasm exists before handoff");
+    match reconcile_relay_code_installed(target, relay_id, expected_wasm_hash, management).await {
+        Ok(RelayCodeInstallReconciliation::ExistingApprovedModule) => {}
+        Ok(RelayCodeInstallReconciliation::EmptyCanister) => {
+            return mark_manual_recovery_required(
+                target,
+                "relay canister has no live module hash before final controller handoff"
+                    .to_string(),
+            );
+        }
+        Ok(RelayCodeInstallReconciliation::ManualRecoveryRequired(result)) => return result,
+        Err(err) => {
+            set_job_status(target, RelaySetupStatus::FailedRetryable, Some(err.clone()));
+            return RelaySetupNotifyResult::Failed {
+                status: RelaySetupStatus::FailedRetryable.into(),
+                message: err,
+            };
+        }
+    }
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let pending_funding_transfer = state::with_state(|st| {
         st.relay_setup_jobs
@@ -1788,6 +1780,7 @@ async fn create_and_activate_relay(
         });
     }
     set_job_status(target, RelaySetupStatus::Blackholing, None);
+    let final_controller = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
     state::with_root_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
             job.blackhole_update_attempted = true;
@@ -1799,14 +1792,14 @@ async fn create_and_activate_relay(
         .update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
             canister_id: relay_id,
             settings: jupiter_ic_clients::management::CanisterSettings {
-                controllers: Some(vec![cfg.blackhole_canister_id]),
+                controllers: Some(vec![final_controller]),
                 log_visibility: Some(jupiter_ic_clients::management::LogVisibility::Public),
             },
         })
         .await
     {
         if let Ok(status) = blackhole.canister_status(relay_id).await {
-            if status.settings.controllers == vec![cfg.blackhole_canister_id] {
+            if status.settings.controllers == vec![final_controller] {
                 state::with_root_and_relay_factory_state_mut(target, |st| {
                     if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
                         job.blackhole_confirmed = true;
@@ -1863,13 +1856,12 @@ async fn create_and_activate_relay(
                 .map(|job| job.setup_tx_ids.clone())
                 .unwrap_or_default()
         }),
-        relay_wasm_hash_hex: relay_install_payload_hash_hex(),
-        final_controllers: Some(vec![cfg.blackhole_canister_id]),
+        final_controllers: Some(vec![final_controller]),
         log_visibility_public: Some(true),
         created_at_ts: Some(now_secs()),
         activated_at_ts: Some(now_secs()),
     };
-    state::with_root_and_relay_factory_state_mut(target, |st| {
+    state::with_root_all_registry_and_relay_factory_state_mut(target, |st| {
         if let Some(job) = st.relay_setup_jobs.get_mut(&target) {
             job.status = RelaySetupStatus::Active;
             job.phase = Some(RelaySetupPhase::Active);
@@ -1878,6 +1870,7 @@ async fn create_and_activate_relay(
             job.updated_at_ts = now_secs();
         }
         st.relay_registry_by_target.insert(target, entry.clone());
+        mark_active_relay_tracked(st, target, relay_id, Some(now_secs()));
     });
     RelaySetupNotifyResult::Active {
         relay: entry.into(),
@@ -1907,7 +1900,7 @@ fn jupiter_relay_init_arg(cfg: &Config, target: Principal) -> Vec<u8> {
         ledger_canister_id: Some(cfg.ledger_canister_id),
         cmc_canister_id: cfg.cmc_canister_id,
         governance_canister_id: Some(jupiter_ic_clients::constants::nns_governance_id()),
-        blackhole_canister_id: Some(cfg.blackhole_canister_id),
+        blackhole_canister_id: None,
         main_interval_seconds: Some(cfg.self_service_relay_interval_seconds),
         max_transfers_per_tick: cfg.self_service_relay_max_transfers_per_tick,
         surplus_canister_recipients: None,
@@ -1923,25 +1916,26 @@ pub(crate) async fn notify_relay_setup(target: Principal) -> RelaySetupNotifyRes
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let index = jupiter_ic_clients::index::IcpIndexCanister::new(cfg.index_canister_id);
-    let original_blackhole = clients::blackhole::BlackholeCanister::new(original_blackhole_id());
-    let configured_blackhole =
-        clients::blackhole::BlackholeCanister::new(cfg.blackhole_canister_id);
+    let cycles_probe_client =
+        jupiter_ic_clients::cycles_probe::IcCyclesProbeClient::new(cfg.sns_wasm_canister_id);
+    let blackhole = clients::blackhole::BlackholeCanister::new(
+        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+    );
     let cmc = cfg.cmc_canister_id.map(CmcCanister::new);
     let missing_cmc = MissingCmcClient;
     let cmc_client: &dyn CmcClient = cmc
         .as_ref()
         .map(|client| client as &dyn CmcClient)
         .unwrap_or(&missing_cmc);
-    if should_try_secure_blackhole_first(cfg.blackhole_canister_id) {
-        let blackhole = FallbackBlackholeClient::new(&configured_blackhole, &original_blackhole);
-        notify_relay_setup_with_clients(target, &ledger, &index, &blackhole, cmc_client).await
-    } else if cfg.blackhole_canister_id == original_blackhole_id() {
-        notify_relay_setup_with_clients(target, &ledger, &index, &original_blackhole, cmc_client)
-            .await
-    } else {
-        notify_relay_setup_with_clients(target, &ledger, &index, &configured_blackhole, cmc_client)
-            .await
-    }
+    notify_relay_setup_with_clients(
+        target,
+        &ledger,
+        &index,
+        &cycles_probe_client,
+        &blackhole,
+        cmc_client,
+    )
+    .await
 }
 
 struct MissingCmcClient;
@@ -2288,7 +2282,6 @@ mod tests {
             index_canister_id: Principal::from_slice(&[3]),
             cmc_canister_id: Some(Principal::from_slice(&[4])),
             faucet_canister_id: Some(Principal::from_slice(&[5])),
-            blackhole_canister_id: Principal::from_slice(&[6]),
             sns_wasm_canister_id: Principal::from_slice(&[7]),
             xrc_canister_id: Principal::from_slice(&[8]),
             enable_sns_tracking: true,
@@ -2320,15 +2313,18 @@ mod tests {
         state::set_state(st);
     }
 
+    type FakeTransferResults = Arc<Mutex<Vec<Result<Result<BlockIndex, TransferError>, String>>>>;
+    type FakeLegacyCalls = Arc<Mutex<Vec<(String, u64, Option<u64>)>>>;
+
     #[derive(Clone)]
     struct FakeLedger {
         fee: Result<u64, String>,
         balance: Result<u64, String>,
-        transfer_results: Arc<Mutex<Vec<Result<Result<BlockIndex, TransferError>, String>>>>,
+        transfer_results: FakeTransferResults,
         transfers: Arc<Mutex<Vec<TransferArg>>>,
         legacy_results:
             Arc<Mutex<Vec<Result<jupiter_ic_clients::ledger::LegacyTransferResult, String>>>>,
-        legacy_calls: Arc<Mutex<Vec<(String, u64, Option<u64>)>>>,
+        legacy_calls: FakeLegacyCalls,
     }
 
     impl FakeLedger {
@@ -2430,21 +2426,186 @@ mod tests {
         }
     }
 
-    struct FailingBlackhole;
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ProbeCall {
+        SelfCycles(Principal),
+        Blackhole { probe: Principal, target: Principal },
+        ListDeployedSnses,
+        CanisterInfo(Principal),
+        ListSnsCanisters(Principal),
+        SnsRootStatus { root: Principal, target: Principal },
+        SnsSwapStatus(Principal),
+    }
 
-    #[async_trait::async_trait]
-    impl BlackholeClient for FailingBlackhole {
-        async fn canister_status(
+    #[derive(Clone)]
+    enum ProbeResponse {
+        Ok(u128),
+        Err(&'static str),
+    }
+
+    struct FakeCyclesProbe {
+        self_cycles: Option<(Principal, u128)>,
+        blackhole: BTreeMap<Principal, ProbeResponse>,
+        sns_root: BTreeMap<Principal, ProbeResponse>,
+        sns_swap: BTreeMap<Principal, ProbeResponse>,
+        deployed: Result<jupiter_ic_clients::sns::ListDeployedSnsesResponse, &'static str>,
+        controllers: Result<Vec<Principal>, &'static str>,
+        root_lists: BTreeMap<
+            Principal,
+            Result<jupiter_ic_clients::sns::ListSnsCanistersResponse, &'static str>,
+        >,
+        calls: Arc<Mutex<Vec<ProbeCall>>>,
+    }
+
+    impl Default for FakeCyclesProbe {
+        fn default() -> Self {
+            Self {
+                self_cycles: None,
+                blackhole: BTreeMap::new(),
+                sns_root: BTreeMap::new(),
+                sns_swap: BTreeMap::new(),
+                deployed: Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse::default()),
+                controllers: Ok(Vec::new()),
+                root_lists: BTreeMap::new(),
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl FakeCyclesProbe {
+        fn blackhole_ok(canister_id: Principal) -> Self {
+            Self {
+                blackhole: BTreeMap::from([(canister_id, ProbeResponse::Ok(1))]),
+                ..Default::default()
+            }
+        }
+
+        fn calls(&self) -> Vec<ProbeCall> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl CyclesProbeClient for FakeCyclesProbe {
+        async fn self_cycles(&self, target: Principal) -> Option<u128> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(ProbeCall::SelfCycles(target));
+            self.self_cycles
+                .filter(|(self_target, _)| *self_target == target)
+                .map(|(_, cycles)| cycles)
+        }
+
+        async fn blackhole_cycles(
             &self,
-            _canister_id: Principal,
-        ) -> Result<BlackholeCanisterStatus, ClientError> {
-            Err(ClientError::Call("not a controller".to_string()))
+            probe_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.lock().unwrap().push(ProbeCall::Blackhole {
+                probe: probe_canister_id,
+                target: target_canister_id,
+            });
+            match self.blackhole.get(&probe_canister_id).cloned() {
+                Some(ProbeResponse::Ok(cycles)) => Ok(cycles),
+                Some(ProbeResponse::Err(message)) => {
+                    Err(jupiter_ic_clients::ClientError::Call(message.to_string()))
+                }
+                None => Err(jupiter_ic_clients::ClientError::Call(
+                    "missing blackhole response".to_string(),
+                )),
+            }
+        }
+
+        async fn list_deployed_snses(
+            &self,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListDeployedSnsesResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(ProbeCall::ListDeployedSnses);
+            self.deployed
+                .clone()
+                .map_err(|err| jupiter_ic_clients::ClientError::Call(err.to_string()))
+        }
+
+        async fn canister_info_controllers(
+            &self,
+            target: Principal,
+        ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(ProbeCall::CanisterInfo(target));
+            self.controllers
+                .clone()
+                .map_err(|err| jupiter_ic_clients::ClientError::Call(err.to_string()))
+        }
+
+        async fn list_sns_canisters(
+            &self,
+            root_canister_id: Principal,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListSnsCanistersResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(ProbeCall::ListSnsCanisters(root_canister_id));
+            self.root_lists
+                .get(&root_canister_id)
+                .cloned()
+                .unwrap_or(Err("missing root list"))
+                .map_err(|err| jupiter_ic_clients::ClientError::Call(err.to_string()))
+        }
+
+        async fn sns_root_cycles(
+            &self,
+            root_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.lock().unwrap().push(ProbeCall::SnsRootStatus {
+                root: root_canister_id,
+                target: target_canister_id,
+            });
+            match self.sns_root.get(&root_canister_id).cloned() {
+                Some(ProbeResponse::Ok(cycles)) => Ok(cycles),
+                Some(ProbeResponse::Err(message)) => {
+                    Err(jupiter_ic_clients::ClientError::Call(message.to_string()))
+                }
+                None => Err(jupiter_ic_clients::ClientError::Call(
+                    "missing SNS root response".to_string(),
+                )),
+            }
+        }
+
+        async fn sns_swap_cycles(
+            &self,
+            swap_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(ProbeCall::SnsSwapStatus(swap_canister_id));
+            match self.sns_swap.get(&swap_canister_id).cloned() {
+                Some(ProbeResponse::Ok(cycles)) => Ok(cycles),
+                Some(ProbeResponse::Err(message)) => {
+                    Err(jupiter_ic_clients::ClientError::Call(message.to_string()))
+                }
+                None => Err(jupiter_ic_clients::ClientError::Call(
+                    "missing SNS swap response".to_string(),
+                )),
+            }
         }
     }
 
     struct FakeCmc {
         notify_results: Arc<Mutex<Vec<Result<u128, NotifyTopUpError>>>>,
         notify_calls: Arc<Mutex<Vec<u64>>>,
+        rate_calls: Arc<Mutex<u32>>,
         rate: Result<IcpXdrConversionRate, String>,
     }
 
@@ -2453,17 +2614,23 @@ mod tests {
             Self {
                 notify_results: Arc::new(Mutex::new(Vec::new())),
                 notify_calls: Arc::new(Mutex::new(Vec::new())),
+                rate_calls: Arc::new(Mutex::new(0)),
                 rate: Ok(IcpXdrConversionRate {
                     timestamp_seconds: 0,
                     xdr_permyriad_per_icp: 100_000,
                 }),
             }
         }
+
+        fn rate_calls(&self) -> u32 {
+            *self.rate_calls.lock().unwrap()
+        }
     }
 
     #[async_trait::async_trait]
     impl CmcClient for FakeCmc {
         async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
+            *self.rate_calls.lock().unwrap() += 1;
             self.rate.clone().map_err(ClientError::Call)
         }
 
@@ -2487,7 +2654,9 @@ mod tests {
         create_calls: Arc<Mutex<u32>>,
         create_attached_cycles: Arc<Mutex<Vec<u128>>>,
         install_calls: Arc<Mutex<u32>>,
+        install_args: Arc<Mutex<Vec<Vec<u8>>>>,
         update_calls: Arc<Mutex<u32>>,
+        update_controllers: Arc<Mutex<Vec<Vec<Principal>>>>,
         status_hashes: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
     }
 
@@ -2498,7 +2667,9 @@ mod tests {
                 create_calls: Arc::new(Mutex::new(0)),
                 create_attached_cycles: Arc::new(Mutex::new(Vec::new())),
                 install_calls: Arc::new(Mutex::new(0)),
+                install_args: Arc::new(Mutex::new(Vec::new())),
                 update_calls: Arc::new(Mutex::new(0)),
+                update_controllers: Arc::new(Mutex::new(Vec::new())),
                 status_hashes: Arc::new(Mutex::new(vec![module_hash])),
             }
         }
@@ -2525,34 +2696,39 @@ mod tests {
 
         async fn install_code(
             &self,
-            _arg: &jupiter_ic_clients::management::InstallCodeArgs,
+            arg: &jupiter_ic_clients::management::InstallCodeArgs,
         ) -> Result<(), ManagementClientError> {
             *self.install_calls.lock().unwrap() += 1;
+            self.install_args.lock().unwrap().push(arg.arg.clone());
             Ok(())
         }
 
-        async fn canister_status(
+        async fn canister_info(
             &self,
-            _arg: &jupiter_ic_clients::management::CanisterStatusArgs,
-        ) -> Result<jupiter_ic_clients::management::CanisterStatusResult, ManagementClientError>
+            _arg: &jupiter_ic_clients::management::CanisterInfoArgs,
+        ) -> Result<jupiter_ic_clients::management::CanisterInfoResult, ManagementClientError>
         {
             let mut hashes = self.status_hashes.lock().unwrap();
             let module_hash = if hashes.is_empty() {
-                None
+                approved_relay_onchain_module_hash().map(|hash| hash.to_vec())
             } else {
                 hashes.remove(0)
             };
-            Ok(jupiter_ic_clients::management::CanisterStatusResult {
+            Ok(jupiter_ic_clients::management::CanisterInfoResult {
                 module_hash,
-                settings: jupiter_ic_clients::management::CanisterSettings::default(),
+                controllers: Vec::new(),
             })
         }
 
         async fn update_settings(
             &self,
-            _arg: &jupiter_ic_clients::management::UpdateSettingsArgs,
+            arg: &jupiter_ic_clients::management::UpdateSettingsArgs,
         ) -> Result<(), ManagementClientError> {
             *self.update_calls.lock().unwrap() += 1;
+            self.update_controllers
+                .lock()
+                .unwrap()
+                .push(arg.settings.controllers.clone().unwrap_or_default());
             Ok(())
         }
     }
@@ -2610,12 +2786,253 @@ mod tests {
             setup_account_identifier: None,
             setup_amount_e8s: None,
             setup_tx_ids: Vec::new(),
-            relay_wasm_hash_hex: None,
             final_controllers: None,
             log_visibility_public: None,
             created_at_ts: None,
             activated_at_ts: None,
         }
+    }
+
+    #[derive(candid::CandidType, candid::Deserialize)]
+    struct DecodedRelaySurplusNeuronRecipient {
+        neuron_id: u64,
+        memo: Vec<u8>,
+    }
+
+    #[derive(candid::CandidType, candid::Deserialize)]
+    struct DecodedRelayInitArgs {
+        managed_canisters: Vec<Principal>,
+        ledger_canister_id: Option<Principal>,
+        cmc_canister_id: Option<Principal>,
+        governance_canister_id: Option<Principal>,
+        blackhole_canister_id: Option<Principal>,
+        main_interval_seconds: Option<u64>,
+        max_transfers_per_tick: Option<u32>,
+        surplus_canister_recipients: Option<Vec<()>>,
+        surplus_neuron_recipients: Vec<DecodedRelaySurplusNeuronRecipient>,
+    }
+
+    fn decode_relay_init_arg(bytes: &[u8]) -> DecodedRelayInitArgs {
+        let (decoded,): (DecodedRelayInitArgs,) =
+            candid::decode_args(bytes).expect("generated relay init arg should decode");
+        decoded
+    }
+
+    #[test]
+    fn generated_self_service_relay_init_arg_decodes_as_auto_without_new_fields() {
+        let cfg = config();
+        let target = Principal::from_slice(&[30, 1]);
+
+        let decoded = decode_relay_init_arg(&jupiter_relay_init_arg(&cfg, target));
+
+        assert_eq!(decoded.managed_canisters, vec![target]);
+        assert_eq!(decoded.ledger_canister_id, Some(cfg.ledger_canister_id));
+        assert_eq!(decoded.cmc_canister_id, cfg.cmc_canister_id);
+        assert_eq!(
+            decoded.governance_canister_id,
+            Some(jupiter_ic_clients::constants::nns_governance_id())
+        );
+        assert_eq!(decoded.blackhole_canister_id, None);
+        assert_eq!(
+            decoded.main_interval_seconds,
+            Some(cfg.self_service_relay_interval_seconds)
+        );
+        assert_eq!(
+            decoded.max_transfers_per_tick,
+            cfg.self_service_relay_max_transfers_per_tick
+        );
+        assert_eq!(decoded.surplus_canister_recipients, None);
+        assert_eq!(decoded.surplus_neuron_recipients.len(), 1);
+        assert_eq!(
+            decoded.surplus_neuron_recipients[0].neuron_id,
+            cfg.io_surplus_neuron_id
+        );
+        assert!(decoded.surplus_neuron_recipients[0].memo.is_empty());
+
+        let relay_did = include_str!("../../relay/jupiter_relay.did");
+        assert!(relay_did.contains("blackhole_canister_id : opt principal"));
+        assert!(!relay_did.contains("cycles_probe_policy"));
+        assert!(!relay_did.contains("relay_final_controller_canister_id"));
+    }
+
+    #[test]
+    fn auto_self_service_relay_init_does_not_change_final_controller() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[30, 2]);
+        let relay_id = Principal::from_slice(&[30, 3]);
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cfg = config();
+        state::set_state(State::new(cfg.clone(), 0));
+        let mut job = job_with_status(RelaySetupStatus::CycleNotifySucceeded);
+        job.target_canister_id = target;
+        job.cycles_minted = Some(cfg.relay_initial_cycles);
+        state::with_state_mut(|st| {
+            st.relay_setup_jobs.insert(target, job);
+        });
+        let management = FakeManagement::healthy(relay_id, None);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let result = block_on(create_and_activate_relay(
+            target,
+            0,
+            10_000,
+            &index,
+            &FakeBlackhole,
+            &management,
+            historian,
+        ));
+
+        assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
+        let install_args = management.install_args.lock().unwrap().clone();
+        assert_eq!(install_args.len(), 1);
+        let relay_init = decode_relay_init_arg(&install_args[0]);
+        assert_eq!(relay_init.managed_canisters, vec![target]);
+        assert_eq!(relay_init.blackhole_canister_id, None);
+        assert_eq!(
+            management.update_controllers.lock().unwrap().as_slice(),
+            &[vec![fiduciary]]
+        );
+        let entry = state::with_state(|st| st.relay_registry_by_target[&target].clone());
+        assert_eq!(entry.final_controllers, Some(vec![fiduciary]));
+        state::with_state(|st| {
+            assert!(st.distinct_canisters.contains(&target));
+            assert!(st.distinct_canisters.contains(&relay_id));
+            assert_eq!(
+                st.initial_cycles_probe_queue
+                    .iter()
+                    .filter(|queued| **queued == target)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                st.initial_cycles_probe_queue
+                    .iter()
+                    .filter(|queued| **queued == relay_id)
+                    .count(),
+                1
+            );
+            assert!(st.canister_tracking_reasons[&target]
+                .contains(&CanisterTrackingReason::RelayTarget));
+            assert!(st.canister_tracking_reasons[&relay_id]
+                .contains(&CanisterTrackingReason::RelayInstance));
+        });
+    }
+
+    #[test]
+    fn active_relay_tracking_tracks_target_and_relay_once() {
+        let target = Principal::from_slice(&[31, 1]);
+        let relay = Principal::from_slice(&[31, 2]);
+        let mut st = State::new(config(), 0);
+        st.relay_registry_by_target
+            .insert(target, active_relay(target, relay));
+        st.canister_tracking_reasons.insert(
+            target,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
+        st.commitment_history.insert(
+            target,
+            vec![CommitmentSample {
+                tx_id: 1,
+                timestamp_nanos: Some(1_000_000_000),
+                amount_e8s: 80_000_000,
+                counts_toward_faucet: true,
+            }],
+        );
+
+        mark_active_relay_tracked(&mut st, target, relay, Some(123));
+        mark_active_relay_tracked(&mut st, target, relay, Some(456));
+
+        assert!(st.distinct_canisters.contains(&target));
+        assert!(st.distinct_canisters.contains(&relay));
+        assert_eq!(st.per_canister_meta[&target].first_seen_ts, Some(123));
+        assert_eq!(st.per_canister_meta[&relay].first_seen_ts, Some(123));
+        assert_eq!(st.initial_cycles_probe_queue, vec![target, relay]);
+        assert!(
+            st.canister_tracking_reasons[&target].contains(&CanisterTrackingReason::RelayTarget)
+        );
+        assert!(
+            st.canister_tracking_reasons[&relay].contains(&CanisterTrackingReason::RelayInstance)
+        );
+        let summary = st
+            .memo_registered_canister_summaries_cache
+            .as_ref()
+            .and_then(|cache| cache.get(&target))
+            .expect("memo summary cache should refresh after adding RelayTarget");
+        assert!(summary
+            .tracking_reasons
+            .contains(&CanisterTrackingReason::RelayTarget));
+    }
+
+    #[test]
+    fn active_relay_tracking_skips_initial_queue_when_cycles_history_exists() {
+        let target = Principal::from_slice(&[31, 3]);
+        let relay = Principal::from_slice(&[31, 4]);
+        let mut st = State::new(config(), 0);
+        st.relay_registry_by_target
+            .insert(target, active_relay(target, relay));
+        st.cycles_history.insert(
+            target,
+            vec![CyclesSample {
+                timestamp_nanos: 1,
+                cycles: 2,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+        st.cycles_history.insert(
+            relay,
+            vec![CyclesSample {
+                timestamp_nanos: 1,
+                cycles: 3,
+                source: CyclesSampleSource::BlackholeStatus,
+            }],
+        );
+
+        mark_active_relay_tracked(&mut st, target, relay, Some(123));
+
+        assert!(st.distinct_canisters.contains(&target));
+        assert!(st.distinct_canisters.contains(&relay));
+        assert!(st.initial_cycles_probe_queue.is_empty());
+    }
+
+    #[test]
+    fn canonical_registry_targets_and_relay_are_tracked() {
+        let target = Principal::from_slice(&[31, 5]);
+        let relay = Principal::from_slice(&[31, 6]);
+        let mut st = State::new(config(), 0);
+        st.config.canonical_relay_canister_id = Some(relay);
+        st.config.canonical_relay_targets = vec![target, target];
+
+        ensure_canonical_relay_registry_with_first_seen(&mut st, Some(789));
+
+        assert!(
+            st.canister_tracking_reasons[&target].contains(&CanisterTrackingReason::RelayTarget)
+        );
+        assert!(
+            st.canister_tracking_reasons[&relay].contains(&CanisterTrackingReason::RelayInstance)
+        );
+        assert_eq!(st.per_canister_meta[&target].first_seen_ts, Some(789));
+        assert_eq!(st.per_canister_meta[&relay].first_seen_ts, Some(789));
+        assert_eq!(st.initial_cycles_probe_queue, vec![target, relay]);
+    }
+
+    #[test]
+    fn self_service_target_and_relay_change_public_tracked_canister_count() {
+        let target = Principal::from_slice(&[31, 7]);
+        let relay = Principal::from_slice(&[31, 8]);
+        let mut st = State::new(config(), 0);
+        st.relay_registry_by_target
+            .insert(target, active_relay(target, relay));
+        mark_active_relay_tracked(&mut st, target, relay, Some(123));
+        state::set_state(st);
+
+        assert_eq!(get_public_counts().tracked_canister_count, 2);
     }
 
     #[test]
@@ -2640,7 +3057,6 @@ mod tests {
         for status in [
             RelaySetupStatus::BelowMinimum,
             RelaySetupStatus::InsufficientForCurrentRate,
-            RelaySetupStatus::TargetNotObservable,
             RelaySetupStatus::Active,
             RelaySetupStatus::RefundAvailable,
             RelaySetupStatus::Refunded,
@@ -2651,6 +3067,38 @@ mod tests {
             RelaySetupStatus::ManualRecoveryRequired,
         ] {
             assert!(!in_flight_job(&job_with_status(status)));
+        }
+    }
+
+    #[test]
+    fn failed_or_refunded_setup_state_adds_no_relay_tracking_reasons() {
+        for (index, status) in [
+            RelaySetupStatus::Refunded,
+            RelaySetupStatus::FailedRetryable,
+            RelaySetupStatus::FailedTerminal,
+            RelaySetupStatus::ManualRecoveryRequired,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let target = Principal::from_slice(&[32, index as u8]);
+            let relay = Principal::from_slice(&[33, index as u8]);
+            let mut st = State::new(config(), 0);
+            let mut job = job_with_status(status);
+            job.target_canister_id = target;
+            job.relay_canister_id = Some(relay);
+            st.relay_setup_jobs.insert(target, job);
+
+            assert!(!st
+                .canister_tracking_reasons
+                .get(&target)
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayTarget))
+                .unwrap_or(false));
+            assert!(!st
+                .canister_tracking_reasons
+                .get(&relay)
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayInstance))
+                .unwrap_or(false));
         }
     }
 
@@ -2962,6 +3410,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -2998,6 +3449,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -3040,6 +3494,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -3084,12 +3541,16 @@ mod tests {
             }),
             ..FakeCmc::healthy()
         };
+        let cycles_probe = FakeCyclesProbe::blackhole_ok(
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        );
 
         let result = block_on(notify_relay_setup_with_clients_for_historian(
             historian,
             target,
             &ledger,
             &index,
+            &cycles_probe,
             &FakeBlackhole,
             &cmc,
         ));
@@ -3098,6 +3559,7 @@ mod tests {
             result,
             RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![188]
         ));
+        assert!(cycles_probe.calls().is_empty());
         assert!(ledger.transfers.lock().unwrap().is_empty());
         assert!(cmc.notify_calls.lock().unwrap().is_empty());
         let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
@@ -3110,10 +3572,277 @@ mod tests {
     }
 
     #[test]
-    fn relay_setup_observability_accepts_fallback_blackhole_before_spending() {
+    fn zero_balance_notify_returns_below_minimum_without_cycles_probe_or_job() {
         let historian = Principal::from_slice(&[42]);
         let target = Principal::from_slice(&[25, 2]);
-        state::set_state(State::new(config(), 0));
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let ledger = FakeLedger::healthy(0);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+                ProbeResponse::Ok(100),
+            )]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc::healthy();
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::BelowMinimum {
+                current_balance_e8s: 0,
+                ..
+            }
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(cmc.notify_calls.lock().unwrap().is_empty());
+        assert!(state::with_state(|st| st.relay_setup_jobs.is_empty()));
+        assert!(cycles_probe.calls().is_empty());
+    }
+
+    #[test]
+    fn below_minimum_notify_returns_below_minimum_without_cycles_probe() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 3]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let ledger = FakeLedger::healthy(10_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 10_000,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([
+                (thirteen, ProbeResponse::Err("not controller")),
+                (fiduciary, ProbeResponse::Ok(100)),
+            ]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc::healthy();
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::BelowMinimum {
+                current_balance_e8s: 10_000,
+                ..
+            }
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(cmc.notify_calls.lock().unwrap().is_empty());
+        assert!(cycles_probe.calls().is_empty());
+    }
+
+    #[test]
+    fn zero_balance_sns_dapp_returns_below_minimum_without_discovery() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 4]);
+        let root = Principal::from_slice(&[25, 40]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let ledger = FakeLedger::healthy(0);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([
+                (thirteen, ProbeResponse::Err("not controller")),
+                (fiduciary, ProbeResponse::Err("not controller")),
+            ]),
+            deployed: Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse {
+                instances: vec![jupiter_ic_clients::sns::DeployedSns {
+                    root_canister_id: Some(root),
+                    ..Default::default()
+                }],
+            }),
+            controllers: Ok(vec![root]),
+            root_lists: BTreeMap::from([(
+                root,
+                Ok(jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                    root: Some(root),
+                    dapps: vec![target],
+                    ..Default::default()
+                }),
+            )]),
+            sns_root: BTreeMap::from([(root, ProbeResponse::Ok(100))]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc::healthy();
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::BelowMinimum {
+                current_balance_e8s: 0,
+                ..
+            }
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(cmc.notify_calls.lock().unwrap().is_empty());
+        assert!(cycles_probe.calls().is_empty());
+    }
+
+    #[test]
+    fn zero_balance_unobservable_target_returns_below_minimum_without_job_or_probe() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 5]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let ledger = FakeLedger::healthy(0);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([
+                (thirteen, ProbeResponse::Err("not controller")),
+                (fiduciary, ProbeResponse::Err("not controller")),
+            ]),
+            ..Default::default()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::BelowMinimum {
+                current_balance_e8s: 0,
+                ..
+            }
+        ));
+        assert!(state::with_state(|st| st.relay_setup_jobs.is_empty()));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        assert!(cycles_probe.calls().is_empty());
+    }
+
+    #[test]
+    fn funded_unobservable_target_refunds_without_relay_creation_spend() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 6]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            legacy_results: Arc::new(Mutex::new(vec![Ok(Ok(606))])),
+            ..FakeLedger::healthy(300_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    300_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([
+                (thirteen, ProbeResponse::Err("not controller")),
+                (fiduciary, ProbeResponse::Err("not controller")),
+            ]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc::healthy();
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![606]
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(cmc.notify_calls.lock().unwrap().is_empty());
+        assert_eq!(ledger.legacy_calls.lock().unwrap().len(), 1);
+        assert!(state::with_state(|st| st
+            .relay_registry_by_target
+            .is_empty()));
+    }
+
+    #[test]
+    fn observable_target_continues_into_existing_post_probe_recovery_path() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 8]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
         let setup_account = setup_account_for(historian, target);
         let setup_account_identifier = account_identifier_text_for_account(&setup_account);
         let ledger = FakeLedger {
@@ -3134,14 +3863,24 @@ mod tests {
             },
             pages: Arc::new(Mutex::new(Vec::new())),
         };
-        let blackhole = FallbackBlackholeClient::new(&FailingBlackhole, &FakeBlackhole);
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([(thirteen, ProbeResponse::Ok(100))]),
+            ..Default::default()
+        };
         let cmc = FakeCmc {
             notify_results: Arc::new(Mutex::new(vec![Ok(1_000_000_000_000)])),
             ..FakeCmc::healthy()
         };
 
         let result = block_on(notify_relay_setup_with_clients_for_historian(
-            historian, target, &ledger, &index, &blackhole, &cmc,
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
         ));
 
         assert!(matches!(
@@ -3151,16 +3890,170 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(
+            cycles_probe.calls(),
+            vec![
+                ProbeCall::SelfCycles(target),
+                ProbeCall::Blackhole {
+                    probe: thirteen,
+                    target
+                },
+            ]
+        );
         assert!(ledger.legacy_calls.lock().unwrap().is_empty());
         assert_eq!(cmc.notify_calls.lock().unwrap().as_slice(), &[1888]);
         let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
         assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
-        assert_ne!(job.status, RelaySetupStatus::TargetNotObservable);
+        assert!(job.refund_transfers.is_empty());
+        assert!(job
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("create_canister"));
         assert!(!job
             .last_error
             .as_deref()
             .unwrap_or_default()
             .contains("not observable"));
+    }
+
+    #[test]
+    fn funded_sns_dapp_probe_continues_into_existing_post_probe_path() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 9]);
+        let root = Principal::from_slice(&[25, 90]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger {
+            transfer_results: Arc::new(Mutex::new(vec![Ok(Ok(candid::Nat::from(1889u64)))])),
+            legacy_results: Arc::new(Mutex::new(Vec::new())),
+            ..FakeLedger::healthy(300_000_000)
+        };
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    300_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([
+                (thirteen, ProbeResponse::Err("not controller")),
+                (fiduciary, ProbeResponse::Err("not controller")),
+            ]),
+            deployed: Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse {
+                instances: vec![jupiter_ic_clients::sns::DeployedSns {
+                    root_canister_id: Some(root),
+                    ..Default::default()
+                }],
+            }),
+            controllers: Ok(vec![root]),
+            root_lists: BTreeMap::from([(
+                root,
+                Ok(jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                    root: Some(root),
+                    dapps: vec![target],
+                    ..Default::default()
+                }),
+            )]),
+            sns_root: BTreeMap::from([(root, ProbeResponse::Ok(100))]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc {
+            notify_results: Arc::new(Mutex::new(vec![Ok(1_000_000_000_000)])),
+            ..FakeCmc::healthy()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &cmc,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::Failed {
+                status: RelaySetupPublicStatus::ManualRecoveryRequired,
+                ..
+            }
+        ));
+        assert_eq!(
+            cycles_probe.calls(),
+            vec![
+                ProbeCall::SelfCycles(target),
+                ProbeCall::Blackhole {
+                    probe: thirteen,
+                    target
+                },
+                ProbeCall::Blackhole {
+                    probe: fiduciary,
+                    target
+                },
+                ProbeCall::ListDeployedSnses,
+                ProbeCall::CanisterInfo(target),
+                ProbeCall::ListSnsCanisters(root),
+                ProbeCall::SnsRootStatus { root, target },
+            ]
+        );
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.lock().unwrap().as_slice(), &[1889]);
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
+    }
+
+    #[test]
+    fn fixed_policy_zero_balance_returns_below_minimum_without_probe() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[25, 7]);
+        let fixed = Principal::from_slice(&[99]);
+        let cfg = config();
+        state::set_state(State::new(cfg, 0));
+        let ledger = FakeLedger::healthy(0);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: Vec::new(),
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([(fixed, ProbeResponse::Ok(100))]),
+            ..Default::default()
+        };
+
+        let result = block_on(notify_relay_setup_with_clients_for_historian(
+            historian,
+            target,
+            &ledger,
+            &index,
+            &cycles_probe,
+            &FakeBlackhole,
+            &FakeCmc::healthy(),
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::BelowMinimum {
+                current_balance_e8s: 0,
+                ..
+            }
+        ));
+        assert!(cycles_probe.calls().is_empty());
     }
 
     #[test]
@@ -3182,16 +4075,19 @@ mod tests {
         let setup_account_identifier = account_identifier_text_for_account(&setup_account);
         let ledger = FakeLedger {
             legacy_results: Arc::new(Mutex::new(vec![Ok(Ok(89))])),
-            ..FakeLedger::healthy(250_000_000)
+            ..FakeLedger::healthy(350_000_000)
         };
+        let cycles_probe = FakeCyclesProbe::blackhole_ok(
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        );
         let index = FakeIndex {
             response: GetAccountIdentifierTransactionsResponse {
-                balance: 250_000_000,
+                balance: 350_000_000,
                 transactions: vec![index_transfer(
                     2,
                     "source-a",
                     &setup_account_identifier,
-                    250_000_000,
+                    350_000_000,
                 )],
                 oldest_tx_id: None,
             },
@@ -3203,14 +4099,16 @@ mod tests {
             target,
             &ledger,
             &index,
+            &cycles_probe,
             &FakeBlackhole,
-            &FakeCmc::healthy(),
+            &MissingCmcClient,
         ));
 
         assert!(matches!(
             result,
             RelaySetupNotifyResult::Refunded { ref blocks } if blocks == &vec![89]
         ));
+        assert!(cycles_probe.calls().is_empty());
         assert!(ledger.transfers.lock().unwrap().is_empty());
     }
 
@@ -3259,6 +4157,70 @@ mod tests {
     }
 
     #[test]
+    fn repeated_index_not_ready_does_not_probe_cycles_or_fetch_cmc_rate() {
+        let historian = Principal::from_slice(&[42]);
+        let target = Principal::from_slice(&[31]);
+        state::set_state(State::new(config(), 0));
+        let setup_account = setup_account_for(historian, target);
+        let setup_account_identifier = account_identifier_text_for_account(&setup_account);
+        let ledger = FakeLedger::healthy(300_000_000);
+        let index = FakeIndex {
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 300_000_000,
+                transactions: vec![index_transfer(
+                    1,
+                    "source-a",
+                    &setup_account_identifier,
+                    100_000_000,
+                )],
+                oldest_tx_id: None,
+            },
+            pages: Arc::new(Mutex::new(Vec::new())),
+        };
+        let cycles_probe = FakeCyclesProbe {
+            blackhole: BTreeMap::from([(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+                ProbeResponse::Ok(100),
+            )]),
+            deployed: Ok(jupiter_ic_clients::sns::ListDeployedSnsesResponse {
+                instances: vec![jupiter_ic_clients::sns::DeployedSns {
+                    root_canister_id: Some(Principal::from_slice(&[32])),
+                    ..Default::default()
+                }],
+            }),
+            controllers: Ok(vec![Principal::from_slice(&[32])]),
+            ..Default::default()
+        };
+        let cmc = FakeCmc::healthy();
+
+        for _ in 0..2 {
+            let result = block_on(notify_relay_setup_with_clients_for_historian(
+                historian,
+                target,
+                &ledger,
+                &index,
+                &cycles_probe,
+                &FakeBlackhole,
+                &cmc,
+            ));
+            assert!(matches!(
+                result,
+                RelaySetupNotifyResult::Pending {
+                    status: RelaySetupPublicStatus::IndexNotReady
+                }
+            ));
+        }
+
+        assert!(cycles_probe.calls().is_empty());
+        assert_eq!(cmc.rate_calls(), 0);
+        assert!(cmc.notify_calls.lock().unwrap().is_empty());
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert!(ledger.legacy_calls.lock().unwrap().is_empty());
+        let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned().unwrap());
+        assert_eq!(job.status, RelaySetupStatus::IndexNotReady);
+    }
+
+    #[test]
     fn stale_pending_transfer_requires_manual_recovery_after_duplicate_window() {
         TEST_NOW_NANOS.store(
             LEDGER_DUPLICATE_WINDOW_NANOS + 10_000_000_000,
@@ -3298,6 +4260,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -3341,6 +4306,7 @@ mod tests {
                 "reply still lost".to_string(),
             ))])),
             notify_calls: Arc::new(Mutex::new(Vec::new())),
+            rate_calls: Arc::new(Mutex::new(0)),
             rate: Ok(IcpXdrConversionRate {
                 timestamp_seconds: 0,
                 xdr_permyriad_per_icp: 100_000,
@@ -3360,6 +4326,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &cmc,
         ));
@@ -3652,12 +4621,11 @@ mod tests {
         assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
         assert_eq!(
             job.last_error.as_deref(),
-            Some("relay canister already has an unexpected module hash")
+            Some("relay canister already has an unexpected live module hash")
         );
-        assert!(state::with_state(|st| st
+        assert!(state::with_state(|st| !st
             .relay_registry_by_target
-            .get(&target)
-            .is_none()));
+            .contains_key(&target)));
     }
 
     #[test]
@@ -3707,10 +4675,9 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("below configured relay_initial_cycles"));
-        assert!(state::with_state(|st| st
+        assert!(state::with_state(|st| !st
             .relay_registry_by_target
-            .get(&target)
-            .is_none()));
+            .contains_key(&target)));
     }
 
     #[test]
@@ -3728,7 +4695,9 @@ mod tests {
             create_calls: Arc::new(Mutex::new(0)),
             create_attached_cycles: Arc::new(Mutex::new(Vec::new())),
             install_calls: Arc::new(Mutex::new(0)),
+            install_args: Arc::new(Mutex::new(Vec::new())),
             update_calls: Arc::new(Mutex::new(0)),
+            update_controllers: Arc::new(Mutex::new(Vec::new())),
             status_hashes: Arc::new(Mutex::new(Vec::new())),
         };
         let index = FakeIndex {
@@ -3762,10 +4731,9 @@ mod tests {
         assert_eq!(job.status, RelaySetupStatus::ManualRecoveryRequired);
         assert!(job.relay_create_attempt.is_some());
         assert!(job.relay_canister_id.is_none());
-        assert!(state::with_state(|st| st
+        assert!(state::with_state(|st| !st
             .relay_registry_by_target
-            .get(&target)
-            .is_none()));
+            .contains_key(&target)));
 
         let ledger = FakeLedger::healthy(250_000_000);
         let retry = block_on(notify_relay_setup_with_clients_for_historian(
@@ -3773,6 +4741,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -3801,7 +4772,9 @@ mod tests {
             create_calls: Arc::new(Mutex::new(0)),
             create_attached_cycles: Arc::new(Mutex::new(Vec::new())),
             install_calls: Arc::new(Mutex::new(0)),
+            install_args: Arc::new(Mutex::new(Vec::new())),
             update_calls: Arc::new(Mutex::new(0)),
+            update_controllers: Arc::new(Mutex::new(Vec::new())),
             status_hashes: Arc::new(Mutex::new(Vec::new())),
         };
         let index = FakeIndex {
@@ -3859,9 +4832,6 @@ mod tests {
             target_canister_id: target,
             created_at_ts: 123,
             initial_cycles: 1_000_000_000_000,
-            raw_relay_wasm_hash_hex: Some("abcd".to_string()),
-            install_payload_hash_hex: Some("ef01".to_string()),
-            relay_wasm_hash_hex: Some("abcd".to_string()),
         });
         job.cycle_transfer = Some(transfer_record(
             RelaySetupTransferKind::CmcConversion,
@@ -4013,6 +4983,9 @@ mod tests {
             target,
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -4139,9 +5112,6 @@ mod tests {
             target_canister_id: target,
             created_at_ts: 99,
             initial_cycles: 2_000_000_000_000,
-            raw_relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
-            install_payload_hash_hex: relay_install_payload_hash_hex(),
-            relay_wasm_hash_hex: relay_raw_wasm_hash_hex(),
         });
         let restored = stable_roundtrip(job);
 
@@ -4201,6 +5171,9 @@ mod tests {
                 Principal::from_slice(&[26, target_id]),
                 &ledger,
                 &index,
+                &FakeCyclesProbe::blackhole_ok(
+                    jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+                ),
                 &FakeBlackhole,
                 &FakeCmc::healthy(),
             ));
@@ -4253,6 +5226,9 @@ mod tests {
             Principal::anonymous(),
             &ledger,
             &index,
+            &FakeCyclesProbe::blackhole_ok(
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ),
             &FakeBlackhole,
             &FakeCmc::healthy(),
         ));
@@ -4283,34 +5259,41 @@ mod tests {
         let mut cfg = config();
         cfg.relay_factory_enabled = false;
         state::set_state(State::new(cfg, 0));
-        let ledger = FakeLedger::healthy(250_000_000);
+        let ledger = FakeLedger::healthy(350_000_000);
         ledger.legacy_results.lock().unwrap().push(Ok(Ok(88)));
         let setup_account = setup_account_for(historian, target);
         let setup_account_identifier = account_identifier_text_for_account(&setup_account);
         let index = FakeIndex {
             response: GetAccountIdentifierTransactionsResponse {
-                balance: 250_000_000,
+                balance: 350_000_000,
                 transactions: vec![index_transfer(
                     1,
                     "source",
                     &setup_account_identifier,
-                    250_000_000,
+                    350_000_000,
                 )],
                 oldest_tx_id: Some(1),
             },
             pages: Arc::new(Mutex::new(Vec::new())),
         };
+        let cycles_probe = FakeCyclesProbe::blackhole_ok(
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        );
+        let cmc = FakeCmc::healthy();
 
         let result = block_on(notify_relay_setup_with_clients_for_historian(
             historian,
             target,
             &ledger,
             &index,
+            &cycles_probe,
             &FakeBlackhole,
-            &FakeCmc::healthy(),
+            &cmc,
         ));
 
         assert!(matches!(result, RelaySetupNotifyResult::Refunded { .. }));
+        assert_eq!(cmc.rate_calls(), 0);
+        assert!(cycles_probe.calls().is_empty());
         let job = state::with_state(|st| st.relay_setup_jobs.get(&target).cloned()).unwrap();
         assert_eq!(job.status, RelaySetupStatus::Refunded);
         let view = setup_view_from_state(&state::with_state(|st| st.clone()), target, historian);
