@@ -351,6 +351,21 @@ fn debug_set_prev_age_seconds(pic: &PocketIc, canister: Principal, age_seconds: 
     Ok(())
 }
 
+fn debug_set_blackhole_armed_since_ts(
+    pic: &PocketIc,
+    canister: Principal,
+    ts: Option<u64>,
+) -> Result<()> {
+    let _: () = update_call(
+        pic,
+        canister,
+        Principal::anonymous(),
+        "debug_set_blackhole_armed_since_ts",
+        ts,
+    )?;
+    Ok(())
+}
+
 fn debug_set_main_lock_expires_at_ts(
     pic: &PocketIc,
     canister: Principal,
@@ -2843,6 +2858,7 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
         );
     }
 
+    let clear_upgrade_ts = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
     pic.upgrade_canister(
         disburser_canister,
         wasm,
@@ -2861,6 +2877,207 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
         bail!(
             "expected clear_forced_rescue upgrade path to clear forced rescue latch, got {:?}",
             after_clear
+        );
+    }
+    if after_clear.blackhole_armed_since_ts != Some(clear_upgrade_ts) {
+        bail!(
+            "expected clear_forced_rescue to reset blackhole_armed_since_ts to upgrade time {}; got {:?}",
+            clear_upgrade_ts,
+            after_clear
+        );
+    }
+    if !after_clear.rescue_triggered {
+        bail!(
+            "expected clear_forced_rescue to leave controller narrowing pending until update_settings succeeds, got {:?}",
+            after_clear
+        );
+    }
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
+    let after_immediate_recheck = debug_state(&pic, disburser_canister)?;
+    if after_immediate_recheck.forced_rescue_reason.is_some() {
+        bail!(
+            "expected cleared forced rescue not to immediately re-latch, got {:?}",
+            after_immediate_recheck
+        );
+    }
+    if after_immediate_recheck.rescue_triggered {
+        bail!(
+            "expected successful controller narrowing to clear rescue_triggered, got {:?}",
+            after_immediate_recheck
+        );
+    }
+    let after_clear_controllers = pic.get_controllers(disburser_canister);
+    if !(after_clear_controllers.contains(&disburser_canister)
+        && after_clear_controllers.contains(&test_blackhole_controller())
+        && after_clear_controllers.len() == 2)
+    {
+        bail!(
+            "expected controllers to narrow to [blackhole,self] after clear; got {:?}",
+            after_clear_controllers
+        );
+    }
+
+    pic.advance_time(Duration::from_secs(15 * DAY_SECS));
+    pic.tick();
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
+    let after_new_window = debug_state(&pic, disburser_canister)?;
+    if after_new_window.forced_rescue_reason != Some(ForcedRescueReason::BootstrapNoSuccess)
+        || !after_new_window.rescue_triggered
+    {
+        bail!(
+            "expected bootstrap rescue to legitimately re-latch after a fresh 14-day window, got {:?}",
+            after_new_window
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn disburser_clear_forced_rescue_keeps_narrowing_pending_after_update_settings_failure(
+) -> Result<()> {
+    require_ignored_flag()?;
+
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
+
+    let disburser_canister = pic.create_canister();
+    pic.add_cycles(disburser_canister, 5_000_000_000_000);
+
+    let controller = fixture_principal();
+
+    let wasm = build_disburser_wasm()?;
+    let init = InitArg {
+        neuron_id: 101,
+        normal_recipient: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        age_bonus_recipient_2: Account {
+            owner: pic.create_canister(),
+            subaccount: None,
+        },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(gov),
+        rescue_controller: controller,
+        blackhole_controller: Some(test_blackhole_controller()),
+        blackhole_armed: Some(true),
+        main_interval_seconds: Some(365 * DAY_SECS),
+        rescue_interval_seconds: Some(365 * DAY_SECS),
+    };
+
+    pic.install_canister(disburser_canister, wasm.clone(), encode_one(init)?, None);
+    set_blackholed_controllers(&pic, disburser_canister)?;
+    let now_secs = pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000;
+    debug_set_blackhole_armed_since_ts(
+        &pic,
+        disburser_canister,
+        Some(now_secs.saturating_sub(15 * DAY_SECS)),
+    )?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
+    let widened = pic.get_controllers(disburser_canister);
+    if !(widened.contains(&disburser_canister)
+        && widened.contains(&test_blackhole_controller())
+        && widened.contains(&controller)
+        && widened.len() == 3)
+    {
+        bail!(
+            "expected forced rescue to widen controllers, got {:?}",
+            widened
+        );
+    }
+
+    // Remove self as a controller before the clear upgrade. The upgrade itself is
+    // authorized by the rescue controller, but the canister's immediate
+    // post-upgrade update_settings call must fail because self is not a
+    // controller yet.
+    set_controllers_exact(
+        &pic,
+        disburser_canister,
+        vec![test_blackhole_controller(), controller],
+    )?;
+    pic.upgrade_canister(
+        disburser_canister,
+        wasm,
+        encode_one(Some(UpgradeArg {
+            blackhole_controller: None,
+            blackhole_armed: None,
+            clear_forced_rescue: Some(true),
+        }))?,
+        Some(controller),
+    )
+    .map_err(|e| anyhow!("upgrade_canister reject: {:?}", e))?;
+
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
+
+    let after_failed_reconcile = debug_state(&pic, disburser_canister)?;
+    if after_failed_reconcile.forced_rescue_reason.is_some()
+        || !after_failed_reconcile.rescue_triggered
+    {
+        bail!(
+            "expected failed controller narrowing to clear forced reason but leave rescue_triggered pending, got {:?}",
+            after_failed_reconcile
+        );
+    }
+    let controllers_after_failed_reconcile = pic.get_controllers(disburser_canister);
+    if !(controllers_after_failed_reconcile.contains(&test_blackhole_controller())
+        && controllers_after_failed_reconcile.contains(&controller)
+        && controllers_after_failed_reconcile.len() == 2)
+    {
+        bail!(
+            "expected failed controller narrowing to leave controllers at [blackhole,rescue], got {:?}",
+            controllers_after_failed_reconcile
+        );
+    }
+
+    set_controllers_exact(
+        &pic,
+        disburser_canister,
+        vec![test_blackhole_controller(), controller, disburser_canister],
+    )?;
+    let _: () = update_noargs(
+        &pic,
+        disburser_canister,
+        Principal::anonymous(),
+        "debug_rescue_tick",
+    )?;
+    let after_successful_retry = debug_state(&pic, disburser_canister)?;
+    let final_controllers = pic.get_controllers(disburser_canister);
+    if after_successful_retry.rescue_triggered
+        || !(final_controllers.contains(&test_blackhole_controller())
+            && final_controllers.contains(&disburser_canister)
+            && final_controllers.len() == 2)
+    {
+        bail!(
+            "expected pending narrowing to retry and clear rescue controller; state={:?} controllers={:?}",
+            after_successful_retry,
+            final_controllers
         );
     }
 
@@ -3670,9 +3887,10 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
     pic.install_canister(disburser_canister, wasm, encode_one(init)?, None);
     set_blackholed_controllers(&pic, disburser_canister)?;
 
-    // Simulate long downtime (no timers fire while stopped).
+    // Simulate long downtime with one direct 60-day jump. The assertion is
+    // about single-step catch-up behavior after timers were unable to fire.
     stop_canister_as(&pic, disburser_canister, disburser_canister)?;
-    advance_days(&pic, 60);
+    pic.advance_time(Duration::from_secs(60 * DAY_SECS));
     start_canister_as(&pic, disburser_canister, disburser_canister)?;
 
     let staging = Account {
@@ -4713,30 +4931,13 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
 
 #[test]
 #[ignore]
-fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
+fn payout_plan_uses_two_year_age_snapshot_and_clamps_at_four_years() -> Result<()> {
     require_ignored_flag()?;
 
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
-    let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
-
-    // Disburser canister (also the neuron controller).
     let disburser_canister = pic.create_canister();
     pic.add_cycles(disburser_canister, 5_000_000_000_000);
-    let controller = disburser_canister;
-
-    // Stake + claim + configure neuron.
-    let neuron_id =
-        stake_and_claim_neuron(&pic, ledger, gov, controller, 911, 10_000 * 100_000_000)?;
-    increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
-    top_up_neuron_stake_and_refresh(
-        &pic,
-        ledger,
-        gov,
-        controller,
-        neuron_id,
-        5_000_000 * 100_000_000,
-    )?;
 
     let r_normal = pic.create_canister();
     let r_bonus1 = pic.create_canister();
@@ -4744,7 +4945,7 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
 
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
-        neuron_id,
+        neuron_id: 911,
         normal_recipient: Account {
             owner: r_normal,
             subaccount: None,
@@ -4758,13 +4959,14 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
             subaccount: None,
         },
         ledger_canister_id: Some(ledger),
-        governance_canister_id: Some(gov),
+        governance_canister_id: Some(Principal::from_text(NNS_GOVERNANCE_ID)?),
         rescue_controller: fixture_principal(),
         blackhole_controller: Some(test_blackhole_controller()),
         blackhole_armed: None,
         main_interval_seconds: Some(60),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
+    pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let staging = Account {
@@ -4776,39 +4978,6 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
     const TWO_YEARS: u64 = 2 * YEAR_SECS;
     const FOUR_YEARS: u64 = 4 * YEAR_SECS;
     const FIVE_YEARS: u64 = 5 * YEAR_SECS;
-
-    fn now_secs(pic: &PocketIc) -> u64 {
-        (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64
-    }
-
-    fn neuron_age_secs(
-        pic: &PocketIc,
-        gov: Principal,
-        controller: Principal,
-        neuron_id: u64,
-    ) -> Result<u64> {
-        let n = get_full_neuron(pic, gov, controller, neuron_id)?;
-        let now = now_secs(pic);
-        Ok(now.saturating_sub(n.aging_since_timestamp_seconds))
-    }
-
-    fn advance_neuron_age_to(
-        pic: &PocketIc,
-        gov: Principal,
-        controller: Principal,
-        neuron_id: u64,
-        target_age_secs: u64,
-    ) -> Result<()> {
-        let age = neuron_age_secs(pic, gov, controller, neuron_id)?;
-        if age >= target_age_secs {
-            return Ok(());
-        }
-        let delta = target_age_secs - age;
-
-        // Coarse stepping keeps timer backlogs manageable without being slow for multi-year jumps.
-        advance_time_steps(pic, delta, 7 * DAY_SECS, 5);
-        Ok(())
-    }
 
     fn expected_base_for_age(total_e8s: u64, age_secs: u64) -> u64 {
         let den: u128 = (16 * YEAR_SECS) as u128;
@@ -4838,225 +5007,169 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         bail!("{label}: expected={expected}, got={got}, diff={diff} e8s ({diff_bp} bp)");
     }
 
-    // Ensure we have enough maturity to disburse. This may advance time.
-    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
+    fn run_checkpoint(
+        pic: &PocketIc,
+        disburser_canister: Principal,
+        ledger: Principal,
+        staging: &Account,
+        init: &InitArg,
+        fee_e8s: u64,
+        staging_fund: u64,
+        age_seconds: u64,
+        label: &str,
+    ) -> Result<(ExpectedGrossSplit, Vec<ExpectedPlanned>, [u64; 3])> {
+        icrc1_transfer(
+            pic,
+            ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: staging.clone(),
+                fee: Some(candid::Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: None,
+                amount: candid::Nat::from(staging_fund),
+            },
+        )?;
 
-    // ----------------- Check at ~2 years -----------------
-    // Set age precisely, then initiate disbursement (no time advances between).
-    advance_neuron_age_to(&pic, gov, controller, neuron_id, TWO_YEARS)?;
-    let age_pre = neuron_age_secs(&pic, gov, controller, neuron_id)?;
-    let pre_diff = if age_pre > TWO_YEARS {
-        age_pre - TWO_YEARS
-    } else {
-        TWO_YEARS - age_pre
-    };
-    if pre_diff > 60 {
-        bail!(
-            "2y checkpoint: expected pre-age to be ~2 years; age_pre={age_pre} (diff {pre_diff}s)"
+        let staging_balance = icrc1_balance(pic, ledger, staging)?;
+        // This test injects the captured age snapshot deliberately. The
+        // governance_ok_none_disbursement_is_treated_as_successful_initiation
+        // test covers production age capture, while
+        // age_bonus_routes_incremental_rewards_to_bonus_accounts covers the
+        // real NNS maturity-to-payout path.
+        debug_set_prev_age_seconds(pic, disburser_canister, age_seconds)?;
+        let expected_base = expected_base_for_age(staging_balance, age_seconds);
+        let expected_bonus = staging_balance.saturating_sub(expected_base);
+        let (gross, planned) = expected_plan_payout_transfers(
+            staging_balance,
+            fee_e8s,
+            age_seconds,
+            &init.normal_recipient,
+            &init.age_bonus_recipient_1,
+            &init.age_bonus_recipient_2,
         );
-    }
+        if planned.len() != 3 {
+            bail!(
+                "{label}: expected 3 transfers (normal+bonus1+bonus2), got {}",
+                planned.len()
+            );
+        }
 
-    pic.install_canister(disburser_canister, wasm, encode_one(init.clone())?, None);
-    set_blackholed_controllers(&pic, disburser_canister)?;
+        assert_eq_with_diff(
+            &format!("{label} base_gross"),
+            expected_base,
+            gross.base_e8s,
+        )?;
+        assert_eq_with_diff(
+            &format!("{label} bonus_gross_total"),
+            expected_bonus,
+            gross.bonus_recipient_1_e8s + gross.bonus_recipient_2_e8s,
+        )?;
+        assert_eq_with_diff(
+            &format!("{label} total_gross"),
+            staging_balance,
+            gross.base_e8s + gross.bonus_recipient_1_e8s + gross.bonus_recipient_2_e8s,
+        )?;
 
-    // Initiate maturity disbursement via the disburser. In PocketIC, the in-flight entry may take
-    // a couple of ticks to surface, so we retry a few times.
-    let mut seen = false;
-    let mut last = get_full_neuron(&pic, gov, controller, neuron_id)?;
-    for _attempt in 1..=3u32 {
-        let _: () = update_noargs(
-            &pic,
+        let rn_before = icrc1_balance(pic, ledger, &init.normal_recipient)?;
+        let rb1_before = icrc1_balance(pic, ledger, &init.age_bonus_recipient_1)?;
+        let rb2_before = icrc1_balance(pic, ledger, &init.age_bonus_recipient_2)?;
+        let built = debug_build_payout_plan(pic, disburser_canister)?;
+        if !built || !debug_state(pic, disburser_canister)?.payout_plan_present {
+            bail!(
+                "{label}: expected payout plan to be present after debug_build_payout_plan; built={built}; {}",
+                payout_plan_failure_context(pic, disburser_canister, ledger, staging)
+            );
+        }
+
+        let executed: bool = update_noargs(
+            pic,
             disburser_canister,
             Principal::anonymous(),
-            "debug_main_tick",
+            "debug_execute_payout_plan",
         )?;
-        let (s, l) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
-        seen = s;
-        last = l;
-        if seen {
-            break;
+        if !executed {
+            bail!(
+                "{label}: debug_execute_payout_plan failed; {}",
+                payout_plan_failure_context(pic, disburser_canister, ledger, staging)
+            );
         }
-    }
-    if !seen {
-        let snap = neuron_snapshot(&pic, gov, controller, neuron_id, "no-inflight-2y")?;
-        let dbg = debug_state(&pic, disburser_canister)?;
-        bail!(
-            "expected in-flight maturity disbursement to be observable (2y checkpoint); disburser_dbg={dbg:?}; last_inflight={:?}; maturity_e8s_equivalent={}; {snap}",
-            last.maturity_disbursements_in_progress,
-            last.maturity_e8s_equivalent,
-        );
-    }
+        if debug_state(pic, disburser_canister)?.payout_plan_present {
+            bail!("{label}: expected payout plan to clear after successful execution");
+        }
 
-    let dbg = debug_state(&pic, disburser_canister)?;
-    let age_used_2y = dbg.prev_age_seconds;
+        let rn_after = icrc1_balance(pic, ledger, &init.normal_recipient)?;
+        let rb1_after = icrc1_balance(pic, ledger, &init.age_bonus_recipient_1)?;
+        let rb2_after = icrc1_balance(pic, ledger, &init.age_bonus_recipient_2)?;
+        let deltas = [
+            rn_after.saturating_sub(rn_before),
+            rb1_after.saturating_sub(rb1_before),
+            rb2_after.saturating_sub(rb2_before),
+        ];
 
-    // Age should be exactly at the target (within a few seconds of stepping).
-    let age_diff = if age_used_2y > age_pre {
-        age_used_2y - age_pre
-    } else {
-        age_pre - age_used_2y
-    };
-    if age_diff > 5 {
-        bail!("2y checkpoint: expected age_used to match current age; age_pre={age_pre}, age_used={age_used_2y}, diff={age_diff}s");
-    }
+        for p in &planned {
+            let got = if p.to == init.normal_recipient {
+                deltas[0]
+            } else if p.to == init.age_bonus_recipient_1 {
+                deltas[1]
+            } else if p.to == init.age_bonus_recipient_2 {
+                deltas[2]
+            } else {
+                bail!(
+                    "{label}: planned transfer targets unknown account: {:?}",
+                    p.to
+                );
+            };
+            if got != p.amount_e8s {
+                bail!(
+                    "{label}: recipient balance mismatch for {:?}: expected +{}, got +{} (diff={} e8s)",
+                    p.to,
+                    p.amount_e8s,
+                    got,
+                    if p.amount_e8s > got { p.amount_e8s - got } else { got - p.amount_e8s }
+                );
+            }
+        }
 
-    // Finalize maturity (mint to staging) and execute payout.
-    stop_canister_as(&pic, disburser_canister, disburser_canister)?;
-    let staging_before = icrc1_balance(&pic, ledger, &staging)?;
-    advance_days(&pic, 8);
-    let staging_after = wait_for_staging_credit(&pic, ledger, &staging, staging_before)?;
-    start_canister_as(&pic, disburser_canister, disburser_canister)?;
-
-    // Compute expected split for exactly 2y (bonus = 12.5%, multiplier = 1.125x).
-    // Note: NNS age bonus is capped at +25% at 4 years; at 2 years it is +12.5%.
-    let expected_base = expected_base_for_age(staging_after, age_used_2y);
-    let expected_bonus = staging_after.saturating_sub(expected_base);
-
-    // Compute the exact plan the disburser should execute at exactly 2y (bonus = 12.5%, multiplier = 1.125x).
-    // Note: NNS age bonus is capped at +25% at 4 years; at 2 years it is +12.5%.
-    let (gross2, planned2) = expected_plan_payout_transfers(
-        staging_after,
-        fee_e8s,
-        age_used_2y,
-        &init.normal_recipient,
-        &init.age_bonus_recipient_1,
-        &init.age_bonus_recipient_2,
-    );
-    if planned2.len() != 3 {
-        bail!(
-            "2y checkpoint: expected 3 transfers (normal+bonus1+bonus2), got {}",
-            planned2.len()
-        );
+        Ok((gross, planned, deltas))
     }
 
-    // Execute payout and verify exact on-ledger deltas.
-    let rn_before = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
-    let rb1_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
-    let rb2_before = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
-    let _: () = update_noargs(
+    let staging_fund = 100 * E8S_PER_ICP;
+    let (gross2, planned2, deltas2) = run_checkpoint(
         &pic,
         disburser_canister,
-        Principal::anonymous(),
-        "debug_main_tick",
+        ledger,
+        &staging,
+        &init,
+        fee_e8s,
+        staging_fund,
+        TWO_YEARS,
+        "2y checkpoint",
     )?;
-    tick_n(&pic, 10);
-    let rn_after = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
-    let rb1_after = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
-    let rb2_after = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
-
-    let normal_delta = rn_after.saturating_sub(rn_before);
-    let b1_delta = rb1_after.saturating_sub(rb1_before);
-    let b2_delta = rb2_after.saturating_sub(rb2_before);
-
-    for p in &planned2 {
-        let got = if p.to == init.normal_recipient {
-            normal_delta
-        } else if p.to == init.age_bonus_recipient_1 {
-            b1_delta
-        } else if p.to == init.age_bonus_recipient_2 {
-            b2_delta
-        } else {
-            bail!(
-                "2y checkpoint: planned transfer targets unknown account: {:?}",
-                p.to
-            );
-        };
-        if got != p.amount_e8s {
-            bail!(
-                "2y checkpoint: recipient balance mismatch for {:?}: expected +{}, got +{} (diff={} e8s)",
-                p.to,
-                p.amount_e8s,
-                got,
-                if p.amount_e8s > got { p.amount_e8s - got } else { got - p.amount_e8s }
-            );
-        }
+    if gross2.bonus_recipient_1_e8s + gross2.bonus_recipient_2_e8s == 0 {
+        bail!("2y checkpoint: expected non-zero age bonus");
     }
 
-    // Exact split checks (gross shares).
-    assert_eq_with_diff("2y base_gross", expected_base, gross2.base_e8s)?;
-    assert_eq_with_diff(
-        "2y bonus_gross_total",
-        expected_bonus,
-        gross2.bonus_recipient_1_e8s + gross2.bonus_recipient_2_e8s,
-    )?;
-    assert_eq_with_diff(
-        "2y total_gross",
-        staging_after,
-        gross2.base_e8s + gross2.bonus_recipient_1_e8s + gross2.bonus_recipient_2_e8s,
-    )?;
-    // ----------------- Check clamp beyond 4 years -----------------
-    // Rebuild some maturity for the second checkpoint. Keep the disburser stopped so long
-    // reward/age advances cannot consume maturity before the explicit 5y checkpoint.
-    stop_canister_as(&pic, disburser_canister, disburser_canister)?;
-    ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
-
-    advance_neuron_age_to(&pic, gov, controller, neuron_id, FIVE_YEARS)?;
-    start_canister_as(&pic, disburser_canister, disburser_canister)?;
-    let age_pre5 = neuron_age_secs(&pic, gov, controller, neuron_id)?;
-    let pre5_diff = if age_pre5 > FIVE_YEARS {
-        age_pre5 - FIVE_YEARS
-    } else {
-        FIVE_YEARS - age_pre5
-    };
-    if pre5_diff > 60 {
-        bail!("5y checkpoint: expected pre-age to be ~5 years; age_pre={age_pre5} (diff {pre5_diff}s)");
-    }
-
-    let mut seen5 = false;
-    let mut last5 = get_full_neuron(&pic, gov, controller, neuron_id)?;
-    for _attempt in 1..=3u32 {
-        let _: () = update_noargs(
-            &pic,
-            disburser_canister,
-            Principal::anonymous(),
-            "debug_main_tick",
-        )?;
-        let (s, l) = wait_for_inflight_disbursement(&pic, gov, controller, neuron_id)?;
-        seen5 = s;
-        last5 = l;
-        if seen5 {
-            break;
-        }
-    }
-    if !seen5 {
-        let snap = neuron_snapshot(&pic, gov, controller, neuron_id, "no-inflight-5y")?;
-        let dbg = debug_state(&pic, disburser_canister)?;
-        bail!(
-            "expected in-flight maturity disbursement to be observable (5y checkpoint); disburser_dbg={dbg:?}; last_inflight={:?}; maturity_e8s_equivalent={}; {snap}",
-            last5.maturity_disbursements_in_progress,
-            last5.maturity_e8s_equivalent,
-        );
-    }
-
-    let dbg5 = debug_state(&pic, disburser_canister)?;
-    let age_used_5y = dbg5.prev_age_seconds;
-    if age_used_5y < FOUR_YEARS {
-        bail!("5y checkpoint: expected age_used >= 4y, got age_used={age_used_5y}");
-    }
-
-    stop_canister_as(&pic, disburser_canister, disburser_canister)?;
-    let staging_before5 = icrc1_balance(&pic, ledger, &staging)?;
-    advance_days(&pic, 8);
-    let staging_after5 = wait_for_staging_credit(&pic, ledger, &staging, staging_before5)?;
-    start_canister_as(&pic, disburser_canister, disburser_canister)?;
-
-    // At 5y, the age bonus must be clamped to the 4y maximum (+25% => multiplier 1.25x).
     let (gross4, planned4) = expected_plan_payout_transfers(
-        staging_after5,
+        staging_fund,
         fee_e8s,
         FOUR_YEARS,
         &init.normal_recipient,
         &init.age_bonus_recipient_1,
         &init.age_bonus_recipient_2,
     );
-    let (gross5, planned5) = expected_plan_payout_transfers(
-        staging_after5,
+    let (gross5, planned5, deltas5) = run_checkpoint(
+        &pic,
+        disburser_canister,
+        ledger,
+        &staging,
+        &init,
         fee_e8s,
-        age_used_5y,
-        &init.normal_recipient,
-        &init.age_bonus_recipient_1,
-        &init.age_bonus_recipient_2,
-    );
+        staging_fund,
+        FIVE_YEARS,
+        "5y checkpoint",
+    )?;
 
     if gross5.base_e8s != gross4.base_e8s
         || gross5.bonus_recipient_1_e8s != gross4.bonus_recipient_1_e8s
@@ -5065,7 +5178,7 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         bail!(
             "expected age bonus clamp at 4y: gross@4y={:?}, gross@age_used({})={:?}",
             gross4,
-            age_used_5y,
+            FIVE_YEARS,
             gross5
         );
     }
@@ -5073,51 +5186,20 @@ fn age_bonus_scales_at_2y_and_clamps_at_4y() -> Result<()> {
         bail!(
             "expected age bonus clamp at 4y: planned@4y={:?}, planned@age_used({})={:?}",
             planned4,
-            age_used_5y,
+            FIVE_YEARS,
             planned5
         );
     }
 
-    // Execute payout and verify exact on-ledger deltas match the (clamped) plan.
-    let rn_before5 = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
-    let rb1_before5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
-    let rb2_before5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
-    let _: () = update_noargs(
-        &pic,
-        disburser_canister,
-        Principal::anonymous(),
-        "debug_main_tick",
-    )?;
-    tick_n(&pic, 10);
-    let rn_after5 = icrc1_balance(&pic, ledger, &init.normal_recipient)?;
-    let rb1_after5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_1)?;
-    let rb2_after5 = icrc1_balance(&pic, ledger, &init.age_bonus_recipient_2)?;
-    let normal_delta5 = rn_after5.saturating_sub(rn_before5);
-    let b1_delta5 = rb1_after5.saturating_sub(rb1_before5);
-    let b2_delta5 = rb2_after5.saturating_sub(rb2_before5);
-
-    for p in &planned4 {
-        let got = if p.to == init.normal_recipient {
-            normal_delta5
-        } else if p.to == init.age_bonus_recipient_1 {
-            b1_delta5
-        } else if p.to == init.age_bonus_recipient_2 {
-            b2_delta5
-        } else {
-            bail!(
-                "5y checkpoint: planned transfer targets unknown account: {:?}",
-                p.to
-            );
-        };
-        if got != p.amount_e8s {
-            bail!(
-                "5y checkpoint: recipient balance mismatch for {:?}: expected +{}, got +{} (diff={} e8s)",
-                p.to,
-                p.amount_e8s,
-                got,
-                if p.amount_e8s > got { p.amount_e8s - got } else { got - p.amount_e8s }
-            );
-        }
+    if (deltas5[1] + deltas5[2]) <= (deltas2[1] + deltas2[2]) {
+        bail!(
+            "expected clamped 5y bonus net to exceed 2y bonus net: 2y={} 5y={}",
+            deltas2[1] + deltas2[2],
+            deltas5[1] + deltas5[2]
+        );
+    }
+    if planned2 == planned4 {
+        bail!("expected 2y payout plan to differ from 4y-clamped payout plan");
     }
     Ok(())
 }

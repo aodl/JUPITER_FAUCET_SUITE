@@ -6,6 +6,7 @@ use std::time::Duration;
 
 const SERVER_HARD_TTL_SECS: u64 = 3 * 60 * 60;
 const SERVER_IDLE_TTL_SECS: u64 = 15 * 60;
+const SERVER_IDLE_TTL_ENV: &str = "JUPITER_POCKETIC_IDLE_TTL_SECS";
 const SERVER_VERSION: &str = "13.0.0";
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
@@ -47,6 +48,15 @@ fn discover_pocketic_binary() -> Option<PathBuf> {
         .find(|path| validate_pocketic_binary(path))
 }
 
+fn server_idle_ttl() -> Duration {
+    let secs = std::env::var(SERVER_IDLE_TTL_ENV)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(SERVER_IDLE_TTL_SECS);
+    Duration::from_secs(secs)
+}
+
 pub fn builder() -> PocketIcBuilder {
     let server_url = SERVER_URL.get_or_init(|| {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -60,7 +70,7 @@ pub fn builder() -> PocketIcBuilder {
             reuse: true,
             // This suite reuses one PocketIC server while some tests perform long
             // release-artifact builds before creating their next instance.
-            ttl: Some(Duration::from_secs(SERVER_IDLE_TTL_SECS)),
+            ttl: Some(server_idle_ttl()),
             hard_ttl: Some(Duration::from_secs(SERVER_HARD_TTL_SECS)),
         }));
         url.to_string()
