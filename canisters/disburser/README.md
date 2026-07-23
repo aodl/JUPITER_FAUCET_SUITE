@@ -233,7 +233,7 @@ Upgrade args support:
 - `blackhole_armed`
 - `clear_forced_rescue`
 
-`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. When used while blackhole mode remains armed, the disburser also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the self-reconciliation policy is only defined for armed mode.
+`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. When used while blackhole mode remains armed, the disburser resets the `BootstrapNoSuccess` observation window to the upgrade time and schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade`. If no successful payout exists, that reconciliation forces narrowing of a stale widened controller set to `self + blackhole`; if `update_settings` fails, narrowing remains pending and is retried by later rescue ticks. If a successful payout exists, the ordinary health-window controller policy remains authoritative. Because the clear starts a fresh bootstrap window, `BootstrapNoSuccess` can legitimately latch again after a new `> 14 days` interval with no successful payout transfer. If blackhole mode is not armed, no automatic controller target is imposed; the self-reconciliation policy is only defined for armed mode.
 
 Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before preparing any upgrade-time argument file.
 

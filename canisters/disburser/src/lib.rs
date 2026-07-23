@@ -217,12 +217,19 @@ pub(crate) fn apply_upgrade_args_to_state(
         if args.clear_forced_rescue.unwrap_or(false) {
             // Clearing forced rescue is a DAO acknowledgement that the prior latch
             // is no longer authoritative after recovery and upgrade. When blackhole
-            // mode remains armed, schedule an immediate rescue/controller
-            // reconciliation after post-upgrade so an obsolete widened controller
-            // set does not linger until the next periodic rescue tick.
+            // mode remains armed, reset the BootstrapNoSuccess observation
+            // window. If no successful payout exists, controller narrowing is
+            // forced and remains pending after update_settings failure; after a
+            // successful payout, the ordinary health-window policy is
+            // authoritative.
             st.forced_rescue_reason = None;
             if st.config.blackhole_armed.unwrap_or(false) {
+                st.blackhole_armed_since_ts = Some(now_secs);
+                st.rescue_triggered = true;
                 actions.schedule_immediate_controller_reconcile = true;
+            } else {
+                st.blackhole_armed_since_ts = None;
+                st.rescue_triggered = false;
             }
         }
     }
@@ -627,6 +634,9 @@ mod tests {
     fn apply_upgrade_args_revalidates_config() {
         let now_secs = 99;
         let mut st = State::new(sample_config(), now_secs);
+        st.forced_rescue_reason = Some(crate::state::ForcedRescueReason::BootstrapNoSuccess);
+        st.blackhole_armed_since_ts = Some(1);
+        st.rescue_triggered = false;
         let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
@@ -641,6 +651,8 @@ mod tests {
             Some(principal("qhbym-qaaaa-aaaaa-aaafq-cai"))
         );
         assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
+        assert_eq!(st.forced_rescue_reason, None);
+        assert!(st.rescue_triggered);
         assert_eq!(st.main_lock_state_ts, Some(0));
         assert_eq!(
             actions,
@@ -655,6 +667,9 @@ mod tests {
         let now_secs = 123;
         let mut st = State::new(sample_config(), now_secs);
         st.config.blackhole_armed = Some(false);
+        st.forced_rescue_reason = Some(crate::state::ForcedRescueReason::BootstrapNoSuccess);
+        st.blackhole_armed_since_ts = Some(1);
+        st.rescue_triggered = true;
         let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
@@ -665,6 +680,9 @@ mod tests {
             now_secs,
         );
         assert_eq!(actions, PostUpgradeActions::default());
+        assert_eq!(st.forced_rescue_reason, None);
+        assert_eq!(st.blackhole_armed_since_ts, None);
+        assert!(!st.rescue_triggered);
     }
 
     #[test]

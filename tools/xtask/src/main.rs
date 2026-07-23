@@ -33,7 +33,9 @@ use process::{
     local_replica_host, pocketic_test_env, principal_of_identity, run_icp, run_icp_with_identity,
     stop_local_network_best_effort,
 };
-use test_runner::run_cargo_test_suite;
+use test_runner::{
+    run_cargo_ignored_tests_individually, run_cargo_test_suite, IgnoredCargoTestSuite,
+};
 use workspace::repo_root;
 
 #[derive(Debug)]
@@ -5588,25 +5590,20 @@ fn run_frontend_local_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 
 fn run_pocketic_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env()?;
-    run_cargo_test_suite(
+    let _common_env = pocketic_test_env()?;
+    let pocketic_bin = env::var("POCKET_IC_BIN")
+        .context("POCKET_IC_BIN was not set after PocketIC environment validation")?;
+    run_cargo_ignored_tests_individually(
         outcomes,
-        "pocketic",
-        "disburser",
-        "cargo",
-        &[
-            "test",
-            "-p",
-            "jupiter-disburser",
-            "--test",
-            "jupiter_disburser_integration",
-            "--",
-            "--ignored",
-            "--color",
-            "always",
-        ],
-        &root,
-        &common_env,
+        IgnoredCargoTestSuite {
+            suite_label: "pocketic",
+            component: "disburser",
+            package: "jupiter-disburser",
+            test_target: "jupiter_disburser_integration",
+            workdir: &root,
+            pocketic_bin: &pocketic_bin,
+            pocketic_idle_ttl_secs: 300,
+        },
     )
 }
 
