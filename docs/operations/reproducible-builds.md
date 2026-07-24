@@ -79,7 +79,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --
 
 With `JUPITER_USE_CANONICAL_ARTIFACTS=1`, the `icp.yaml` build helper refuses to rebuild locally and instead verifies `release-artifacts/release-artifacts.sha256`, confirms the requested artifact is present in that Docker-generated manifest, and copies the matching `release-artifacts/<name>.wasm.gz` package into the `icp deploy` build output path. It also prints the package SHA-256 before deployment.
 
-For routine no-config-change upgrades, pass no args for Disburser, Faucet, and Historian. Checked-in `mainnet-install-args.did` files are fresh install/reinstall `InitArgs`, not routine upgrade inputs for those stateful canisters. Relay is replacement-style and requires full `InitArgs` on every upgrade. For Disburser, Faucet, and Historian config-changing upgrades, pass a temporary, deployment-specific `Option<UpgradeArgs>` file:
+For routine no-config-change upgrades, pass no args for Disburser, Faucet, and Historian. Existing production Historian must be upgraded in place; reinstall destroys stable history and is prohibited for the existing production canister. Checked-in `mainnet-install-args.did` files are fresh install/reinstall `InitArgs`, not routine upgrade inputs for those stateful canisters. `canisters/historian/mainnet-install-args.did` is for a brand-new Historian installation only. Relay is replacement-style and requires full `InitArgs` on every upgrade. For Disburser, Faucet, and Historian config-changing upgrades, pass a temporary, deployment-specific `Option<UpgradeArgs>` file:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
@@ -101,12 +101,21 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
 
 Reinstall clears canister Wasm/stable state and must be treated as a separate destructive operation.
 
+Historian production upgrade command:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
+  --environment ic \
+  --mode upgrade
+```
+
+Pause the self-service factory during the Historian maintenance window, take a canister snapshot or equivalent backup, and record pre-upgrade query results for after-upgrade comparison. Existing setup/recovery jobs and Relay registrations are preserved by the upgrade. Deploy the frontend after backend verification.
+
 Lifecycle summary:
 
 | Canister group | Routine upgrade args | Config-changing upgrade args | State behavior |
 | --- | --- | --- | --- |
-| Disburser/Faucet/Historian outside this development-phase release | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
-| Historian for this development-phase release | Complete checked-in `InitArgs` with `--mode reinstall` | Not applicable | Heap and stable state reset |
+| Disburser/Faucet/Historian | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | Relay | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
 | Frontend/Lifeline/SNS Rewards | No args | No args | No install args |
 

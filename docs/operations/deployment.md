@@ -6,7 +6,7 @@ Use `icp deploy --environment ic` for ordinary production orchestration, and use
 
 Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and only diverge from the canonical production Relay in target canister, automatic probe routing, and surplus-recipient configuration.
 
-This development-phase release intentionally reinstalls the Historian and canonical Relay instead of upgrading their existing state. Reinstall wipes Historian heap and stable state and wipes canonical Relay runtime state. It requires current controller authority and complete `InitArgs`. It does not modify already blackholed self-service Relays, and a genuinely blackholed Relay cannot be reinstalled.
+Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, Relay registrations, setup/recovery jobs, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
 ## Production release flow
 
@@ -20,23 +20,30 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --
 
 `./tools/scripts/docker-build` produces canonical `.wasm.gz` install packages and `release-artifacts/release-artifacts.sha256`. `JUPITER_USE_CANONICAL_ARTIFACTS=1` tells the `icp.yaml` build helper to verify that manifest and deploy those existing packages instead of rebuilding with the local toolchain.
 
-Do not use the generic upgrade command for this development-phase Historian/Relay release. For this release, use reinstall for `jupiter_historian` and the canonical `jupiter_relay` only after explicit operator signoff and live controller-authority checks:
+Routine no-config Historian upgrades pass no arguments:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --environment ic \
-  --mode reinstall \
-  --args-file canisters/historian/mainnet-install-args.did
+  --mode upgrade
+```
+
+Config-changing Historian upgrades use a temporary Option<UpgradeArgs> file. Do not commit that file, and do not use `canisters/historian/mainnet-install-args.did` for an upgrade:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
+  --environment ic \
+  --mode upgrade \
+  --args-file /tmp/historian-upgrade-args.did
+```
+
+Keep canonical Relay lifecycle instructions separate. Relay is replacement-style and requires full `InitArgs` on every upgrade:
 
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --environment ic \
-  --mode reinstall \
+  --mode upgrade \
   --args-file canisters/relay/mainnet-install-args.did
 ```
-
-Before reinstall, operators must disable the self-service factory; verify no in-flight setup job, no setup payment mid-processing, and no child Relay created by a job the fresh Historian would forget; confirm the current Historian controller permits reinstall; and confirm the canonical Relay controller permits reinstall if it is also being reinstalled. Operators must either confirm production has zero completed self-service Relays or provide fresh-init seed data or another intentional restore path for every existing target-to-Relay relationship. Inventory alone is not enough because a fresh Historian state will not know those registrations.
-
-After reinstall, verify Historian cycles probing is Auto, canonical Relay remains fixed to the Fiduciary blackhole route, a self-service Relay is created in Auto mode, target and Relay both appear in `list_canisters`, `tracked_canister_count` includes both, and cycles history is recorded for both.
 
 For unrelated routine no-config-change production upgrades, pass no args for Disburser, Faucet, and Historian. Those stateful canisters decode omitted upgrade args as no config change. Relay is replacement-style and requires full `InitArgs` on every upgrade.
 
@@ -47,17 +54,6 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
 ```
 
 Do not pass `canisters/historian/mainnet-install-args.did` to an already-installed Historian upgrade.
-
-If operators need to install a reviewed local artifact directly instead of using `icp deploy`, the production historian Wasm path is still the canonical relay-enabled artifact:
-
-```bash
-icp canister install --environment ic jupiter_historian \
-  --mode reinstall \
-  --wasm release-artifacts/jupiter_historian.wasm.gz \
-  --args-format candid \
-  --args-file canisters/historian/mainnet-install-args.did \
-  --yes
-```
 
 For fresh install only, use the checked-in `mainnet-install-args.did` `InitArgs` file:
 
@@ -78,6 +74,47 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
 ```
 
 Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
+
+## Historian upgrade audit checklist
+
+Pause the self-service factory before the maintenance window. Existing setup/recovery jobs and Relay registrations are preserved by the in-place upgrade, but pausing the factory keeps new setup work from starting while operators capture before/after evidence.
+
+Record pre-upgrade query results before upgrading `jupiter_historian`:
+
+- Historian module hash, controllers, and stable memory size from `icp canister status j5gs6-uiaaa-aaaar-qb5cq-cai -n ic`.
+- `get_public_counts` and `get_public_status`.
+- All `list_canisters` pages needed to cover tracked targets, canonical Relay, and self-service Relays.
+- Representative commitment histories and cycles histories for known targets.
+- Relay registrations and setup recovery views.
+- Indexing cursors, fault state, aggregate output/reward/burn totals, and factory enabled state.
+
+Take a canister snapshot or equivalent backup before upgrading. The installed `icp` CLI supports:
+
+```bash
+icp canister snapshot create jupiter_historian --environment ic --json
+icp canister snapshot list jupiter_historian --environment ic --json
+icp canister snapshot download jupiter_historian <SNAPSHOT_ID> --environment ic --output /tmp/jupiter-historian-snapshot
+```
+
+Rollback from a snapshot uses the same CLI family:
+
+```bash
+icp canister snapshot restore jupiter_historian <SNAPSHOT_ID> --environment ic
+```
+
+After upgrade, verify:
+
+- Module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash.
+- Controllers are unchanged.
+- Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
+- Relay registrations are preserved.
+- Setup jobs are preserved or safely migrated.
+- Automatic cycles probing is active.
+- `RelayTarget` and `RelayInstance` tracking reasons are present for active Relay relationships.
+- New cycles samples append to existing histories.
+- The self-service factory can be re-enabled.
+
+Deploy the frontend only after backend verification is complete.
 
 ## Production canister IDs
 
@@ -118,7 +155,7 @@ For config-changing upgrades, Disburser, Faucet, and Historian use the canister'
 | --- | --- | --- | --- | --- |
 | `jupiter_disburser` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | `jupiter_faucet` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
-| `jupiter_historian` | `InitArgs` from checked-in `mainnet-install-args.did` | No args outside this development-phase release | Temporary `Option<UpgradeArgs>` outside this development-phase release | This release reinstalls and resets heap/stable state |
+| `jupiter_historian` | `InitArgs` from checked-in `mainnet-install-args.did` for brand-new canister only | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved; existing production canister must not be reinstalled |
 | `jupiter_relay` | `InitArgs` from checked-in `mainnet-install-args.did` | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
 | `jupiter_faucet_frontend` | No install args | No args | No args | Asset canister state managed by frontend asset lifecycle |
 | `jupiter_lifeline` | No install args | No args | No args | Minimal support canister state |

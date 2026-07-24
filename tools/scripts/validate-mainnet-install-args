@@ -613,6 +613,90 @@ def docs_use_stale_privileged_deployment_framing(text: str) -> bool:
     return "Production deployment is a manual, privileged operation." in text
 
 
+def historian_reinstall_command_contexts(text: str) -> list[str]:
+    return [
+        command
+        for command in documented_icp_install_commands(text)
+        if re.search(r"\bjupiter_historian\b", command)
+        and re.search(r"--mode\s+reinstall\b", command)
+    ]
+
+
+def historian_upgrade_uses_mainnet_install_args(text: str) -> bool:
+    return any(
+        re.search(r"\bjupiter_historian\b", command)
+        and re.search(r"--mode\s+upgrade\b", command)
+        and re.search(r"canisters/historian/mainnet-install-args\.did\b", command)
+        for command in documented_icp_install_commands(text)
+    )
+
+
+def historian_destructive_history_wording(text: str) -> bool:
+    forbidden_phrases = [
+        "accepts loss of development-phase histories and registrations",
+        "production has zero completed self-service Relays",
+        "fresh Historian will not rediscover",
+        "This development-phase release uses reinstall",
+        "Historian for this development-phase release",
+        "Heap and stable state reset",
+    ]
+    return any(phrase in text for phrase in forbidden_phrases)
+
+
+def validate_historian_upgrade_only_docs() -> None:
+    paths = [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "canisters" / "historian" / "README.md",
+        REPO_ROOT / "docs" / "operations" / "deployment.md",
+        REPO_ROOT / "docs" / "operations" / "reproducible-builds.md",
+        REPO_ROOT / "docs" / "relay-setup-recovery.md",
+        REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable",
+        REPO_ROOT / "tools" / "xtask" / "src" / "main.rs",
+    ]
+    for path in paths:
+        text = path.read_text()
+        reinstall_contexts = historian_reinstall_command_contexts(text)
+        if reinstall_contexts:
+            fail(f"{path} documents production Historian reinstall; existing production Historian must use --mode upgrade")
+        if historian_upgrade_uses_mainnet_install_args(text):
+            fail(f"{path} pairs Historian --mode upgrade with mainnet-install-args.did; use no args or temporary UpgradeArgs")
+        if historian_destructive_history_wording(text):
+            fail(f"{path} contains obsolete Historian history-discard wording")
+
+    deployment_text = (REPO_ROOT / "docs" / "operations" / "deployment.md").read_text()
+    for phrase in [
+        "Existing production Historian must be upgraded in place",
+        "Reinstall destroys all Historian stable history and is prohibited",
+        "mainnet-install-args.did is for a brand-new Historian installation only",
+        "Routine no-config Historian upgrades pass no arguments",
+        "Config-changing Historian upgrades use a temporary Option<UpgradeArgs> file",
+        "Pause the self-service factory before the maintenance window",
+        "Take a canister snapshot or equivalent backup",
+        "Record pre-upgrade query results",
+    ]:
+        if phrase not in deployment_text:
+            fail(f"docs/operations/deployment.md must document Historian upgrade-only requirement: {phrase}")
+
+    preflight_text = (REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable").read_text()
+    for phrase in [
+        "Existing production Historian must be upgraded in place",
+        "Reinstall destroys all stable history",
+        "canisters/historian/mainnet-install-args.did is fresh-install-only",
+        "Canonical no-config Historian upgrade command",
+        "--mode upgrade",
+    ]:
+        if phrase not in preflight_text:
+            fail(f"tools/scripts/preflight-historian-relay-factory-enable must print Historian upgrade-only guidance: {phrase}")
+    for phrase in [
+        "--mode reinstall",
+        "--args-file canisters/historian/mainnet-install-args.did",
+        "Historian reinstall args must be complete",
+        "Canonical release reinstall command",
+    ]:
+        if phrase in preflight_text:
+            fail(f"tools/scripts/preflight-historian-relay-factory-enable must not print Historian reinstall guidance: {phrase}")
+
+
 def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None:
     for path in [
         REPO_ROOT / "README.md",
@@ -757,16 +841,19 @@ def validate_historian_relay_factory_enablement_fixture() -> None:
     require_contains(text, 'manifest="release-artifacts/release-artifacts.sha256"', str(path))
     require_contains(text, 'sha256sum -c "$manifest"', str(path))
     require_contains(text, "python3 ./tools/scripts/validate-mainnet-install-args", str(path))
-    require_contains(text, "Historian reinstall args must be complete:", str(path))
+    require_contains(text, "Existing production Historian must be upgraded in place", str(path))
+    require_contains(text, "Reinstall destroys all stable history", str(path))
+    require_contains(text, "canisters/historian/mainnet-install-args.did is fresh-install-only", str(path))
     require_contains(text, "JUPITER_USE_CANONICAL_ARTIFACTS=1 \\", str(path))
     require_contains(text, "icp deploy jupiter_historian \\", str(path))
     require_contains(text, "--environment ic \\", str(path))
-    require_contains(text, "--mode reinstall \\", str(path))
-    require_contains(text, "--args-file canisters/historian/mainnet-install-args.did", str(path))
-    if "--mode upgrade" in text:
-        fail(f"{path} must not recommend --mode upgrade for this development-phase reinstall release")
+    require_contains(text, "--mode upgrade", str(path))
+    if "--mode reinstall" in text:
+        fail(f"{path} must not recommend Historian reinstall")
+    if "--args-file canisters/historian/mainnet-install-args.did" in text:
+        fail(f"{path} must not recommend Historian upgrade with mainnet install args")
     if "/tmp/historian-relay-factory-enable.did" in text:
-        fail(f"{path} must use the checked-in Historian InitArgs file, not a temporary args file")
+        fail(f"{path} must not recommend an implicit config-changing Historian upgrade args file")
     for line in non_comment_command_lines(text):
         command = line.removeprefix("env ").strip()
         if command.startswith("echo ") or command.startswith("cat ") or command.startswith("printf "):
@@ -1196,6 +1283,34 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \\
         fail("self-test failed to reject stale privileged deployment framing")
     if docs_use_stale_privileged_deployment_framing(bootstrap_governance_text):
         fail("self-test unexpectedly rejected bootstrap-scoped governance wording")
+    historian_reinstall_text = """
+    Existing Historian production command:
+    JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \\
+      --environment ic \\
+      --mode reinstall \\
+      --args-file canisters/historian/mainnet-install-args.did
+    """
+    historian_bad_upgrade_args_text = historian_reinstall_text.replace("--mode reinstall", "--mode upgrade")
+    if not historian_reinstall_command_contexts(historian_reinstall_text):
+        fail("self-test failed to reject production Historian reinstall command")
+    if not historian_upgrade_uses_mainnet_install_args(historian_bad_upgrade_args_text):
+        fail("self-test failed to reject Historian upgrade paired with mainnet install args")
+    destructive_history_text = (
+        "This development-phase release uses reinstall and accepts loss of "
+        "development-phase histories and registrations."
+    )
+    if not historian_destructive_history_wording(destructive_history_text):
+        fail("self-test failed to reject destructive Historian history wording")
+    historian_good_upgrade_text = """
+    Existing production Historian must be upgraded in place:
+    JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \\
+      --environment ic \\
+      --mode upgrade
+    """
+    if historian_reinstall_command_contexts(historian_good_upgrade_text):
+        fail("self-test unexpectedly rejected no-argument Historian upgrade command")
+    if historian_upgrade_uses_mainnet_install_args(historian_good_upgrade_text):
+        fail("self-test unexpectedly rejected no-argument Historian upgrade as using install args")
 
     icp_yaml_without_init_args = """
 canisters:
@@ -1324,6 +1439,7 @@ def main() -> None:
     validate_historian_factory_production_artifact_paths()
     validate_public_verifier_links()
     validate_upgrade_docs_do_not_use_install_args_or_null_routine_args()
+    validate_historian_upgrade_only_docs()
     validate_relay_docs_contain_full_init_args_upgrade()
     validate_docs_do_not_use_stale_privileged_deployment_framing()
     validate_historian_relay_factory_enablement_fixture()

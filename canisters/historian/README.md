@@ -255,7 +255,7 @@ The committed [`mainnet-install-args.did`](mainnet-install-args.did) configures:
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-That file is intended to be the copy-pasteable install/reinstall argument source for an IC deployment of the historian. Routine upgrades preserve existing state and should normally pass no args.
+That file is intended to be the copy-pasteable argument source for a brand-new IC deployment of the historian. Routine upgrades preserve existing state and should pass no args unless a temporary `Option<UpgradeArgs>` config-change file is intentionally reviewed.
 
 ## Build and test
 
@@ -331,28 +331,19 @@ The checked-in production args enable `relay_factory_enabled = opt true`, so `ju
 
 Production canister: `jupiter_historian` / `j5gs6-uiaaa-aaaar-qb5cq-cai`
 
-Fresh install or development-phase reinstall:
+Existing production Historian must be upgraded in place. Reinstall destroys all stable history, tracking metadata, Relay registrations, setup/recovery jobs, index cursors, aggregates, and other durable state; it is prohibited for the existing production canister.
+
+Routine no-config production upgrade:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --environment ic \
-  --mode reinstall \
-  --args-file canisters/historian/mainnet-install-args.did
+  --mode upgrade
 ```
 
-This development-phase release uses reinstall, not upgrade. Reinstall wipes Historian heap and stable state, requires current controller authority and complete `InitArgs`, and accepts loss of development-phase histories and registrations. Before reinstall, disable the self-service factory; verify no in-flight setup job, no setup payment mid-processing, and no child Relay created by a job the fresh Historian would forget; then either confirm production has zero completed self-service Relays or provide fresh-init seed data that restores every existing target-to-Relay relationship. If the canonical Relay is also being reinstalled, first prove its current controller permits reinstall; a genuinely blackholed Relay cannot be reinstalled. After reinstall, verify Auto probing, `RelayTarget` plus `RelayInstance` tracking, `tracked_canister_count`, and cycles history for both target and Relay.
-
-### Production upgrades outside this development-phase reinstall
-
-The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
+The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading an existing Historian.
 
 Normal production upgrades preserve stable state and must use the historian `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
-
-For a production upgrade with no config change, pass no args:
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
-```
 
 For a production upgrade with an intentional config change, create a temporary local `UpgradeArgs` file. Fill in only the fields intentionally changed by that deployment. Do not commit the temporary file.
 
@@ -386,6 +377,8 @@ After upgrade, verify the runtime config from public logs:
 ```bash
 icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
 ```
+
+Before the maintenance window, pause the self-service factory, take a canister snapshot or equivalent backup, and record pre-upgrade query results for later comparison. Existing setup/recovery jobs and Relay registrations are preserved by the upgrade. Verify commitment histories, cycles histories, first-seen metadata, cursors, totals, Relay registrations, setup jobs, automatic cycles probing, and new `RelayTarget`/`RelayInstance` reasons before deploying the frontend.
 
 ## Debug interface
 

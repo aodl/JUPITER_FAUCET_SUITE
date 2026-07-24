@@ -38,10 +38,6 @@ sha256sum -c "$manifest"
 python3 ./tools/scripts/validate-mainnet-install-args
 
 echo
-echo "Historian reinstall args must be complete:"
-echo "canisters/historian/mainnet-install-args.did"
-
-echo
 echo "Production historian deploy artifact path:"
 echo "$artifact"
 echo
@@ -60,13 +56,17 @@ if [[ -f "$deprecated_artifact" ]]; then
 fi
 
 echo
-echo "Dry-run only. Canonical release reinstall command after live controller-authority signoff:"
+echo "Read-only preflight only. Existing production Historian must be upgraded in place."
+echo "Reinstall destroys all stable history, tracking metadata, Relay registrations, and setup/recovery jobs; it is prohibited for the existing production Historian."
+echo "canisters/historian/mainnet-install-args.did is fresh-install-only for Historian and must not be passed to upgrade."
+echo "Before upgrade, pause the self-service factory, record pre-upgrade query results, and create a canister snapshot or equivalent backup."
+echo
+echo "Canonical no-config Historian upgrade command after release signoff:"
 cat <<'CMD'
 JUPITER_USE_CANONICAL_ARTIFACTS=1 \
 icp deploy jupiter_historian \
   --environment ic \
-  --mode reinstall \
-  --args-file canisters/historian/mainnet-install-args.did
+  --mode upgrade
 CMD
 echo
 echo "The command above resolves jupiter_historian through icp.yaml, which must build/copy:"
