@@ -900,6 +900,13 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
     // heap view. Relay registry/setup maps are small and may contain one-version
     // legacy values that need current-schema persistence after decoding.
     state::set_state_after_upgrade(st, &registry_principals, &relay_targets);
+    let (registry, setup_jobs) = state::with_state(|st| {
+        (
+            st.relay_registry_by_target.clone(),
+            st.relay_setup_jobs.clone(),
+        )
+    });
+    state::rewrite_relay_factory_maps_current_schema(&registry, &setup_jobs);
 }
 
 fn log_lifecycle(event: &str) {

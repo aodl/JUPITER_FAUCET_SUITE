@@ -10,6 +10,8 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
+// Stable persistent schema copied from Historian revision:
+// 98c871a85af91320a5dfc59b5b040727e21aa094
 const LEGACY_HISTORIAN_V1_REVISION: &str = "98c871a85af91320a5dfc59b5b040727e21aa094";
 
 type Memory = VirtualMemory<DefaultMemoryImpl>;
@@ -44,15 +46,6 @@ struct LegacyFixtureInit {
 #[derive(CandidType, Serialize)]
 struct LegacySeedSummary {
     revision: String,
-    memo_target: Principal,
-    sns_target: Principal,
-    canonical_target: Principal,
-    canonical_relay: Principal,
-    self_service_target: Principal,
-    self_service_relay: Principal,
-    normal_setup_target: Principal,
-    refundable_setup_target: Principal,
-    unsafe_setup_target: Principal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -394,15 +387,32 @@ impl Storable for RelayRegistryEntry {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 enum RelaySetupStatus {
     NotFunded,
+    BelowMinimum,
+    InsufficientForCurrentRate,
+    TargetNotObservable,
     Pending,
+    ConvertingCycles,
     CycleTransferAccepted,
+    CycleNotifySucceeded,
+    CreatingCanister,
     CanisterCreated,
+    InstallingCode,
+    CodeInstalled,
+    SettingPublicLogs,
+    FundingRelaySubaccountOne,
+    Blackholing,
     Active,
+    SweepingToExistingRelay,
+    SweptToExistingRelay,
+    SweepBelowDust,
+    RefundAvailable,
+    Refunding,
     Refunded,
+    IndexNotReady,
     FailedRetryable,
+    FailedTerminal,
     Ambiguous,
     ManualRecoveryRequired,
-    TargetNotObservable,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -419,12 +429,21 @@ struct RelaySetupPayment {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 enum RelaySetupTransferKind {
     CmcConversion,
+    RelayFunding,
+    ExistingRelaySweep,
+    Refund,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 enum RelaySetupPhase {
     PreSpend,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
     RelayCanisterCreated,
+    RelayCodeInstalled,
+    RelayFundingAccepted,
+    BlackholeUpdateAttempted,
+    Active,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -577,6 +596,35 @@ struct ActiveCyclesSweep {
     next_index: u64,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+struct ActiveRouteSweep {
+    started_at_ts_nanos: u64,
+    next_index: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+struct ActiveSnsDiscovery {
+    started_at_ts_nanos: u64,
+    root_canister_ids: Vec<Principal>,
+    next_index: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+struct CommitmentIndexFault {
+    observed_at_ts: u64,
+    last_cursor_tx_id: Option<u64>,
+    offending_tx_id: u64,
+    message: String,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+struct IcpXdrRateSnapshot {
+    rate: u64,
+    decimals: u32,
+    timestamp: u64,
+    fetched_at_ts: u64,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 struct StableRootState {
     config: StableConfig,
@@ -611,9 +659,9 @@ struct StableRootState {
     #[serde(default)]
     initial_cycles_probe_queue: Vec<Principal>,
     #[serde(default)]
-    active_route_sweep: Option<()>,
+    active_route_sweep: Option<ActiveRouteSweep>,
     #[serde(default)]
-    active_sns_discovery: Option<()>,
+    active_sns_discovery: Option<ActiveSnsDiscovery>,
     main_lock_state_ts: Option<u64>,
     last_main_run_ts: u64,
     #[serde(default)]
@@ -639,9 +687,9 @@ struct StableRootState {
     #[serde(default)]
     last_index_run_ts: Option<u64>,
     #[serde(default)]
-    commitment_index_fault: Option<()>,
+    commitment_index_fault: Option<CommitmentIndexFault>,
     #[serde(default)]
-    icp_xdr_rate: Option<()>,
+    icp_xdr_rate: Option<IcpXdrRateSnapshot>,
     #[serde(default)]
     last_icp_xdr_rate_attempt_ts: Option<u64>,
     #[serde(default)]
@@ -791,12 +839,19 @@ fn init(args: LegacyFixtureInit) {
         last_completed_route_sweep_ts: Some(3_000),
         active_cycles_sweep: Some(ActiveCyclesSweep {
             started_at_ts_nanos: 4_000,
-            canisters: vec![args.memo_target, args.sns_target],
+            canisters: vec![args.memo_target, args.canonical_target],
             next_index: 1,
         }),
         initial_cycles_probe_queue: vec![args.memo_target],
-        active_route_sweep: None,
-        active_sns_discovery: None,
+        active_route_sweep: Some(ActiveRouteSweep {
+            started_at_ts_nanos: 4_500,
+            next_index: 2,
+        }),
+        active_sns_discovery: Some(ActiveSnsDiscovery {
+            started_at_ts_nanos: 4_600,
+            root_canister_ids: vec![args.sns_target],
+            next_index: 1,
+        }),
         main_lock_state_ts: Some(999_999),
         last_main_run_ts: 4_000,
         qualifying_commitment_count: Some(2),
@@ -834,8 +889,18 @@ fn init(args: LegacyFixtureInit) {
             amount_e8s: 55,
         }]),
         last_index_run_ts: Some(4_001),
-        commitment_index_fault: None,
-        icp_xdr_rate: None,
+        commitment_index_fault: Some(CommitmentIndexFault {
+            observed_at_ts: 4_003,
+            last_cursor_tx_id: Some(699),
+            offending_tx_id: 700,
+            message: "fixture commitment index fault".to_string(),
+        }),
+        icp_xdr_rate: Some(IcpXdrRateSnapshot {
+            rate: 50_123,
+            decimals: 4,
+            timestamp: 4_004,
+            fetched_at_ts: 4_005,
+        }),
         last_icp_xdr_rate_attempt_ts: Some(4_002),
         last_icp_xdr_rate_error: None,
     });
@@ -853,17 +918,17 @@ fn init(args: LegacyFixtureInit) {
     );
 
     let mut meta = StableBTreeMap::<PrincipalKey, StableCanisterMeta, Memory>::init(memory(11));
-    for (principal, first_seen) in [
-        (args.memo_target, 111),
-        (args.sns_target, 222),
-        (args.self_service_target, 333),
-        (args.self_service_relay, 444),
+    for (principal, first_seen, last_commitment_ts) in [
+        (args.memo_target, 111, Some(0)),
+        (args.sns_target, 222, None),
+        (args.self_service_target, 333, None),
+        (args.self_service_relay, 444, None),
     ] {
         meta.insert(
             PrincipalKey::from(principal),
             StableCanisterMeta {
                 first_seen_ts: Some(first_seen),
-                last_commitment_ts: Some(first_seen + 10),
+                last_commitment_ts,
                 last_cycles_probe_ts: Some(first_seen + 20),
                 last_cycles_probe_result: Some(CyclesProbeResult::Ok(
                     CyclesSampleSource::BlackholeStatus,
@@ -1099,15 +1164,6 @@ fn setup_job(target: Principal, status: RelaySetupStatus, unsafe_evidence: bool)
 fn debug_seed_summary() -> LegacySeedSummary {
     LegacySeedSummary {
         revision: LEGACY_HISTORIAN_V1_REVISION.to_string(),
-        memo_target: Principal::from_slice(&[1, 1]),
-        sns_target: Principal::from_slice(&[1, 2]),
-        canonical_target: Principal::from_slice(&[1, 3]),
-        canonical_relay: Principal::from_slice(&[1, 4]),
-        self_service_target: Principal::from_slice(&[1, 5]),
-        self_service_relay: Principal::from_slice(&[1, 6]),
-        normal_setup_target: Principal::from_slice(&[1, 7]),
-        refundable_setup_target: Principal::from_slice(&[1, 8]),
-        unsafe_setup_target: Principal::from_slice(&[1, 9]),
     }
 }
 

@@ -612,6 +612,90 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CurrentOnlyRelaySetupJob(RelaySetupJob);
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct LegacyRelaySetupJobBytes(LegacyRelaySetupJobV1);
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RawStableBytes(Vec<u8>);
+
+    impl Storable for RawStableBytes {
+        fn to_bytes(&self) -> Cow<'_, [u8]> {
+            Cow::Borrowed(&self.0)
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            self.0
+        }
+
+        fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+            Self(bytes.into_owned())
+        }
+
+        const BOUND: Bound = Bound::Unbounded;
+    }
+
+    impl Storable for LegacyRelaySetupJobBytes {
+        fn to_bytes(&self) -> Cow<'_, [u8]> {
+            Cow::Owned(candid::encode_one(&self.0).unwrap())
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            candid::encode_one(&self.0).unwrap()
+        }
+
+        fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+            Self(candid::decode_one(bytes.as_ref()).expect("legacy setup job decode failed"))
+        }
+
+        const BOUND: Bound = Bound::Unbounded;
+    }
+
+    impl Storable for CurrentOnlyRelaySetupJob {
+        fn to_bytes(&self) -> Cow<'_, [u8]> {
+            Cow::Owned(candid::encode_one(&self.0).unwrap())
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            candid::encode_one(&self.0).unwrap()
+        }
+
+        fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+            Self(candid::decode_one(bytes.as_ref()).expect("current-only setup job decode failed"))
+        }
+
+        const BOUND: Bound = Bound::Unbounded;
+    }
+
+    fn stable_setup_job_bytes() -> BTreeMap<Principal, Vec<u8>> {
+        MEMORY_MANAGER.with(|manager| {
+            let memory = manager.borrow().get(MemoryId::new(24));
+            let map = StableBTreeMap::<PrincipalKey, RawStableBytes, Memory>::init(memory);
+            let mut out = BTreeMap::new();
+            for entry in map.iter() {
+                let (key, job) = entry.into_pair();
+                out.insert(key.to_principal(), job.0);
+            }
+            out
+        })
+    }
+
+    fn current_only_setup_jobs() -> BTreeMap<Principal, RelaySetupJob> {
+        MEMORY_MANAGER.with(|manager| {
+            let memory = manager.borrow().get(MemoryId::new(24));
+            let map =
+                StableBTreeMap::<PrincipalKey, CurrentOnlyRelaySetupJob, Memory>::init(memory);
+            let mut out = BTreeMap::new();
+            for entry in map.iter() {
+                let (key, job) = entry.into_pair();
+                out.insert(key.to_principal(), job.0);
+            }
+            out
+        })
+    }
+
     #[test]
     fn relay_registry_remap_updates_target_entry() {
         reset_test_storage();
@@ -642,6 +726,62 @@ mod tests {
         sync_relay_factory_maps(&registry, &BTreeMap::new(), Some(&BTreeSet::from([target])));
 
         assert!(snapshot_relay_registry_by_target_map().is_empty());
+    }
+
+    #[test]
+    fn relay_setup_migration_rewrites_legacy_bytes_to_current_schema() {
+        reset_test_storage();
+        let target = principal(&[35]);
+        let stale = principal(&[36]);
+        let mut legacy = legacy_setup_job(LegacyRelaySetupStatusV1::TargetNotObservable);
+        legacy.target_canister_id = target;
+        legacy.setup_account.owner = principal(&[37]);
+
+        STABLE_RELAY_SETUP_JOBS_MAP.with(|map| *map.borrow_mut() = None);
+        MEMORY_MANAGER.with(|manager| {
+            let memory = manager.borrow().get(MemoryId::new(24));
+            let mut map =
+                StableBTreeMap::<PrincipalKey, LegacyRelaySetupJobBytes, Memory>::init(memory);
+            map.insert(PrincipalKey::from(target), LegacyRelaySetupJobBytes(legacy));
+            let mut stale_legacy = legacy_setup_job(LegacyRelaySetupStatusV1::Pending);
+            stale_legacy.target_canister_id = stale;
+            map.insert(
+                PrincipalKey::from(stale),
+                LegacyRelaySetupJobBytes(stale_legacy),
+            );
+        });
+
+        let restored = with_relay_setup_jobs_map(|map| {
+            map.get(&PrincipalKey::from(target))
+                .expect("legacy setup job should restore through fallback")
+        });
+        assert_eq!(restored.status, RelaySetupStatus::RefundAvailable);
+        let legacy_bytes = stable_setup_job_bytes()
+            .remove(&target)
+            .expect("legacy bytes should exist");
+        assert!(
+            candid::decode_one::<RelaySetupJob>(&legacy_bytes).is_err(),
+            "pre-rewrite legacy bytes should require the legacy fallback decoder"
+        );
+
+        let mut current = BTreeMap::new();
+        current.insert(target, restored);
+        rewrite_relay_factory_maps_current_schema(&BTreeMap::new(), &current);
+
+        let current_only = current_only_setup_jobs();
+        assert_eq!(current_only, current);
+        assert!(!current_only.contains_key(&stale));
+        let rewritten_once = stable_setup_job_bytes()
+            .remove(&target)
+            .expect("rewritten bytes should exist");
+        assert!(candid::decode_one::<RelaySetupJob>(&rewritten_once).is_ok());
+
+        rewrite_relay_factory_maps_current_schema(&BTreeMap::new(), &current);
+        let rewritten_twice = stable_setup_job_bytes()
+            .remove(&target)
+            .expect("rewritten bytes should remain");
+        assert_eq!(rewritten_twice, rewritten_once);
+        assert_eq!(current_only_setup_jobs(), current);
     }
 
     #[test]

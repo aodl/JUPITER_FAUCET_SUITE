@@ -7,7 +7,7 @@ use stable::*;
 mod commitments;
 use commitments::*;
 mod routes;
-use routes::*;
+pub(crate) use routes::*;
 mod cycles;
 use cycles::*;
 mod snapshots;
