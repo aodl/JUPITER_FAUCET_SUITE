@@ -77,7 +77,7 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-Pause the self-service factory before the maintenance window. Existing setup/recovery jobs and Relay registrations are preserved by the in-place upgrade, but pausing the factory keeps new setup work from starting while operators capture before/after evidence.
+Stopping `jupiter_historian` is the executable self-service factory pause for this deployment. Existing setup/recovery jobs and Relay registrations are preserved by the in-place upgrade, but the canister must stay stopped while operators create/download the snapshot and perform the upgrade.
 
 Record pre-upgrade query results before upgrading `jupiter_historian`:
 
@@ -88,18 +88,41 @@ Record pre-upgrade query results before upgrading `jupiter_historian`:
 - Relay registrations and setup recovery views.
 - Indexing cursors, fault state, aggregate output/reward/burn totals, and factory enabled state.
 
-Take a canister snapshot or equivalent backup before upgrading. The installed `icp` CLI supports:
+Before the maintenance window, prove the live production module matches the approved legacy baseline:
+
+1. Create a separate clean worktree at `98c871a85af91320a5dfc59b5b040727e21aa094`.
+2. Run the sanctioned reproducible build process there.
+3. Record both raw and deterministic compressed Historian hashes.
+4. Identify the exact install payload used by the historical deployment.
+5. Compare that expected install payload hash to the live module hash with:
 
 ```bash
-icp canister snapshot create jupiter_historian --environment ic --json
-icp canister snapshot list jupiter_historian --environment ic --json
-icp canister snapshot download jupiter_historian <SNAPSHOT_ID> --environment ic --output /tmp/jupiter-historian-snapshot
+./tools/scripts/preflight-live-historian-upgrade-baseline <EXPECTED_LEGACY_MODULE_HASH>
 ```
 
-Rollback from a snapshot uses the same CLI family:
+Do not hardcode the expected hash in this repository until a sanctioned build and production query have established it. If the live hash does not match the artifact from `98c871a85af91320a5dfc59b5b040727e21aa094`, stop deployment and identify the actual deployed source revision before migration.
+
+Maintenance sequence tested with `icp 0.2.6`:
 
 ```bash
-icp canister snapshot restore jupiter_historian <SNAPSHOT_ID> --environment ic
+icp canister stop jupiter_historian --environment ic
+SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
+icp canister snapshot list jupiter_historian --environment ic --json
+icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
+```
+
+The stopped-canister upgrade behavior above is intentional: local testing showed `icp deploy <name> --environment local --mode upgrade` succeeds while the canister is stopped and leaves it `Stopped`, so the explicit `icp canister start` is required after the upgrade.
+
+Rollback from the recorded snapshot ID:
+
+```bash
+icp canister stop jupiter_historian --environment ic
+icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
 ```
 
 After upgrade, verify:

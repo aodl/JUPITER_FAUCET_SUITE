@@ -59,14 +59,32 @@ echo
 echo "Read-only preflight only. Existing production Historian must be upgraded in place."
 echo "Reinstall destroys all stable history, tracking metadata, Relay registrations, and setup/recovery jobs; it is prohibited for the existing production Historian."
 echo "canisters/historian/mainnet-install-args.did is fresh-install-only for Historian and must not be passed to upgrade."
-echo "Before upgrade, pause the self-service factory, record pre-upgrade query results, and create a canister snapshot or equivalent backup."
+echo "Before stopping Historian, record pre-upgrade query results. Stopping jupiter_historian is the executable self-service factory pause."
+echo "Also run the read-only live legacy-baseline gate with the sanctioned expected module hash:"
+echo "./tools/scripts/preflight-live-historian-upgrade-baseline <EXPECTED_LEGACY_MODULE_HASH>"
 echo
-echo "Canonical no-config Historian upgrade command after release signoff:"
+echo "Complete tested maintenance sequence after release signoff:"
 cat <<'CMD'
+icp canister stop jupiter_historian --environment ic
+SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
+icp canister snapshot list jupiter_historian --environment ic --json
+icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
 JUPITER_USE_CANONICAL_ARTIFACTS=1 \
 icp deploy jupiter_historian \
   --environment ic \
   --mode upgrade
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
+CMD
+echo
+echo "Local icp 0.2.6 testing showed the stopped-canister upgrade leaves the canister stopped; the explicit start command is required."
+echo
+echo "Rollback from the recorded snapshot ID:"
+cat <<'CMD'
+icp canister stop jupiter_historian --environment ic
+icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
 CMD
 echo
 echo "The command above resolves jupiter_historian through icp.yaml, which must build/copy:"

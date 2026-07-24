@@ -643,6 +643,37 @@ def historian_destructive_history_wording(text: str) -> bool:
     return any(phrase in text for phrase in forbidden_phrases)
 
 
+def historian_snapshot_runbook_errors(text: str) -> list[str]:
+    errors: list[str] = []
+    stop_pos = text.find("icp canister stop jupiter_historian --environment ic")
+    create_pos = text.find("icp canister snapshot create jupiter_historian --environment ic")
+    restore_pos = text.find("icp canister snapshot restore jupiter_historian")
+    start_after_restore_pos = (
+        text.find("icp canister start jupiter_historian --environment ic", restore_pos)
+        if restore_pos != -1
+        else -1
+    )
+
+    if create_pos == -1:
+        errors.append("missing snapshot create command")
+    if stop_pos == -1 or (create_pos != -1 and stop_pos > create_pos):
+        errors.append("missing stop before snapshot create")
+    if restore_pos == -1:
+        errors.append("missing snapshot restore command")
+    if restore_pos != -1:
+        stop_before_restore_pos = text.rfind(
+            "icp canister stop jupiter_historian --environment ic", 0, restore_pos
+        )
+        start_before_restore_pos = text.rfind(
+            "icp canister start jupiter_historian --environment ic", 0, restore_pos
+        )
+        if stop_before_restore_pos == -1 or stop_before_restore_pos < start_before_restore_pos:
+            errors.append("missing stop before snapshot restore")
+        if start_after_restore_pos == -1:
+            errors.append("missing start after snapshot restore")
+    return errors
+
+
 def validate_historian_upgrade_only_docs() -> None:
     paths = [
         REPO_ROOT / "README.md",
@@ -662,6 +693,9 @@ def validate_historian_upgrade_only_docs() -> None:
             fail(f"{path} pairs Historian --mode upgrade with mainnet-install-args.did; use no args or temporary UpgradeArgs")
         if historian_destructive_history_wording(text):
             fail(f"{path} contains obsolete Historian history-discard wording")
+        snapshot_errors = historian_snapshot_runbook_errors(text)
+        if path.name in {"deployment.md", "preflight-historian-relay-factory-enable"} and snapshot_errors:
+            fail(f"{path} has incomplete Historian snapshot/rollback runbook: {', '.join(snapshot_errors)}")
 
     deployment_text = (REPO_ROOT / "docs" / "operations" / "deployment.md").read_text()
     for phrase in [
@@ -670,8 +704,8 @@ def validate_historian_upgrade_only_docs() -> None:
         "mainnet-install-args.did is for a brand-new Historian installation only",
         "Routine no-config Historian upgrades pass no arguments",
         "Config-changing Historian upgrades use a temporary Option<UpgradeArgs> file",
-        "Pause the self-service factory before the maintenance window",
-        "Take a canister snapshot or equivalent backup",
+        "Stopping `jupiter_historian` is the executable self-service factory pause",
+        "SNAPSHOT_ID=\"$(icp canister snapshot create jupiter_historian --environment ic --quiet)\"",
         "Record pre-upgrade query results",
     ]:
         if phrase not in deployment_text:
@@ -682,8 +716,9 @@ def validate_historian_upgrade_only_docs() -> None:
         "Existing production Historian must be upgraded in place",
         "Reinstall destroys all stable history",
         "canisters/historian/mainnet-install-args.did is fresh-install-only",
-        "Canonical no-config Historian upgrade command",
+        "Complete tested maintenance sequence",
         "--mode upgrade",
+        "Rollback from the recorded snapshot ID",
     ]:
         if phrase not in preflight_text:
             fail(f"tools/scripts/preflight-historian-relay-factory-enable must print Historian upgrade-only guidance: {phrase}")
@@ -695,6 +730,17 @@ def validate_historian_upgrade_only_docs() -> None:
     ]:
         if phrase in preflight_text:
             fail(f"tools/scripts/preflight-historian-relay-factory-enable must not print Historian reinstall guidance: {phrase}")
+
+    live_baseline_path = REPO_ROOT / "tools" / "scripts" / "preflight-live-historian-upgrade-baseline"
+    live_baseline_text = live_baseline_path.read_text()
+    for phrase in [
+        "j5gs6-uiaaa-aaaar-qb5cq-cai",
+        "EXPECTED_HISTORIAN_LEGACY_MODULE_HASH",
+        "--self-test",
+        "never mutate",
+    ]:
+        if phrase not in live_baseline_text:
+            fail(f"{live_baseline_path} must contain live legacy-baseline gate phrase: {phrase}")
 
 
 def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None:
@@ -1311,6 +1357,36 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \\
         fail("self-test unexpectedly rejected no-argument Historian upgrade command")
     if historian_upgrade_uses_mainnet_install_args(historian_good_upgrade_text):
         fail("self-test unexpectedly rejected no-argument Historian upgrade as using install args")
+    historian_snapshot_good_text = """
+    icp canister stop jupiter_historian --environment ic
+    SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
+    icp canister snapshot list jupiter_historian --environment ic --json
+    icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/snapshot
+    JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
+    icp canister start jupiter_historian --environment ic
+    icp canister stop jupiter_historian --environment ic
+    icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
+    icp canister start jupiter_historian --environment ic
+    """
+    if historian_snapshot_runbook_errors(historian_snapshot_good_text):
+        fail("self-test unexpectedly rejected complete Historian snapshot runbook")
+    missing_stop_create = historian_snapshot_good_text.replace(
+        "    icp canister stop jupiter_historian --environment ic\n", "", 1
+    )
+    if "missing stop before snapshot create" not in historian_snapshot_runbook_errors(missing_stop_create):
+        fail("self-test failed to reject snapshot runbook missing stop before create")
+    missing_stop_restore = historian_snapshot_good_text.replace(
+        "    icp canister stop jupiter_historian --environment ic\n    icp canister snapshot restore",
+        "    icp canister snapshot restore",
+    )
+    if "missing stop before snapshot restore" not in historian_snapshot_runbook_errors(missing_stop_restore):
+        fail("self-test failed to reject snapshot runbook missing stop before restore")
+    missing_start_restore = historian_snapshot_good_text.rsplit(
+        "    icp canister start jupiter_historian --environment ic\n", 1
+    )
+    missing_start_restore_text = "".join(missing_start_restore)
+    if "missing start after snapshot restore" not in historian_snapshot_runbook_errors(missing_start_restore_text):
+        fail("self-test failed to reject snapshot runbook missing start after restore")
 
     icp_yaml_without_init_args = """
 canisters:

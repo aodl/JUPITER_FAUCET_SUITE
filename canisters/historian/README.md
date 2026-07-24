@@ -378,7 +378,30 @@ After upgrade, verify the runtime config from public logs:
 icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
 ```
 
-Before the maintenance window, pause the self-service factory, take a canister snapshot or equivalent backup, and record pre-upgrade query results for later comparison. Existing setup/recovery jobs and Relay registrations are preserved by the upgrade. Verify commitment histories, cycles histories, first-seen metadata, cursors, totals, Relay registrations, setup jobs, automatic cycles probing, and new `RelayTarget`/`RelayInstance` reasons before deploying the frontend.
+Before stopping the canister, record pre-upgrade query results for later comparison. Stopping `jupiter_historian` is the executable self-service factory pause for this deployment.
+
+Tested `icp 0.2.6` maintenance sequence:
+
+```bash
+icp canister stop jupiter_historian --environment ic
+SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
+icp canister snapshot list jupiter_historian --environment ic --json
+icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
+```
+
+Local testing showed the stopped-canister upgrade succeeds but leaves the canister stopped, so the explicit start command is required. Rollback uses the recorded snapshot ID:
+
+```bash
+icp canister stop jupiter_historian --environment ic
+icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
+```
+
+Existing setup/recovery jobs and Relay registrations are preserved by the upgrade. Verify commitment histories, cycles histories, first-seen metadata, cursors, totals, Relay registrations, setup jobs, automatic cycles probing, and new `RelayTarget`/`RelayInstance` reasons before deploying the frontend.
 
 ## Debug interface
 
