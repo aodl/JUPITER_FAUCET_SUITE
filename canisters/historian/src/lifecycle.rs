@@ -481,6 +481,24 @@ pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
     ensure_canonical_relay_registry_with_first_seen(st, None);
 }
 
+pub(crate) fn ensure_active_relay_tracking(st: &mut State) {
+    let active_relays: Vec<_> = st
+        .relay_registry_by_target
+        .values()
+        .filter(|entry| entry.status == RelayRegistryStatus::Active)
+        .map(|entry| {
+            (
+                entry.target_canister_id,
+                entry.relay_canister_id,
+                entry.activated_at_ts.or(entry.created_at_ts),
+            )
+        })
+        .collect();
+    for (target, relay_id, first_seen_ts) in active_relays {
+        mark_active_relay_tracked(st, target, relay_id, first_seen_ts);
+    }
+}
+
 pub(crate) fn ensure_canonical_relay_registry_with_first_seen(
     st: &mut State,
     first_seen_ts: Option<u64>,
@@ -834,6 +852,7 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     initialize_derived_state_if_missing(st);
     normalize_runtime_state(st);
     ensure_canonical_relay_registry(st);
+    ensure_active_relay_tracking(st);
     validate_config(&st.config);
     st.main_lock_state_ts = Some(0);
 }
@@ -869,10 +888,18 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
-    // Persist only the historian root on upgrade. Commitment/cycles histories are
-    // restored lazily from stable entry/index maps, so rewriting all durable sections
-    // here would clobber those bulk histories with an intentionally sparse heap view.
-    state::set_state_root_and_registry_principals(st, &registry_principals);
+    let relay_targets = st
+        .relay_registry_by_target
+        .keys()
+        .chain(st.relay_setup_jobs.keys())
+        .copied()
+        .collect();
+    // Persist only small upgrade-normalized sections. Commitment/cycles histories
+    // are restored lazily from stable entry/index maps, so rewriting all durable
+    // sections here would clobber those bulk histories with an intentionally sparse
+    // heap view. Relay registry/setup maps are small and may contain one-version
+    // legacy values that need current-schema persistence after decoding.
+    state::set_state_after_upgrade(st, &registry_principals, &relay_targets);
 }
 
 fn log_lifecycle(event: &str) {

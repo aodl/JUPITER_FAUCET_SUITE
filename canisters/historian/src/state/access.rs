@@ -12,19 +12,20 @@ pub(crate) fn set_state_root_only(st: State) {
     STATE.with(|s| *s.borrow_mut() = Some(st));
 }
 
-pub(crate) fn set_state_root_and_registry_principals(
+pub(crate) fn set_state_after_upgrade(
     st: State,
     registry_principals: &BTreeSet<Principal>,
+    relay_targets: &BTreeSet<Principal>,
 ) {
     persist_snapshot_sections_scoped(
         &st,
-        DIRTY_ROOT | DIRTY_REGISTRY,
+        DIRTY_ROOT | DIRTY_REGISTRY | DIRTY_RELAY_FACTORY,
         (!registry_principals.is_empty()).then_some(registry_principals),
         None,
         None,
         None,
         None,
-        None,
+        (!relay_targets.is_empty()).then_some(relay_targets),
     );
     clear_persistence_dirty();
     STATE.with(|s| *s.borrow_mut() = Some(st));

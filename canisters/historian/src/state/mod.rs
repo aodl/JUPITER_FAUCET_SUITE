@@ -1,6 +1,7 @@
 mod types;
 use types::*;
 pub(crate) use types::*;
+mod legacy_v1;
 mod stable;
 use stable::*;
 mod commitments;

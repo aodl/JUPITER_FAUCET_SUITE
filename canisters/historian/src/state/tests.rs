@@ -4,7 +4,9 @@ use super::*;
 #[allow(clippy::module_inception, clippy::unnecessary_get_then_check)]
 mod tests {
     use super::*;
+    use crate::state::legacy_v1::*;
     use crate::MemoRegisteredCanisterSummary;
+    use std::borrow::Cow;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn reset_test_storage() {
@@ -77,6 +79,376 @@ mod tests {
             canonical_relay_canister_id: Some(crate::mainnet_relay_id()),
             canonical_relay_targets: crate::mainnet_canonical_relay_targets(),
         }
+    }
+
+    fn legacy_stable_config() -> LegacyStableConfigV1 {
+        let cfg = sample_config();
+        LegacyStableConfigV1 {
+            staking_account: cfg.staking_account,
+            output_source_account: Some(cfg.output_source_account),
+            output_account: Some(cfg.output_account),
+            rewards_account: Some(cfg.rewards_account),
+            ledger_canister_id: cfg.ledger_canister_id,
+            index_canister_id: cfg.index_canister_id,
+            cmc_canister_id: cfg.cmc_canister_id,
+            faucet_canister_id: cfg.faucet_canister_id,
+            blackhole_canister_id: principal(&[99]),
+            sns_wasm_canister_id: cfg.sns_wasm_canister_id,
+            xrc_canister_id: Some(cfg.xrc_canister_id),
+            enable_sns_tracking: cfg.enable_sns_tracking,
+            scan_interval_seconds: cfg.scan_interval_seconds,
+            cycles_interval_seconds: cfg.cycles_interval_seconds,
+            min_tx_e8s: cfg.min_tx_e8s,
+            max_cycles_entries_per_canister: cfg.max_cycles_entries_per_canister,
+            max_commitment_entries_per_canister: cfg.max_commitment_entries_per_canister,
+            max_index_pages_per_tick: cfg.max_index_pages_per_tick,
+            max_canisters_per_cycles_tick: cfg.max_canisters_per_cycles_tick,
+            relay_factory_enabled: Some(cfg.relay_factory_enabled),
+            relay_setup_min_e8s: Some(cfg.relay_setup_min_e8s),
+            relay_setup_dust_e8s: Some(cfg.relay_setup_dust_e8s),
+            relay_setup_refund_cooldown_seconds: Some(cfg.relay_setup_refund_cooldown_seconds),
+            relay_initial_cycles: Some(cfg.relay_initial_cycles),
+            relay_cycle_safety_margin_e8s: Some(cfg.relay_cycle_safety_margin_e8s),
+            relay_min_subaccount_one_seed_e8s: Some(cfg.relay_min_subaccount_one_seed_e8s),
+            self_service_relay_interval_seconds: Some(cfg.self_service_relay_interval_seconds),
+            self_service_relay_max_transfers_per_tick: Some(
+                cfg.self_service_relay_max_transfers_per_tick,
+            ),
+            io_surplus_neuron_id: Some(cfg.io_surplus_neuron_id),
+            canonical_relay_canister_id: Some(cfg.canonical_relay_canister_id),
+            canonical_relay_targets: Some(cfg.canonical_relay_targets),
+        }
+    }
+
+    fn legacy_setup_transfer(
+        kind: LegacyRelaySetupTransferKindV1,
+    ) -> LegacyRelaySetupTransferRecordV1 {
+        LegacyRelaySetupTransferRecordV1 {
+            kind,
+            from_subaccount: Some([1; 32]),
+            from_account_identifier: "from-account".to_string(),
+            to: Account {
+                owner: principal(&[77]),
+                subaccount: None,
+            },
+            to_account_identifier: "to-account".to_string(),
+            amount_e8s: 10_000_000,
+            fee_e8s: 10_000,
+            memo: Some(vec![1, 2, 3]),
+            created_at_time_nanos: 123,
+            block_index: Some(456),
+            completed: true,
+        }
+    }
+
+    fn legacy_setup_job(status: LegacyRelaySetupStatusV1) -> LegacyRelaySetupJobV1 {
+        LegacyRelaySetupJobV1 {
+            target_canister_id: principal(&[50]),
+            setup_account: Account {
+                owner: principal(&[51]),
+                subaccount: Some([9; 32]),
+            },
+            setup_account_identifier: "setup-account".to_string(),
+            status,
+            relay_canister_id: None,
+            last_indexed_setup_tx_id: Some(8),
+            setup_tx_ids: vec![8, 9],
+            setup_amount_seen_e8s: 400_000_000,
+            setup_amount_processed_e8s: 0,
+            payments: vec![LegacyRelaySetupPaymentV1 {
+                target_canister_id: principal(&[50]),
+                tx_id: 8,
+                from_account_identifier: "payer".to_string(),
+                amount_e8s: 400_000_000,
+                timestamp_nanos: Some(88),
+                processed: false,
+                refunded: false,
+            }],
+            cycle_conversion_e8s: None,
+            cycle_transfer_block_index: None,
+            cycles_minted: None,
+            relay_initial_cycles: None,
+            relay_funding_e8s: None,
+            relay_funding_block_index: None,
+            phase: Some(LegacyRelaySetupPhaseV1::PreSpend),
+            cycle_transfer: None,
+            relay_funding_transfer: None,
+            existing_relay_sweep_transfer: None,
+            refund_transfers: Vec::new(),
+            relay_create_attempt: None,
+            code_installed: false,
+            relay_funding_accepted: false,
+            blackhole_update_attempted: false,
+            blackhole_confirmed: false,
+            refund_attempt_count: 0,
+            last_refund_attempt_ts: None,
+            refund_blocks: Vec::new(),
+            created_at_ts: 10,
+            updated_at_ts: 11,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn legacy_revision_fixture_is_pinned() {
+        assert_eq!(
+            LEGACY_HISTORIAN_V1_REVISION,
+            "98c871a85af91320a5dfc59b5b040727e21aa094"
+        );
+    }
+
+    #[test]
+    fn legacy_root_config_discards_blackhole_and_preserves_retained_fields() {
+        let legacy = LegacyVersionedStableStateV1::Current(LegacyStableRootStateV1 {
+            config: legacy_stable_config(),
+            last_indexed_staking_tx_id: Some(1),
+            oldest_indexed_staking_tx_id: Some(2),
+            staking_index_descending: Some(true),
+            staking_backfill_complete: Some(false),
+            last_indexed_output_tx_id: Some(3),
+            oldest_indexed_output_tx_id: Some(4),
+            output_route_index_descending: Some(true),
+            output_route_backfill_complete: Some(false),
+            last_indexed_rewards_tx_id: Some(5),
+            oldest_indexed_rewards_tx_id: Some(6),
+            rewards_route_index_descending: Some(true),
+            rewards_route_backfill_complete: Some(false),
+            last_sns_discovery_ts: 7,
+            last_completed_cycles_sweep_ts: 8,
+            last_completed_route_sweep_ts: Some(9),
+            active_cycles_sweep: None,
+            initial_cycles_probe_queue: vec![principal(&[10])],
+            active_route_sweep: None,
+            active_sns_discovery: None,
+            main_lock_state_ts: Some(12),
+            last_main_run_ts: 13,
+            qualifying_commitment_count: Some(14),
+            total_output_e8s: Some(15),
+            total_rewards_e8s: Some(16),
+            icp_burned_e8s: Some(17),
+            recent_commitments: Some(Vec::new()),
+            recent_under_threshold_commitments: Some(Vec::new()),
+            recent_neuron_commitments: Some(Vec::new()),
+            recent_under_threshold_neuron_commitments: Some(Vec::new()),
+            recent_invalid_commitments: Some(Vec::new()),
+            recent_burns: Some(Vec::new()),
+            last_index_run_ts: Some(18),
+            commitment_index_fault: None,
+            icp_xdr_rate: None,
+            last_icp_xdr_rate_attempt_ts: Some(19),
+            last_icp_xdr_rate_error: Some("xrc down".to_string()),
+        });
+        let bytes = candid::encode_one(legacy).unwrap();
+        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
+        let VersionedStableState::Current(root) = decoded else {
+            panic!("expected current root");
+        };
+        let cfg: Config = root.config.into();
+        assert_eq!(cfg.staking_account.owner, principal(&[1]));
+        assert_eq!(cfg.output_source_account.owner, principal(&[11]));
+        assert_eq!(cfg.sns_wasm_canister_id, principal(&[7]));
+        assert_eq!(cfg.xrc_canister_id, principal(&[8]));
+        assert_eq!(root.last_indexed_staking_tx_id, Some(1));
+        assert_eq!(root.last_icp_xdr_rate_error.as_deref(), Some("xrc down"));
+    }
+
+    #[test]
+    fn legacy_source_set_decodes_as_tracking_reasons() {
+        let legacy = LegacyStableSourceSetV1(BTreeSet::from([
+            LegacyCanisterSourceV1::MemoCommitment,
+            LegacyCanisterSourceV1::SnsDiscovery,
+        ]));
+        let bytes = candid::encode_one(legacy).unwrap();
+        let decoded = StableTrackingReasonSet::from_bytes(Cow::Owned(bytes));
+        assert_eq!(
+            decoded.0,
+            BTreeSet::from([
+                CanisterTrackingReason::MemoCommitment,
+                CanisterTrackingReason::SnsDiscovery
+            ])
+        );
+    }
+
+    #[test]
+    fn every_legacy_cycles_sample_source_decodes_without_value_loss() {
+        for (legacy_source, current_source) in [
+            (
+                LegacyCyclesSampleSourceV1::BlackholeStatus,
+                CyclesSampleSource::BlackholeStatus,
+            ),
+            (
+                LegacyCyclesSampleSourceV1::SelfCanister,
+                CyclesSampleSource::SelfCanister,
+            ),
+            (
+                LegacyCyclesSampleSourceV1::SnsRootSummary,
+                CyclesSampleSource::SnsRootSummary,
+            ),
+        ] {
+            let legacy = LegacyCyclesSampleV1 {
+                timestamp_nanos: 123_456,
+                cycles: 987_654_321,
+                source: legacy_source,
+            };
+            let bytes = candid::encode_one(legacy).unwrap();
+            let decoded = CyclesSample::from_bytes(Cow::Owned(bytes));
+            assert_eq!(decoded.timestamp_nanos, 123_456);
+            assert_eq!(decoded.cycles, 987_654_321);
+            assert_eq!(decoded.source, current_source);
+        }
+    }
+
+    #[test]
+    fn legacy_canister_meta_with_probe_result_decodes() {
+        let legacy = LegacyStableCanisterMetaV1 {
+            first_seen_ts: Some(1),
+            last_commitment_ts: Some(2),
+            last_cycles_probe_ts: Some(3),
+            last_cycles_probe_result: Some(LegacyCyclesProbeResultV1::Ok(
+                LegacyCyclesSampleSourceV1::SnsRootSummary,
+            )),
+            last_burn_tx_id: Some(4),
+            last_burn_scan_tx_id: Some(5),
+            burned_e8s: Some(6),
+        };
+        let bytes = candid::encode_one(legacy).unwrap();
+        let decoded = StableCanisterMeta::from_bytes(Cow::Owned(bytes));
+        assert_eq!(decoded.first_seen_ts, Some(1));
+        assert_eq!(
+            decoded.last_cycles_probe_result,
+            Some(CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary))
+        );
+        assert_eq!(decoded.burned_e8s, Some(6));
+    }
+
+    #[test]
+    fn legacy_relay_registry_entry_discards_removed_hash_field() {
+        let legacy = LegacyRelayRegistryEntryV1 {
+            relay_canister_id: principal(&[60]),
+            target_canister_id: principal(&[61]),
+            kind: LegacyRelayRegistryKindV1::SelfService,
+            status: LegacyRelayRegistryStatusV1::Active,
+            setup_account: Some(Account {
+                owner: principal(&[62]),
+                subaccount: None,
+            }),
+            setup_account_identifier: Some("setup".to_string()),
+            setup_amount_e8s: Some(300_000_000),
+            setup_tx_ids: vec![1, 2],
+            relay_wasm_hash_hex: Some("removed-info".to_string()),
+            final_controllers: Some(vec![principal(&[63])]),
+            log_visibility_public: Some(true),
+            created_at_ts: Some(10),
+            activated_at_ts: Some(11),
+        };
+        let bytes = candid::encode_one(legacy).unwrap();
+        let decoded = RelayRegistryEntry::from_bytes(Cow::Owned(bytes));
+        assert_eq!(decoded.relay_canister_id, principal(&[60]));
+        assert_eq!(decoded.target_canister_id, principal(&[61]));
+        assert_eq!(decoded.kind, RelayRegistryKind::SelfService);
+        assert_eq!(decoded.status, RelayRegistryStatus::Active);
+        assert_eq!(decoded.setup_tx_ids, vec![1, 2]);
+        assert_eq!(decoded.activated_at_ts, Some(11));
+    }
+
+    #[test]
+    fn legacy_relay_setup_statuses_decode() {
+        let statuses = [
+            (
+                LegacyRelaySetupStatusV1::NotFunded,
+                RelaySetupStatus::NotFunded,
+            ),
+            (LegacyRelaySetupStatusV1::Pending, RelaySetupStatus::Pending),
+            (
+                LegacyRelaySetupStatusV1::CycleTransferAccepted,
+                RelaySetupStatus::CycleTransferAccepted,
+            ),
+            (
+                LegacyRelaySetupStatusV1::CanisterCreated,
+                RelaySetupStatus::CanisterCreated,
+            ),
+            (
+                LegacyRelaySetupStatusV1::CodeInstalled,
+                RelaySetupStatus::CodeInstalled,
+            ),
+            (
+                LegacyRelaySetupStatusV1::FundingRelaySubaccountOne,
+                RelaySetupStatus::FundingRelaySubaccountOne,
+            ),
+            (LegacyRelaySetupStatusV1::Active, RelaySetupStatus::Active),
+            (
+                LegacyRelaySetupStatusV1::Refunded,
+                RelaySetupStatus::Refunded,
+            ),
+            (
+                LegacyRelaySetupStatusV1::FailedRetryable,
+                RelaySetupStatus::FailedRetryable,
+            ),
+            (
+                LegacyRelaySetupStatusV1::Ambiguous,
+                RelaySetupStatus::Ambiguous,
+            ),
+            (
+                LegacyRelaySetupStatusV1::ManualRecoveryRequired,
+                RelaySetupStatus::ManualRecoveryRequired,
+            ),
+            (
+                LegacyRelaySetupStatusV1::TargetNotObservable,
+                RelaySetupStatus::RefundAvailable,
+            ),
+        ];
+        for (legacy_status, expected_status) in statuses {
+            let legacy = legacy_setup_job(legacy_status);
+            let bytes = candid::encode_one(legacy).unwrap();
+            let decoded = RelaySetupJob::from_bytes(Cow::Owned(bytes));
+            assert_eq!(decoded.status, expected_status);
+            assert_eq!(decoded.target_canister_id, principal(&[50]));
+            assert_eq!(decoded.setup_tx_ids, vec![8, 9]);
+            assert_eq!(decoded.phase, Some(RelaySetupPhase::PreSpend));
+        }
+    }
+
+    #[test]
+    fn legacy_target_not_observable_with_irreversible_evidence_requires_manual_recovery() {
+        let mut legacy = legacy_setup_job(LegacyRelaySetupStatusV1::TargetNotObservable);
+        legacy.relay_create_attempt = Some(LegacyRelayCreateAttemptV1 {
+            target_canister_id: legacy.target_canister_id,
+            created_at_ts: 20,
+            initial_cycles: 2_000_000_000_000,
+            raw_relay_wasm_hash_hex: Some("discarded".to_string()),
+            install_payload_hash_hex: Some("discarded".to_string()),
+            relay_wasm_hash_hex: Some("discarded".to_string()),
+        });
+        let bytes = candid::encode_one(legacy).unwrap();
+        let decoded = RelaySetupJob::from_bytes(Cow::Owned(bytes));
+        assert_eq!(decoded.status, RelaySetupStatus::ManualRecoveryRequired);
+        assert_eq!(decoded.relay_create_attempt.unwrap().created_at_ts, 20);
+    }
+
+    #[test]
+    fn legacy_target_not_observable_with_accepted_transfer_requires_manual_recovery() {
+        let mut legacy = legacy_setup_job(LegacyRelaySetupStatusV1::TargetNotObservable);
+        legacy.cycle_transfer = Some(legacy_setup_transfer(
+            LegacyRelaySetupTransferKindV1::CmcConversion,
+        ));
+        let bytes = candid::encode_one(legacy).unwrap();
+        let decoded = RelaySetupJob::from_bytes(Cow::Owned(bytes));
+        assert_eq!(decoded.status, RelaySetupStatus::ManualRecoveryRequired);
+    }
+
+    #[test]
+    fn corrupt_stable_root_bytes_do_not_create_empty_state() {
+        let panic = std::panic::catch_unwind(|| {
+            let _ = VersionedStableState::from_bytes(Cow::Borrowed(&[0xde, 0xad, 0xbe, 0xef]));
+        })
+        .expect_err("expected corrupt root decode to panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(message.contains("failed to decode historian root stable state"));
+        assert!(message.contains(LEGACY_HISTORIAN_V1_REVISION));
     }
 
     #[test]

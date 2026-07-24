@@ -42,6 +42,7 @@ static MOCK_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static LEGACY_HISTORIAN_V1_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
@@ -76,6 +77,13 @@ fn status_proxy_wasm() -> Result<Vec<u8>> {
 }
 fn cycle_burner_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&CYCLE_BURNER_WASM, "mock-cycle-burner", None)
+}
+fn legacy_historian_v1_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(
+        &LEGACY_HISTORIAN_V1_WASM,
+        "mock-legacy-historian-v1",
+        None,
+    )
 }
 fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
     if let Some(bytes) = RELAY_ENABLED_HISTORIAN_WASM.get() {
@@ -180,6 +188,38 @@ struct HistorianUpgradeArg {
     faucet_canister_id: Option<Principal>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LegacyHistorianV1FixtureInit {
+    ledger_canister_id: Principal,
+    index_canister_id: Principal,
+    cmc_canister_id: Principal,
+    sns_wasm_canister_id: Principal,
+    xrc_canister_id: Principal,
+    memo_target: Principal,
+    sns_target: Principal,
+    canonical_target: Principal,
+    canonical_relay: Principal,
+    self_service_target: Principal,
+    self_service_relay: Principal,
+    normal_setup_target: Principal,
+    refundable_setup_target: Principal,
+    unsafe_setup_target: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LegacySeedSummary {
+    revision: String,
+    memo_target: Principal,
+    sns_target: Principal,
+    canonical_target: Principal,
+    canonical_relay: Principal,
+    self_service_target: Principal,
+    self_service_relay: Principal,
+    normal_setup_target: Principal,
+    refundable_setup_target: Principal,
+    unsafe_setup_target: Principal,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 enum CanisterTrackingReason {
     MemoCommitment,
@@ -229,7 +269,7 @@ struct CommitmentHistoryPage {
     next_start_after_tx_id: Option<u64>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum CyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
@@ -515,6 +555,49 @@ enum RelaySetupPublicStatus {
     Refunded,
     FailedRetryable,
     ManualRecoveryRequired,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySetupStatus {
+    NotFunded,
+    BelowMinimum,
+    InsufficientForCurrentRate,
+    Pending,
+    ConvertingCycles,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    CreatingCanister,
+    CanisterCreated,
+    InstallingCode,
+    CodeInstalled,
+    SettingPublicLogs,
+    FundingRelaySubaccountOne,
+    Blackholing,
+    Active,
+    SweepingToExistingRelay,
+    SweptToExistingRelay,
+    SweepBelowDust,
+    RefundAvailable,
+    Refunding,
+    Refunded,
+    IndexNotReady,
+    FailedRetryable,
+    FailedTerminal,
+    Ambiguous,
+    ManualRecoveryRequired,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelaySetupJob {
+    target_canister_id: Principal,
+    setup_account: Account,
+    setup_account_identifier: String,
+    status: RelaySetupStatus,
+    relay_canister_id: Option<Principal>,
+    last_indexed_setup_tx_id: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    setup_amount_seen_e8s: u64,
+    setup_amount_processed_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1122,6 +1205,276 @@ impl Harness {
         self.pic.advance_time(Duration::from_secs(2));
         tick_n(&self.pic, 5);
     }
+}
+
+fn staking_identifier_42() -> String {
+    account_identifier_text(Principal::management_canister(), Some([42u8; 32]))
+}
+
+fn commitment_ids(
+    pic: &PocketIc,
+    historian: Principal,
+    canister_id: Principal,
+) -> Result<Vec<u64>> {
+    let page: CommitmentHistoryPage = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id,
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    Ok(page.items.into_iter().map(|item| item.tx_id).collect())
+}
+
+fn cycle_sources(
+    pic: &PocketIc,
+    historian: Principal,
+    canister_id: Principal,
+) -> Result<Vec<CyclesSampleSource>> {
+    let page: CyclesHistoryPage = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_cycles_history",
+        GetCyclesHistoryArgs {
+            canister_id,
+            start_after_ts: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    Ok(page.items.into_iter().map(|item| item.source).collect())
+}
+
+#[test]
+#[ignore]
+fn legacy_historian_v1_stable_layout_upgrades_in_place_without_history_rewrite() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let ledger = pic.create_canister();
+    let index = pic.create_canister();
+    let cmc = pic.create_canister();
+    let sns_wasm = pic.create_canister();
+    let xrc = pic.create_canister();
+    let historian = pic.create_canister();
+    let memo_target = pic.create_canister();
+    let sns_target = pic.create_canister();
+    let canonical_target = pic.create_canister();
+    let canonical_relay = pic.create_canister();
+    let self_service_target = pic.create_canister();
+    let self_service_relay = pic.create_canister();
+    let normal_setup_target = pic.create_canister();
+    let refundable_setup_target = pic.create_canister();
+    let unsafe_setup_target = pic.create_canister();
+    for canister in [
+        ledger,
+        index,
+        cmc,
+        sns_wasm,
+        xrc,
+        historian,
+        memo_target,
+        sns_target,
+        canonical_target,
+        canonical_relay,
+        self_service_target,
+        self_service_relay,
+        normal_setup_target,
+        refundable_setup_target,
+        unsafe_setup_target,
+    ] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(index, index_wasm()?, vec![], None);
+    pic.install_canister(ledger, mock_ledger_wasm()?, vec![], None);
+    pic.install_canister(cmc, mock_cmc_wasm()?, vec![], None);
+    pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+    pic.install_canister(xrc, xrc_wasm()?, vec![], None);
+    for target in [
+        memo_target,
+        sns_target,
+        canonical_target,
+        canonical_relay,
+        self_service_target,
+        self_service_relay,
+    ] {
+        pic.install_canister(target, cycle_burner_wasm()?, vec![], None);
+    }
+
+    let fixture_init = LegacyHistorianV1FixtureInit {
+        ledger_canister_id: ledger,
+        index_canister_id: index,
+        cmc_canister_id: cmc,
+        sns_wasm_canister_id: sns_wasm,
+        xrc_canister_id: xrc,
+        memo_target,
+        sns_target,
+        canonical_target,
+        canonical_relay,
+        self_service_target,
+        self_service_relay,
+        normal_setup_target,
+        refundable_setup_target,
+        unsafe_setup_target,
+    };
+    pic.install_canister(
+        historian,
+        legacy_historian_v1_wasm()?,
+        encode_one(fixture_init)?,
+        None,
+    );
+    let seed: LegacySeedSummary = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_seed_summary",
+        (),
+    )?;
+    assert_eq!(seed.revision, "98c871a85af91320a5dfc59b5b040727e21aa094");
+
+    pic.upgrade_canister(historian, historian_wasm()?, vec![], None)
+        .map_err(|e| {
+            anyhow!("legacy fixture to current historian no-arg upgrade rejected: {e:?}")
+        })?;
+
+    let commitments_before = commitment_ids(&pic, historian, memo_target)?;
+    assert_eq!(commitments_before, vec![10, 20]);
+    let cycle_sources_before = cycle_sources(&pic, historian, memo_target)?;
+    assert_eq!(
+        cycle_sources_before,
+        vec![
+            CyclesSampleSource::BlackholeStatus,
+            CyclesSampleSource::SelfCanister,
+            CyclesSampleSource::SnsRootSummary
+        ]
+    );
+    let overview: Option<CanisterOverview> = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_canister_overview",
+        memo_target,
+    )?;
+    let overview = overview.context("memo target overview should survive upgrade")?;
+    assert_eq!(overview.meta.first_seen_ts, Some(111));
+    assert_eq!(overview.commitment_points, 2);
+    assert_eq!(overview.cycles_points, 3);
+
+    let debug_state: DebugState =
+        query_one(&pic, historian, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(debug_state.last_indexed_staking_tx_id, Some(700));
+    assert_eq!(debug_state.last_indexed_output_tx_id, Some(800));
+    assert_eq!(debug_state.last_indexed_rewards_tx_id, Some(900));
+    assert!(debug_state.active_cycles_sweep_present);
+    assert_eq!(debug_state.active_cycles_sweep_next_index, Some(1));
+
+    let counts: PublicCounts = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_eq!(counts.qualifying_commitment_count, 2);
+    assert_eq!(counts.total_output_e8s, 12_345);
+    assert_eq!(counts.total_rewards_e8s, 67_890);
+    assert!(counts.relay_target_canister_count >= 2);
+    assert!(counts.relay_instance_canister_count >= 2);
+
+    let registrations: ListRelayRegistrationsResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_relay_registrations",
+        ListRelayRegistrationsArgs {
+            start_after: None,
+            limit: Some(100),
+        },
+    )?;
+    assert!(registrations.items.iter().any(|entry| {
+        entry.target_canister_id == canonical_target
+            && entry.relay_canister_id == canonical_relay
+            && entry.kind == RelayRegistryKind::Canonical
+    }));
+    assert!(registrations.items.iter().any(|entry| {
+        entry.target_canister_id == self_service_target
+            && entry.relay_canister_id == self_service_relay
+            && entry.kind == RelayRegistryKind::SelfService
+    }));
+
+    let refundable: Option<RelaySetupJob> = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_get_relay_setup_job",
+        refundable_setup_target,
+    )?;
+    assert_eq!(
+        refundable.context("refundable legacy setup job")?.status,
+        RelaySetupStatus::RefundAvailable
+    );
+    let unsafe_job: Option<RelaySetupJob> = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_get_relay_setup_job",
+        unsafe_setup_target,
+    )?;
+    assert_eq!(
+        unsafe_job.context("unsafe legacy setup job")?.status,
+        RelaySetupStatus::ManualRecoveryRequired
+    );
+
+    let _: u64 = update_bytes(
+        &pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((
+            staking_identifier_42(),
+            300_000_000u64,
+            Some(memo_target.to_text().into_bytes()),
+        ))?,
+    )?;
+    let _: () = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_set_last_indexed_staking_tx_id",
+        None::<u64>,
+    )?;
+    let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
+    let commitments_after_append = commitment_ids(&pic, historian, memo_target)?;
+    assert!(
+        commitments_after_append.contains(&1),
+        "new post-upgrade commitment should append through normal indexer: {commitments_after_append:?}"
+    );
+    assert!(
+        commitments_after_append.contains(&10) && commitments_after_append.contains(&20),
+        "old stable commitments should still be returned after append: {commitments_after_append:?}"
+    );
+
+    let before_second_upgrade = commitment_ids(&pic, historian, memo_target)?;
+    pic.upgrade_canister(historian, historian_wasm()?, vec![], None)
+        .map_err(|e| anyhow!("current historian second no-arg upgrade rejected: {e:?}"))?;
+    assert_eq!(
+        commitment_ids(&pic, historian, memo_target)?,
+        before_second_upgrade,
+        "second upgrade should not duplicate or drop commitments"
+    );
+    assert_eq!(
+        cycle_sources(&pic, historian, memo_target)?,
+        cycle_sources_before,
+        "second upgrade should not duplicate or drop legacy cycles samples"
+    );
+    Ok(())
 }
 
 #[test]

@@ -851,7 +851,17 @@ impl Storable for RelaySetupJob {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian relay setup job")
+        let raw = bytes.as_ref();
+        candid::decode_one(raw).unwrap_or_else(|current_err| {
+            crate::state::legacy_v1::decode_legacy_relay_setup_job(raw).unwrap_or_else(
+                |legacy_err| {
+                    panic!(
+                        "failed to decode historian relay setup job as current schema ({current_err}) or legacy V1 schema from {} ({legacy_err})",
+                        crate::state::legacy_v1::LEGACY_HISTORIAN_V1_REVISION
+                    )
+                },
+            )
+        })
     }
 
     const BOUND: Bound = Bound::Unbounded;
@@ -1015,7 +1025,15 @@ impl Storable for VersionedStableState {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian root stable state")
+        let raw = bytes.as_ref();
+        candid::decode_one(raw).unwrap_or_else(|current_err| {
+            crate::state::legacy_v1::decode_legacy_root(raw).unwrap_or_else(|legacy_err| {
+                panic!(
+                    "failed to decode historian root stable state as current schema ({current_err}) or legacy V1 schema from {} ({legacy_err})",
+                    crate::state::legacy_v1::LEGACY_HISTORIAN_V1_REVISION
+                )
+            })
+        })
     }
 
     const BOUND: Bound = Bound::Unbounded;

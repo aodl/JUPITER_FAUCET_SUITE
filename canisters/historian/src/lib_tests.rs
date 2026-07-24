@@ -121,6 +121,11 @@ mod tests {
         assert!(err.contains("received InitArgs in historian post_upgrade"));
     }
 
+    #[test]
+    fn decode_post_upgrade_args_treats_omitted_args_as_none() {
+        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
+    }
+
     fn base_state() -> State {
         State {
             config: Config {
@@ -559,6 +564,26 @@ mod tests {
             st.commitment_history.get(&canister).map(|v| v.len()),
             Some(1)
         );
+        assert_eq!(st.main_lock_state_ts, Some(0));
+    }
+
+    #[test]
+    fn no_argument_upgrade_preserves_config_and_resets_lock() {
+        let mut st = base_state();
+        st.config.scan_interval_seconds = 321;
+        st.config.cycles_interval_seconds = 654;
+        st.config.relay_factory_enabled = true;
+        st.config.relay_setup_min_e8s = 777_000_000;
+        st.config.self_service_relay_interval_seconds = 888;
+        st.main_lock_state_ts = Some(99);
+
+        apply_upgrade_args(&mut st, None);
+
+        assert_eq!(st.config.scan_interval_seconds, 321);
+        assert_eq!(st.config.cycles_interval_seconds, 654);
+        assert!(st.config.relay_factory_enabled);
+        assert_eq!(st.config.relay_setup_min_e8s, 777_000_000);
+        assert_eq!(st.config.self_service_relay_interval_seconds, 888);
         assert_eq!(st.main_lock_state_ts, Some(0));
     }
 
