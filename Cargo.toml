@@ -24,6 +24,7 @@ members = [
   "tests/mocks/mock-cycle-burner",
   "tests/mocks/mock-icp-index",
   "tests/mocks/mock-icrc-ledger",
+  "tests/mocks/mock-legacy-historian-v1",
   "tests/mocks/mock-nns-governance",
   "tests/mocks/mock-sns-root",
   "tests/mocks/mock-sns-wasm",

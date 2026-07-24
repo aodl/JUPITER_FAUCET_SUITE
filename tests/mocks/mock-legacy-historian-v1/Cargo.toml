@@ -1,0 +1,15 @@
+[package]
+name = "mock-legacy-historian-v1"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid = { workspace = true }
+ic-cdk = { workspace = true }
+ic-stable-structures = { workspace = true }
+icrc-ledger-types = { workspace = true }
+serde = { workspace = true }

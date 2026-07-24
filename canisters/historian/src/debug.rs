@@ -13,6 +13,30 @@ pub struct DebugState {
     pub active_cycles_sweep_next_index: Option<u64>,
     pub active_route_sweep_present: bool,
     pub active_route_sweep_next_index: Option<u64>,
+    pub active_sns_discovery_present: bool,
+    pub active_sns_discovery_next_index: Option<u64>,
+    pub oldest_indexed_staking_tx_id: Option<u64>,
+    pub staking_index_descending: Option<bool>,
+    pub staking_backfill_complete: Option<bool>,
+    pub oldest_indexed_output_tx_id: Option<u64>,
+    pub output_route_index_descending: Option<bool>,
+    pub output_route_backfill_complete: Option<bool>,
+    pub oldest_indexed_rewards_tx_id: Option<u64>,
+    pub rewards_route_index_descending: Option<bool>,
+    pub rewards_route_backfill_complete: Option<bool>,
+    pub main_lock_state_ts: Option<u64>,
+    pub last_main_run_ts: u64,
+    pub initial_cycles_probe_queue_len: u32,
+    pub initial_cycles_probe_queue: Vec<Principal>,
+    pub active_cycles_sweep_started_at_ts_nanos: Option<u64>,
+    pub active_route_sweep_started_at_ts_nanos: Option<u64>,
+    pub active_sns_discovery_started_at_ts_nanos: Option<u64>,
+    pub active_sns_discovery_root_canister_ids: Vec<Principal>,
+    pub commitment_index_fault: Option<CommitmentIndexFault>,
+    pub icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+    pub last_icp_xdr_rate_attempt_ts: Option<u64>,
+    pub last_icp_xdr_rate_error: Option<String>,
+    pub cached_cycles_probe_route_count: u32,
     pub last_index_run_ts: Option<u64>,
 }
 
@@ -47,6 +71,101 @@ pub enum DebugRefreshIcpXdrRateResult {
 }
 
 #[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugPrincipalCommitmentHistory {
+    pub canister_id: Principal,
+    pub items: Vec<CommitmentSample>,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugPrincipalCyclesHistory {
+    pub canister_id: Principal,
+    pub items: Vec<CyclesSample>,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugNeuronCommitmentHistory {
+    pub neuron_id: u64,
+    pub items: Vec<CommitmentSample>,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugCanisterMetaEntry {
+    pub canister_id: Principal,
+    pub meta: CanisterMeta,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugTrackingReasonsEntry {
+    pub canister_id: Principal,
+    pub tracking_reasons: Vec<CanisterTrackingReason>,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugRecentCommitment {
+    pub canister_id: Principal,
+    pub raw_icp_memo_text: Option<String>,
+    pub tx_id: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub amount_e8s: u64,
+    pub counts_toward_faucet: bool,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugRecentNeuronCommitment {
+    pub neuron_id: u64,
+    pub memo_text: Option<String>,
+    pub tx_id: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub amount_e8s: u64,
+    pub counts_toward_faucet: bool,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugInvalidCommitment {
+    pub tx_id: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub amount_e8s: u64,
+    pub memo_text: String,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugRecentBurn {
+    pub canister_id: Principal,
+    pub tx_id: u64,
+    pub timestamp_nanos: Option<u64>,
+    pub amount_e8s: u64,
+}
+
+#[cfg(feature = "debug_api")]
+#[derive(CandidType, Deserialize)]
+pub struct DebugMigrationSnapshot {
+    pub commitment_history: Vec<DebugPrincipalCommitmentHistory>,
+    pub cycles_history: Vec<DebugPrincipalCyclesHistory>,
+    pub raw_icp_commitment_history: Vec<DebugPrincipalCommitmentHistory>,
+    pub neuron_commitment_history: Vec<DebugNeuronCommitmentHistory>,
+    pub recent_commitments: Vec<DebugRecentCommitment>,
+    pub recent_under_threshold_commitments: Vec<DebugRecentCommitment>,
+    pub recent_neuron_commitments: Vec<DebugRecentNeuronCommitment>,
+    pub recent_under_threshold_neuron_commitments: Vec<DebugRecentNeuronCommitment>,
+    pub recent_invalid_commitments: Vec<DebugInvalidCommitment>,
+    pub recent_burns: Vec<DebugRecentBurn>,
+    pub canister_meta: Vec<DebugCanisterMetaEntry>,
+    pub tracking_reasons: Vec<DebugTrackingReasonsEntry>,
+    pub relay_registrations: Vec<RelayRegistryEntry>,
+    pub relay_setup_jobs: Vec<RelaySetupJob>,
+    pub public_counts: PublicCounts,
+}
+
+#[cfg(feature = "debug_api")]
 #[ic_cdk::query]
 pub(super) fn debug_state() -> DebugState {
     guard_debug_api_not_production();
@@ -62,6 +181,43 @@ pub(super) fn debug_state() -> DebugState {
         active_cycles_sweep_next_index: st.active_cycles_sweep.as_ref().map(|s| s.next_index),
         active_route_sweep_present: st.active_route_sweep.is_some(),
         active_route_sweep_next_index: st.active_route_sweep.as_ref().map(|s| s.next_index),
+        active_sns_discovery_present: st.active_sns_discovery.is_some(),
+        active_sns_discovery_next_index: st.active_sns_discovery.as_ref().map(|s| s.next_index),
+        oldest_indexed_staking_tx_id: st.oldest_indexed_staking_tx_id,
+        staking_index_descending: st.staking_index_descending,
+        staking_backfill_complete: st.staking_backfill_complete,
+        oldest_indexed_output_tx_id: st.oldest_indexed_output_tx_id,
+        output_route_index_descending: st.output_route_index_descending,
+        output_route_backfill_complete: st.output_route_backfill_complete,
+        oldest_indexed_rewards_tx_id: st.oldest_indexed_rewards_tx_id,
+        rewards_route_index_descending: st.rewards_route_index_descending,
+        rewards_route_backfill_complete: st.rewards_route_backfill_complete,
+        main_lock_state_ts: st.main_lock_state_ts,
+        last_main_run_ts: st.last_main_run_ts,
+        initial_cycles_probe_queue_len: st.initial_cycles_probe_queue.len() as u32,
+        initial_cycles_probe_queue: st.initial_cycles_probe_queue.clone(),
+        active_cycles_sweep_started_at_ts_nanos: st
+            .active_cycles_sweep
+            .as_ref()
+            .map(|s| s.started_at_ts_nanos),
+        active_route_sweep_started_at_ts_nanos: st
+            .active_route_sweep
+            .as_ref()
+            .map(|s| s.started_at_ts_nanos),
+        active_sns_discovery_started_at_ts_nanos: st
+            .active_sns_discovery
+            .as_ref()
+            .map(|s| s.started_at_ts_nanos),
+        active_sns_discovery_root_canister_ids: st
+            .active_sns_discovery
+            .as_ref()
+            .map(|s| s.root_canister_ids.clone())
+            .unwrap_or_default(),
+        commitment_index_fault: st.commitment_index_fault.clone(),
+        icp_xdr_rate: st.icp_xdr_rate.clone(),
+        last_icp_xdr_rate_attempt_ts: st.last_icp_xdr_rate_attempt_ts,
+        last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
+        cached_cycles_probe_route_count: st.cached_cycles_probe_routes.len() as u32,
         last_index_run_ts: st.last_index_run_ts,
     })
 }
@@ -89,6 +245,151 @@ pub(super) fn debug_config() -> DebugConfig {
         max_commitment_entries_per_canister: st.config.max_commitment_entries_per_canister,
         max_index_pages_per_tick: st.config.max_index_pages_per_tick,
         max_canisters_per_cycles_tick: st.config.max_canisters_per_cycles_tick,
+    })
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+pub(super) fn debug_migration_snapshot() -> DebugMigrationSnapshot {
+    guard_debug_api_not_production();
+    state::with_state(|st| DebugMigrationSnapshot {
+        commitment_history: crate::commitment_history_canister_ids(st)
+            .into_iter()
+            .map(|canister_id| DebugPrincipalCommitmentHistory {
+                canister_id,
+                items: crate::commitment_history_snapshot(st, canister_id),
+            })
+            .collect(),
+        cycles_history: crate::cycles_history_canister_ids(st)
+            .into_iter()
+            .map(|canister_id| DebugPrincipalCyclesHistory {
+                canister_id,
+                items: crate::cycles_history_snapshot(st, canister_id),
+            })
+            .collect(),
+        raw_icp_commitment_history: st
+            .raw_icp_commitment_history
+            .keys()
+            .copied()
+            .chain(state::stable_raw_icp_commitment_history_keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|canister_id| DebugPrincipalCommitmentHistory {
+                canister_id,
+                items: crate::raw_icp_commitment_history_snapshot(st, canister_id),
+            })
+            .collect(),
+        neuron_commitment_history: st
+            .neuron_commitment_history
+            .keys()
+            .copied()
+            .chain(state::stable_neuron_commitment_history_keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|neuron_id| DebugNeuronCommitmentHistory {
+                neuron_id,
+                items: crate::neuron_commitment_history_snapshot(st, neuron_id),
+            })
+            .collect(),
+        recent_commitments: st
+            .recent_commitments
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| DebugRecentCommitment {
+                canister_id: item.canister_id,
+                raw_icp_memo_text: item.raw_icp_memo_text,
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+                counts_toward_faucet: item.counts_toward_faucet,
+            })
+            .collect(),
+        recent_under_threshold_commitments: st
+            .recent_under_threshold_commitments
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| DebugRecentCommitment {
+                canister_id: item.canister_id,
+                raw_icp_memo_text: item.raw_icp_memo_text,
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+                counts_toward_faucet: item.counts_toward_faucet,
+            })
+            .collect(),
+        recent_neuron_commitments: st
+            .recent_neuron_commitments
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| DebugRecentNeuronCommitment {
+                neuron_id: item.neuron_id,
+                memo_text: item.memo_text,
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+                counts_toward_faucet: item.counts_toward_faucet,
+            })
+            .collect(),
+        recent_under_threshold_neuron_commitments: st
+            .recent_under_threshold_neuron_commitments
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| DebugRecentNeuronCommitment {
+                neuron_id: item.neuron_id,
+                memo_text: item.memo_text,
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+                counts_toward_faucet: item.counts_toward_faucet,
+            })
+            .collect(),
+        recent_invalid_commitments: st
+            .recent_invalid_commitments
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| DebugInvalidCommitment {
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+                memo_text: item.memo_text,
+            })
+            .collect(),
+        recent_burns: st
+            .recent_burns
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| DebugRecentBurn {
+                canister_id: item.canister_id,
+                tx_id: item.tx_id,
+                timestamp_nanos: item.timestamp_nanos,
+                amount_e8s: item.amount_e8s,
+            })
+            .collect(),
+        canister_meta: st
+            .per_canister_meta
+            .iter()
+            .map(|(canister_id, meta)| DebugCanisterMetaEntry {
+                canister_id: *canister_id,
+                meta: meta.clone(),
+            })
+            .collect(),
+        tracking_reasons: st
+            .canister_tracking_reasons
+            .iter()
+            .map(|(canister_id, reasons)| DebugTrackingReasonsEntry {
+                canister_id: *canister_id,
+                tracking_reasons: reasons.iter().cloned().collect(),
+            })
+            .collect(),
+        relay_registrations: st.relay_registry_by_target.values().cloned().collect(),
+        relay_setup_jobs: st.relay_setup_jobs.values().cloned().collect(),
+        public_counts: crate::read_model::get_public_counts(),
     })
 }
 
@@ -139,6 +440,23 @@ pub(super) fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
         st.oldest_indexed_staking_tx_id = tx_id;
         st.staking_index_descending = None;
         st.staking_backfill_complete = Some(false);
+    });
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+pub(super) fn debug_set_blackhole_cycles_probe_route(
+    target_canister_id: Principal,
+    blackhole_canister_id: Principal,
+) {
+    guard_debug_api_not_production();
+    state::with_root_state_mut(|st| {
+        st.cached_cycles_probe_routes.insert(
+            target_canister_id,
+            jupiter_ic_clients::cycles_probe::CyclesProbeRoute::Blackhole {
+                canister_id: blackhole_canister_id,
+            },
+        );
     });
 }
 

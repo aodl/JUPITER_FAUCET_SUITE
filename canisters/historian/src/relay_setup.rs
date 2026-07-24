@@ -579,13 +579,20 @@ fn indexed_inbound_total_for_job(job: &RelaySetupJob) -> u64 {
         .fold(0u64, |acc, payment| acc.saturating_add(payment.amount_e8s))
 }
 
-fn refund_allowed_before_spend(job: &RelaySetupJob) -> bool {
+pub(crate) fn refund_allowed_before_spend(job: &RelaySetupJob) -> bool {
     job.cycle_transfer_block_index.is_none()
         && job.cycles_minted.is_none()
         && job.relay_canister_id.is_none()
         && job.relay_funding_block_index.is_none()
+        && matches!(job.phase, None | Some(RelaySetupPhase::PreSpend))
         && job.cycle_transfer.is_none()
         && job.relay_funding_transfer.is_none()
+        && job.existing_relay_sweep_transfer.is_none()
+        && job.relay_create_attempt.is_none()
+        && !job.code_installed
+        && !job.relay_funding_accepted
+        && !job.blackhole_update_attempted
+        && !job.blackhole_confirmed
         && job.setup_amount_processed_e8s == 0
 }
 

@@ -1845,6 +1845,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mock-legacy-historian-v1"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "ic-stable-structures 0.7.2",
+ "icrc-ledger-types",
+ "serde",
+]
+
+[[package]]
 name = "mock-nns-governance"
 version = "0.1.0"
 dependencies = [

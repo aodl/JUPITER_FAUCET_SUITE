@@ -1,12 +1,13 @@
 mod types;
 use types::*;
 pub(crate) use types::*;
+mod legacy_v1;
 mod stable;
 use stable::*;
 mod commitments;
 use commitments::*;
 mod routes;
-use routes::*;
+pub(crate) use routes::*;
 mod cycles;
 use cycles::*;
 mod snapshots;

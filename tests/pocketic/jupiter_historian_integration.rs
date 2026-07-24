@@ -42,6 +42,7 @@ static MOCK_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static MOCK_CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static LEGACY_HISTORIAN_V1_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn index_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
@@ -76,6 +77,13 @@ fn status_proxy_wasm() -> Result<Vec<u8>> {
 }
 fn cycle_burner_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&CYCLE_BURNER_WASM, "mock-cycle-burner", None)
+}
+fn legacy_historian_v1_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(
+        &LEGACY_HISTORIAN_V1_WASM,
+        "mock-legacy-historian-v1",
+        None,
+    )
 }
 fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
     if let Some(bytes) = RELAY_ENABLED_HISTORIAN_WASM.get() {
@@ -180,6 +188,29 @@ struct HistorianUpgradeArg {
     faucet_canister_id: Option<Principal>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LegacyHistorianV1FixtureInit {
+    ledger_canister_id: Principal,
+    index_canister_id: Principal,
+    cmc_canister_id: Principal,
+    sns_wasm_canister_id: Principal,
+    xrc_canister_id: Principal,
+    memo_target: Principal,
+    sns_target: Principal,
+    canonical_target: Principal,
+    canonical_relay: Principal,
+    self_service_target: Principal,
+    self_service_relay: Principal,
+    normal_setup_target: Principal,
+    refundable_setup_target: Principal,
+    unsafe_setup_target: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LegacySeedSummary {
+    revision: String,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 enum CanisterTrackingReason {
     MemoCommitment,
@@ -195,7 +226,7 @@ struct ListCanistersArgs {
     tracking_reason_filter: Option<CanisterTrackingReason>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CanisterListItem {
     canister_id: Principal,
     tracking_reasons: Vec<CanisterTrackingReason>,
@@ -215,7 +246,7 @@ struct GetCommitmentHistoryArgs {
     descending: Option<bool>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CommitmentSample {
     tx_id: u64,
     timestamp_nanos: Option<u64>,
@@ -229,7 +260,7 @@ struct CommitmentHistoryPage {
     next_start_after_tx_id: Option<u64>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum CyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
@@ -238,7 +269,7 @@ enum CyclesSampleSource {
     SnsRootSummary,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CyclesSample {
     timestamp_nanos: u64,
     cycles: u128,
@@ -257,18 +288,6 @@ struct GetCyclesHistoryArgs {
     start_after_ts: Option<u64>,
     limit: Option<u32>,
     descending: Option<bool>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct DebugState {
-    distinct_canister_count: u32,
-    last_indexed_staking_tx_id: Option<u64>,
-    last_indexed_output_tx_id: Option<u64>,
-    last_indexed_rewards_tx_id: Option<u64>,
-    last_sns_discovery_ts: u64,
-    last_completed_cycles_sweep_ts: u64,
-    active_cycles_sweep_present: bool,
-    active_cycles_sweep_next_index: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -292,10 +311,12 @@ struct GetSnsCanistersSummaryResponse {
     dapps: Vec<SnsCanisterSummary>,
     archives: Vec<SnsCanisterSummary>,
 }
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct PublicCounts {
     tracked_canister_count: u64,
     memo_registered_canister_count: u64,
+    raw_icp_declared_canister_count: Option<u64>,
+    declared_neuron_count: Option<u64>,
     qualifying_commitment_count: u64,
     sns_discovered_canister_count: u64,
     relay_target_canister_count: u64,
@@ -304,7 +325,7 @@ struct PublicCounts {
     total_rewards_e8s: u64,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CommitmentIndexFault {
     observed_at_ts: u64,
     last_cursor_tx_id: Option<u64>,
@@ -312,7 +333,15 @@ struct CommitmentIndexFault {
     message: String,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct IcpXdrRateSnapshot {
+    rate: u64,
+    decimals: u32,
+    timestamp: u64,
+    fetched_at_ts: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct PublicStatus {
     staking_account: Account,
     ledger_canister_id: Principal,
@@ -324,6 +353,131 @@ struct PublicStatus {
     stable_memory_bytes: Option<u64>,
     total_memory_bytes: Option<u64>,
     commitment_index_fault: Option<CommitmentIndexFault>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugPrincipalCommitmentHistory {
+    canister_id: Principal,
+    items: Vec<CommitmentSample>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugPrincipalCyclesHistory {
+    canister_id: Principal,
+    items: Vec<CyclesSample>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugNeuronCommitmentHistory {
+    neuron_id: u64,
+    items: Vec<CommitmentSample>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugRecentCommitment {
+    canister_id: Principal,
+    raw_icp_memo_text: Option<String>,
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+    counts_toward_faucet: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugRecentNeuronCommitment {
+    neuron_id: u64,
+    memo_text: Option<String>,
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+    counts_toward_faucet: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugInvalidCommitment {
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+    memo_text: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugRecentBurn {
+    canister_id: Principal,
+    tx_id: u64,
+    timestamp_nanos: Option<u64>,
+    amount_e8s: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugCanisterMetaEntry {
+    canister_id: Principal,
+    meta: CanisterMeta,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugTrackingReasonsEntry {
+    canister_id: Principal,
+    tracking_reasons: Vec<CanisterTrackingReason>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugMigrationSnapshot {
+    commitment_history: Vec<DebugPrincipalCommitmentHistory>,
+    cycles_history: Vec<DebugPrincipalCyclesHistory>,
+    raw_icp_commitment_history: Vec<DebugPrincipalCommitmentHistory>,
+    neuron_commitment_history: Vec<DebugNeuronCommitmentHistory>,
+    recent_commitments: Vec<DebugRecentCommitment>,
+    recent_under_threshold_commitments: Vec<DebugRecentCommitment>,
+    recent_neuron_commitments: Vec<DebugRecentNeuronCommitment>,
+    recent_under_threshold_neuron_commitments: Vec<DebugRecentNeuronCommitment>,
+    recent_invalid_commitments: Vec<DebugInvalidCommitment>,
+    recent_burns: Vec<DebugRecentBurn>,
+    canister_meta: Vec<DebugCanisterMetaEntry>,
+    tracking_reasons: Vec<DebugTrackingReasonsEntry>,
+    relay_registrations: Vec<RelayRegistryEntry>,
+    relay_setup_jobs: Vec<RelaySetupJob>,
+    public_counts: PublicCounts,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct DebugState {
+    distinct_canister_count: u32,
+    last_indexed_staking_tx_id: Option<u64>,
+    last_indexed_output_tx_id: Option<u64>,
+    last_indexed_rewards_tx_id: Option<u64>,
+    last_sns_discovery_ts: u64,
+    last_completed_cycles_sweep_ts: u64,
+    last_completed_route_sweep_ts: Option<u64>,
+    active_cycles_sweep_present: bool,
+    active_cycles_sweep_next_index: Option<u64>,
+    active_route_sweep_present: bool,
+    active_route_sweep_next_index: Option<u64>,
+    active_sns_discovery_present: bool,
+    active_sns_discovery_next_index: Option<u64>,
+    oldest_indexed_staking_tx_id: Option<u64>,
+    staking_index_descending: Option<bool>,
+    staking_backfill_complete: Option<bool>,
+    oldest_indexed_output_tx_id: Option<u64>,
+    output_route_index_descending: Option<bool>,
+    output_route_backfill_complete: Option<bool>,
+    oldest_indexed_rewards_tx_id: Option<u64>,
+    rewards_route_index_descending: Option<bool>,
+    rewards_route_backfill_complete: Option<bool>,
+    main_lock_state_ts: Option<u64>,
+    last_main_run_ts: u64,
+    initial_cycles_probe_queue_len: u32,
+    initial_cycles_probe_queue: Vec<Principal>,
+    active_cycles_sweep_started_at_ts_nanos: Option<u64>,
+    active_route_sweep_started_at_ts_nanos: Option<u64>,
+    active_sns_discovery_started_at_ts_nanos: Option<u64>,
+    active_sns_discovery_root_canister_ids: Vec<Principal>,
+    commitment_index_fault: Option<CommitmentIndexFault>,
+    icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+    last_icp_xdr_rate_attempt_ts: Option<u64>,
+    last_icp_xdr_rate_error: Option<String>,
+    cached_cycles_probe_route_count: u32,
+    last_index_run_ts: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
@@ -351,19 +505,22 @@ struct ListMemoRegisteredCanisterSummariesResponse {
     total: u64,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 enum CyclesProbeResult {
     Ok(CyclesSampleSource),
     NotAvailable,
     Error(String),
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CanisterMeta {
     first_seen_ts: Option<u64>,
     last_commitment_ts: Option<u64>,
     last_cycles_probe_ts: Option<u64>,
     last_cycles_probe_result: Option<CyclesProbeResult>,
+    last_burn_tx_id: Option<u64>,
+    last_burn_scan_tx_id: Option<u64>,
+    burned_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -381,7 +538,7 @@ struct ListRecentCommitmentsArgs {
     qualifying_only: Option<bool>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
     neuron_id: Option<u64>,
@@ -405,12 +562,36 @@ enum RelayRegistryKind {
     SelfService,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct RelayRegistration {
     target_canister_id: Principal,
     relay_canister_id: Principal,
     kind: RelayRegistryKind,
     created_at_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RelayRegistryEntry {
+    relay_canister_id: Principal,
+    target_canister_id: Principal,
+    kind: RelayRegistryKind,
+    status: RelayRegistryStatus,
+    setup_account: Option<Account>,
+    setup_account_identifier: Option<String>,
+    setup_amount_e8s: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    final_controllers: Option<Vec<Principal>>,
+    log_visibility_public: Option<bool>,
+    created_at_ts: Option<u64>,
+    activated_at_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelayRegistryStatus {
+    Pending,
+    Active,
+    Failed,
+    Superseded,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -515,6 +696,125 @@ enum RelaySetupPublicStatus {
     Refunded,
     FailedRetryable,
     ManualRecoveryRequired,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySetupStatus {
+    NotFunded,
+    BelowMinimum,
+    InsufficientForCurrentRate,
+    Pending,
+    ConvertingCycles,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    CreatingCanister,
+    CanisterCreated,
+    InstallingCode,
+    CodeInstalled,
+    SettingPublicLogs,
+    FundingRelaySubaccountOne,
+    Blackholing,
+    Active,
+    SweepingToExistingRelay,
+    SweptToExistingRelay,
+    SweepBelowDust,
+    RefundAvailable,
+    Refunding,
+    Refunded,
+    IndexNotReady,
+    FailedRetryable,
+    FailedTerminal,
+    Ambiguous,
+    ManualRecoveryRequired,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RelaySetupPayment {
+    target_canister_id: Principal,
+    tx_id: u64,
+    from_account_identifier: String,
+    amount_e8s: u64,
+    timestamp_nanos: Option<u64>,
+    processed: bool,
+    refunded: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySetupTransferKind {
+    CmcConversion,
+    RelayFunding,
+    ExistingRelaySweep,
+    Refund,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySetupPhase {
+    PreSpend,
+    CycleTransferAccepted,
+    CycleNotifySucceeded,
+    RelayCanisterCreated,
+    RelayCodeInstalled,
+    RelayFundingAccepted,
+    BlackholeUpdateAttempted,
+    Active,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RelaySetupTransferRecord {
+    kind: RelaySetupTransferKind,
+    from_subaccount: Option<[u8; 32]>,
+    from_account_identifier: String,
+    to: Account,
+    to_account_identifier: String,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo: Option<Vec<u8>>,
+    created_at_time_nanos: u64,
+    block_index: Option<u64>,
+    completed: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RelayCreateAttempt {
+    target_canister_id: Principal,
+    created_at_ts: u64,
+    initial_cycles: u128,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RelaySetupJob {
+    target_canister_id: Principal,
+    setup_account: Account,
+    setup_account_identifier: String,
+    status: RelaySetupStatus,
+    relay_canister_id: Option<Principal>,
+    last_indexed_setup_tx_id: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    setup_amount_seen_e8s: u64,
+    setup_amount_processed_e8s: u64,
+    payments: Vec<RelaySetupPayment>,
+    cycle_conversion_e8s: Option<u64>,
+    cycle_transfer_block_index: Option<u64>,
+    cycles_minted: Option<u128>,
+    relay_initial_cycles: Option<u128>,
+    relay_funding_e8s: Option<u64>,
+    relay_funding_block_index: Option<u64>,
+    phase: Option<RelaySetupPhase>,
+    cycle_transfer: Option<RelaySetupTransferRecord>,
+    relay_funding_transfer: Option<RelaySetupTransferRecord>,
+    existing_relay_sweep_transfer: Option<RelaySetupTransferRecord>,
+    refund_transfers: Vec<RelaySetupTransferRecord>,
+    relay_create_attempt: Option<RelayCreateAttempt>,
+    code_installed: bool,
+    relay_funding_accepted: bool,
+    blackhole_update_attempted: bool,
+    blackhole_confirmed: bool,
+    refund_attempt_count: u32,
+    last_refund_attempt_ts: Option<u64>,
+    refund_blocks: Vec<u64>,
+    created_at_ts: u64,
+    updated_at_ts: u64,
+    last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1122,6 +1422,599 @@ impl Harness {
         self.pic.advance_time(Duration::from_secs(2));
         tick_n(&self.pic, 5);
     }
+}
+
+fn staking_identifier_42() -> String {
+    account_identifier_text(Principal::management_canister(), Some([42u8; 32]))
+}
+
+fn commitment_ids(
+    pic: &PocketIc,
+    historian: Principal,
+    canister_id: Principal,
+) -> Result<Vec<u64>> {
+    Ok(commitment_history(pic, historian, canister_id)?
+        .into_iter()
+        .map(|item| item.tx_id)
+        .collect())
+}
+
+fn commitment_history(
+    pic: &PocketIc,
+    historian: Principal,
+    canister_id: Principal,
+) -> Result<Vec<CommitmentSample>> {
+    let page: CommitmentHistoryPage = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id,
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    Ok(page.items)
+}
+
+fn cycles_history(
+    pic: &PocketIc,
+    historian: Principal,
+    canister_id: Principal,
+) -> Result<Vec<CyclesSample>> {
+    let page: CyclesHistoryPage = query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_cycles_history",
+        GetCyclesHistoryArgs {
+            canister_id,
+            start_after_ts: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    Ok(page.items)
+}
+
+fn debug_state(pic: &PocketIc, historian: Principal) -> Result<DebugState> {
+    query_one(pic, historian, Principal::anonymous(), "debug_state", ())
+}
+
+fn debug_migration_snapshot(
+    pic: &PocketIc,
+    historian: Principal,
+) -> Result<DebugMigrationSnapshot> {
+    query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "debug_migration_snapshot",
+        (),
+    )
+}
+
+fn snapshot_commitment_history(
+    snapshot: &DebugMigrationSnapshot,
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
+    snapshot
+        .commitment_history
+        .iter()
+        .find(|entry| entry.canister_id == canister_id)
+        .map(|entry| entry.items.clone())
+        .unwrap_or_default()
+}
+
+fn snapshot_cycles_history(
+    snapshot: &DebugMigrationSnapshot,
+    canister_id: Principal,
+) -> Vec<CyclesSample> {
+    snapshot
+        .cycles_history
+        .iter()
+        .find(|entry| entry.canister_id == canister_id)
+        .map(|entry| entry.items.clone())
+        .unwrap_or_default()
+}
+
+fn snapshot_raw_icp_history(
+    snapshot: &DebugMigrationSnapshot,
+    canister_id: Principal,
+) -> Vec<CommitmentSample> {
+    snapshot
+        .raw_icp_commitment_history
+        .iter()
+        .find(|entry| entry.canister_id == canister_id)
+        .map(|entry| entry.items.clone())
+        .unwrap_or_default()
+}
+
+fn snapshot_neuron_history(
+    snapshot: &DebugMigrationSnapshot,
+    neuron_id: u64,
+) -> Vec<CommitmentSample> {
+    snapshot
+        .neuron_commitment_history
+        .iter()
+        .find(|entry| entry.neuron_id == neuron_id)
+        .map(|entry| entry.items.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+#[ignore]
+fn legacy_historian_v1_stable_layout_upgrades_in_place_without_history_rewrite() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let ledger = pic.create_canister();
+    let index = pic.create_canister();
+    let cmc = pic.create_canister();
+    let sns_wasm = pic.create_canister();
+    let xrc = pic.create_canister();
+    let historian = pic.create_canister();
+    let memo_target = pic.create_canister();
+    let sns_target = pic.create_canister();
+    let canonical_target = pic.create_canister();
+    let canonical_relay = pic.create_canister();
+    let self_service_target = pic.create_canister();
+    let self_service_relay = pic.create_canister();
+    let normal_setup_target = pic.create_canister();
+    let refundable_setup_target = pic.create_canister();
+    let unsafe_setup_target = pic.create_canister();
+    for canister in [
+        ledger,
+        index,
+        cmc,
+        sns_wasm,
+        xrc,
+        historian,
+        memo_target,
+        sns_target,
+        canonical_target,
+        canonical_relay,
+        self_service_target,
+        self_service_relay,
+        normal_setup_target,
+        refundable_setup_target,
+        unsafe_setup_target,
+    ] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(index, index_wasm()?, vec![], None);
+    pic.install_canister(ledger, mock_ledger_wasm()?, vec![], None);
+    pic.install_canister(cmc, mock_cmc_wasm()?, vec![], None);
+    pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
+    pic.install_canister(xrc, xrc_wasm()?, vec![], None);
+    pic.install_canister(
+        canonical_target,
+        real_blackhole::real_blackhole_wasm()?,
+        vec![],
+        None,
+    );
+    set_controllers_exact(&pic, canonical_target, vec![canonical_target])?;
+    for target in [
+        memo_target,
+        sns_target,
+        canonical_relay,
+        self_service_target,
+        self_service_relay,
+    ] {
+        pic.install_canister(target, cycle_burner_wasm()?, vec![], None);
+    }
+
+    let fixture_init = LegacyHistorianV1FixtureInit {
+        ledger_canister_id: ledger,
+        index_canister_id: index,
+        cmc_canister_id: cmc,
+        sns_wasm_canister_id: sns_wasm,
+        xrc_canister_id: xrc,
+        memo_target,
+        sns_target,
+        canonical_target,
+        canonical_relay,
+        self_service_target,
+        self_service_relay,
+        normal_setup_target,
+        refundable_setup_target,
+        unsafe_setup_target,
+    };
+    pic.install_canister(
+        historian,
+        legacy_historian_v1_wasm()?,
+        encode_one(fixture_init)?,
+        None,
+    );
+    let seed: LegacySeedSummary = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_seed_summary",
+        (),
+    )?;
+    assert_eq!(seed.revision, "98c871a85af91320a5dfc59b5b040727e21aa094");
+
+    pic.upgrade_canister(historian, historian_wasm()?, vec![], None)
+        .map_err(|e| {
+            anyhow!("legacy fixture to current historian no-arg upgrade rejected: {e:?}")
+        })?;
+
+    let immediate_state = debug_state(&pic, historian)?;
+    let immediate = debug_migration_snapshot(&pic, historian)?;
+    assert_eq!(immediate_state.cached_cycles_probe_route_count, 0);
+    assert_eq!(immediate_state.last_indexed_staking_tx_id, Some(700));
+    assert_eq!(immediate_state.oldest_indexed_staking_tx_id, Some(650));
+    assert_eq!(immediate_state.staking_index_descending, Some(true));
+    assert_eq!(immediate_state.staking_backfill_complete, Some(false));
+    assert_eq!(immediate_state.last_indexed_output_tx_id, Some(800));
+    assert_eq!(immediate_state.oldest_indexed_output_tx_id, Some(750));
+    assert_eq!(immediate_state.output_route_index_descending, Some(true));
+    assert_eq!(immediate_state.output_route_backfill_complete, Some(false));
+    assert_eq!(immediate_state.last_indexed_rewards_tx_id, Some(900));
+    assert_eq!(immediate_state.oldest_indexed_rewards_tx_id, Some(850));
+    assert_eq!(immediate_state.rewards_route_index_descending, Some(true));
+    assert_eq!(immediate_state.rewards_route_backfill_complete, Some(false));
+    assert_eq!(immediate_state.last_sns_discovery_ts, 1_000);
+    assert_eq!(immediate_state.last_completed_cycles_sweep_ts, 2_000);
+    assert_eq!(immediate_state.last_completed_route_sweep_ts, Some(3_000));
+    assert!(immediate_state.active_cycles_sweep_present);
+    assert_eq!(
+        immediate_state.active_cycles_sweep_started_at_ts_nanos,
+        Some(4_000)
+    );
+    assert_eq!(immediate_state.active_cycles_sweep_next_index, Some(1));
+    assert_eq!(
+        immediate_state.initial_cycles_probe_queue,
+        vec![memo_target, canonical_target, canonical_relay]
+    );
+    assert_eq!(immediate_state.initial_cycles_probe_queue_len, 3);
+    assert!(immediate_state.active_route_sweep_present);
+    assert_eq!(
+        immediate_state.active_route_sweep_started_at_ts_nanos,
+        Some(4_500)
+    );
+    assert_eq!(immediate_state.active_route_sweep_next_index, Some(2));
+    assert!(immediate_state.active_sns_discovery_present);
+    assert_eq!(
+        immediate_state.active_sns_discovery_started_at_ts_nanos,
+        Some(4_600)
+    );
+    assert_eq!(immediate_state.active_sns_discovery_next_index, Some(1));
+    assert_eq!(
+        immediate_state.active_sns_discovery_root_canister_ids,
+        vec![sns_target]
+    );
+    assert_eq!(immediate_state.main_lock_state_ts, Some(0));
+    assert_eq!(immediate_state.last_main_run_ts, 4_000);
+    assert_eq!(immediate_state.last_index_run_ts, Some(4_001));
+    assert_eq!(
+        immediate_state.commitment_index_fault,
+        Some(CommitmentIndexFault {
+            observed_at_ts: 4_003,
+            last_cursor_tx_id: Some(699),
+            offending_tx_id: 700,
+            message: "fixture commitment index fault".to_string(),
+        })
+    );
+    assert_eq!(
+        immediate_state.icp_xdr_rate,
+        Some(IcpXdrRateSnapshot {
+            rate: 50_123,
+            decimals: 4,
+            timestamp: 4_004,
+            fetched_at_ts: 4_005,
+        })
+    );
+    assert_eq!(immediate_state.last_icp_xdr_rate_attempt_ts, Some(4_002));
+    assert_eq!(immediate_state.last_icp_xdr_rate_error, None);
+
+    assert_eq!(
+        snapshot_commitment_history(&immediate, memo_target),
+        vec![
+            CommitmentSample {
+                tx_id: 10,
+                timestamp_nanos: Some(10_000),
+                amount_e8s: 100_000_000,
+                counts_toward_faucet: true,
+            },
+            CommitmentSample {
+                tx_id: 20,
+                timestamp_nanos: Some(20_000),
+                amount_e8s: 200_000_000,
+                counts_toward_faucet: true,
+            },
+        ]
+    );
+    assert_eq!(
+        snapshot_cycles_history(&immediate, memo_target),
+        vec![
+            CyclesSample {
+                timestamp_nanos: 31_000,
+                cycles: 31,
+                source: CyclesSampleSource::BlackholeStatus,
+            },
+            CyclesSample {
+                timestamp_nanos: 32_000,
+                cycles: 32,
+                source: CyclesSampleSource::SelfCanister,
+            },
+            CyclesSample {
+                timestamp_nanos: 33_000,
+                cycles: 33,
+                source: CyclesSampleSource::SnsRootSummary,
+            },
+        ]
+    );
+    assert_eq!(
+        snapshot_raw_icp_history(&immediate, sns_target),
+        vec![CommitmentSample {
+            tx_id: 401,
+            timestamp_nanos: Some(401_000),
+            amount_e8s: 401,
+            counts_toward_faucet: false,
+        }]
+    );
+    assert_eq!(
+        snapshot_neuron_history(&immediate, 42),
+        vec![CommitmentSample {
+            tx_id: 501,
+            timestamp_nanos: Some(501_000),
+            amount_e8s: 501,
+            counts_toward_faucet: false,
+        }]
+    );
+    assert_eq!(
+        immediate.recent_commitments,
+        vec![
+            DebugRecentCommitment {
+                canister_id: memo_target,
+                raw_icp_memo_text: None,
+                tx_id: 20,
+                timestamp_nanos: Some(20_000),
+                amount_e8s: 200_000_000,
+                counts_toward_faucet: true,
+            },
+            DebugRecentCommitment {
+                canister_id: memo_target,
+                raw_icp_memo_text: None,
+                tx_id: 10,
+                timestamp_nanos: Some(10_000),
+                amount_e8s: 100_000_000,
+                counts_toward_faucet: true,
+            },
+        ]
+    );
+    assert!(immediate.recent_under_threshold_commitments.is_empty());
+    assert_eq!(
+        immediate.recent_neuron_commitments,
+        vec![DebugRecentNeuronCommitment {
+            neuron_id: 42,
+            memo_text: Some("42".to_string()),
+            tx_id: 501,
+            timestamp_nanos: Some(501_000),
+            amount_e8s: 111,
+            counts_toward_faucet: false,
+        }]
+    );
+    assert!(immediate
+        .recent_under_threshold_neuron_commitments
+        .is_empty());
+    assert_eq!(
+        immediate.recent_invalid_commitments,
+        vec![DebugInvalidCommitment {
+            tx_id: 600,
+            timestamp_nanos: Some(600_000),
+            amount_e8s: 1,
+            memo_text: "bad".to_string(),
+        }]
+    );
+    assert_eq!(
+        immediate.recent_burns,
+        vec![DebugRecentBurn {
+            canister_id: memo_target,
+            tx_id: 99,
+            timestamp_nanos: Some(99_000),
+            amount_e8s: 55,
+        }]
+    );
+    for (principal, first_seen, last_commitment_ts) in [
+        (memo_target, 111, Some(0)),
+        (sns_target, 222, None),
+        (self_service_target, 333, None),
+        (self_service_relay, 444, None),
+    ] {
+        let meta = immediate
+            .canister_meta
+            .iter()
+            .find(|entry| entry.canister_id == principal)
+            .with_context(|| format!("missing meta for {principal}"))?;
+        assert_eq!(meta.meta.first_seen_ts, Some(first_seen));
+        assert_eq!(meta.meta.last_commitment_ts, last_commitment_ts);
+        assert_eq!(meta.meta.last_cycles_probe_ts, Some(first_seen + 20));
+        assert_eq!(
+            meta.meta.last_cycles_probe_result,
+            Some(CyclesProbeResult::Ok(CyclesSampleSource::BlackholeStatus))
+        );
+        assert_eq!(meta.meta.last_burn_tx_id, Some(first_seen + 30));
+        assert_eq!(meta.meta.last_burn_scan_tx_id, Some(first_seen + 31));
+        assert_eq!(meta.meta.burned_e8s, first_seen + 32);
+    }
+    assert!(immediate.tracking_reasons.iter().any(|entry| {
+        entry.canister_id == memo_target
+            && entry
+                .tracking_reasons
+                .contains(&CanisterTrackingReason::MemoCommitment)
+    }));
+    assert!(immediate.tracking_reasons.iter().any(|entry| {
+        entry.canister_id == sns_target
+            && entry
+                .tracking_reasons
+                .contains(&CanisterTrackingReason::SnsDiscovery)
+    }));
+    assert!(immediate.tracking_reasons.iter().any(|entry| {
+        entry.canister_id == canonical_target
+            && entry
+                .tracking_reasons
+                .contains(&CanisterTrackingReason::RelayTarget)
+    }));
+    assert!(immediate.tracking_reasons.iter().any(|entry| {
+        entry.canister_id == canonical_relay
+            && entry
+                .tracking_reasons
+                .contains(&CanisterTrackingReason::RelayInstance)
+    }));
+    assert!(immediate.tracking_reasons.iter().any(|entry| {
+        entry.canister_id == self_service_target
+            && entry
+                .tracking_reasons
+                .contains(&CanisterTrackingReason::RelayTarget)
+    }));
+    assert!(immediate.tracking_reasons.iter().any(|entry| {
+        entry.canister_id == self_service_relay
+            && entry
+                .tracking_reasons
+                .contains(&CanisterTrackingReason::RelayInstance)
+    }));
+    assert!(immediate.relay_registrations.iter().any(|entry| {
+        entry.target_canister_id == canonical_target
+            && entry.relay_canister_id == canonical_relay
+            && entry.kind == RelayRegistryKind::Canonical
+            && entry.status == RelayRegistryStatus::Active
+            && entry.log_visibility_public == Some(true)
+            && entry.created_at_ts == Some(5_000)
+            && entry.activated_at_ts == Some(5_001)
+    }));
+    assert!(immediate.relay_registrations.iter().any(|entry| {
+        entry.target_canister_id == self_service_target
+            && entry.relay_canister_id == self_service_relay
+            && entry.kind == RelayRegistryKind::SelfService
+            && entry.status == RelayRegistryStatus::Active
+            && entry.setup_amount_e8s == Some(300_000_000)
+            && entry.setup_tx_ids == vec![701]
+            && entry.final_controllers == Some(vec![cmc])
+            && entry.created_at_ts == Some(6_000)
+            && entry.activated_at_ts == Some(6_001)
+    }));
+    let normal = immediate
+        .relay_setup_jobs
+        .iter()
+        .find(|job| job.target_canister_id == normal_setup_target)
+        .context("normal pending setup job")?;
+    assert_eq!(normal.status, RelaySetupStatus::Pending);
+    assert_eq!(normal.phase, Some(RelaySetupPhase::PreSpend));
+    assert_eq!(normal.setup_tx_ids, vec![700]);
+    assert_eq!(normal.payments.len(), 1);
+    let refundable = immediate
+        .relay_setup_jobs
+        .iter()
+        .find(|job| job.target_canister_id == refundable_setup_target)
+        .context("refundable legacy setup job")?;
+    assert_eq!(refundable.status, RelaySetupStatus::RefundAvailable);
+    assert_eq!(refundable.setup_amount_processed_e8s, 0);
+    let unsafe_job = immediate
+        .relay_setup_jobs
+        .iter()
+        .find(|job| job.target_canister_id == unsafe_setup_target)
+        .context("unsafe legacy setup job")?;
+    assert_eq!(unsafe_job.status, RelaySetupStatus::ManualRecoveryRequired);
+    assert_eq!(unsafe_job.setup_amount_processed_e8s, 100_000_000);
+    assert_eq!(unsafe_job.cycle_conversion_e8s, Some(100_000_000));
+    assert_eq!(unsafe_job.cycle_transfer_block_index, Some(701));
+    assert_eq!(unsafe_job.cycles_minted, Some(1_000_000_000_000));
+    assert_eq!(
+        unsafe_job.phase,
+        Some(RelaySetupPhase::RelayCanisterCreated)
+    );
+    assert!(unsafe_job.cycle_transfer.is_some());
+    assert!(unsafe_job.relay_create_attempt.is_some());
+    assert_eq!(immediate.public_counts.qualifying_commitment_count, 2);
+    assert_eq!(immediate.public_counts.total_output_e8s, 12_345);
+    assert_eq!(immediate.public_counts.total_rewards_e8s, 67_890);
+    assert_eq!(immediate.public_counts.memo_registered_canister_count, 1);
+    assert_eq!(
+        immediate.public_counts.raw_icp_declared_canister_count,
+        Some(1)
+    );
+    assert_eq!(immediate.public_counts.declared_neuron_count, Some(1));
+    assert_eq!(immediate.public_counts.sns_discovered_canister_count, 1);
+    assert_eq!(immediate.public_counts.relay_target_canister_count, 2);
+    assert_eq!(immediate.public_counts.relay_instance_canister_count, 2);
+
+    let _: u64 = update_bytes(
+        &pic,
+        index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((
+            staking_identifier_42(),
+            300_000_000u64,
+            Some(memo_target.to_text().into_bytes()),
+        ))?,
+    )?;
+    let _: () = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_set_last_indexed_staking_tx_id",
+        None::<u64>,
+    )?;
+    let before_cycles_append = cycles_history(&pic, historian, canonical_target)?;
+    let _: () = update_bytes(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_set_blackhole_cycles_probe_route",
+        encode_args((canonical_target, canonical_target))?,
+    )?;
+    let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
+    let commitments_after_append = commitment_ids(&pic, historian, memo_target)?;
+    assert!(
+        commitments_after_append.contains(&1),
+        "new post-upgrade commitment should append through normal indexer: {commitments_after_append:?}"
+    );
+    assert!(
+            commitments_after_append.contains(&10) && commitments_after_append.contains(&20),
+            "old stable commitments should still be returned after append: {commitments_after_append:?}"
+        );
+    let after_cycles_append = cycles_history(&pic, historian, canonical_target)?;
+    assert!(
+        after_cycles_append.len() > before_cycles_append.len(),
+        "debug scheduler cycles probe should append a new cycles sample; before={before_cycles_append:?} after={after_cycles_append:?}"
+    );
+    assert_eq!(
+        snapshot_commitment_history(&debug_migration_snapshot(&pic, historian)?, memo_target)
+            .iter()
+            .filter(|item| item.tx_id == 10 || item.tx_id == 20)
+            .count(),
+        2,
+        "old and new commitment history should coexist after appending"
+    );
+
+    let before_second_upgrade = debug_migration_snapshot(&pic, historian)?;
+    let mut before_second_state = debug_state(&pic, historian)?;
+    before_second_state.cached_cycles_probe_route_count = 0;
+    pic.upgrade_canister(historian, historian_wasm()?, vec![], None)
+        .map_err(|e| anyhow!("current historian second no-arg upgrade rejected: {e:?}"))?;
+    assert_eq!(
+        debug_migration_snapshot(&pic, historian)?,
+        before_second_upgrade,
+        "second upgrade should not duplicate, drop, or semantically remigrate histories, registrations, setup jobs, tracking reasons, totals, or counts"
+    );
+    assert_eq!(
+        debug_state(&pic, historian)?.cached_cycles_probe_route_count,
+        0,
+        "heap-only cycles route cache should be empty after the second post_upgrade"
+    );
+    assert_eq!(
+        debug_state(&pic, historian)?,
+        before_second_state,
+        "second upgrade should preserve cursors and active sweep state exactly"
+    );
+    Ok(())
 }
 
 #[test]

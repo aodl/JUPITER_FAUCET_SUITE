@@ -177,6 +177,34 @@ pub(super) fn sync_relay_factory_maps(
     }
 }
 
+pub(crate) fn rewrite_relay_factory_maps_current_schema(
+    registry_by_target: &BTreeMap<Principal, RelayRegistryEntry>,
+    setup_jobs: &BTreeMap<Principal, RelaySetupJob>,
+) {
+    with_relay_registry_by_target_map(|map| {
+        let existing: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
+        for key in existing {
+            if !registry_by_target.contains_key(&key.to_principal()) {
+                map.remove(&key);
+            }
+        }
+        for (target, entry) in registry_by_target {
+            map.insert(PrincipalKey::from(target), entry.clone());
+        }
+    });
+    with_relay_setup_jobs_map(|map| {
+        let existing: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
+        for key in existing {
+            if !setup_jobs.contains_key(&key.to_principal()) {
+                map.remove(&key);
+            }
+        }
+        for (target, job) in setup_jobs {
+            map.insert(PrincipalKey::from(target), job.clone());
+        }
+    });
+}
+
 pub(super) fn sync_all_commitment_history_maps(
     current: &BTreeMap<Principal, Vec<CommitmentSample>>,
 ) {
