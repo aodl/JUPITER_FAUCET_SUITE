@@ -254,12 +254,18 @@ button {
 
 /* Small screens tweaks */
 
+@media (max-width: 860px) {
+  .nav-item--domains {
+    display: none;
+  }
+}
+
 @media (max-width: 720px) {
   .navbar {
     padding: 12px 20px;
   }
 
-  .nav-item--domains {
+  .nav-item--simulator {
     display: none;
   }
 

@@ -82,9 +82,11 @@ test('top navbar exposes Simulator and Domains and no longer exposes Partners', 
   assert.match(navbarCss, /\.nav-brand \{[\s\S]*display: inline-flex;[\s\S]*text-decoration: none;/);
   assert.match(navbarCss, /\.nav-logo \{[\s\S]*width: 32px;[\s\S]*height: 32px;[\s\S]*flex: 0 0 32px;/);
   assert.doesNotMatch(indexHtml, /<span class="nav-brand-text">JUPITER FAUCET<\/span>/);
-  assert.match(indexHtml, /<a href="#simulator" class="nav-item" data-panel="simulator">Simulator<\/a>/);
+  assert.match(indexHtml, /<a href="#simulator" class="nav-item nav-item--simulator" data-panel="simulator">Simulator<\/a>/);
+  assert.doesNotMatch(indexHtml, /<a href="#relay-setup" class="nav-item" data-panel="relay-setup">Relay setup<\/a>/);
   assert.match(indexHtml, /<a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains<\/a>/);
-  assert.match(navbarCss, /@media \(max-width: 720px\) \{[\s\S]*\.nav-item--domains \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(navbarCss, /@media \(max-width: 720px\) \{[\s\S]*\.nav-item--simulator \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(navbarCss, /@media \(max-width: 860px\) \{[\s\S]*\.nav-item--domains \{[\s\S]*display: none;[\s\S]*\}/);
   assert.doesNotMatch(indexHtml, /data-panel="partners"/i);
   assert.doesNotMatch(indexHtml, />Partners<\/a>/i);
 });
