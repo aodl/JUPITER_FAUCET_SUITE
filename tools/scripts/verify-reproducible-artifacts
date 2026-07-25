@@ -17,26 +17,51 @@ if ! docker buildx version >/dev/null 2>&1; then
 fi
 
 workdir="$(mktemp -d)"
+containers=()
+images=()
 cleanup() {
+  for container in "${containers[@]}"; do
+    docker rm -f "$container" >/dev/null 2>&1 || true
+  done
+  for image in "${images[@]}"; do
+    docker image rm -f "$image" >/dev/null 2>&1 || true
+  done
   rm -rf "$workdir"
 }
 trap cleanup EXIT
 
-docker buildx build \
-  --platform linux/amd64 \
-  --no-cache \
-  --file Dockerfile.repro \
-  --target artifact \
-  --output "type=local,dest=$workdir/run-a" \
-  .
+extract_artifacts() {
+  local run_name="$1"
+  local dest="$2"
+  local tag_suffix
+  local image
+  local container
 
-docker buildx build \
-  --platform linux/amd64 \
-  --no-cache \
-  --file Dockerfile.repro \
-  --target artifact \
-  --output "type=local,dest=$workdir/run-b" \
-  .
+  tag_suffix="$(date +%s)-$$-${run_name}-${RANDOM}"
+  image="jupiter-repro-artifact-verify:${tag_suffix}"
+  images+=("$image")
+
+  mkdir -p "$dest"
+  docker build \
+    --builder default \
+    --platform linux/amd64 \
+    --no-cache \
+    --file Dockerfile.repro \
+    --target artifact \
+    --tag "$image" \
+    .
+
+  container="$(docker create "$image" /bin/true)"
+  containers+=("$container")
+  docker cp "$container:/release-artifacts/." "$dest/"
+  docker rm -f "$container" >/dev/null
+  container=""
+  docker image rm -f "$image" >/dev/null
+  image=""
+}
+
+extract_artifacts "run-a" "$workdir/run-a"
+extract_artifacts "run-b" "$workdir/run-b"
 
 (
   cd "$workdir/run-a"

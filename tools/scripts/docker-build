@@ -16,25 +16,45 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "$REPO_ROOT"
 
-rm -rf release-artifacts .repro-out
-mkdir -p .repro-out release-artifacts
+rm -rf "release-artifacts" ".repro-out"
+mkdir -p ".repro-out" "release-artifacts"
 
-docker buildx build   --platform linux/amd64   --target artifact   --output type=local,dest=./.repro-out   -f Dockerfile.repro   .
+tag_suffix="$(date +%s)-$$-${RANDOM}"
+artifact_image="jupiter-repro-artifact:${tag_suffix}"
+artifact_container=""
 
-if [ -d ./.repro-out/release-artifacts ]; then
-  cp -a ./.repro-out/release-artifacts/. ./release-artifacts/
+cleanup() {
+  if [ -n "$artifact_container" ]; then
+    docker rm -f "$artifact_container" >/dev/null 2>&1 || true
+  fi
+  docker image rm -f "$artifact_image" >/dev/null 2>&1 || true
+  rm -rf ".repro-out"
+}
+trap cleanup EXIT
+
+docker build \
+  --builder default \
+  --platform linux/amd64 \
+  --target artifact \
+  --tag "$artifact_image" \
+  -f Dockerfile.repro \
+  .
+
+artifact_container="$(docker create "$artifact_image" /bin/true)"
+docker cp "$artifact_container:/release-artifacts/." "./.repro-out/"
+
+if [ -d "./.repro-out/release-artifacts" ]; then
+  cp -a "./.repro-out/release-artifacts/." "./release-artifacts/"
 else
-  cp -a ./.repro-out/. ./release-artifacts/
+  cp -a "./.repro-out/." "./release-artifacts/"
 fi
-
-rm -rf .repro-out
 
 echo
 echo "Built canonical artifacts in release-artifacts/"
 
 manifest="release-artifacts/release-artifacts.sha256"
 manifest_tmp="$(mktemp)"
-find release-artifacts \
+find "release-artifacts" \
   -maxdepth 2 \
   -type f \
   ! -name 'release-artifacts.sha256' \
@@ -46,7 +66,7 @@ mv "$manifest_tmp" "$manifest"
 
 echo
 echo "Mainnet module-hash comparison targets (*.wasm.gz):"
-find release-artifacts \
+find "release-artifacts" \
   -maxdepth 1 \
   -type f \
   -name '*.wasm.gz' \
