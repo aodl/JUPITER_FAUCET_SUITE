@@ -681,7 +681,7 @@ def validate_historian_upgrade_only_docs() -> None:
         REPO_ROOT / "docs" / "operations" / "deployment.md",
         REPO_ROOT / "docs" / "operations" / "reproducible-builds.md",
         REPO_ROOT / "docs" / "relay-setup-recovery.md",
-        REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable",
+        REPO_ROOT / "tools" / "scripts" / "preflight-historian-production-upgrade",
         REPO_ROOT / "tools" / "xtask" / "src" / "main.rs",
     ]
     for path in paths:
@@ -694,7 +694,7 @@ def validate_historian_upgrade_only_docs() -> None:
         if historian_destructive_history_wording(text):
             fail(f"{path} contains obsolete Historian history-discard wording")
         snapshot_errors = historian_snapshot_runbook_errors(text)
-        if path.name in {"deployment.md", "preflight-historian-relay-factory-enable"} and snapshot_errors:
+        if path.name in {"deployment.md", "preflight-historian-production-upgrade"} and snapshot_errors:
             fail(f"{path} has incomplete Historian snapshot/rollback runbook: {', '.join(snapshot_errors)}")
 
     deployment_text = (REPO_ROOT / "docs" / "operations" / "deployment.md").read_text()
@@ -711,7 +711,7 @@ def validate_historian_upgrade_only_docs() -> None:
         if phrase not in deployment_text:
             fail(f"docs/operations/deployment.md must document Historian upgrade-only requirement: {phrase}")
 
-    preflight_text = (REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable").read_text()
+    preflight_text = (REPO_ROOT / "tools" / "scripts" / "preflight-historian-production-upgrade").read_text()
     for phrase in [
         "Existing production Historian must be upgraded in place",
         "Reinstall destroys all stable history",
@@ -721,7 +721,7 @@ def validate_historian_upgrade_only_docs() -> None:
         "Rollback from the recorded snapshot ID",
     ]:
         if phrase not in preflight_text:
-            fail(f"tools/scripts/preflight-historian-relay-factory-enable must print Historian upgrade-only guidance: {phrase}")
+            fail(f"tools/scripts/preflight-historian-production-upgrade must print Historian upgrade-only guidance: {phrase}")
     for phrase in [
         "--mode reinstall",
         "--args-file canisters/historian/mainnet-install-args.did",
@@ -729,18 +729,7 @@ def validate_historian_upgrade_only_docs() -> None:
         "Canonical release reinstall command",
     ]:
         if phrase in preflight_text:
-            fail(f"tools/scripts/preflight-historian-relay-factory-enable must not print Historian reinstall guidance: {phrase}")
-
-    live_baseline_path = REPO_ROOT / "tools" / "scripts" / "preflight-live-historian-upgrade-baseline"
-    live_baseline_text = live_baseline_path.read_text()
-    for phrase in [
-        "j5gs6-uiaaa-aaaar-qb5cq-cai",
-        "EXPECTED_HISTORIAN_LEGACY_MODULE_HASH",
-        "--self-test",
-        "never mutate",
-    ]:
-        if phrase not in live_baseline_text:
-            fail(f"{live_baseline_path} must contain live legacy-baseline gate phrase: {phrase}")
+            fail(f"tools/scripts/preflight-historian-production-upgrade must not print Historian reinstall guidance: {phrase}")
 
 
 def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None:
@@ -881,8 +870,8 @@ def validate_historian() -> int:
     return historian_min_tx_e8s
 
 
-def validate_historian_relay_factory_enablement_fixture() -> None:
-    path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-relay-factory-enable"
+def validate_historian_production_upgrade_preflight() -> None:
+    path = REPO_ROOT / "tools" / "scripts" / "preflight-historian-production-upgrade"
     text = path.read_text()
     require_contains(text, 'manifest="release-artifacts/release-artifacts.sha256"', str(path))
     require_contains(text, 'sha256sum -c "$manifest"', str(path))
@@ -898,7 +887,7 @@ def validate_historian_relay_factory_enablement_fixture() -> None:
         fail(f"{path} must not recommend Historian reinstall")
     if "--args-file canisters/historian/mainnet-install-args.did" in text:
         fail(f"{path} must not recommend Historian upgrade with mainnet install args")
-    if "/tmp/historian-relay-factory-enable.did" in text:
+    if "/tmp/historian-production-upgrade.did" in text:
         fail(f"{path} must not recommend an implicit config-changing Historian upgrade args file")
     for line in non_comment_command_lines(text):
         command = line.removeprefix("env ").strip()
@@ -1518,7 +1507,7 @@ def main() -> None:
     validate_historian_upgrade_only_docs()
     validate_relay_docs_contain_full_init_args_upgrade()
     validate_docs_do_not_use_stale_privileged_deployment_framing()
-    validate_historian_relay_factory_enablement_fixture()
+    validate_historian_production_upgrade_preflight()
     historian_min_tx_e8s = validate_historian()
     validate_relay_setup_recovery_runbook()
     validate_relay()

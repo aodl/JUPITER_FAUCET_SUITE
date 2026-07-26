@@ -60,9 +60,6 @@ echo "Read-only preflight only. Existing production Historian must be upgraded i
 echo "Reinstall destroys all stable history, tracking metadata, Relay registrations, and setup/recovery jobs; it is prohibited for the existing production Historian."
 echo "canisters/historian/mainnet-install-args.did is fresh-install-only for Historian and must not be passed to upgrade."
 echo "Before stopping Historian, record pre-upgrade query results. Stopping jupiter_historian is the executable self-service factory pause."
-echo "Also run the read-only live legacy-baseline gate with the sanctioned expected module hash:"
-echo "./tools/scripts/preflight-live-historian-upgrade-baseline <EXPECTED_LEGACY_MODULE_HASH>"
-echo
 echo "Complete tested maintenance sequence after release signoff:"
 cat <<'CMD'
 icp canister stop jupiter_historian --environment ic

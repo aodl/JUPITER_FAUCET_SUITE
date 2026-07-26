@@ -1,6 +1,6 @@
 # Relay Setup Recovery Runbook
 
-This runbook covers self-service relay setup jobs that reach `ManualRecoveryRequired`. Self-service relays use the canonical Relay daily cadence; their configuration differs from the canonical production Relay only by target canister and surplus recipient settings.
+This runbook covers self-service relay setup jobs that reach `ManualRecoveryRequired`. Mainnet install args enable `relay_factory_enabled = opt true`. Self-service relays use the canonical Relay daily cadence; their configuration differs from the canonical production Relay only by target canister and surplus recipient settings.
 
 `ManualRecoveryRequired` means the historian saw an operation whose outcome can no longer be recovered safely by automatic retry. Operators must inspect public ledger/index records and canister state before deciding whether to refund, register a relay, or leave the job blocked.
 
@@ -99,41 +99,6 @@ Refund manually when:
 
 Tell users that setup is blocked for manual reconciliation, the setup account and public transaction evidence are being checked, and no new payment should be sent for the same target until operators resolve the job.
 
-## Existing Failed Target 2lo52-kiaaa-aaaar-qaqta-cai
-
-The live failed job for `2lo52-kiaaa-aaaar-qaqta-cai` recorded:
-
-- CMC conversion completed for `94_950_000` e8s at block `37_414_364`.
-- `relay_canister_id = null`, so canister creation did not succeed or at least was not recorded.
-- `relay_create_attempt.initial_cycles = 1_000_000_000_000`.
-- The management canister rejected `create_canister` because it required `1_307_692_307_692` cycles while only `1_000_000_000_000` cycles were attached.
-
-After this patch, automatic retry is safe only after the upgraded Historian config is live and the recovery view confirms `cycles_minted` is at least the new configured create attachment. If the existing CMC conversion minted only `1_000_000_000_000` cycles, retrying cannot safely call `create_canister` with the new 2T-cycle attachment without subsidizing from Historian cycles; the job should remain `ManualRecoveryRequired`.
-
-Recovery recommendation for that target:
-
-1. Query `get_relay_setup_recovery_view` and confirm `cycles_minted`, `cycle_conversion_e8s`, and all transfer records.
-2. If `cycles_minted < 2_000_000_000_000` and no relay ID exists, do not call `notify_relay_setup` again expecting automatic completion.
-3. Reconcile the setup account balance and the cycles minted to Historian. Because ICP was already spent on CMC conversion, an additional user payment may be required only if operators choose to complete the relay through a reviewed manual recovery path; otherwise operator refund/reconciliation is required because the converted ICP cannot be automatically returned from the setup account.
-4. If operators can prove enough cycles are available and decide to complete manually, create/install/fund only with the reviewed reproducible Relay artifact and record the action in release evidence.
-
 ## Public Notify Monitoring
 
 `notify_relay_setup` is public and can consume historian cycles through ledger/index calls even when a caller has not funded a valid setup account. After enablement, monitor Historian cycle balance and call volume. The deployment accepts this bounded operational risk for now rather than adding stable-state rate-limit data; revisit if public no-fund notify traffic becomes material.
-
-## Factory-Enabled Production Deploys
-
-Mainnet install args enable `relay_factory_enabled = opt true`. Historian probing is always Auto; there is no deployment field that selects a fixed Historian probe route. The Auto route order is direct self balance, canonical-blackhole target self-status, cached positive route, 13-node blackhole, Fiduciary blackhole, then SNS discovery. SNS-W and controller-based SNS discovery do not require blackhole control of SNS-governed targets.
-
-Factory-enabled production Historian deploys must:
-
-1. Build the canonical artifacts with `./tools/scripts/docker-build`.
-2. Verify `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`.
-3. Verify `release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256`.
-4. Install the reviewed canonical historian artifact in a non-mainnet test environment with `relay_factory_enabled=true`.
-5. Confirm live module-hash reconciliation reads the Relay module hash from the IC and does not depend on persisted per-instance expected hashes.
-6. Confirm an activated setup adds `RelayTarget` to the target canister and `RelayInstance` to the Relay canister, both appear in `list_canisters`, and `tracked_canister_count` includes both unique principals.
-7. Include the raw relay wasm hash, compressed relay install payload hash, canonical historian artifact hash, and validator output in the final pre-deploy report.
-8. Use `release-artifacts/jupiter_historian.wasm.gz` for the production deploy command.
-
-Historian production releases must upgrade the existing canister in place. Reinstall destroys setup/recovery jobs and Relay registrations and is prohibited for the existing production Historian. Before stopping Historian, record Relay registrations plus setup recovery views. Stopping `jupiter_historian` is the executable self-service factory pause while the snapshot is created/downloaded and the upgrade is performed. With `icp 0.2.6`, `icp deploy jupiter_historian --environment ic --mode upgrade` succeeds against a stopped canister but leaves it stopped, so operators must explicitly run `icp canister start jupiter_historian --environment ic` afterward. Rollback stops Historian, restores the recorded snapshot ID, starts Historian, and verifies the prior module hash and state. After upgrade, verify existing setup/recovery jobs and Relay registrations are preserved and `RelayTarget` and `RelayInstance` reasons are present for active relationships. Canonical Relay lifecycle remains separate from Historian lifecycle.

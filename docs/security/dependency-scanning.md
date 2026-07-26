@@ -34,6 +34,9 @@ The npm SBOM step uses `npx --yes @cyclonedx/cyclonedx-npm@4.2.1` so the
 CycloneDX npm CLI is provisioned by npm when it is not already cached, while
 remaining pinned for release evidence.
 
+The helper reports installed scanner versions at runtime. Keep the install
+versions above aligned with the versions expected by release evidence review.
+
 ## Local Gate
 
 Run the canonical local command from any directory in the repository:
@@ -113,18 +116,31 @@ The current allowed RustSec findings are classified as:
 certification/display paths and/or dev/test tooling. It must not enter
 production value-moving canister runtime paths.
 
-The following findings were mitigated by dependency upgrades and do not have
-scanner exceptions:
-
-| Advisory | Package | Classification | Mitigation | Owner | Scope |
-| --- | --- | --- | --- | --- | --- |
-| `RUSTSEC-2026-0185` | `quinn-proto 0.11.14` | `dev-test-only` | Upgraded the locked transitive dependency to `quinn-proto 0.11.15`, the first fixed release. | `protocol-maintainers` | Reached only through `reqwest -> pocket-ic` dev/test tooling; `tools/scripts/check-production-reachability` continues to fail if `pocket-ic` enters covered production value-moving or privileged operational wasm trees. |
-| `RUSTSEC-2026-0190` | `anyhow 1.0.102` | `workspace-runtime-and-tooling` | Upgraded the locked dependency to `anyhow 1.0.103`, which removes the vulnerable version from all workspace paths. | `protocol-maintainers` | Shared Rust dependency used by canisters and tooling; no exception is allowed because it can appear in production canister dependency trees. |
-| `GHSA-g7r4-m6w7-qqqr` | `esbuild 0.27.4` | `frontend-build-tooling-dev-only` | Upgraded the pinned npm dev dependency to `esbuild 0.28.1`, the OSV fixed version. | `protocol-maintainers` | Root npm dev dependency used for frontend build/bundle generation; it is outside canister runtime code and remains enforced by `npm audit --omit=dev`, OSV lockfile scanning, and the hermetic npm lockfile check. |
-
 Do not broaden ignores or silence a new advisory without adding a classification,
 owner, mitigation path, and automated proof that the finding is outside the
 production value-moving runtime path.
+
+## NNS Dependency Boundary
+
+[`jupiter-nns-types`](../../crates/nns-types) provides minimal Candid-compatible
+NNS Governance wire DTOs from the pinned subset DID under
+[`candid/nns-governance/`](../../candid/nns-governance). The DTO file is
+committed and verified by the dev-only
+[`nns-bindgen-check`](../../tools/nns-bindgen-check) tool, which uses
+`candid_parser` directly. `jupiter-nns-types` remains DTO-only and has no
+`ic-cdk` dependency.
+
+[`jupiter-ic-clients`](../../crates/ic-clients) contains the committed generated
+raw NNS Governance transport. That crate already owns shared inter-canister
+client code and depends on `ic-cdk`, so generated transport does not add
+`ic-cdk` to the DTO crate. Production canister builds include plain Rust source
+and do not run bindgen, depend on `ic-cdk-bindgen`, or rely on generated marker
+extraction.
+
+Keep broad DFINITY NNS graph crates such as `rsa`, `bincode`,
+`proc-macro-error`, and `derivative` out of disburser, faucet, relay, and
+historian production trees unless a separate dependency review explicitly
+accepts the runtime scope.
 
 The script derives deterministic SBOM timestamps and serial numbers from
 `SOURCE_DATE_EPOCH`. If `SOURCE_DATE_EPOCH` is unset, it uses the Unix timestamp

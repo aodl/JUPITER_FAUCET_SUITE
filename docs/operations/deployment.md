@@ -39,6 +39,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
 
 Keep canonical Relay lifecycle instructions separate. Relay is replacement-style and requires full `InitArgs` on every upgrade:
 
+```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --environment ic \
   --mode upgrade \
@@ -79,6 +80,8 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 Stopping `jupiter_historian` is the executable self-service factory pause for this deployment. Existing setup/recovery jobs and Relay registrations are preserved by the in-place upgrade, but the canister must stay stopped while operators create/download the snapshot and perform the upgrade.
 
+After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
+
 Record pre-upgrade query results before upgrading `jupiter_historian`:
 
 - Historian module hash, controllers, and stable memory size from `icp canister status j5gs6-uiaaa-aaaar-qb5cq-cai -n ic`.
@@ -88,19 +91,7 @@ Record pre-upgrade query results before upgrading `jupiter_historian`:
 - Relay registrations and setup recovery views.
 - Indexing cursors, fault state, aggregate output/reward/burn totals, and factory enabled state.
 
-Before the maintenance window, prove the live production module matches the approved legacy baseline:
-
-1. Create a separate clean worktree at `98c871a85af91320a5dfc59b5b040727e21aa094`.
-2. Run the sanctioned reproducible build process there.
-3. Record both raw and deterministic compressed Historian hashes.
-4. Identify the exact install payload used by the historical deployment.
-5. Compare that expected install payload hash to the live module hash with:
-
-```bash
-./tools/scripts/preflight-live-historian-upgrade-baseline <EXPECTED_LEGACY_MODULE_HASH>
-```
-
-Do not hardcode the expected hash in this repository until a sanctioned build and production query have established it. If the live hash does not match the artifact from `98c871a85af91320a5dfc59b5b040727e21aa094`, stop deployment and identify the actual deployed source revision before migration.
+Before the maintenance window, confirm the live production Historian is on a supported direct-upgrade path. The current release retains the V1 stable decoder because the repository does not contain sufficient production evidence to raise the minimum supported upgrade version. Removing the decoder requires a separately reviewed change that records the production compatibility evidence, snapshot policy, and new minimum supported direct-upgrade version. Rollback procedures must use the snapshot created during the maintenance window; do not rely on restoring a pre-migration snapshot after upgrading to current code.
 
 Maintenance sequence tested with `icp 0.2.6`:
 
@@ -131,7 +122,7 @@ After upgrade, verify:
 - Controllers are unchanged.
 - Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
 - Relay registrations are preserved.
-- Setup jobs are preserved or safely migrated.
+- Setup jobs are preserved and remain readable.
 - Automatic cycles probing is active.
 - `RelayTarget` and `RelayInstance` tracking reasons are present for active Relay relationships.
 - New cycles samples append to existing histories.

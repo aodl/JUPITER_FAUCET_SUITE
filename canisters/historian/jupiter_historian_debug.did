@@ -446,71 +446,6 @@ type CanisterModuleHash = record {
   stable_memory_bytes : opt nat64;
   total_memory_bytes : opt nat64;
 };
-type DebugPrincipalCommitmentHistory = record {
-  canister_id : principal;
-  items : vec CommitmentSample;
-};
-type DebugPrincipalCyclesHistory = record {
-  canister_id : principal;
-  items : vec CyclesSample;
-};
-type DebugNeuronCommitmentHistory = record {
-  neuron_id : nat64;
-  items : vec CommitmentSample;
-};
-type DebugCanisterMetaEntry = record {
-  canister_id : principal;
-  meta : CanisterMeta;
-};
-type DebugTrackingReasonsEntry = record {
-  canister_id : principal;
-  tracking_reasons : vec CanisterTrackingReason;
-};
-type DebugRecentCommitment = record {
-  canister_id : principal;
-  raw_icp_memo_text : opt text;
-  tx_id : nat64;
-  timestamp_nanos : opt nat64;
-  amount_e8s : nat64;
-  counts_toward_faucet : bool;
-};
-type DebugRecentNeuronCommitment = record {
-  neuron_id : nat64;
-  memo_text : opt text;
-  tx_id : nat64;
-  timestamp_nanos : opt nat64;
-  amount_e8s : nat64;
-  counts_toward_faucet : bool;
-};
-type DebugInvalidCommitment = record {
-  tx_id : nat64;
-  timestamp_nanos : opt nat64;
-  amount_e8s : nat64;
-  memo_text : text;
-};
-type DebugRecentBurn = record {
-  canister_id : principal;
-  tx_id : nat64;
-  timestamp_nanos : opt nat64;
-  amount_e8s : nat64;
-};
-type DebugMigrationSnapshot = record {
-  commitment_history : vec DebugPrincipalCommitmentHistory;
-  cycles_history : vec DebugPrincipalCyclesHistory;
-  raw_icp_commitment_history : vec DebugPrincipalCommitmentHistory;
-  neuron_commitment_history : vec DebugNeuronCommitmentHistory;
-  recent_commitments : vec DebugRecentCommitment;
-  recent_under_threshold_commitments : vec DebugRecentCommitment;
-  recent_neuron_commitments : vec DebugRecentNeuronCommitment;
-  recent_under_threshold_neuron_commitments : vec DebugRecentNeuronCommitment;
-  recent_invalid_commitments : vec DebugInvalidCommitment;
-  recent_burns : vec DebugRecentBurn;
-  canister_meta : vec DebugCanisterMetaEntry;
-  tracking_reasons : vec DebugTrackingReasonsEntry;
-  relay_registrations : vec RelayRegistryEntry;
-  relay_setup_jobs : vec RelaySetupJob;
-  public_counts : PublicCounts;
-};
 type DebugState = record {
   distinct_canister_count : nat32;
   last_indexed_staking_tx_id : opt nat64;
@@ -586,7 +521,6 @@ service : (InitArgs) -> {
   list_memo_registered_canister_summaries : (ListMemoRegisteredCanisterSummariesArgs) -> (ListMemoRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
   debug_state : () -> (DebugState) query;
-  debug_migration_snapshot : () -> (DebugMigrationSnapshot) query;
   debug_config : () -> (DebugConfig) query;
   debug_driver_tick : () -> ();
   debug_refresh_icp_xdr_rate_cache : () -> (DebugRefreshIcpXdrRateResult);
