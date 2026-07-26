@@ -728,7 +728,7 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.match(navbarJs, /key === "metric-registered"[\s\S]*key: "metric-commitments", page: 0/);
 });
 
-test('Actions nav button exposes Plan Prepare and Optimize pane links', () => {
+test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
   const actionsStart = indexHtml.indexOf('<div class="nav-popover action-rail"');
   assert.ok(actionsStart >= 0, 'missing actions rail');
   const actionsRail = indexHtml.slice(actionsStart, indexHtml.indexOf('</div>', actionsStart) + '</div>'.length);
@@ -736,7 +736,7 @@ test('Actions nav button exposes Plan Prepare and Optimize pane links', () => {
   assert.match(indexHtml, /id="actions-menu-toggle"[\s\S]*aria-controls="actions-menu"[\s\S]*>Actions<\/button>/);
   assert.match(indexHtml, /id="metrics-menu-toggle"[\s\S]*aria-controls="metrics-menu"[\s\S]*>Metrics<\/button>/);
   assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>/);
-  assert.match(actionsRail, /href="#how-it-works:2"[^>]*data-panel="how-it-works"[\s\S]*>Prepare<\/span>/);
+  assert.match(actionsRail, /href="#how-it-works:2"[^>]*data-panel="how-it-works"[\s\S]*>Commit<\/span>/);
   assert.match(actionsRail, /href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>/);
   assert.match(indexHtml, /<div class="nav-disclosure" data-nav-group="actions">\s*<button[\s\S]*id="actions-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover action-rail" id="actions-menu"[^>]*hidden>/);
   assert.match(indexHtml, /<div class="nav-disclosure nav-disclosure--end" data-nav-group="metrics">\s*<button[\s\S]*id="metrics-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover metric-rail" id="metrics-menu"[^>]*hidden>/);

@@ -360,7 +360,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     hidden: '',
   });
   append(actionsMenu, 'a', { href: '#simulator', class: 'metric-rail-link nav-item', 'data-panel': 'simulator' }, 'Plan');
-  append(actionsMenu, 'a', { href: '#how-it-works:2', class: 'metric-rail-link nav-item', 'data-panel': 'how-it-works' }, 'Prepare');
+  append(actionsMenu, 'a', { href: '#how-it-works:2', class: 'metric-rail-link nav-item', 'data-panel': 'how-it-works' }, 'Commit');
   append(actionsMenu, 'a', { href: '#relay-setup', class: 'metric-rail-link nav-item', 'data-panel': 'relay-setup' }, 'Optimize');
 
   const metrics = append(nav, 'div', {
