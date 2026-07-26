@@ -15,7 +15,7 @@ const TERMINAL_POLL_STATUSES = new Set([
 
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const FRONTEND_NOTIFY_MIN_E8S = 10_000n;
-const RELAY_SETUP_PROMPT_TEXT = 'Enter a canister ID to check whether Jupiter can create a relay for it. This creates a relay, not an emergency top-up; if the canister is close to freezing, top it up directly first.';
+const RELAY_SETUP_PROMPT_TEXT = 'Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about what a relay canister is and how it works and set up a new relay using the instructions below.';
 const STATUS_LABELS = {
   NotFunded: 'Not funded',
   BelowMinimum: 'Below minimum',

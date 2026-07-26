@@ -360,7 +360,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     hidden: '',
   });
   append(actionsMenu, 'a', { href: '#simulator', class: 'metric-rail-link nav-item', 'data-panel': 'simulator' }, 'Plan');
-  append(actionsMenu, 'a', { href: '#how-it-works:2', class: 'metric-rail-link nav-item', 'data-panel': 'how-it-works' }, 'Commit');
+  append(actionsMenu, 'a', { href: '#memo-builder', class: 'metric-rail-link nav-item', 'data-panel': 'memo-builder' }, 'Commit');
   append(actionsMenu, 'a', { href: '#relay-setup', class: 'metric-rail-link nav-item', 'data-panel': 'relay-setup' }, 'Optimize');
 
   const metrics = append(nav, 'div', {
@@ -388,15 +388,20 @@ function setupNavbar(width = 1440, initialHash = '') {
 
   const backdrop = append(document.body, 'div', { class: 'nav-panel-backdrop', id: 'nav-panel-backdrop' });
   append(backdrop, 'button', { class: 'nav-panel-close' });
-  ['about', 'how-it-works', 'simulator', 'domains', 'relay-setup', 'metric-stake', 'metric-commitments', 'metric-tracker'].forEach((key) => {
+  ['about', 'how-it-works', 'memo-builder', 'simulator', 'domains', 'relay-setup', 'metric-stake', 'metric-commitments', 'metric-tracker'].forEach((key) => {
     addPanel(document, key, key === 'how-it-works' ? 4 : 2);
   });
   const howSection = document.querySelector('.nav-panel-section[data-panel="how-it-works"]');
   const howPageTwoLink = append(howSection, 'a', {
-    href: '#how-it-works:2',
+    href: '/#how-it-works:2',
     class: 'pane-link',
     'data-panel': 'how-it-works',
   }, 'Prepare page');
+  const memoBuilderPrefillLink = append(howSection, 'a', {
+    href: '/#memo-builder?canister=u2qkp-aqaaa-aaaar-qb7ea-cai&title=Relay%20Canister&label=Optional%20Donor%20Name',
+    class: 'pane-link',
+    'data-panel': 'memo-builder',
+  }, 'Relay memo builder');
   append(document.body, 'aside', {
     id: 'orbit-disbursement-status',
     class: 'orbit-disbursement-status',
@@ -419,6 +424,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     howLink,
     domainsLink,
     howPageTwoLink,
+    memoBuilderPrefillLink,
   };
 }
 
@@ -550,7 +556,7 @@ test('navbar hash navigation opens panels without reopening dropdowns', () => {
   assert.equal(env.backdrop.classList.contains('is-open'), false);
 });
 
-test('Prepare route keeps Actions ownership through direct load and history', () => {
+test('Relay route keeps Actions ownership through direct load and history', () => {
   const env = setupNavbar(1440, '#how-it-works:2');
 
   assert.equal(activeSection(env.document).getAttribute('data-panel'), 'how-it-works');
@@ -566,13 +572,13 @@ test('Prepare route keeps Actions ownership through direct load and history', ()
   click(env.actionsMenu.querySelector('a[href="#simulator"]'));
   click(env.actionsButton);
   click(env.actionsButton);
-  click(env.actionsMenu.querySelector('a[href="#how-it-works:2"]'));
-  assert.equal(env.window.location.hash, '#how-it-works:2');
+  click(env.actionsMenu.querySelector('a[href="#memo-builder"]'));
+  assert.equal(env.window.location.hash, '#memo-builder');
   env.window.history.back();
   assert.equal(env.window.location.hash, '');
   assert.equal(env.backdrop.classList.contains('is-open'), false);
   env.window.history.forward();
-  assert.equal(env.window.location.hash, '#how-it-works:2');
+  assert.equal(env.window.location.hash, '#memo-builder');
   assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
   assert.equal(env.actionsMenu.hidden, true);
 });
@@ -582,7 +588,7 @@ test('opening transient disclosures clears stale panel hashes', () => {
     ['about to actions', 'aboutLink', 'actionsButton', 'actionsMenu'],
     ['about to metrics', 'aboutLink', 'metricsButton', 'metricsMenu'],
     ['domains to actions', 'domainsLink', 'actionsButton', 'actionsMenu'],
-    ['prepare route to metrics', null, 'metricsButton', 'metricsMenu', '#how-it-works:2'],
+    ['relay route to metrics', null, 'metricsButton', 'metricsMenu', '#how-it-works:2'],
     ['metrics panel to actions', 'metricsButton', 'actionsButton', 'actionsMenu', null, 'a[data-panel="metric-stake"]'],
     ['actions panel to metrics', 'actionsButton', 'metricsButton', 'metricsMenu', null, 'a[data-panel="simulator"]'],
   ];
@@ -628,6 +634,19 @@ test('direct panel triggers toggle closed but same-section page links navigate',
   assert.equal(env.backdrop.classList.contains('is-open'), true);
   assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '2');
   assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
+});
+
+test('panel links preserve memo builder prefill query parameters', () => {
+  const env = setupNavbar();
+
+  click(env.howLink);
+  click(env.memoBuilderPrefillLink);
+
+  assert.equal(
+    env.window.location.hash,
+    '#memo-builder?canister=u2qkp-aqaaa-aaaar-qb7ea-cai&title=Relay%20Canister&label=Optional%20Donor%20Name',
+  );
+  assert.equal(activeSection(env.document).getAttribute('data-panel'), 'memo-builder');
 });
 
 test('closing child panels restores focus to visible parent toggles', () => {

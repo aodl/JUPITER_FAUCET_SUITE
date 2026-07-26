@@ -27,14 +27,14 @@ const MEMO_POLICY_CASES = JSON.parse(readFileSync(
 test('advanced memo tip copy URL resolves fragments against the current page URL', () => {
   assert.equal(
     currentPageUrlForFragment(
-      '#how-it-works:2?canister={protocol canister ID}&title={custom title}&label={custom label}',
+      '#memo-builder?canister={protocol canister ID}&title={custom title}&label={custom label}',
       'https://example.com/current/path?source=nav#about',
     ),
-    'https://example.com/current/path?source=nav#how-it-works:2?canister={protocol canister ID}&title={custom title}&label={custom label}',
+    'https://example.com/current/path?source=nav#memo-builder?canister={protocol canister ID}&title={custom title}&label={custom label}',
   );
   assert.equal(
-    currentPageUrlForFragment('#how-it-works:2', 'https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/#intro'),
-    'https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/#how-it-works:2',
+    currentPageUrlForFragment('#memo-builder', 'https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/#intro'),
+    'https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/#memo-builder',
   );
 });
 
@@ -154,7 +154,7 @@ test('URL prefill state treats empty canister with requested mode as manually ed
 });
 
 test('URL target values apply once per fragment even when empty target has a label', () => {
-  const fragment = '#how-it-works:2?canister=&label=Foo';
+  const fragment = '#memo-builder?canister=&label=Foo';
 
   assert.equal(shouldApplyAdvancedMemoUrlTargetValue(fragment, ''), true);
   assert.equal(shouldApplyAdvancedMemoUrlTargetValue(fragment, fragment), false);

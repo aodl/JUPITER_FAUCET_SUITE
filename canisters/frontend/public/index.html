@@ -90,7 +90,7 @@
               <a href="#simulator" class="metric-rail-link metric-rail-link--action nav-item" data-panel="simulator">
                 <span class="metric-rail-link-label">Plan</span>
               </a>
-              <a href="#how-it-works:2" class="metric-rail-link metric-rail-link--action nav-item" data-panel="how-it-works">
+              <a href="#memo-builder" class="metric-rail-link metric-rail-link--action nav-item" data-panel="memo-builder">
                 <span class="metric-rail-link-label">Commit</span>
               </a>
               <a href="#relay-setup" class="metric-rail-link metric-rail-link--action nav-item" data-panel="relay-setup">
@@ -497,8 +497,8 @@
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Developer tip:</strong> If you need many small ICP transfers to build up to
                 the minimum 1 ICP threshold, you might consider deploying an instance of the
-                <a href="#source" data-panel="source" class="pane-external-link">Jupiter Relay</a>
-                canister. See <a href="#how-it-works:1" data-page-target="1" class="pane-external-link">Advanced Usage</a>.
+                <a href="/#how-it-works:2" data-panel="how-it-works" class="pane-external-link">Jupiter Relay</a>
+                canister.
               </p>
             </div>
               
@@ -524,14 +524,15 @@
               <p class="nav-panel-content">
                 The full ICP commitment memo must be ASCII and at most <strong>32 characters</strong>.
                 For canister targets, hyphens in the principal may be omitted to save space. Use the
-                memo builder on the next slide to build a valid memo.
+                <a href="#memo-builder" data-panel="memo-builder" class="pane-external-link">memo builder</a>
+                to build a valid memo.
               </p>
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Developer tip:</strong> You can adjust the <code>canister</code>/<code>neuron</code>,
                 <code>title</code>, and <code>label</code> parameters in the following URL to customise the memo helper
-                form on the next slide for a smoother user experience:
+                form for a smoother user experience:
                 <span class="memo-builder-tip-copy-row">
-                  <span class="memo-builder-tip-url mono" id="memo-builder-tip-url" data-copy-value="#how-it-works:2?canister={protocol canister ID}&amp;title={custom title}&amp;label={custom label}">#how-it-works:2?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;title=<span class="memo-builder-placeholder">{custom title}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></span>
+                  <span class="memo-builder-tip-url mono" id="memo-builder-tip-url" data-copy-value="#memo-builder?canister={protocol canister ID}&amp;title={custom title}&amp;label={custom label}">#memo-builder?canister=<span class="memo-builder-placeholder">{protocol canister ID}</span>&amp;title=<span class="memo-builder-placeholder">{custom title}</span>&amp;label=<span class="memo-builder-placeholder">{custom label}</span></span>
                   <button class="pane-page-button" id="copy-memo-builder-tip-url" type="button">Copy URL</button>
                 </span>
               </p>
@@ -539,100 +540,76 @@
                 <p><strong>e.g.</strong></p>
                 <ul>
                   <li>
-                    ONICAI's <a href="#how-it-works:2?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;title=mAIner%20ID&amp;label=mAIner%20ID%20Prefix%20(xxxxx-xx)" class="pane-external-link">mAIner ID Memo Builder</a>
+                    ONICAI's <a href="/#memo-builder?canister=r5m5y-diaaa-aaaaa-qanaa-cai&amp;title=mAIner%20ID&amp;label=mAIner%20ID%20Prefix%20(xxxxx-xx)" data-panel="memo-builder" class="pane-external-link">mAIner ID Memo Builder</a>
                     tops up the protocol's GameState canister with raw ICP; GameState then routes a
                     portion as cycles to the declared mAIner.
                   </li>
                   <li>
-                    IO's <a href="#how-it-works:2?neuron=10292412127977304661&amp;title=IO%20Perpetual%20Stake&amp;label=Optional%20Donor%20Name" class="pane-external-link">IO Perpetual Stake Memo Builder</a>
+                    IO's <a href="/#memo-builder?neuron=10292412127977304661&amp;title=IO%20Perpetual%20Stake&amp;label=Optional%20Donor%20Name" data-panel="memo-builder" class="pane-external-link">IO Perpetual Stake Memo Builder</a>
                     causes Jupiter Faucet to perpetually pay into the IO neuron's staking account,
                     driving an ever-increasing minimum APY for all IO holders. In this particular
                     case a <code>'.'</code> suffix is superfluous.
                   </li>
                 </ul>
               </div>
-              <p class="nav-panel-content memo-builder-safety-notice">
-                <strong>Extra tip:</strong> Developers may wish to deploy an instance of the
-                <a href="#source" data-panel="source" class="pane-external-link">Jupiter Relay</a>
-                canister. The relay acts as a singular target for perpetual top-ups using raw ICP
-                (the <code>'.'</code> memo syntax documented above). It periodically samples the
-                cycles balance of configured canisters, tops them up proportionally to burn rate,
-                then routes remaining ICP to configured treasury canisters and/or public neuron
-                staking accounts.
-              </p>
             </div>
 
             <div class="nav-panel-page" data-page="2">
-              <h3 class="pane-section-title" id="memo-builder-title">Memo Builder</h3>
-              <p class="nav-panel-content" id="memo-builder-prefill-note" hidden>
-                This memo helper simplifies constructing a memo from your chosen ID and a protocol
-                canister that facilitates a specialised top-up flow.
-              </p>
-              <p class="nav-panel-content memo-builder-safety-notice" id="memo-builder-safety-notice" hidden>
-                <strong>Health &amp; Safety Notice:</strong> Please make sure that you have identified
-                the controller of the <span id="memo-builder-safety-target-kind">protocol canister</span>
-                <a class="pane-external-link mono" id="memo-builder-canister-dashboard-link" href="#" target="_blank" rel="noopener noreferrer"></a>
-                and that it belongs to a DAO or reputable pre-DAO dev team who prescribe this
-                <span id="memo-builder-safety-prescription-kind">canister</span>. Jupiter Faucet
-                is not responsible for lost funds resulting from user indiscretion.
-                <span id="memo-builder-url-context"></span>
-              </p>
-              <section class="memo-builder" id="advanced-memo-builder" aria-label="Jupiter Faucet memo builder">
-                <fieldset class="memo-builder-fieldset" id="memo-builder-mode-fieldset">
-                  <legend class="memo-builder-label">Target mode</legend>
-                  <label class="memo-builder-radio">
-                    <input type="radio" name="memo-builder-mode" value="rawIcp" checked />
-                    <span>Canister default account</span>
-                  </label>
-                  <label class="memo-builder-radio">
-                    <input type="radio" name="memo-builder-mode" value="neuron" />
-                    <span>Public neuron staking account</span>
-                  </label>
-                  <label class="memo-builder-radio">
-                    <input type="radio" name="memo-builder-mode" value="cycles" />
-                    <span>Cycles top-up canister</span>
-                  </label>
-                </fieldset>
-
-                <div class="memo-builder-grid">
-                  <div class="memo-builder-field" id="memo-builder-canister-fields">
-                    <label class="memo-builder-label" for="memo-builder-canister">Declared canister ID</label>
-                    <input class="memo-builder-input mono" id="memo-builder-canister" type="text" autocomplete="off" spellcheck="false" inputmode="latin" pattern="[A-Za-z2-7-]*" />
-                  </div>
-
-                  <div class="memo-builder-field" id="memo-builder-neuron-fields" hidden>
-                    <label class="memo-builder-label" for="memo-builder-neuron">Declared public neuron ID</label>
-                    <input class="memo-builder-input mono" id="memo-builder-neuron" type="text" autocomplete="off" spellcheck="false" inputmode="numeric" pattern="[0-9]*" />
-                  </div>
-
-                  <div class="memo-builder-field" id="memo-builder-optional-fields" hidden>
-                    <label class="memo-builder-label" id="memo-builder-optional-label" for="memo-builder-optional">Optional outgoing transfer memo</label>
-                    <div class="memo-builder-output-row">
-                      <div class="memo-builder-input memo-builder-editable mono" id="memo-builder-optional" contenteditable="plaintext-only" role="textbox" tabindex="0" spellcheck="false" inputmode="latin" aria-labelledby="memo-builder-optional-label"></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="memo-builder-help" id="memo-builder-messages" aria-live="polite"></div>
-
-                <div class="memo-builder-field">
-                  <label class="memo-builder-label" for="memo-builder-output">Generated ICP commitment memo</label>
-                  <div class="memo-builder-output-row">
-                    <input class="memo-builder-input mono" id="memo-builder-output" type="text" readonly />
-                    <button class="pane-page-button" id="memo-builder-copy" type="button" disabled>Copy memo</button>
-                  </div>
-                </div>
-              </section>
-
+              <h3 class="pane-section-title">Relay Canisters</h3>
               <p class="nav-panel-content">
-                Use the generated memo as described in the
-                <a href="#how-it-works" data-page-target="0" class="pane-external-link">basic instructions</a>
-                (in place of the "declared canister ID") to make your ICP commitment and initiate
-                perpetual top-ups.
+                A relay canister provides one stable target for ICP transfers. It aims to maintain
+                a steadily growing cycles balance for configured canisters by topping up 1% more
+                cycles than needed to restore the previously sampled balance for each configured
+                canister (provided enough ICP is perpetually supplied into the relay canister).
+              </p>
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Example:</strong> The full suite of Jupiter Faucet protocol canisters are managed by a single
+                <a href="/#metric-tracker?memo=u2qkp-aqaaa-aaaar-qb7ea-cai.&amp;range=month" data-panel="metric-tracker" class="pane-external-link">relay canister</a>.
+                Anyone who wishes to contribute an ICP commitment can use the
+                <a href="/#memo-builder?canister=u2qkp-aqaaa-aaaar-qb7ea-cai&amp;title=Relay%20Canister&amp;label=Optional%20Donor%20Name" data-panel="memo-builder" class="pane-external-link">Relay Canister Memo Builder</a>,
+                optionally supplying their name as a memo suffix (identifying them for their good
+                deed).
               </p>
               <p class="nav-panel-content">
-                For more information about this memo builder see
-                <a href="#how-it-works:1" data-page-target="1" class="pane-external-link">Advanced Usage</a>.
+                This flow depends on raw ICP top-ups described in the
+                <a href="/#how-it-works:1" data-panel="how-it-works" class="pane-external-link">Advanced Usage</a>
+                section. This ensures Jupiter Faucet perpetually transfers raw ICP rather than
+                directly topping up the relay canister with cycles. The relay canister then uses
+                that raw ICP to keep itself topped up along with configured canisters. Surplus ICP
+                (if any) can then be routed to a configured DAO treasury or other account. The
+                Jupiter Faucet protocol's own relay canister routes 50% of any surplus ICP back into
+                the Jupiter Faucet neuron itself (forever increasing the rate of future ICP back
+                into the relay). The relay routes any remaining surplus ICP into the IO neuron's
+                staking account (described below).
+              </p>
+              <p class="nav-panel-content">
+                Anyone can deploy their own relay canister (specifying their own selection of target
+                canisters they wish to be kept topped up). There are two options:
+              </p>
+              <ul class="nav-panel-content">
+                <li>
+                  The easiest path to deploying a relay canister is to use the
+                  <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
+                  tool (any surplus ICP will automatically be routed to the IO neuron staking
+                  account, increasing the minimum APY for all IO holders and therefore increasing
+                  the value of rewards for jUP stakers).
+                </li>
+                <li>
+                  Alternatively, developers can pull the
+                  <a href="/#source" data-panel="source" class="pane-external-link">source code</a>
+                  and deploy an instance manually specifying their own selection of surplus accounts.
+                </li>
+              </ul>
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Developer tip:</strong> A relay canister also accepts ICP transfers into its
+                <code>'1'</code> subaccount (e.g. <code>u2qkp-aqaaa-aaaar-qb7ea-cai.1</code>). This
+                is intended to support ICP senders who do not have support for ICRC memos, or who
+                wish to grow their Jupiter Faucet commitment with many small ICP transfers (each
+                below the <a href="/#how-it-works" data-panel="how-it-works" class="pane-external-link">1 ICP minimum Jupiter Faucet threshold</a>).
+                The relay canister allows many small ICP transfers to accumulate before it
+                transforms these into a single ICP commitment that meets or surpasses the minimum
+                1 ICP threshold. The relay canister's own ID is used in the ICP commitment memo such
+                that it will perpetually receive raw ICP from Jupiter Faucet maturity.
               </p>
             </div>
 
@@ -676,10 +653,87 @@
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
               <button class="nav-panel-dot" type="button" data-page="1" aria-label="Advanced Usage" aria-selected="false"></button>
-              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Memo Builder" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Relay Canisters" aria-selected="false"></button>
               <button class="nav-panel-dot" type="button" data-page="3" aria-label="Maturity and rewards" aria-selected="false"></button>
             </div>
 
+        </article>
+
+        <article class="nav-panel-section" data-panel="memo-builder" id="nav-panel-memo-builder">
+          <h2 class="nav-panel-title">Memo Builder</h2>
+          <div class="nav-panel-scroll-region">
+            <h3 class="pane-section-title" id="memo-builder-title">Memo Builder</h3>
+            <p class="nav-panel-content" id="memo-builder-prefill-note" hidden>
+              This memo helper simplifies constructing a memo from your chosen ID and a protocol
+              canister that facilitates a specialised top-up flow.
+            </p>
+            <p class="nav-panel-content memo-builder-safety-notice" id="memo-builder-safety-notice" hidden>
+              <strong>Health &amp; Safety Notice:</strong> Please make sure that you have identified
+              the controller of the <span id="memo-builder-safety-target-kind">protocol canister</span>
+              <a class="pane-external-link mono" id="memo-builder-canister-dashboard-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+              and that it belongs to a DAO or reputable pre-DAO dev team who prescribe this
+              <span id="memo-builder-safety-prescription-kind">canister</span>. Jupiter Faucet
+              is not responsible for lost funds resulting from user indiscretion.
+              <span id="memo-builder-url-context"></span>
+            </p>
+            <section class="memo-builder" id="advanced-memo-builder" aria-label="Jupiter Faucet memo builder">
+              <fieldset class="memo-builder-fieldset" id="memo-builder-mode-fieldset">
+                <legend class="memo-builder-label">Target mode</legend>
+                <label class="memo-builder-radio">
+                  <input type="radio" name="memo-builder-mode" value="rawIcp" checked />
+                  <span>Canister default account</span>
+                </label>
+                <label class="memo-builder-radio">
+                  <input type="radio" name="memo-builder-mode" value="neuron" />
+                  <span>Public neuron staking account</span>
+                </label>
+                <label class="memo-builder-radio">
+                  <input type="radio" name="memo-builder-mode" value="cycles" />
+                  <span>Cycles top-up canister</span>
+                </label>
+              </fieldset>
+
+              <div class="memo-builder-grid">
+                <div class="memo-builder-field" id="memo-builder-canister-fields">
+                  <label class="memo-builder-label" for="memo-builder-canister">Declared canister ID</label>
+                  <input class="memo-builder-input mono" id="memo-builder-canister" type="text" autocomplete="off" spellcheck="false" inputmode="latin" pattern="[A-Za-z2-7-]*" />
+                </div>
+
+                <div class="memo-builder-field" id="memo-builder-neuron-fields" hidden>
+                  <label class="memo-builder-label" for="memo-builder-neuron">Declared public neuron ID</label>
+                  <input class="memo-builder-input mono" id="memo-builder-neuron" type="text" autocomplete="off" spellcheck="false" inputmode="numeric" pattern="[0-9]*" />
+                </div>
+
+                <div class="memo-builder-field" id="memo-builder-optional-fields" hidden>
+                  <label class="memo-builder-label" id="memo-builder-optional-label" for="memo-builder-optional">Optional outgoing transfer memo</label>
+                  <div class="memo-builder-output-row">
+                    <div class="memo-builder-input memo-builder-editable mono" id="memo-builder-optional" contenteditable="plaintext-only" role="textbox" tabindex="0" spellcheck="false" inputmode="latin" aria-labelledby="memo-builder-optional-label"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="memo-builder-help" id="memo-builder-messages" aria-live="polite"></div>
+
+              <div class="memo-builder-field">
+                <label class="memo-builder-label" for="memo-builder-output">Generated ICP commitment memo</label>
+                <div class="memo-builder-output-row">
+                  <input class="memo-builder-input mono" id="memo-builder-output" type="text" readonly />
+                  <button class="pane-page-button" id="memo-builder-copy" type="button" disabled>Copy memo</button>
+                </div>
+              </div>
+            </section>
+
+            <p class="nav-panel-content">
+              Use the generated memo as described in the
+              <a href="#how-it-works" data-panel="how-it-works" class="pane-external-link">basic instructions</a>
+              (in place of the "declared canister ID") to make your ICP commitment and initiate
+              perpetual top-ups.
+            </p>
+            <p class="nav-panel-content">
+              For more information about this memo builder see
+              <a href="#how-it-works:1" data-panel="how-it-works" class="pane-external-link">Advanced Usage</a>.
+            </p>
+          </div>
         </article>
         
         <article class="nav-panel-section" data-panel="metric-stake" id="nav-panel-metric-stake">
@@ -910,7 +964,7 @@
           <h2 class="nav-panel-title">Relay Setup</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle">Create a target-specific Jupiter Relay instance without login.</p>
-            <p class="nav-panel-content">Enter a canister ID to check whether Jupiter can create a relay for it. This creates a relay, not an emergency top-up; if the canister is close to freezing, top it up directly first.</p>
+            <p class="nav-panel-content">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about <a href="/#how-it-works:2" data-panel="how-it-works" class="pane-external-link">what a relay canister is and how it works</a> and set up a new relay using the instructions below.</p>
             <form class="tracker-form relay-setup-form" id="relay-setup-form">
               <label class="tracker-label" for="relay-setup-target-input">Target canister ID</label>
               <div class="tracker-input-row">
@@ -921,7 +975,7 @@
             <p class="pane-status-note tracker-status-note" id="relay-setup-warning" hidden></p>
             <div class="tracker-result" id="relay-setup-result">
               <div class="tracker-empty-state">
-                <p id="relay-setup-prompt-text">Enter a canister ID to check whether Jupiter can create a relay for it. This creates a relay, not an emergency top-up; if the canister is close to freezing, top it up directly first.</p>
+                <p id="relay-setup-prompt-text">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about what a relay canister is and how it works and set up a new relay using the instructions below.</p>
               </div>
             </div>
             <dl class="pane-detail-grid tracker-summary-grid relay-setup-grid" id="relay-setup-summary" hidden>

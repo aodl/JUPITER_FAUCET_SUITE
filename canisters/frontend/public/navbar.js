@@ -54,6 +54,7 @@
       if (
         key === "simulator" ||
         key === "relay-setup" ||
+        key === "memo-builder" ||
         (key === "how-it-works" && page === 2)
       ) {
         return "actions";
@@ -259,7 +260,7 @@
       renderNavState();
     }
 
-    function setPanelState(key, page = 0, owner = null, { syncHash = true, focusPanel = true } = {}) {
+    function setPanelState(key, page = 0, owner = null, { syncHash = true, focusPanel = true, hashOverride = "" } = {}) {
       if (!key) return;
       navState = {
         openMenu: null,
@@ -268,7 +269,7 @@
         panelPage: page,
       };
       if (syncHash) {
-        const nextHash = panelHashFor(key, page);
+        const nextHash = hashOverride || panelHashFor(key, page);
         if (nextHash && window.location.hash !== nextHash) {
           history.pushState(null, "", nextHash);
           lastAppliedHash = nextHash;
@@ -389,17 +390,20 @@
     }
 
     function panelTargetFromHash(hash) {
-      const fragment = hash ? hash.replace(/^#/, "") : "";
+      const hashText = String(hash || "");
+      const hashStart = hashText.indexOf("#");
+      const fragment = hashStart >= 0 ? hashText.slice(hashStart + 1) : hashText;
+      const fullHash = fragment ? `#${fragment}` : "";
       const route = fragment.split("?")[0];
       const pageMatch = route.match(/^([^:]+):(\d+)$/);
       const key = pageMatch ? pageMatch[1] : route;
       const page = pageMatch ? Number(pageMatch[2]) : 0;
-      if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0 };
-      if (key.startsWith("simulator-")) return { key: "simulator", page: 0 };
-      if (key === "metric-registered") return { key: "metric-commitments", page: 0 };
-      if (key === "metric-output") return { key: "metric-stake", page: 1 };
-      if (key === "metric-rewards") return { key: "metric-stake", page: 2 };
-      return { key, page: Number.isFinite(page) ? page : 0 };
+      if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0, hash: fullHash };
+      if (key.startsWith("simulator-")) return { key: "simulator", page: 0, hash: fullHash };
+      if (key === "metric-registered") return { key: "metric-commitments", page: 0, hash: fullHash };
+      if (key === "metric-output") return { key: "metric-stake", page: 1, hash: fullHash };
+      if (key === "metric-rewards") return { key: "metric-stake", page: 2, hash: fullHash };
+      return { key, page: Number.isFinite(page) ? page : 0, hash: fullHash };
     }
 
     function applyHash(hash) {
@@ -441,7 +445,7 @@
           setClosedState();
           return;
         }
-        setPanelState(key, page, owner);
+        setPanelState(key, page, owner, { hashOverride: hrefTarget.hash });
       });
     });
 
