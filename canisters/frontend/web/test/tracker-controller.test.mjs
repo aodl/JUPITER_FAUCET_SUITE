@@ -332,6 +332,59 @@ test('tracker range buttons rerender loaded beneficiary data', async () => {
   }, { rangeButtons: [monthButton, allButton] });
 });
 
+test('tracker range buttons replace the metric-tracker hash for shareable views', async () => {
+  const nodes = trackerNodes();
+  const yearButton = new FakeElement({ 'data-tracker-range': 'year' });
+  await withFakeTrackerDom(nodes, async ({ nodeMap, historyCalls }) => {
+    yearButton.owner = nodeMap.get('tracker-result');
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => minimalTrackerData(),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+    nodeMap.get('tracker-result').listeners.get('click')({
+      target: yearButton,
+      preventDefault() {},
+    });
+
+    assert.equal(controller.state.range, 'year');
+    assert.equal(window.location.hash, '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=year');
+    assert.deepEqual(historyCalls.map((call) => call.hash), [
+      '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=month',
+      '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=year',
+    ]);
+  }, { hash: '#metric-tracker', rangeButtons: [yearButton] });
+});
+
+test('tracker range deep links hydrate the selected range before loading data', async () => {
+  const nodes = trackerNodes();
+  const requests = [];
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async (request) => {
+        requests.push(request);
+        return minimalTrackerData();
+      },
+    });
+    controller.bindPane();
+
+    assert.equal(controller.hydrateFromLocationHash({ submit: true }), true);
+    await flushMicrotasks();
+
+    assert.equal(controller.state.range, 'all');
+    assert.equal(nodeMap.get('tracker-principal-input').value, 'jufzc-caaaa-aaaar-qb5da-cai');
+    assert.equal(requests[0].minTimestampNanos, null);
+  }, { hash: '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=all' });
+});
+
 test('tracker all range reloads raw ICP history with the large transfer limit', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
@@ -508,7 +561,7 @@ test('delegated tracker memo links preserve compact dotted memo hashes', async (
       historyLimit: 10_000,
       hasCutoff: true,
     }]);
-    assert.deepEqual(historyCalls.map((call) => call.hash), ['#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.miner']);
+    assert.deepEqual(historyCalls.map((call) => call.hash), ['#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.miner&range=month']);
   });
 });
 

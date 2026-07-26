@@ -12,7 +12,7 @@ import { renderAmountBarChart, renderEmptyChart, renderLineChart, renderStackedA
 import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from '../tracker-cycles.js';
 import { parseJupiterMemo } from '../memo-policy.js';
 import { classifyTransferItem, relayRegistrySourceMap } from '../data/transfer-source-classification.js';
-import { trackerHashForMemo, trackerHashForPrincipal, trackerStateFromHash } from './hash-routes.js';
+import { normalizeTrackerRange, trackerHashForMemo, trackerHashForPrincipal, trackerStateFromHash } from './hash-routes.js';
 import { formatDailyBurnInputFromCyclesPerDay, formatIcpCommitmentInputRoundedUp } from './simulator-controller.js';
 import {
   DASH,
@@ -1046,13 +1046,30 @@ export function createTrackerController({
       </div>`;
   };
 
-  const setRange = (range) => {
-    state.range = range === 'all' || range === 'year' ? range : 'month';
+  const replaceLocationHash = (memoText, protocolCanister = state.protocolCanisterText, range = state.range) => {
+    const hash = trackerHashForMemo({ memo: memoText, protocolCanister, range });
+    if (window.location.hash !== hash) {
+      history.replaceState(null, '', hash);
+    }
+  };
+
+  const replaceRangeLocationHash = () => {
+    const route = trackerStateFromHash();
+    const memoText = state.memoText || route.memo || route.legacyPrincipal || '';
+    const protocolCanister = state.protocolCanisterText || route.protocolCanister || '';
+    replaceLocationHash(memoText, protocolCanister, state.range);
+  };
+
+  const setRange = (range, { syncHash = false } = {}) => {
+    state.range = normalizeTrackerRange(range);
     document.querySelectorAll('[data-tracker-range]').forEach((button) => {
       const active = button.getAttribute('data-tracker-range') === state.range;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+    if (syncHash && window.location.hash.startsWith('#metric-tracker')) {
+      replaceRangeLocationHash();
+    }
     if (
       state.data
       && state.parsedMemo
@@ -1067,13 +1084,6 @@ export function createTrackerController({
       renderData(state.data, state.principalText);
     } else if ((state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake') && state.data && state.parsedMemo) {
       renderRawIcpData(state.data, state.parsedMemo);
-    }
-  };
-
-  const replaceLocationHash = (memoText, protocolCanister = state.protocolCanisterText) => {
-    const hash = trackerHashForMemo({ memo: memoText, protocolCanister });
-    if (window.location.hash !== hash) {
-      history.replaceState(null, '', hash);
     }
   };
 
@@ -1157,14 +1167,15 @@ export function createTrackerController({
 
   const hydrateFromLocationHash = ({ submit = false } = {}) => {
     const route = trackerStateFromHash();
+    setRange(route.range);
     const memoText = route.memo || route.legacyPrincipal;
     if (!memoText) return false;
     state.memoText = memoText;
     state.protocolCanisterText = route.protocolCanister || '';
     const input = document.getElementById('tracker-principal-input');
     if (input) input.value = memoText;
-    if (submit && lastHashSubmitMemo !== `${memoText}|${state.protocolCanisterText}`) {
-      lastHashSubmitMemo = `${memoText}|${state.protocolCanisterText}`;
+    if (submit && lastHashSubmitMemo !== `${memoText}|${state.protocolCanisterText}|${state.range}`) {
+      lastHashSubmitMemo = `${memoText}|${state.protocolCanisterText}|${state.range}`;
       window.setTimeout(() => {
         const refreshedInput = document.getElementById('tracker-principal-input');
         if (refreshedInput) refreshedInput.value = memoText;
@@ -1260,7 +1271,7 @@ export function createTrackerController({
         if (!button || !result.contains(button)) return;
         event.preventDefault();
         if (button.disabled || button.getAttribute('aria-disabled') === 'true' || rawTransfersLoading()) return;
-        setRange(button.getAttribute('data-tracker-range') || 'month');
+        setRange(button.getAttribute('data-tracker-range') || 'month', { syncHash: true });
       });
     }
     setRange(state.range);
