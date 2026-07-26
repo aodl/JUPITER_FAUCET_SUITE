@@ -32,6 +32,18 @@ Relay's default ICP ledger account is:
 Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai; subaccount = null }
 ```
 
+Its legacy ICP account identifier is:
+
+```text
+ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd
+```
+
+Its ICRC textual account is:
+
+```text
+u2qkp-aqaaa-aaaar-qb7ea-cai
+```
+
 The Relay default account remains the only account used for managed-canister CMC top-ups and configured surplus routing.
 
 ## Workflow 2: Direct Jupiter Faucet commitment for perpetual Relay funding
@@ -211,9 +223,12 @@ Production Relay identity and subaccount-1 addresses:
 
 ```text
 relay principal: u2qkp-aqaaa-aaaar-qb7ea-cai
+default subaccount hex: 0000000000000000000000000000000000000000000000000000000000000000
+default legacy ICP account identifier: ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd
+default ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai
 subaccount 1 hex: 0000000000000000000000000000000000000000000000000000000000000001
-legacy ICP account identifier: 9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee
-ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
+subaccount 1 legacy ICP account identifier: 9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee
+subaccount 1 ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
 ```
 
 ## Tick Behavior
