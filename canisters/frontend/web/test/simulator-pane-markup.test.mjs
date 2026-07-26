@@ -85,8 +85,8 @@ test('top navbar exposes Simulator and Domains and no longer exposes Partners', 
   assert.match(indexHtml, /<a href="#simulator" class="nav-item nav-item--simulator" data-panel="simulator">Simulator<\/a>/);
   assert.doesNotMatch(indexHtml, /<a href="#relay-setup" class="nav-item" data-panel="relay-setup">Relay setup<\/a>/);
   assert.match(indexHtml, /<a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains<\/a>/);
-  assert.match(navbarCss, /@media \(max-width: 720px\) \{[\s\S]*\.nav-item--simulator \{[\s\S]*display: none;[\s\S]*\}/);
-  assert.match(navbarCss, /@media \(max-width: 860px\) \{[\s\S]*\.nav-item--domains \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(navbarCss, /@media \(max-width: 860px\) \{[\s\S]*\.nav-item--simulator \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(navbarCss, /@media \(max-width: 720px\) \{[\s\S]*\.nav-item--domains \{[\s\S]*display: none;[\s\S]*\}/);
   assert.doesNotMatch(indexHtml, /data-panel="partners"/i);
   assert.doesNotMatch(indexHtml, />Partners<\/a>/i);
 });
@@ -197,8 +197,10 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.doesNotMatch(orbitJs, /statusSlot: "orbit-disbursement-status"/);
   assert.doesNotMatch(orbitJs, /__JUPITER_ORBIT_DISBURSEMENT_TEXT__/);
   assert.match(indexHtml, /class="orbit-disbursement-status" id="orbit-disbursement-status" hidden aria-live="polite"/);
-  assert.match(orbitCss, /\.metric-rail:not\(\.metric-rail--visible\) ~ \.orbit-disbursement-status \{[\s\S]*display: none;[\s\S]*\}/);
-  assert.match(orbitCss, /\.orbit-disbursement-status \{[\s\S]*top: 22dvw;[\s\S]*left: 6\.5dvw;[\s\S]*width: min\(23dvw, 16rem\);[\s\S]*color: rgba\(255, 255, 255, 0\.56\);[\s\S]*font-size: 11px;[\s\S]*line-height: 1\.35;[\s\S]*font-weight: 400;[\s\S]*\}/);
+  assert.doesNotMatch(orbitCss, /\.metric-rail:not\(\.metric-rail--visible\) ~ \.orbit-disbursement-status/);
+  assert.match(orbitCss, /\.orbit-disbursement-status\[hidden\] \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(orbitCss, /body\.metrics-menu-open \.orbit-disbursement-status:not\(\[hidden\]\) \{[\s\S]*display: block;[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-disbursement-status \{[\s\S]*display: none;[\s\S]*top: 22dvw;[\s\S]*left: 6\.5dvw;[\s\S]*width: min\(23dvw, 16rem\);[\s\S]*color: rgba\(255, 255, 255, 0\.56\);[\s\S]*font-size: 11px;[\s\S]*line-height: 1\.35;[\s\S]*font-weight: 400;[\s\S]*\}/);
   assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*width: min\(8\.7dvw, 7\.35rem\);[\s\S]*\}/);
   assert.match(orbitCss, /\.orbit-disbursement-status::before \{[\s\S]*float: right;[\s\S]*shape-outside: polygon\(150% 0, 100% 100%, 0 100%\);[\s\S]*\}/);
   assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*background:/);
@@ -700,11 +702,14 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
 
 test('Total Output and Total Rewards are pages of Jupiter Stake rather than metric rail buttons', () => {
   const stake = sectionMarkup('metric-stake');
-  const rail = indexHtml.slice(indexHtml.indexOf('<aside class="metric-rail"'), indexHtml.indexOf('</aside>') + '</aside>'.length);
+  const railStart = indexHtml.indexOf('<div class="nav-popover metric-rail" id="metrics-menu"');
+  assert.ok(railStart >= 0, 'missing metrics rail');
+  const rail = indexHtml.slice(railStart, indexHtml.indexOf('</div>', railStart) + '</div>'.length);
 
   assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
   assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
   assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Track Memos/);
+  assert.doesNotMatch(rail, /Create Relay/);
   assert.doesNotMatch(rail, /Declared Canisters/);
   assert.doesNotMatch(rail, /Target Canisters/);
   assert.doesNotMatch(rail, />Commitments<\/span>/);
@@ -721,6 +726,42 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.match(navbarJs, /key === "metric-output"[\s\S]*key: "metric-stake", page: 1/);
   assert.match(navbarJs, /key === "metric-rewards"[\s\S]*key: "metric-stake", page: 2/);
   assert.match(navbarJs, /key === "metric-registered"[\s\S]*key: "metric-commitments", page: 0/);
+});
+
+test('Actions nav button exposes Plan Prepare and Optimize pane links', () => {
+  const actionsStart = indexHtml.indexOf('<div class="nav-popover action-rail"');
+  assert.ok(actionsStart >= 0, 'missing actions rail');
+  const actionsRail = indexHtml.slice(actionsStart, indexHtml.indexOf('</div>', actionsStart) + '</div>'.length);
+
+  assert.match(indexHtml, /id="actions-menu-toggle"[\s\S]*aria-controls="actions-menu"[\s\S]*>Actions<\/button>/);
+  assert.match(indexHtml, /id="metrics-menu-toggle"[\s\S]*aria-controls="metrics-menu"[\s\S]*>Metrics<\/button>/);
+  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>/);
+  assert.match(actionsRail, /href="#how-it-works:2"[^>]*data-panel="how-it-works"[\s\S]*>Prepare<\/span>/);
+  assert.match(actionsRail, /href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>/);
+  assert.match(indexHtml, /<div class="nav-disclosure" data-nav-group="actions">\s*<button[\s\S]*id="actions-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover action-rail" id="actions-menu"[^>]*hidden>/);
+  assert.match(indexHtml, /<div class="nav-disclosure nav-disclosure--end" data-nav-group="metrics">\s*<button[\s\S]*id="metrics-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover metric-rail" id="metrics-menu"[^>]*hidden>/);
+  const navItemRule = navbarCss.match(/\.nav-item \{[^}]*\}/)?.[0] || '';
+  assert.match(navbarCss, /\.nav-disclosure \{[\s\S]*position: relative;[\s\S]*display: inline-flex;[\s\S]*flex: 0 0 auto;[\s\S]*\}/);
+  assert.doesNotMatch(navItemRule, /white-space: nowrap/);
+  assert.match(navbarCss, /\.navbar-inner > \.nav-links > \.nav-item,[\s\S]*\.nav-disclosure-toggle \{[\s\S]*white-space: nowrap;[\s\S]*\}/);
+  assert.match(metricsCss, /\.nav-popover \{[\s\S]*position: absolute;[\s\S]*top: calc\(100% \+ 8px\);[\s\S]*left: 0;[\s\S]*width: max-content;[\s\S]*min-width: 100%;[\s\S]*\}/);
+  assert.match(metricsCss, /\.nav-disclosure--end \.nav-popover \{[\s\S]*left: auto;[\s\S]*right: 0;[\s\S]*\}/);
+  assert.match(metricsCss, /\.nav-popover\[hidden\] \{[\s\S]*display: none;[\s\S]*\}/);
+  assert.match(metricsCss, /\.action-rail \{[\s\S]*text-align: left;[\s\S]*\}/);
+  assert.match(metricsCss, /\.action-rail-list \{[\s\S]*align-items: flex-start;[\s\S]*\}/);
+  assert.match(metricsCss, /\.action-rail \.metric-rail-link \{[\s\S]*justify-content: flex-start;[\s\S]*text-align: left;[\s\S]*white-space: nowrap;[\s\S]*\}/);
+  assert.match(metricsCss, /\.metric-rail-subtitle \{[\s\S]*max-width: none;[\s\S]*white-space: nowrap;[\s\S]*\}/);
+  assert.match(metricsCss, /@media \(max-width: 720px\) \{[\s\S]*\.metric-rail-link \{[\s\S]*white-space: normal;[\s\S]*\}/);
+  assert.match(metricsCss, /@media \(max-width: 720px\) \{[\s\S]*\.metric-rail-subtitle \{[\s\S]*max-width: min\(78vw, 340px\);[\s\S]*white-space: normal;[\s\S]*overflow-wrap: anywhere;[\s\S]*\}/);
+  assert.match(navbarJs, /const CLOSED_NAV_STATE = Object\.freeze/);
+  assert.match(navbarJs, /let navState = \{ \.\.\.CLOSED_NAV_STATE \};/);
+  assert.match(navbarJs, /function renderNavState/);
+  assert.match(navbarJs, /const actionsToggle = document\.getElementById\("actions-menu-toggle"\);/);
+  assert.match(navbarJs, /function groupForPanelRoute\(key, page = 0, trigger = null\)/);
+  assert.match(navbarJs, /\(key === "how-it-works" && page === 2\)/);
+  assert.match(navbarJs, /document\.body\.classList\.toggle\("metrics-menu-open", metricsDisclosureVisible\);/);
+  assert.match(navbarJs, /if \(navState\.openPanel\) clearPanelHash\(\);[\s\S]*openMenu: group/);
+  assert.doesNotMatch(navbarJs, /positionMenuRails|getBoundingClientRect|let actionsMenuOpen|let metricsMenuOpen|activePanelKey|metric-rail--visible/);
 });
 
 test('Patron Commitments table omits redundant category column', () => {
@@ -807,31 +848,31 @@ test('simulator displays T-cycle values with four decimal places and uses weekly
 });
 
 test('metrics nav button closes an open pane before showing the metrics rail', () => {
-  assert.match(navbarJs, /if \(backdrop\.classList\.contains\("is-open"\)\) \{/);
-  assert.match(navbarJs, /metricsMenuOpen = true;[\s\S]*?closePanel\(\);/);
+  assert.match(navbarJs, /navState\.openMenu === "metrics" \|\| navState\.panelOwner === "metrics"/);
+  assert.match(navbarJs, /setClosedState\(\);[\s\S]*return;[\s\S]*setMenuState\("metrics"\);/);
 });
 
 test('navbar brand link closes visible pane state before navigating to intro', () => {
   assert.match(indexHtml, /<a href="\/#intro" class="nav-brand" aria-label="Jupiter Faucet intro">/);
   assert.match(navbarJs, /const brandLink = document\.querySelector\("\.nav-brand"\);/);
   assert.match(navbarJs, /brandLink\?\.addEventListener\("click", \(\) => \{/);
-  assert.match(navbarJs, /metricsMenuOpen = false;[\s\S]*?closePanel\(\{ syncHash: false, restoreFocus: false \}\);/);
+  assert.match(navbarJs, /setClosedState\(\{ syncHash: false, restoreFocus: false \}\);/);
   assert.doesNotMatch(navbarJs, /brandLink\?\.addEventListener\("click", \(evt\) => \{[\s\S]*?evt\.preventDefault\(\);/);
 });
 
 test('pane fragment navigation participates in browser history', () => {
-  assert.match(navbarJs, /const hrefTarget = panelTargetFromHash\(btn\.getAttribute\("href"\)\);/);
+  assert.match(navbarJs, /const hrefTarget = panelTargetFromHash\(trigger\.getAttribute\("href"\)\);/);
   assert.match(navbarJs, /const page = hrefTarget\.key === key \? hrefTarget\.page : 0;/);
   assert.match(navbarJs, /const nextHash = panelHashFor\(key, page\);/);
   assert.match(navbarJs, /history\.pushState\(null, "", nextHash\);/);
-  assert.match(navbarJs, /handleTriggerClick\(btn, page\);/);
+  assert.match(navbarJs, /setPanelState\(key, page, owner\);/);
   assert.match(navbarJs, /function panelHashFor\(key, pageIndex = 0\)/);
   assert.match(navbarJs, /return pageIndex > 0 \? `#\$\{key\}:\$\{pageIndex\}` : `#\$\{key\}`;/);
   assert.match(navbarJs, /document\.dispatchEvent\(new CustomEvent\("navpanel:pagechange"/);
   assert.match(navbarJs, /detail: \{[\s\S]*key: sectionEl\.getAttribute\("data-panel"\),[\s\S]*page: clamped/);
   assert.match(navbarJs, /window\.addEventListener\("popstate", \(\) => applyHash\(window\.location\.hash\)\);/);
-  assert.match(navbarJs, /if \(!key\) \{[\s\S]*closePanel\(\{ syncHash: false, restoreFocus: false \}\);/);
-  assert.match(navbarJs, /function closePanel\(\{ syncHash = true, restoreFocus = true \} = \{\}\)/);
+  assert.match(navbarJs, /if \(!key\) \{[\s\S]*navState = \{ \.\.\.CLOSED_NAV_STATE \};/);
+  assert.match(navbarJs, /function setClosedState\(\{ syncHash = true, restoreFocus = true \} = \{\}\)/);
   assert.match(navbarJs, /if \(syncHash\) \{[\s\S]*clearPanelHash\(\);[\s\S]*\}/);
   assert.doesNotMatch(navbarJs, /history\.replaceState\(null, "", `#\$\{key\}`\);/);
 });
@@ -851,8 +892,11 @@ test('pane arrow-key guard covers plaintext-only contenteditable fields', () => 
 });
 
 test('pane focus does not strip deep-link query parameters', () => {
-  assert.match(navbarJs, /backdrop\.addEventListener\("focusin", \(evt\) => \{[\s\S]*activatePage\(sectionEl, page\);[\s\S]*\}\);/);
-  assert.doesNotMatch(navbarJs, /backdrop\.addEventListener\("focusin", \(evt\) => \{[\s\S]*activatePage\(sectionEl, page, \{ syncHash: true \}\);[\s\S]*\}\);/);
+  const focusStart = navbarJs.indexOf('backdrop.addEventListener("focusin"');
+  assert.ok(focusStart >= 0, 'missing focusin listener');
+  const focusBlock = navbarJs.slice(focusStart, navbarJs.indexOf('function handlePanelArrowKeydown', focusStart));
+  assert.match(focusBlock, /navState\.panelPage = page;[\s\S]*renderNavState\(\);/);
+  assert.doesNotMatch(focusBlock, /syncPanelHash: true/);
 });
 
 test('canister tracker defaults to last month history', () => {

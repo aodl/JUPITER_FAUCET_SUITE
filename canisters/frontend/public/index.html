@@ -77,36 +77,56 @@
         <a href="#domains" class="nav-item nav-item--domains" data-panel="domains">Domains</a>
       </div>
       <div class="nav-actions">
-        <button
-          class="nav-item nav-item--metrics-toggle"
-          id="metrics-menu-toggle"
-          type="button"
-          aria-expanded="false"
-          aria-controls="landing-live-summary"
-        >Metrics</button>
+        <div class="nav-disclosure" data-nav-group="actions">
+          <button
+            class="nav-item nav-disclosure-toggle"
+            id="actions-menu-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="actions-menu"
+          >Actions</button>
+          <div class="nav-popover action-rail" id="actions-menu" aria-label="Actions menu" hidden>
+            <div class="metric-rail-list action-rail-list">
+              <a href="#simulator" class="metric-rail-link metric-rail-link--action nav-item" data-panel="simulator">
+                <span class="metric-rail-link-label">Plan</span>
+              </a>
+              <a href="#how-it-works:2" class="metric-rail-link metric-rail-link--action nav-item" data-panel="how-it-works">
+                <span class="metric-rail-link-label">Prepare</span>
+              </a>
+              <a href="#relay-setup" class="metric-rail-link metric-rail-link--action nav-item" data-panel="relay-setup">
+                <span class="metric-rail-link-label">Optimize</span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="nav-disclosure nav-disclosure--end" data-nav-group="metrics">
+          <button
+            class="nav-item nav-disclosure-toggle"
+            id="metrics-menu-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="metrics-menu"
+          >Metrics</button>
+          <div class="nav-popover metric-rail" id="metrics-menu" aria-label="Live metrics summary" hidden>
+            <div class="metric-rail-list">
+              <p class="metric-rail-subtitle" id="landing-next-run">Loading next historian run…</p>
+              <a href="#metric-stake" class="metric-rail-link nav-item" data-panel="metric-stake">
+                <span class="metric-rail-link-label">Jupiter Stake</span>
+                <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
+              </a>
+              <a href="#metric-commitments" class="metric-rail-link nav-item" data-panel="metric-commitments">
+                <span class="metric-rail-link-label">Patron Commitments</span>
+                <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">—</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
+              </a>
+              <a href="#metric-tracker" class="metric-rail-link metric-rail-link--action nav-item" data-panel="metric-tracker">
+                <span class="metric-rail-link-label">Track Memos</span>
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
     </nav>
   </header>
-
-  <aside class="metric-rail" id="landing-live-summary" aria-label="Live metrics summary">
-    <div class="metric-rail-list">
-      <p class="metric-rail-subtitle" id="landing-next-run">Loading next historian run…</p>
-      <a href="#metric-stake" class="metric-rail-link nav-item" data-panel="metric-stake">
-        <span class="metric-rail-link-label">Jupiter Stake</span>
-        <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
-      </a>
-      <a href="#metric-commitments" class="metric-rail-link nav-item" data-panel="metric-commitments">
-        <span class="metric-rail-link-label">Patron Commitments</span>
-        <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">—</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
-      </a>
-      <a href="#metric-tracker" class="metric-rail-link metric-rail-link--action nav-item" data-panel="metric-tracker">
-        <span class="metric-rail-link-label">Track Memos</span>
-      </a>
-      <a href="#relay-setup" class="metric-rail-link metric-rail-link--action nav-item" data-panel="relay-setup">
-        <span class="metric-rail-link-label">Create Relay</span>
-      </a>
-    </div>
-  </aside>
 
   <!-- Info pane opened by nav buttons -->
   <div class="dashboard-alert dashboard-alert--error" id="historian-fault-banner" hidden role="alert"></div>

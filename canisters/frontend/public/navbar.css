@@ -71,6 +71,12 @@ button {
   gap: 16px;
 }
 
+.nav-disclosure {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
 .nav-item {
   background: transparent;
   border: 1px solid transparent;
@@ -87,6 +93,11 @@ button {
     background-color 160ms ease,
     color 160ms ease,
     transform 120ms ease;
+}
+
+.navbar-inner > .nav-links > .nav-item,
+.nav-disclosure-toggle {
+  white-space: nowrap;
 }
 
 .nav-item:hover {
@@ -255,7 +266,7 @@ button {
 /* Small screens tweaks */
 
 @media (max-width: 860px) {
-  .nav-item--domains {
+  .nav-item--simulator {
     display: none;
   }
 }
@@ -265,12 +276,12 @@ button {
     padding: 12px 20px;
   }
 
-  .nav-item--simulator {
+  .nav-item--domains {
     display: none;
   }
 
   .nav-links {
-    gap: 10px;
+    gap: 6px;
   }
 
   .nav-logo {
@@ -280,12 +291,12 @@ button {
   }
 
   .nav-actions {
-    gap: 10px;
+    gap: 6px;
   }
 
   .nav-item {
     font-size: 10px;
-    padding: 4px 10px;
+    padding: 4px 7px;
   }
 
   .nav-panel {

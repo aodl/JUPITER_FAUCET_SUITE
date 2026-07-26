@@ -1,22 +1,32 @@
 
-.metric-rail {
-  position: fixed;
-  top: 0;
-  right: 40px;
+.nav-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
   z-index: 19500;
-  width: auto;
+  width: max-content;
+  min-width: 100%;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
   display: block;
-  text-align: right;
-  opacity: 0;
-  transform: translateY(-12px);
-  pointer-events: none;
-  transition: opacity 220ms ease-out, transform 220ms ease-out;
+  opacity: 1;
 }
 
-.metric-rail.metric-rail--visible {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
+.nav-disclosure--end .nav-popover {
+  left: auto;
+  right: 0;
+}
+
+.nav-popover[hidden] {
+  display: none;
+}
+
+.metric-rail {
+  text-align: right;
+}
+
+.action-rail {
+  text-align: left;
 }
 
 .metric-rail-list {
@@ -24,8 +34,12 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
-  padding-top: 58px;
+  padding-top: 10px;
   box-sizing: border-box;
+}
+
+.action-rail-list {
+  align-items: flex-start;
 }
 
 .metric-rail-link {
@@ -34,19 +48,26 @@
   justify-content: flex-end;
   gap: 10px;
   max-width: min(42vw, 520px);
+  min-width: 0;
   text-align: right;
-  white-space: nowrap;
   color: #fff;
   text-decoration: none;
 }
 
+.action-rail .metric-rail-link {
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+}
+
 .metric-rail-subtitle {
-  max-width: min(42vw, 520px);
+  max-width: none;
   margin: 0 12px 4px 0;
   color: rgba(255, 255, 255, 0.56);
   font-size: 11px;
   line-height: 1.35;
   text-align: right;
+  white-space: nowrap;
 }
 
 .metric-rail-link.nav-item {
@@ -55,11 +76,13 @@
 
 .metric-rail-link-label {
   display: inline;
+  min-width: 0;
   font-size: 14px;
   line-height: 1.15;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.92;
+  overflow-wrap: anywhere;
 }
 
 .metric-rail-link-value {
@@ -67,11 +90,13 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
   font-size: 20px;
   line-height: 1.1;
   letter-spacing: 0.02em;
   font-weight: 700;
   min-height: 24px;
+  overflow-wrap: anywhere;
 }
 
 .metric-rail-note {
@@ -150,11 +175,6 @@
 
 
 @media (max-width: 600px) {
-  .metric-rail {
-    top: 0;
-    right: 20px;
-  }
-
   .dashboard-alert {
     top: 70px;
     left: 12px;
@@ -166,7 +186,6 @@
 
   .metric-rail-list {
     gap: 0;
-    padding-top: 52px;
   }
 
   .metric-rail-link.nav-item {
@@ -176,11 +195,11 @@
   .metric-rail-link {
     align-items: center;
     gap: 8px;
-    max-width: min(56vw, 340px);
+    max-width: min(78vw, 340px);
   }
 
   .metric-rail-subtitle {
-    max-width: min(56vw, 340px);
+    max-width: min(78vw, 340px);
     margin-bottom: 6px;
     font-size: 11px;
   }
@@ -1192,11 +1211,6 @@
 }
 
 @media (max-width: 900px) {
-  .metric-rail {
-    top: 0;
-    right: 20px;
-  }
-
   .metric-rail-link {
     max-width: min(62vw, 420px);
   }
@@ -1211,14 +1225,8 @@
 }
 
 @media (max-width: 720px) {
-  .metric-rail {
-    right: 12px;
-    top: 0;
-  }
-
   .metric-rail-list {
     gap: 0;
-    padding-top: 48px;
   }
 
   .metric-rail-link {
@@ -1227,7 +1235,9 @@
   }
 
   .metric-rail-subtitle {
-    max-width: min(78vw, 360px);
+    max-width: min(78vw, 340px);
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .nav-panel {

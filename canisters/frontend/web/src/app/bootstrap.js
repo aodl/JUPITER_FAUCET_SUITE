@@ -492,6 +492,6 @@ if (window.location.hash === '#source' || document.querySelector('.nav-panel-sec
   void sourcePaneController.ensureLoaded();
 }
 
-if (document.getElementById('landing-live-summary')) {
+if (document.getElementById('metrics-menu')) {
   initLandingPage();
 }

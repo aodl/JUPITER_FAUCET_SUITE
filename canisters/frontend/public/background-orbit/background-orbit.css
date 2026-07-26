@@ -107,12 +107,9 @@
   display: none;
 }
 
-.metric-rail:not(.metric-rail--visible) ~ .orbit-disbursement-status {
-  display: none;
-}
-
 .orbit-disbursement-status {
   position: absolute;
+  display: none;
   top: 22dvw;
   left: 6.5dvw;
   z-index: 12100;
@@ -123,6 +120,10 @@
   font-weight: 400;
   text-wrap: pretty;
   pointer-events: auto;
+}
+
+body.metrics-menu-open .orbit-disbursement-status:not([hidden]) {
+  display: block;
 }
 
 .orbit-disbursement-status::before {

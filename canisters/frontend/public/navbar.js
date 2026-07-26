@@ -1,16 +1,21 @@
 // navbar.js
 // - Fades navbar in when scrolling up or near the top
-// - Fades out when scrolling down
 // - Clicking nav items opens panel sections
-// - Each panel section can have 3 "pages" switched by dot buttons
-// - Hash #about / #how-it-works auto-opens that section
-// - Navbar stays visible whenever a pane is open
-// - Swipe gestures to navigate between pages in touch devices
+// - Each panel section can have pages switched by dot buttons
+// - Hash routes open content panels, while transient dropdowns do not alter the hash
+// - Navbar stays visible whenever a menu or pane is open
+// - Swipe gestures navigate between pages on touch devices
 
 (function () {
   const VISIBILITY_SCROLL_THRESHOLD = 10; // px from top
   const SCROLL_DELTA_TOLERANCE = 4; // px before we consider it real movement
   const SWIPE_THRESHOLD = 50; // Minimum distance (in pixels) for a valid swipe
+  const CLOSED_NAV_STATE = Object.freeze({
+    openMenu: null,
+    openPanel: null,
+    panelOwner: null,
+    panelPage: 0,
+  });
 
   let lastScrollY = window.scrollY || 0;
 
@@ -18,9 +23,11 @@
     const navbar = document.getElementById("navbar");
     const brandLink = document.querySelector(".nav-brand");
     const panelTriggers = Array.from(document.querySelectorAll("a[data-panel]"));
+    const actionsToggle = document.getElementById("actions-menu-toggle");
     const metricsToggle = document.getElementById("metrics-menu-toggle");
+    const actionsMenu = document.getElementById("actions-menu");
+    const metricsMenu = document.getElementById("metrics-menu");
     const backdrop = document.getElementById("nav-panel-backdrop");
-    const metricRail = document.getElementById("landing-live-summary");
     const closeBtn = document.querySelector(".nav-panel-close");
     const sections = Array.from(document.querySelectorAll(".nav-panel-section"));
 
@@ -29,23 +36,110 @@
     }
 
     let lastTriggerBtn = null;
-    let activePanelKey = "";
-    let metricsMenuOpen = false;
     let pointerDownOnBackdrop = false;
+    let navState = { ...CLOSED_NAV_STATE };
+    let lastAppliedHash = "";
+    let renderedPanelKey = null;
+    let renderedPanelPage = null;
 
     function isMetricPanelKey(key) {
       return /^metric-/.test(key || "");
     }
 
-    function syncMetricsUi() {
-      const panelOpen = backdrop.classList.contains("is-open");
-      const metricPanelOpen = panelOpen && isMetricPanelKey(activePanelKey);
-      const shouldShowRail = navbar.classList.contains("navbar--visible") && metricsMenuOpen && !panelOpen;
-      metricRail?.classList.toggle("metric-rail--visible", shouldShowRail);
-      if (metricsToggle) {
-        metricsToggle.classList.toggle("nav-item--active", metricsMenuOpen || metricPanelOpen);
-        metricsToggle.setAttribute("aria-expanded", shouldShowRail ? "true" : "false");
+    function groupForPanelRoute(key, page = 0, trigger = null) {
+      const disclosure = trigger?.closest?.("[data-nav-group]");
+      const triggerGroup = disclosure?.getAttribute?.("data-nav-group");
+      if (triggerGroup === "actions" || triggerGroup === "metrics") return triggerGroup;
+      if (isMetricPanelKey(key)) return "metrics";
+      if (
+        key === "simulator" ||
+        key === "relay-setup" ||
+        (key === "how-it-works" && page === 2)
+      ) {
+        return "actions";
       }
+      return null;
+    }
+
+    function activeSection() {
+      return sections.find((section) => section.getAttribute("data-panel") === navState.openPanel);
+    }
+
+    function panelHashFor(key, pageIndex = 0) {
+      return pageIndex > 0 ? `#${key}:${pageIndex}` : `#${key}`;
+    }
+
+    function setMenuHidden(menu, hidden) {
+      if (!menu) return;
+      menu.hidden = hidden;
+    }
+
+    function hasHiddenAncestor(node) {
+      for (let current = node; current; current = current.parentElement) {
+        if (current.hidden) return true;
+      }
+      return false;
+    }
+
+    function canRestoreFocus(node) {
+      if (!node || typeof node.focus !== "function") return false;
+      if (node.isConnected === false) return false;
+      if (hasHiddenAncestor(node)) return false;
+      return true;
+    }
+
+    function focusReturnTarget(trigger) {
+      const group = trigger
+        ?.closest?.("[data-nav-group]")
+        ?.getAttribute?.("data-nav-group");
+      if (group === "actions") return actionsToggle;
+      if (group === "metrics") return metricsToggle;
+      return trigger;
+    }
+
+    function clearPanelPages(section) {
+      section.querySelectorAll(".nav-panel-page").forEach((page) => {
+        page.classList.remove("is-active");
+      });
+      section.querySelectorAll(".nav-panel-dot").forEach((dot) => {
+        dot.classList.remove("is-active");
+        dot.setAttribute("aria-selected", "false");
+      });
+    }
+
+    function activatePage(sectionEl, pageIndex, { syncHash = false, emitPageChange = true } = {}) {
+      if (!sectionEl) return 0;
+
+      const pages = Array.from(sectionEl.querySelectorAll(".nav-panel-page"));
+      const dots = Array.from(sectionEl.querySelectorAll(".nav-panel-dot"));
+      if (pages.length === 0 || dots.length === 0) return 0;
+
+      const clamped = Math.max(0, Math.min(pageIndex, pages.length - 1));
+      pages.forEach((page, index) => page.classList.toggle("is-active", index === clamped));
+      dots.forEach((dot, index) => {
+        const isActive = index === clamped;
+        dot.classList.toggle("is-active", isActive);
+        dot.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+
+      if (syncHash) {
+        const key = sectionEl.getAttribute("data-panel");
+        const nextHash = key ? panelHashFor(key, clamped) : "";
+        if (nextHash && window.location.hash !== nextHash) {
+          history.pushState(null, "", nextHash);
+          lastAppliedHash = nextHash;
+        }
+      }
+
+      if (emitPageChange) {
+        document.dispatchEvent(new CustomEvent("navpanel:pagechange", {
+          detail: {
+            key: sectionEl.getAttribute("data-panel"),
+            page: clamped,
+          },
+        }));
+      }
+      return clamped;
     }
 
     function focusControlsForSection(sectionEl) {
@@ -59,15 +153,138 @@
       });
     }
 
+    function renderNavState({ focusPanel = false, syncPanelHash = false } = {}) {
+      const panelOpen = Boolean(navState.openPanel);
+      const actionsDisclosureVisible = navState.openMenu === "actions";
+      const metricsDisclosureVisible = navState.openMenu === "metrics";
+      const openingPanelKey = panelOpen && navState.openPanel !== renderedPanelKey
+        ? navState.openPanel
+        : null;
+      const panelRouteChanged = panelOpen &&
+        (navState.openPanel !== renderedPanelKey || navState.panelPage !== renderedPanelPage);
+      const panelOwner = panelOpen
+        ? groupForPanelRoute(navState.openPanel, navState.panelPage)
+        : navState.panelOwner;
+
+      setMenuHidden(actionsMenu, !actionsDisclosureVisible);
+      setMenuHidden(metricsMenu, !metricsDisclosureVisible);
+
+      actionsToggle?.setAttribute("aria-expanded", actionsDisclosureVisible ? "true" : "false");
+      metricsToggle?.setAttribute("aria-expanded", metricsDisclosureVisible ? "true" : "false");
+      actionsToggle?.classList.toggle(
+        "nav-item--active",
+        actionsDisclosureVisible || panelOwner === "actions"
+      );
+      metricsToggle?.classList.toggle(
+        "nav-item--active",
+        metricsDisclosureVisible || panelOwner === "metrics"
+      );
+
+      panelTriggers.forEach((trigger) => {
+        trigger.classList.toggle(
+          "nav-item--active",
+          Boolean(navState.openPanel) &&
+            trigger.getAttribute("data-panel") === navState.openPanel
+        );
+      });
+
+      sections.forEach((section) => {
+        const isActive = section.getAttribute("data-panel") === navState.openPanel;
+        section.classList.toggle("nav-panel-section--active", isActive);
+        if (!isActive) clearPanelPages(section);
+      });
+
+      backdrop.classList.toggle("is-open", panelOpen);
+      document.body.classList.toggle("nav-panel-open", panelOpen);
+      document.body.classList.toggle("metrics-menu-open", metricsDisclosureVisible);
+      if (actionsDisclosureVisible || metricsDisclosureVisible || panelOpen) {
+        navbar.classList.add("navbar--visible");
+      }
+
+      if (panelOpen) {
+        const sectionEl = activeSection();
+        navState.panelPage = activatePage(sectionEl, navState.panelPage, {
+          syncHash: syncPanelHash,
+          emitPageChange: panelRouteChanged,
+        });
+        navState.panelOwner = groupForPanelRoute(navState.openPanel, navState.panelPage);
+        if (focusPanel) focusControlsForSection(sectionEl);
+        if (openingPanelKey) {
+          document.dispatchEvent(new CustomEvent("navpanel:open", {
+            detail: { key: navState.openPanel },
+          }));
+        }
+        renderedPanelKey = navState.openPanel;
+        renderedPanelPage = navState.panelPage;
+      } else {
+        renderedPanelKey = null;
+        renderedPanelPage = null;
+      }
+    }
+
+    function clearPanelHash() {
+      if (!window.location.hash) return;
+      const cleanUrl = `${window.location.pathname}${window.location.search}`;
+      history.replaceState(null, "", cleanUrl);
+      lastAppliedHash = "";
+    }
+
+    function setClosedState({ syncHash = true, restoreFocus = true } = {}) {
+      const previousOwner = navState.panelOwner ||
+        groupForPanelRoute(navState.openPanel, navState.panelPage);
+      navState = { ...CLOSED_NAV_STATE };
+      if (syncHash) clearPanelHash();
+      renderNavState();
+      updateNavbarVisibility();
+      if (restoreFocus) {
+        requestAnimationFrame(() => {
+          const fallback =
+            previousOwner === "actions"
+              ? actionsToggle
+              : previousOwner === "metrics"
+                ? metricsToggle
+                : closeBtn;
+          const target = canRestoreFocus(lastTriggerBtn) ? lastTriggerBtn : fallback;
+          if (canRestoreFocus(target)) target.focus();
+        });
+      }
+    }
+
+    function setMenuState(group) {
+      if (navState.openPanel) clearPanelHash();
+      navState = {
+        ...CLOSED_NAV_STATE,
+        openMenu: group,
+      };
+      renderNavState();
+    }
+
+    function setPanelState(key, page = 0, owner = null, { syncHash = true, focusPanel = true } = {}) {
+      if (!key) return;
+      navState = {
+        openMenu: null,
+        openPanel: key,
+        panelOwner: owner || groupForPanelRoute(key, page),
+        panelPage: page,
+      };
+      if (syncHash) {
+        const nextHash = panelHashFor(key, page);
+        if (nextHash && window.location.hash !== nextHash) {
+          history.pushState(null, "", nextHash);
+          lastAppliedHash = nextHash;
+        }
+      }
+      renderNavState({ focusPanel });
+    }
+
     function updateNavbarVisibility() {
       const currentY = window.scrollY || 0;
 
       const setVisible = (visible) => {
         navbar.classList.toggle("navbar--visible", visible);
-        syncMetricsUi();
       };
 
-      if (backdrop.classList.contains("is-open")) {
+      if (navState.openMenu || navState.openPanel) {
         setVisible(true);
         lastScrollY = currentY;
         return;
@@ -89,33 +306,8 @@
     if (window.scrollY <= VISIBILITY_SCROLL_THRESHOLD) {
       navbar.classList.add("navbar--visible");
     }
-    syncMetricsUi();
+    renderNavState();
     window.addEventListener("scroll", updateNavbarVisibility, { passive: true });
-
-    function setActiveSection(key) {
-      sections.forEach((section) => {
-        section.classList.toggle(
-          "nav-panel-section--active",
-          section.getAttribute("data-panel") === key
-        );
-      });
-    }
-
-    function setActiveButton(key) {
-      panelTriggers.forEach((btn) => {
-        btn.classList.toggle("nav-item--active", btn.getAttribute("data-panel") === key);
-      });
-    }
-
-    function activePageIndex(sectionEl) {
-      const pages = Array.from(sectionEl?.querySelectorAll?.(".nav-panel-page") || []);
-      const activeIndex = pages.findIndex((page) => page.classList.contains("is-active"));
-      return activeIndex >= 0 ? activeIndex : 0;
-    }
-
-    function panelHashFor(key, pageIndex = 0) {
-      return pageIndex > 0 ? `#${key}:${pageIndex}` : `#${key}`;
-    }
 
     function isTextEditingTarget(target) {
       if (!target?.closest) return false;
@@ -123,37 +315,6 @@
         target.closest("input, textarea, select, [contenteditable]") ||
           target.isContentEditable
       );
-    }
-
-    function activatePage(sectionEl, pageIndex, { syncHash = false } = {}) {
-      if (!sectionEl) return;
-
-      const pages = Array.from(sectionEl.querySelectorAll(".nav-panel-page"));
-      const dots = Array.from(sectionEl.querySelectorAll(".nav-panel-dot"));
-
-      if (pages.length === 0 || dots.length === 0) return;
-
-      const clamped = Math.max(0, Math.min(pageIndex, pages.length - 1));
-
-      pages.forEach((p, i) => p.classList.toggle("is-active", i === clamped));
-      dots.forEach((d, i) => {
-        const isActive = i === clamped;
-        d.classList.toggle("is-active", isActive);
-        d.setAttribute("aria-selected", isActive ? "true" : "false");
-      });
-      if (syncHash) {
-        const key = sectionEl.getAttribute("data-panel");
-        if (key) {
-          const nextHash = panelHashFor(key, clamped);
-          if (window.location.hash !== nextHash) history.pushState(null, "", nextHash);
-        }
-      }
-      document.dispatchEvent(new CustomEvent("navpanel:pagechange", {
-        detail: {
-          key: sectionEl.getAttribute("data-panel"),
-          page: clamped,
-        },
-      }));
     }
 
     backdrop.addEventListener("click", (evt) => {
@@ -165,7 +326,9 @@
         const page = Number(pageLink.getAttribute("data-page-target"));
         if (sectionEl && Number.isFinite(page)) {
           evt.preventDefault();
-          activatePage(sectionEl, page, { syncHash: true });
+          navState.panelPage = page;
+          navState.panelOwner = groupForPanelRoute(navState.openPanel, page);
+          renderNavState({ syncPanelHash: true });
         }
         return;
       }
@@ -177,7 +340,9 @@
       const page = Number(dot.getAttribute("data-page"));
       if (!Number.isFinite(page)) return;
 
-      activatePage(sectionEl, page, { syncHash: true });
+      navState.panelPage = page;
+      navState.panelOwner = groupForPanelRoute(navState.openPanel, page);
+      renderNavState({ syncPanelHash: true });
     });
 
     backdrop.addEventListener("focusin", (evt) => {
@@ -188,11 +353,13 @@
       const page = Number(dot.getAttribute("data-page"));
       if (!Number.isFinite(page)) return;
 
-      activatePage(sectionEl, page);
+      navState.panelPage = page;
+      navState.panelOwner = groupForPanelRoute(navState.openPanel, page);
+      renderNavState();
     });
 
     function handlePanelArrowKeydown(evt) {
-      if (!backdrop.classList.contains("is-open")) return;
+      if (!navState.openPanel) return;
       if (evt.key !== "ArrowLeft" && evt.key !== "ArrowRight") return;
       if (isTextEditingTarget(evt.target) || isTextEditingTarget(document.activeElement)) return;
 
@@ -200,7 +367,6 @@
       const sectionEl =
         focusedDot?.closest?.(".nav-panel-section") ||
         backdrop.querySelector(".nav-panel-section--active");
-
       if (!sectionEl) return;
 
       const dots = Array.from(sectionEl.querySelectorAll(".nav-panel-dot"));
@@ -209,142 +375,18 @@
       const activeIndex = Math.max(
         0,
         dots.findIndex(
-          (d) => d.classList.contains("is-active") || d.getAttribute("aria-selected") === "true"
+          (dot) => dot.classList.contains("is-active") || dot.getAttribute("aria-selected") === "true"
         )
       );
-
       const dir = evt.key === "ArrowRight" ? 1 : -1;
       const nextIndex = (activeIndex + dir + dots.length) % dots.length;
 
-      activatePage(sectionEl, nextIndex, { syncHash: true });
+      navState.panelPage = nextIndex;
+      navState.panelOwner = groupForPanelRoute(navState.openPanel, nextIndex);
+      renderNavState({ syncPanelHash: true });
       dots[nextIndex].focus();
       evt.preventDefault();
     }
-
-    function clearPanelHash() {
-      if (!window.location.hash) return;
-      const cleanUrl = `${window.location.pathname}${window.location.search}`;
-      history.replaceState(null, "", cleanUrl);
-    }
-
-    function openPanel(key) {
-      if (!key) return;
-
-      activePanelKey = key;
-      if (isMetricPanelKey(key)) {
-        metricsMenuOpen = true;
-      }
-      setActiveSection(key);
-      backdrop.classList.add("is-open");
-      document.body.classList.add("nav-panel-open");
-      navbar.classList.add("navbar--visible");
-      syncMetricsUi();
-
-      const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
-      activatePage(sectionEl, activePageIndex(sectionEl));
-      focusControlsForSection(sectionEl);
-      document.dispatchEvent(new CustomEvent("navpanel:open", {
-        detail: { key },
-      }));
-    }
-
-    function closePanel({ syncHash = true, restoreFocus = true } = {}) {
-      backdrop.classList.remove("is-open");
-      document.body.classList.remove("nav-panel-open");
-      activePanelKey = "";
-      panelTriggers.forEach((btn) => btn.classList.remove("nav-item--active"));
-      sections.forEach((section) => {
-        section.classList.remove("nav-panel-section--active");
-        section.querySelectorAll(".nav-panel-page").forEach((p) => p.classList.remove("is-active"));
-        section.querySelectorAll(".nav-panel-dot").forEach((d) => {
-          d.classList.remove("is-active");
-          d.setAttribute("aria-selected", "false");
-        });
-      });
-
-      if (syncHash) {
-        clearPanelHash();
-      }
-      updateNavbarVisibility();
-      syncMetricsUi();
-
-      if (restoreFocus) {
-        requestAnimationFrame(() => {
-          lastTriggerBtn?.focus?.();
-        });
-      }
-    }
-
-    function handleTriggerClick(btn, pageIndex = 0) {
-      lastTriggerBtn = btn;
-      const key = btn.getAttribute("data-panel");
-
-      if (btn.classList.contains("nav-item--active") && backdrop.classList.contains("is-open")) {
-        closePanel();
-        return;
-      }
-
-      if (!isMetricPanelKey(key)) {
-        metricsMenuOpen = false;
-      }
-      setActiveButton(key);
-      openPanel(key);
-      const sectionEl = sections.find((s) => s.getAttribute("data-panel") === key);
-      activatePage(sectionEl, pageIndex);
-    }
-
-    panelTriggers.forEach((btn) => {
-      btn.addEventListener("click", (evt) => {
-        evt.preventDefault();
-        const key = btn.getAttribute("data-panel");
-        const hrefTarget = panelTargetFromHash(btn.getAttribute("href"));
-        const page = hrefTarget.key === key ? hrefTarget.page : 0;
-        const nextHash = panelHashFor(key, page);
-        if (key && window.location.hash !== nextHash) {
-          history.pushState(null, "", nextHash);
-        }
-        handleTriggerClick(btn, page);
-      });
-    });
-
-    brandLink?.addEventListener("click", () => {
-      metricsMenuOpen = false;
-      if (backdrop.classList.contains("is-open")) {
-        closePanel({ syncHash: false, restoreFocus: false });
-        return;
-      }
-      syncMetricsUi();
-    });
-
-    metricsToggle?.addEventListener("click", (evt) => {
-      evt.preventDefault();
-      lastTriggerBtn = metricsToggle;
-      if (backdrop.classList.contains("is-open")) {
-        metricsMenuOpen = true;
-        closePanel();
-        syncMetricsUi();
-        return;
-      }
-      metricsMenuOpen = !metricsMenuOpen;
-      syncMetricsUi();
-    });
-
-    closeBtn.addEventListener("click", closePanel);
-
-    backdrop.addEventListener("pointerdown", (evt) => {
-      pointerDownOnBackdrop = evt.target === backdrop;
-    });
-
-    backdrop.addEventListener("click", (evt) => {
-      const shouldClose = evt.target === backdrop && pointerDownOnBackdrop;
-      pointerDownOnBackdrop = false;
-      if (shouldClose) closePanel();
-    });
-
-    document.addEventListener("keydown", (evt) => {
-      if (evt.key === "Escape" && backdrop.classList.contains("is-open")) closePanel();
-    });
-    document.addEventListener("keydown", handlePanelArrowKeydown);
 
     function panelTargetFromHash(hash) {
       const fragment = hash ? hash.replace(/^#/, "") : "";
@@ -361,26 +403,99 @@
     }
 
     function applyHash(hash) {
+      if (hash === lastAppliedHash) return;
+      lastAppliedHash = hash || "";
       const { key, page } = panelTargetFromHash(hash);
       if (!key) {
-        if (backdrop.classList.contains("is-open")) {
-          closePanel({ syncHash: false, restoreFocus: false });
-        }
+        navState = { ...CLOSED_NAV_STATE };
+        renderNavState();
+        updateNavbarVisibility();
         return;
       }
 
-      const matchingTrigger = panelTriggers.find((btn) => btn.getAttribute("data-panel") === key);
       const matchingSection = sections.find((section) => section.getAttribute("data-panel") === key);
-      if (!matchingTrigger || !matchingSection) return;
+      if (!matchingSection) return;
 
-      lastTriggerBtn = isMetricPanelKey(key) ? metricsToggle || matchingTrigger : matchingTrigger;
-      if (isMetricPanelKey(key)) {
-        metricsMenuOpen = true;
-      }
-      setActiveButton(key);
-      openPanel(key);
-      activatePage(matchingSection, page);
+      const owner = groupForPanelRoute(key, page);
+      lastTriggerBtn =
+        owner === "metrics"
+          ? metricsToggle
+          : owner === "actions"
+            ? actionsToggle
+            : panelTriggers.find((trigger) => trigger.getAttribute("data-panel") === key);
+      setPanelState(key, page, owner, { syncHash: false, focusPanel: false });
     }
+
+    panelTriggers.forEach((trigger) => {
+      trigger.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        const key = trigger.getAttribute("data-panel");
+        const hrefTarget = panelTargetFromHash(trigger.getAttribute("href"));
+        const page = hrefTarget.key === key ? hrefTarget.page : 0;
+        const owner = groupForPanelRoute(key, page, trigger);
+        const isDirectNavbarTrigger = Boolean(trigger.closest("#navbar")) &&
+          !trigger.closest(".nav-popover");
+        const samePanel = navState.openPanel === key && navState.panelPage === page;
+        lastTriggerBtn = focusReturnTarget(trigger);
+        if (isDirectNavbarTrigger && samePanel) {
+          setClosedState();
+          return;
+        }
+        setPanelState(key, page, owner);
+      });
+    });
+
+    actionsToggle?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      lastTriggerBtn = actionsToggle;
+      if (navState.openMenu === "actions" || navState.panelOwner === "actions") {
+        setClosedState();
+        return;
+      }
+      setMenuState("actions");
+    });
+
+    metricsToggle?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      lastTriggerBtn = metricsToggle;
+      if (navState.openMenu === "metrics" || navState.panelOwner === "metrics") {
+        setClosedState();
+        return;
+      }
+      setMenuState("metrics");
+    });
+
+    brandLink?.addEventListener("click", () => {
+      setClosedState({ syncHash: false, restoreFocus: false });
+    });
+
+    closeBtn.addEventListener("click", () => setClosedState());
+
+    backdrop.addEventListener("pointerdown", (evt) => {
+      pointerDownOnBackdrop = evt.target === backdrop;
+    });
+
+    backdrop.addEventListener("click", (evt) => {
+      const shouldClose = evt.target === backdrop && pointerDownOnBackdrop;
+      pointerDownOnBackdrop = false;
+      if (shouldClose) setClosedState();
+    });
+
+    document.addEventListener("click", (evt) => {
+      if (!navState.openMenu) return;
+      const openDisclosure = document.querySelector(
+        `.nav-disclosure[data-nav-group="${navState.openMenu}"]`
+      );
+      if (openDisclosure?.contains?.(evt.target)) return;
+      setClosedState({ syncHash: false, restoreFocus: false });
+    });
+
+    document.addEventListener("keydown", (evt) => {
+      if (evt.key === "Escape" && (navState.openMenu || navState.openPanel)) {
+        setClosedState();
+      }
+    });
+    document.addEventListener("keydown", handlePanelArrowKeydown);
 
     applyHash(window.location.hash);
     window.addEventListener("hashchange", () => applyHash(window.location.hash));
@@ -390,31 +505,32 @@
     let touchEndX = 0;
 
     function handleSwipe() {
-      const activeSection = backdrop.querySelector(".nav-panel-section--active");
-      if (!activeSection) return;
+      const sectionEl = backdrop.querySelector(".nav-panel-section--active");
+      if (!sectionEl) return;
 
-      const dots = Array.from(activeSection.querySelectorAll(".nav-panel-dot"));
+      const dots = Array.from(sectionEl.querySelectorAll(".nav-panel-dot"));
       const activeDot = dots.find((dot) => dot.classList.contains("is-active"));
       if (!activeDot) return;
 
       const activeIndex = dots.indexOf(activeDot);
-
       if (touchStartX - touchEndX > SWIPE_THRESHOLD) {
-        const nextIndex = (activeIndex + 1) % dots.length;
-        activatePage(activeSection, nextIndex, { syncHash: true });
+        navState.panelPage = (activeIndex + 1) % dots.length;
+        navState.panelOwner = groupForPanelRoute(navState.openPanel, navState.panelPage);
+        renderNavState({ syncPanelHash: true });
       } else if (touchEndX - touchStartX > SWIPE_THRESHOLD) {
-        const prevIndex = (activeIndex - 1 + dots.length) % dots.length;
-        activatePage(activeSection, prevIndex, { syncHash: true });
+        navState.panelPage = (activeIndex - 1 + dots.length) % dots.length;
+        navState.panelOwner = groupForPanelRoute(navState.openPanel, navState.panelPage);
+        renderNavState({ syncPanelHash: true });
       }
     }
 
-    backdrop.addEventListener("touchstart", (e) => {
-      const touch = e.touches[0];
+    backdrop.addEventListener("touchstart", (evt) => {
+      const touch = evt.touches[0];
       touchStartX = touch.pageX;
     });
 
-    backdrop.addEventListener("touchend", (e) => {
-      const touch = e.changedTouches[0];
+    backdrop.addEventListener("touchend", (evt) => {
+      const touch = evt.changedTouches[0];
       touchEndX = touch.pageX;
       handleSwipe();
     });
