@@ -13,6 +13,7 @@ import {
   sanitizeNeuronIdText,
   shouldApplyAdvancedMemoUrlTargetValue,
 } from '../src/advanced-memo-builder.js';
+import { currentPageUrlForFragment } from '../src/app/advanced-memo-controller.js';
 
 const COMPACT_CANISTER = '22255zqaaaaaaasqf6uqcai';
 const CANONICAL_CANISTER = '22255-zqaaa-aaaas-qf6uq-cai';
@@ -22,6 +23,20 @@ const MEMO_POLICY_CASES = JSON.parse(readFileSync(
   new URL('../../../../crates/memo-policy/fixtures/memo-policy-cases.json', import.meta.url),
   'utf8',
 ));
+
+test('advanced memo tip copy URL resolves fragments against the current page URL', () => {
+  assert.equal(
+    currentPageUrlForFragment(
+      '#how-it-works:2?canister={protocol canister ID}&title={custom title}&label={custom label}',
+      'https://example.com/current/path?source=nav#about',
+    ),
+    'https://example.com/current/path?source=nav#how-it-works:2?canister={protocol canister ID}&title={custom title}&label={custom label}',
+  );
+  assert.equal(
+    currentPageUrlForFragment('#how-it-works:2', 'https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/#intro'),
+    'https://gvey7-gyaaa-aaaar-qb4fq-cai.icp0.io/#how-it-works:2',
+  );
+});
 
 test('advanced memo builder matches canonical memo policy fixture corpus', () => {
   for (const fixture of MEMO_POLICY_CASES) {

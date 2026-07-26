@@ -547,6 +547,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(mainJs, /lastAppliedPrefillFragment = currentFragment/);
   assert.match(mainJs, /tipUrlCopyButton\?\.addEventListener\('click'/);
   assert.match(mainJs, /copyTextToClipboard\(value\)/);
+  assert.match(mainJs, /const url = currentPageUrlForFragment\(value\);/);
+  assert.match(mainJs, /copyTextToClipboard\(url\)/);
   assert.match(mainJs, /window\.addEventListener\('popstate', render\)/);
   assert.match(mainJs, /document\.addEventListener\('navpanel:open', render\)/);
   assert.match(mainJs, /document\.addEventListener\('navpanel:pagechange', render\)/);

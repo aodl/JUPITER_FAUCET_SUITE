@@ -10,6 +10,24 @@ import {
 const PREFILL_CANISTER_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a protocol canister that facilitates a specialised top-up flow.';
 const PREFILL_NEURON_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a public protocol neuron.';
 
+export function currentPageUrlForFragment(value, currentHref = window.location.href) {
+  if (!value) return '';
+  if (String(value).startsWith('#')) {
+    try {
+      const base = new URL(currentHref);
+      base.hash = '';
+      return `${base.href}${value}`;
+    } catch {
+      return value;
+    }
+  }
+  try {
+    return new URL(value, currentHref).href;
+  } catch {
+    return value;
+  }
+}
+
 export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   const builder = document.getElementById('advanced-memo-builder');
   if (!builder || builder.dataset.bound === 'true') return;
@@ -244,9 +262,10 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   tipUrlCopyButton?.addEventListener('click', async () => {
     const value = tipUrlText?.getAttribute('data-copy-value') || tipUrlText?.textContent || '';
     if (!value || typeof copyTextToClipboard !== 'function') return;
+    const url = currentPageUrlForFragment(value);
     const defaultText = tipUrlCopyButton.textContent || 'Copy URL';
     try {
-      await copyTextToClipboard(value);
+      await copyTextToClipboard(url);
       tipUrlCopyButton.textContent = 'Copied';
       window.setTimeout(() => {
         tipUrlCopyButton.textContent = defaultText;
