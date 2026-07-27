@@ -191,7 +191,7 @@ test('relay setup payment markup focuses on useful account identifiers', () => {
   assert.match(html, /id="relay-setup-account-identifier-link"/);
   assert.match(html, /placeholder="Canister ID"/);
   assert.match(html, /id="relay-setup-warning" hidden/);
-  assert.match(html, /Read more about <a href="\/#how-it-works:2"[^>]*>what a relay canister is and how it works<\/a>/);
+  assert.match(html, /Read more about <a href="\/#how-it-works:3"[^>]*>what a relay canister is and how it works<\/a>/);
   assert.match(html, /id="relay-setup-result"[\s\S]*tracker-empty-state[\s\S]*id="relay-setup-prompt-text"[\s\S]*Setting up a dedicated relay canister can help/);
   assert.match(html, /id="relay-setup-summary" hidden/);
   assert.match(html, /id="relay-setup-payment-details" hidden/);

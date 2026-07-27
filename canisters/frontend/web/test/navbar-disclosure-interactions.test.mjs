@@ -392,11 +392,11 @@ function setupNavbar(width = 1440, initialHash = '') {
     addPanel(document, key, key === 'how-it-works' ? 4 : 2);
   });
   const howSection = document.querySelector('.nav-panel-section[data-panel="how-it-works"]');
-  const howPageTwoLink = append(howSection, 'a', {
-    href: '/#how-it-works:2',
+  const howRelayPageLink = append(howSection, 'a', {
+    href: '/#how-it-works:3',
     class: 'pane-link',
     'data-panel': 'how-it-works',
-  }, 'Prepare page');
+  }, 'Relay page');
   const memoBuilderPrefillLink = append(howSection, 'a', {
     href: '/#memo-builder?canister=u2qkp-aqaaa-aaaar-qb7ea-cai&title=Relay%20Canister&label=Optional%20Donor%20Name',
     class: 'pane-link',
@@ -423,7 +423,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     aboutLink,
     howLink,
     domainsLink,
-    howPageTwoLink,
+    howRelayPageLink,
     memoBuilderPrefillLink,
   };
 }
@@ -557,10 +557,10 @@ test('navbar hash navigation opens panels without reopening dropdowns', () => {
 });
 
 test('Relay route keeps Actions ownership through direct load and history', () => {
-  const env = setupNavbar(1440, '#how-it-works:2');
+  const env = setupNavbar(1440, '#how-it-works:3');
 
   assert.equal(activeSection(env.document).getAttribute('data-panel'), 'how-it-works');
-  assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '2');
+  assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '3');
   assert.equal(env.actionsMenu.hidden, true);
   assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
 
@@ -588,7 +588,7 @@ test('opening transient disclosures clears stale panel hashes', () => {
     ['about to actions', 'aboutLink', 'actionsButton', 'actionsMenu'],
     ['about to metrics', 'aboutLink', 'metricsButton', 'metricsMenu'],
     ['domains to actions', 'domainsLink', 'actionsButton', 'actionsMenu'],
-    ['relay route to metrics', null, 'metricsButton', 'metricsMenu', '#how-it-works:2'],
+    ['relay route to metrics', null, 'metricsButton', 'metricsMenu', '#how-it-works:3'],
     ['metrics panel to actions', 'metricsButton', 'actionsButton', 'actionsMenu', null, 'a[data-panel="metric-stake"]'],
     ['actions panel to metrics', 'actionsButton', 'metricsButton', 'metricsMenu', null, 'a[data-panel="simulator"]'],
   ];
@@ -629,10 +629,10 @@ test('direct panel triggers toggle closed but same-section page links navigate',
   assert.equal(env.backdrop.classList.contains('is-open'), false);
 
   click(env.howLink);
-  click(env.howPageTwoLink);
-  assert.equal(env.window.location.hash, '#how-it-works:2');
+  click(env.howRelayPageLink);
+  assert.equal(env.window.location.hash, '#how-it-works:3');
   assert.equal(env.backdrop.classList.contains('is-open'), true);
-  assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '2');
+  assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '3');
   assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
 });
 

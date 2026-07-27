@@ -55,7 +55,7 @@
         key === "simulator" ||
         key === "relay-setup" ||
         key === "memo-builder" ||
-        (key === "how-it-works" && page === 2)
+        (key === "how-it-works" && page === 3)
       ) {
         return "actions";
       }

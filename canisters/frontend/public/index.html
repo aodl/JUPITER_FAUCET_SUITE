@@ -497,12 +497,49 @@
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Developer tip:</strong> If you need many small ICP transfers to build up to
                 the minimum 1 ICP threshold, you might consider deploying an instance of the
-                <a href="/#how-it-works:2" data-panel="how-it-works" class="pane-external-link">Jupiter Relay</a>
+                <a href="/#how-it-works:3" data-panel="how-it-works" class="pane-external-link">Jupiter Relay</a>
                 canister.
               </p>
             </div>
-              
+
             <div class="nav-panel-page" data-page="1">
+              <p class="nav-panel-content">
+                <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
+                maturity generated from committed stake for topping up cycles is used to perpetually
+                burn ICP, mint cycles, and top up the declared canister over time.
+              </p>
+
+              <p class="nav-panel-content">
+                <strong>Age bonus maturity:</strong> the age-bonus component (between
+                <strong>0% and 20%</strong> of total maturity depending on stake age) is split
+                into:
+                <br />
+                • <strong>0%–19%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly minted <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)
+                <br />
+                • <strong>0%–1%</strong> restaked into the
+                <a
+                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  ><strong>D-QUORUM</strong></a
+                >
+                neuron to help fund decentralized due diligence of NNS proposals, because a pre-requisite for truly unstoppable canisters is a secure and decentralized network.
+              </p>
+
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Rewards:</strong>
+                jUP SNS tokens will be minted to patrons who have
+                <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
+                to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
+                of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
+                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
+                While the Jupiter Faucet SNS rewards components are still being finalised the ICP will accumulate in the
+                <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
+                (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
+              </p>
+            </div>
+
+            <div class="nav-panel-page" data-page="2">
               <h3 class="pane-section-title">Advanced Usage</h3>
 
               <p class="nav-panel-content">
@@ -554,7 +591,7 @@
               </div>
             </div>
 
-            <div class="nav-panel-page" data-page="2">
+            <div class="nav-panel-page" data-page="3">
               <h3 class="pane-section-title">Relay Canisters</h3>
               <p class="nav-panel-content">
                 A relay canister provides one stable target for ICP transfers. It aims to maintain
@@ -572,14 +609,14 @@
               </p>
               <p class="nav-panel-content">
                 This flow depends on raw ICP top-ups described in the
-                <a href="/#how-it-works:1" data-panel="how-it-works" class="pane-external-link">Advanced Usage</a>
+                <a href="/#how-it-works:2" data-panel="how-it-works" class="pane-external-link">Advanced Usage</a>
                 section. This ensures Jupiter Faucet perpetually transfers raw ICP rather than
                 directly topping up the relay canister with cycles. The relay canister then uses
                 that raw ICP to keep itself topped up along with configured canisters. Surplus ICP
                 (if any) can then be routed to a configured DAO treasury or other account. The
                 Jupiter Faucet protocol's own relay canister routes 50% of any surplus ICP back into
                 the Jupiter Faucet neuron itself (forever increasing the rate of future ICP back
-                into the relay). The relay routes any remaining surplus ICP into the IO neuron's
+                into the relay). The relay routes remaining surplus ICP into the IO neuron's
                 staking account (described below).
               </p>
               <p class="nav-panel-content">
@@ -613,48 +650,11 @@
               </p>
             </div>
 
-            <div class="nav-panel-page" data-page="3">
-              <p class="nav-panel-content">
-                <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
-                maturity generated from committed stake is used to perpetually burn ICP, mint cycles,
-                and top up the declared canister over time.
-              </p>
-
-              <p class="nav-panel-content">
-                <strong>Age bonus maturity:</strong> the age-bonus component (between
-                <strong>0% and 20%</strong> of total maturity depending on stake age) is split
-                into:
-                <br />
-                • <strong>0%–19%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly minted <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)
-                <br />
-                • <strong>0%–1%</strong> restaked into the
-                <a
-                  href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  ><strong>D-QUORUM</strong></a
-                >
-                neuron to help fund decentralized due diligence of NNS proposals, because a pre-requisite for truly unstoppable canisters is a secure and decentralized network.
-              </p>
-
-              <p class="nav-panel-content memo-builder-safety-notice">
-                <strong>Rewards:</strong>
-                jUP SNS tokens will be minted to patrons who have
-                <a href="#metric-commitments" data-panel="metric-commitments" class="pane-external-link">committed ICP</a>
-                to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
-                of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
-                (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
-                While the Jupiter Faucet SNS rewards components are still being finalised the ICP will accumulate in the
-                <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
-                (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
-              </p>
-            </div>
-              
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
-              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Advanced Usage" aria-selected="false"></button>
-              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Relay Canisters" aria-selected="false"></button>
-              <button class="nav-panel-dot" type="button" data-page="3" aria-label="Maturity and rewards" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="1" aria-label="Maturity and rewards" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="2" aria-label="Advanced Usage" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="3" aria-label="Relay Canisters" aria-selected="false"></button>
             </div>
 
         </article>
@@ -731,7 +731,7 @@
             </p>
             <p class="nav-panel-content">
               For more information about this memo builder see
-              <a href="#how-it-works:1" data-panel="how-it-works" class="pane-external-link">Advanced Usage</a>.
+              <a href="#how-it-works:2" data-panel="how-it-works" class="pane-external-link">Advanced Usage</a>.
             </p>
           </div>
         </article>
@@ -882,7 +882,7 @@
               </div>
             </div>
             <div class="nav-panel-page" data-page="1">
-              <p class="nav-panel-content">See <a href="#how-it-works:1" class="pane-external-link">Advanced Usage</a> for raw ICP commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+              <p class="nav-panel-content">See <a href="#how-it-works:2" class="pane-external-link">Advanced Usage</a> for raw ICP commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
               <h3 class="pane-section-title">Declared Raw ICP Canisters <span id="commitments-raw-canister-count"></span></h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">
@@ -905,7 +905,7 @@
               </div>
             </div>
             <div class="nav-panel-page" data-page="2">
-              <p class="nav-panel-content">See <a href="#how-it-works:1" class="pane-external-link">Advanced Usage</a> for neuron commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
+              <p class="nav-panel-content">See <a href="#how-it-works:2" class="pane-external-link">Advanced Usage</a> for neuron commitment rules. This table shows a bounded recent view; full transfer history remains durably queryable from the ICP ledger and its archive canisters.</p>
               <h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"></span></h3>
               <div class="pane-table-wrap">
                 <table class="pane-table">
@@ -964,7 +964,7 @@
           <h2 class="nav-panel-title">Relay Setup</h2>
           <div class="nav-panel-scroll-region">
             <p class="nav-panel-subtitle">Create a target-specific Jupiter Relay instance without login.</p>
-            <p class="nav-panel-content">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about <a href="/#how-it-works:2" data-panel="how-it-works" class="pane-external-link">what a relay canister is and how it works</a> and set up a new relay using the instructions below.</p>
+            <p class="nav-panel-content">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about <a href="/#how-it-works:3" data-panel="how-it-works" class="pane-external-link">what a relay canister is and how it works</a> and set up a new relay using the instructions below.</p>
             <form class="tracker-form relay-setup-form" id="relay-setup-form">
               <label class="tracker-label" for="relay-setup-target-input">Target canister ID</label>
               <div class="tracker-input-row">
@@ -1097,7 +1097,7 @@
   <div class="tagline bottom-fade-widget">
     <p class="diagonal-wrap">
       <span class="slope" aria-hidden="true"></span>
-      Powers unstoppable dapps running on a public <b>World Computer</b> by delivering a simple, set-and-forget, perpetual top-up solution that's trustless, permissionless and immutable. Adopters receive front-loaded <b>jUP SNS airdrops. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="#how-it-works:3" data-panel="how-it-works">How?</a></b>
+      Powers unstoppable dapps running on a public <b>World Computer</b> by delivering a simple, set-and-forget, perpetual top-up solution that's trustless, permissionless and immutable. Adopters receive front-loaded <b>jUP SNS airdrops. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="#how-it-works:1" data-panel="how-it-works">How?</a></b>
     </p>
   </div>
 

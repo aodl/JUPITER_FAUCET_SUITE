@@ -92,7 +92,7 @@ test('top navbar exposes Simulator and Domains and no longer exposes Partners', 
 });
 
 test('hero How link opens the maturity and rewards page', () => {
-  assert.match(indexHtml, /<a href="#how-it-works:3"[^>]*data-panel="how-it-works"[^>]*>How\?<\/a>/);
+  assert.match(indexHtml, /<a href="#how-it-works:1"[^>]*data-panel="how-it-works"[^>]*>How\?<\/a>/);
 });
 
 test('static frontend markup does not depend on inline CSS', () => {
@@ -394,8 +394,8 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /data-panel="governance"[^>]*>Governance<\/a>/);
   assert.match(navbarJs, /data-page-target/);
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> If you need many small ICP transfers to build up to\s*the minimum 1 ICP threshold/);
-  assert.match(howItWorks, /href="\/#how-it-works:2"[^>]*data-panel="how-it-works"[^>]*>Jupiter Relay<\/a>/);
-  assert.doesNotMatch(howItWorks, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a>/);
+  assert.match(howItWorks, /href="\/#how-it-works:3"[^>]*data-panel="how-it-works"[^>]*>Jupiter Relay<\/a>/);
+  assert.doesNotMatch(howItWorks, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a>/);
 });
 
 test('How it works pane includes advanced usage memo builder without restoring simulator controls', () => {
@@ -407,7 +407,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /data-page="1"/);
   assert.match(howItWorks, /data-page="2"/);
   assert.match(howItWorks, /data-page="3"/);
-  assert.match(howItWorks, /data-page="1"[\s\S]*Advanced Usage[\s\S]*data-page="2"[\s\S]*Relay Canisters[\s\S]*data-page="3"[\s\S]*Base maturity/);
+  assert.match(howItWorks, /data-page="1"[\s\S]*Base maturity[\s\S]*data-page="2"[\s\S]*Advanced Usage[\s\S]*data-page="3"[\s\S]*Relay Canisters/);
   assert.match(howItWorks, /Advanced Usage/);
   assert.match(howItWorks, /three memo-directed flows/);
   assert.match(howItWorks, /plain declared canister ID/);
@@ -436,7 +436,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /<strong>Example:<\/strong> The full suite of Jupiter Faucet protocol canisters are managed by a single/);
   assert.match(howItWorks, /href="\/#metric-tracker\?memo=u2qkp-aqaaa-aaaar-qb7ea-cai\.&amp;range=month"[^>]*data-panel="metric-tracker"[^>]*>relay canister<\/a>/);
   assert.match(howItWorks, /href="\/#memo-builder\?canister=u2qkp-aqaaa-aaaar-qb7ea-cai&amp;title=Relay%20Canister&amp;label=Optional%20Donor%20Name"[^>]*data-panel="memo-builder"[^>]*>Relay Canister Memo Builder<\/a>/);
-  assert.match(howItWorks, /raw ICP top-ups described in the\s*<a href="\/#how-it-works:1"[^>]*data-panel="how-it-works"[^>]*>Advanced Usage<\/a>/);
+  assert.match(howItWorks, /raw ICP top-ups described in the\s*<a href="\/#how-it-works:2"[^>]*data-panel="how-it-works"[^>]*>Advanced Usage<\/a>/);
   assert.match(howItWorks, /This ensures Jupiter Faucet perpetually transfers raw ICP rather than\s*directly topping up the relay canister with cycles/);
   assert.match(howItWorks, /routes 50% of any surplus ICP back into\s*the Jupiter Faucet neuron/);
   assert.match(howItWorks, /remaining surplus ICP into the IO neuron's\s*staking account \(described below\)/);
@@ -506,7 +506,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(memoBuilder, /href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>basic instructions<\/a>/);
   assert.match(memoBuilder, /\(in place of the "declared canister ID"\) to make your ICP commitment and initiate\s+perpetual top-ups/);
   assert.match(memoBuilder, /Use the generated memo[\s\S]*For more information about this memo builder see/);
-  assert.match(memoBuilder, /For more information about this memo builder see[\s\S]*href="#how-it-works:1"[^>]*data-panel="how-it-works"[^>]*>Advanced Usage<\/a>/);
+  assert.match(memoBuilder, /For more information about this memo builder see[\s\S]*href="#how-it-works:2"[^>]*data-panel="how-it-works"[^>]*>Advanced Usage<\/a>/);
   assert.doesNotMatch(howItWorks, /Use the copied memo/);
   assert.doesNotMatch(howItWorks, /target="_blank"[^>]*>Advanced Usage<\/a>/);
   assert.doesNotMatch(howItWorks, /target="_blank"[^>]*>basic instructions<\/a>/);
@@ -775,7 +775,7 @@ test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
   assert.match(navbarJs, /function renderNavState/);
   assert.match(navbarJs, /const actionsToggle = document\.getElementById\("actions-menu-toggle"\);/);
   assert.match(navbarJs, /function groupForPanelRoute\(key, page = 0, trigger = null\)/);
-  assert.match(navbarJs, /\(key === "how-it-works" && page === 2\)/);
+  assert.match(navbarJs, /\(key === "how-it-works" && page === 3\)/);
   assert.match(navbarJs, /document\.body\.classList\.toggle\("metrics-menu-open", metricsDisclosureVisible\);/);
   assert.match(navbarJs, /if \(navState\.openPanel\) clearPanelHash\(\);[\s\S]*openMenu: group/);
   assert.doesNotMatch(navbarJs, /positionMenuRails|getBoundingClientRect|let actionsMenuOpen|let metricsMenuOpen|activePanelKey|metric-rail--visible/);
@@ -784,8 +784,8 @@ test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
   assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters <span id="commitments-raw-canister-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:1"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters <span id="commitments-raw-canister-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
   assert.doesNotMatch(commitments, /<th>Memo<\/th>/);
   assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
   assert.match(mainJs, /const countDisplays = dashboardCountDisplays\(data\?\.counts\);/);
