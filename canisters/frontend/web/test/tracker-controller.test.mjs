@@ -245,13 +245,14 @@ test('tracker renders cycles-only data for recognized relay instances', async ()
   });
 });
 
-function rawTransfer(id, from, amountE8s, isMatchingMemo = false) {
+function rawTransfer(id, from, amountE8s, isMatchingMemo = false, memoText = null) {
   return {
     tx_id: BigInt(id),
     timestamp_nanos: [1_700_000_000_000_000_000n + BigInt(id)],
     amount_e8s: BigInt(amountE8s),
     from_account_identifier: from,
     is_matching_memo: isMatchingMemo,
+    icrc1_memo_text: memoText,
   };
 }
 
@@ -653,8 +654,8 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
       loadRawCanisterData: async ({ historyLimit }) => ({
         status: { output_account: [faucetAccount] },
         transfers: { items: [
-          rawTransfer(5, faucetAccountId, 500_000_000n, true),
-          rawTransfer(4, faucetAccountId, 400_000_000n, false),
+          rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner'),
+          rawTransfer(4, faucetAccountId, 400_000_000n, false, 'treasury'),
           rawTransfer(3, relayAccountId, 300_000_000n, false),
           rawTransfer(2, protocolAccountId, 200_000_000n, false),
           rawTransfer(1, otherAccountId, 100_000_000n, true),
@@ -671,16 +672,61 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
 
     const html = nodeMap.get('tracker-result').innerHTML;
     assert.match(html, /Jupiter Faucet · matching memo/);
-    assert.match(html, /Jupiter Faucet · other memo/);
-    assert.match(html, /tracker-chart-bar--source-faucet-matching-memo/);
-    assert.match(html, /tracker-chart-bar--source-faucet-other-memo/);
+    assert.match(html, /Jupiter Faucet · treasury/);
+    assert.doesNotMatch(html, /Jupiter Faucet · other memo/);
+    assert.match(html, /tracker-chart-bar--source-faucet-memo-1/);
+    assert.match(html, /tracker-chart-bar--source-faucet-memo-2/);
+    assert.doesNotMatch(html, /tracker-chart-bar--source-faucet-other-memo/);
     assert.match(html, /Jupiter Relay/);
     assert.match(html, /Protocol canister/);
     assert.match(html, /Other/);
     assert.match(html, /Visible Jupiter Faucet transfers matching the outgoing memo: 1 · 5 ICP/);
     assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
-    assert.match(html, /Jupiter Faucet · other memo 4 ICP across 1 transfer/);
+    assert.match(html, /Jupiter Faucet · treasury 4 ICP across 1 transfer/);
     assert.match(html, /Chart display is limited to the newest 10,000 incoming ICP transfers/);
+  });
+});
+
+test('raw ICP tracker groups faucet memos after five distinct memos', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => ({
+        status: { output_account: [faucetAccount] },
+        transfers: { items: [
+          rawTransfer(6, faucetAccountId, 600_000_000n, false, 'memo-f'),
+          rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner'),
+          rawTransfer(4, faucetAccountId, 400_000_000n, false, 'memo-d'),
+          rawTransfer(3, faucetAccountId, 300_000_000n, false, 'memo-c'),
+          rawTransfer(2, faucetAccountId, 200_000_000n, false, 'memo-b'),
+          rawTransfer(1, faucetAccountId, 100_000_000n, false, 'memo-a'),
+        ] },
+        candidates: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Jupiter Faucet · matching memo/);
+    assert.match(html, /Jupiter Faucet · memo-f/);
+    assert.match(html, /Jupiter Faucet · memo-d/);
+    assert.match(html, /Jupiter Faucet · memo-c/);
+    assert.match(html, /Jupiter Faucet · memo-b/);
+    assert.doesNotMatch(html, /Jupiter Faucet · memo-a/);
+    assert.match(html, /Jupiter Faucet · other memo/);
+    assert.match(html, /Jupiter Faucet · other memo 1 ICP across 1 transfer/);
   });
 });
 
@@ -701,7 +747,7 @@ test('raw ICP tracker renders incoming transfers while index pages are still loa
         onTransfersProgress({
           status: { output_account: [faucetAccount] },
           transfers: {
-            items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)],
+            items: [rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner')],
             loading: true,
             truncated: false,
             limit: historyLimit,
@@ -715,8 +761,8 @@ test('raw ICP tracker renders incoming transfers while index pages are still loa
           status: { output_account: [faucetAccount] },
           transfers: {
             items: [
-              rawTransfer(5, faucetAccountId, 500_000_000n, true),
-              rawTransfer(4, faucetAccountId, 400_000_000n, false),
+              rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner'),
+              rawTransfer(4, faucetAccountId, 400_000_000n, false, 'treasury'),
             ],
             loading: false,
             truncated: false,
@@ -757,7 +803,7 @@ test('raw ICP tracker legend only includes sources with visible bars', async () 
       loadRawCanisterData: async () => ({
         status: { output_account: [faucetAccount] },
         transfers: { items: [
-          rawTransfer(5, faucetAccountId, 500_000_000n, true),
+          rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner'),
         ] },
         candidates: { items: [] },
         errors: {},
@@ -770,7 +816,7 @@ test('raw ICP tracker legend only includes sources with visible bars', async () 
 
     const html = nodeMap.get('tracker-result').innerHTML;
     assert.match(html, /Jupiter Faucet · matching memo/);
-    assert.match(html, /data-source-segment="faucet-matching-memo"/);
+    assert.match(html, /data-source-segment="faucet-memo-1"/);
     assert.doesNotMatch(html, /Jupiter Faucet · other memo/);
     assert.doesNotMatch(html, /Jupiter Relay/);
     assert.doesNotMatch(html, /Protocol canister/);
@@ -842,8 +888,8 @@ test('raw ICP tracker treats an empty outgoing memo as present', async () => {
       loadRawCanisterData: async () => ({
         status: { output_account: [faucetAccount] },
         transfers: { items: [
-          rawTransfer(5, faucetAccountId, 500_000_000n, true),
-          rawTransfer(4, faucetAccountId, 400_000_000n, false),
+          rawTransfer(5, faucetAccountId, 500_000_000n, true, ''),
+          rawTransfer(4, faucetAccountId, 400_000_000n, false, 'treasury'),
           rawTransfer(3, relayAccountId, 300_000_000n, false),
         ] },
         candidates: { items: [] },
@@ -858,9 +904,11 @@ test('raw ICP tracker treats an empty outgoing memo as present', async () => {
     const html = nodeMap.get('tracker-result').innerHTML;
     assert.match(html, /Raw ICP canister memo/);
     assert.match(html, /Jupiter Faucet · matching memo/);
-    assert.match(html, /Jupiter Faucet · other memo/);
-    assert.match(html, /data-source-segment="faucet-matching-memo"/);
-    assert.match(html, /data-source-segment="faucet-other-memo"/);
+    assert.match(html, /Jupiter Faucet · treasury/);
+    assert.doesNotMatch(html, /Jupiter Faucet · other memo/);
+    assert.match(html, /data-source-segment="faucet-memo-1"/);
+    assert.match(html, /data-source-segment="faucet-memo-2"/);
+    assert.doesNotMatch(html, /data-source-segment="faucet-other-memo"/);
     assert.match(html, /Visible Jupiter Faucet transfers matching the outgoing memo: 1 · 5 ICP/);
     assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
     assert.match(html, /<dt>Outgoing memo<\/dt><dd class="pane-detail-value mono"><\/dd>/);

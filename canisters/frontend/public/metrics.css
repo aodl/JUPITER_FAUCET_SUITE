@@ -1052,6 +1052,26 @@
   fill: rgba(132, 204, 22, 0.86);
 }
 
+.tracker-chart-bar--source-faucet-memo-1 {
+  fill: rgba(22, 163, 74, 0.95);
+}
+
+.tracker-chart-bar--source-faucet-memo-2 {
+  fill: rgba(132, 204, 22, 0.88);
+}
+
+.tracker-chart-bar--source-faucet-memo-3 {
+  fill: rgba(20, 184, 166, 0.88);
+}
+
+.tracker-chart-bar--source-faucet-memo-4 {
+  fill: rgba(45, 212, 191, 0.82);
+}
+
+.tracker-chart-bar--source-faucet-memo-5 {
+  fill: rgba(190, 242, 100, 0.82);
+}
+
 .tracker-chart-bar--source-relay {
   fill: rgba(96, 165, 250, 0.88);
 }
@@ -1093,6 +1113,26 @@
 
 .tracker-source-legend-item.tracker-chart-bar--source-faucet-other-memo {
   color: rgba(132, 204, 22, 0.86);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-memo-1 {
+  color: rgba(22, 163, 74, 0.95);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-memo-2 {
+  color: rgba(132, 204, 22, 0.88);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-memo-3 {
+  color: rgba(20, 184, 166, 0.88);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-memo-4 {
+  color: rgba(45, 212, 191, 0.82);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-faucet-memo-5 {
+  color: rgba(190, 242, 100, 0.82);
 }
 
 .tracker-source-legend-item.tracker-chart-bar--source-relay {

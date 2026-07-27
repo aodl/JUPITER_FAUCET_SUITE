@@ -48,6 +48,14 @@ const RAW_SOURCE_SEGMENTS = [
   { key: 'protocolAmountE8s', countKey: 'protocolTransferCount', className: 'tracker-chart-bar--source-protocol', label: 'Protocol canister', legendKey: 'protocol' },
   { key: 'otherAmountE8s', countKey: 'otherTransferCount', className: 'tracker-chart-bar--source-other', label: 'Other', legendKey: 'other' },
 ];
+const RAW_MEMO_SEGMENT_LIMIT = 5;
+const RAW_MEMO_SEGMENT_CLASSES = [
+  'tracker-chart-bar--source-faucet-memo-1',
+  'tracker-chart-bar--source-faucet-memo-2',
+  'tracker-chart-bar--source-faucet-memo-3',
+  'tracker-chart-bar--source-faucet-memo-4',
+  'tracker-chart-bar--source-faucet-memo-5',
+];
 
 function optValue(value) {
   return readOpt(value);
@@ -348,7 +356,15 @@ function emptyRawBucket(period) {
   };
 }
 
-function rawTransferSourceSegment(item) {
+function rawTransferMemoText(item) {
+  if (item?.icrc1_memo_text === null || item?.icrc1_memo_text === undefined) return '(missing memo)';
+  return String(item.icrc1_memo_text);
+}
+
+function rawTransferSourceSegment(item, memoSegmentByText = null) {
+  if (item?.source_category === 'faucet' && memoSegmentByText) {
+    return memoSegmentByText.get(rawTransferMemoText(item)) || 'faucetOtherMemo';
+  }
   if (item?.source_category === 'faucet' && item?.is_matching_memo) return 'faucetMatchingMemo';
   if (item?.source_category === 'faucet') return 'faucetOtherMemo';
   if (item?.source_category === 'relay') return 'relay';
@@ -356,17 +372,19 @@ function rawTransferSourceSegment(item) {
   return 'other';
 }
 
-function addRawSourceAmount(bucket, item, amount) {
+function addRawSourceAmount(bucket, item, amount, memoSegmentByText = null) {
   if (item?.source_category === 'faucet') {
     bucket.faucetAmountE8s += amount;
     bucket.faucetTransferCount += 1;
   }
-  const prefix = rawTransferSourceSegment(item);
+  const prefix = rawTransferSourceSegment(item, memoSegmentByText);
+  bucket[`${prefix}AmountE8s`] = bucket[`${prefix}AmountE8s`] || 0n;
+  bucket[`${prefix}TransferCount`] = bucket[`${prefix}TransferCount`] || 0;
   bucket[`${prefix}AmountE8s`] += amount;
   bucket[`${prefix}TransferCount`] += 1;
 }
 
-function aggregateRawTransfers(items, range) {
+function aggregateRawTransfers(items, range, { memoSegmentByText = null } = {}) {
   const buckets = new Map();
   const ensureBucket = (period) => {
     const existing = buckets.get(period.key);
@@ -382,7 +400,7 @@ function aggregateRawTransfers(items, range) {
     const amount = itemAmountE8s(item);
     bucket.totalIcpE8s += amount;
     bucket.totalTransferCount += 1;
-    addRawSourceAmount(bucket, item, amount);
+    addRawSourceAmount(bucket, item, amount, memoSegmentByText);
   }
   const bounds = rawTimelineBounds(items, range);
   if (bounds) {
@@ -391,6 +409,42 @@ function aggregateRawTransfers(items, range) {
     }
   }
   return Array.from(buckets.values()).sort((left, right) => left.startMs - right.startMs);
+}
+
+function rawMemoDisplayLabel(memoText, outgoingMemoText) {
+  if (memoText === outgoingMemoText) return 'Jupiter Faucet · matching memo';
+  if (memoText === '') return 'Jupiter Faucet · empty memo';
+  if (memoText === '(missing memo)') return 'Jupiter Faucet · missing memo';
+  return `Jupiter Faucet · ${memoText}`;
+}
+
+function rawMemoSegmentPlan(items, outgoingMemoText) {
+  const byMemo = new Map();
+  for (const item of items || []) {
+    if (item?.source_category !== 'faucet') continue;
+    const memoText = rawTransferMemoText(item);
+    const existing = byMemo.get(memoText) || { memoText, amountE8s: 0n, transferCount: 0 };
+    existing.amountE8s += itemAmountE8s(item);
+    existing.transferCount += 1;
+    byMemo.set(memoText, existing);
+  }
+  const ranked = Array.from(byMemo.values()).sort((left, right) => {
+    if (left.memoText === outgoingMemoText) return -1;
+    if (right.memoText === outgoingMemoText) return 1;
+    if (left.amountE8s !== right.amountE8s) return left.amountE8s > right.amountE8s ? -1 : 1;
+    return left.memoText.localeCompare(right.memoText);
+  });
+  const explicit = ranked.slice(0, RAW_MEMO_SEGMENT_LIMIT);
+  const memoSegmentByText = new Map(explicit.map((entry, index) => [entry.memoText, `faucetMemo${index + 1}`]));
+  const memoSegments = explicit.map((entry, index) => ({
+    key: `faucetMemo${index + 1}AmountE8s`,
+    countKey: `faucetMemo${index + 1}TransferCount`,
+    className: RAW_MEMO_SEGMENT_CLASSES[index],
+    label: rawMemoDisplayLabel(entry.memoText, outgoingMemoText),
+    legendKey: `faucet-memo-${index + 1}`,
+  }));
+  const overflowSegments = ranked.length > RAW_MEMO_SEGMENT_LIMIT ? [RAW_SOURCE_SEGMENTS[1]] : [];
+  return { memoSegmentByText, memoSegments: [...memoSegments, ...overflowSegments] };
 }
 
 function cycleSampleSourceLabel(samples) {
@@ -991,8 +1045,18 @@ export function createTrackerController({
     const target = isNeuron ? parsed.neuronId.toString() : parsed.canisterText;
     const targetHtml = isNeuron ? renderNeuronDashboardLink(target) : escapeHtml(target);
     const hasOutgoingMemo = parsed.outgoingMemoText !== null && parsed.outgoingMemoText !== undefined;
-    const sourceSegments = hasOutgoingMemo ? RAW_SOURCE_SEGMENTS : SOURCE_SEGMENTS;
-    const buckets = aggregateRawTransfers(visibleItems, state.range);
+    const rawMemoSegments = hasOutgoingMemo ? rawMemoSegmentPlan(visibleItems, parsed.outgoingMemoText || '') : null;
+    const sourceSegments = hasOutgoingMemo
+      ? [
+        ...rawMemoSegments.memoSegments,
+        RAW_SOURCE_SEGMENTS[2],
+        RAW_SOURCE_SEGMENTS[3],
+        RAW_SOURCE_SEGMENTS[4],
+      ]
+      : SOURCE_SEGMENTS;
+    const buckets = aggregateRawTransfers(visibleItems, state.range, {
+      memoSegmentByText: rawMemoSegments?.memoSegmentByText || null,
+    });
     const transferLoadingNote = classified.transfers?.loading
       ? `<p class="pane-status-note tracker-status-note tracker-status-note--loading tracker-chart-note">Chart still loading incoming ICP history… ${escapeHtml(formatInteger((classified.transfers.items || []).length))} transfers loaded${classified.transfers.pages_loaded ? ` across ${escapeHtml(formatInteger(classified.transfers.pages_loaded))} index pages` : ''}. The bars update as records arrive.</p>`
       : '';
