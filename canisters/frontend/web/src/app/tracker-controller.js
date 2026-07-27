@@ -612,7 +612,7 @@ export function createTrackerController({
     barClass: 'tracker-chart-bar--commitment',
     emptyMessage: trackerRangeEmptyMessage({
       fullItems: fullData?.commitments?.items,
-      rangeMessage: `No dated commitments are available in ${trackerRangeLabel()}.`,
+      rangeMessage: 'No dated commitments are available within the selected time range.',
       emptyMessage: 'No dated commitments are available for this beneficiary yet.',
     }),
     ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
