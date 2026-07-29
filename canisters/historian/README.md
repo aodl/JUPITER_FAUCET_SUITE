@@ -125,7 +125,11 @@ Production methods:
 - `get_cycles_history`
   - paged cycles history for one canister
 - `get_commitment_history`
-  - paged commitment history for one canister
+  - paged bounded history of qualifying cycles-top-up canister commitments only for one canister principal
+- `get_raw_icp_commitment_history`
+  - paged bounded history of qualifying destination-canister-wide raw ICP commitments only for one canister principal
+- `get_neuron_commitment_history`
+  - paged bounded history of qualifying neuron-wide commitments only for one neuron ID
 - `get_canister_overview`
   - one-canister overview including source set, metadata, and point counts
 - `get_public_counts`
@@ -148,8 +152,19 @@ The main public queries use these code-backed defaults:
 - `list_canisters`: default `limit = 50`, clamped to `1..=100`
 - `get_cycles_history`: default `limit = 100`, clamped to `1..=100`
 - `get_commitment_history`: default `limit = 100`, clamped to `1..=100`
+- `get_raw_icp_commitment_history`: default `limit = 100`, clamped to `1..=100`
+- `get_neuron_commitment_history`: default `limit = 100`, clamped to `1..=100`
 - `list_memo_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
 - `list_recent_commitments`: default `limit = 20`, clamped to `1..=100`
+
+The three commitment-history methods all page over bounded retained samples using
+the same cursor semantics and the same configured history cap. Retention remains
+bounded by `max_commitment_entries_per_canister`, which defaults to 100 samples
+per target and is hard-clamped to 250. Raw canister and neuron durable commitment
+samples are target-wide:
+they do not retain the optional outgoing memo suffix used by raw ICP payout
+memos, so the raw and neuron history APIs cannot provide suffix-specific
+commitment attribution.
 
 ## Timers and driver model
 

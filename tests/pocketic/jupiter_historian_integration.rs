@@ -214,6 +214,14 @@ struct GetCommitmentHistoryArgs {
     descending: Option<bool>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetNeuronCommitmentHistoryArgs {
+    neuron_id: u64,
+    start_after_tx_id: Option<u64>,
+    limit: Option<u32>,
+    descending: Option<bool>,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CommitmentSample {
     tx_id: u64,
@@ -3135,6 +3143,8 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.historian;
+    let raw_target = h.blackhole;
+    let neuron_id = 42_u64;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(
         &h.pic,
@@ -3142,9 +3152,32 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
         Principal::anonymous(),
         "debug_append_transfer",
         encode_args((
-            staking_id,
-            42_000_000u64,
+            staking_id.clone(),
+            100_000_000u64,
             Some(target.to_text().into_bytes()),
+        ))?,
+    )?;
+    let raw_memo = format!("{}.vault42", raw_target.to_text().replace('-', ""));
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((
+            staking_id.clone(),
+            100_000_000u64,
+            Some(raw_memo.into_bytes()),
+        ))?,
+    )?;
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_transfer",
+        encode_args((
+            staking_id,
+            100_000_000u64,
+            Some(format!("{neuron_id}.vault.memo").into_bytes()),
         ))?,
     )?;
     h.tick();
@@ -3154,6 +3187,60 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
         Principal::anonymous(),
         "debug_driver_tick",
     )?;
+
+    let commitments_before: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id: target,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    let raw_commitments_before: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_raw_icp_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id: raw_target,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    let neuron_commitments_before: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_neuron_commitment_history",
+        GetNeuronCommitmentHistoryArgs {
+            neuron_id,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    let cycles_before: CyclesHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_cycles_history",
+        GetCyclesHistoryArgs {
+            canister_id: target,
+            start_after_ts: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    assert_eq!(commitments_before.items.len(), 1);
+    assert_eq!(raw_commitments_before.items.len(), 1);
+    assert_eq!(neuron_commitments_before.items.len(), 1);
+    assert_eq!(cycles_before.items.len(), 1);
+    assert!(cycles_before.items[0].cycles > 0);
 
     let upgrade_sender = h
         .pic
@@ -3170,7 +3257,7 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
         )
         .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
 
-    let commitments: CommitmentHistoryPage = query_one(
+    let commitments_after: CommitmentHistoryPage = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
@@ -3182,8 +3269,31 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
             descending: Some(false),
         },
     )?;
-    assert_eq!(commitments.items.len(), 1);
-    let cycles: CyclesHistoryPage = query_one(
+    let raw_commitments_after: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_raw_icp_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id: raw_target,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    let neuron_commitments_after: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_neuron_commitment_history",
+        GetNeuronCommitmentHistoryArgs {
+            neuron_id,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        },
+    )?;
+    let cycles_after: CyclesHistoryPage = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
@@ -3195,8 +3305,29 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
             descending: Some(false),
         },
     )?;
-    assert_eq!(cycles.items.len(), 1);
-    assert!(cycles.items[0].cycles > 0);
+    assert_eq!(commitments_after.items, commitments_before.items);
+    assert_eq!(
+        commitments_after.next_start_after_tx_id,
+        commitments_before.next_start_after_tx_id
+    );
+    assert_eq!(raw_commitments_after.items, raw_commitments_before.items);
+    assert_eq!(
+        raw_commitments_after.next_start_after_tx_id,
+        raw_commitments_before.next_start_after_tx_id
+    );
+    assert_eq!(
+        neuron_commitments_after.items,
+        neuron_commitments_before.items
+    );
+    assert_eq!(
+        neuron_commitments_after.next_start_after_tx_id,
+        neuron_commitments_before.next_start_after_tx_id
+    );
+    assert_eq!(cycles_after.items, cycles_before.items);
+    assert_eq!(
+        cycles_after.next_start_after_ts,
+        cycles_before.next_start_after_ts
+    );
     Ok(())
 }
 

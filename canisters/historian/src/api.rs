@@ -103,6 +103,14 @@ pub struct GetCommitmentHistoryArgs {
     pub descending: Option<bool>,
 }
 
+#[derive(CandidType, Deserialize, Clone)]
+pub struct GetNeuronCommitmentHistoryArgs {
+    pub neuron_id: u64,
+    pub start_after_tx_id: Option<u64>,
+    pub limit: Option<u32>,
+    pub descending: Option<bool>,
+}
+
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct CyclesHistoryPage {
     pub items: Vec<CyclesSample>,

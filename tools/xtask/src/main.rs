@@ -872,6 +872,7 @@ struct RecentCommitmentListItem {
     neuron_memo_text: Option<String>,
     memo_text: Option<String>,
     tx_id: u64,
+    timestamp_nanos: Option<u64>,
     amount_e8s: u64,
     counts_toward_faucet: bool,
 }
@@ -4195,6 +4196,40 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             {
                 bail!("unexpected raw ICP recent commitment: {:?}", raw);
             }
+            let raw_history: HistorianCommitmentHistoryPage = call_raw(
+                "jupiter_historian_dbg",
+                "get_raw_icp_commitment_history",
+                &format!(
+                    r#"(record {{ canister_id = principal "{}"; start_after_tx_id = null; limit = opt (10:nat32); descending = opt false }})"#,
+                    target.to_text()
+                ),
+            )?;
+            if raw_history.items.len() != 1 {
+                bail!(
+                    "expected one raw ICP commitment history sample, got {}",
+                    raw_history.items.len()
+                );
+            }
+            let raw_sample = &raw_history.items[0];
+            if raw_sample.timestamp_nanos.is_none() {
+                bail!(
+                    "raw ICP commitment history sample missing durable timestamp: history={:?} recent={:?}",
+                    raw_sample,
+                    raw
+                );
+            }
+            if raw_sample.tx_id != raw.tx_id
+                || raw_sample.timestamp_nanos != raw.timestamp_nanos
+                || raw_sample.amount_e8s != raw.amount_e8s
+                || raw_sample.counts_toward_faucet != raw.counts_toward_faucet
+                || raw.canister_id != Some(target)
+            {
+                bail!(
+                    "raw ICP commitment history sample did not match target/recent row: history={:?} recent={:?}",
+                    raw_sample,
+                    raw
+                );
+            }
             let neuron = recent
                 .items
                 .iter()
@@ -4207,6 +4242,40 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 || !neuron.counts_toward_faucet
             {
                 bail!("unexpected neuron recent commitment: {:?}", neuron);
+            }
+            let neuron_history: HistorianCommitmentHistoryPage = call_raw(
+                "jupiter_historian_dbg",
+                "get_neuron_commitment_history",
+                &format!(
+                    r#"(record {{ neuron_id = {}:nat64; start_after_tx_id = null; limit = opt (10:nat32); descending = opt false }})"#,
+                    neuron_id
+                ),
+            )?;
+            if neuron_history.items.len() != 1 {
+                bail!(
+                    "expected one neuron commitment history sample, got {}",
+                    neuron_history.items.len()
+                );
+            }
+            let neuron_sample = &neuron_history.items[0];
+            if neuron_sample.timestamp_nanos.is_none() {
+                bail!(
+                    "neuron commitment history sample missing durable timestamp: history={:?} recent={:?}",
+                    neuron_sample,
+                    neuron
+                );
+            }
+            if neuron_sample.tx_id != neuron.tx_id
+                || neuron_sample.timestamp_nanos != neuron.timestamp_nanos
+                || neuron_sample.amount_e8s != neuron.amount_e8s
+                || neuron_sample.counts_toward_faucet != neuron.counts_toward_faucet
+                || neuron.neuron_id != Some(neuron_id)
+            {
+                bail!(
+                    "neuron commitment history sample did not match target/recent row: history={:?} recent={:?}",
+                    neuron_sample,
+                    neuron
+                );
             }
             Ok(())
         },

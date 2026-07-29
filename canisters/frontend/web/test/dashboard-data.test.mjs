@@ -13,6 +13,7 @@ import {
   loadCanisterLogs,
   loadTrackerData,
   loadRawIcpCanisterTrackerData,
+  loadNeuronStakeTrackerData,
   loadCmcTopUpTransfersFromIndex,
   cmcDepositAccount,
   dquorumStakingAccount,
@@ -1317,6 +1318,254 @@ test('loadRawIcpCanisterTrackerData uses the large raw ICP transfer limit by def
   assert.equal(indexCall.account_identifier, targetAccountId);
   assert.equal(indexCall.max_results, 100n);
   assert.equal(data.transfers.limit, RAW_ICP_TRACKER_TRANSFER_LIMIT);
+});
+
+test('loadRawIcpCanisterTrackerData loads raw commitment history alongside transfers', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const calls = [];
+
+  const data = await loadRawIcpCanisterTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historyLimit: 2,
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async get_raw_icp_commitment_history(args) {
+        calls.push(args);
+        return {
+          items: [{ tx_id: 9n, timestamp_nanos: [1_710_000_000_000_000_000n], amount_e8s: 200_000_000n, counts_toward_faucet: true }],
+          next_start_after_tx_id: [],
+        };
+      },
+      async find_canisters_by_memo_prefix() {
+        return { items: [], truncated: false };
+      },
+    },
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        return { Ok: { balance: 0n, oldest_tx_id: [], transactions: [] } };
+      },
+    }),
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], {
+    canister_id: target,
+    start_after_tx_id: [],
+    limit: [2],
+    descending: [true],
+  });
+  assert.equal(data.commitments.items.length, 1);
+  assert.equal(data.commitments.items[0].tx_id, 9n);
+  assert.deepEqual(data.transfers.items, []);
+  assert.equal(data.errors.commitments, null);
+  assert.equal(data.errors.transfers, null);
+});
+
+test('loadRawIcpCanisterTrackerData isolates commitment query failures from transfers', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+
+  const data = await loadRawIcpCanisterTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async get_raw_icp_commitment_history() {
+        throw new Error('raw commitment outage');
+      },
+      async find_canisters_by_memo_prefix() {
+        return { items: [], truncated: false };
+      },
+    },
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        return { Ok: { balance: 0n, oldest_tx_id: [], transactions: [] } };
+      },
+    }),
+  });
+
+  assert.deepEqual(data.commitments.items, []);
+  assert.deepEqual(data.transfers.items, []);
+  assert.match(data.errors.commitments, /raw commitment outage/);
+  assert.equal(data.errors.transfers, null);
+});
+
+test('loadRawIcpCanisterTrackerData isolates transfer failures from commitments', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+
+  const data = await loadRawIcpCanisterTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async get_raw_icp_commitment_history() {
+        return {
+          items: [{ tx_id: 12n, timestamp_nanos: [1_710_000_000_000_000_000n], amount_e8s: 300_000_000n, counts_toward_faucet: true }],
+          next_start_after_tx_id: [],
+        };
+      },
+      async find_canisters_by_memo_prefix() {
+        return { items: [], truncated: false };
+      },
+    },
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        throw new Error('index outage');
+      },
+    }),
+  });
+
+  assert.equal(data.commitments.items[0].tx_id, 12n);
+  assert.deepEqual(data.transfers.items, []);
+  assert.equal(data.errors.commitments, null);
+  assert.match(data.errors.transfers, /index outage/);
+});
+
+test('loadRawIcpCanisterTrackerData marks progressive transfer data with commitments loading', async () => {
+  const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const progress = [];
+
+  await loadRawIcpCanisterTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    canisterId: target,
+    onTransfersProgress: (partial) => progress.push(partial),
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async get_raw_icp_commitment_history() {
+        return { items: [], next_start_after_tx_id: [] };
+      },
+      async find_canisters_by_memo_prefix() {
+        return { items: [], truncated: false };
+      },
+    },
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        return { Ok: { balance: 0n, oldest_tx_id: [], transactions: [] } };
+      },
+    }),
+  });
+
+  assert.equal(progress.length, 1);
+  assert.deepEqual(progress[0].commitments, { items: [], loading: true });
+  assert.equal(progress[0].errors.commitments, null);
+});
+
+test('loadNeuronStakeTrackerData loads neuron commitment history with isolated transfer failure', async () => {
+  const calls = [];
+  const stakingSubaccount = Array.from({ length: 32 }, () => 7);
+
+  const data = await loadNeuronStakeTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    neuronId: 42n,
+    historyLimit: 3,
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async get_neuron_commitment_history(args) {
+        calls.push(args);
+        return {
+          items: [{ tx_id: 14n, timestamp_nanos: [1_710_000_000_000_000_000n], amount_e8s: 400_000_000n, counts_toward_faucet: true }],
+          next_start_after_tx_id: [],
+        };
+      },
+    },
+    governanceActorFactory: () => ({
+      async list_neurons() {
+        return { full_neurons: [{ id: [{ id: 42n }], account: stakingSubaccount }] };
+      },
+    }),
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions() {
+        throw new Error('index outage');
+      },
+    }),
+  });
+
+  assert.deepEqual(calls, [{
+    neuron_id: 42n,
+    start_after_tx_id: [],
+    limit: [3],
+    descending: [true],
+  }]);
+  assert.equal(data.commitments.items[0].tx_id, 14n);
+  assert.deepEqual(data.transfers.items, []);
+  assert.equal(data.errors.commitments, null);
+  assert.match(data.errors.transfers, /index outage/);
+});
+
+test('loadNeuronStakeTrackerData isolates commitment query failures from transfers', async () => {
+  const stakingSubaccount = Array.from({ length: 32 }, () => 7);
+
+  const data = await loadNeuronStakeTrackerData({
+    historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
+    host: 'https://icp0.io',
+    agent: { test: true },
+    neuronId: 42n,
+    historianActor: {
+      async get_public_status() {
+        return historianStatus({
+          index_canister_id: [principal('qhbym-qaaaa-aaaaa-aaafq-cai')],
+        });
+      },
+      async get_neuron_commitment_history() {
+        throw new Error('neuron commitment outage');
+      },
+    },
+    governanceActorFactory: () => ({
+      async list_neurons() {
+        return { full_neurons: [{ id: [{ id: 42n }], account: stakingSubaccount }] };
+      },
+    }),
+    indexActorFactory: () => ({
+      async get_account_identifier_transactions(args) {
+        return { Ok: { balance: 0n, oldest_tx_id: [21n], transactions: [{
+          id: 21n,
+          transaction: {
+            memo: 0n,
+            icrc1_memo: [],
+            created_at_time: [],
+            timestamp: [{ timestamp_nanos: 1_710_000_000_000_000_021n }],
+            operation: { Transfer: { from: 'faucet-account', to: args.account_identifier, amount: { e8s: 210_000_000n }, fee: { e8s: 10_000n }, spender: [] } },
+          },
+        }] } };
+      },
+    }),
+  });
+
+  assert.deepEqual(data.commitments.items, []);
+  assert.equal(data.transfers.items.length, 1);
+  assert.equal(data.transfers.items[0].tx_id, 21n);
+  assert.match(data.errors.commitments, /neuron commitment outage/);
+  assert.equal(data.errors.transfers, null);
 });
 
 test('loadCmcTopUpTransfersFromIndex builds the CMC deposit account and filters matching transfers', async () => {

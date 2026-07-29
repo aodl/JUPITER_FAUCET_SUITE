@@ -113,6 +113,12 @@ type GetCommitmentHistoryArgs = record {
   limit : opt nat32;
   descending : opt bool;
 };
+type GetNeuronCommitmentHistoryArgs = record {
+  neuron_id : nat64;
+  start_after_tx_id : opt nat64;
+  limit : opt nat32;
+  descending : opt bool;
+};
 type CommitmentHistoryPage = record {
   items : vec CommitmentSample;
   next_start_after_tx_id : opt nat64;
@@ -510,6 +516,8 @@ service : (InitArgs) -> {
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
   get_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
+  get_raw_icp_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
+  get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;

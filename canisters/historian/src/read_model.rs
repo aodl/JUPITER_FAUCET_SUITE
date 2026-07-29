@@ -77,43 +77,84 @@ pub(super) fn get_cycles_history(args: GetCyclesHistoryArgs) -> CyclesHistoryPag
     })
 }
 
+fn commitment_history_page_from_snapshot(
+    history: Vec<CommitmentSample>,
+    start_after_tx_id: Option<u64>,
+    limit: Option<u32>,
+    descending: Option<bool>,
+) -> CommitmentHistoryPage {
+    let descending = descending.unwrap_or(false);
+    let limit = clamp_public_limit(limit, 100);
+    let mut items = Vec::new();
+    let mut next = None;
+    let iter: Box<dyn Iterator<Item = &CommitmentSample>> = if descending {
+        Box::new(history.iter().rev())
+    } else {
+        Box::new(history.iter())
+    };
+    for item in iter {
+        let include = match start_after_tx_id {
+            Some(tx_id) if descending => item.tx_id < tx_id,
+            Some(tx_id) => item.tx_id > tx_id,
+            None => true,
+        };
+        if !include {
+            continue;
+        }
+        if items.len() >= limit {
+            next = items.last().map(|sample: &CommitmentSample| sample.tx_id);
+            break;
+        }
+        items.push(item.clone());
+    }
+    CommitmentHistoryPage {
+        items,
+        next_start_after_tx_id: next,
+    }
+}
+
 pub(super) fn commitment_history_page(args: GetCommitmentHistoryArgs) -> CommitmentHistoryPage {
     state::with_state(|st| {
-        let descending = args.descending.unwrap_or(false);
-        let limit = clamp_public_limit(args.limit, 100);
-        let mut items = Vec::new();
-        let mut next = None;
-        let history = commitment_history_snapshot(st, args.canister_id);
-        let iter: Box<dyn Iterator<Item = &CommitmentSample>> = if descending {
-            Box::new(history.iter().rev())
-        } else {
-            Box::new(history.iter())
-        };
-        for item in iter {
-            let include = match args.start_after_tx_id {
-                Some(tx_id) if descending => item.tx_id < tx_id,
-                Some(tx_id) => item.tx_id > tx_id,
-                None => true,
-            };
-            if !include {
-                continue;
-            }
-            if items.len() >= limit {
-                next = items.last().map(|sample: &CommitmentSample| sample.tx_id);
-                break;
-            }
-            items.push(item.clone());
-        }
-        CommitmentHistoryPage {
-            items,
-            next_start_after_tx_id: next,
-        }
+        commitment_history_page_from_snapshot(
+            commitment_history_snapshot(st, args.canister_id),
+            args.start_after_tx_id,
+            args.limit,
+            args.descending,
+        )
     })
 }
 
 #[ic_cdk::query]
 pub(super) fn get_commitment_history(args: GetCommitmentHistoryArgs) -> CommitmentHistoryPage {
     commitment_history_page(args)
+}
+
+#[ic_cdk::query]
+pub(super) fn get_raw_icp_commitment_history(
+    args: GetCommitmentHistoryArgs,
+) -> CommitmentHistoryPage {
+    state::with_state(|st| {
+        commitment_history_page_from_snapshot(
+            raw_icp_commitment_history_snapshot(st, args.canister_id),
+            args.start_after_tx_id,
+            args.limit,
+            args.descending,
+        )
+    })
+}
+
+#[ic_cdk::query]
+pub(super) fn get_neuron_commitment_history(
+    args: GetNeuronCommitmentHistoryArgs,
+) -> CommitmentHistoryPage {
+    state::with_state(|st| {
+        commitment_history_page_from_snapshot(
+            neuron_commitment_history_snapshot(st, args.neuron_id),
+            args.start_after_tx_id,
+            args.limit,
+            args.descending,
+        )
+    })
 }
 
 #[ic_cdk::query]

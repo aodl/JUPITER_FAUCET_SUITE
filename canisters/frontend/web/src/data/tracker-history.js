@@ -94,21 +94,26 @@ function buildGetCommitmentHistoryArgs({ canisterId, startAfter = null, limit = 
   };
 }
 
-async function loadTrackerCommitments(historian, { canisterId, historyLimit, minTimestampNanos = null }) {
-  if (typeof historian?.get_commitment_history !== 'function') {
-    throw new Error('Historian commitment history query is unavailable');
-  }
+function buildGetNeuronCommitmentHistoryArgs({ neuronId, startAfter = null, limit = TRACKER_HISTORY_PAGE_SIZE, descending = false } = {}) {
+  return {
+    neuron_id: typeof neuronId === 'bigint' ? neuronId : BigInt(neuronId),
+    start_after_tx_id: startAfter === null || startAfter === undefined ? [] : [typeof startAfter === 'bigint' ? startAfter : BigInt(startAfter)],
+    limit: [limit],
+    descending: [Boolean(descending)],
+  };
+}
+
+async function loadCommitmentHistoryPages({ fetchPage, historyLimit, minTimestampNanos = null }) {
   const limit = positiveLimit(historyLimit);
   const items = [];
   let startAfter = null;
   let nextStartAfter = null;
   while (items.length < limit) {
-    const page = await historian.get_commitment_history(buildGetCommitmentHistoryArgs({
-      canisterId,
+    const page = await fetchPage({
       startAfter,
       limit: Math.min(TRACKER_HISTORY_PAGE_SIZE, limit - items.length),
       descending: true,
-    }));
+    });
     const pageItems = page?.items || [];
     for (const item of pageItems) {
       if (isInsideTimestampCutoff(item, minTimestampNanos)) items.push(item);
@@ -126,6 +131,54 @@ async function loadTrackerCommitments(historian, { canisterId, historyLimit, min
     }),
     next_start_after_tx_id: items.length >= limit && nextStartAfter !== null && nextStartAfter !== undefined ? [nextStartAfter] : [],
   };
+}
+
+async function loadTrackerCommitments(historian, { canisterId, historyLimit, minTimestampNanos = null }) {
+  if (typeof historian?.get_commitment_history !== 'function') {
+    throw new Error('Historian commitment history query is unavailable');
+  }
+  return loadCommitmentHistoryPages({
+    historyLimit,
+    minTimestampNanos,
+    fetchPage: ({ startAfter, limit, descending }) => historian.get_commitment_history(buildGetCommitmentHistoryArgs({
+      canisterId,
+      startAfter,
+      limit,
+      descending,
+    })),
+  });
+}
+
+async function loadRawIcpCanisterCommitments(historian, { canisterId, historyLimit, minTimestampNanos = null }) {
+  if (typeof historian?.get_raw_icp_commitment_history !== 'function') {
+    throw new Error('Historian raw ICP commitment history query is unavailable');
+  }
+  return loadCommitmentHistoryPages({
+    historyLimit,
+    minTimestampNanos,
+    fetchPage: ({ startAfter, limit, descending }) => historian.get_raw_icp_commitment_history(buildGetCommitmentHistoryArgs({
+      canisterId,
+      startAfter,
+      limit,
+      descending,
+    })),
+  });
+}
+
+async function loadNeuronCommitments(historian, { neuronId, historyLimit, minTimestampNanos = null }) {
+  if (typeof historian?.get_neuron_commitment_history !== 'function') {
+    throw new Error('Historian neuron commitment history query is unavailable');
+  }
+  return loadCommitmentHistoryPages({
+    historyLimit,
+    minTimestampNanos,
+    fetchPage: ({ startAfter, limit, descending }) => historian.get_neuron_commitment_history(buildGetNeuronCommitmentHistoryArgs({
+      neuronId,
+      startAfter,
+      limit,
+      descending,
+    })),
+  });
 }
 
 async function loadTrackerCmcTransfers({ historian, status = null, agent, indexActorFactory, canisterId, cmcCanisterId, historyLimit, minTimestampNanos = null }) {
@@ -312,6 +365,11 @@ export async function loadRawIcpCanisterTrackerData({
   });
   const statusPromise = historian.get_public_status();
   const relayRegistrationsPromise = loadRelayRegistrations(historian);
+  const commitmentsPromise = loadRawIcpCanisterCommitments(historian, {
+    canisterId,
+    historyLimit,
+    minTimestampNanos,
+  });
   const transfersPromise = statusPromise.then((status) => loadRawIncomingTransfers({
     historian,
     status,
@@ -325,9 +383,10 @@ export async function loadRawIcpCanisterTrackerData({
       ? (transfers) => onTransfersProgress({
           canisterId,
           status,
+          commitments: { items: [], loading: true },
           transfers,
           candidates: { items: [], truncated: false, loading: true },
-          errors: { transfers: null, candidates: null },
+          errors: { commitments: null, transfers: null, candidates: null },
         })
       : null,
   }));
@@ -338,9 +397,10 @@ export async function loadRawIcpCanisterTrackerData({
         limit: [prefixLimit],
       })
     : Promise.resolve({ items: [], truncated: false });
-  const [statusResult, relayRegistrationsResult, transfersResult, candidatesResult] = await Promise.allSettled([
+  const [statusResult, relayRegistrationsResult, commitmentsResult, transfersResult, candidatesResult] = await Promise.allSettled([
     statusPromise,
     relayRegistrationsPromise,
+    commitmentsPromise,
     transfersPromise,
     candidatesPromise,
   ]);
@@ -348,9 +408,11 @@ export async function loadRawIcpCanisterTrackerData({
     canisterId,
     status: fulfilledOrNull(statusResult),
     relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
+    commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
     transfers: fulfilledOrNull(transfersResult) || { items: [] },
     candidates: fulfilledOrNull(candidatesResult) || { items: [], truncated: false },
     errors: {
+      commitments: commitmentsResult.status === 'rejected' ? normalizeError(commitmentsResult.reason) : null,
       transfers: transfersResult.status === 'rejected' ? normalizeError(transfersResult.reason) : null,
       candidates: candidatesResult.status === 'rejected' ? normalizeError(candidatesResult.reason) : null,
     },
@@ -388,8 +450,13 @@ export async function loadNeuronStakeTrackerData({
     neuronId,
     governanceCanisterId,
   });
-  const status = await historian.get_public_status();
-  const transfers = await loadRawIncomingTransfers({
+  const statusPromise = historian.get_public_status();
+  const commitmentsPromise = loadNeuronCommitments(historian, {
+    neuronId,
+    historyLimit,
+    minTimestampNanos,
+  });
+  const transfersPromise = statusPromise.then((status) => loadRawIncomingTransfers({
     historian,
     status,
     agent: resolvedAgent,
@@ -403,16 +470,26 @@ export async function loadNeuronStakeTrackerData({
           neuronId,
           stakingAccount,
           status,
+          commitments: { items: [], loading: true },
           transfers: progressTransfers,
-          errors: { transfers: null },
+          errors: { commitments: null, transfers: null },
         })
       : null,
-  });
+  }));
+  const [statusResult, commitmentsResult, transfersResult] = await Promise.allSettled([
+    statusPromise,
+    commitmentsPromise,
+    transfersPromise,
+  ]);
   return {
     neuronId,
     stakingAccount,
-    status,
-    transfers,
-    errors: { transfers: null },
+    status: fulfilledOrNull(statusResult),
+    commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
+    transfers: fulfilledOrNull(transfersResult) || { items: [] },
+    errors: {
+      commitments: commitmentsResult.status === 'rejected' ? normalizeError(commitmentsResult.reason) : null,
+      transfers: transfersResult.status === 'rejected' ? normalizeError(transfersResult.reason) : null,
+    },
   };
 }

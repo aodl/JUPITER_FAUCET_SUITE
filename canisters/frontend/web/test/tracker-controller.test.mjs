@@ -256,6 +256,19 @@ function rawTransfer(id, from, amountE8s, isMatchingMemo = false, memoText = nul
   };
 }
 
+function rawCommitment(id, amountE8s, timestampNanos = 1_700_000_000_000_000_000n + BigInt(id)) {
+  return {
+    tx_id: BigInt(id),
+    timestamp_nanos: Array.isArray(timestampNanos) ? timestampNanos : [timestampNanos],
+    amount_e8s: BigInt(amountE8s),
+    counts_toward_faucet: true,
+  };
+}
+
+function dayTimestampNanos(day) {
+  return 1_700_000_000_000_000_000n + BigInt(day) * 86_400_000_000_000n;
+}
+
 test('tracker hash hydration submits once for the same principal', async () => {
   const calls = [];
   const nodes = trackerNodes();
@@ -684,6 +697,309 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
     assert.match(html, /Jupiter Faucet · matching memo 5 ICP across 1 transfer/);
     assert.match(html, /Jupiter Faucet · treasury 4 ICP across 1 transfer/);
     assert.match(html, /Chart display is limited to the newest 10,000 incoming ICP transfers/);
+  });
+});
+
+test('raw ICP canister and neuron trackers render commitment and incoming-transfer charts', async () => {
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+
+  for (const mode of ['rawIcpCanister', 'neuronStake']) {
+    const nodes = trackerNodes();
+    await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+      const controller = createTrackerController({
+        frontendConfig: {},
+        isLocalHost: () => false,
+        simulatorHashForPrefill,
+        loadRawCanisterData: async () => ({
+          status: { output_account: [faucetAccount] },
+          commitments: { items: [rawCommitment(8, 800_000_000n)] },
+          transfers: { items: [rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner')] },
+          candidates: { items: [] },
+          errors: {},
+        }),
+        loadNeuronData: async () => ({
+          neuronId: 42n,
+          stakingAccount: faucetAccount,
+          status: { output_account: [faucetAccount] },
+          commitments: { items: [rawCommitment(9, 900_000_000n)] },
+          transfers: { items: [rawTransfer(6, faucetAccountId, 600_000_000n, true, 'miner')] },
+          errors: {},
+        }),
+      });
+      controller.bindPane();
+      nodeMap.get('tracker-principal-input').value = mode === 'rawIcpCanister' ? `${compactCanister}.miner` : '42.miner';
+
+      await controller.submitPrincipal();
+
+      const html = nodeMap.get('tracker-result').innerHTML;
+      assert.match(html, /<h3>ICP commitments<\/h3>/);
+      assert.match(html, mode === 'rawIcpCanister' ? /Raw ICP canister memo/ : /Raw ICP neuron memo/);
+      assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+      assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    });
+  }
+});
+
+test('raw ICP tracker range uses the newest dated commitment or transfer as the shared anchor', async () => {
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+
+  const scenarios = [
+    {
+      name: 'newer transfer',
+      commitments: { items: [rawCommitment(1, 100_000_000n, dayTimestampNanos(0))] },
+      transfers: { items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)] },
+      expectedCommitments: '0',
+      expectedTransfers: '1',
+      emptyMessage: /No retained qualifying commitments are loaded for last month/,
+    },
+    {
+      name: 'newer commitment',
+      commitments: { items: [rawCommitment(1, 100_000_000n, dayTimestampNanos(40))] },
+      transfers: { items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)] },
+      expectedCommitments: '1',
+      expectedTransfers: '0',
+      emptyMessage: /No dated incoming ICP transfers are available in last month/,
+    },
+  ];
+  scenarios[0].transfers.items[0].timestamp_nanos = [dayTimestampNanos(40)];
+  scenarios[1].transfers.items[0].timestamp_nanos = [dayTimestampNanos(0)];
+
+  for (const scenario of scenarios) {
+    const nodes = trackerNodes();
+    await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+      const controller = createTrackerController({
+        frontendConfig: {},
+        isLocalHost: () => false,
+        simulatorHashForPrefill,
+      });
+      controller.bindPane();
+      controller.state.viewMode = 'rawIcpCanister';
+      controller.state.data = {
+        status: { output_account: [faucetAccount] },
+        commitments: scenario.commitments,
+        transfers: scenario.transfers,
+        candidates: { items: [] },
+        errors: {},
+      };
+      controller.state.parsedMemo = {
+        kind: 'rawIcpCanister',
+        canisterText: canister,
+        canisterId: Principal.fromText(canister),
+        normalizedMemoText: canister,
+        outgoingMemoText: null,
+      };
+
+      controller.setRange('month');
+
+      const html = nodeMap.get('tracker-result').innerHTML;
+      assert.match(
+        html,
+        new RegExp(`Commitments shown</dt><dd class="pane-detail-value">${scenario.expectedCommitments}</dd>`),
+        scenario.name,
+      );
+      assert.match(
+        html,
+        new RegExp(`Incoming transfers shown</dt><dd class="pane-detail-value">${scenario.expectedTransfers}</dd>`),
+        scenario.name,
+      );
+      assert.match(html, scenario.emptyMessage, scenario.name);
+    });
+  }
+});
+
+test('raw ICP commitment chart uses range-aware empty copy', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+    });
+    controller.bindPane();
+    controller.state.viewMode = 'rawIcpCanister';
+    controller.state.data = {
+      status: {},
+      commitments: { items: [] },
+      transfers: { items: [] },
+      candidates: { items: [] },
+      errors: {},
+    };
+    controller.state.parsedMemo = {
+      kind: 'rawIcpCanister',
+      canisterText: canister,
+      canisterId: Principal.fromText(canister),
+      normalizedMemoText: canister,
+      outgoingMemoText: null,
+    };
+
+    controller.setRange('month');
+    let html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /No retained qualifying commitments are loaded for last month/);
+    assert.match(html, /loader may not have loaded older retained rows/);
+    assert.doesNotMatch(html, /No retained target history exists/);
+
+    controller.setRange('all');
+    html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /No dated retained qualifying commitments are available for this target/);
+  });
+});
+
+test('raw ICP commitment chart distinguishes undated retained commitments from no retained history', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+    });
+    controller.bindPane();
+    controller.state.viewMode = 'rawIcpCanister';
+    controller.state.data = {
+      status: {},
+      commitments: { items: [rawCommitment(4, 400_000_000n, [])] },
+      transfers: { items: [] },
+      candidates: { items: [] },
+      errors: {},
+    };
+    controller.state.parsedMemo = {
+      kind: 'rawIcpCanister',
+      canisterText: canister,
+      canisterId: Principal.fromText(canister),
+      normalizedMemoText: canister,
+      outgoingMemoText: null,
+    };
+
+    controller.setRange('all');
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    assert.match(html, /ICP committed shown<\/dt><dd class="pane-detail-value">4 ICP<\/dd>/);
+    assert.match(html, /No dated retained qualifying commitments are available for this target/);
+    assert.doesNotMatch(html, /No retained target history exists/);
+  });
+});
+
+test('raw ICP tracker isolates commitment and transfer chart failures', async () => {
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+
+  for (const failure of ['commitments', 'transfers']) {
+    const nodes = trackerNodes();
+    await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+      const controller = createTrackerController({
+        frontendConfig: {},
+        isLocalHost: () => false,
+        simulatorHashForPrefill,
+      });
+      controller.bindPane();
+      controller.state.viewMode = 'rawIcpCanister';
+      controller.state.data = {
+        status: { output_account: [faucetAccount] },
+        commitments: { items: failure === 'commitments' ? [] : [rawCommitment(3, 300_000_000n)] },
+        transfers: { items: failure === 'transfers' ? [] : [rawTransfer(5, faucetAccountId, 500_000_000n, true)] },
+        candidates: { items: [] },
+        errors: failure === 'commitments'
+          ? { commitments: 'commitment query failed', transfers: null }
+          : { commitments: null, transfers: 'index query failed' },
+      };
+      controller.state.parsedMemo = {
+        kind: 'rawIcpCanister',
+        canisterText: canister,
+        canisterId: Principal.fromText(canister),
+        normalizedMemoText: canister,
+        outgoingMemoText: null,
+      };
+
+      controller.setRange('all');
+
+      const html = nodeMap.get('tracker-result').innerHTML;
+      if (failure === 'commitments') {
+        assert.match(html, /Commitment history unavailable: commitment query failed/);
+        assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
+        assert.match(html, /ICP committed shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
+        assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+        assert.equal((html.match(/Commitment history unavailable/g) || []).length, 1);
+      } else {
+        assert.match(html, /Raw ICP transfer history unavailable: index query failed/);
+        assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+      }
+    });
+  }
+});
+
+test('raw ICP commitment-only data renders no empty transfer-source legend', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+    });
+    controller.bindPane();
+    controller.state.viewMode = 'rawIcpCanister';
+    controller.state.data = {
+      status: {},
+      commitments: { items: [rawCommitment(3, 300_000_000n)] },
+      transfers: { items: [] },
+      candidates: { items: [] },
+      errors: {},
+    };
+    controller.state.parsedMemo = {
+      kind: 'rawIcpCanister',
+      canisterText: canister,
+      canisterId: Principal.fromText(canister),
+      normalizedMemoText: canister,
+      outgoingMemoText: null,
+    };
+
+    controller.setRange('all');
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">0<\/dd>/);
+    assert.doesNotMatch(html, /tracker-source-legend/);
+  });
+});
+
+test('raw ICP tracker explains target-wide commitment scope when an outgoing suffix is present', async () => {
+  const nodes = trackerNodes();
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const compactCanister = canister.replaceAll('-', '');
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => ({
+        status: {},
+        commitments: { items: [rawCommitment(3, 300_000_000n)] },
+        transfers: { items: [] },
+        candidates: { items: [] },
+        errors: {},
+      }),
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compactCanister}.miner`;
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assert.match(html, /Retained qualifying commitment history is recorded for the destination target as a whole/);
+    assert.match(html, /is not filtered by this outgoing memo/);
+    assert.match(html, /The chart shows retained qualifying commitments in the selected range/);
   });
 });
 

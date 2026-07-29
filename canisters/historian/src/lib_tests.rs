@@ -1990,6 +1990,189 @@ mod tests {
     }
 
     #[test]
+    fn raw_icp_commitment_history_query_reads_raw_store_only() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.raw_icp_commitment_history.insert(
+            canister,
+            vec![CommitmentSample {
+                tx_id: 41,
+                timestamp_nanos: Some(410),
+                amount_e8s: 4100,
+                counts_toward_faucet: true,
+            }],
+        );
+        state::set_state(st);
+
+        let page = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        });
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].tx_id, 41);
+        assert_eq!(page.items[0].timestamp_nanos, Some(410));
+        assert_eq!(page.items[0].amount_e8s, 4100);
+        assert!(page.items[0].counts_toward_faucet);
+    }
+
+    #[test]
+    fn neuron_commitment_history_query_reads_neuron_store() {
+        let neuron_id = 42;
+        let mut st = base_state();
+        st.neuron_commitment_history.insert(
+            neuron_id,
+            vec![CommitmentSample {
+                tx_id: 51,
+                timestamp_nanos: Some(510),
+                amount_e8s: 5100,
+                counts_toward_faucet: true,
+            }],
+        );
+        state::set_state(st);
+
+        let page = get_neuron_commitment_history(GetNeuronCommitmentHistoryArgs {
+            neuron_id,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        });
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].tx_id, 51);
+        assert_eq!(page.items[0].timestamp_nanos, Some(510));
+        assert_eq!(page.items[0].amount_e8s, 5100);
+        assert!(page.items[0].counts_toward_faucet);
+    }
+
+    #[test]
+    fn normal_and_raw_commitment_history_queries_are_store_scoped() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.commitment_history.insert(
+            canister,
+            vec![CommitmentSample {
+                tx_id: 61,
+                timestamp_nanos: Some(610),
+                amount_e8s: 6100,
+                counts_toward_faucet: true,
+            }],
+        );
+        st.raw_icp_commitment_history.insert(
+            canister,
+            vec![CommitmentSample {
+                tx_id: 62,
+                timestamp_nanos: Some(620),
+                amount_e8s: 6200,
+                counts_toward_faucet: true,
+            }],
+        );
+        state::set_state(st);
+
+        let normal = get_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        });
+        let raw = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        });
+
+        assert_eq!(
+            normal
+                .items
+                .iter()
+                .map(|item| item.tx_id)
+                .collect::<Vec<_>>(),
+            vec![61]
+        );
+        assert_eq!(
+            raw.items.iter().map(|item| item.tx_id).collect::<Vec<_>>(),
+            vec![62]
+        );
+    }
+
+    #[test]
+    fn raw_and_neuron_commitment_history_unknown_targets_return_empty_pages() {
+        state::set_state(base_state());
+
+        let raw = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: principal("22255-zqaaa-aaaas-qf6uq-cai"),
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        });
+        let neuron = get_neuron_commitment_history(GetNeuronCommitmentHistoryArgs {
+            neuron_id: 999,
+            start_after_tx_id: None,
+            limit: Some(10),
+            descending: Some(false),
+        });
+
+        assert!(raw.items.is_empty());
+        assert_eq!(raw.next_start_after_tx_id, None);
+        assert!(neuron.items.is_empty());
+        assert_eq!(neuron.next_start_after_tx_id, None);
+    }
+
+    #[test]
+    fn raw_icp_commitment_history_uses_shared_descending_cursor_pagination() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.raw_icp_commitment_history.insert(
+            canister,
+            vec![
+                CommitmentSample {
+                    tx_id: 10,
+                    timestamp_nanos: Some(10),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                },
+                CommitmentSample {
+                    tx_id: 20,
+                    timestamp_nanos: Some(20),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                },
+                CommitmentSample {
+                    tx_id: 30,
+                    timestamp_nanos: Some(30),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                },
+            ],
+        );
+        state::set_state(st);
+
+        let first = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: None,
+            limit: Some(2),
+            descending: Some(true),
+        });
+        let second = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+            canister_id: canister,
+            start_after_tx_id: first.next_start_after_tx_id,
+            limit: Some(2),
+            descending: Some(true),
+        });
+
+        let tx_ids: Vec<_> = first
+            .items
+            .iter()
+            .chain(second.items.iter())
+            .map(|item| item.tx_id)
+            .collect();
+        assert_eq!(tx_ids, vec![30, 20, 10]);
+    }
+
+    #[test]
     fn memo_registered_canister_summaries_roll_up_qualifying_only() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();

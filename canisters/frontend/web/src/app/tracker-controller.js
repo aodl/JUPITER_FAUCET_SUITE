@@ -169,7 +169,7 @@ function trackerAllDatedItems(data) {
   ];
 }
 
-function rawTransferTimestampMs(item) {
+function rawHistoryTimestampMs(item) {
   const timestamp = optValue(item?.timestamp_nanos);
   const date = timestampNanosToDate(timestamp);
   return date ? date.getTime() : null;
@@ -208,6 +208,39 @@ function filterTrackerDataByRange(data, range) {
     cycles: filterTrackerPageAfterCutoff(data.cycles, cutoffMs),
     logs: filterTrackerPageAfterCutoff(data.logs, cutoffMs),
     cmcTransfers: filterTrackerPageAfterCutoff(data.cmcTransfers, cutoffMs),
+  };
+}
+
+function latestRawTrackerTimestampMs(data) {
+  return [
+    ...(data?.commitments?.items || []),
+    ...(data?.transfers?.items || []),
+  ].reduce((latest, item) => {
+    const timestampMs = rawHistoryTimestampMs(item);
+    return timestampMs !== null && timestampMs > latest ? timestampMs : latest;
+  }, 0);
+}
+
+function filterRawTrackerPageAfterCutoff(page, cutoffMs) {
+  const items = page?.items || [];
+  if (cutoffMs === null) return { ...(page || { items: [] }), items };
+  return {
+    ...(page || { items: [] }),
+    items: items.filter((item) => {
+      const timestampMs = rawHistoryTimestampMs(item);
+      return timestampMs !== null && timestampMs >= cutoffMs;
+    }),
+  };
+}
+
+function filterRawTrackerDataByRange(data, range) {
+  if (!data || range === 'all') return data;
+  const anchorMs = latestRawTrackerTimestampMs(data) || Date.now();
+  const cutoffMs = trackerRangeCutoffMs(range, anchorMs);
+  return {
+    ...data,
+    commitments: filterRawTrackerPageAfterCutoff(data.commitments, cutoffMs),
+    transfers: filterRawTrackerPageAfterCutoff(data.transfers, cutoffMs),
   };
 }
 
@@ -327,8 +360,12 @@ function aggregateTrackerData(data, range) {
   return Array.from(buckets.values()).sort((left, right) => left.startMs - right.startMs);
 }
 
+function aggregateCommitmentsOnly(items, range) {
+  return aggregateTrackerData({ commitments: { items: items || [] } }, range);
+}
+
 function rawTimelineBounds(items, range) {
-  const timestamps = (items || []).map(rawTransferTimestampMs).filter((value) => value !== null);
+  const timestamps = (items || []).map(rawHistoryTimestampMs).filter((value) => value !== null);
   if (timestamps.length === 0) return null;
   const maxMs = Math.max(...timestamps);
   const minMs = range === 'all' ? Math.min(...timestamps) : trackerRangeCutoffMs(range, maxMs);
@@ -593,11 +630,11 @@ export function createTrackerController({
 
   const trackerRangeLabel = (range = state.range) => TRACKER_RANGE_LABELS[range] || TRACKER_RANGE_LABELS.month;
 
-  const rawTransfersLoading = () => (state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake')
-    && Boolean(state.data?.transfers?.loading);
+  const rawHistoryLoading = () => (state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake')
+    && (Boolean(state.data?.transfers?.loading) || Boolean(state.data?.commitments?.loading));
 
   const renderTrackerRangeControls = () => {
-    const disabled = rawTransfersLoading();
+    const disabled = rawHistoryLoading();
     const button = (range, label) => {
       const active = state.range === range;
       return `<button class="pane-page-button${active ? ' is-active' : ''}" type="button" data-tracker-range="${range}" aria-pressed="${active ? 'true' : 'false'}"${disabled ? ' disabled aria-disabled="true"' : ''}>${label}</button>`;
@@ -672,6 +709,31 @@ export function createTrackerController({
     ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
     labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying commitment')}`,
   });
+
+  const renderRawCommitmentsChart = (buckets, visibleData, fullData) => {
+    const commitmentError = fullData?.errors?.commitments;
+    if (commitmentError) {
+      return renderTrackerEmptyChart(`Commitment history unavailable: ${commitmentError}`);
+    }
+    const rawCommitmentEmptyMessage = () => {
+      if (visibleData?.commitments?.loading) return 'Loading ICP commitment history...';
+      if (state.range === 'all') return 'No dated retained qualifying commitments are available for this target.';
+      const rangeLabel = trackerRangeLabel();
+      if ((fullData?.commitments?.items || []).length > 0) {
+        return `No retained qualifying commitments are loaded for ${rangeLabel}. Select All to view older loaded history.`;
+      }
+      return `No retained qualifying commitments are loaded for ${rangeLabel}. The loader may not have loaded older retained rows; select All to request the full retained target history.`;
+    };
+    return renderTrackerAmountBarChart({
+      buckets,
+      amountKey: 'commitmentAmountE8s',
+      countKey: 'commitmentCount',
+      barClass: 'tracker-chart-bar--commitment',
+      emptyMessage: rawCommitmentEmptyMessage(),
+      ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
+      labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}`,
+    });
+  };
 
   const legendSegments = (segments, includeProtocol) => segments
     .filter((segment) => includeProtocol || segment.legendKey !== 'protocol')
@@ -1030,16 +1092,13 @@ export function createTrackerController({
     const result = document.getElementById('tracker-result');
     if (!result) return;
     const classified = classifyRawTransfers(data);
-    const latestRawMs = (classified.transfers?.items || [])
-      .map(rawTransferTimestampMs)
-      .filter((value) => value !== null)
-      .reduce((latest, value) => value > latest ? value : latest, 0);
-    const visibleItems = (classified.transfers?.items || []).filter((item) => {
-      if (state.range === 'all') return true;
-      const timestamp = rawTransferTimestampMs(item);
-      return timestamp !== null && timestamp >= trackerRangeCutoffMs(state.range, latestRawMs || Date.now());
-    });
+    const visibleData = filterRawTrackerDataByRange(classified, state.range);
+    const visibleCommitments = visibleData?.commitments?.items || [];
+    const visibleItems = visibleData?.transfers?.items || [];
     const summary = rawSummary(visibleItems);
+    const commitmentError = classified.errors?.commitments;
+    const commitmentCount = commitmentError ? null : visibleCommitments.length;
+    const committedE8s = commitmentError ? null : sumE8s(visibleCommitments);
     const isNeuron = parsed.kind === 'neuronStake';
     const title = isNeuron ? 'Raw ICP neuron memo' : 'Raw ICP canister memo';
     const target = isNeuron ? parsed.neuronId.toString() : parsed.canisterText;
@@ -1057,9 +1116,13 @@ export function createTrackerController({
     const buckets = aggregateRawTransfers(visibleItems, state.range, {
       memoSegmentByText: rawMemoSegments?.memoSegmentByText || null,
     });
+    const commitmentBuckets = aggregateCommitmentsOnly(visibleCommitments, state.range);
     const transferLoadingNote = classified.transfers?.loading
       ? `<p class="pane-status-note tracker-status-note tracker-status-note--loading tracker-chart-note">Chart still loading incoming ICP history… ${escapeHtml(formatInteger((classified.transfers.items || []).length))} transfers loaded${classified.transfers.pages_loaded ? ` across ${escapeHtml(formatInteger(classified.transfers.pages_loaded))} index pages` : ''}. The bars update as records arrive.</p>`
       : '';
+    const commitmentScopeNote = !hasOutgoingMemo
+      ? ''
+      : '<p class="pane-status-note tracker-status-note">Retained qualifying commitment history is recorded for the destination target as a whole and is not filtered by this outgoing memo. The chart shows retained qualifying commitments in the selected range. The transfer chart separately identifies matching and other payout memos.</p>';
     const matchingNote = !hasOutgoingMemo
       ? ''
       : `<p class="pane-status-note tracker-status-note">Visible Jupiter Faucet transfers matching the outgoing memo: ${escapeHtml(formatInteger(summary.faucetMatchingMemoTransferCount))} · ${escapeHtml(formatIcpE8s(summary.faucetMatchingMemoIcpE8s))}. If no transfers match, the top-up may not have been indexed yet, may be outside the loaded range, or may not have been paid through Jupiter Faucet yet.</p>`;
@@ -1069,6 +1132,13 @@ export function createTrackerController({
     result.innerHTML = `
       ${renderTrackerRangeControls()}
       <div class="tracker-chart-wrapper" id="tracker-chart-wrapper">
+        <div class="tracker-chart-card">
+          <div class="tracker-chart-header">
+            <h3>ICP commitments</h3>
+            <span>Retained qualifying Jupiter Faucet commitments recorded by Historian for this destination target.</span>
+          </div>
+          ${renderRawCommitmentsChart(commitmentBuckets, visibleData, classified)}
+        </div>
         <div class="tracker-chart-card">
           <div class="tracker-chart-header">
             <h3>${escapeHtml(title)}</h3>
@@ -1090,11 +1160,14 @@ export function createTrackerController({
       <dl class="pane-detail-grid tracker-summary-grid">
         <div><dt>Memo type</dt><dd class="pane-detail-value">${escapeHtml(title)}</dd></div>
         <div><dt>Tracked target</dt><dd class="pane-detail-value mono">${targetHtml}</dd></div>
+        <div><dt>Commitments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : escapeHtml(formatInteger(commitmentCount))}</dd></div>
+        <div><dt>ICP committed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : escapeHtml(formatIcpE8s(committedE8s))}</dd></div>
         <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
         <div><dt>Incoming ICP shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalIcpE8s))}</dd></div>
         <div><dt>Jupiter Faucet inflow shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.faucetTransferCount)} · ${formatIcpE8s(summary.faucetIcpE8s)}`)}</dd></div>
         ${!hasOutgoingMemo ? '' : `<div><dt>Outgoing memo</dt><dd class="pane-detail-value mono">${escapeHtml(parsed.outgoingMemoText)}</dd></div>`}
       </dl>
+      ${commitmentScopeNote}
       ${matchingNote}
       ${!isNeuron ? renderCandidateLinks(classified, parsed) : ''}
       ${classified.errors?.transfers ? `<p class="pane-status-note tracker-status-note">Raw ICP transfer history unavailable: ${escapeHtml(classified.errors.transfers)}</p>` : ''}
@@ -1106,7 +1179,7 @@ export function createTrackerController({
     if (!result || result.innerHTML.trim()) return;
     result.innerHTML = `
       <div class="tracker-empty-state">
-        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP into the target canister account; numeric memos show public neuron staking-account inflows.</p>
+        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP commitment history and incoming transfers for the target canister account; numeric memos show public neuron commitment history and staking-account inflows.</p>
       </div>`;
   };
 
@@ -1334,7 +1407,7 @@ export function createTrackerController({
         const button = event.target instanceof Element ? event.target.closest('[data-tracker-range]') : null;
         if (!button || !result.contains(button)) return;
         event.preventDefault();
-        if (button.disabled || button.getAttribute('aria-disabled') === 'true' || rawTransfersLoading()) return;
+        if (button.disabled || button.getAttribute('aria-disabled') === 'true' || rawHistoryLoading()) return;
         setRange(button.getAttribute('data-tracker-range') || 'month', { syncHash: true });
       });
     }

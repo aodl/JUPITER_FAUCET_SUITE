@@ -98,6 +98,12 @@ export const idlFactory = ({ IDL }) => {
     'start_after_tx_id' : IDL.Opt(IDL.Nat64),
     'limit' : IDL.Opt(IDL.Nat32),
   });
+  const GetNeuronCommitmentHistoryArgs = IDL.Record({
+    'descending' : IDL.Opt(IDL.Bool),
+    'neuron_id' : IDL.Nat64,
+    'start_after_tx_id' : IDL.Opt(IDL.Nat64),
+    'limit' : IDL.Opt(IDL.Nat32),
+  });
   const CommitmentSample = IDL.Record({
     'timestamp_nanos' : IDL.Opt(IDL.Nat64),
     'tx_id' : IDL.Nat64,
@@ -363,6 +369,16 @@ export const idlFactory = ({ IDL }) => {
         ['query'],
       ),
     'get_commitment_history' : IDL.Func(
+        [GetCommitmentHistoryArgs],
+        [CommitmentHistoryPage],
+        ['query'],
+      ),
+    'get_neuron_commitment_history' : IDL.Func(
+        [GetNeuronCommitmentHistoryArgs],
+        [CommitmentHistoryPage],
+        ['query'],
+      ),
+    'get_raw_icp_commitment_history' : IDL.Func(
         [GetCommitmentHistoryArgs],
         [CommitmentHistoryPage],
         ['query'],
