@@ -393,6 +393,42 @@ test('tracker commitment empty state distinguishes scoped ranges from all histor
   });
 });
 
+test('tracker initial scoped load uses the selected-range commitment empty state', async () => {
+  const nodes = trackerNodes();
+  const trackerData = {
+    ...minimalTrackerData(),
+    commitments: { items: [] },
+    cycles: {
+      items: [{
+        timestamp_nanos: 1_800_000_000_000_000_000n,
+        source: { BlackholeStatus: null },
+        cycles: 4_200_000_000_000n,
+      }],
+    },
+  };
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => trackerData,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+    await controller.submitPrincipal();
+
+    assert.equal(controller.state.range, 'month');
+    assert.match(
+      nodeMap.get('tracker-chart-wrapper').innerHTML,
+      /No dated commitments are available within the selected time range\. Select All to view older loaded history\./,
+    );
+    assert.doesNotMatch(
+      nodeMap.get('tracker-chart-wrapper').innerHTML,
+      /No dated commitments are available for this beneficiary yet\./,
+    );
+  });
+});
+
 test('tracker range buttons replace the metric-tracker hash for shareable views', async () => {
   const nodes = trackerNodes();
   const yearButton = new FakeElement({ 'data-tracker-range': 'year' });

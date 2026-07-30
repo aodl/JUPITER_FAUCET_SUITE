@@ -100,7 +100,30 @@
 .orbit-infographic-copy-link {
   display: inline-block;
   margin-top: 0.3em;
+  padding: 0.32em 0.7em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: rgba(16, 12, 32, 0.52);
+  color: inherit;
+  font-size: 0.72em;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-decoration: none;
   pointer-events: auto;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.orbit-infographic-copy-link:hover,
+.orbit-infographic-copy-link:focus-visible {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: #fff;
+  color: #fff;
+  transform: translateY(-1px);
 }
 
 .orbit-disbursement-status[hidden] {

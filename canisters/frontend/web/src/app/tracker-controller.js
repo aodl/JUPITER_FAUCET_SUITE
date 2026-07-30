@@ -674,8 +674,8 @@ export function createTrackerController({
 
   const renderTrackerEmptyChart = (message) => renderEmptyChart(message);
 
-  const trackerRangeEmptyMessage = ({ fullItems, rangeMessage, emptyMessage }) => {
-    if (state.range !== 'all' && (fullItems || []).length > 0) {
+  const trackerRangeEmptyMessage = ({ rangeMessage, emptyMessage }) => {
+    if (state.range !== 'all') {
       return `${rangeMessage} Select All to view older loaded history.`;
     }
     return emptyMessage;
@@ -696,13 +696,12 @@ export function createTrackerController({
     allowMinBarOverflow: true,
   });
 
-  const renderTrackerCommitmentsChart = (buckets, fullData = null) => renderTrackerAmountBarChart({
+  const renderTrackerCommitmentsChart = (buckets) => renderTrackerAmountBarChart({
     buckets,
     amountKey: 'commitmentAmountE8s',
     countKey: 'commitmentCount',
     barClass: 'tracker-chart-bar--commitment',
     emptyMessage: trackerRangeEmptyMessage({
-      fullItems: fullData?.commitments?.items,
       rangeMessage: 'No dated commitments are available within the selected time range.',
       emptyMessage: 'No dated commitments are available for this beneficiary yet.',
     }),
@@ -762,11 +761,10 @@ export function createTrackerController({
     return renderSourceLegend({ includeProtocol, segments: activeSegments });
   };
 
-  const renderTrackerObservedCmcChart = (buckets, fullData = null) => renderStackedAmountBarChart({
+  const renderTrackerObservedCmcChart = (buckets) => renderStackedAmountBarChart({
     buckets,
     segments: activeSourceSegments(SOURCE_SEGMENTS, buckets),
     emptyMessage: trackerRangeEmptyMessage({
-      fullItems: fullData?.cmcTransfers?.items,
       rangeMessage: `No dated ICP transfers to the canister’s CMC top-up account are available in ${trackerRangeLabel()}.`,
       emptyMessage: 'No dated ICP transfers to the canister’s CMC top-up account are available yet.',
     }),
@@ -836,7 +834,7 @@ export function createTrackerController({
           <h3>ICP commitments</h3>
           <span>Memo-registered commitment history from historian.</span>
         </div>
-        ${renderTrackerCommitmentsChart(buckets, fullData)}
+        ${renderTrackerCommitmentsChart(buckets)}
       </div>
       ${hasObservedCmcTopUps ? `<div class="tracker-chart-card">
         <div class="tracker-chart-header">
@@ -844,7 +842,7 @@ export function createTrackerController({
           <span>Transfers to the CMC deposit account in the selected range, colour-coded by source; direct non-Jupiter top-ups may appear.</span>
         </div>
         ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), buckets })}
-        ${renderTrackerObservedCmcChart(buckets, fullData)}
+        ${renderTrackerObservedCmcChart(buckets)}
       </div>` : ''}
       <div class="tracker-chart-card">
         <div class="tracker-chart-header">

@@ -21,7 +21,7 @@
     },
     {
       label: "Black hole",
-      text: "Disbursals are orchestrated by immutable (unmodifiable) smart contracts, aka 'blackholed'.",
+      text: "Disbursals are orchestrated by immutable (unmodifiable) smart contracts.",
       ctaLabel: "MORE INFO",
       ctaPanel: "governance",
       target: "point",

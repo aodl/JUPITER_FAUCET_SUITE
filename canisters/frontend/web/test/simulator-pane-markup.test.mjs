@@ -209,11 +209,15 @@ test('orbit scene includes hoverable infographic callouts', () => {
   assert.doesNotMatch(orbitCss, /\.orbit-disbursement-status \{[^}]*text-shadow:/);
   assert.match(orbitCss, /\.orbit-disbursement-status \.orbit-infographic-copy-link \{[\s\S]*color: inherit;[\s\S]*\}/);
   assert.match(orbitCss, /\.orbit-disbursement-status \.orbit-infographic-copy-link:hover,[\s\S]*\.orbit-disbursement-status \.orbit-infographic-copy-link:focus \{[\s\S]*color: #fff;[\s\S]*\}/);
-  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts, aka 'blackholed'\."/);
+  assert.match(orbitJs, /Disbursals are orchestrated by immutable \(unmodifiable\) smart contracts\."/);
+  assert.doesNotMatch(orbitJs, /aka 'blackholed'/);
   assert.doesNotMatch(orbitJs, /COMING SOON/);
   assert.match(orbitJs, /ctaLabel: "MORE INFO"/);
   assert.match(orbitJs, /ctaPanel: "governance"/);
+  assert.match(orbitJs, /copy\.appendChild\(document\.createElement\("br"\)\);[\s\S]*link\.textContent = item\.ctaLabel;/);
   assert.match(orbitJs, /link\.dataset\.panel = item\.ctaPanel/);
+  assert.match(orbitCss, /\.orbit-infographic-copy-link \{[\s\S]*border: 1px solid currentColor;[\s\S]*border-radius: 999px;[\s\S]*text-decoration: none;[\s\S]*\}/);
+  assert.match(orbitCss, /\.orbit-infographic-copy-link:hover,[\s\S]*\.orbit-infographic-copy-link:focus-visible \{[\s\S]*transform: translateY\(-1px\);[\s\S]*\}/);
   assert.match(orbitCss, /\.orbit-infographic-copy\.is-visible \{[\s\S]*pointer-events: auto;[\s\S]*\}/);
   assert.match(orbitJs, /Disbursed ICP is automatically converted into cycles, forming a giant, unstoppable faucet\./);
   assert.match(orbitJs, /lineStartX: 370/);
