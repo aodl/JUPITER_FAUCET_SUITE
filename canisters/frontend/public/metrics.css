@@ -1160,6 +1160,30 @@
   fill: rgba(96, 165, 250, 0.88);
 }
 
+.tracker-chart-bar--source-relay-1 {
+  fill: rgba(96, 165, 250, 0.88);
+}
+
+.tracker-chart-bar--source-relay-2 {
+  fill: rgba(56, 189, 248, 0.9);
+}
+
+.tracker-chart-bar--source-relay-3 {
+  fill: rgba(59, 130, 246, 0.92);
+}
+
+.tracker-chart-bar--source-relay-4 {
+  fill: rgba(99, 102, 241, 0.92);
+}
+
+.tracker-chart-bar--source-relay-5 {
+  fill: rgba(139, 92, 246, 0.9);
+}
+
+.tracker-chart-bar--source-relay-6 {
+  fill: rgba(192, 132, 252, 0.88);
+}
+
 .tracker-chart-bar--source-protocol {
   fill: rgba(245, 158, 11, 0.9);
 }
@@ -1180,6 +1204,17 @@
   display: inline-flex;
   gap: 0.35rem;
   outline: none;
+}
+
+.tracker-source-legend-item--link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tracker-source-legend-item--relay {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tracker-source-legend-item:focus-visible {
@@ -1223,6 +1258,30 @@
   color: rgba(96, 165, 250, 0.88);
 }
 
+.tracker-source-legend-item.tracker-chart-bar--source-relay-1 {
+  color: rgba(96, 165, 250, 0.88);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-relay-2 {
+  color: rgba(56, 189, 248, 0.9);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-relay-3 {
+  color: rgba(59, 130, 246, 0.92);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-relay-4 {
+  color: rgba(99, 102, 241, 0.92);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-relay-5 {
+  color: rgba(139, 92, 246, 0.9);
+}
+
+.tracker-source-legend-item.tracker-chart-bar--source-relay-6 {
+  color: rgba(192, 132, 252, 0.88);
+}
+
 .tracker-source-legend-item.tracker-chart-bar--source-protocol {
   color: rgba(245, 158, 11, 0.9);
 }
@@ -1243,9 +1302,35 @@
 .tracker-chart-card:has(.tracker-source-legend [data-source-segment="faucet-matching-memo"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="faucet-matching-memo"]),
 .tracker-chart-card:has(.tracker-source-legend [data-source-segment="faucet-other-memo"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="faucet-other-memo"]),
 .tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay-instance-1"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay-instance-1"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay-instance-2"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay-instance-2"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay-instance-3"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay-instance-3"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay-instance-4"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay-instance-4"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay-instance-5"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay-instance-5"]),
+.tracker-chart-card:has(.tracker-source-legend [data-source-segment="relay-instance-6"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="relay-instance-6"]),
 .tracker-chart-card:has(.tracker-source-legend [data-source-segment="protocol"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="protocol"]),
 .tracker-chart-card:has(.tracker-source-legend [data-source-segment="other"]:is(:hover, :focus-visible)) .tracker-chart-bar[data-source-segment]:not([data-source-segment="other"]) {
   opacity: 0.28;
+}
+
+.tracker-relay-overflow-details {
+  margin-top: 0.65rem;
+}
+
+.tracker-relay-overflow-details summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.tracker-relay-overflow-details p {
+  font-size: 0.78rem;
+  margin: 0.45rem 0;
+  opacity: 0.78;
+}
+
+.tracker-relay-overflow-list {
+  display: grid;
+  gap: 0.4rem;
 }
 
 .tracker-candidate-section {

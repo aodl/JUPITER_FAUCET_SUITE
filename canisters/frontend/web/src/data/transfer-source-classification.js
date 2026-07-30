@@ -6,6 +6,11 @@ function normalizeIdentifier(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function canisterIdText(value) {
+  if (!value) return '';
+  return typeof value.toText === 'function' ? value.toText() : String(value);
+}
+
 export function defaultCanisterAccountIdentifier(canisterId) {
   if (!canisterId) return '';
   const owner = typeof canisterId === 'string' ? Principal.fromText(canisterId) : canisterId;
@@ -17,7 +22,7 @@ export function relayRegistrySourceMap(relayRegistrations = []) {
   for (const entry of relayRegistrations || []) {
     const relayCanisterId = readOptional(entry?.relay_canister_id) || entry?.relay_canister_id;
     if (!relayCanisterId) continue;
-    const relayText = typeof relayCanisterId.toText === 'function' ? relayCanisterId.toText() : String(relayCanisterId);
+    const relayText = canisterIdText(relayCanisterId);
     map.set(defaultCanisterAccountIdentifier(relayText), {
       entry,
       relayCanisterId: relayText,
@@ -53,12 +58,15 @@ export function classifyTransferItem(item, options = {}) {
     ...options,
     fromAccountIdentifier: item?.from_account_identifier,
   });
+  const relayCanisterId = sourceCategory === 'relay'
+    ? relayMatch?.relayCanisterId || canisterIdText(options.relayCanisterId ?? JUPITER_RELAY_CANISTER_ID)
+    : '';
   return {
     ...item,
     source_category: sourceCategory,
-    ...(sourceCategory === 'relay' && relayMatch ? {
-      source_relay_canister_id: relayMatch.relayCanisterId,
-      source_label: relayMatch.label,
+    ...(relayCanisterId ? {
+      source_relay_canister_id: relayCanisterId,
+      source_label: relayMatch?.label || `Relay ${relayCanisterId.slice(0, 5)}…`,
     } : {}),
   };
 }

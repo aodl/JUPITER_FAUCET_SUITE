@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Principal } from '@icp-sdk/core/principal';
 
 import { createTrackerController } from '../src/app/tracker-controller.js';
@@ -7,6 +8,8 @@ import { simulatorHashForPrefill } from '../src/app/hash-routes.js';
 import { JUPITER_RELAY_CANISTER_ID } from '../src/app/config.js';
 import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
 import { classifyTransferItem, defaultCanisterAccountIdentifier, relayRegistrySourceMap } from '../src/data/transfer-source-classification.js';
+
+const metricsCss = readFileSync(new URL('../../public/metrics.css', import.meta.url), 'utf8');
 
 class FakeElement {
   constructor(attrs = {}) {
@@ -58,7 +61,17 @@ class FakeElement {
   }
 }
 
-test('dynamic relay registry classifies relay source and adds metadata', () => {
+test('canonical Relay fallback classifies the source and attaches its Relay canister ID', () => {
+  const item = classifyTransferItem({
+    from_account_identifier: defaultCanisterAccountIdentifier(JUPITER_RELAY_CANISTER_ID),
+  });
+
+  assert.equal(item.source_category, 'relay');
+  assert.equal(item.source_relay_canister_id, JUPITER_RELAY_CANISTER_ID);
+  assert.equal(item.source_label, `Relay ${JUPITER_RELAY_CANISTER_ID.slice(0, 5)}…`);
+});
+
+test('dynamic Relay registry classification takes precedence and attaches the registered Relay ID', () => {
   const relay = 'br5f7-7uaaa-aaaaa-qaaca-cai';
   const relayAccountId = defaultCanisterAccountIdentifier(relay);
   const relaySourceMap = relayRegistrySourceMap([{
@@ -66,11 +79,32 @@ test('dynamic relay registry classifies relay source and adds metadata', () => {
     target_canister_id: Principal.fromText('22255-zqaaa-aaaas-qf6uq-cai'),
   }]);
 
-  const item = classifyTransferItem({ from_account_identifier: relayAccountId }, { relaySourceMap });
+  const item = classifyTransferItem(
+    { from_account_identifier: relayAccountId },
+    { relayCanisterId: JUPITER_RELAY_CANISTER_ID, relaySourceMap },
+  );
 
   assert.equal(item.source_category, 'relay');
   assert.equal(item.source_relay_canister_id, relay);
   assert.equal(item.source_label, 'Relay br5f7…');
+});
+
+test('unknown transfer sources remain other without fabricated Relay metadata', () => {
+  const item = classifyTransferItem({ from_account_identifier: 'f'.repeat(64) });
+
+  assert.equal(item.source_category, 'other');
+  assert.equal(Object.hasOwn(item, 'source_relay_canister_id'), false);
+  assert.equal(Object.hasOwn(item, 'source_label'), false);
+});
+
+test('Relay slot styles cover bars, linked legends, and fixed segment highlighting', () => {
+  for (let slot = 1; slot <= 6; slot += 1) {
+    assert.match(metricsCss, new RegExp(`\\.tracker-chart-bar--source-relay-${slot} \\{[\\s\\S]*?fill:`));
+    assert.match(metricsCss, new RegExp(`\\.tracker-source-legend-item\\.tracker-chart-bar--source-relay-${slot} \\{[\\s\\S]*?color:`));
+    assert.match(metricsCss, new RegExp(`data-source-segment="relay-instance-${slot}"`));
+  }
+  assert.match(metricsCss, /\.tracker-source-legend-item--link \{[\s\S]*?text-decoration: underline;/);
+  assert.match(metricsCss, /\.tracker-source-legend-item--relay \{[\s\S]*?overflow-wrap: anywhere;/);
 });
 
 async function flushMicrotasks() {
@@ -78,7 +112,7 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
-async function withFakeTrackerDom(nodes, fn, { hash = '', rangeButtons = [] } = {}) {
+async function withFakeTrackerDom(nodes, fn, { hash = '', rangeButtons = [], trackerOpen = false } = {}) {
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
   const originalHistory = globalThis.history;
@@ -99,13 +133,20 @@ async function withFakeTrackerDom(nodes, fn, { hash = '', rangeButtons = [] } = 
     documentElement: { dataset: {} },
     body: {
       classList: {
-        contains: () => false,
+        contains: (name) => trackerOpen && name === 'nav-panel-open',
       },
     },
     getElementById(id) {
       return nodeMap.get(id) || null;
     },
     querySelector(selector) {
+      if (selector === '.nav-panel-section[data-panel="metric-tracker"]') {
+        return trackerOpen ? {
+          classList: {
+            contains: (name) => name === 'nav-panel-section--active',
+          },
+        } : null;
+      }
       if (selector === 'a[data-panel="metric-tracker"]') {
         return {
           dispatchEvent(event) {
@@ -267,6 +308,46 @@ function rawCommitment(id, amountE8s, timestampNanos = 1_700_000_000_000_000_000
 
 function dayTimestampNanos(day) {
   return 1_700_000_000_000_000_000n + BigInt(day) * 86_400_000_000_000n;
+}
+
+function cmcTransfer(id, from, amountE8s, day = id) {
+  return {
+    tx_id: BigInt(id),
+    timestamp_nanos: [dayTimestampNanos(day)],
+    amount_e8s: BigInt(amountE8s),
+    from_account_identifier: from,
+  };
+}
+
+function relayRegistration(relayCanisterId, targetCanisterId = 'jufzc-caaaa-aaaar-qb5da-cai') {
+  return {
+    relay_canister_id: Principal.fromText(relayCanisterId),
+    target_canister_id: Principal.fromText(targetCanisterId),
+  };
+}
+
+function trackerDataWithCmcTransfers({
+  transfers,
+  relayCanisterIds = [],
+  faucetAccount = null,
+} = {}) {
+  const data = minimalTrackerData();
+  return {
+    ...data,
+    status: {
+      ...data.status,
+      ...(faucetAccount ? { output_account: [faucetAccount] } : {}),
+    },
+    relayRegistrations: {
+      items: relayCanisterIds.map((relayCanisterId) => relayRegistration(relayCanisterId)),
+    },
+    cmcTransfers: { items: transfers || [] },
+  };
+}
+
+function relayTrackerLinks(html) {
+  return Array.from(String(html || '').matchAll(/<a[\s\S]*?data-tracker-memo="([^"]+\.)"[\s\S]*?<\/a>/g))
+    .map((match) => ({ html: match[0], memo: match[1] }));
 }
 
 test('tracker hash hydration submits once for the same principal', async () => {
@@ -771,6 +852,67 @@ test('delegated tracker memo links preserve compact dotted memo hashes', async (
   });
 });
 
+test('delegated tracker links preserve the previous tracker route in browser history', async () => {
+  const nodes = trackerNodes();
+  const previousMemo = 'jufzc-caaaa-aaaar-qb5da-cai';
+  const linkedMemo = 'u2qkp-aqaaa-aaaar-qb7ea-cai.';
+  const loads = [];
+  await withFakeTrackerDom(nodes, async ({
+    documentListeners,
+    historyCalls,
+    clickedPanels,
+  }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async ({ canisterId }) => {
+        loads.push(canisterId.toText());
+        return minimalTrackerData();
+      },
+      loadRawCanisterData: async ({ canisterId, outgoingMemoText }) => {
+        loads.push(`${canisterId.toText()}.${outgoingMemoText}`);
+        return {
+          status: {},
+          transfers: { items: [] },
+          candidates: { items: [] },
+          errors: {},
+        };
+      },
+    });
+    controller.bindPane();
+    controller.bindLinks();
+    assert.equal(controller.hydrateFromLocationHash({ submit: true }), true);
+    await flushMicrotasks();
+    const trigger = new FakeElement({ 'data-tracker-memo': linkedMemo });
+
+    documentListeners.get('click')({
+      target: trigger,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+    await flushMicrotasks();
+
+    window.location.hash = `#metric-tracker?memo=${previousMemo}&range=month`;
+    assert.equal(controller.hydrateFromLocationHash({ submit: true }), true);
+    await flushMicrotasks();
+
+    assert.deepEqual(clickedPanels, []);
+    assert.deepEqual(historyCalls, [{
+      type: 'push',
+      hash: `#metric-tracker?memo=${linkedMemo}&range=month`,
+    }]);
+    assert.deepEqual(loads, [
+      previousMemo,
+      linkedMemo,
+      previousMemo,
+    ]);
+  }, {
+    hash: `#metric-tracker?memo=${previousMemo}&range=month`,
+    trackerOpen: true,
+  });
+});
+
 test('tracker hides observed CMC top-up card when no top-ups are loaded', async () => {
   const nodes = trackerNodes();
   await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
@@ -790,6 +932,290 @@ test('tracker hides observed CMC top-up card when no top-ups are loaded', async 
     assert.match(html, /Cycles balance/);
     assert.doesNotMatch(html, /Observed CMC top-ups/);
     assert.doesNotMatch(html, /No dated ICP transfers to the canister’s CMC top-up account are available yet/);
+  });
+});
+
+test('observed CMC chart renders two Relay instances as separately coloured tracker links', async () => {
+  const nodes = trackerNodes();
+  const target = 'jufzc-caaaa-aaaar-qb5da-cai';
+  const relayA = 'u2qkp-aqaaa-aaaar-qb7ea-cai';
+  const relayB = 'br5f7-7uaaa-aaaaa-qaaca-cai';
+  const protocol = '22255-zqaaa-aaaas-qf6uq-cai';
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const faucetAccountId = accountIdentifierHex(faucetAccount);
+  const protocolAccountId = defaultCanisterAccountIdentifier(protocol);
+  const otherAccountId = 'f'.repeat(64);
+  const data = trackerDataWithCmcTransfers({
+    faucetAccount,
+    relayCanisterIds: [relayA, relayB],
+    transfers: [
+      cmcTransfer(10, faucetAccountId, 100_000_000n, 400),
+      cmcTransfer(9, defaultCanisterAccountIdentifier(relayA), 200_000_000n, 400),
+      cmcTransfer(8, defaultCanisterAccountIdentifier(relayB), 300_000_000n, 400),
+      cmcTransfer(7, protocolAccountId, 400_000_000n, 400),
+      cmcTransfer(6, otherAccountId, 500_000_000n, 400),
+    ],
+  });
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    controller.state.protocolCanisterText = protocol;
+    nodeMap.get('tracker-principal-input').value = target;
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    const links = relayTrackerLinks(html);
+    assert.equal(links.length, 2);
+    assert.deepEqual(links.map((link) => link.memo), [`${relayA}.`, `${relayB}.`]);
+    links.forEach((link, index) => {
+      const relayCanisterId = [relayA, relayB][index];
+      assert.match(link.html, new RegExp(`</i>Jupiter Relay · ${relayCanisterId.slice(0, 5)}…\\s*</a>`));
+      assert.match(link.html, new RegExp(`title="Jupiter Relay ${relayCanisterId.replaceAll('-', '\\-')}"`));
+      assert.match(link.html, /&amp;range=month"/);
+      assert.doesNotMatch(link.html, /protocol-canister/);
+      assert.doesNotMatch(link.html, /tabindex=/);
+    });
+    assert.match(links[0].html, /tracker-chart-bar--source-relay-1/);
+    assert.match(links[0].html, /data-source-segment="relay-instance-1"/);
+    assert.match(links[0].html, new RegExp(`href="#metric-tracker\\?memo=${relayA.replaceAll('-', '\\-')}\\.&amp;range=month"`));
+    assert.match(links[1].html, /tracker-chart-bar--source-relay-2/);
+    assert.match(links[1].html, /data-source-segment="relay-instance-2"/);
+    assert.match(html, new RegExp(`<rect class="tracker-chart-bar tracker-chart-bar--source-relay-1" data-source-segment="relay-instance-1"`));
+    assert.match(html, new RegExp(`<rect class="tracker-chart-bar tracker-chart-bar--source-relay-2" data-source-segment="relay-instance-2"`));
+    assert.match(html, new RegExp(`Relay ${relayA} 2 ICP across 1 observed CMC transfer`));
+    assert.match(html, new RegExp(`Relay ${relayB} 3 ICP across 1 observed CMC transfer`));
+    assert.match(html, /data-source-segment="faucet"/);
+    assert.match(html, /Jupiter Faucet 1 ICP across 1 observed CMC transfer/);
+    assert.match(html, /data-source-segment="protocol"/);
+    assert.match(html, /Protocol canister 4 ICP across 1 observed CMC transfer/);
+    assert.match(html, /data-source-segment="other"/);
+    assert.match(html, /Other 5 ICP across 1 observed CMC transfer/);
+    assert.match(html, /Relay canister IDs open the corresponding raw ICP tracker/);
+  });
+});
+
+test('observed CMC chart deduplicates Relay links and aggregates daily transfers per Relay slot', async () => {
+  const nodes = trackerNodes();
+  const relay = 'br5f7-7uaaa-aaaaa-qaaca-cai';
+  const relayAccountId = defaultCanisterAccountIdentifier(relay);
+  const data = trackerDataWithCmcTransfers({
+    relayCanisterIds: [relay],
+    transfers: [
+      cmcTransfer(3, relayAccountId, 100_000_000n, 400),
+      cmcTransfer(2, relayAccountId, 200_000_000n, 400),
+      cmcTransfer(1, relayAccountId, 400_000_000n, 399),
+    ],
+  });
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    assert.equal(relayTrackerLinks(html).filter((link) => link.memo === `${relay}.`).length, 1);
+    assert.equal(new Set(Array.from(html.matchAll(/data-source-segment="(relay-instance-\d)"/g), (match) => match[1])).size, 1);
+    assert.match(html, new RegExp(`Relay ${relay} 3 ICP across 2 observed CMC transfers`));
+    assert.match(html, new RegExp(`Relay ${relay} 4 ICP across 1 observed CMC transfer`));
+  });
+});
+
+test('observed CMC Relay slots stay stable while range visibility follows observed transfers', async () => {
+  const nodes = trackerNodes();
+  const relayA = 'u2qkp-aqaaa-aaaar-qb7ea-cai';
+  const relayB = 'br5f7-7uaaa-aaaaa-qaaca-cai';
+  const registeredWithoutTransfer = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
+  const data = trackerDataWithCmcTransfers({
+    relayCanisterIds: [relayA, relayB, registeredWithoutTransfer],
+    transfers: [
+      cmcTransfer(20, defaultCanisterAccountIdentifier(relayA), 200_000_000n, 400),
+      cmcTransfer(10, defaultCanisterAccountIdentifier(relayB), 100_000_000n, 0),
+    ],
+  });
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const monthHtml = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    const monthLinks = relayTrackerLinks(monthHtml);
+    assert.deepEqual(monthLinks.map((link) => link.memo), [`${relayA}.`]);
+    assert.match(monthLinks[0].html, /tracker-chart-bar--source-relay-1/);
+    assert.match(monthLinks[0].html, /range=month/);
+    assert.doesNotMatch(monthHtml, new RegExp(registeredWithoutTransfer));
+
+    controller.setRange('all');
+    await flushMicrotasks();
+
+    const allHtml = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    const allLinks = relayTrackerLinks(allHtml);
+    assert.deepEqual(allLinks.map((link) => link.memo), [`${relayA}.`, `${relayB}.`]);
+    assert.match(allLinks[0].html, /tracker-chart-bar--source-relay-1/);
+    assert.match(allLinks[1].html, /tracker-chart-bar--source-relay-2/);
+    allLinks.forEach((link) => assert.match(link.html, /range=all/));
+    assert.doesNotMatch(allHtml, new RegExp(registeredWithoutTransfer));
+  });
+});
+
+test('observed CMC chart links the canonical Relay fallback without a registry entry', async () => {
+  const nodes = trackerNodes();
+  const data = trackerDataWithCmcTransfers({
+    transfers: [
+      cmcTransfer(
+        1,
+        defaultCanisterAccountIdentifier(JUPITER_RELAY_CANISTER_ID),
+        200_000_000n,
+        400,
+      ),
+    ],
+  });
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const links = relayTrackerLinks(nodeMap.get('tracker-chart-wrapper').innerHTML);
+    assert.equal(links.length, 1);
+    assert.equal(links[0].memo, `${JUPITER_RELAY_CANISTER_ID}.`);
+    assert.match(links[0].html, new RegExp(`href="#metric-tracker\\?memo=${JUPITER_RELAY_CANISTER_ID.replaceAll('-', '\\-')}\\.&amp;range=month"`));
+  });
+});
+
+test('observed CMC chart bounds explicit Relay segments and discloses visible overflow Relays', async () => {
+  const nodes = trackerNodes();
+  const relayCanisterIds = [
+    'u2qkp-aqaaa-aaaar-qb7ea-cai',
+    'rrkah-fqaaa-aaaaa-aaaaq-cai',
+    'ryjl3-tyaaa-aaaaa-aaaba-cai',
+    'r7inp-6aaaa-aaaaa-aaabq-cai',
+    'rkp4c-7iaaa-aaaaa-aaaca-cai',
+    'rno2w-sqaaa-aaaaa-aaacq-cai',
+    'renrk-eyaaa-aaaaa-aaada-cai',
+    'rdmx6-jaaaa-aaaaa-aaadq-cai',
+  ];
+  const data = trackerDataWithCmcTransfers({
+    relayCanisterIds,
+    transfers: relayCanisterIds.map((relayCanisterId, index) => cmcTransfer(
+      100 - index,
+      defaultCanisterAccountIdentifier(relayCanisterId),
+      BigInt(index + 1) * 100_000_000n,
+      index < 6 ? 400 : 0,
+    )),
+  });
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const monthHtml = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    assert.equal(relayTrackerLinks(monthHtml).length, 6);
+    assert.doesNotMatch(monthHtml, /tracker-relay-overflow-details/);
+    relayCanisterIds.slice(6).forEach((relayCanisterId) => {
+      assert.doesNotMatch(monthHtml, new RegExp(relayCanisterId));
+    });
+
+    controller.setRange('all');
+    await flushMicrotasks();
+
+    const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    const explicitSegmentKeys = new Set(
+      Array.from(html.matchAll(/data-source-segment="(relay-instance-\d)"/g), (match) => match[1]),
+    );
+    assert.deepEqual(Array.from(explicitSegmentKeys).sort(), [
+      'relay-instance-1',
+      'relay-instance-2',
+      'relay-instance-3',
+      'relay-instance-4',
+      'relay-instance-5',
+      'relay-instance-6',
+    ]);
+    assert.match(html, /data-source-segment="relay"/);
+    assert.match(html, /Other Relay instances/);
+    assert.match(html, /Additional Relay canisters grouped in “Other Relay instances” \(2\)/);
+    assert.match(html, /These Relay canister IDs share one grouped graph colour/);
+
+    const links = relayTrackerLinks(html);
+    assert.equal(links.length, relayCanisterIds.length);
+    const overflowRelayCanisterIds = relayCanisterIds.slice(6);
+    for (const relayCanisterId of overflowRelayCanisterIds) {
+      const matchingLinks = links.filter((link) => link.memo === `${relayCanisterId}.`);
+      assert.equal(matchingLinks.length, 1);
+      assert.match(matchingLinks[0].html, /tracker-chart-bar--source-relay\b/);
+      assert.match(matchingLinks[0].html, /data-source-segment="relay"/);
+      assert.match(matchingLinks[0].html, /range=all/);
+      assert.doesNotMatch(matchingLinks[0].html, /protocol-canister/);
+    }
+  });
+});
+
+test('observed CMC chart does not render Relay links or disclosure without visible Relay bars', async () => {
+  const nodes = trackerNodes();
+  const relayWithoutTransfer = 'br5f7-7uaaa-aaaaa-qaaca-cai';
+  const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
+  const data = trackerDataWithCmcTransfers({
+    faucetAccount,
+    relayCanisterIds: [relayWithoutTransfer],
+    transfers: [
+      cmcTransfer(1, accountIdentifierHex(faucetAccount), 100_000_000n, 400),
+    ],
+  });
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
+    assert.match(html, /Observed CMC top-ups/);
+    assert.match(html, /data-source-segment="faucet"/);
+    assert.equal(relayTrackerLinks(html).length, 0);
+    assert.doesNotMatch(html, /tracker-relay-overflow-details/);
+    assert.doesNotMatch(html, new RegExp(relayWithoutTransfer));
   });
 });
 

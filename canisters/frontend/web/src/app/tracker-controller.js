@@ -35,18 +35,60 @@ const TRACKER_RANGE_LABELS = {
   all: 'all currently loaded history',
 };
 const TRACKER_DEFAULT_RANGE = 'month';
+const FAUCET_SOURCE_SEGMENT = {
+  key: 'faucetAmountE8s',
+  countKey: 'faucetTransferCount',
+  className: 'tracker-chart-bar--source-faucet',
+  label: 'Jupiter Faucet',
+  legendKey: 'faucet',
+};
+const RELAY_SOURCE_SEGMENT = {
+  key: 'relayAmountE8s',
+  countKey: 'relayTransferCount',
+  className: 'tracker-chart-bar--source-relay',
+  label: 'Jupiter Relay',
+  legendKey: 'relay',
+};
+const PROTOCOL_SOURCE_SEGMENT = {
+  key: 'protocolAmountE8s',
+  countKey: 'protocolTransferCount',
+  className: 'tracker-chart-bar--source-protocol',
+  label: 'Protocol canister',
+  legendKey: 'protocol',
+};
+const OTHER_SOURCE_SEGMENT = {
+  key: 'otherAmountE8s',
+  countKey: 'otherTransferCount',
+  className: 'tracker-chart-bar--source-other',
+  label: 'Other',
+  legendKey: 'other',
+};
 const SOURCE_SEGMENTS = [
-  { key: 'faucetAmountE8s', countKey: 'faucetTransferCount', className: 'tracker-chart-bar--source-faucet', label: 'Jupiter Faucet', legendKey: 'faucet' },
-  { key: 'relayAmountE8s', countKey: 'relayTransferCount', className: 'tracker-chart-bar--source-relay', label: 'Jupiter Relay', legendKey: 'relay' },
-  { key: 'protocolAmountE8s', countKey: 'protocolTransferCount', className: 'tracker-chart-bar--source-protocol', label: 'Protocol canister', legendKey: 'protocol' },
-  { key: 'otherAmountE8s', countKey: 'otherTransferCount', className: 'tracker-chart-bar--source-other', label: 'Other', legendKey: 'other' },
+  FAUCET_SOURCE_SEGMENT,
+  RELAY_SOURCE_SEGMENT,
+  PROTOCOL_SOURCE_SEGMENT,
+  OTHER_SOURCE_SEGMENT,
 ];
+const RAW_FAUCET_MATCHING_MEMO_SOURCE_SEGMENT = {
+  key: 'faucetMatchingMemoAmountE8s',
+  countKey: 'faucetMatchingMemoTransferCount',
+  className: 'tracker-chart-bar--source-faucet-matching-memo',
+  label: 'Jupiter Faucet · matching memo',
+  legendKey: 'faucet-matching-memo',
+};
+const RAW_FAUCET_OTHER_MEMO_SOURCE_SEGMENT = {
+  key: 'faucetOtherMemoAmountE8s',
+  countKey: 'faucetOtherMemoTransferCount',
+  className: 'tracker-chart-bar--source-faucet-other-memo',
+  label: 'Jupiter Faucet · other memo',
+  legendKey: 'faucet-other-memo',
+};
 const RAW_SOURCE_SEGMENTS = [
-  { key: 'faucetMatchingMemoAmountE8s', countKey: 'faucetMatchingMemoTransferCount', className: 'tracker-chart-bar--source-faucet-matching-memo', label: 'Jupiter Faucet · matching memo', legendKey: 'faucet-matching-memo' },
-  { key: 'faucetOtherMemoAmountE8s', countKey: 'faucetOtherMemoTransferCount', className: 'tracker-chart-bar--source-faucet-other-memo', label: 'Jupiter Faucet · other memo', legendKey: 'faucet-other-memo' },
-  { key: 'relayAmountE8s', countKey: 'relayTransferCount', className: 'tracker-chart-bar--source-relay', label: 'Jupiter Relay', legendKey: 'relay' },
-  { key: 'protocolAmountE8s', countKey: 'protocolTransferCount', className: 'tracker-chart-bar--source-protocol', label: 'Protocol canister', legendKey: 'protocol' },
-  { key: 'otherAmountE8s', countKey: 'otherTransferCount', className: 'tracker-chart-bar--source-other', label: 'Other', legendKey: 'other' },
+  RAW_FAUCET_MATCHING_MEMO_SOURCE_SEGMENT,
+  RAW_FAUCET_OTHER_MEMO_SOURCE_SEGMENT,
+  RELAY_SOURCE_SEGMENT,
+  PROTOCOL_SOURCE_SEGMENT,
+  OTHER_SOURCE_SEGMENT,
 ];
 const RAW_MEMO_SEGMENT_LIMIT = 5;
 const RAW_MEMO_SEGMENT_CLASSES = [
@@ -55,6 +97,15 @@ const RAW_MEMO_SEGMENT_CLASSES = [
   'tracker-chart-bar--source-faucet-memo-3',
   'tracker-chart-bar--source-faucet-memo-4',
   'tracker-chart-bar--source-faucet-memo-5',
+];
+const OBSERVED_CMC_RELAY_SEGMENT_LIMIT = 6;
+const OBSERVED_CMC_RELAY_SEGMENT_CLASSES = [
+  'tracker-chart-bar--source-relay-1',
+  'tracker-chart-bar--source-relay-2',
+  'tracker-chart-bar--source-relay-3',
+  'tracker-chart-bar--source-relay-4',
+  'tracker-chart-bar--source-relay-5',
+  'tracker-chart-bar--source-relay-6',
 ];
 
 function optValue(value) {
@@ -84,6 +135,83 @@ function variantNameFromValue(value) {
 
 function itemAmountE8s(item) {
   return typeof item?.amount_e8s === 'bigint' ? item.amount_e8s : BigInt(item?.amount_e8s || 0);
+}
+
+function itemTransactionId(item) {
+  try {
+    return typeof item?.tx_id === 'bigint' ? item.tx_id : BigInt(item?.tx_id ?? -1);
+  } catch {
+    return -1n;
+  }
+}
+
+function relayLegendLabel(relayCanisterId) {
+  return `${RELAY_SOURCE_SEGMENT.label} · ${String(relayCanisterId || '').slice(0, 5)}…`;
+}
+
+function observedCmcRelaySegmentPlan(items) {
+  const newestByRelayCanisterId = new Map();
+  let hasUnattributedRelay = false;
+  for (const item of items || []) {
+    if (item?.source_category !== 'relay') continue;
+    const relayCanisterId = String(item?.source_relay_canister_id || '').trim();
+    if (!relayCanisterId) {
+      hasUnattributedRelay = true;
+      continue;
+    }
+    const txId = itemTransactionId(item);
+    const current = newestByRelayCanisterId.get(relayCanisterId);
+    if (current === undefined || txId > current) {
+      newestByRelayCanisterId.set(relayCanisterId, txId);
+    }
+  }
+
+  const rankedRelayCanisterIds = Array.from(newestByRelayCanisterId.entries())
+    .sort(([leftId, leftTxId], [rightId, rightTxId]) => {
+      if (leftTxId !== rightTxId) return leftTxId > rightTxId ? -1 : 1;
+      return leftId.localeCompare(rightId);
+    })
+    .map(([relayCanisterId]) => relayCanisterId);
+  const explicitRelayCanisterIds = rankedRelayCanisterIds.slice(0, OBSERVED_CMC_RELAY_SEGMENT_LIMIT);
+  const overflowRelayCanisterIds = rankedRelayCanisterIds.slice(OBSERVED_CMC_RELAY_SEGMENT_LIMIT);
+  const relaySlotByCanisterId = new Map(
+    explicitRelayCanisterIds.map((relayCanisterId, index) => [relayCanisterId, index + 1]),
+  );
+  const explicitSegments = explicitRelayCanisterIds.map((relayCanisterId, index) => {
+    const slot = index + 1;
+    return {
+      key: `relayInstance${slot}AmountE8s`,
+      countKey: `relayInstance${slot}TransferCount`,
+      className: OBSERVED_CMC_RELAY_SEGMENT_CLASSES[index],
+      label: relayLegendLabel(relayCanisterId),
+      tooltipLabel: `Relay ${relayCanisterId}`,
+      legendKey: `relay-instance-${slot}`,
+      relayCanisterId,
+      trackerMemo: `${relayCanisterId}.`,
+    };
+  });
+  const needsGenericRelaySegment = hasUnattributedRelay || overflowRelayCanisterIds.length > 0;
+  const genericRelaySegment = {
+    ...RELAY_SOURCE_SEGMENT,
+    label: overflowRelayCanisterIds.length > 0 ? 'Other Relay instances' : RELAY_SOURCE_SEGMENT.label,
+  };
+  return {
+    relaySlotByCanisterId,
+    explicitSegments,
+    overflowRelayCanisterIds,
+    genericRelaySegment,
+    needsGenericRelaySegment,
+  };
+}
+
+function observedCmcSourceSegments(relayPlan) {
+  return [
+    FAUCET_SOURCE_SEGMENT,
+    ...(relayPlan?.explicitSegments || []),
+    ...(relayPlan?.needsGenericRelaySegment ? [relayPlan.genericRelaySegment] : []),
+    PROTOCOL_SOURCE_SEGMENT,
+    OTHER_SOURCE_SEGMENT,
+  ];
 }
 
 function renderCyclesHelpIcon() {
@@ -299,13 +427,24 @@ function emptyTrackerBucket(period) {
   };
 }
 
-function addSourceAmount(bucket, category, amount) {
-  const prefix = category === 'faucet' || category === 'relay' || category === 'protocol' ? category : 'other';
-  bucket[`${prefix}AmountE8s`] += amount;
-  bucket[`${prefix}TransferCount`] += 1;
+function addSourceAmount(bucket, item, amount, relayPlan = null) {
+  let prefix = 'other';
+  if (item?.source_category === 'faucet' || item?.source_category === 'protocol') {
+    prefix = item.source_category;
+  } else if (item?.source_category === 'relay') {
+    const relayCanisterId = String(item?.source_relay_canister_id || '').trim();
+    const relaySlot = relayPlan?.relaySlotByCanisterId?.get(relayCanisterId);
+    prefix = relaySlot ? `relayInstance${relaySlot}` : 'relay';
+  }
+  const amountKey = `${prefix}AmountE8s`;
+  const countKey = `${prefix}TransferCount`;
+  bucket[amountKey] = bucket[amountKey] || 0n;
+  bucket[countKey] = bucket[countKey] || 0;
+  bucket[amountKey] += amount;
+  bucket[countKey] += 1;
 }
 
-function aggregateTrackerData(data, range) {
+function aggregateTrackerData(data, range, { relayPlan = null } = {}) {
   const buckets = new Map();
   const ensureBucket = (period) => {
     const existing = buckets.get(period.key);
@@ -336,7 +475,7 @@ function aggregateTrackerData(data, range) {
     const bucket = ensureBucket(trackerPeriod(date, range));
     bucket.observedCmcAmountE8s += itemAmountE8s(item);
     bucket.observedCmcTransferCount += 1;
-    addSourceAmount(bucket, item.source_category, itemAmountE8s(item));
+    addSourceAmount(bucket, item, itemAmountE8s(item), relayPlan);
   }
 
   for (const item of data?.cycles?.items || []) {
@@ -480,7 +619,7 @@ function rawMemoSegmentPlan(items, outgoingMemoText) {
     label: rawMemoDisplayLabel(entry.memoText, outgoingMemoText),
     legendKey: `faucet-memo-${index + 1}`,
   }));
-  const overflowSegments = ranked.length > RAW_MEMO_SEGMENT_LIMIT ? [RAW_SOURCE_SEGMENTS[1]] : [];
+  const overflowSegments = ranked.length > RAW_MEMO_SEGMENT_LIMIT ? [RAW_FAUCET_OTHER_MEMO_SOURCE_SEGMENT] : [];
   return { memoSegmentByText, memoSegments: [...memoSegments, ...overflowSegments] };
 }
 
@@ -700,7 +839,7 @@ export function createTrackerController({
             })
           : `${renderTrackerLoadingCard({
               title: 'Observed CMC top-ups',
-              subtitle: 'Transfers to the CMC deposit account in the selected range, colour-coded by source.',
+              subtitle: 'Transfers to the CMC deposit account in the selected range, colour-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.',
               message: 'Loading observed CMC top-up history…',
             })}
             ${renderTrackerLoadingCard({
@@ -812,10 +951,28 @@ export function createTrackerController({
 
   const legendSegments = (segments, includeProtocol) => segments
     .filter((segment) => includeProtocol || segment.legendKey !== 'protocol')
-    .map((segment) => `
-      <span class="tracker-source-legend-item ${escapeHtml(segment.className)}" data-source-segment="${escapeHtml(segment.legendKey || segment.key)}" tabindex="0">
-        <i></i>${escapeHtml(segment.label)}
-      </span>`)
+    .map((segment) => {
+      const legendKey = segment.legendKey || segment.key;
+      if (segment.trackerMemo) {
+        const relayCanisterId = String(segment.relayCanisterId || segment.label || '').trim();
+        const href = trackerHashForMemo({ memo: segment.trackerMemo, range: state.range });
+        return `
+          <a
+            class="tracker-source-legend-item tracker-source-legend-item--link tracker-source-legend-item--relay ${escapeHtml(segment.className)} pane-external-link mono"
+            data-source-segment="${escapeHtml(legendKey)}"
+            data-tracker-memo="${escapeHtml(segment.trackerMemo)}"
+            href="${escapeHtml(href)}"
+            aria-label="${escapeHtml(`Track raw ICP received by Relay canister ${relayCanisterId}`)}"
+            title="${escapeHtml(`Jupiter Relay ${relayCanisterId}`)}"
+          >
+            <i></i>${escapeHtml(segment.label)}
+          </a>`;
+      }
+      return `
+        <span class="tracker-source-legend-item ${escapeHtml(segment.className)}" data-source-segment="${escapeHtml(legendKey)}" tabindex="0">
+          <i></i>${escapeHtml(segment.label)}
+        </span>`;
+    })
     .join('');
 
   const renderSourceLegend = ({ includeProtocol = false, segments = SOURCE_SEGMENTS } = {}) => `
@@ -837,19 +994,45 @@ export function createTrackerController({
     return renderSourceLegend({ includeProtocol, segments: activeSegments });
   };
 
-  const renderTrackerObservedCmcChart = (buckets, fullData = null) => {
+  const renderRelayOverflowDisclosure = (relayPlan, visibleItems) => {
+    const visibleRelayCanisterIds = new Set(
+      (visibleItems || [])
+        .filter((item) => item?.source_category === 'relay')
+        .map((item) => String(item?.source_relay_canister_id || '').trim())
+        .filter(Boolean),
+    );
+    const visibleOverflowRelayCanisterIds = (relayPlan?.overflowRelayCanisterIds || [])
+      .filter((relayCanisterId) => visibleRelayCanisterIds.has(relayCanisterId));
+    if (visibleOverflowRelayCanisterIds.length === 0) return '';
+    const groupedSegments = visibleOverflowRelayCanisterIds.map((relayCanisterId) => ({
+      ...relayPlan.genericRelaySegment,
+      label: relayLegendLabel(relayCanisterId),
+      relayCanisterId,
+      trackerMemo: `${relayCanisterId}.`,
+    }));
+    return `
+      <details class="tracker-relay-overflow-details">
+        <summary>Additional Relay canisters grouped in “Other Relay instances” (${escapeHtml(formatInteger(visibleOverflowRelayCanisterIds.length))})</summary>
+        <p>These Relay canister IDs share one grouped graph colour.</p>
+        <div class="tracker-source-legend tracker-relay-overflow-list">
+          ${legendSegments(groupedSegments, true)}
+        </div>
+      </details>`;
+  };
+
+  const renderTrackerObservedCmcChart = (buckets, segments, fullData = null) => {
     if (fullData?.cmcTransfers?.loading && (fullData?.cmcTransfers?.items || []).length === 0) {
       return renderTrackerLoadingChart('Loading observed CMC top-up history…');
     }
     return renderStackedAmountBarChart({
       buckets,
-      segments: activeSourceSegments(SOURCE_SEGMENTS, buckets),
+      segments: activeSourceSegments(segments, buckets),
       emptyMessage: trackerRangeEmptyMessage({
         rangeMessage: `No dated ICP transfers to the canister’s CMC top-up account are available in ${trackerRangeLabel()}.`,
         emptyMessage: 'No dated ICP transfers to the canister’s CMC top-up account are available yet.',
       }),
       ariaLabel: `Observed CMC top-up transfers in ${trackerRangeLabel()}`,
-      labelBuilder: (bucket, segment, amount, count) => `${bucket.label}: ${segment.label} ${formatIcpE8s(amount)} across ${pluralize(count, 'observed CMC transfer')}`,
+      labelBuilder: (bucket, segment, amount, count) => `${bucket.label}: ${segment.tooltipLabel || segment.label} ${formatIcpE8s(amount)} across ${pluralize(count, 'observed CMC transfer')}`,
       valueFormatter: formatIcpE8s,
       xAxis: 'time',
       minBarWidth: 2,
@@ -901,7 +1084,9 @@ export function createTrackerController({
   const renderTrackerCharts = (data, fullData = data) => {
     const wrapper = document.getElementById('tracker-chart-wrapper');
     if (!wrapper) return;
-    const buckets = aggregateTrackerData(data, state.range);
+    const relayPlan = observedCmcRelaySegmentPlan(fullData?.cmcTransfers?.items || []);
+    const sourceSegments = observedCmcSourceSegments(relayPlan);
+    const buckets = aggregateTrackerData(data, state.range, { relayPlan });
     const hasObservedCmcTopUps = Boolean(fullData?.cmcTransfers?.loading)
       || (fullData?.cmcTransfers?.items || []).length > 0;
     if (buckets.length === 0 && !trackerHasLoadingPages(fullData)) {
@@ -924,10 +1109,11 @@ export function createTrackerController({
       ${hasObservedCmcTopUps ? `<div class="tracker-chart-card">
         <div class="tracker-chart-header">
           <h3>Observed CMC top-ups</h3>
-          <span>Transfers to the CMC deposit account in the selected range, colour-coded by source; direct non-Jupiter top-ups may appear.</span>
+          <span>Transfers to the CMC deposit account in the selected range, colour-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.</span>
         </div>
-        ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), buckets })}
-        ${renderTrackerObservedCmcChart(buckets, fullData)}
+        ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), segments: sourceSegments, buckets })}
+        ${renderRelayOverflowDisclosure(relayPlan, data?.cmcTransfers?.items || [])}
+        ${renderTrackerObservedCmcChart(buckets, sourceSegments, fullData)}
       </div>` : ''}
       <div class="tracker-chart-card">
         <div class="tracker-chart-header">
@@ -1209,9 +1395,9 @@ export function createTrackerController({
     const sourceSegments = hasOutgoingMemo
       ? [
         ...rawMemoSegments.memoSegments,
-        RAW_SOURCE_SEGMENTS[2],
-        RAW_SOURCE_SEGMENTS[3],
-        RAW_SOURCE_SEGMENTS[4],
+        RELAY_SOURCE_SEGMENT,
+        PROTOCOL_SOURCE_SEGMENT,
+        OTHER_SOURCE_SEGMENT,
       ]
       : SOURCE_SEGMENTS;
     const buckets = aggregateRawTransfers(visibleItems, state.range, {
@@ -1291,6 +1477,13 @@ export function createTrackerController({
     }
   };
 
+  const pushLocationHash = (memoText, protocolCanister = state.protocolCanisterText, range = state.range) => {
+    const hash = trackerHashForMemo({ memo: memoText, protocolCanister, range });
+    if (window.location.hash !== hash) {
+      history.pushState(null, '', hash);
+    }
+  };
+
   const replaceRangeLocationHash = () => {
     const route = trackerStateFromHash();
     const memoText = state.memoText || route.memo || route.legacyPrincipal || '';
@@ -1335,6 +1528,12 @@ export function createTrackerController({
     }
   };
 
+  const trackerSubmissionKey = (
+    memoText,
+    protocolCanister = state.protocolCanisterText,
+    range = state.range,
+  ) => `${memoText}|${protocolCanister}|${range}`;
+
   const submitMemo = async () => {
     const input = document.getElementById('tracker-principal-input');
     const result = document.getElementById('tracker-result');
@@ -1350,6 +1549,7 @@ export function createTrackerController({
       return;
     }
 
+    lastHashSubmitMemo = trackerSubmissionKey(raw);
     state.viewMode = parsed.kind;
     state.principalText = parsed.canisterText || '';
     state.protocolCanisterId = parseProtocolCanister(state.protocolCanisterText);
@@ -1413,8 +1613,9 @@ export function createTrackerController({
     state.protocolCanisterText = route.protocolCanister || '';
     const input = document.getElementById('tracker-principal-input');
     if (input) input.value = memoText;
-    if (submit && lastHashSubmitMemo !== `${memoText}|${state.protocolCanisterText}|${state.range}`) {
-      lastHashSubmitMemo = `${memoText}|${state.protocolCanisterText}|${state.range}`;
+    const submissionKey = trackerSubmissionKey(memoText);
+    if (submit && lastHashSubmitMemo !== submissionKey) {
+      lastHashSubmitMemo = submissionKey;
       window.setTimeout(() => {
         const refreshedInput = document.getElementById('tracker-principal-input');
         if (refreshedInput) refreshedInput.value = memoText;
@@ -1429,7 +1630,7 @@ export function createTrackerController({
     const trackerAlreadyOpen = document.body.classList.contains('nav-panel-open')
       && trackerSection?.classList.contains('nav-panel-section--active');
     if (trackerAlreadyOpen) {
-      if (principalText) replaceLocationHash(principalText);
+      if (principalText) pushLocationHash(principalText);
       return;
     }
     const trigger = document.querySelector('a[data-panel="metric-tracker"]');
