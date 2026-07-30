@@ -877,12 +877,14 @@ test('loadTrackerData returns unrecognised state without history queries', async
 test('loadTrackerData loads commitment, observed CMC top-up, and cycles histories for memo-registered beneficiaries', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const calls = [];
+  const progress = [];
   const data = await loadTrackerData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
     agent: { test: true },
     canisterId: target,
     historyLimit: 12,
+    onProgress: (partial) => progress.push(partial),
     historianActor: {
       async get_canister_overview(canisterId) {
         calls.push(['overview', canisterId.toText()]);
@@ -989,6 +991,20 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(calls[2][1].canister_id.toText(), target.toText());
   assert.deepEqual(calls[3], ['status']);
   assert.deepEqual(calls[4], ['logs', target.toText()]);
+  assert.equal(progress[0].commitments.loading, true);
+  assert.equal(progress[0].cycles.loading, true);
+  assert.equal(progress[0].cmcTransfers.loading, true);
+  const firstCommitmentProgress = progress.findIndex((partial) => partial.commitments.items.length === 1);
+  assert.notEqual(firstCommitmentProgress, -1);
+  progress.slice(firstCommitmentProgress).forEach((partial) => {
+    assert.equal(partial.commitments.loading, false);
+    assert.equal(partial.commitments.items[0].tx_id, 22n);
+  });
+  const finalProgress = progress.at(-1);
+  assert.equal(finalProgress.commitments.loading, false);
+  assert.equal(finalProgress.cycles.loading, false);
+  assert.equal(finalProgress.logs.loading, false);
+  assert.equal(finalProgress.cmcTransfers.loading, false);
 });
 
 test('loadTrackerData pages relay registrations for tracker classification', async () => {
@@ -1439,7 +1455,7 @@ test('loadRawIcpCanisterTrackerData isolates transfer failures from commitments'
   assert.match(data.errors.transfers, /index outage/);
 });
 
-test('loadRawIcpCanisterTrackerData marks progressive transfer data with commitments loading', async () => {
+test('loadRawIcpCanisterTrackerData emits cumulative progress without discarding commitments', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const progress = [];
 
@@ -1448,7 +1464,7 @@ test('loadRawIcpCanisterTrackerData marks progressive transfer data with commitm
     host: 'https://icp0.io',
     agent: { test: true },
     canisterId: target,
-    onTransfersProgress: (partial) => progress.push(partial),
+    onProgress: (partial) => progress.push(partial),
     historianActor: {
       async get_public_status() {
         return historianStatus({
@@ -1469,9 +1485,16 @@ test('loadRawIcpCanisterTrackerData marks progressive transfer data with commitm
     }),
   });
 
-  assert.equal(progress.length, 1);
-  assert.deepEqual(progress[0].commitments, { items: [], loading: true });
-  assert.equal(progress[0].errors.commitments, null);
+  assert.equal(progress[0].commitments.loading, true);
+  assert.equal(progress[0].transfers.loading, true);
+  const transferProgress = progress.find((partial) => partial.transfers.pages_loaded === 1);
+  assert.ok(transferProgress);
+  assert.equal(transferProgress.commitments.loading, false);
+  assert.deepEqual(transferProgress.commitments.items, []);
+  assert.equal(transferProgress.errors.commitments, null);
+  const finalProgress = progress.at(-1);
+  assert.equal(finalProgress.commitments.loading, false);
+  assert.equal(finalProgress.transfers.loading, false);
 });
 
 test('loadNeuronStakeTrackerData loads neuron commitment history with isolated transfer failure', async () => {

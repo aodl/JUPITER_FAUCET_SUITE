@@ -321,6 +321,115 @@ test('tracker submit rejects invalid principals without loading data', async () 
   });
 });
 
+test('tracker paints chart shells before the first data response', async () => {
+  const canister = '22255-zqaaa-aaaas-qf6uq-cai';
+  const cases = [
+    {
+      memo: canister,
+      expectedHeadings: [/ICP commitments/, /Observed CMC top-ups/, /Cycles balance/],
+      finalData: minimalTrackerData(),
+      loaderKey: 'loadData',
+    },
+    {
+      memo: `${canister.replaceAll('-', '')}.miner`,
+      expectedHeadings: [/ICP commitments/, /Raw ICP canister memo/],
+      finalData: {
+        commitments: { items: [] },
+        transfers: { items: [] },
+        candidates: { items: [] },
+        errors: {},
+      },
+      loaderKey: 'loadRawCanisterData',
+    },
+    {
+      memo: '42.miner',
+      expectedHeadings: [/ICP commitments/, /Raw ICP neuron memo/],
+      finalData: {
+        neuronId: 42n,
+        stakingAccount: { owner: Principal.fromText('aaaaa-aa'), subaccount: [] },
+        commitments: { items: [] },
+        transfers: { items: [] },
+        errors: {},
+      },
+      loaderKey: 'loadNeuronData',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const nodes = trackerNodes();
+    await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+      let resolveLoad;
+      const pendingLoad = new Promise((resolve) => {
+        resolveLoad = resolve;
+      });
+      const controller = createTrackerController({
+        frontendConfig: {},
+        isLocalHost: () => false,
+        simulatorHashForPrefill,
+        [testCase.loaderKey]: async () => pendingLoad,
+      });
+      controller.bindPane();
+      nodeMap.get('tracker-principal-input').value = testCase.memo;
+
+      const submission = controller.submitPrincipal();
+      const loadingHtml = nodeMap.get('tracker-result').innerHTML;
+
+      assert.equal(controller.state.loading, true);
+      assert.match(loadingHtml, /tracker-chart-wrapper--loading/);
+      assert.match(loadingHtml, /tracker-chart-loading-bars/);
+      assert.match(loadingHtml, /Tracker charts are loading/);
+      assert.doesNotMatch(loadingHtml, /tracker-empty-state"><p>Loading/);
+      testCase.expectedHeadings.forEach((heading) => assert.match(loadingHtml, heading));
+
+      resolveLoad(testCase.finalData);
+      await submission;
+      assert.equal(controller.state.loading, false);
+    });
+  }
+});
+
+test('plain memo tracker renders cumulative chart progress while sources load', async () => {
+  const nodes = trackerNodes();
+  let progressResultHtml = '';
+  let progressChartHtml = '';
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const finalData = minimalTrackerData();
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async ({ onProgress }) => {
+        onProgress({
+          ...finalData,
+          cycles: { items: [], loading: true },
+          cmcTransfers: { items: [], loading: true },
+          logs: { items: [], loading: true },
+        });
+        progressResultHtml = nodeMap.get('tracker-result').innerHTML;
+        progressChartHtml = nodeMap.get('tracker-chart-wrapper').innerHTML;
+        return finalData;
+      },
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    assert.match(progressChartHtml, /tracker-chart-svg/);
+    assert.match(progressChartHtml, /Loading observed CMC top-up history/);
+    assert.match(progressChartHtml, /Loading cycles balance history/);
+    assert.match(progressResultHtml, /Tracker charts are still loading/);
+    assert.match(progressResultHtml, /Patron commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    assert.match(progressResultHtml, /Latest cycles shown<\/dt><dd class="pane-detail-value"><span class="tracker-summary-loading">Loading…<\/span>/);
+    assert.match(progressResultHtml, /data-tracker-range="month"[^>]* disabled aria-disabled="true"/);
+
+    const finalHtml = nodeMap.get('tracker-result').innerHTML;
+    assert.doesNotMatch(finalHtml, /Tracker charts are still loading/);
+    assert.doesNotMatch(finalHtml, /tracker-summary-loading/);
+    assert.doesNotMatch(finalHtml, /data-tracker-range="month"[^>]* disabled/);
+  });
+});
+
 test('tracker range buttons rerender loaded beneficiary data', async () => {
   const nodes = trackerNodes();
   const monthButton = new FakeElement({ 'data-tracker-range': 'month' });
@@ -1095,8 +1204,8 @@ test('raw ICP tracker renders incoming transfers while index pages are still loa
       frontendConfig: {},
       isLocalHost: () => false,
       simulatorHashForPrefill,
-      loadRawCanisterData: async ({ historyLimit, onTransfersProgress }) => {
-        onTransfersProgress({
+      loadRawCanisterData: async ({ historyLimit, onProgress }) => {
+        onProgress({
           status: { output_account: [faucetAccount] },
           transfers: {
             items: [rawTransfer(5, faucetAccountId, 500_000_000n, true, 'miner')],

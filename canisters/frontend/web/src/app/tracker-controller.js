@@ -557,7 +557,9 @@ function rawSummary(items) {
 function renderTrackerLogs(data) {
   const logs = data?.logs?.items || [];
   const logsError = data?.errors?.logs;
-  const body = logs.length === 0
+  const body = data?.logs?.loading
+    ? '<p class="tracker-log-empty">Loading canister logs…</p>'
+    : logs.length === 0
     ? `<p class="tracker-log-empty">${escapeHtml(logsError ? `Canister logs unavailable: ${logsError}` : 'No canister logs are currently available for this principal.')}</p>`
     : `<pre class="tracker-log-output">${escapeHtml(logs.map((item) => {
         const idx = item?.idx === undefined || item?.idx === null ? '?' : item.idx.toString();
@@ -630,11 +632,22 @@ export function createTrackerController({
 
   const trackerRangeLabel = (range = state.range) => TRACKER_RANGE_LABELS[range] || TRACKER_RANGE_LABELS.month;
 
+  const trackerHasLoadingPages = (data = state.data) => [
+    data?.commitments,
+    data?.cycles,
+    data?.logs,
+    data?.cmcTransfers,
+    data?.transfers,
+    data?.candidates,
+  ].some((page) => Boolean(page?.loading));
+
   const rawHistoryLoading = () => (state.viewMode === 'rawIcpCanister' || state.viewMode === 'neuronStake')
     && (Boolean(state.data?.transfers?.loading) || Boolean(state.data?.commitments?.loading));
 
+  const trackerControlsDisabled = () => state.loading || rawHistoryLoading();
+
   const renderTrackerRangeControls = () => {
-    const disabled = rawHistoryLoading();
+    const disabled = trackerControlsDisabled();
     const button = (range, label) => {
       const active = state.range === range;
       return `<button class="pane-page-button${active ? ' is-active' : ''}" type="button" data-tracker-range="${range}" aria-pressed="${active ? 'true' : 'false'}"${disabled ? ' disabled aria-disabled="true"' : ''}>${label}</button>`;
@@ -647,11 +660,66 @@ export function createTrackerController({
       </div>`;
   };
 
+  const renderTrackerLoadingChart = (message) => `
+    <div class="tracker-chart-loading" role="status" aria-live="polite">
+      <span>${escapeHtml(message)}</span>
+      <div class="tracker-chart-loading-bars" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </div>`;
+
+  const renderTrackerLoadingCard = ({ title, subtitle, message }) => `
+    <div class="tracker-chart-card">
+      <div class="tracker-chart-header">
+        <h3>${escapeHtml(title)}</h3>
+        <span>${escapeHtml(subtitle)}</span>
+      </div>
+      ${renderTrackerLoadingChart(message)}
+    </div>`;
+
+  const renderInitialTrackerLoadingState = (parsed) => {
+    const result = document.getElementById('tracker-result');
+    if (!result) return;
+    const isRaw = parsed.kind === 'rawIcpCanister' || parsed.kind === 'neuronStake';
+    const transferTitle = parsed.kind === 'neuronStake' ? 'Raw ICP neuron memo' : 'Raw ICP canister memo';
+    result.innerHTML = `
+      ${renderTrackerRangeControls()}
+      <div class="tracker-chart-wrapper tracker-chart-wrapper--loading" aria-busy="true">
+        ${renderTrackerLoadingCard({
+          title: 'ICP commitments',
+          subtitle: isRaw
+            ? 'Retained qualifying Jupiter Faucet commitments recorded by Historian for this destination target.'
+            : 'Memo-registered commitment history from historian.',
+          message: 'Loading ICP commitment history…',
+        })}
+        ${isRaw
+          ? renderTrackerLoadingCard({
+              title: transferTitle,
+              subtitle: `Observed incoming ICP transfers into the ${parsed.kind === 'neuronStake' ? 'staking' : 'canister'} account, colour-coded by source.`,
+              message: 'Loading incoming ICP transfer history…',
+            })
+          : `${renderTrackerLoadingCard({
+              title: 'Observed CMC top-ups',
+              subtitle: 'Transfers to the CMC deposit account in the selected range, colour-coded by source.',
+              message: 'Loading observed CMC top-up history…',
+            })}
+            ${renderTrackerLoadingCard({
+              title: 'Cycles balance',
+              subtitle: 'Historian cycles balance samples in the selected range.',
+              message: 'Loading cycles balance history…',
+            })}`}
+      </div>
+      <p class="pane-status-note tracker-status-note tracker-status-note--loading">Tracker charts are loading. Available data will appear as each source completes.</p>`;
+  };
+
   const trackerBucketDescription = () => 'daily buckets';
 
   const renderTrackerCadenceNote = (data) => {
     const status = data?.status;
     if (!status) {
+      if (trackerHasLoadingPages(data)) {
+        return '<p class="pane-status-note tracker-status-note tracker-status-note--loading">Loading historian update cadence…</p>';
+      }
       return '<p class="pane-status-note tracker-status-note">Cycles balances are sampled by historian cycles sweeps; cadence is unavailable because historian public status could not be loaded.</p>';
     }
 
@@ -673,6 +741,9 @@ export function createTrackerController({
   };
 
   const renderTrackerEmptyChart = (message) => renderEmptyChart(message);
+  const renderTrackerSummaryValue = (loading, value) => loading
+    ? '<span class="tracker-summary-loading">Loading…</span>'
+    : escapeHtml(value);
 
   const trackerRangeEmptyMessage = ({ rangeMessage, emptyMessage }) => {
     if (state.range !== 'all') {
@@ -696,18 +767,23 @@ export function createTrackerController({
     allowMinBarOverflow: true,
   });
 
-  const renderTrackerCommitmentsChart = (buckets) => renderTrackerAmountBarChart({
-    buckets,
-    amountKey: 'commitmentAmountE8s',
-    countKey: 'commitmentCount',
-    barClass: 'tracker-chart-bar--commitment',
-    emptyMessage: trackerRangeEmptyMessage({
-      rangeMessage: 'No dated commitments are available within the selected time range.',
-      emptyMessage: 'No dated commitments are available for this beneficiary yet.',
-    }),
-    ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
-    labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying commitment')}`,
-  });
+  const renderTrackerCommitmentsChart = (buckets, fullData = null) => {
+    if (fullData?.commitments?.loading && (fullData?.commitments?.items || []).length === 0) {
+      return renderTrackerLoadingChart('Loading ICP commitment history…');
+    }
+    return renderTrackerAmountBarChart({
+      buckets,
+      amountKey: 'commitmentAmountE8s',
+      countKey: 'commitmentCount',
+      barClass: 'tracker-chart-bar--commitment',
+      emptyMessage: trackerRangeEmptyMessage({
+        rangeMessage: 'No dated commitments are available within the selected time range.',
+        emptyMessage: 'No dated commitments are available for this beneficiary yet.',
+      }),
+      ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
+      labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying commitment')}`,
+    });
+  };
 
   const renderRawCommitmentsChart = (buckets, visibleData, fullData) => {
     const commitmentError = fullData?.errors?.commitments;
@@ -761,21 +837,26 @@ export function createTrackerController({
     return renderSourceLegend({ includeProtocol, segments: activeSegments });
   };
 
-  const renderTrackerObservedCmcChart = (buckets) => renderStackedAmountBarChart({
-    buckets,
-    segments: activeSourceSegments(SOURCE_SEGMENTS, buckets),
-    emptyMessage: trackerRangeEmptyMessage({
-      rangeMessage: `No dated ICP transfers to the canister’s CMC top-up account are available in ${trackerRangeLabel()}.`,
-      emptyMessage: 'No dated ICP transfers to the canister’s CMC top-up account are available yet.',
-    }),
-    ariaLabel: `Observed CMC top-up transfers in ${trackerRangeLabel()}`,
-    labelBuilder: (bucket, segment, amount, count) => `${bucket.label}: ${segment.label} ${formatIcpE8s(amount)} across ${pluralize(count, 'observed CMC transfer')}`,
-    valueFormatter: formatIcpE8s,
-    xAxis: 'time',
-    minBarWidth: 2,
-    maxBarWidth: 28,
-    allowMinBarOverflow: true,
-  });
+  const renderTrackerObservedCmcChart = (buckets, fullData = null) => {
+    if (fullData?.cmcTransfers?.loading && (fullData?.cmcTransfers?.items || []).length === 0) {
+      return renderTrackerLoadingChart('Loading observed CMC top-up history…');
+    }
+    return renderStackedAmountBarChart({
+      buckets,
+      segments: activeSourceSegments(SOURCE_SEGMENTS, buckets),
+      emptyMessage: trackerRangeEmptyMessage({
+        rangeMessage: `No dated ICP transfers to the canister’s CMC top-up account are available in ${trackerRangeLabel()}.`,
+        emptyMessage: 'No dated ICP transfers to the canister’s CMC top-up account are available yet.',
+      }),
+      ariaLabel: `Observed CMC top-up transfers in ${trackerRangeLabel()}`,
+      labelBuilder: (bucket, segment, amount, count) => `${bucket.label}: ${segment.label} ${formatIcpE8s(amount)} across ${pluralize(count, 'observed CMC transfer')}`,
+      valueFormatter: formatIcpE8s,
+      xAxis: 'time',
+      minBarWidth: 2,
+      maxBarWidth: 28,
+      allowMinBarOverflow: true,
+    });
+  };
 
   const trackerCyclesChartPoints = (data) => sortedCycleSamples(data).map((sample) => {
     const millis = Number(sample.timestampNanos / 1_000_000n);
@@ -794,6 +875,9 @@ export function createTrackerController({
   const renderTrackerCyclesChart = (data, timelineBuckets, fullData = data) => {
     const points = trackerCyclesChartPoints(data);
     if (points.length === 0) {
+      if (fullData?.cycles?.loading) {
+        return renderTrackerLoadingChart('Loading cycles balance history…');
+      }
       if ((fullData?.cycles?.items || []).length > 0) {
         return renderTrackerEmptyChart(`No cycles samples are available in ${trackerRangeLabel()}.`);
       }
@@ -818,8 +902,9 @@ export function createTrackerController({
     const wrapper = document.getElementById('tracker-chart-wrapper');
     if (!wrapper) return;
     const buckets = aggregateTrackerData(data, state.range);
-    const hasObservedCmcTopUps = (fullData?.cmcTransfers?.items || []).length > 0;
-    if (buckets.length === 0) {
+    const hasObservedCmcTopUps = Boolean(fullData?.cmcTransfers?.loading)
+      || (fullData?.cmcTransfers?.items || []).length > 0;
+    if (buckets.length === 0 && !trackerHasLoadingPages(fullData)) {
       const hasOlderLoadedData = state.range !== 'all' && trackerHasAnyDatedItems(fullData);
       const message = state.range === 'all'
         ? 'No dated tracker data is available for this canister yet.'
@@ -834,7 +919,7 @@ export function createTrackerController({
           <h3>ICP commitments</h3>
           <span>Memo-registered commitment history from historian.</span>
         </div>
-        ${renderTrackerCommitmentsChart(buckets)}
+        ${renderTrackerCommitmentsChart(buckets, fullData)}
       </div>
       ${hasObservedCmcTopUps ? `<div class="tracker-chart-card">
         <div class="tracker-chart-header">
@@ -842,7 +927,7 @@ export function createTrackerController({
           <span>Transfers to the CMC deposit account in the selected range, colour-coded by source; direct non-Jupiter top-ups may appear.</span>
         </div>
         ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), buckets })}
-        ${renderTrackerObservedCmcChart(buckets)}
+        ${renderTrackerObservedCmcChart(buckets, fullData)}
       </div>` : ''}
       <div class="tracker-chart-card">
         <div class="tracker-chart-header">
@@ -856,7 +941,7 @@ export function createTrackerController({
     const wrapper = document.getElementById('tracker-chart-wrapper');
     if (!wrapper) return;
     const buckets = aggregateTrackerData(data, state.range);
-    if (buckets.length === 0) {
+    if (buckets.length === 0 && !fullData?.cycles?.loading) {
       const hasOlderLoadedData = state.range !== 'all' && trackerHasAnyDatedItems(fullData);
       const message = state.range === 'all'
         ? 'No dated cycles data is available for this tracked canister yet.'
@@ -896,11 +981,14 @@ export function createTrackerController({
     const summary = trackerMetricSummary(visibleData);
     const cycleSamples = sortedCycleSamples(data);
     const rangeLabel = trackerRangeLabel();
+    const cyclesLoading = Boolean(data?.cycles?.loading);
     const trackingReasons = trackingReasonNames(data.overview?.tracking_reasons).join(', ') || DASH;
     const firstSeen = formatTimestampSeconds(optValue(data.overview?.meta?.first_seen_ts));
     const cyclesStatus = cyclesProbeStatusInfo(data);
     const usingLogCycles = cycleSamples[0]?.source === 'log';
-    const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
+    const latestCyclesHtml = cyclesLoading
+      ? '<span class="tracker-summary-loading">Loading…</span>'
+      : summary.latestCycles !== null && summary.latestCycles !== undefined
       ? escapeHtml(formatCycles(summary.latestCycles))
       : renderCyclesStatusCell(cyclesStatus.label);
     const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay(data);
@@ -919,6 +1007,7 @@ export function createTrackerController({
     result.innerHTML = `
       ${renderTrackerRangeControls()}
       <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>
+      ${trackerHasLoadingPages(data) ? '<p class="pane-status-note tracker-status-note tracker-status-note--loading">Tracker charts are still loading. Available data is shown as each source completes.</p>' : ''}
       ${cyclesProbeIssueNote}
       ${renderTrackerLogs(data)}
       <dl class="pane-detail-grid tracker-summary-grid">
@@ -952,6 +1041,10 @@ export function createTrackerController({
     const visibleData = filterTrackerDataByRange(classifiedData, state.range);
     const summary = trackerMetricSummary(visibleData);
     const fullSummary = trackerMetricSummary(classifiedData);
+    const commitmentLoading = Boolean(classifiedData?.commitments?.loading);
+    const cyclesLoading = Boolean(classifiedData?.cycles?.loading);
+    const cmcLoading = Boolean(classifiedData?.cmcTransfers?.loading);
+    const trackerHistoryLoading = trackerHasLoadingPages(classifiedData);
     const cycleSamples = sortedCycleSamples(classifiedData);
     const rangeLabel = trackerRangeLabel();
     const trackingReasons = trackingReasonNames(classifiedData.overview?.tracking_reasons).join(', ') || DASH;
@@ -959,7 +1052,9 @@ export function createTrackerController({
     const lastCommitment = formatTimestampSeconds(optValue(classifiedData.overview?.meta?.last_commitment_ts));
     const cyclesStatus = cyclesProbeStatusInfo(classifiedData);
     const usingLogCycles = cycleSamples[0]?.source === 'log';
-    const latestCyclesHtml = summary.latestCycles !== null && summary.latestCycles !== undefined
+    const latestCyclesHtml = cyclesLoading
+      ? renderTrackerSummaryValue(true, '')
+      : summary.latestCycles !== null && summary.latestCycles !== undefined
       ? escapeHtml(formatCycles(summary.latestCycles))
       : renderCyclesStatusCell(cyclesStatus.label);
     const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay(classifiedData);
@@ -989,6 +1084,7 @@ export function createTrackerController({
     result.innerHTML = `
       ${renderTrackerRangeControls()}
       <div class="tracker-chart-wrapper" id="tracker-chart-wrapper"></div>
+      ${trackerHistoryLoading ? '<p class="pane-status-note tracker-status-note tracker-status-note--loading">Tracker charts are still loading. Available data is shown as each source completes.</p>' : ''}
       ${cyclesProbeIssueNote}
       ${renderTrackerLogs(data)}
       <dl class="pane-detail-grid tracker-summary-grid">
@@ -998,11 +1094,11 @@ export function createTrackerController({
         <div><dt>Tracking reasons</dt><dd class="pane-detail-value">${escapeHtml(trackingReasons)}</dd></div>
         <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
         <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
-        <div><dt>Patron commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.commitmentCount))}</dd></div>
-        <div><dt>Total commitments shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalCommittedE8s))}</dd></div>
-        <div><dt>Qualifying commitments shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.qualifyingCommitmentCount)} · ${formatIcpE8s(summary.qualifyingCommittedE8s)}`)}</dd></div>
-        <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.observedCmcTransferCount))}</dd></div>
-        <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.observedCmcE8s))}</dd></div>
+        <div><dt>Patron commitments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, formatInteger(summary.commitmentCount))}</dd></div>
+        <div><dt>Total commitments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(summary.totalCommittedE8s))}</dd></div>
+        <div><dt>Qualifying commitments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, `${formatInteger(summary.qualifyingCommitmentCount)} · ${formatIcpE8s(summary.qualifyingCommittedE8s)}`)}</dd></div>
+        <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(cmcLoading, formatInteger(summary.observedCmcTransferCount))}</dd></div>
+        <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(cmcLoading, formatIcpE8s(summary.observedCmcE8s))}</dd></div>
         <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
         ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
         ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Simulator prefill</dt><dd class="pane-detail-value">${simulatorPrefillHtml}</dd></div>`}
@@ -1018,10 +1114,16 @@ export function createTrackerController({
   };
 
   const setLoading = (loading) => {
+    state.loading = loading;
     const submit = document.getElementById('tracker-submit');
     const input = document.getElementById('tracker-principal-input');
     if (submit) submit.disabled = loading;
     if (input) input.disabled = loading;
+    document.querySelectorAll('[data-tracker-range]').forEach((button) => {
+      const disabled = loading || rawHistoryLoading();
+      button.disabled = disabled;
+      button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    });
   };
 
   const setStatus = (message = '', kind = '') => {
@@ -1095,6 +1197,7 @@ export function createTrackerController({
     const visibleItems = visibleData?.transfers?.items || [];
     const summary = rawSummary(visibleItems);
     const commitmentError = classified.errors?.commitments;
+    const commitmentLoading = Boolean(classified.commitments?.loading);
     const commitmentCount = commitmentError ? null : visibleCommitments.length;
     const committedE8s = commitmentError ? null : sumE8s(visibleCommitments);
     const isNeuron = parsed.kind === 'neuronStake';
@@ -1158,8 +1261,8 @@ export function createTrackerController({
       <dl class="pane-detail-grid tracker-summary-grid">
         <div><dt>Memo type</dt><dd class="pane-detail-value">${escapeHtml(title)}</dd></div>
         <div><dt>Tracked target</dt><dd class="pane-detail-value mono">${targetHtml}</dd></div>
-        <div><dt>Commitments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : escapeHtml(formatInteger(commitmentCount))}</dd></div>
-        <div><dt>ICP committed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : escapeHtml(formatIcpE8s(committedE8s))}</dd></div>
+        <div><dt>Commitments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatInteger(commitmentCount))}</dd></div>
+        <div><dt>ICP committed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(committedE8s))}</dd></div>
         <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
         <div><dt>Incoming ICP shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalIcpE8s))}</dd></div>
         <div><dt>Jupiter Faucet inflow shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.faucetTransferCount)} · ${formatIcpE8s(summary.faucetIcpE8s)}`)}</dd></div>
@@ -1255,9 +1358,7 @@ export function createTrackerController({
     setStatus('Loading tracker data…', 'loading');
     const historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT;
     const minTimestampNanos = trackerRangeCutoffNanos(state.range);
-    if (result) {
-      result.innerHTML = '<div class="tracker-empty-state"><p>Loading…</p></div>';
-    }
+    renderInitialTrackerLoadingState(parsed);
 
     const progressRequestId = `${Date.now()}-${Math.random()}`;
     state.progressRequestId = progressRequestId;
@@ -1267,19 +1368,21 @@ export function createTrackerController({
         host: window.location.origin,
         local: isLocalHost(),
       };
-      const onTransfersProgress = (partialData) => {
+      const onProgress = (partialData) => {
         if (state.progressRequestId !== progressRequestId || state.viewMode !== parsed.kind) return;
         state.data = partialData;
-        renderRawIcpData(partialData, parsed);
+        if (parsed.kind === 'cyclesTopUp') renderData(partialData, parsed.canisterText);
+        else renderRawIcpData(partialData, parsed);
       };
       const data = parsed.kind === 'cyclesTopUp'
-        ? await loadData({ ...common, canisterId: parsed.canisterId, historyLimit, minTimestampNanos })
+        ? await loadData({ ...common, canisterId: parsed.canisterId, historyLimit, minTimestampNanos, onProgress })
         : parsed.kind === 'rawIcpCanister'
-          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onTransfersProgress })
-          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onTransfersProgress });
+          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onProgress })
+          : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onProgress });
       if (state.progressRequestId !== progressRequestId) return;
       state.data = data;
       state.loadedRange = state.range;
+      setLoading(false);
       setStatus('', '');
       if (parsed.kind === 'cyclesTopUp') renderData(data, parsed.canisterText);
       else renderRawIcpData(data, parsed);
@@ -1287,6 +1390,7 @@ export function createTrackerController({
       if (state.progressRequestId !== progressRequestId) return;
       state.data = null;
       state.error = normalizeLoadError(error);
+      setLoading(false);
       setStatus(`Tracker unavailable: ${state.error}`, 'error');
       if (result) {
         result.innerHTML = '<div class="tracker-empty-state"><p>Tracker data could not be loaded right now.</p></div>';

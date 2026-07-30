@@ -16,6 +16,61 @@ import {
 
 const TRACKER_HISTORY_PAGE_SIZE = 100;
 export const RAW_ICP_TRACKER_TRANSFER_LIMIT = 10_000;
+const TRACKER_PROGRESS_PAGE_KEYS = [
+  'commitments',
+  'cycles',
+  'logs',
+  'cmcTransfers',
+  'relayRegistrations',
+  'transfers',
+  'candidates',
+];
+
+function progressPage(value = null, loading = false) {
+  return {
+    ...(value || {}),
+    items: [...(value?.items || [])],
+    loading,
+  };
+}
+
+function trackerProgressSnapshot(progress) {
+  const snapshot = {
+    ...progress,
+    errors: { ...(progress?.errors || {}) },
+  };
+  TRACKER_PROGRESS_PAGE_KEYS.forEach((key) => {
+    if (progress?.[key]) snapshot[key] = progressPage(progress[key], Boolean(progress[key].loading));
+  });
+  return snapshot;
+}
+
+function notifyTrackerProgress(onProgress, progress) {
+  if (typeof onProgress === 'function') onProgress(trackerProgressSnapshot(progress));
+}
+
+function trackProgressPromise(promise, {
+  progress,
+  key,
+  onProgress,
+  page = true,
+  fallback = null,
+  errorKey = null,
+} = {}) {
+  return promise.then(
+    (value) => {
+      progress[key] = page ? progressPage(value, false) : value;
+      notifyTrackerProgress(onProgress, progress);
+      return value;
+    },
+    (error) => {
+      progress[key] = page ? progressPage(fallback, false) : fallback;
+      if (errorKey) progress.errors[errorKey] = normalizeError(error);
+      notifyTrackerProgress(onProgress, progress);
+      throw error;
+    },
+  );
+}
 
 function positiveLimit(limit, fallback = TRACKER_HISTORY_PAGE_SIZE) {
   const value = Number(limit);
@@ -249,6 +304,7 @@ export async function loadTrackerData({
   cmcCanisterId = null,
   historyLimit = TRACKER_HISTORY_PAGE_SIZE,
   minTimestampNanos = null,
+  onProgress = null,
 } = {}) {
   if (!canisterId) {
     throw new Error('A canister ID is required');
@@ -281,25 +337,64 @@ export async function loadTrackerData({
     };
   }
 
-  const commitmentsPromise = isCommitmentBeneficiary
+  const progress = {
+    canisterId,
+    overview: overviewValue,
+    status: null,
+    relayRegistrations: progressPage(null, true),
+    isRecognized: true,
+    isCommitmentBeneficiary,
+    commitments: progressPage(null, isCommitmentBeneficiary),
+    cycles: progressPage(null, true),
+    logs: progressPage(null, true),
+    cmcTransfers: progressPage(null, true),
+    errors: { commitments: null, cycles: null, logs: null, cmcTransfers: null },
+  };
+  notifyTrackerProgress(onProgress, progress);
+
+  const commitmentsPromise = trackProgressPromise(isCommitmentBeneficiary
     ? loadTrackerCommitments(historian, {
         canisterId,
         historyLimit,
         minTimestampNanos,
       })
-    : Promise.resolve({ items: [] });
-  const cyclesPromise = loadTrackerCycles(historian, {
+    : Promise.resolve({ items: [] }), {
+    progress,
+    key: 'commitments',
+    onProgress,
+    errorKey: 'commitments',
+  });
+  const cyclesPromise = trackProgressPromise(loadTrackerCycles(historian, {
     canisterId,
     historyLimit,
     minTimestampNanos,
+  }), {
+    progress,
+    key: 'cycles',
+    onProgress,
+    errorKey: 'cycles',
   });
-  const statusPromise = historian.get_public_status();
-  const relayRegistrationsPromise = loadRelayRegistrations(historian);
-  const logsPromise = canisterLogsLoader({
+  const statusPromise = trackProgressPromise(historian.get_public_status(), {
+    progress,
+    key: 'status',
+    onProgress,
+    page: false,
+  });
+  const relayRegistrationsPromise = trackProgressPromise(loadRelayRegistrations(historian), {
+    progress,
+    key: 'relayRegistrations',
+    onProgress,
+  });
+  const logsPromise = trackProgressPromise(canisterLogsLoader({
     agent: resolvedAgent,
     canisterId,
+  }), {
+    progress,
+    key: 'logs',
+    onProgress,
+    errorKey: 'logs',
   });
-  const cmcTransfersPromise = statusPromise.then((status) => loadTrackerCmcTransfers({
+  const cmcTransfersPromise = trackProgressPromise(statusPromise.then((status) => loadTrackerCmcTransfers({
     historian,
     status,
     agent: resolvedAgent,
@@ -308,7 +403,12 @@ export async function loadTrackerData({
     cmcCanisterId,
     historyLimit,
     minTimestampNanos,
-  }));
+  })), {
+    progress,
+    key: 'cmcTransfers',
+    onProgress,
+    errorKey: 'cmcTransfers',
+  });
 
   const [commitmentsResult, cyclesResult, statusResult, relayRegistrationsResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
     commitmentsPromise,
@@ -352,6 +452,7 @@ export async function loadRawIcpCanisterTrackerData({
   prefixLimit = 10,
   historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
   minTimestampNanos = null,
+  onProgress = null,
   onTransfersProgress = null,
 } = {}) {
   if (!canisterId) throw new Error('A canister ID is required');
@@ -363,14 +464,40 @@ export async function loadRawIcpCanisterTrackerData({
     historianActor,
     historianActorFactory,
   });
-  const statusPromise = historian.get_public_status();
-  const relayRegistrationsPromise = loadRelayRegistrations(historian);
-  const commitmentsPromise = loadRawIcpCanisterCommitments(historian, {
+  const progressCallback = typeof onProgress === 'function' ? onProgress : onTransfersProgress;
+  const progress = {
+    canisterId,
+    status: null,
+    relayRegistrations: progressPage(null, true),
+    commitments: progressPage(null, true),
+    transfers: progressPage(null, true),
+    candidates: progressPage(null, true),
+    errors: { commitments: null, transfers: null, candidates: null },
+  };
+  notifyTrackerProgress(progressCallback, progress);
+
+  const statusPromise = trackProgressPromise(historian.get_public_status(), {
+    progress,
+    key: 'status',
+    onProgress: progressCallback,
+    page: false,
+  });
+  const relayRegistrationsPromise = trackProgressPromise(loadRelayRegistrations(historian), {
+    progress,
+    key: 'relayRegistrations',
+    onProgress: progressCallback,
+  });
+  const commitmentsPromise = trackProgressPromise(loadRawIcpCanisterCommitments(historian, {
     canisterId,
     historyLimit,
     minTimestampNanos,
+  }), {
+    progress,
+    key: 'commitments',
+    onProgress: progressCallback,
+    errorKey: 'commitments',
   });
-  const transfersPromise = statusPromise.then((status) => loadRawIncomingTransfers({
+  const transfersPromise = trackProgressPromise(statusPromise.then((status) => loadRawIncomingTransfers({
     historian,
     status,
     agent: resolvedAgent,
@@ -379,24 +506,30 @@ export async function loadRawIcpCanisterTrackerData({
     memoText: outgoingMemoText,
     historyLimit,
     minTimestampNanos,
-    onProgress: typeof onTransfersProgress === 'function'
-      ? (transfers) => onTransfersProgress({
-          canisterId,
-          status,
-          commitments: { items: [], loading: true },
-          transfers,
-          candidates: { items: [], truncated: false, loading: true },
-          errors: { commitments: null, transfers: null, candidates: null },
-        })
+    onProgress: typeof progressCallback === 'function'
+      ? (transfers) => {
+          progress.transfers = progressPage(transfers, Boolean(transfers?.loading));
+          notifyTrackerProgress(progressCallback, progress);
+        }
       : null,
-  }));
+  })), {
+    progress,
+    key: 'transfers',
+    onProgress: progressCallback,
+    errorKey: 'transfers',
+  });
   const prefix = String(outgoingMemoText || '');
-  const candidatesPromise = prefix.length >= 4 && typeof historian.find_canisters_by_memo_prefix === 'function'
+  const candidatesPromise = trackProgressPromise(prefix.length >= 4 && typeof historian.find_canisters_by_memo_prefix === 'function'
     ? historian.find_canisters_by_memo_prefix({
         prefix,
         limit: [prefixLimit],
       })
-    : Promise.resolve({ items: [], truncated: false });
+    : Promise.resolve({ items: [], truncated: false }), {
+    progress,
+    key: 'candidates',
+    onProgress: progressCallback,
+    errorKey: 'candidates',
+  });
   const [statusResult, relayRegistrationsResult, commitmentsResult, transfersResult, candidatesResult] = await Promise.allSettled([
     statusPromise,
     relayRegistrationsPromise,
@@ -433,6 +566,7 @@ export async function loadNeuronStakeTrackerData({
   outgoingMemoText = null,
   historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
   minTimestampNanos = null,
+  onProgress = null,
   onTransfersProgress = null,
 } = {}) {
   if (neuronId === null || neuronId === undefined) throw new Error('A neuron ID is required');
@@ -450,13 +584,34 @@ export async function loadNeuronStakeTrackerData({
     neuronId,
     governanceCanisterId,
   });
-  const statusPromise = historian.get_public_status();
-  const commitmentsPromise = loadNeuronCommitments(historian, {
+  const progressCallback = typeof onProgress === 'function' ? onProgress : onTransfersProgress;
+  const progress = {
+    neuronId,
+    stakingAccount,
+    status: null,
+    commitments: progressPage(null, true),
+    transfers: progressPage(null, true),
+    errors: { commitments: null, transfers: null },
+  };
+  notifyTrackerProgress(progressCallback, progress);
+
+  const statusPromise = trackProgressPromise(historian.get_public_status(), {
+    progress,
+    key: 'status',
+    onProgress: progressCallback,
+    page: false,
+  });
+  const commitmentsPromise = trackProgressPromise(loadNeuronCommitments(historian, {
     neuronId,
     historyLimit,
     minTimestampNanos,
+  }), {
+    progress,
+    key: 'commitments',
+    onProgress: progressCallback,
+    errorKey: 'commitments',
   });
-  const transfersPromise = statusPromise.then((status) => loadRawIncomingTransfers({
+  const transfersPromise = trackProgressPromise(statusPromise.then((status) => loadRawIncomingTransfers({
     historian,
     status,
     agent: resolvedAgent,
@@ -465,17 +620,18 @@ export async function loadNeuronStakeTrackerData({
     memoText: outgoingMemoText,
     historyLimit,
     minTimestampNanos,
-    onProgress: typeof onTransfersProgress === 'function'
-      ? (progressTransfers) => onTransfersProgress({
-          neuronId,
-          stakingAccount,
-          status,
-          commitments: { items: [], loading: true },
-          transfers: progressTransfers,
-          errors: { commitments: null, transfers: null },
-        })
+    onProgress: typeof progressCallback === 'function'
+      ? (transfers) => {
+          progress.transfers = progressPage(transfers, Boolean(transfers?.loading));
+          notifyTrackerProgress(progressCallback, progress);
+        }
       : null,
-  }));
+  })), {
+    progress,
+    key: 'transfers',
+    onProgress: progressCallback,
+    errorKey: 'transfers',
+  });
   const [statusResult, commitmentsResult, transfersResult] = await Promise.allSettled([
     statusPromise,
     commitmentsPromise,

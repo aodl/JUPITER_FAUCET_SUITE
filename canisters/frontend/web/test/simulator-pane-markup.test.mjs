@@ -830,6 +830,10 @@ test('Tracker results render chart controls and graphs before explanatory text',
   assert.ok(summaryGridIndex > chartWrapperIndex, 'summary text should render below charts');
   assert.ok(showingNoteIndex > summaryGridIndex, 'explanatory text should render below summary');
   assert.match(metricsCss, /\.tracker-chart-wrapper \{[\s\S]*margin: 16px 0 20px;/);
+  assert.match(trackerControllerJs, /renderInitialTrackerLoadingState\(parsed\)/);
+  assert.match(trackerControllerJs, /Tracker charts are loading\. Available data will appear as each source completes\./);
+  assert.match(metricsCss, /\.tracker-chart-loading \{[\s\S]*min-height: 132px;[\s\S]*\}/);
+  assert.match(metricsCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.tracker-chart-loading-bars i \{[\s\S]*animation: none;/);
 });
 
 
