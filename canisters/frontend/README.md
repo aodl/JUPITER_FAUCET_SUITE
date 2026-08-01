@@ -82,6 +82,8 @@ Used for:
 - `get_public_status`
 - `list_memo_registered_canister_summaries`
 - `list_recent_commitments`
+- canonical target-set setup through `get_relay_setup_view` and explicit `notify_relay_setup`
+- paginated `list_canisters` filtered by `RelayInstance` for tracker source classification
 
 These power the registry table, commitment feed, and historian-backed status surface.
 
@@ -99,6 +101,14 @@ The loader attempts:
 The frontend also reads the Jupiter neuron directly from NNS Governance so it can show neuron metadata such as age, creation timestamp, refresh timestamp, and followees.
 
 No browser requests are made to custom `/dashboard/*` routes.
+
+### Self-service Relay setup
+
+The setup textarea accepts comma, newline, or whitespace-separated principal text and rejects empty, invalid, duplicate, or over-20-target input before calling Historian. Historian remains authoritative for canonical raw-byte ordering and protected-target validation.
+
+The returned view displays canonical order, target-count pricing, and an optional cached-rate requirement. For a new available exact set, the browser reads its informational balance directly from the ICP ledger with `icrc1_balance_of`; it never scans the index or submits a transaction reference. Funding does not trigger creation automatically. The **Create Relay** button calls `notify_relay_setup` with only the target vector, then polls the setup view while it is in progress. Active and manual-recovery states hide all payment controls, and stale responses cannot replace a newer target-set view.
+
+Setup deposits are aggregate protocol deposits. They are not attributed to individual payers and are not automatically refundable. Target sets may overlap, become immutable after Relay creation, and return the existing Relay when the same canonical set is submitted again.
 
 ### Dashboard loader behavior
 

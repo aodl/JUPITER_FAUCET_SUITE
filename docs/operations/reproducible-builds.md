@@ -109,7 +109,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --mode upgrade
 ```
 
-Pause the self-service factory during the Historian maintenance window, take a canister snapshot or equivalent backup, and record pre-upgrade query results for after-upgrade comparison. Existing setup/recovery jobs and Relay registrations are preserved by the upgrade. Deploy the frontend after backend verification.
+Pause the self-service factory during the Historian maintenance window, verify no setup entry is `Creating`, take a canister snapshot or equivalent backup, and record pre-upgrade query results for after-upgrade comparison. Active hash-to-Relay mappings and independent target/Relay tracking reasons are preserved by the upgrade. Historian does not upgrade or reconstruct blackholed children. Deploy the frontend after backend verification.
 
 Lifecycle summary:
 

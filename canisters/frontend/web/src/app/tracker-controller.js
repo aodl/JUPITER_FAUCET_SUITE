@@ -11,7 +11,7 @@ import { escapeHtml } from '../followee-links.js';
 import { renderAmountBarChart, renderEmptyChart, renderLineChart, renderStackedAmountBarChart } from '../chart-rendering.js';
 import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from '../tracker-cycles.js';
 import { parseJupiterMemo } from '../memo-policy.js';
-import { classifyTransferItem, relayRegistrySourceMap } from '../data/transfer-source-classification.js';
+import { classifyTransferItem, relayInstanceSourceMap } from '../data/transfer-source-classification.js';
 import { normalizeTrackerRange, trackerHashForMemo, trackerHashForPrincipal, trackerStateFromHash } from './hash-routes.js';
 import { formatDailyBurnInputFromCyclesPerDay, formatIcpCommitmentInputRoundedUp } from './simulator-controller.js';
 import {
@@ -655,7 +655,7 @@ function trackerMetricSummary(data) {
 
 function classifyTrackerData(data, protocolCanisterId = null) {
   if (!data) return data;
-  const relaySourceMap = relayRegistrySourceMap(data.relayRegistrations?.items || []);
+  const relaySourceMap = relayInstanceSourceMap(data.relayInstances?.items || []);
   return {
     ...data,
     cmcTransfers: {
@@ -1327,7 +1327,7 @@ export function createTrackerController({
       items: (data?.transfers?.items || []).map((item) => classifyTransferItem(item, {
         status: data?.status,
         protocolCanisterId: state.protocolCanisterId,
-        relaySourceMap: relayRegistrySourceMap(data?.relayRegistrations?.items || []),
+        relaySourceMap: relayInstanceSourceMap(data?.relayInstances?.items || []),
       })),
     },
   });

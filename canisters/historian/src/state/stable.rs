@@ -13,9 +13,10 @@ pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
 // 19: raw ICP commitment entries
 // 20: neuron commitment history index
 // 21: neuron commitment entries
-// 22: relay registry by target
-// 23: reserved (formerly relay targets by relay)
-// 24: relay setup jobs by target
+// 22: retired legacy target-keyed Relay registry
+// 23: retired/reserved legacy Relay memory
+// 24: retired legacy target-keyed setup jobs
+// 25: definitive relay setup entries by canonical target-set hash
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -41,9 +42,11 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_NEURON_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>>> =
         const { std::cell::RefCell::new(None) };
-    pub(super) static STABLE_RELAY_REGISTRY_BY_TARGET_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RelayRegistryEntry, Memory>>> =
+    pub(super) static STABLE_RETIRED_RELAY_REGISTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RetiredRelayRegistryEntry, Memory>>> =
         const { std::cell::RefCell::new(None) };
-    pub(super) static STABLE_RELAY_SETUP_JOBS_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RelaySetupJob, Memory>>> =
+    pub(super) static STABLE_RETIRED_RELAY_SETUP_JOBS_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RetiredRelaySetupJob, Memory>>> =
+        const { std::cell::RefCell::new(None) };
+    pub(super) static STABLE_RELAY_SETUP_ENTRIES_MAP: std::cell::RefCell<Option<StableBTreeMap<crate::relay_setup::RelaySetupKey, crate::relay_setup::RelaySetupEntry, Memory>>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     pub(super) static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -53,7 +56,6 @@ thread_local! {
     pub(super) static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
     pub(super) static DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
     pub(super) static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = const { std::cell::RefCell::new(BTreeSet::new()) };
-    pub(super) static DIRTY_RELAY_TARGETS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
 }
 
 pub(crate) const DIRTY_ROOT: u8 = 1 << 0;
@@ -62,14 +64,12 @@ pub(crate) const DIRTY_COMMITMENTS: u8 = 1 << 2;
 pub(crate) const DIRTY_CYCLES: u8 = 1 << 3;
 pub(crate) const DIRTY_RAW_ICP_COMMITMENTS: u8 = 1 << 4;
 pub(crate) const DIRTY_NEURON_COMMITMENTS: u8 = 1 << 5;
-pub(crate) const DIRTY_RELAY_FACTORY: u8 = 1 << 6;
 pub(crate) const DIRTY_ALL: u8 = DIRTY_ROOT
     | DIRTY_REGISTRY
     | DIRTY_COMMITMENTS
     | DIRTY_CYCLES
     | DIRTY_RAW_ICP_COMMITMENTS
-    | DIRTY_NEURON_COMMITMENTS
-    | DIRTY_RELAY_FACTORY;
+    | DIRTY_NEURON_COMMITMENTS;
 
 pub(super) fn with_root_stable_cell<R>(
     f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R,
@@ -269,10 +269,10 @@ pub(super) fn with_neuron_commitment_entry_map<R>(
     })
 }
 
-pub(super) fn with_relay_registry_by_target_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, RelayRegistryEntry, Memory>) -> R,
+pub(super) fn with_retired_relay_registry_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, RetiredRelayRegistryEntry, Memory>) -> R,
 ) -> R {
-    STABLE_RELAY_REGISTRY_BY_TARGET_MAP.with(|map| {
+    STABLE_RETIRED_RELAY_REGISTRY_MAP.with(|map| {
         if map.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(22));
@@ -287,10 +287,10 @@ pub(super) fn with_relay_registry_by_target_map<R>(
     })
 }
 
-pub(super) fn with_relay_setup_jobs_map<R>(
-    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, RelaySetupJob, Memory>) -> R,
+pub(super) fn with_retired_relay_setup_jobs_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<PrincipalKey, RetiredRelaySetupJob, Memory>) -> R,
 ) -> R {
-    STABLE_RELAY_SETUP_JOBS_MAP.with(|map| {
+    STABLE_RETIRED_RELAY_SETUP_JOBS_MAP.with(|map| {
         if map.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
                 let memory = manager.borrow().get(MemoryId::new(24));
@@ -302,5 +302,29 @@ pub(super) fn with_relay_setup_jobs_map<R>(
         f(borrow
             .as_mut()
             .expect("historian relay setup jobs stable map not initialized"))
+    })
+}
+
+pub(crate) fn with_relay_setup_entries_map<R>(
+    f: impl FnOnce(
+        &mut StableBTreeMap<
+            crate::relay_setup::RelaySetupKey,
+            crate::relay_setup::RelaySetupEntry,
+            Memory,
+        >,
+    ) -> R,
+) -> R {
+    STABLE_RELAY_SETUP_ENTRIES_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(25));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow
+            .as_mut()
+            .expect("historian relay setup entries stable map not initialized"))
     })
 }

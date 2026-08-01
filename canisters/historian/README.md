@@ -82,7 +82,7 @@ The historian intentionally does **not** attempt to fetch logs from other canist
 
 Historian probing is always Auto. For each target it attempts direct self balance first, and recognized blackhole canisters are probed through their own self-status before any fallback. For ordinary targets, Auto mode first reuses the target's previously successful positive route, whether that route is the 13-node blackhole, the Fiduciary blackhole, SNS Root, or SNS Swap. This sticky route cache is heap-only runtime state and is rebuilt after upgrade as targets are probed again. If that route is absent or fails, route discovery tries the 13-node blackhole, then the Fiduciary blackhole, then SNS discovery. The 13-node blackhole is preferred when selecting an unknown blackhole route, while a healthy positive route is reused to avoid predictable failed calls and unnecessary cycles burn. Route failure triggers immediate rediscovery. No route TTL, negative cache, or stable route map is used. SNS-governed targets do not need blackhole control for discovery or SNS-root-summary cycles observations. Each cycles sweep also includes the historian canister **itself** as a `SelfCanister` sample target.
 
-Tracked principals carry one or more `CanisterTrackingReason` values: `MemoCommitment`, `SnsDiscovery`, `RelayTarget`, and `RelayInstance`. `tracked_canister_count` is the number of unique principals with at least one currently visible tracking reason. The specialized counts `memo_registered_canister_count`, `sns_discovered_canister_count`, `relay_target_canister_count`, and `relay_instance_canister_count` are per-reason counts and do not change the unique-principal rule for `tracked_canister_count`. When a Relay registration becomes active, Historian tracks both the target canister (`RelayTarget`) and the Relay canister (`RelayInstance`) and records independent cycles history for both.
+Tracked principals carry one or more `CanisterTrackingReason` values: `MemoCommitment`, `SnsDiscovery`, `RelayTarget`, and `RelayInstance`. `tracked_canister_count` is the number of unique principals with at least one currently visible tracking reason. The specialized counts `memo_registered_canister_count`, `sns_discovered_canister_count`, `relay_target_canister_count`, and `relay_instance_canister_count` are per-reason counts and do not change the unique-principal rule for `tracked_canister_count`. Active self-service target sets add `RelayTarget` to every target and `RelayInstance` to the spawned Relay. These reasons and cycles histories are independent; they do not form a target-to-Relay relationship.
 
 ### SNS discovery
 
@@ -142,8 +142,22 @@ Production methods:
 - `list_recent_commitments`
   - recent valid and invalid commitment feed used by the frontend
   - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and a generic placeholder memo label rather than the original attacker-provided text
+- `get_relay_setup_view`
+  - canonicalizes a submitted 1–20 target vector and returns exact-set state, target-count pricing, an optional cached-rate requirement, and a deterministic setup account only for a new available set
+- `notify_relay_setup`
+  - explicitly starts a sufficiently funded exact-set setup using only the submitted target vector
 
 The public read model is intentionally richer than the raw history methods because the production frontend should not need to reconstruct aggregate dashboard state in the browser.
+
+### Self-service Relay target sets
+
+Self-service setup accepts 1–20 external target canisters. Historian validates every target, sorts by raw principal bytes, rejects duplicates, and hashes the framed canonical vector with SHA-256. Input order therefore does not affect identity. Exact canonical sets are idempotent, while subsets, supersets, and partial overlaps are separate valid sets. A request exactly matching the configured canonical Relay target set returns the canonical Relay without exposing a payment account.
+
+Memory ID 25 is the only definitive self-service setup map. Its active state is only `target-set hash -> Relay principal`; no target vector or target-to-Relay registry is durable. Targets and Relay instances remain visible independently through generic tracking reasons and `list_canisters` filtering. A blackholed child is immutable, is never upgraded through Historian, and is never queried to reconstruct target configuration.
+
+The deterministic setup subaccount is the 32-byte target-set hash. Funding uses only the aggregate ICP ledger `icrc1_balance_of` result, with no index/history scan and no payer attribution. The nominal singleton minimum gains 0.25 ICP per additional target, while notification recomputes the greater live rate-sensitive requirement including exactly two ledger fees. Deposits are not automatically refundable, and unexpected post-activation deposits require operator recovery.
+
+Creation is an explicit user action. A narrow same-key reservation prevents duplicate execution, all targets are probed before spend, transfer records are persisted before dispatch with fixed timestamps, and create dispatch is fail-closed. Final activation requires small pre- and post-handoff audits around the Fiduciary controller transition. See [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md) for the state and operational procedure.
 
 ### Default paging / limit behavior
 
@@ -340,13 +354,13 @@ It produces the canonical release artifacts under `release-artifacts/`, includin
 - `release-artifacts/jupiter_relay.wasm.gz`
 - corresponding `.sha256` files
 
-The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Its embedded Relay install payload must correspond to the reviewed raw Relay Wasm from the same Docker/reproducible release build, recorded as `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`, and `release-artifacts/jupiter_relay.wasm.gz` must decompress to those reviewed raw bytes. Runtime self-service Relay reconciliation reads the live module hash from management `canister_info(relay_id)` and compares it with the hash derived from the exact embedded Relay install payload bytes. Historian does not persist per-instance expected Relay hashes. Self-service relays created by Historian use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and differ from the canonical production Relay in target canister, automatic probe route, and surplus-recipient configuration. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
+The checked-in production args enable `relay_factory_enabled = opt true`, so `jupiter_historian.wasm.gz` is the relay-enabled canonical production Historian artifact. Its embedded Relay install payload must correspond to the reviewed raw Relay Wasm from the same Docker/reproducible release build, recorded as `release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256`, and `release-artifacts/jupiter_relay.wasm.gz` must decompress to those reviewed raw bytes. Runtime self-service Relay reconciliation reads live child status and compares it with the approved installed-module hash. Historian does not persist per-instance expected Relay hashes. Self-service Relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`), their submitted canonical target vector, automatic probe routing, and the configured surplus recipient. If a local no-relay artifact is needed for development or tests, build `jupiter-historian-no-relay`, which writes `release-artifacts/jupiter_historian_no_relay.wasm.gz`.
 
 ### Deploy canonical release artifact on the IC
 
 Production canister: `jupiter_historian` / `j5gs6-uiaaa-aaaar-qb5cq-cai`
 
-Existing production Historian must be upgraded in place. Reinstall destroys all stable history, tracking metadata, Relay registrations, setup/recovery jobs, index cursors, aggregates, and other durable state; it is prohibited for the existing production canister.
+Existing production Historian must be upgraded in place. Reinstall destroys stable history, tracking metadata, active hash-to-Relay mappings, setup progress, index cursors, aggregates, and other durable state; it is prohibited for the existing production canister.
 
 Routine no-config production upgrade:
 
@@ -416,7 +430,7 @@ icp canister start jupiter_historian --environment ic
 icp canister status jupiter_historian --environment ic --json
 ```
 
-Existing setup/recovery jobs and Relay registrations are preserved by the upgrade. Verify commitment histories, cycles histories, first-seen metadata, cursors, totals, Relay registrations, setup jobs, automatic cycles probing, and new `RelayTarget`/`RelayInstance` reasons before deploying the frontend.
+Before a future upgrade, disable the factory and verify no setup entry is `Creating`. Active hash-to-Relay mappings and independent tracking reasons are preserved by the in-place upgrade. Verify histories, first-seen metadata, cursors, totals, active mappings, automatic cycles probing, and `RelayTarget`/`RelayInstance` counts before re-enabling setup.
 
 ## Debug interface
 

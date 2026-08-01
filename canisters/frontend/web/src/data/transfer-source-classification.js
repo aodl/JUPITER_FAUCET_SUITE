@@ -17,10 +17,10 @@ export function defaultCanisterAccountIdentifier(canisterId) {
   return accountIdentifierHex({ owner, subaccount: [] }).toLowerCase();
 }
 
-export function relayRegistrySourceMap(relayRegistrations = []) {
+export function relayInstanceSourceMap(trackedCanisters = []) {
   const map = new Map();
-  for (const entry of relayRegistrations || []) {
-    const relayCanisterId = readOptional(entry?.relay_canister_id) || entry?.relay_canister_id;
+  for (const entry of trackedCanisters || []) {
+    const relayCanisterId = entry?.canister_id;
     if (!relayCanisterId) continue;
     const relayText = canisterIdText(relayCanisterId);
     map.set(defaultCanisterAccountIdentifier(relayText), {

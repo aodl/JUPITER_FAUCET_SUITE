@@ -19,8 +19,6 @@ export {
   bytesToHex,
   dquorumStakingAccount,
   hasCanisterTrackingReason,
-  relaySetupAccount,
-  relaySetupSubaccount,
   summaryMetricsUnavailable,
   uint8ArrayFromOptBytes,
 } from './data/dashboard-transforms.js';

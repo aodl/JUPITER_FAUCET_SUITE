@@ -103,3 +103,5 @@ pub(crate) fn approved_relay_wasm_hash() -> Option<[u8; 32]> {
         bytes.try_into().ok()
     }
 }
+
+ic_cdk::export_candid!();

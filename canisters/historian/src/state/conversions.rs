@@ -22,15 +22,13 @@ impl From<Config> for StableConfig {
             max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
             relay_factory_enabled: Some(value.relay_factory_enabled),
             relay_setup_min_e8s: Some(value.relay_setup_min_e8s),
-            relay_setup_dust_e8s: Some(value.relay_setup_dust_e8s),
-            relay_setup_refund_cooldown_seconds: Some(value.relay_setup_refund_cooldown_seconds),
+            relay_setup_dust_e8s: None,
+            relay_setup_refund_cooldown_seconds: None,
             relay_initial_cycles: Some(value.relay_initial_cycles),
             relay_cycle_safety_margin_e8s: Some(value.relay_cycle_safety_margin_e8s),
             relay_min_subaccount_one_seed_e8s: Some(value.relay_min_subaccount_one_seed_e8s),
             self_service_relay_interval_seconds: Some(value.self_service_relay_interval_seconds),
-            self_service_relay_max_transfers_per_tick: Some(
-                value.self_service_relay_max_transfers_per_tick,
-            ),
+            self_service_relay_max_transfers_per_tick: None,
             io_surplus_neuron_id: Some(value.io_surplus_neuron_id),
             canonical_relay_canister_id: Some(value.canonical_relay_canister_id),
             canonical_relay_targets: Some(value.canonical_relay_targets),
@@ -67,10 +65,6 @@ impl From<StableConfig> for Config {
             max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
             relay_factory_enabled: value.relay_factory_enabled.unwrap_or(false),
             relay_setup_min_e8s: value.relay_setup_min_e8s.unwrap_or(300_000_000),
-            relay_setup_dust_e8s: value.relay_setup_dust_e8s.unwrap_or(10_000),
-            relay_setup_refund_cooldown_seconds: value
-                .relay_setup_refund_cooldown_seconds
-                .unwrap_or(300),
             relay_initial_cycles: value.relay_initial_cycles.unwrap_or(2_000_000_000_000),
             relay_cycle_safety_margin_e8s: value.relay_cycle_safety_margin_e8s.unwrap_or(5_000_000),
             relay_min_subaccount_one_seed_e8s: value
@@ -79,9 +73,6 @@ impl From<StableConfig> for Config {
             self_service_relay_interval_seconds: value
                 .self_service_relay_interval_seconds
                 .unwrap_or(86400),
-            self_service_relay_max_transfers_per_tick: value
-                .self_service_relay_max_transfers_per_tick
-                .unwrap_or(Some(10)),
             io_surplus_neuron_id: value
                 .io_surplus_neuron_id
                 .unwrap_or(crate::DEFAULT_IO_SURPLUS_NEURON_ID),

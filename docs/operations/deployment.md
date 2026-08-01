@@ -4,9 +4,9 @@ Production deployment is a governance-controlled operation. Once Jupiter Faucet 
 
 Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
 
-Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`) and only diverge from the canonical production Relay in target canister, automatic probe routing, and surplus-recipient configuration.
+Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service Relays use the canonical Relay daily cadence (`main_interval_seconds = 86400`) with their canonical 1–20 target vector, automatic probe routing, and configured surplus recipient.
 
-Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, Relay registrations, setup/recovery jobs, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
+Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
 ## Production release flow
 
@@ -78,7 +78,7 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-Stopping `jupiter_historian` is the executable self-service factory pause for this deployment. Existing setup/recovery jobs and Relay registrations are preserved by the in-place upgrade, but the canister must stay stopped while operators create/download the snapshot and perform the upgrade.
+First deploy a maintenance frontend that disables new setup, then disable the Relay factory. Verify the retired setup-job memory is empty, the retired registry contains no self-service row, and memory 25 contains no `Creating` entry. Stopping `jupiter_historian` is the executable self-service factory pause for this deployment. It also drains calls while operators create/download the snapshot and perform the in-place upgrade.
 
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
 
@@ -88,7 +88,7 @@ Record pre-upgrade query results before upgrading `jupiter_historian`:
 - `get_public_counts` and `get_public_status`.
 - All `list_canisters` pages needed to cover tracked targets, canonical Relay, and self-service Relays.
 - Representative commitment histories and cycles histories for known targets.
-- Relay registrations and setup recovery views.
+- Controller/debug setup entries: hash, variant, phase, and optional Relay ID.
 - Indexing cursors, fault state, aggregate output/reward/burn totals, and factory enabled state.
 
 Before the maintenance window, confirm the live production Historian is on a supported direct-upgrade path. The current release retains the V1 stable decoder because the repository does not contain sufficient production evidence to raise the minimum supported upgrade version. Removing the decoder requires a separately reviewed change that records the production compatibility evidence, snapshot policy, and new minimum supported direct-upgrade version. Rollback procedures must use the snapshot created during the maintenance window; do not rely on restoring a pre-migration snapshot after upgrading to current code.
@@ -121,14 +121,16 @@ After upgrade, verify:
 - Module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash.
 - Controllers are unchanged.
 - Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
-- Relay registrations are preserved.
-- Setup jobs are preserved and remain readable.
+- Active hash-to-Relay mappings are preserved; for the pre-launch cutover, memory 25 opens empty.
+- No setup entry is `Creating` before the factory is re-enabled.
 - Automatic cycles probing is active.
-- `RelayTarget` and `RelayInstance` tracking reasons are present for active Relay relationships.
+- `RelayTarget` and `RelayInstance` tracking reasons and counts are preserved independently.
 - New cycles samples append to existing histories.
 - The self-service factory can be re-enabled.
 
 Deploy the frontend only after backend verification is complete.
+
+For the pre-launch cutover, deploy the final frontend after the Historian checks, perform one singleton setup and one overlapping multi-target setup, then verify both active hash mappings, tracking reasons, child module hashes, running status, and Fiduciary-only controllers. Self-service children are blackholed and are never upgraded or reconstructed by Historian.
 
 ## Production canister IDs
 

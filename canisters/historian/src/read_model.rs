@@ -227,32 +227,17 @@ pub(super) fn get_public_status() -> PublicStatus {
         last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
         relay_factory_enabled: Some(st.config.relay_factory_enabled),
         relay_setup_min_e8s: Some(st.config.relay_setup_min_e8s),
-        relay_setup_dust_e8s: Some(st.config.relay_setup_dust_e8s),
     })
 }
 
 #[ic_cdk::query]
-pub(super) fn get_relay_setup_view(args: GetRelaySetupViewArgs) -> RelaySetupView {
-    crate::relay_setup::setup_view(args.target_canister_id)
-}
-
-#[ic_cdk::query]
-pub(super) fn get_relay_setup_recovery_view(
-    args: GetRelaySetupRecoveryViewArgs,
-) -> RelaySetupRecoveryView {
-    crate::relay_setup::setup_recovery_view(args.target_canister_id)
-}
-
-#[ic_cdk::query]
-pub(super) fn list_relay_registrations(
-    args: ListRelayRegistrationsArgs,
-) -> ListRelayRegistrationsResponse {
-    crate::relay_setup::list_relay_registrations(args)
+pub(super) fn get_relay_setup_view(args: RelayTargetSetArgs) -> RelaySetupViewResult {
+    crate::relay_setup::setup_view(args)
 }
 
 #[ic_cdk::update]
-pub(super) async fn notify_relay_setup(target: Principal) -> RelaySetupNotifyResult {
-    crate::relay_setup::notify_relay_setup(target).await
+pub(super) async fn notify_relay_setup(args: RelayTargetSetArgs) -> RelaySetupNotifyResult {
+    crate::relay_setup::notify_relay_setup(args).await
 }
 
 fn principal_matches_compact_prefix(principal: Principal, prefix: &str) -> bool {

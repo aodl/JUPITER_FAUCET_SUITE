@@ -1,104 +1,75 @@
-# Relay Setup Recovery Runbook
+# Self-service Relay setup and recovery
 
-This runbook covers self-service relay setup jobs that reach `ManualRecoveryRequired`. Mainnet install args enable `relay_factory_enabled = opt true`. Self-service relays use the canonical Relay daily cadence; their configuration differs from the canonical production Relay only by target canister and surplus recipient settings.
+Historian creates an immutable blackholed Relay for a submitted set of 1–20 target canisters. The caller supplies the complete target vector on every query or notification. Historian sorts principals by raw principal bytes, rejects duplicates, and hashes the canonical vector with the framed `jupiter-relay-target-set-v1\0` SHA-256 format.
 
-`ManualRecoveryRequired` means the historian saw an operation whose outcome can no longer be recovered safely by automatic retry. Operators must inspect public ledger/index records and canister state before deciding whether to refund, register a relay, or leave the job blocked.
+The durable active relationship is only:
 
-## Inspection Entry Points
+```text
+target-set hash -> Relay canister ID
+```
 
-Use `get_relay_setup_view` for the user-facing status and setup account. Use `get_relay_setup_recovery_view` for recovery details:
+Memory ID 25 contains the single definitive setup map. Retired memories 22–24 are validated during upgrade and are never reused or rewritten. Active entries contain only the Relay principal. Target principals are not stored with the entry, no target-to-Relay registry exists, and Historian never inspects a blackholed child to reconstruct its targets.
 
-- target canister ID
-- setup account identifier
-- setup amount seen and processed
-- last error
-- relay canister ID, if known
-- cycle conversion amount and minted cycles, if CMC conversion has happened
-- redacted transfer records for CMC conversion, relay funding, existing-relay sweep, and refund count
-- create-canister intent and attached cycles, if one was persisted before a possibly ambiguous create
+Targets and Relay instances are tracked independently. Successful activation adds `RelayTarget` to every canonical target and `RelayInstance` to the child. Overlapping sets are valid, and set semantics keep each tracked-principal count unique. Tracker source classification obtains Relay principals through paginated `list_canisters` calls filtered by `RelayInstance`; observed ledger transfers determine which Relay sent a commitment.
 
-The recovery query is read-only. It does not redirect funds, register relays, or retry setup work.
+## Funding and creation
 
-## Setup Account Balance
+The deterministic setup account uses the target-set hash as its Historian-owned subaccount. Funding authority is the aggregate `icrc1_balance_of` value for that account. Historian does not scan transaction history, inspect transfer sources, attribute funds to payers, accept block references, or automatically refund deposits.
 
-Identify the target setup account from `setup_account_identifier` in the recovery view. Inspect the ICP ledger/index for:
+The nominal minimum preserves the configured singleton minimum and adds 0.25 ICP for every target after the first. The live requirement is the greater of that nominal minimum and:
 
-- current balance
-- inbound setup payments
-- outbound CMC conversion transfer
-- outbound relay funding transfer
-- outbound existing-relay sweep transfer
-- outbound refund transfers
+```text
+ICP needed to mint configured create cycles
++ configured conversion safety margin
++ configured Relay subaccount-one seed
++ setup-to-CMC ledger fee
++ setup-to-Relay ledger fee
+```
 
-If the ICP index has not caught up, wait for the indexed transactions to explain the ledger balance before taking manual action.
+The frontend displays the cached-rate estimate and current ledger balance, but creation begins only when a user presses **Create Relay**. `notify_relay_setup` independently reads the live balance, ledger fee, and CMC rate. Underfunded requests leave the deposit in place and write no setup entry.
 
-## CMC Conversion
+After sufficient funding, Historian synchronously reserves the exact hash. At most four distinct funded setups may be in `Creating`; a same-hash caller receives the existing phase without making further external calls. Every target must pass the shared Auto cycles probe before the first ledger transfer.
 
-The nominal self-service setup policy minimum is now 3 ICP. That amount funds the overall service: Relay creation and initialization, Relay seed funding, and ongoing Historian observation of both the target and Relay. It is not a literal 1 ICP allocation per task. The canister does not rely only on that static policy floor. Before any CMC transfer, it fetches the current CMC ICP/XDR conversion rate and computes the current required setup amount from:
+The irreversible workflow journals only the information needed to prevent replay:
 
-- configured `create_canister` attachment cycles,
-- relay subaccount-1 seed requirement,
-- relay cycle safety margin held in ICP,
-- required ICP ledger fees.
+- the prepared CMC transfer, its fixed timestamp, and accepted block;
+- minted cycles;
+- the create-dispatch timestamp and optional returned Relay ID;
+- the prepared Relay-funding transfer, fixed timestamp, and accepted block;
+- the current irreversible phase and a bounded diagnostic message.
 
-If current CMC/XDR conditions mean the setup account cannot mint the configured create attachment while preserving the seed, safety margin, and fees, setup fails before spending ICP. The user-facing view should display the actionable required amount, which is at least the 3 ICP nominal minimum and can be higher under adverse conversion conditions.
+Clean rejection of the first ledger transfer removes the reservation. Ambiguous transfers, CMC notification errors, any create error after dispatch, unreconciled installation errors, child funding failures, and failed final audits enter `ManualRecoveryRequired`. Public notifications never retry a manual-recovery entry.
 
-For a stale CMC conversion transfer, compare the recovery view's `cycle_transfer` with the ICP index:
+## Child configuration and handoff
 
-- `to_account_identifier` should be the CMC deposit account for the historian canister.
-- the memo should be the top-up memo recorded by protocol code, when visible in index tooling.
-- if the transfer block exists but CMC notify is unresolved, inspect whether cycles were minted to the historian.
-- if the transfer is not indexed and is older than the duplicate window, keep the job in manual recovery until ledger/index evidence is clear.
+Relay `InitArgs` use the canonical targets held in the active call, `blackhole_canister_id = null`, and `max_transfers_per_tick = target_count + 2`. The two additional slots cover Relay self and surplus transfers. The normal remainder transfer funds subaccount one owned by the spawned Relay. Its Faucet memo therefore remains `<spawned Relay principal without hyphens>.Relay`; it never uses the canonical production Relay identity.
 
-## Relay Canister Creation
+Before handoff, management state must report a running child, the approved Relay module hash, exactly Historian as controller, and public logs. Historian then requests exactly Fiduciary as controller with public logs. The post-handoff audit uses Fiduciary's real blackhole interface and requires running status, the approved hash, and exactly Fiduciary as controller. A reported `update_settings` error is accepted only if the observed final state is correct.
 
-For create-canister ambiguity, the historian persists a create intent before calling `create_canister`. If the management-canister reply is lost with no relay ID recorded, the recovery view shows the intent but `relay_canister_id` remains empty.
+Successful activation replaces the entire progress record with `Active { relay_canister_id }`, then records independent tracking reasons without another await. The blackholed child is immutable and cannot be upgraded through Historian. Historian upgrades preserve the hash mapping and tracking state but never call, upgrade, or reconstruct a child Relay.
 
-This is the explicit create_canister ambiguous relay ID loss case. The created canister ID may be unrecoverable from historian state, so automatic retry must not create another relay. Do not mark the job solved unless operators independently identify the created relay canister or decide to refund/replace through governance-reviewed operations.
+## Manual recovery
 
-`create_canister` consumes a creation fee from the attached cycles. Remaining attached cycles become the new relay canister's starting balance. A deterministic management-canister rejection saying the attached cycles are insufficient for `create_canister` is an operator-recovery condition, not a user-retry condition. Do not advise users to repeatedly call `notify_relay_setup` against the same bad config.
+`ManualRecoveryRequired` is intentionally terminal for public automation. Controller/debug preflight exposes the setup hash, entry variant, phase, and optional Relay ID. Operators investigate the stored transfer timestamp/amount/fee/block, live ledger state, management state, and Fiduciary state through separately reviewed operational procedures. Unexpected deposits, including deposits after activation, also require operator-assisted recovery; they are not automatically swept or refunded.
 
-## Install Code
+## Pre-launch cutover and deployment sequence
 
-If `relay_canister_id` is known and `code_installed` was not recorded, automatic retry first calls management `canister_info(relay_id)` and checks the live module hash. The expected hash is derived from the exact embedded Relay install payload bytes supplied by Historian. If the live module hash is empty, automatic setup may retry install while the historian is still controller. If it matches the embedded payload hash, the historian marks code installed and resumes relay funding. This install_code module-hash reconciliation prevents a second `install_code` call in `Install` mode after a lost reply.
+No self-service setup has been used, so the upgrade performs no migration. It traps if retired setup-job memory contains a row or if retired registry memory contains anything other than the configured canonical Relay projection.
 
-The canonical historian build embeds `release-artifacts/jupiter_relay.wasm.gz` corresponding to the reviewed raw Relay Wasm from `./tools/scripts/docker-build`. Release artifacts are generated review evidence and are not checked into source control, so their absence from a source archive is not a source-level failure. `install_code` receives those compressed bytes directly; the IC accepts gzip-compressed Wasm modules and installs the decompressed module. Operators should keep these hashes distinct:
+Production rollout order:
 
-- reviewed reproducible raw relay wasm hash: `sha256sum release-artifacts/jupiter_relay.wasm`
-- compressed Relay install payload hash: `sha256sum release-artifacts/jupiter_relay.wasm.gz`
-- installed module hash: management `canister_info(relay_id).module_hash`, obtained live from IC system state and compared against the exact embedded Relay install payload hash
+1. Deploy a maintenance frontend that disables new setup.
+2. Disable the Relay factory.
+3. Snapshot Historian.
+4. Verify no old self-service setup or registration exists.
+5. Verify no setup entry is `Creating`.
+6. Stop or drain outstanding Historian calls under the normal deployment procedure.
+7. Upgrade Historian in place; do not reinstall it.
+8. Verify memory 25 is open and initially empty.
+9. Deploy the final frontend.
+10. Perform one singleton setup.
+11. Perform one overlapping multi-target setup.
+12. Verify active hash mappings, independent tracking reasons, child module hashes, running status, and Fiduciary-only controllers.
+13. Re-enable the factory.
 
-The reviewed raw relay wasm hash is reviewer verification evidence and must come from the Docker/reproducible release artifact, not an arbitrary local build. The gzip payload must decompress to that reviewed raw Wasm. Reviewed release hashes establish source-to-artifact reproducibility; per-instance module hashes are obtained live from IC system state. The compressed relay wasm hash is the install payload hash and the runtime module-hash reconciliation value. Release notes must also record the `release-artifacts/jupiter_historian.wasm.gz` hash, which is the production Historian install package hash.
-
-If the module hash exists but differs from the reviewed compressed Relay install payload hash, the job enters `ManualRecoveryRequired`. Operators must inspect the relay canister before any governance action.
-
-## Relay Funding
-
-For a stale relay funding transfer, compare `relay_funding_transfer` against the ICP index:
-
-- if the transfer is indexed, confirm the relay subaccount-1 balance.
-- if it is not indexed and the duplicate window has expired, do not retry blindly.
-- if the relay is funded but not active, inspect blackhole/controller status before registering.
-
-## Blackhole Update
-
-Final blackhole control is complete only when the relay canister controllers are the canonical Fiduciary blackhole canister and logs are public as expected. If `blackhole_update_attempted` was recorded but activation did not finish, inspect canister status through the blackhole or management tooling available to the current controller.
-
-Register or supersede a relay manually only after confirming the relay canister runs the reviewed wasm, targets the intended canister, has expected funding, and is controlled by the blackhole.
-
-## Refunds
-
-For a refund transfer possibly succeeded case, compare `refund_transfer_count`, `refund_blocks`, and index records for each source account. A stale refund transfer may have succeeded even if the historian did not record the block. Do not issue a second manual refund until the index proves the original transfer did not happen.
-
-Refund manually when:
-
-- setup funds remain in the setup account,
-- no CMC conversion or relay funding consumed the funds,
-- indexed inbound payments identify refund destinations,
-- and no relay has been created or funded for the target.
-
-Tell users that setup is blocked for manual reconciliation, the setup account and public transaction evidence are being checked, and no new payment should be sent for the same target until operators resolve the job.
-
-## Public Notify Monitoring
-
-`notify_relay_setup` is public and can consume historian cycles through ledger/index calls even when a caller has not funded a valid setup account. After enablement, monitor Historian cycle balance and call volume. The deployment accepts this bounded operational risk for now rather than adding stable-state rate-limit data; revisit if public no-fund notify traffic becomes material.
+For subsequent Historian upgrades, disable the factory, verify no entry is `Creating`, drain calls, upgrade in place, verify active entries and tracking counts, then re-enable the factory.

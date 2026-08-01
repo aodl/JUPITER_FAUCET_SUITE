@@ -1,6 +1,15 @@
 #![allow(dead_code)]
 
 use super::*;
+use super::{
+    RetiredRelayCreateAttempt as RelayCreateAttempt,
+    RetiredRelayRegistryEntry as RelayRegistryEntry, RetiredRelayRegistryKind as RelayRegistryKind,
+    RetiredRelayRegistryStatus as RelayRegistryStatus, RetiredRelaySetupJob as RelaySetupJob,
+    RetiredRelaySetupPayment as RelaySetupPayment, RetiredRelaySetupPhase as RelaySetupPhase,
+    RetiredRelaySetupStatus as RelaySetupStatus,
+    RetiredRelaySetupTransferKind as RelaySetupTransferKind,
+    RetiredRelaySetupTransferRecord as RelaySetupTransferRecord,
+};
 
 pub(crate) const LEGACY_HISTORIAN_V1_REVISION: &str = "98c871a85af91320a5dfc59b5b040727e21aa094";
 
@@ -581,7 +590,7 @@ impl From<LegacyRelaySetupJobV1> for RelaySetupJob {
             updated_at_ts: value.updated_at_ts,
             last_error: value.last_error,
         };
-        if target_not_observable && !crate::relay_setup::refund_allowed_before_spend(&job) {
+        if target_not_observable {
             job.status = RelaySetupStatus::ManualRecoveryRequired;
         }
         job

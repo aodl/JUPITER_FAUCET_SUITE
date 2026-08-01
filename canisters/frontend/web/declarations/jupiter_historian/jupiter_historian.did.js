@@ -18,8 +18,6 @@ export const idlFactory = ({ IDL }) => {
     'enable_sns_tracking' : IDL.Opt(IDL.Bool),
     'relay_initial_cycles' : IDL.Opt(IDL.Nat),
     'relay_min_subaccount_one_seed_e8s' : IDL.Opt(IDL.Nat64),
-    'self_service_relay_max_transfers_per_tick' : IDL.Opt(IDL.Nat32),
-    'relay_setup_refund_cooldown_seconds' : IDL.Opt(IDL.Nat64),
     'max_index_pages_per_tick' : IDL.Opt(IDL.Nat32),
     'rewards_account' : IDL.Opt(Account),
     'max_commitment_entries_per_canister' : IDL.Opt(IDL.Nat32),
@@ -31,7 +29,6 @@ export const idlFactory = ({ IDL }) => {
     'ledger_canister_id' : IDL.Opt(IDL.Principal),
     'output_account' : IDL.Opt(Account),
     'canonical_relay_targets' : IDL.Opt(IDL.Vec(IDL.Principal)),
-    'relay_setup_dust_e8s' : IDL.Opt(IDL.Nat64),
     'scan_interval_seconds' : IDL.Opt(IDL.Nat64),
     'sns_wasm_canister_id' : IDL.Opt(IDL.Principal),
   });
@@ -98,12 +95,6 @@ export const idlFactory = ({ IDL }) => {
     'start_after_tx_id' : IDL.Opt(IDL.Nat64),
     'limit' : IDL.Opt(IDL.Nat32),
   });
-  const GetNeuronCommitmentHistoryArgs = IDL.Record({
-    'descending' : IDL.Opt(IDL.Bool),
-    'neuron_id' : IDL.Nat64,
-    'start_after_tx_id' : IDL.Opt(IDL.Nat64),
-    'limit' : IDL.Opt(IDL.Nat32),
-  });
   const CommitmentSample = IDL.Record({
     'timestamp_nanos' : IDL.Opt(IDL.Nat64),
     'tx_id' : IDL.Nat64,
@@ -128,6 +119,12 @@ export const idlFactory = ({ IDL }) => {
   const CyclesHistoryPage = IDL.Record({
     'next_start_after_ts' : IDL.Opt(IDL.Nat64),
     'items' : IDL.Vec(CyclesSample),
+  });
+  const GetNeuronCommitmentHistoryArgs = IDL.Record({
+    'descending' : IDL.Opt(IDL.Bool),
+    'start_after_tx_id' : IDL.Opt(IDL.Nat64),
+    'limit' : IDL.Opt(IDL.Nat32),
+    'neuron_id' : IDL.Nat64,
   });
   const PublicCounts = IDL.Record({
     'qualifying_commitment_count' : IDL.Nat64,
@@ -171,95 +168,58 @@ export const idlFactory = ({ IDL }) => {
     'commitment_index_fault' : IDL.Opt(CommitmentIndexFault),
     'ledger_canister_id' : IDL.Principal,
     'output_account' : IDL.Opt(Account),
-    'relay_setup_dust_e8s' : IDL.Opt(IDL.Nat64),
     'icp_xdr_rate' : IDL.Opt(IcpXdrRateSnapshot),
     'total_memory_bytes' : IDL.Opt(IDL.Nat64),
     'last_index_run_ts' : IDL.Opt(IDL.Nat64),
   });
-  const GetRelaySetupRecoveryViewArgs = IDL.Record({
-    'target_canister_id' : IDL.Principal,
+  const RelayTargetSetArgs = IDL.Record({
+    'target_canister_ids' : IDL.Vec(IDL.Principal),
   });
-  const RelaySetupPublicStatus = IDL.Variant({
-    'ManualRecoveryRequired' : IDL.Null,
-    'PaymentNotAllowed' : IDL.Null,
-    'BelowMinimum' : IDL.Null,
-    'Refunding' : IDL.Null,
-    'Refunded' : IDL.Null,
-    'SweepingToExistingRelay' : IDL.Null,
-    'FailedRetryable' : IDL.Null,
-    'Active' : IDL.Null,
-    'IndexNotReady' : IDL.Null,
+  const RelayCreationPhase = IDL.Variant({
+    'RelayFunded' : IDL.Null,
+    'Reserved' : IDL.Null,
+    'CmcTransferPrepared' : IDL.Null,
+    'CmcTransferAccepted' : IDL.Null,
+    'RelayFundingPrepared' : IDL.Null,
+    'HandoffAttempted' : IDL.Null,
+    'ProbingTargets' : IDL.Null,
+    'ChildCreated' : IDL.Null,
+    'CreateDispatched' : IDL.Null,
+    'CmcNotifySucceeded' : IDL.Null,
+    'CodeInstalled' : IDL.Null,
+  });
+  const RelaySetupState = IDL.Variant({
+    'ManualRecoveryRequired' : IDL.Record({
+      'relay_canister_id' : IDL.Opt(IDL.Principal),
+      'message' : IDL.Text,
+      'phase' : RelayCreationPhase,
+    }),
+    'Active' : IDL.Record({ 'relay_canister_id' : IDL.Principal }),
     'NotFunded' : IDL.Null,
-    'CreatingRelay' : IDL.Null,
-    'Pending' : IDL.Null,
-  });
-  const RelaySetupTransferKind = IDL.Variant({
-    'ExistingRelaySweep' : IDL.Null,
-    'Refund' : IDL.Null,
-    'RelayFunding' : IDL.Null,
-    'CmcConversion' : IDL.Null,
-  });
-  const RedactedTransferRecord = IDL.Record({
-    'from_account_identifier' : IDL.Text,
-    'block_index' : IDL.Opt(IDL.Nat64),
-    'created_at_time_nanos' : IDL.Nat64,
-    'kind' : RelaySetupTransferKind,
-    'completed' : IDL.Bool,
-    'fee_e8s' : IDL.Nat64,
-    'to_account_identifier' : IDL.Text,
-    'amount_e8s' : IDL.Nat64,
-  });
-  const RelayCreateAttemptView = IDL.Record({
-    'initial_cycles' : IDL.Nat,
-    'create_attach_cycles' : IDL.Nat,
-    'created_at_ts' : IDL.Nat64,
-    'target_canister_id' : IDL.Principal,
-  });
-  const RelaySetupRecoveryView = IDL.Record({
-    'last_error' : IDL.Opt(IDL.Text),
-    'status' : RelaySetupPublicStatus,
-    'cycle_transfer' : IDL.Opt(RedactedTransferRecord),
-    'setup_amount_seen_e8s' : IDL.Nat64,
-    'relay_canister_id' : IDL.Opt(IDL.Principal),
-    'relay_create_attempt' : IDL.Opt(RelayCreateAttemptView),
-    'configured_relay_create_attach_cycles' : IDL.Nat,
-    'updated_at_ts' : IDL.Nat64,
-    'created_at_ts' : IDL.Nat64,
-    'relay_funding_transfer' : IDL.Opt(RedactedTransferRecord),
-    'refund_transfer_count' : IDL.Nat32,
-    'cycles_minted' : IDL.Opt(IDL.Nat),
-    'target_canister_id' : IDL.Principal,
-    'existing_relay_sweep_transfer' : IDL.Opt(RedactedTransferRecord),
-    'setup_amount_processed_e8s' : IDL.Nat64,
-    'setup_account_identifier' : IDL.Text,
-    'cycle_conversion_e8s' : IDL.Opt(IDL.Nat64),
-  });
-  const GetRelaySetupViewArgs = IDL.Record({
-    'target_canister_id' : IDL.Principal,
-  });
-  const RelayRegistryKind = IDL.Variant({
-    'SelfService' : IDL.Null,
-    'Canonical' : IDL.Null,
-  });
-  const RelayRegistration = IDL.Record({
-    'relay_canister_id' : IDL.Principal,
-    'kind' : RelayRegistryKind,
-    'created_at_ts' : IDL.Opt(IDL.Nat64),
-    'target_canister_id' : IDL.Principal,
+    'InProgress' : IDL.Record({
+      'relay_canister_id' : IDL.Opt(IDL.Principal),
+      'phase' : RelayCreationPhase,
+    }),
   });
   const RelaySetupView = IDL.Record({
-    'status' : RelaySetupPublicStatus,
-    'warning_text' : IDL.Opt(IDL.Text),
-    'existing_relay' : IDL.Opt(RelayRegistration),
-    'minimum_e8s' : IDL.Nat64,
+    'indicative_rate_timestamp_seconds' : IDL.Opt(IDL.Nat64),
+    'setup_key_identifier' : IDL.Text,
+    'indicative_current_requirement_e8s' : IDL.Opt(IDL.Nat64),
+    'canonical_target_canister_ids' : IDL.Vec(IDL.Principal),
+    'state' : RelaySetupState,
     'nominal_minimum_e8s' : IDL.Nat64,
-    'payment_allowed' : IDL.Bool,
-    'setup_account' : Account,
-    'current_required_e8s' : IDL.Opt(IDL.Nat64),
-    'target_canister_id' : IDL.Principal,
+    'singleton_nominal_minimum_e8s' : IDL.Nat64,
+    'total_extra_target_charge_e8s' : IDL.Nat64,
+    'setup_account' : IDL.Opt(Account),
+    'extra_target_count' : IDL.Nat64,
     'factory_available' : IDL.Bool,
-    'setup_account_identifier' : IDL.Text,
-    'payment_blocked_reason' : IDL.Opt(IDL.Text),
+    'target_count' : IDL.Nat32,
+    'setup_account_identifier' : IDL.Opt(IDL.Text),
+    'extra_target_unit_charge_e8s' : IDL.Nat64,
+  });
+  const RelaySetupViewResult = IDL.Variant({
+    'Ok' : RelaySetupView,
+    'Err' : IDL.Text,
   });
   const ListCanistersArgs = IDL.Record({
     'tracking_reason_filter' : IDL.Opt(CanisterTrackingReason),
@@ -317,40 +277,29 @@ export const idlFactory = ({ IDL }) => {
   const ListRecentCommitmentsResponse = IDL.Record({
     'items' : IDL.Vec(RecentCommitmentListItem),
   });
-  const ListRelayRegistrationsArgs = IDL.Record({
-    'start_after' : IDL.Opt(IDL.Principal),
-    'limit' : IDL.Opt(IDL.Nat32),
-  });
-  const ListRelayRegistrationsResponse = IDL.Record({
-    'items' : IDL.Vec(RelayRegistration),
-    'next_start_after' : IDL.Opt(IDL.Principal),
-  });
   const RelaySetupNotifyResult = IDL.Variant({
-    'SweepBelowDust' : IDL.Record({
-      'current_balance_e8s' : IDL.Nat64,
-      'relay' : RelayRegistration,
+    'ManualRecoveryRequired' : IDL.Record({
+      'relay_canister_id' : IDL.Opt(IDL.Principal),
+      'message' : IDL.Text,
+      'phase' : RelayCreationPhase,
     }),
     'BelowMinimum' : IDL.Record({
-      'minimum_e8s' : IDL.Nat64,
-      'current_balance_e8s' : IDL.Nat64,
-    }),
-    'SweptToExistingRelay' : IDL.Record({
-      'block_index' : IDL.Nat64,
-      'amount_e8s' : IDL.Nat64,
-      'relay' : RelayRegistration,
-    }),
-    'Failed' : IDL.Record({
-      'status' : RelaySetupPublicStatus,
-      'message' : IDL.Text,
-    }),
-    'Refunded' : IDL.Record({ 'blocks' : IDL.Vec(IDL.Nat64) }),
-    'Active' : IDL.Record({ 'relay' : RelayRegistration }),
-    'InsufficientForCurrentRate' : IDL.Record({
-      'current_balance_e8s' : IDL.Nat64,
+      'shortfall_e8s' : IDL.Nat64,
       'required_e8s' : IDL.Nat64,
+      'balance_e8s' : IDL.Nat64,
     }),
-    'RefundPending' : IDL.Record({ 'reason' : IDL.Text }),
-    'Pending' : IDL.Record({ 'status' : RelaySetupPublicStatus }),
+    'FailedPreSpend' : IDL.Record({ 'message' : IDL.Text }),
+    'Busy' : IDL.Null,
+    'Active' : IDL.Record({ 'relay_canister_id' : IDL.Principal }),
+    'BelowCurrentRequirement' : IDL.Record({
+      'shortfall_e8s' : IDL.Nat64,
+      'required_e8s' : IDL.Nat64,
+      'balance_e8s' : IDL.Nat64,
+    }),
+    'InProgress' : IDL.Record({
+      'relay_canister_id' : IDL.Opt(IDL.Principal),
+      'phase' : RelayCreationPhase,
+    }),
   });
   return IDL.Service({
     'find_canisters_by_memo_prefix' : IDL.Func(
@@ -373,31 +322,26 @@ export const idlFactory = ({ IDL }) => {
         [CommitmentHistoryPage],
         ['query'],
       ),
-    'get_neuron_commitment_history' : IDL.Func(
-        [GetNeuronCommitmentHistoryArgs],
-        [CommitmentHistoryPage],
-        ['query'],
-      ),
-    'get_raw_icp_commitment_history' : IDL.Func(
-        [GetCommitmentHistoryArgs],
-        [CommitmentHistoryPage],
-        ['query'],
-      ),
     'get_cycles_history' : IDL.Func(
         [GetCyclesHistoryArgs],
         [CyclesHistoryPage],
         ['query'],
       ),
+    'get_neuron_commitment_history' : IDL.Func(
+        [GetNeuronCommitmentHistoryArgs],
+        [CommitmentHistoryPage],
+        ['query'],
+      ),
     'get_public_counts' : IDL.Func([], [PublicCounts], ['query']),
     'get_public_status' : IDL.Func([], [PublicStatus], ['query']),
-    'get_relay_setup_recovery_view' : IDL.Func(
-        [GetRelaySetupRecoveryViewArgs],
-        [RelaySetupRecoveryView],
+    'get_raw_icp_commitment_history' : IDL.Func(
+        [GetCommitmentHistoryArgs],
+        [CommitmentHistoryPage],
         ['query'],
       ),
     'get_relay_setup_view' : IDL.Func(
-        [GetRelaySetupViewArgs],
-        [RelaySetupView],
+        [RelayTargetSetArgs],
+        [RelaySetupViewResult],
         ['query'],
       ),
     'list_canisters' : IDL.Func(
@@ -415,13 +359,8 @@ export const idlFactory = ({ IDL }) => {
         [ListRecentCommitmentsResponse],
         ['query'],
       ),
-    'list_relay_registrations' : IDL.Func(
-        [ListRelayRegistrationsArgs],
-        [ListRelayRegistrationsResponse],
-        ['query'],
-      ),
     'notify_relay_setup' : IDL.Func(
-        [IDL.Principal],
+        [RelayTargetSetArgs],
         [RelaySetupNotifyResult],
         [],
       ),
@@ -447,8 +386,6 @@ export const init = ({ IDL }) => {
     'enable_sns_tracking' : IDL.Opt(IDL.Bool),
     'relay_initial_cycles' : IDL.Opt(IDL.Nat),
     'relay_min_subaccount_one_seed_e8s' : IDL.Opt(IDL.Nat64),
-    'self_service_relay_max_transfers_per_tick' : IDL.Opt(IDL.Nat32),
-    'relay_setup_refund_cooldown_seconds' : IDL.Opt(IDL.Nat64),
     'max_index_pages_per_tick' : IDL.Opt(IDL.Nat32),
     'rewards_account' : IDL.Opt(Account),
     'max_commitment_entries_per_canister' : IDL.Opt(IDL.Nat32),
@@ -460,7 +397,6 @@ export const init = ({ IDL }) => {
     'ledger_canister_id' : IDL.Opt(IDL.Principal),
     'output_account' : IDL.Opt(Account),
     'canonical_relay_targets' : IDL.Opt(IDL.Vec(IDL.Principal)),
-    'relay_setup_dust_e8s' : IDL.Opt(IDL.Nat64),
     'scan_interval_seconds' : IDL.Opt(IDL.Nat64),
     'sns_wasm_canister_id' : IDL.Opt(IDL.Principal),
   });

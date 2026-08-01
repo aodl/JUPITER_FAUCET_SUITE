@@ -18,7 +18,6 @@ use crate::clients::sns_wasm::ListDeployedSnsesResponse;
 pub(crate) type IcpXdrRate = jupiter_ic_clients::xrc::IcpXdrRate;
 #[allow(dead_code)]
 pub(crate) type IcpXdrConversionRate = jupiter_ic_clients::cmc::IcpXdrConversionRate;
-pub(crate) type LegacyTransferResult = jupiter_ic_clients::ledger::LegacyTransferResult;
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum ClientError {
@@ -87,15 +86,6 @@ pub(crate) trait LedgerClient: Send + Sync {
         &self,
         arg: TransferArg,
     ) -> Result<Result<BlockIndex, TransferError>, ClientError>;
-    async fn legacy_transfer_to_account_identifier(
-        &self,
-        from_subaccount: Option<[u8; 32]>,
-        to_account_identifier_hex: String,
-        amount_e8s: u64,
-        fee_e8s: u64,
-        memo: u64,
-        created_at_time_nanos: Option<u64>,
-    ) -> Result<LegacyTransferResult, ClientError>;
 }
 
 #[async_trait]
@@ -113,29 +103,6 @@ impl LedgerClient for jupiter_ic_clients::ledger::IcrcLedgerCanister {
         arg: TransferArg,
     ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
         Ok(jupiter_ic_clients::ledger::IcrcLedgerCanister::transfer(self, arg).await?)
-    }
-
-    async fn legacy_transfer_to_account_identifier(
-        &self,
-        from_subaccount: Option<[u8; 32]>,
-        to_account_identifier_hex: String,
-        amount_e8s: u64,
-        fee_e8s: u64,
-        memo: u64,
-        created_at_time_nanos: Option<u64>,
-    ) -> Result<LegacyTransferResult, ClientError> {
-        Ok(
-            jupiter_ic_clients::ledger::IcrcLedgerCanister::legacy_transfer_to_account_identifier(
-                self,
-                from_subaccount,
-                to_account_identifier_hex,
-                amount_e8s,
-                fee_e8s,
-                memo,
-                created_at_time_nanos,
-            )
-            .await?,
-        )
     }
 }
 

@@ -3,6 +3,32 @@ pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
+pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
+    with_retired_relay_setup_jobs_map(|map| {
+        assert!(
+            map.is_empty(),
+            "retired Relay setup-job memory contains unexpected pre-launch state"
+        );
+    });
+    with_retired_relay_registry_map(|map| {
+        for row in map.iter() {
+            let entry = row.value();
+            let expected_canonical = config.canonical_relay_canister_id
+                == Some(entry.relay_canister_id)
+                && config
+                    .canonical_relay_targets
+                    .contains(&entry.target_canister_id)
+                && entry.kind == RetiredRelayRegistryKind::Canonical
+                && entry.status == RetiredRelayRegistryStatus::Active;
+            assert!(
+                expected_canonical,
+                "retired Relay registry contains unexpected self-service state"
+            );
+        }
+    });
+    with_relay_setup_entries_map(|_| ());
+}
+
 pub(super) fn restore_state_current(root: StableRootState) -> State {
     let canister_tracking_reasons = with_canister_tracking_reasons_map(|map| {
         let mut out = BTreeMap::new();
@@ -22,23 +48,6 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         }
         out
     });
-    let relay_registry_by_target = with_relay_registry_by_target_map(|map| {
-        let mut out = BTreeMap::new();
-        for entry in map.iter() {
-            let (key, value) = entry.into_pair();
-            out.insert(key.to_principal(), value.clone());
-        }
-        out
-    });
-    let relay_setup_jobs = with_relay_setup_jobs_map(|map| {
-        let mut out = BTreeMap::new();
-        for entry in map.iter() {
-            let (key, value) = entry.into_pair();
-            out.insert(key.to_principal(), value.clone());
-        }
-        out
-    });
-
     let mut st = State {
         config: root.config.into(),
         distinct_canisters: BTreeSet::new(),
@@ -47,8 +56,6 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         cycles_history,
         per_canister_meta,
         cached_cycles_probe_routes: BTreeMap::new(),
-        relay_registry_by_target,
-        relay_setup_jobs,
         memo_registered_canister_summaries_cache: None,
         memo_registered_canister_summaries_total_desc_index: None,
         last_indexed_staking_tx_id: root.last_indexed_staking_tx_id,

@@ -21,13 +21,10 @@ pub struct InitArgs {
     pub max_canisters_per_cycles_tick: Option<u32>,
     pub relay_factory_enabled: Option<bool>,
     pub relay_setup_min_e8s: Option<u64>,
-    pub relay_setup_dust_e8s: Option<u64>,
-    pub relay_setup_refund_cooldown_seconds: Option<u64>,
     pub relay_initial_cycles: Option<u128>,
     pub relay_cycle_safety_margin_e8s: Option<u64>,
     pub relay_min_subaccount_one_seed_e8s: Option<u64>,
     pub self_service_relay_interval_seconds: Option<u64>,
-    pub self_service_relay_max_transfers_per_tick: Option<u32>,
     pub io_surplus_neuron_id: Option<u64>,
     pub canonical_relay_canister_id: Option<Principal>,
     pub canonical_relay_targets: Option<Vec<Principal>>,
@@ -56,13 +53,10 @@ pub struct UpgradeArgs {
     pub xrc_canister_id: Option<Principal>,
     pub relay_factory_enabled: Option<bool>,
     pub relay_setup_min_e8s: Option<u64>,
-    pub relay_setup_dust_e8s: Option<u64>,
-    pub relay_setup_refund_cooldown_seconds: Option<u64>,
     pub relay_initial_cycles: Option<u128>,
     pub relay_cycle_safety_margin_e8s: Option<u64>,
     pub relay_min_subaccount_one_seed_e8s: Option<u64>,
     pub self_service_relay_interval_seconds: Option<u64>,
-    pub self_service_relay_max_transfers_per_tick: Option<Option<u32>>,
     pub io_surplus_neuron_id: Option<u64>,
     pub canonical_relay_canister_id: Option<Option<Principal>>,
     pub canonical_relay_targets: Option<Vec<Principal>>,
@@ -168,200 +162,91 @@ pub struct PublicStatus {
     pub last_icp_xdr_rate_error: Option<String>,
     pub relay_factory_enabled: Option<bool>,
     pub relay_setup_min_e8s: Option<u64>,
-    pub relay_setup_dust_e8s: Option<u64>,
 }
 
-#[derive(CandidType, Deserialize, Clone)]
-pub struct GetRelaySetupViewArgs {
-    pub target_canister_id: Principal,
-}
-
-#[derive(CandidType, Deserialize, Clone)]
-pub struct GetRelaySetupRecoveryViewArgs {
-    pub target_canister_id: Principal,
-}
-
-#[derive(CandidType, Deserialize, Clone, Default)]
-pub struct ListRelayRegistrationsArgs {
-    pub start_after: Option<Principal>,
-    pub limit: Option<u32>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct ListRelayRegistrationsResponse {
-    pub items: Vec<RelayRegistration>,
-    pub next_start_after: Option<Principal>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RelayRegistration {
-    pub target_canister_id: Principal,
-    pub relay_canister_id: Principal,
-    pub kind: RelayRegistryKind,
-    pub created_at_ts: Option<u64>,
-}
-
-impl From<RelayRegistryEntry> for RelayRegistration {
-    fn from(value: RelayRegistryEntry) -> Self {
-        Self {
-            target_canister_id: value.target_canister_id,
-            relay_canister_id: value.relay_canister_id,
-            kind: value.kind,
-            created_at_ts: value.created_at_ts,
-        }
-    }
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelayTargetSetArgs {
+    pub target_canister_ids: Vec<Principal>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
-pub enum RelaySetupPublicStatus {
+pub enum RelaySetupState {
     NotFunded,
-    BelowMinimum,
-    PaymentNotAllowed,
-    IndexNotReady,
-    Pending,
-    CreatingRelay,
-    Active,
-    SweepingToExistingRelay,
-    Refunding,
-    Refunded,
-    FailedRetryable,
-    ManualRecoveryRequired,
-}
-
-impl From<RelaySetupStatus> for RelaySetupPublicStatus {
-    fn from(value: RelaySetupStatus) -> Self {
-        match value {
-            RelaySetupStatus::NotFunded => Self::NotFunded,
-            RelaySetupStatus::BelowMinimum | RelaySetupStatus::SweepBelowDust => Self::BelowMinimum,
-            RelaySetupStatus::FailedTerminal => Self::ManualRecoveryRequired,
-            RelaySetupStatus::RefundAvailable | RelaySetupStatus::Refunding => Self::Refunding,
-            RelaySetupStatus::Refunded => Self::Refunded,
-            RelaySetupStatus::IndexNotReady => Self::IndexNotReady,
-            RelaySetupStatus::CreatingCanister
-            | RelaySetupStatus::CanisterCreated
-            | RelaySetupStatus::InstallingCode
-            | RelaySetupStatus::CodeInstalled
-            | RelaySetupStatus::SettingPublicLogs
-            | RelaySetupStatus::Blackholing => Self::CreatingRelay,
-            RelaySetupStatus::Active => Self::Active,
-            RelaySetupStatus::SweepingToExistingRelay | RelaySetupStatus::SweptToExistingRelay => {
-                Self::SweepingToExistingRelay
-            }
-            RelaySetupStatus::FailedRetryable | RelaySetupStatus::Ambiguous => {
-                Self::FailedRetryable
-            }
-            RelaySetupStatus::ManualRecoveryRequired => Self::ManualRecoveryRequired,
-            RelaySetupStatus::Pending
-            | RelaySetupStatus::ConvertingCycles
-            | RelaySetupStatus::CycleTransferAccepted
-            | RelaySetupStatus::CycleNotifySucceeded
-            | RelaySetupStatus::FundingRelaySubaccountOne => Self::Pending,
-            RelaySetupStatus::InsufficientForCurrentRate => Self::BelowMinimum,
-        }
-    }
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RelaySetupView {
-    pub target_canister_id: Principal,
-    pub setup_account: Account,
-    pub setup_account_identifier: String,
-    pub minimum_e8s: u64,
-    pub current_required_e8s: Option<u64>,
-    pub nominal_minimum_e8s: u64,
-    pub payment_allowed: bool,
-    pub payment_blocked_reason: Option<String>,
-    pub existing_relay: Option<RelayRegistration>,
-    pub status: RelaySetupPublicStatus,
-    pub factory_available: bool,
-    pub warning_text: Option<String>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RedactedTransferRecord {
-    pub kind: RelaySetupTransferKind,
-    pub from_account_identifier: String,
-    pub to_account_identifier: String,
-    pub amount_e8s: u64,
-    pub fee_e8s: u64,
-    pub created_at_time_nanos: u64,
-    pub block_index: Option<u64>,
-    pub completed: bool,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RelayCreateAttemptView {
-    pub target_canister_id: Principal,
-    pub created_at_ts: u64,
-    pub initial_cycles: u128,
-    pub create_attach_cycles: u128,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub struct RelaySetupRecoveryView {
-    pub target_canister_id: Principal,
-    pub status: RelaySetupPublicStatus,
-    pub last_error: Option<String>,
-    pub relay_canister_id: Option<Principal>,
-    pub setup_account_identifier: String,
-    pub setup_amount_seen_e8s: u64,
-    pub setup_amount_processed_e8s: u64,
-    pub cycle_conversion_e8s: Option<u64>,
-    pub cycles_minted: Option<u128>,
-    pub configured_relay_create_attach_cycles: u128,
-    pub cycle_transfer: Option<RedactedTransferRecord>,
-    pub relay_funding_transfer: Option<RedactedTransferRecord>,
-    pub existing_relay_sweep_transfer: Option<RedactedTransferRecord>,
-    pub refund_transfer_count: u32,
-    pub relay_create_attempt: Option<RelayCreateAttemptView>,
-    pub created_at_ts: u64,
-    pub updated_at_ts: u64,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub enum RelaySetupNotifyResult {
-    BelowMinimum {
-        minimum_e8s: u64,
-        current_balance_e8s: u64,
-    },
-    InsufficientForCurrentRate {
-        required_e8s: u64,
-        current_balance_e8s: u64,
-    },
-    Pending {
-        status: RelaySetupPublicStatus,
+    InProgress {
+        phase: crate::relay_setup::RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
     },
     Active {
-        relay: RelayRegistration,
+        relay_canister_id: Principal,
     },
-    SweptToExistingRelay {
-        relay: RelayRegistration,
-        amount_e8s: u64,
-        block_index: u64,
-    },
-    SweepBelowDust {
-        relay: RelayRegistration,
-        current_balance_e8s: u64,
-    },
-    Refunded {
-        blocks: Vec<u64>,
-    },
-    RefundPending {
-        reason: String,
-    },
-    Failed {
-        status: RelaySetupPublicStatus,
+    ManualRecoveryRequired {
+        phase: crate::relay_setup::RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
         message: String,
     },
 }
 
-#[derive(CandidType, Deserialize, Clone, Serialize)]
-pub enum RelaySetupRefundResult {
-    NotEligible { status: Option<RelaySetupStatus> },
-    Cooldown { retry_after_seconds: u64 },
-    Refunded { blocks: Vec<u64> },
-    NoRefundableAmount,
-    Failed { message: String },
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub struct RelaySetupView {
+    pub canonical_target_canister_ids: Vec<Principal>,
+    pub setup_key_identifier: String,
+    pub setup_account: Option<Account>,
+    pub setup_account_identifier: Option<String>,
+    pub target_count: u32,
+    pub singleton_nominal_minimum_e8s: u64,
+    pub extra_target_count: u64,
+    pub extra_target_unit_charge_e8s: u64,
+    pub total_extra_target_charge_e8s: u64,
+    pub nominal_minimum_e8s: u64,
+    pub indicative_current_requirement_e8s: Option<u64>,
+    pub indicative_rate_timestamp_seconds: Option<u64>,
+    pub factory_available: bool,
+    pub state: RelaySetupState,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)] // Keep the public Candid result shape direct and allocation-free.
+pub enum RelaySetupViewResult {
+    Ok(RelaySetupView),
+    Err(String),
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub enum RelaySetupNotifyResult {
+    BelowMinimum {
+        balance_e8s: u64,
+        required_e8s: u64,
+        shortfall_e8s: u64,
+    },
+    BelowCurrentRequirement {
+        balance_e8s: u64,
+        required_e8s: u64,
+        shortfall_e8s: u64,
+    },
+    Busy,
+    InProgress {
+        phase: crate::relay_setup::RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
+    },
+    Active {
+        relay_canister_id: Principal,
+    },
+    FailedPreSpend {
+        message: String,
+    },
+    ManualRecoveryRequired {
+        phase: crate::relay_setup::RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
+        message: String,
+    },
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub struct RelaySetupDebugEntry {
+    pub setup_key_identifier: String,
+    pub entry_variant: String,
+    pub phase: Option<crate::relay_setup::RelayCreationPhase>,
+    pub relay_canister_id: Option<Principal>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Default)]
