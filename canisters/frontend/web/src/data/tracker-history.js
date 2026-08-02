@@ -21,7 +21,7 @@ const TRACKER_PROGRESS_PAGE_KEYS = [
   'cycles',
   'logs',
   'cmcTransfers',
-  'relayRegistrations',
+  'relayInstances',
   'transfers',
   'candidates',
 ];
@@ -270,19 +270,24 @@ async function loadRawIncomingTransfers({ historian, status = null, agent, index
   });
 }
 
-async function loadRelayRegistrations(historian) {
-  if (typeof historian?.list_relay_registrations !== 'function') return { items: [] };
+export async function loadRelayInstances(historian) {
+  if (typeof historian?.list_canisters !== 'function') return { items: [] };
   try {
     const items = [];
     let startAfter = [];
+    const seenCursors = new Set();
     for (let pageIndex = 0; pageIndex < 50; pageIndex += 1) {
-      const page = await historian.list_relay_registrations({
+      const page = await historian.list_canisters({
         start_after: startAfter,
-        limit: [200],
+        limit: [100],
+        tracking_reason_filter: [{ RelayInstance: null }],
       });
       items.push(...(page?.items || []));
       const next = readOptional(page?.next_start_after);
       if (!next) break;
+      const nextText = principalToText(next);
+      if (!nextText || seenCursors.has(nextText)) break;
+      seenCursors.add(nextText);
       startAfter = [next];
     }
     return { items };
@@ -341,7 +346,7 @@ export async function loadTrackerData({
     canisterId,
     overview: overviewValue,
     status: null,
-    relayRegistrations: progressPage(null, true),
+    relayInstances: progressPage(null, true),
     isRecognized: true,
     isCommitmentBeneficiary,
     commitments: progressPage(null, isCommitmentBeneficiary),
@@ -380,9 +385,9 @@ export async function loadTrackerData({
     onProgress,
     page: false,
   });
-  const relayRegistrationsPromise = trackProgressPromise(loadRelayRegistrations(historian), {
+  const relayInstancesPromise = trackProgressPromise(loadRelayInstances(historian), {
     progress,
-    key: 'relayRegistrations',
+    key: 'relayInstances',
     onProgress,
   });
   const logsPromise = trackProgressPromise(canisterLogsLoader({
@@ -410,11 +415,11 @@ export async function loadTrackerData({
     errorKey: 'cmcTransfers',
   });
 
-  const [commitmentsResult, cyclesResult, statusResult, relayRegistrationsResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
+  const [commitmentsResult, cyclesResult, statusResult, relayInstancesResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
     commitmentsPromise,
     cyclesPromise,
     statusPromise,
-    relayRegistrationsPromise,
+    relayInstancesPromise,
     logsPromise,
     cmcTransfersPromise,
   ]);
@@ -423,7 +428,7 @@ export async function loadTrackerData({
     canisterId,
     overview: overviewValue,
     status: fulfilledOrNull(statusResult),
-    relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
+    relayInstances: fulfilledOrNull(relayInstancesResult) || { items: [] },
     isRecognized: true,
     isCommitmentBeneficiary,
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
@@ -468,7 +473,7 @@ export async function loadRawIcpCanisterTrackerData({
   const progress = {
     canisterId,
     status: null,
-    relayRegistrations: progressPage(null, true),
+    relayInstances: progressPage(null, true),
     commitments: progressPage(null, true),
     transfers: progressPage(null, true),
     candidates: progressPage(null, true),
@@ -482,9 +487,9 @@ export async function loadRawIcpCanisterTrackerData({
     onProgress: progressCallback,
     page: false,
   });
-  const relayRegistrationsPromise = trackProgressPromise(loadRelayRegistrations(historian), {
+  const relayInstancesPromise = trackProgressPromise(loadRelayInstances(historian), {
     progress,
-    key: 'relayRegistrations',
+    key: 'relayInstances',
     onProgress: progressCallback,
   });
   const commitmentsPromise = trackProgressPromise(loadRawIcpCanisterCommitments(historian, {
@@ -530,9 +535,9 @@ export async function loadRawIcpCanisterTrackerData({
     onProgress: progressCallback,
     errorKey: 'candidates',
   });
-  const [statusResult, relayRegistrationsResult, commitmentsResult, transfersResult, candidatesResult] = await Promise.allSettled([
+  const [statusResult, relayInstancesResult, commitmentsResult, transfersResult, candidatesResult] = await Promise.allSettled([
     statusPromise,
-    relayRegistrationsPromise,
+    relayInstancesPromise,
     commitmentsPromise,
     transfersPromise,
     candidatesPromise,
@@ -540,7 +545,7 @@ export async function loadRawIcpCanisterTrackerData({
   return {
     canisterId,
     status: fulfilledOrNull(statusResult),
-    relayRegistrations: fulfilledOrNull(relayRegistrationsResult) || { items: [] },
+    relayInstances: fulfilledOrNull(relayInstancesResult) || { items: [] },
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
     transfers: fulfilledOrNull(transfersResult) || { items: [] },
     candidates: fulfilledOrNull(candidatesResult) || { items: [], truncated: false },

@@ -61,13 +61,10 @@ mod tests {
                 max_canisters_per_cycles_tick: 25,
                 relay_factory_enabled: false,
                 relay_setup_min_e8s: 300_000_000,
-                relay_setup_dust_e8s: 10_000,
-                relay_setup_refund_cooldown_seconds: 300,
                 relay_initial_cycles: 2_000_000_000_000,
                 relay_cycle_safety_margin_e8s: 5_000_000,
                 relay_min_subaccount_one_seed_e8s: 100_020_000,
                 self_service_relay_interval_seconds: 86400,
-                self_service_relay_max_transfers_per_tick: Some(10),
                 io_surplus_neuron_id: crate::DEFAULT_IO_SURPLUS_NEURON_ID,
                 canonical_relay_canister_id: Some(crate::mainnet_relay_id()),
                 canonical_relay_targets: crate::mainnet_canonical_relay_targets(),
@@ -1479,23 +1476,6 @@ mod tests {
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let relay = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
         state::with_state_mut(|st| {
-            st.relay_registry_by_target.insert(
-                target,
-                crate::state::RelayRegistryEntry {
-                    relay_canister_id: relay,
-                    target_canister_id: target,
-                    kind: crate::state::RelayRegistryKind::SelfService,
-                    status: crate::state::RelayRegistryStatus::Active,
-                    setup_account: None,
-                    setup_account_identifier: None,
-                    setup_amount_e8s: None,
-                    setup_tx_ids: Vec::new(),
-                    final_controllers: None,
-                    log_visibility_public: None,
-                    created_at_ts: None,
-                    activated_at_ts: None,
-                },
-            );
             crate::mark_active_relay_tracked(st, target, relay, Some(123));
         });
 

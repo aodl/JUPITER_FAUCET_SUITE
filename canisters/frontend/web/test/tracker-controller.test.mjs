@@ -7,7 +7,7 @@ import { createTrackerController } from '../src/app/tracker-controller.js';
 import { simulatorHashForPrefill } from '../src/app/hash-routes.js';
 import { JUPITER_RELAY_CANISTER_ID } from '../src/app/config.js';
 import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
-import { classifyTransferItem, defaultCanisterAccountIdentifier, relayRegistrySourceMap } from '../src/data/transfer-source-classification.js';
+import { classifyTransferItem, defaultCanisterAccountIdentifier, relayInstanceSourceMap } from '../src/data/transfer-source-classification.js';
 
 const metricsCss = readFileSync(new URL('../../public/metrics.css', import.meta.url), 'utf8');
 
@@ -71,12 +71,12 @@ test('canonical Relay fallback classifies the source and attaches its Relay cani
   assert.equal(item.source_label, `Relay ${JUPITER_RELAY_CANISTER_ID.slice(0, 5)}…`);
 });
 
-test('dynamic Relay registry classification takes precedence and attaches the registered Relay ID', () => {
+test('generic RelayInstance classification attaches the tracked Relay ID', () => {
   const relay = 'br5f7-7uaaa-aaaaa-qaaca-cai';
   const relayAccountId = defaultCanisterAccountIdentifier(relay);
-  const relaySourceMap = relayRegistrySourceMap([{
-    relay_canister_id: Principal.fromText(relay),
-    target_canister_id: Principal.fromText('22255-zqaaa-aaaas-qf6uq-cai'),
+  const relaySourceMap = relayInstanceSourceMap([{
+    canister_id: Principal.fromText(relay),
+    tracking_reasons: [{ RelayInstance: null }],
   }]);
 
   const item = classifyTransferItem(
@@ -319,10 +319,10 @@ function cmcTransfer(id, from, amountE8s, day = id) {
   };
 }
 
-function relayRegistration(relayCanisterId, targetCanisterId = 'jufzc-caaaa-aaaar-qb5da-cai') {
+function relayInstance(relayCanisterId) {
   return {
-    relay_canister_id: Principal.fromText(relayCanisterId),
-    target_canister_id: Principal.fromText(targetCanisterId),
+    canister_id: Principal.fromText(relayCanisterId),
+    tracking_reasons: [{ RelayInstance: null }],
   };
 }
 
@@ -338,8 +338,8 @@ function trackerDataWithCmcTransfers({
       ...data.status,
       ...(faucetAccount ? { output_account: [faucetAccount] } : {}),
     },
-    relayRegistrations: {
-      items: relayCanisterIds.map((relayCanisterId) => relayRegistration(relayCanisterId)),
+    relayInstances: {
+      items: relayCanisterIds.map((relayCanisterId) => relayInstance(relayCanisterId)),
     },
     cmcTransfers: { items: transfers || [] },
   };

@@ -49,6 +49,9 @@ pub(crate) fn validate_config(cfg: &Config) {
     if let Some(faucet_canister_id) = cfg.faucet_canister_id {
         assert_non_anonymous_principal("faucet_canister_id", faucet_canister_id);
     }
+    if let Err(message) = crate::relay_setup::validate_canonical_relay_config(cfg) {
+        panic!("{message}");
+    }
     assert!(
         cfg.output_source_account != cfg.output_account,
         "output_source_account and output_account must be distinct"
@@ -72,10 +75,6 @@ pub(crate) fn validate_config(cfg: &Config) {
     assert!(
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
-    );
-    assert!(
-        cfg.relay_setup_min_e8s > cfg.relay_setup_dust_e8s,
-        "relay_setup_min_e8s must be greater than relay_setup_dust_e8s"
     );
     if cfg.relay_factory_enabled {
         assert!(

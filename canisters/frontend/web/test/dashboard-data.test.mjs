@@ -17,8 +17,6 @@ import {
   loadCmcTopUpTransfersFromIndex,
   cmcDepositAccount,
   dquorumStakingAccount,
-  relaySetupAccount,
-  relaySetupSubaccount,
   hasCanisterTrackingReason,
   resetAgentCacheForTests,
   summaryMetricsUnavailable,
@@ -27,9 +25,11 @@ import {
   RECENT_COMMITMENT_LIMIT,
   RECENT_ROUTE_TRANSFER_LIMIT,
 } from '../src/dashboard-data.js';
-import { classifyTransferItem, defaultCanisterAccountIdentifier, relayRegistrySourceMap } from '../src/data/transfer-source-classification.js';
+import { classifyTransferItem, defaultCanisterAccountIdentifier, relayInstanceSourceMap } from '../src/data/transfer-source-classification.js';
+import { loadRelayInstances } from '../src/data/tracker-history.js';
 
 const FetchCanisterLogsArgs = IDL.Record({ canister_id: IDL.Principal });
+const RELAY_TEST_ID = 'br5f7-7uaaa-aaaaa-qaaca-cai';
 const CanisterLogRecord = IDL.Record({
   idx: IDL.Nat64,
   timestamp_nanos: IDL.Nat64,
@@ -117,20 +117,6 @@ test('accountIdentifierHex stays stable for the staking-account derivation fixtu
     accountIdentifierHex(stakingAccount()),
     '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3',
   );
-});
-
-test('relay setup subaccount matches Rust SHA-256 fixture', () => {
-  const target = '22255-zqaaa-aaaas-qf6uq-cai';
-  assert.equal(
-    bytesToHex(relaySetupSubaccount(target)),
-    '9008ebda9c222b8ca7a187b58876c9c5ce11ec50eb413da2c1ab1b8f71447312',
-  );
-  const account = relaySetupAccount({
-    historianCanisterId: 'qaa6y-5yaaa-aaaaa-aaafa-cai',
-    targetCanisterId: target,
-  });
-  assert.equal(account.owner.toText(), 'qaa6y-5yaaa-aaaaa-aaafa-cai');
-  assert.equal(bytesToHex(account.subaccount[0]), '9008ebda9c222b8ca7a187b58876c9c5ce11ec50eb413da2c1ab1b8f71447312');
 });
 
 test('dquorumStakingAccount uses the committed production staking subaccount', () => {
@@ -1007,7 +993,7 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
   assert.equal(finalProgress.cmcTransfers.loading, false);
 });
 
-test('loadTrackerData pages relay registrations for tracker classification', async () => {
+test('loadTrackerData pages generic RelayInstance canisters for tracker classification', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const relay = principal('br5f7-7uaaa-aaaaa-qaaca-cai');
   const calls = [];
@@ -1035,21 +1021,21 @@ test('loadTrackerData pages relay registrations for tracker classification', asy
       async get_public_status() {
         return historianStatus({ index_canister_id: [] });
       },
-      async list_relay_registrations(args) {
+      async list_canisters(args) {
         calls.push(args);
         if (args.start_after.length === 0) {
           return {
             items: [{
-              relay_canister_id: principal('rrkah-fqaaa-aaaaa-aaaaq-cai'),
-              target_canister_id: principal('qaa6y-5yaaa-aaaaa-aaafa-cai'),
+              canister_id: principal('rrkah-fqaaa-aaaaa-aaaaq-cai'),
+              tracking_reasons: [{ RelayInstance: null }],
             }],
             next_start_after: [principal('qaa6y-5yaaa-aaaaa-aaafa-cai')],
           };
         }
         return {
           items: [{
-            relay_canister_id: relay,
-            target_canister_id: target,
+            canister_id: relay,
+            tracking_reasons: [{ RelayInstance: null }],
           }],
           next_start_after: [],
         };
@@ -1059,13 +1045,68 @@ test('loadTrackerData pages relay registrations for tracker classification', asy
   });
 
   assert.equal(calls.length, 2);
-  const relaySourceMap = relayRegistrySourceMap(data.relayRegistrations.items);
+  assert.deepEqual(calls[0].tracking_reason_filter, [{ RelayInstance: null }]);
+  const relaySourceMap = relayInstanceSourceMap(data.relayInstances.items);
   const item = classifyTransferItem(
     { from_account_identifier: defaultCanisterAccountIdentifier(relay.toText()) },
     { relaySourceMap },
   );
   assert.equal(item.source_category, 'relay');
   assert.equal(item.source_relay_canister_id, relay.toText());
+});
+
+test('Relay-instance loading uses one generic list_canisters page', async () => {
+  const calls = [];
+  const result = await loadRelayInstances({
+    async list_canisters(args) {
+      calls.push(args);
+      return { items: [{ canister_id: principal(RELAY_TEST_ID) }], next_start_after: [] };
+    },
+  });
+  assert.equal(result.items.length, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].tracking_reason_filter, [{ RelayInstance: null }]);
+});
+
+test('Relay-instance loading follows two generic list_canisters pages', async () => {
+  const cursor = principal('qaa6y-5yaaa-aaaaa-aaafa-cai');
+  let calls = 0;
+  const result = await loadRelayInstances({
+    async list_canisters(args) {
+      calls += 1;
+      return args.start_after.length === 0
+        ? { items: [{ canister_id: principal(RELAY_TEST_ID) }], next_start_after: [cursor] }
+        : { items: [{ canister_id: cursor }], next_start_after: [] };
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.items.length, 2);
+});
+
+test('Relay-instance loading stops on a repeated cursor', async () => {
+  const cursor = principal('qaa6y-5yaaa-aaaaa-aaafa-cai');
+  let calls = 0;
+  const result = await loadRelayInstances({
+    async list_canisters() {
+      calls += 1;
+      return { items: [{ canister_id: cursor }], next_start_after: [cursor] };
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.items.length, 2);
+});
+
+test('Relay-instance loading returns accumulated IDs at the 50-page cap', async () => {
+  let calls = 0;
+  const result = await loadRelayInstances({
+    async list_canisters() {
+      calls += 1;
+      const cursor = Principal.fromUint8Array(Uint8Array.of(calls));
+      return { items: [{ canister_id: cursor }], next_start_after: [cursor] };
+    },
+  });
+  assert.equal(calls, 50);
+  assert.equal(result.items.length, 50);
 });
 
 test('loadTrackerData pages recent historian histories until the timestamp cutoff is covered', async () => {

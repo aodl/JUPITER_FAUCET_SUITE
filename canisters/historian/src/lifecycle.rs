@@ -98,6 +98,18 @@ pub(super) fn guard_debug_api_not_production() {
 }
 
 pub(super) fn config_from_init_args(args: InitArgs) -> Config {
+    let canonical_relay_targets_explicitly_empty = args
+        .canonical_relay_targets
+        .as_ref()
+        .is_some_and(Vec::is_empty);
+    let canonical_relay_canister_id = match args.canonical_relay_canister_id {
+        Some(relay_canister_id) => Some(relay_canister_id),
+        None if canonical_relay_targets_explicitly_empty => None,
+        None => Some(mainnet_relay_id()),
+    };
+    let canonical_relay_targets = args
+        .canonical_relay_targets
+        .unwrap_or_else(mainnet_canonical_relay_targets);
     let cfg = Config {
         staking_account: args.staking_account,
         output_source_account: args
@@ -133,10 +145,6 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .relay_factory_enabled
             .unwrap_or_else(|| crate::approved_self_service_relay_wasm().is_some()),
         relay_setup_min_e8s: args.relay_setup_min_e8s.unwrap_or(300_000_000),
-        relay_setup_dust_e8s: args.relay_setup_dust_e8s.unwrap_or(10_000),
-        relay_setup_refund_cooldown_seconds: args
-            .relay_setup_refund_cooldown_seconds
-            .unwrap_or(300),
         relay_initial_cycles: args.relay_initial_cycles.unwrap_or(2_000_000_000_000),
         relay_cycle_safety_margin_e8s: args.relay_cycle_safety_margin_e8s.unwrap_or(5_000_000),
         relay_min_subaccount_one_seed_e8s: args
@@ -146,19 +154,11 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .self_service_relay_interval_seconds
             .unwrap_or(86400)
             .max(60),
-        self_service_relay_max_transfers_per_tick: Some(
-            args.self_service_relay_max_transfers_per_tick.unwrap_or(10),
-        ),
         io_surplus_neuron_id: args
             .io_surplus_neuron_id
             .unwrap_or(DEFAULT_IO_SURPLUS_NEURON_ID),
-        canonical_relay_canister_id: Some(
-            args.canonical_relay_canister_id
-                .unwrap_or_else(mainnet_relay_id),
-        ),
-        canonical_relay_targets: args
-            .canonical_relay_targets
-            .unwrap_or_else(mainnet_canonical_relay_targets),
+        canonical_relay_canister_id,
+        canonical_relay_targets,
     };
     validate_config(&cfg);
     cfg
@@ -453,12 +453,6 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.relay_setup_min_e8s == 0 {
         st.config.relay_setup_min_e8s = 300_000_000;
     }
-    if st.config.relay_setup_dust_e8s == 0 {
-        st.config.relay_setup_dust_e8s = 10_000;
-    }
-    if st.config.relay_setup_refund_cooldown_seconds == 0 {
-        st.config.relay_setup_refund_cooldown_seconds = 300;
-    }
     if st.config.relay_initial_cycles == 0 {
         st.config.relay_initial_cycles = 2_000_000_000_000;
     }
@@ -474,58 +468,16 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.io_surplus_neuron_id == 0 {
         st.config.io_surplus_neuron_id = DEFAULT_IO_SURPLUS_NEURON_ID;
     }
-    ensure_canonical_relay_registry(st);
+    ensure_canonical_relay_tracking(st);
 }
 
-pub(crate) fn ensure_canonical_relay_registry(st: &mut State) {
-    ensure_canonical_relay_registry_with_first_seen(st, None);
-}
-
-pub(crate) fn ensure_active_relay_tracking(st: &mut State) {
-    let active_relays: Vec<_> = st
-        .relay_registry_by_target
-        .values()
-        .filter(|entry| entry.status == RelayRegistryStatus::Active)
-        .map(|entry| {
-            (
-                entry.target_canister_id,
-                entry.relay_canister_id,
-                entry.activated_at_ts.or(entry.created_at_ts),
-            )
-        })
-        .collect();
-    for (target, relay_id, first_seen_ts) in active_relays {
-        mark_active_relay_tracked(st, target, relay_id, first_seen_ts);
-    }
-}
-
-pub(crate) fn ensure_canonical_relay_registry_with_first_seen(
-    st: &mut State,
-    first_seen_ts: Option<u64>,
-) {
+pub(crate) fn ensure_canonical_relay_tracking(st: &mut State) {
     let Some(relay_canister_id) = st.config.canonical_relay_canister_id else {
         return;
     };
     let targets = st.config.canonical_relay_targets.clone();
     for target_canister_id in targets {
-        let entry = RelayRegistryEntry {
-            relay_canister_id,
-            target_canister_id,
-            kind: RelayRegistryKind::Canonical,
-            status: RelayRegistryStatus::Active,
-            setup_account: None,
-            setup_account_identifier: None,
-            setup_amount_e8s: None,
-            setup_tx_ids: Vec::new(),
-            final_controllers: None,
-            log_visibility_public: Some(true),
-            created_at_ts: None,
-            activated_at_ts: None,
-        };
-        st.relay_registry_by_target
-            .entry(target_canister_id)
-            .or_insert(entry);
-        mark_active_relay_tracked(st, target_canister_id, relay_canister_id, first_seen_ts);
+        mark_active_relay_tracked(st, target_canister_id, relay_canister_id, None);
     }
 }
 
@@ -745,7 +697,6 @@ pub(super) fn init(args: InitArgs) {
     state::init_stable_storage();
     let mut st = State::new(cfg, now_secs);
     initialize_config_defaults_if_missing(&mut st);
-    ensure_canonical_relay_registry_with_first_seen(&mut st, Some(now_secs));
     normalize_runtime_state(&mut st);
     state::set_state(st);
     scheduler::install_timers();
@@ -806,12 +757,6 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         if let Some(v) = args.relay_setup_min_e8s {
             st.config.relay_setup_min_e8s = v;
         }
-        if let Some(v) = args.relay_setup_dust_e8s {
-            st.config.relay_setup_dust_e8s = v;
-        }
-        if let Some(v) = args.relay_setup_refund_cooldown_seconds {
-            st.config.relay_setup_refund_cooldown_seconds = v;
-        }
         if let Some(v) = args.relay_initial_cycles {
             st.config.relay_initial_cycles = v;
         }
@@ -823,9 +768,6 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         }
         if let Some(v) = args.self_service_relay_interval_seconds {
             st.config.self_service_relay_interval_seconds = v.max(60);
-        }
-        if let Some(v) = args.self_service_relay_max_transfers_per_tick {
-            st.config.self_service_relay_max_transfers_per_tick = v;
         }
         if let Some(v) = args.io_surplus_neuron_id {
             st.config.io_surplus_neuron_id = v;
@@ -851,8 +793,7 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     }
     initialize_derived_state_if_missing(st);
     normalize_runtime_state(st);
-    ensure_canonical_relay_registry(st);
-    ensure_active_relay_tracking(st);
+    ensure_canonical_relay_tracking(st);
     validate_config(&st.config);
     st.main_lock_state_ts = Some(0);
 }
@@ -882,31 +823,22 @@ pub(crate) fn post_upgrade_with_timestamp(args: Option<UpgradeArgs>, now_secs: u
 }
 
 pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs>, _now_secs: u64) {
+    let first_relay_setup_cutover = !state::relay_setup_entries_memory_initialized();
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
+    if first_relay_setup_cutover {
+        state::validate_retired_relay_factory_state(&st.config);
+    }
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
-    let relay_targets = st
-        .relay_registry_by_target
-        .keys()
-        .chain(st.relay_setup_jobs.keys())
-        .copied()
-        .collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories
     // are restored lazily from stable entry/index maps, so rewriting all durable
     // sections here would clobber those bulk histories with an intentionally sparse
-    // heap view. Relay registry/setup maps are small and may contain one-version
-    // legacy values that need current-schema persistence after decoding.
-    state::set_state_after_upgrade(st, &registry_principals, &relay_targets);
-    let (registry, setup_jobs) = state::with_state(|st| {
-        (
-            st.relay_registry_by_target.clone(),
-            st.relay_setup_jobs.clone(),
-        )
-    });
-    state::rewrite_relay_factory_maps_current_schema(&registry, &setup_jobs);
+    // heap view. Retired Relay memories are validated above and never rewritten.
+    state::set_state_after_upgrade(st, &registry_principals);
+    crate::relay_setup::reconcile_interrupted_creating_entries_after_upgrade();
 }
 
 fn log_lifecycle(event: &str) {

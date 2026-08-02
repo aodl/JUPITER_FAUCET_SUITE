@@ -10,7 +10,6 @@
 use anyhow::{bail, Context, Result};
 use candid::{decode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
-use jupiter_ic_clients::account::relay_setup_subaccount;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::constants as ic_constants;
 use num_traits::ToPrimitive;
@@ -231,6 +230,49 @@ fn embed_candid_metadata(canister: &str) -> Result<()> {
     Ok(())
 }
 
+fn build_historian_debug_with_relay() -> Result<()> {
+    run_cargo_build("jupiter-relay", &["debug_api"])?;
+    let relay_wasm_path = std::path::Path::new(&repo_root())
+        .join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm")
+        .canonicalize()
+        .context("failed to resolve local relay wasm for historian debug build")?;
+    let relay_gz_wasm_path = relay_wasm_path.with_file_name("jupiter_relay.wasm.gz");
+    let gzip_output = Command::new("gzip")
+        .args(["-n", "-9", "-c"])
+        .arg(&relay_wasm_path)
+        .output()
+        .context("failed to gzip local relay wasm for historian debug build")?;
+    if !gzip_output.status.success() {
+        bail!("gzip failed for local relay wasm used by historian debug build");
+    }
+    fs::write(&relay_gz_wasm_path, gzip_output.stdout)
+        .context("failed to write gzip relay wasm for historian debug build")?;
+    let raw_hash = hex::encode(Sha256::digest(
+        fs::read(&relay_wasm_path)
+            .context("failed to read raw relay wasm for historian debug build")?,
+    ));
+    let gz_hash = hex::encode(Sha256::digest(
+        fs::read(&relay_gz_wasm_path)
+            .context("failed to read gzip relay wasm for historian debug build")?,
+    ));
+    run_cargo_build_with_env(
+        "jupiter-historian",
+        &["debug_api"],
+        &[
+            (
+                "JUPITER_RELAY_WASM_PATH",
+                relay_gz_wasm_path.to_string_lossy().into_owned(),
+            ),
+            (
+                "JUPITER_RELAY_RAW_WASM_PATH",
+                relay_wasm_path.to_string_lossy().into_owned(),
+            ),
+            ("JUPITER_RELAY_RAW_WASM_SHA256", raw_hash),
+            ("JUPITER_RELAY_GZ_WASM_SHA256", gz_hash),
+        ],
+    )
+}
+
 fn build_canister_wasm(canister: &str) -> Result<()> {
     match canister {
         "mock_icrc_ledger" => run_cargo_build("mock-icrc-ledger", &[]),
@@ -247,48 +289,8 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         "jupiter_faucet_dbg" | "jupiter_faucet_args_dbg" => {
             run_cargo_build("jupiter-faucet", &["debug_api"])
         }
-        "jupiter_historian_dbg" => run_cargo_build("jupiter-historian", &["debug_api"]),
-        "jupiter_historian_args_dbg" => {
-            run_cargo_build("jupiter-relay", &["debug_api"])?;
-            let relay_wasm_path = std::path::Path::new(&repo_root())
-                .join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm")
-                .canonicalize()
-                .context("failed to resolve local relay wasm for historian args roundtrip")?;
-            let relay_gz_wasm_path = relay_wasm_path.with_file_name("jupiter_relay.wasm.gz");
-            let gzip_output = Command::new("gzip")
-                .args(["-n", "-9", "-c"])
-                .arg(&relay_wasm_path)
-                .output()
-                .context("failed to gzip local relay wasm for historian args roundtrip")?;
-            if !gzip_output.status.success() {
-                bail!("gzip failed for local relay wasm used by historian args roundtrip");
-            }
-            fs::write(&relay_gz_wasm_path, gzip_output.stdout)
-                .context("failed to write gzip relay wasm for historian args roundtrip")?;
-            let raw_hash = hex::encode(Sha256::digest(
-                fs::read(&relay_wasm_path)
-                    .context("failed to read raw relay wasm for historian args roundtrip")?,
-            ));
-            let gz_hash = hex::encode(Sha256::digest(
-                fs::read(&relay_gz_wasm_path)
-                    .context("failed to read gzip relay wasm for historian args roundtrip")?,
-            ));
-            run_cargo_build_with_env(
-                "jupiter-historian",
-                &["debug_api"],
-                &[
-                    (
-                        "JUPITER_RELAY_WASM_PATH",
-                        relay_gz_wasm_path.to_string_lossy().into_owned(),
-                    ),
-                    (
-                        "JUPITER_RELAY_RAW_WASM_PATH",
-                        relay_wasm_path.to_string_lossy().into_owned(),
-                    ),
-                    ("JUPITER_RELAY_RAW_WASM_SHA256", raw_hash),
-                    ("JUPITER_RELAY_GZ_WASM_SHA256", gz_hash),
-                ],
-            )
+        "jupiter_historian_dbg" | "jupiter_historian_args_dbg" => {
+            build_historian_debug_with_relay()
         }
         "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => {
             run_cargo_build("jupiter-relay", &["debug_api"])
@@ -643,89 +645,90 @@ struct HistorianDebugConfig {
     max_canisters_per_cycles_tick: u32,
 }
 
-#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
-enum RelayRegistryKind {
-    Canonical,
-    SelfService,
-}
-
-#[derive(Debug, CandidType, Deserialize)]
-struct RelayRegistration {
-    target_canister_id: Principal,
-    relay_canister_id: Principal,
-    kind: RelayRegistryKind,
-    created_at_ts: Option<u64>,
-}
-
-#[derive(Debug, CandidType, Deserialize)]
-struct ListRelayRegistrationsResponse {
-    items: Vec<RelayRegistration>,
-    next_start_after: Option<Principal>,
-}
-
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq, Clone)]
-enum RelaySetupPublicStatus {
+enum RelayCreationPhase {
+    Reserved,
+    ProbingTargets,
+    CmcTransferPrepared,
+    CmcTransferAccepted,
+    CmcNotifySucceeded,
+    CreateDispatched,
+    ChildCreated,
+    CodeInstalled,
+    RelayFundingPrepared,
+    RelayFunded,
+    HandoffAttempted,
+}
+
+#[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySetupState {
     NotFunded,
-    BelowMinimum,
-    PaymentNotAllowed,
-    IndexNotReady,
-    Pending,
-    CreatingRelay,
-    Active,
-    SweepingToExistingRelay,
-    Refunding,
-    Refunded,
-    FailedRetryable,
-    ManualRecoveryRequired,
+    InProgress {
+        phase: RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
+    },
+    Active {
+        relay_canister_id: Principal,
+    },
+    ManualRecoveryRequired {
+        phase: RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
+        message: String,
+    },
 }
 
 #[derive(Debug, CandidType, Deserialize)]
 struct RelaySetupView {
-    target_canister_id: Principal,
-    setup_account: Account,
-    setup_account_identifier: String,
-    minimum_e8s: u64,
-    payment_allowed: bool,
-    payment_blocked_reason: Option<String>,
-    existing_relay: Option<RelayRegistration>,
-    status: RelaySetupPublicStatus,
+    canonical_target_canister_ids: Vec<Principal>,
+    setup_key_identifier: String,
+    setup_account: Option<Account>,
+    setup_account_identifier: Option<String>,
+    target_count: u32,
+    nominal_minimum_e8s: u64,
     factory_available: bool,
-    warning_text: Option<String>,
+    state: RelaySetupState,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+enum RelaySetupViewResult {
+    Ok(RelaySetupView),
+    Err(String),
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct RelaySetupDebugEntry {
+    setup_key_identifier: String,
+    entry_variant: String,
+    phase: Option<RelayCreationPhase>,
+    relay_canister_id: Option<Principal>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
 enum RelaySetupNotifyResult {
     BelowMinimum {
-        minimum_e8s: u64,
-        current_balance_e8s: u64,
-    },
-    InsufficientForCurrentRate {
+        balance_e8s: u64,
         required_e8s: u64,
-        current_balance_e8s: u64,
+        shortfall_e8s: u64,
     },
-    Pending {
-        status: RelaySetupPublicStatus,
+    BelowCurrentRequirement {
+        balance_e8s: u64,
+        required_e8s: u64,
+        shortfall_e8s: u64,
+    },
+    Busy,
+    InProgress {
+        phase: RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
     },
     Active {
-        relay: RelayRegistration,
+        relay_canister_id: Principal,
     },
-    SweptToExistingRelay {
-        relay: RelayRegistration,
-        amount_e8s: u64,
-        block_index: u64,
+    FailedPreSpend {
+        message: String,
     },
-    SweepBelowDust {
-        relay: RelayRegistration,
-        current_balance_e8s: u64,
-    },
-    Refunded {
-        blocks: Vec<u64>,
-    },
-    RefundPending {
-        reason: String,
-    },
-    Failed {
-        status: RelaySetupPublicStatus,
+    ManualRecoveryRequired {
+        phase: RelayCreationPhase,
+        relay_canister_id: Option<Principal>,
         message: String,
     },
 }
@@ -998,31 +1001,21 @@ fn account_to_candid(account: &Account) -> String {
     )
 }
 
-fn relay_setup_view(target: Principal) -> Result<RelaySetupView> {
-    call_raw(
+fn relay_setup_view(targets: &[Principal]) -> Result<RelaySetupView> {
+    let principals = targets
+        .iter()
+        .map(|target| format!("principal \"{}\"", target.to_text()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let result: RelaySetupViewResult = call_raw(
         "jupiter_historian_dbg",
         "get_relay_setup_view",
-        &format!(
-            r#"(record {{ target_canister_id = principal "{}" }})"#,
-            target.to_text()
-        ),
-    )
-}
-
-fn append_setup_payment(
-    source: Account,
-    setup_account_identifier: &str,
-    amount_e8s: u64,
-) -> Result<u64> {
-    let source_id = account_identifier_text(source.owner, source.subaccount);
-    call_raw(
-        "mock_icp_index",
-        "debug_append_transfer_from",
-        &format!(
-            r#"("{}", "{}", {}:nat64, null)"#,
-            source_id, setup_account_identifier, amount_e8s
-        ),
-    )
+        &format!("(record {{ target_canister_ids = vec {{ {principals} }} }})"),
+    )?;
+    match result {
+        RelaySetupViewResult::Ok(view) => Ok(view),
+        RelaySetupViewResult::Err(message) => bail!("Relay setup view rejected: {message}"),
+    }
 }
 
 fn local_faucet_funding_source_account() -> Result<Account> {
@@ -3664,8 +3657,10 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         || {
             reset_historian_local_replica_state()?;
             let historian = Principal::from_text(canister_id("jupiter_historian_dbg")?.trim())?;
-            let view = relay_setup_view(target)?;
-            let expected_subaccount = relay_setup_subaccount(target);
+            let view = relay_setup_view(&[target])?;
+            let expected_subaccount: [u8; 32] = hex::decode(&view.setup_key_identifier)?
+                .try_into()
+                .map_err(|_| anyhow::Error::msg("setup hash is not 32 bytes"))?;
             let expected_account = Account {
                 owner: historian,
                 subaccount: Some(expected_subaccount),
@@ -3673,14 +3668,15 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let expected_account_identifier =
                 account_identifier_text(expected_account.owner, expected_account.subaccount);
 
-            if view.target_canister_id != target
-                || view.setup_account != expected_account
-                || view.setup_account_identifier != expected_account_identifier
-                || view.existing_relay.is_some()
+            if view.canonical_target_canister_ids != vec![target]
+                || view.setup_account != Some(expected_account)
+                || view.setup_account_identifier.as_deref() != Some(&expected_account_identifier)
+                || view.target_count != 1
+                || view.state != RelaySetupState::NotFunded
             {
                 bail!("unexpected relay setup view: {view:?}");
             }
-            if view.minimum_e8s == 0 {
+            if view.nominal_minimum_e8s == 0 {
                 bail!("relay setup view should expose positive economics: {view:?}");
             }
             Ok(())
@@ -3701,28 +3697,22 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 let result: RelaySetupNotifyResult = call_raw(
                     "jupiter_historian_dbg",
                     "notify_relay_setup",
-                    &format!(r#"(principal "{}")"#, spam_target.to_text()),
+                    &format!(
+                        r#"(record {{ target_canister_ids = vec {{ principal "{}" }} }})"#,
+                        spam_target.to_text()
+                    ),
                 )?;
                 if !matches!(result, RelaySetupNotifyResult::BelowMinimum { .. }) {
                     bail!("expected BelowMinimum for zero-balance notify, got {result:?}");
                 }
-                let job: Option<()> = call_raw(
+                let jobs: Vec<RelaySetupDebugEntry> = call_raw(
                     "jupiter_historian_dbg",
-                    "debug_get_relay_setup_job",
-                    &format!(r#"(principal "{}")"#, spam_target.to_text()),
+                    "debug_list_relay_setup_entries",
+                    "()",
                 )?;
-                if job.is_some() {
+                if !jobs.is_empty() {
                     bail!("zero-balance notify persisted a setup job for {spam_target}");
                 }
-            }
-
-            let registrations: ListRelayRegistrationsResponse = call_raw(
-                "jupiter_historian_dbg",
-                "list_relay_registrations",
-                "(record { start_after = null; limit = opt (100 : nat32) })",
-            )?;
-            if !registrations.items.is_empty() {
-                bail!("zero-balance notify created relay registrations: {registrations:?}");
             }
             let transfers: Vec<TransferRecord> =
                 call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
@@ -3740,168 +3730,36 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
     run_scenario(
         outcomes,
-        label("icp", "historian", "notify below minimum auto-refunds"),
-        || {
-            reset_historian_local_replica_state()?;
-            let view = relay_setup_view(target)?;
-            let amount = view.minimum_e8s.saturating_sub(1);
-            let source = Account {
-                owner: short_test_principal(),
-                subaccount: Some([11; 32]),
-            };
-            let _: () = call_raw(
-                "mock_icrc_ledger",
-                "debug_credit",
-                &format!(
-                    "({}, {}:nat64)",
-                    account_to_candid(&view.setup_account),
-                    amount
-                ),
-            )?;
-            append_setup_payment(source, &view.setup_account_identifier, amount)?;
-
-            let result: RelaySetupNotifyResult = call_raw(
-                "jupiter_historian_dbg",
-                "notify_relay_setup",
-                &format!(r#"(principal "{}")"#, target.to_text()),
-            )?;
-            if !matches!(result, RelaySetupNotifyResult::Refunded { .. }) {
-                bail!("expected Refunded notify result, got {result:?}");
-            }
-
-            let registrations: ListRelayRegistrationsResponse = call_raw(
-                "jupiter_historian_dbg",
-                "list_relay_registrations",
-                "(record { start_after = null; limit = opt (100 : nat32) })",
-            )?;
-            if registrations
-                .items
-                .iter()
-                .any(|registration| registration.target_canister_id == target)
-            {
-                bail!("below-minimum notify should not register a relay: {registrations:?}");
-            }
-            Ok(())
-        },
-    );
-
-    run_scenario(
-        outcomes,
         label(
             "icp",
             "historian",
-            "target not observable exposes refund to source",
+            "notify below minimum leaves aggregate deposit",
         ),
         || {
             reset_historian_local_replica_state()?;
-            let view = relay_setup_view(target)?;
-            let amount = view.minimum_e8s;
-            let source = Account {
-                owner: short_test_principal(),
-                subaccount: Some([12; 32]),
-            };
-            let source_id = account_identifier_text(source.owner, source.subaccount);
+            let view = relay_setup_view(&[target])?;
+            let amount = view.nominal_minimum_e8s.saturating_sub(1);
+            let setup_account = view.setup_account.context("expected setup account")?;
             let _: () = call_raw(
                 "mock_icrc_ledger",
                 "debug_credit",
-                &format!(
-                    "({}, {}:nat64)",
-                    account_to_candid(&view.setup_account),
-                    amount
-                ),
+                &format!("({}, {}:nat64)", account_to_candid(&setup_account), amount),
             )?;
-            append_setup_payment(source, &view.setup_account_identifier, amount)?;
-
             let result: RelaySetupNotifyResult = call_raw(
                 "jupiter_historian_dbg",
                 "notify_relay_setup",
-                &format!(r#"(principal "{}")"#, target.to_text()),
-            )?;
-            if !matches!(result, RelaySetupNotifyResult::Refunded { .. }) {
-                bail!("expected Refunded notify result, got {result:?}");
-            }
-            let legacy: Vec<LegacyTransferRecord> =
-                call_raw_noargs("mock_icrc_ledger", "debug_legacy_transfers")?;
-            if legacy.len() != 1
-                || legacy[0].to_account_identifier_hex != source_id
-                || legacy[0].from != view.setup_account
-                || legacy[0].amount.e8s == 0
-            {
-                bail!("unexpected legacy refund transfers: {legacy:?}");
-            }
-            Ok(())
-        },
-    );
-
-    run_scenario(
-        outcomes,
-        label(
-            "icp",
-            "historian",
-            "existing relay setup balance sweeps to relay subaccount one",
-        ),
-        || {
-            reset_historian_local_replica_state()?;
-            let view = relay_setup_view(target)?;
-            let relay = Principal::from_text(canister_id("mock_blackhole")?.trim())?;
-            let amount = view.minimum_e8s;
-            let _: () = call_raw(
-                "jupiter_historian_dbg",
-                "debug_insert_relay_registry_entry",
                 &format!(
-                    r#"(record {{
-                        relay_canister_id = principal "{}";
-                        target_canister_id = principal "{}";
-                        kind = variant {{ SelfService }};
-                        status = variant {{ Active }};
-                        setup_account = null;
-                        setup_account_identifier = null;
-                        setup_amount_e8s = null;
-                        setup_tx_ids = vec {{}};
-                        final_controllers = null;
-                        log_visibility_public = null;
-                        created_at_ts = null;
-                        activated_at_ts = null;
-                    }})"#,
-                    relay.to_text(),
+                    r#"(record {{ target_canister_ids = vec {{ principal "{}" }} }})"#,
                     target.to_text()
                 ),
             )?;
-            let _: () = call_raw(
-                "mock_icrc_ledger",
-                "debug_credit",
-                &format!(
-                    "({}, {}:nat64)",
-                    account_to_candid(&view.setup_account),
-                    amount
-                ),
-            )?;
-
-            let result: RelaySetupNotifyResult = call_raw(
-                "jupiter_historian_dbg",
-                "notify_relay_setup",
-                &format!(r#"(principal "{}")"#, target.to_text()),
-            )?;
-            let swept_amount = match result {
-                RelaySetupNotifyResult::SweptToExistingRelay { amount_e8s, .. } => amount_e8s,
-                other => bail!("expected sweep result for existing relay, got {other:?}"),
-            };
-            let transfers: Vec<TransferRecord> =
-                call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
-            let transfer = transfers
-                .last()
-                .context("expected setup sweep ledger transfer")?;
-            let mut relay_subaccount_one = [0u8; 32];
-            relay_subaccount_one[31] = 1;
-            if transfer.from != view.setup_account
-                || transfer.to
-                    != (Account {
-                        owner: relay,
-                        subaccount: Some(relay_subaccount_one),
-                    })
-                || nat_to_u64(&transfer.amount) != swept_amount
-            {
-                bail!("unexpected sweep transfer: {transfer:?}");
+            if !matches!(result, RelaySetupNotifyResult::BelowMinimum { .. }) {
+                bail!("expected BelowMinimum notify result, got {result:?}");
+            }
+            let jobs: Vec<RelaySetupDebugEntry> =
+                call_raw_noargs("jupiter_historian_dbg", "debug_list_relay_setup_entries")?;
+            if !jobs.is_empty() {
+                bail!("below-minimum notify should not persist setup state: {jobs:?}");
             }
             Ok(())
         },

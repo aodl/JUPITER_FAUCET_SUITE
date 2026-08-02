@@ -73,13 +73,10 @@ type InitArgs = record {
   max_canisters_per_cycles_tick : opt nat32;
   relay_factory_enabled : opt bool;
   relay_setup_min_e8s : opt nat64;
-  relay_setup_dust_e8s : opt nat64;
-  relay_setup_refund_cooldown_seconds : opt nat64;
   relay_initial_cycles : opt nat;
   relay_cycle_safety_margin_e8s : opt nat64;
   relay_min_subaccount_one_seed_e8s : opt nat64;
   self_service_relay_interval_seconds : opt nat64;
-  self_service_relay_max_transfers_per_tick : opt nat32;
   io_surplus_neuron_id : opt nat64;
   canonical_relay_canister_id : opt principal;
   canonical_relay_targets : opt vec principal;
@@ -106,13 +103,10 @@ type UpgradeArgs = record {
   faucet_canister_id : opt principal;
   relay_factory_enabled : opt bool;
   relay_setup_min_e8s : opt nat64;
-  relay_setup_dust_e8s : opt nat64;
-  relay_setup_refund_cooldown_seconds : opt nat64;
   relay_initial_cycles : opt nat;
   relay_cycle_safety_margin_e8s : opt nat64;
   relay_min_subaccount_one_seed_e8s : opt nat64;
   self_service_relay_interval_seconds : opt nat64;
-  self_service_relay_max_transfers_per_tick : opt opt nat32;
   io_surplus_neuron_id : opt nat64;
   canonical_relay_canister_id : opt opt principal;
   canonical_relay_targets : opt vec principal;
@@ -199,104 +193,58 @@ type PublicStatus = record {
   last_icp_xdr_rate_error : opt text;
   relay_factory_enabled : opt bool;
   relay_setup_min_e8s : opt nat64;
-  relay_setup_dust_e8s : opt nat64;
 };
-type RelayRegistryKind = variant { Canonical; SelfService };
-type RelayRegistration = record {
-  target_canister_id : principal;
-  relay_canister_id : principal;
-  kind : RelayRegistryKind;
-  created_at_ts : opt nat64;
+type RelayCreationPhase = variant {
+  Reserved;
+  ProbingTargets;
+  CmcTransferPrepared;
+  CmcTransferAccepted;
+  CmcNotifySucceeded;
+  CreateDispatched;
+  ChildCreated;
+  CodeInstalled;
+  RelayFundingPrepared;
+  RelayFunded;
+  HandoffAttempted;
 };
-type RelaySetupPublicStatus = variant {
+type RelaySetupState = variant {
   NotFunded;
-  BelowMinimum;
-  PaymentNotAllowed;
-  IndexNotReady;
-  Pending;
-  CreatingRelay;
-  Active;
-  SweepingToExistingRelay;
-  Refunding;
-  Refunded;
-  FailedRetryable;
-  ManualRecoveryRequired;
+  InProgress : record { phase : RelayCreationPhase; relay_canister_id : opt principal };
+  Active : record { relay_canister_id : principal };
+  ManualRecoveryRequired : record {
+    phase : RelayCreationPhase;
+    relay_canister_id : opt principal;
+    message : text;
+  };
 };
-type GetRelaySetupViewArgs = record { target_canister_id : principal };
+type RelayTargetSetArgs = record { target_canister_ids : vec principal };
 type RelaySetupView = record {
-  target_canister_id : principal;
-  setup_account : Account;
-  setup_account_identifier : text;
-  minimum_e8s : nat64;
-  current_required_e8s : opt nat64;
+  canonical_target_canister_ids : vec principal;
+  setup_key_identifier : text;
+  setup_account : opt Account;
+  setup_account_identifier : opt text;
+  target_count : nat32;
+  singleton_nominal_minimum_e8s : nat64;
+  extra_target_count : nat64;
+  extra_target_unit_charge_e8s : nat64;
+  total_extra_target_charge_e8s : nat64;
   nominal_minimum_e8s : nat64;
-  payment_allowed : bool;
-  payment_blocked_reason : opt text;
-  existing_relay : opt RelayRegistration;
-  status : RelaySetupPublicStatus;
   factory_available : bool;
-  warning_text : opt text;
+  state : RelaySetupState;
 };
-type GetRelaySetupRecoveryViewArgs = record { target_canister_id : principal };
-type RelaySetupTransferKind = variant {
-  CmcConversion;
-  RelayFunding;
-  ExistingRelaySweep;
-  Refund;
-};
-type RedactedTransferRecord = record {
-  kind : RelaySetupTransferKind;
-  from_account_identifier : text;
-  to_account_identifier : text;
-  amount_e8s : nat64;
-  fee_e8s : nat64;
-  created_at_time_nanos : nat64;
-  block_index : opt nat64;
-  completed : bool;
-};
-type RelayCreateAttemptView = record {
-  target_canister_id : principal;
-  created_at_ts : nat64;
-  initial_cycles : nat;
-  create_attach_cycles : nat;
-};
-type RelaySetupRecoveryView = record {
-  target_canister_id : principal;
-  status : RelaySetupPublicStatus;
-  last_error : opt text;
-  relay_canister_id : opt principal;
-  setup_account_identifier : text;
-  setup_amount_seen_e8s : nat64;
-  setup_amount_processed_e8s : nat64;
-  cycle_conversion_e8s : opt nat64;
-  cycles_minted : opt nat;
-  configured_relay_create_attach_cycles : nat;
-  cycle_transfer : opt RedactedTransferRecord;
-  relay_funding_transfer : opt RedactedTransferRecord;
-  existing_relay_sweep_transfer : opt RedactedTransferRecord;
-  refund_transfer_count : nat32;
-  relay_create_attempt : opt RelayCreateAttemptView;
-  created_at_ts : nat64;
-  updated_at_ts : nat64;
-};
-type ListRelayRegistrationsArgs = record {
-  start_after : opt principal;
-  limit : opt nat32;
-};
-type ListRelayRegistrationsResponse = record {
-  items : vec RelayRegistration;
-  next_start_after : opt principal;
-};
+type RelaySetupViewResult = variant { Ok : RelaySetupView; Err : text };
 type RelaySetupNotifyResult = variant {
-  BelowMinimum : record { minimum_e8s : nat64; current_balance_e8s : nat64 };
-  InsufficientForCurrentRate : record { required_e8s : nat64; current_balance_e8s : nat64 };
-  Pending : record { status : RelaySetupPublicStatus };
-  Active : record { relay : RelayRegistration };
-  SweptToExistingRelay : record { relay : RelayRegistration; amount_e8s : nat64; block_index : nat64 };
-  SweepBelowDust : record { relay : RelayRegistration; current_balance_e8s : nat64 };
-  Refunded : record { blocks : vec nat64 };
-  RefundPending : record { reason : text };
-  Failed : record { status : RelaySetupPublicStatus; message : text };
+  BelowMinimum : record { balance_e8s : nat64; required_e8s : nat64; shortfall_e8s : nat64 };
+  BelowCurrentRequirement : record { balance_e8s : nat64; required_e8s : nat64; shortfall_e8s : nat64 };
+  Busy;
+  InProgress : record { phase : RelayCreationPhase; relay_canister_id : opt principal };
+  Active : record { relay_canister_id : principal };
+  FailedPreSpend : record { message : text };
+  ManualRecoveryRequired : record {
+    phase : RelayCreationPhase;
+    relay_canister_id : opt principal;
+    message : text;
+  };
 };
 type ListMemoRegisteredCanisterSummariesArgs = record {
   page : opt nat32;
@@ -360,10 +308,8 @@ service : (InitArgs) -> {
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
-  get_relay_setup_view : (GetRelaySetupViewArgs) -> (RelaySetupView) query;
-  get_relay_setup_recovery_view : (GetRelaySetupRecoveryViewArgs) -> (RelaySetupRecoveryView) query;
-  list_relay_registrations : (ListRelayRegistrationsArgs) -> (ListRelayRegistrationsResponse) query;
-  notify_relay_setup : (principal) -> (RelaySetupNotifyResult);
+  get_relay_setup_view : (RelayTargetSetArgs) -> (RelaySetupViewResult) query;
+  notify_relay_setup : (RelayTargetSetArgs) -> (RelaySetupNotifyResult);
   find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;
   list_memo_registered_canister_summaries : (ListMemoRegisteredCanisterSummariesArgs) -> (ListMemoRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;
