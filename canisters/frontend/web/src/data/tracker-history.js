@@ -270,13 +270,13 @@ async function loadRawIncomingTransfers({ historian, status = null, agent, index
   });
 }
 
-async function loadRelayInstances(historian) {
+export async function loadRelayInstances(historian) {
   if (typeof historian?.list_canisters !== 'function') return { items: [] };
   try {
     const items = [];
     let startAfter = [];
-    let previousCursor = '';
-    while (true) {
+    const seenCursors = new Set();
+    for (let pageIndex = 0; pageIndex < 50; pageIndex += 1) {
       const page = await historian.list_canisters({
         start_after: startAfter,
         limit: [100],
@@ -286,8 +286,8 @@ async function loadRelayInstances(historian) {
       const next = readOptional(page?.next_start_after);
       if (!next) break;
       const nextText = principalToText(next);
-      if (!nextText || nextText === previousCursor) break;
-      previousCursor = nextText;
+      if (!nextText || seenCursors.has(nextText)) break;
+      seenCursors.add(nextText);
       startAfter = [next];
     }
     return { items };

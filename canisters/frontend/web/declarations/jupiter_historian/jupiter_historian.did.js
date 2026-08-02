@@ -202,9 +202,7 @@ export const idlFactory = ({ IDL }) => {
     }),
   });
   const RelaySetupView = IDL.Record({
-    'indicative_rate_timestamp_seconds' : IDL.Opt(IDL.Nat64),
     'setup_key_identifier' : IDL.Text,
-    'indicative_current_requirement_e8s' : IDL.Opt(IDL.Nat64),
     'canonical_target_canister_ids' : IDL.Vec(IDL.Principal),
     'state' : RelaySetupState,
     'nominal_minimum_e8s' : IDL.Nat64,

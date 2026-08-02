@@ -26,8 +26,10 @@ import {
   RECENT_ROUTE_TRANSFER_LIMIT,
 } from '../src/dashboard-data.js';
 import { classifyTransferItem, defaultCanisterAccountIdentifier, relayInstanceSourceMap } from '../src/data/transfer-source-classification.js';
+import { loadRelayInstances } from '../src/data/tracker-history.js';
 
 const FetchCanisterLogsArgs = IDL.Record({ canister_id: IDL.Principal });
+const RELAY_TEST_ID = 'br5f7-7uaaa-aaaaa-qaaca-cai';
 const CanisterLogRecord = IDL.Record({
   idx: IDL.Nat64,
   timestamp_nanos: IDL.Nat64,
@@ -1051,6 +1053,60 @@ test('loadTrackerData pages generic RelayInstance canisters for tracker classifi
   );
   assert.equal(item.source_category, 'relay');
   assert.equal(item.source_relay_canister_id, relay.toText());
+});
+
+test('Relay-instance loading uses one generic list_canisters page', async () => {
+  const calls = [];
+  const result = await loadRelayInstances({
+    async list_canisters(args) {
+      calls.push(args);
+      return { items: [{ canister_id: principal(RELAY_TEST_ID) }], next_start_after: [] };
+    },
+  });
+  assert.equal(result.items.length, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].tracking_reason_filter, [{ RelayInstance: null }]);
+});
+
+test('Relay-instance loading follows two generic list_canisters pages', async () => {
+  const cursor = principal('qaa6y-5yaaa-aaaaa-aaafa-cai');
+  let calls = 0;
+  const result = await loadRelayInstances({
+    async list_canisters(args) {
+      calls += 1;
+      return args.start_after.length === 0
+        ? { items: [{ canister_id: principal(RELAY_TEST_ID) }], next_start_after: [cursor] }
+        : { items: [{ canister_id: cursor }], next_start_after: [] };
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.items.length, 2);
+});
+
+test('Relay-instance loading stops on a repeated cursor', async () => {
+  const cursor = principal('qaa6y-5yaaa-aaaaa-aaafa-cai');
+  let calls = 0;
+  const result = await loadRelayInstances({
+    async list_canisters() {
+      calls += 1;
+      return { items: [{ canister_id: cursor }], next_start_after: [cursor] };
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.items.length, 2);
+});
+
+test('Relay-instance loading returns accumulated IDs at the 50-page cap', async () => {
+  let calls = 0;
+  const result = await loadRelayInstances({
+    async list_canisters() {
+      calls += 1;
+      const cursor = Principal.fromUint8Array(Uint8Array.of(calls));
+      return { items: [{ canister_id: cursor }], next_start_after: [cursor] };
+    },
+  });
+  assert.equal(calls, 50);
+  assert.equal(result.items.length, 50);
 });
 
 test('loadTrackerData pages recent historian histories until the timestamp cutoff is covered', async () => {

@@ -123,12 +123,10 @@ function viewState(view) {
   return variantName(view?.state);
 }
 
-function requiredBalance(view) {
-  const nominal = BigInt(view?.nominal_minimum_e8s ?? 0);
-  const indicative = readOptional(view?.indicative_current_requirement_e8s);
-  return indicative === null || indicative === undefined
-    ? nominal
-    : (BigInt(indicative) > nominal ? BigInt(indicative) : nominal);
+function requiredBalance(view, override = null) {
+  return override === null || override === undefined
+    ? BigInt(view?.nominal_minimum_e8s ?? 0)
+    : BigInt(override);
 }
 
 function relayIdFromState(state) {
@@ -156,6 +154,7 @@ export function createRelaySetupController({
     error: '',
     loading: false,
     creating: false,
+    requiredBalanceOverride: null,
   };
   let generation = 0;
   let pollHandle = null;
@@ -163,6 +162,12 @@ export function createRelaySetupController({
   function stopPolling() {
     if (pollHandle !== null) clearIntervalFn(pollHandle);
     pollHandle = null;
+  }
+
+  function shouldPoll(view = state.view) {
+    const kind = viewState(view);
+    return kind === 'InProgress'
+      || (kind === 'NotFunded' && Boolean(readOptional(view?.setup_account)));
   }
 
   function inputStillCurrent(expected, requestGeneration) {
@@ -185,6 +190,60 @@ export function createRelaySetupController({
     return ledgerActorFactory(ledgerId, { agent });
   }
 
+  function setAccountLink(linkId, value, accountIdentifier) {
+    const link = document.getElementById(linkId);
+    if (!link) return;
+    if (!accountIdentifier) {
+      if (typeof link.removeAttribute === 'function') link.removeAttribute('href');
+      else link.href = '';
+      link.title = '';
+      return;
+    }
+    link.href = `https://dashboard.internetcomputer.org/account/${encodeURIComponent(accountIdentifier)}`;
+    link.title = value || accountIdentifier;
+  }
+
+  function notifyPresentation() {
+    const kind = variantName(state.notifyResult);
+    const details = state.notifyResult?.[kind];
+    switch (kind) {
+      case 'BelowMinimum':
+        return {
+          status: 'Below minimum',
+          message: `Balance ${formatIcpE8s(details.balance_e8s)}; required ${formatIcpE8s(details.required_e8s)}; shortfall ${formatIcpE8s(details.shortfall_e8s)}.`,
+        };
+      case 'BelowCurrentRequirement':
+        return {
+          status: 'Below current requirement',
+          message: `Balance ${formatIcpE8s(details.balance_e8s)}; live required balance ${formatIcpE8s(details.required_e8s)}; shortfall ${formatIcpE8s(details.shortfall_e8s)}.`,
+        };
+      case 'Busy':
+        return {
+          status: 'Busy',
+          message: 'Relay factory is processing the maximum number of funded setups. Try again shortly.',
+        };
+      case 'InProgress':
+        return {
+          status: 'In progress',
+          message: variantName(details?.phase) || DASH,
+        };
+      case 'Active':
+        return { status: 'Active', message: '' };
+      case 'FailedPreSpend':
+        return { status: 'Failed before spend', message: details?.message || DASH };
+      case 'ManualRecoveryRequired': {
+        const phase = variantName(details?.phase);
+        const relayId = principalText(details?.relay_canister_id);
+        return {
+          status: 'Manual recovery required',
+          message: [phase, relayId ? `Relay ${relayId}` : '', details?.message || ''].filter(Boolean).join(' · '),
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
   function render() {
     const view = state.view;
     const kind = viewState(view);
@@ -194,21 +253,26 @@ export function createRelaySetupController({
     const phase = stateDetails?.phase ? variantName(stateDetails.phase) : '';
     const notifyKind = variantName(state.notifyResult);
     const notifyDetails = state.notifyResult?.[notifyKind];
-    const shortfall = notifyKind === 'BelowMinimum' || notifyKind === 'BelowCurrentRequirement'
-      ? `Balance ${formatIcpE8s(notifyDetails.balance_e8s)}; shortfall ${formatIcpE8s(notifyDetails.shortfall_e8s)}.`
-      : '';
+    const notification = notifyPresentation();
     const account = readOptional(view?.setup_account);
     const accountText = account ? icrcAccountText(account) : '';
     const identifier = readOptional(view?.setup_account_identifier) || (account ? accountIdentifierHex(account) : '');
-    const activeOrBlocked = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(kind);
+    const notifiedRelayId = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(notifyKind)
+      ? principalText(notifyDetails?.relay_canister_id)
+      : '';
+    const displayedRelayId = relayId || notifiedRelayId;
+    const activeOrBlocked = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(kind)
+      || ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(notifyKind);
     const createButton = document.getElementById('relay-setup-create');
     const balance = state.balanceE8s === null ? 0n : state.balanceE8s;
-    const canCreate = Boolean(view && account && !activeOrBlocked && balance >= requiredBalance(view) && !state.creating);
+    const effectiveRequirement = requiredBalance(view, state.requiredBalanceOverride);
+    const canCreate = Boolean(view && account && !activeOrBlocked && !state.error
+      && balance >= effectiveRequirement && !state.creating);
 
     setHidden('relay-setup-result', Boolean(view || state.error || state.loading));
     setHidden('relay-setup-summary', !view && !state.error && !state.loading);
-    setText('relay-setup-status', state.error || (state.loading ? 'Checking target set…' : (state.creating ? 'Creating Relay…' : kind || DASH)));
-    setText('relay-setup-status-label', recoveryMessage || shortfall || phase || DASH);
+    setText('relay-setup-status', state.error || (state.loading ? 'Checking target set…' : (state.creating ? 'Creating Relay…' : (notification?.status || kind || DASH))));
+    setText('relay-setup-status-label', notification?.message || recoveryMessage || phase || DASH);
     setText('relay-setup-factory', view?.factory_available ? 'Available' : 'Unavailable');
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
     setText('relay-setup-canonical-targets', view ? view.canonical_target_canister_ids.map(principalText).join('\n') : DASH);
@@ -217,16 +281,17 @@ export function createRelaySetupController({
     setText('relay-setup-extra-unit', view ? formatIcpE8s(view.extra_target_unit_charge_e8s) : DASH);
     setText('relay-setup-extra-total', view ? formatIcpE8s(view.total_extra_target_charge_e8s) : DASH);
     setText('relay-setup-minimum', view ? formatIcpE8s(view.nominal_minimum_e8s) : DASH);
-    setText('relay-setup-indicative', view && readOptional(view.indicative_current_requirement_e8s) !== null
-      ? formatIcpE8s(readOptional(view.indicative_current_requirement_e8s)) : DASH);
+    setText('relay-setup-requirement', view ? formatIcpE8s(effectiveRequirement) : DASH);
     setText('relay-setup-balance', state.balanceE8s === null ? DASH : formatIcpE8s(state.balanceE8s));
     setText('relay-setup-icrc-account', accountText || DASH);
     setText('relay-setup-account-identifier', identifier || DASH);
+    setAccountLink('relay-setup-icrc-account-link', accountText, identifier);
+    setAccountLink('relay-setup-account-identifier-link', identifier, identifier);
     setHidden('relay-setup-payment-details', !account || activeOrBlocked);
     setHidden('relay-setup-create-panel', !account || activeOrBlocked);
     if (createButton) createButton.disabled = !canCreate;
-    setHtml('relay-setup-existing-relay', relayId ? `<p>Relay: ${renderCanisterTrackerLink(relayId)}</p>` : '');
-    setHidden('relay-setup-existing-relay', !relayId);
+    setHtml('relay-setup-existing-relay', displayedRelayId ? `<p>Relay: ${renderCanisterTrackerLink(displayedRelayId)}</p>` : '');
+    setHidden('relay-setup-existing-relay', !displayedRelayId);
   }
 
   async function refresh({ expectedInput = state.inputText, requestGeneration = generation } = {}) {
@@ -244,21 +309,29 @@ export function createRelaySetupController({
     }
     state.view = view;
     state.balanceE8s = balance;
+    state.error = '';
     state.loading = false;
+    const kind = viewState(view);
+    if (kind === 'Active' || kind === 'ManualRecoveryRequired') {
+      state.requiredBalanceOverride = null;
+    }
     render();
-    if (viewState(view) !== 'InProgress') stopPolling();
+    if (shouldPoll(view)) {
+      if (pollHandle === null) startPolling();
+    } else {
+      stopPolling();
+    }
   }
 
   function startPolling() {
     stopPolling();
-    if (viewState(state.view) !== 'InProgress') return;
+    if (!shouldPoll()) return;
     const expectedInput = state.inputText;
     const requestGeneration = generation;
     pollHandle = setIntervalFn(() => {
       void refresh({ expectedInput, requestGeneration }).catch((error) => {
         if (!inputStillCurrent(expectedInput, requestGeneration)) return;
         state.error = normalizeError(error);
-        stopPolling();
         render();
       });
     }, pollIntervalMs);
@@ -273,14 +346,15 @@ export function createRelaySetupController({
     state.inputText = inputText;
     state.view = null;
     state.balanceE8s = null;
+    state.creating = false;
     state.notifyResult = null;
+    state.requiredBalanceOverride = null;
     state.error = '';
     state.loading = true;
     try {
       state.targets = parseRelayTargetSet(inputText);
       render();
       await refresh({ expectedInput: inputText, requestGeneration });
-      startPolling();
     } catch (error) {
       if (!inputStillCurrent(inputText, requestGeneration)) return;
       state.targets = [];
@@ -295,6 +369,11 @@ export function createRelaySetupController({
     if (!state.targets.length || state.creating) return;
     const expectedInput = state.inputText;
     const requestGeneration = generation;
+    if (state.requiredBalanceOverride !== null
+      && state.balanceE8s !== null
+      && state.balanceE8s >= state.requiredBalanceOverride) {
+      state.requiredBalanceOverride = null;
+    }
     state.creating = true;
     state.notifyResult = null;
     render();
@@ -304,8 +383,15 @@ export function createRelaySetupController({
       if (!inputStillCurrent(expectedInput, requestGeneration)) return;
       state.notifyResult = result;
       state.creating = false;
+      const notifyKind = variantName(result);
+      if (notifyKind === 'BelowMinimum' || notifyKind === 'BelowCurrentRequirement') {
+        state.requiredBalanceOverride = BigInt(result[notifyKind].required_e8s);
+      } else if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') {
+        state.requiredBalanceOverride = null;
+      }
       await refresh({ expectedInput, requestGeneration });
-      startPolling();
+      if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+      if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') stopPolling();
     } catch (error) {
       if (!inputStillCurrent(expectedInput, requestGeneration)) return;
       state.creating = false;
@@ -325,6 +411,24 @@ export function createRelaySetupController({
   }
 
   function bindPane() {
+    const input = document.getElementById('relay-setup-target-input');
+    if (input && input.dataset.bound !== 'true') {
+      input.dataset.bound = 'true';
+      input.addEventListener('input', () => {
+        if (String(input.value || '').trim() === state.inputText) return;
+        generation += 1;
+        stopPolling();
+        state.targets = [];
+        state.view = null;
+        state.balanceE8s = null;
+        state.notifyResult = null;
+        state.requiredBalanceOverride = null;
+        state.error = '';
+        state.loading = false;
+        state.creating = false;
+        render();
+      });
+    }
     const form = document.getElementById('relay-setup-form');
     if (form && form.dataset.bound !== 'true') {
       form.dataset.bound = 'true';
@@ -342,5 +446,5 @@ export function createRelaySetupController({
     bindCopy('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
   }
 
-  return { state, bindPane, submitTarget, createRelay, refresh, stopPolling, render };
+  return { state, bindPane, submitTarget, createRelay, refresh, stopPolling, teardown: stopPolling, render };
 }
