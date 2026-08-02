@@ -198,8 +198,6 @@ pub struct RelaySetupView {
     pub extra_target_unit_charge_e8s: u64,
     pub total_extra_target_charge_e8s: u64,
     pub nominal_minimum_e8s: u64,
-    pub indicative_current_requirement_e8s: Option<u64>,
-    pub indicative_rate_timestamp_seconds: Option<u64>,
     pub factory_available: bool,
     pub state: RelaySetupState,
 }

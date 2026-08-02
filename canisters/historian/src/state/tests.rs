@@ -35,6 +35,13 @@ mod tests {
         Principal::from_slice(bytes)
     }
 
+    #[test]
+    fn relay_setup_memory_header_is_the_one_time_cutover_marker() {
+        assert!(!relay_setup_entries_memory_initialized());
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
+        assert!(relay_setup_entries_memory_initialized());
+    }
+
     fn sample_config() -> Config {
         Config {
             staking_account: Account {
@@ -353,6 +360,35 @@ mod tests {
         let config = sample_config();
         validate_retired_relay_factory_state(&config);
 
+        with_retired_relay_registry_map(|map| {
+            for target in &config.canonical_relay_targets {
+                map.insert(
+                    PrincipalKey::from(*target),
+                    RetiredRelayRegistryEntry {
+                        relay_canister_id: config.canonical_relay_canister_id.unwrap(),
+                        target_canister_id: *target,
+                        kind: RetiredRelayRegistryKind::Canonical,
+                        status: RetiredRelayRegistryStatus::Active,
+                        setup_account: None,
+                        setup_account_identifier: None,
+                        setup_amount_e8s: None,
+                        setup_tx_ids: Vec::new(),
+                        final_controllers: None,
+                        log_visibility_public: None,
+                        created_at_ts: None,
+                        activated_at_ts: None,
+                    },
+                );
+            }
+        });
+        validate_retired_relay_factory_state(&config);
+    }
+
+    #[test]
+    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
+    fn prelaunch_relay_cutover_rejects_partial_canonical_projection() {
+        reset_test_storage();
+        let config = sample_config();
         let target = config.canonical_relay_targets[0];
         with_retired_relay_registry_map(|map| {
             map.insert(

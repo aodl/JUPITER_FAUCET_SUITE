@@ -817,18 +817,22 @@ pub(crate) fn post_upgrade_with_timestamp(args: Option<UpgradeArgs>, now_secs: u
 }
 
 pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs>, _now_secs: u64) {
+    let first_relay_setup_cutover = !state::relay_setup_entries_memory_initialized();
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    state::validate_retired_relay_factory_state(&st.config);
+    if first_relay_setup_cutover {
+        state::validate_retired_relay_factory_state(&st.config);
+    }
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories
     // are restored lazily from stable entry/index maps, so rewriting all durable
     // sections here would clobber those bulk histories with an intentionally sparse
     // heap view. Retired Relay memories are validated above and never rewritten.
     state::set_state_after_upgrade(st, &registry_principals);
+    crate::relay_setup::reconcile_interrupted_creating_entries_after_upgrade();
 }
 
 fn log_lifecycle(event: &str) {

@@ -890,7 +890,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         Principal::anonymous(),
         "get_relay_setup_view",
         RelayTargetSetArgs {
-            target_canister_ids: targets,
+            target_canister_ids: targets.clone(),
         },
     )?;
     let RelaySetupViewResult::Ok(after_upgrade) = after_upgrade else {
@@ -917,6 +917,42 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         counts_after.relay_instance_canister_count,
         counts_after_setup.relay_instance_canister_count
     );
+    let relay_instances_after_upgrade: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayInstance),
+        },
+    )?;
+    assert!(relay_instances_after_upgrade
+        .items
+        .iter()
+        .any(|item| item.canister_id == singleton_relay));
+    assert!(relay_instances_after_upgrade
+        .items
+        .iter()
+        .any(|item| item.canister_id == multi_relay));
+    let relay_targets_after_upgrade: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayTarget),
+        },
+    )?;
+    for target in targets {
+        assert!(relay_targets_after_upgrade
+            .items
+            .iter()
+            .any(|item| item.canister_id == target));
+    }
     Ok(())
 }
 

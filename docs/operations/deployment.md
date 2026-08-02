@@ -78,7 +78,7 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-First deploy a maintenance frontend that disables new setup, then disable the Relay factory. Verify the retired setup-job memory is empty, the retired registry contains no self-service row, and memory 25 contains no `Creating` entry. Stopping `jupiter_historian` is the executable self-service factory pause for this deployment. It also drains calls while operators create/download the snapshot and perform the in-place upgrade.
+First deploy a maintenance frontend that disables new setup, then disable the Relay factory. For the first cutover, verify the retired setup-job memory is empty and the retired registry is empty or exactly the configured canonical Relay projection. Verify memory 25 contains no `Creating` entry. Stopping `jupiter_historian` is the executable self-service factory pause for this deployment. It also drains calls while operators create/download the snapshot and perform the in-place upgrade.
 
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
 
@@ -130,7 +130,22 @@ After upgrade, verify:
 
 Deploy the frontend only after backend verification is complete.
 
-For the pre-launch cutover, deploy the final frontend after the Historian checks, perform one singleton setup and one overlapping multi-target setup, then verify both active hash mappings, tracking reasons, child module hashes, running status, and Fiduciary-only controllers. Self-service children are blackholed and are never upgraded or reconstructed by Historian.
+The pre-launch cutover sequence is:
+
+1. Deploy the maintenance frontend.
+2. Disable the Relay factory.
+3. Snapshot Historian.
+4. Prove no retired self-service state exists.
+5. Prove no setup entry is `Creating`.
+6. Upgrade Historian in place; do not reinstall it.
+7. Verify active mappings and independent tracking reasons.
+8. Deploy the final frontend.
+9. Test one singleton setup.
+10. Test one overlapping multi-target setup.
+11. Verify each child module hash, running status, and Fiduciary-only controller set.
+12. Re-enable the factory.
+
+Self-service children are blackholed and are never upgraded or reconstructed by Historian.
 
 ## Production canister IDs
 

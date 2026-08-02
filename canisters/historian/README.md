@@ -143,7 +143,7 @@ Production methods:
   - recent valid and invalid commitment feed used by the frontend
   - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and a generic placeholder memo label rather than the original attacker-provided text
 - `get_relay_setup_view`
-  - canonicalizes a submitted 1–20 target vector and returns exact-set state, target-count pricing, an optional cached-rate requirement, and a deterministic setup account only for a new available set
+  - canonicalizes a submitted 1–20 target vector and returns exact-set state, nominal target-count pricing, and a deterministic setup account only for a new available set
 - `notify_relay_setup`
   - explicitly starts a sufficiently funded exact-set setup using only the submitted target vector
 
@@ -155,9 +155,11 @@ Self-service setup accepts 1–20 external target canisters. Historian validates
 
 Memory ID 25 is the only definitive self-service setup map. Its active state is only `target-set hash -> Relay principal`; no target vector or target-to-Relay registry is durable. Targets and Relay instances remain visible independently through generic tracking reasons and `list_canisters` filtering. A blackholed child is immutable, is never upgraded through Historian, and is never queried to reconstruct target configuration.
 
-The deterministic setup subaccount is the 32-byte target-set hash. Funding uses only the aggregate ICP ledger `icrc1_balance_of` result, with no index/history scan and no payer attribution. The nominal singleton minimum gains 0.25 ICP per additional target, while notification recomputes the greater live rate-sensitive requirement including exactly two ledger fees. Deposits are not automatically refundable, and unexpected post-activation deposits require operator recovery.
+The deterministic setup subaccount is the 32-byte target-set hash. Funding uses only the aggregate ICP ledger `icrc1_balance_of` result, with no index/history scan and no payer attribution. Notification computes `max(singleton nominal minimum, conversion + safety margin + configured seed + two ledger fees) + 0.25 ICP × extra targets`, so the extra-target charge applies in every rate regime. The CMC receives conversion ICP only; the reread setup-account remainder funds Relay subaccount one, including the safety margin and extra-target charge. Deposits are not automatically refundable or swept.
 
 Creation is an explicit user action. A narrow same-key reservation prevents duplicate execution, all targets are probed before spend, transfer records are persisted before dispatch with fixed timestamps, and create dispatch is fail-closed. Final activation requires small pre- and post-handoff audits around the Fiduciary controller transition. See [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md) for the state and operational procedure.
+
+On Historian upgrade, interrupted `Reserved` and `ProbingTargets` entries are removed. Every later `Creating` phase becomes terminal manual recovery with `HistorianUpgradeInterrupted`; active mappings and existing manual-recovery entries are preserved without calling any child.
 
 ### Default paging / limit behavior
 

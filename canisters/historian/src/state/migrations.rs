@@ -11,17 +11,26 @@ pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
         );
     });
     with_retired_relay_registry_map(|map| {
-        for row in map.iter() {
-            let entry = row.value();
-            let expected_canonical = config.canonical_relay_canister_id
-                == Some(entry.relay_canister_id)
-                && config
-                    .canonical_relay_targets
-                    .contains(&entry.target_canister_id)
-                && entry.kind == RetiredRelayRegistryKind::Canonical
-                && entry.status == RetiredRelayRegistryStatus::Active;
+        if map.is_empty() {
+            return;
+        }
+        let Some(canonical_relay_canister_id) = config.canonical_relay_canister_id else {
+            panic!("retired Relay registry contains unexpected self-service state");
+        };
+        assert_eq!(
+            map.len(),
+            config.canonical_relay_targets.len() as u64,
+            "retired Relay registry contains unexpected self-service state"
+        );
+        for target in &config.canonical_relay_targets {
+            let entry = map
+                .get(&PrincipalKey::from(*target))
+                .expect("retired Relay registry contains unexpected self-service state");
             assert!(
-                expected_canonical,
+                entry.relay_canister_id == canonical_relay_canister_id
+                    && entry.target_canister_id == *target
+                    && entry.kind == RetiredRelayRegistryKind::Canonical
+                    && entry.status == RetiredRelayRegistryStatus::Active,
                 "retired Relay registry contains unexpected self-service state"
             );
         }

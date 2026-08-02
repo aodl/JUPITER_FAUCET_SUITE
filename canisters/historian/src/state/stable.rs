@@ -1,4 +1,5 @@
 use super::*;
+use ic_stable_structures::Memory as _;
 pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
 
 // Historian stable memory IDs:
@@ -70,6 +71,10 @@ pub(crate) const DIRTY_ALL: u8 = DIRTY_ROOT
     | DIRTY_CYCLES
     | DIRTY_RAW_ICP_COMMITMENTS
     | DIRTY_NEURON_COMMITMENTS;
+
+pub(crate) fn relay_setup_entries_memory_initialized() -> bool {
+    MEMORY_MANAGER.with(|manager| manager.borrow().get(MemoryId::new(25)).size() > 0)
+}
 
 pub(super) fn with_root_stable_cell<R>(
     f: impl FnOnce(&mut StableCell<VersionedStableState, Memory>) -> R,

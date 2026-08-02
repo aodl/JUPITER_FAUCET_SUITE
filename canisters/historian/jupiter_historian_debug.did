@@ -202,8 +202,6 @@ type RelaySetupView = record {
   extra_target_unit_charge_e8s : nat64;
   total_extra_target_charge_e8s : nat64;
   nominal_minimum_e8s : nat64;
-  indicative_current_requirement_e8s : opt nat64;
-  indicative_rate_timestamp_seconds : opt nat64;
   factory_available : bool;
   state : RelaySetupState;
 };

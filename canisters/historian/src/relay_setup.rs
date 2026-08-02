@@ -30,8 +30,8 @@ pub(crate) const RELAY_SUBACCOUNT_ONE: [u8; 32] = {
 };
 
 const TOP_UP_CANISTER_MEMO: u64 = 1_347_768_404;
-const INDICATIVE_ICP_LEDGER_FEE_E8S: u64 = 10_000;
 const MAX_DIAGNOSTIC_BYTES: usize = 1_024;
+pub(crate) const MAX_RELAY_SETUP_ENTRY_BYTES: u32 = 4_096;
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayCreationPhase {
@@ -101,7 +101,10 @@ impl Storable for RelaySetupEntry {
         candid::decode_one(bytes.as_ref()).expect("failed to decode relay setup entry")
     }
 
-    const BOUND: Bound = Bound::Unbounded;
+    const BOUND: Bound = Bound::Bounded {
+        max_size: MAX_RELAY_SETUP_ENTRY_BYTES,
+        is_fixed_size: false,
+    };
 }
 
 #[derive(Clone, Copy, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -272,6 +275,37 @@ fn remove_entry(key: RelaySetupKey) {
     });
 }
 
+pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
+    state::with_relay_setup_entries_map(|map| {
+        let entries = map
+            .iter()
+            .map(|entry| entry.into_pair())
+            .collect::<Vec<_>>();
+        for (key, entry) in entries {
+            let RelaySetupEntry::Creating(mut progress) = entry else {
+                continue;
+            };
+            match progress.phase {
+                RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets => {
+                    map.remove(&key);
+                }
+                RelayCreationPhase::CmcTransferPrepared
+                | RelayCreationPhase::CmcTransferAccepted
+                | RelayCreationPhase::CmcNotifySucceeded
+                | RelayCreationPhase::CreateDispatched
+                | RelayCreationPhase::ChildCreated
+                | RelayCreationPhase::CodeInstalled
+                | RelayCreationPhase::RelayFundingPrepared
+                | RelayCreationPhase::RelayFunded
+                | RelayCreationPhase::HandoffAttempted => {
+                    progress.last_error = Some("HistorianUpgradeInterrupted".to_string());
+                    map.insert(key, RelaySetupEntry::ManualRecoveryRequired(progress));
+                }
+            }
+        }
+    });
+}
+
 fn notify_for_entry(entry: RelaySetupEntry) -> RelaySetupNotifyResult {
     match entry {
         RelaySetupEntry::Creating(progress) => RelaySetupNotifyResult::InProgress {
@@ -339,14 +373,18 @@ fn manual_recovery(
     }
 }
 
-fn nominal_minimum_e8s(config: &Config, target_count: usize) -> Result<u64, String> {
+fn extra_target_charge_e8s(target_count: usize) -> Result<u64, String> {
     let extra_target_count = target_count
         .checked_sub(1)
         .ok_or_else(|| "target count must be positive".to_string())?;
-    let extra = u64::try_from(extra_target_count)
+    u64::try_from(extra_target_count)
         .ok()
         .and_then(|count| count.checked_mul(EXTRA_TARGET_CHARGE_E8S))
-        .ok_or_else(|| "target-count pricing overflow".to_string())?;
+        .ok_or_else(|| "target-count pricing overflow".to_string())
+}
+
+fn nominal_minimum_e8s(config: &Config, target_count: usize) -> Result<u64, String> {
+    let extra = extra_target_charge_e8s(target_count)?;
     config
         .relay_setup_min_e8s
         .checked_add(extra)
@@ -363,14 +401,12 @@ fn ceil_div(numerator: u128, denominator: u128) -> Option<u128> {
 }
 
 fn cmc_conversion_e8s(config: &Config, rate: &IcpXdrConversionRate) -> Result<u64, String> {
-    let base = ceil_div(
+    ceil_div(
         config.relay_initial_cycles,
         u128::from(rate.xdr_permyriad_per_icp),
     )
     .and_then(|value| u64::try_from(value).ok())
-    .ok_or_else(|| "CMC returned an invalid ICP/XDR conversion rate".to_string())?;
-    base.checked_add(config.relay_cycle_safety_margin_e8s)
-        .ok_or_else(|| "CMC conversion amount overflow".to_string())
+    .ok_or_else(|| "CMC returned an invalid ICP/XDR conversion rate".to_string())
 }
 
 fn current_requirement_e8s(
@@ -379,25 +415,18 @@ fn current_requirement_e8s(
     fee_e8s: u64,
     rate: &IcpXdrConversionRate,
 ) -> Result<u64, String> {
-    let nominal = nominal_minimum_e8s(config, target_count)?;
+    let extra = extra_target_charge_e8s(target_count)?;
+    let nominal_singleton = config.relay_setup_min_e8s;
     let conversion = cmc_conversion_e8s(config, rate)?;
-    let live = conversion
-        .checked_add(config.relay_min_subaccount_one_seed_e8s)
+    let live_singleton = conversion
+        .checked_add(config.relay_cycle_safety_margin_e8s)
+        .and_then(|value| value.checked_add(config.relay_min_subaccount_one_seed_e8s))
         .and_then(|value| value.checked_add(fee_e8s.checked_mul(2)?))
         .ok_or_else(|| "live relay setup requirement overflow".to_string())?;
-    Ok(nominal.max(live))
-}
-
-fn cached_cmc_rate(snapshot: &IcpXdrRateSnapshot) -> Option<IcpXdrConversionRate> {
-    let scale = 10u128.checked_pow(snapshot.decimals)?;
-    let permyriad = u128::from(snapshot.rate)
-        .checked_mul(10_000)?
-        .checked_div(scale)?;
-    let xdr_permyriad_per_icp = u64::try_from(permyriad).ok()?;
-    (xdr_permyriad_per_icp > 0).then_some(IcpXdrConversionRate {
-        timestamp_seconds: snapshot.timestamp,
-        xdr_permyriad_per_icp,
-    })
+    nominal_singleton
+        .max(live_singleton)
+        .checked_add(extra)
+        .ok_or_else(|| "relay setup requirement overflow".to_string())
 }
 
 fn canonical_relay_match(
@@ -492,25 +521,21 @@ fn setup_view_for_historian(
             .as_ref()
             .map(crate::clients::index::account_identifier_text_for_account);
         let target_count = targets.len();
-        let extra_target_count = u64::try_from(target_count.saturating_sub(1)).unwrap_or(0);
-        let total_extra_target_charge_e8s =
-            extra_target_count.saturating_mul(EXTRA_TARGET_CHARGE_E8S);
+        let extra_target_count = match target_count
+            .checked_sub(1)
+            .and_then(|count| u64::try_from(count).ok())
+        {
+            Some(value) => value,
+            None => return RelaySetupViewResult::Err("target-count pricing overflow".to_string()),
+        };
+        let total_extra_target_charge_e8s = match extra_target_charge_e8s(target_count) {
+            Ok(value) => value,
+            Err(message) => return RelaySetupViewResult::Err(message),
+        };
         let nominal_minimum_e8s = match nominal_minimum_e8s(&state.config, target_count) {
             Ok(value) => value,
             Err(message) => return RelaySetupViewResult::Err(message),
         };
-        let indicative = state.icp_xdr_rate.as_ref().and_then(|snapshot| {
-            cached_cmc_rate(snapshot).and_then(|rate| {
-                current_requirement_e8s(
-                    &state.config,
-                    target_count,
-                    INDICATIVE_ICP_LEDGER_FEE_E8S,
-                    &rate,
-                )
-                .ok()
-                .map(|requirement| (requirement, rate.timestamp_seconds))
-            })
-        });
         RelaySetupViewResult::Ok(RelaySetupView {
             canonical_target_canister_ids: targets.targets().to_vec(),
             setup_key_identifier: key.identifier(),
@@ -522,8 +547,6 @@ fn setup_view_for_historian(
             extra_target_unit_charge_e8s: EXTRA_TARGET_CHARGE_E8S,
             total_extra_target_charge_e8s,
             nominal_minimum_e8s,
-            indicative_current_requirement_e8s: indicative.map(|value| value.0),
-            indicative_rate_timestamp_seconds: indicative.map(|value| value.1),
             factory_available,
             state: setup_state,
         })
@@ -1218,11 +1241,15 @@ pub(crate) fn clear_setup_entries_for_debug() {
 mod tests {
     use super::*;
     use candid::Nat;
+    use futures::channel::oneshot;
     use futures::executor::block_on;
-    use jupiter_ic_clients::sns::{ListDeployedSnsesResponse, ListSnsCanistersResponse};
+    use jupiter_ic_clients::sns::{
+        DeployedSns, ListDeployedSnsesResponse, ListSnsCanistersResponse,
+    };
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::task::Poll;
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
@@ -1275,6 +1302,28 @@ mod tests {
     fn reset() {
         clear_setup_entries_for_debug();
         state::set_state(State::new(config(), 0));
+    }
+
+    fn progress_for_phase(phase: RelayCreationPhase) -> RelayCreationProgress {
+        RelayCreationProgress {
+            phase,
+            cmc_transfer: Some(RelayTransferRecord {
+                amount_e8s: u64::MAX,
+                fee_e8s: u64::MAX,
+                created_at_time_nanos: u64::MAX,
+                block_index: Some(u64::MAX),
+            }),
+            cycles_minted: Some(u128::MAX),
+            create_dispatched_at_ts: Some(u64::MAX),
+            relay_canister_id: Some(Principal::from_slice(&[7; 29])),
+            relay_funding_transfer: Some(RelayTransferRecord {
+                amount_e8s: u64::MAX,
+                fee_e8s: u64::MAX,
+                created_at_time_nanos: u64::MAX,
+                block_index: Some(u64::MAX),
+            }),
+            last_error: Some(bounded_message("é".repeat(MAX_DIAGNOSTIC_BYTES))),
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -1341,6 +1390,52 @@ mod tests {
         notify_calls: AtomicUsize,
     }
 
+    struct ReadBarrierCmc {
+        rate_calls: AtomicUsize,
+        notify_calls: AtomicUsize,
+        rate_releases: Mutex<Option<Vec<oneshot::Sender<()>>>>,
+        rate_waiters: Mutex<VecDeque<oneshot::Receiver<()>>>,
+    }
+
+    impl ReadBarrierCmc {
+        fn new() -> Self {
+            let (send_one, receive_one) = oneshot::channel();
+            let (send_two, receive_two) = oneshot::channel();
+            Self {
+                rate_calls: AtomicUsize::new(0),
+                notify_calls: AtomicUsize::new(0),
+                rate_releases: Mutex::new(Some(vec![send_one, send_two])),
+                rate_waiters: Mutex::new(VecDeque::from([receive_one, receive_two])),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CmcClient for ReadBarrierCmc {
+        async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
+            let waiter = self.rate_waiters.lock().unwrap().pop_front().unwrap();
+            if self.rate_calls.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+                for release in self.rate_releases.lock().unwrap().take().unwrap() {
+                    let _ = release.send(());
+                }
+            }
+            let _ = waiter.await;
+            Ok(IcpXdrConversionRate {
+                timestamp_seconds: 1,
+                xdr_permyriad_per_icp: 1_000_000,
+            })
+        }
+
+        async fn notify_top_up(
+            &self,
+            _canister_id: Principal,
+            _block_index: u64,
+        ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
+            self.notify_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(2_000_000_000_000)
+        }
+    }
+
     #[async_trait::async_trait]
     impl CmcClient for MockCmc {
         async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
@@ -1363,6 +1458,163 @@ mod tests {
     struct MockCyclesProbe {
         succeeds: bool,
         blackhole_calls: AtomicUsize,
+    }
+
+    struct YieldingCyclesProbe {
+        blackhole_calls: AtomicUsize,
+    }
+
+    struct MixedRouteCyclesProbe {
+        direct_target: Principal,
+        sns_swap_target: Principal,
+        sns_root: Principal,
+        expose_sns_route: bool,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[allow(async_fn_in_trait)]
+    impl CyclesProbeClient for MixedRouteCyclesProbe {
+        async fn self_cycles(&self, target: Principal) -> Option<u128> {
+            self.calls.lock().unwrap().push(format!("self:{target}"));
+            (target == self.direct_target).then_some(1_000_000)
+        }
+
+        async fn blackhole_cycles(
+            &self,
+            probe_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.lock().unwrap().push(format!(
+                "blackhole:{probe_canister_id}:{target_canister_id}"
+            ));
+            Err(jupiter_ic_clients::ClientError::Call(
+                "not blackholed".to_string(),
+            ))
+        }
+
+        async fn list_deployed_snses(
+            &self,
+        ) -> Result<ListDeployedSnsesResponse, jupiter_ic_clients::ClientError> {
+            self.calls.lock().unwrap().push("list_sns".to_string());
+            Ok(ListDeployedSnsesResponse {
+                instances: self
+                    .expose_sns_route
+                    .then_some(DeployedSns {
+                        root_canister_id: Some(self.sns_root),
+                        swap_canister_id: Some(self.sns_swap_target),
+                        ..Default::default()
+                    })
+                    .into_iter()
+                    .collect(),
+            })
+        }
+
+        async fn canister_info_controllers(
+            &self,
+            target: Principal,
+        ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("controllers:{target}"));
+            Ok(Vec::new())
+        }
+
+        async fn list_sns_canisters(
+            &self,
+            root_canister_id: Principal,
+        ) -> Result<ListSnsCanistersResponse, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("list_root:{root_canister_id}"));
+            Ok(ListSnsCanistersResponse::default())
+        }
+
+        async fn sns_root_cycles(
+            &self,
+            root_canister_id: Principal,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("sns_root:{root_canister_id}:{target_canister_id}"));
+            Ok(1_000_000)
+        }
+
+        async fn sns_swap_cycles(
+            &self,
+            swap_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("sns_swap:{swap_canister_id}"));
+            Ok(1_000_000)
+        }
+    }
+
+    #[allow(async_fn_in_trait)]
+    impl CyclesProbeClient for YieldingCyclesProbe {
+        async fn self_cycles(&self, _target: Principal) -> Option<u128> {
+            None
+        }
+
+        async fn blackhole_cycles(
+            &self,
+            _probe_canister_id: Principal,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.blackhole_calls.fetch_add(1, Ordering::SeqCst);
+            let mut yielded = false;
+            futures::future::poll_fn(|context| {
+                if yielded {
+                    Poll::Ready(())
+                } else {
+                    yielded = true;
+                    context.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(1_000_000)
+        }
+
+        async fn list_deployed_snses(
+            &self,
+        ) -> Result<ListDeployedSnsesResponse, jupiter_ic_clients::ClientError> {
+            Ok(ListDeployedSnsesResponse::default())
+        }
+
+        async fn canister_info_controllers(
+            &self,
+            _target: Principal,
+        ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_sns_canisters(
+            &self,
+            _root_canister_id: Principal,
+        ) -> Result<ListSnsCanistersResponse, jupiter_ic_clients::ClientError> {
+            Ok(ListSnsCanistersResponse::default())
+        }
+
+        async fn sns_root_cycles(
+            &self,
+            _root_canister_id: Principal,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!()
+        }
+
+        async fn sns_swap_cycles(
+            &self,
+            _swap_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!()
+        }
     }
 
     #[allow(async_fn_in_trait)]
@@ -1540,11 +1792,111 @@ mod tests {
             timestamp_seconds: 1,
             xdr_permyriad_per_icp: 1_000_000,
         };
-        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(7_000_000));
+        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(2_000_000));
         assert_eq!(
             current_requirement_e8s(&cfg, 1, 10_000, &rate),
             Ok(300_000_000)
         );
+    }
+
+    #[test]
+    fn extra_target_charge_is_additive_under_nominal_and_live_dominance() {
+        let rate = IcpXdrConversionRate {
+            timestamp_seconds: 1,
+            xdr_permyriad_per_icp: 1_000_000,
+        };
+        let nominal = config();
+        let mut live = config();
+        live.relay_setup_min_e8s = 1;
+        live.relay_initial_cycles = 400_000_000_000_000;
+
+        for cfg in [&nominal, &live] {
+            let singleton = current_requirement_e8s(cfg, 1, 10_000, &rate).unwrap();
+            assert_eq!(
+                current_requirement_e8s(cfg, 2, 10_000, &rate).unwrap() - singleton,
+                25_000_000
+            );
+            assert_eq!(
+                current_requirement_e8s(cfg, 10, 10_000, &rate).unwrap() - singleton,
+                225_000_000
+            );
+            assert_eq!(
+                current_requirement_e8s(cfg, 20, 10_000, &rate).unwrap() - singleton,
+                475_000_000
+            );
+        }
+    }
+
+    #[test]
+    fn maximum_manual_recovery_entry_fits_the_stable_bound() {
+        let progress = progress_for_phase(RelayCreationPhase::HandoffAttempted);
+        assert_eq!(
+            progress.last_error.as_ref().unwrap().len(),
+            MAX_DIAGNOSTIC_BYTES
+        );
+        let encoded = RelaySetupEntry::ManualRecoveryRequired(progress).into_bytes();
+        assert_eq!(encoded.len(), 1_338);
+        assert!(encoded.len() <= MAX_RELAY_SETUP_ENTRY_BYTES as usize);
+    }
+
+    #[test]
+    fn upgrade_reconciliation_covers_every_creation_phase_without_clients() {
+        let retryable = [
+            RelayCreationPhase::Reserved,
+            RelayCreationPhase::ProbingTargets,
+        ];
+        let manual = [
+            RelayCreationPhase::CmcTransferPrepared,
+            RelayCreationPhase::CmcTransferAccepted,
+            RelayCreationPhase::CmcNotifySucceeded,
+            RelayCreationPhase::CreateDispatched,
+            RelayCreationPhase::ChildCreated,
+            RelayCreationPhase::CodeInstalled,
+            RelayCreationPhase::RelayFundingPrepared,
+            RelayCreationPhase::RelayFunded,
+            RelayCreationPhase::HandoffAttempted,
+        ];
+
+        for (index, phase) in retryable.into_iter().enumerate() {
+            reset();
+            let key = RelaySetupKey::from_canonical_targets(&[principal(index as u8 + 1)]);
+            insert_entry(key, RelaySetupEntry::Creating(progress_for_phase(phase)));
+            reconcile_interrupted_creating_entries_after_upgrade();
+            assert_eq!(get_entry(key), None, "phase {phase:?}");
+        }
+        for (index, phase) in manual.into_iter().enumerate() {
+            reset();
+            let key = RelaySetupKey::from_canonical_targets(&[principal(index as u8 + 20)]);
+            insert_entry(key, RelaySetupEntry::Creating(progress_for_phase(phase)));
+            reconcile_interrupted_creating_entries_after_upgrade();
+            let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
+                panic!("phase {phase:?} did not enter manual recovery")
+            };
+            assert_eq!(progress.phase, phase);
+            assert_eq!(
+                progress.last_error.as_deref(),
+                Some("HistorianUpgradeInterrupted")
+            );
+        }
+
+        reset();
+        let active_key = RelaySetupKey::from_canonical_targets(&[principal(90)]);
+        let active = RelaySetupEntry::Active {
+            relay_canister_id: principal(91),
+        };
+        let active_bytes = active.to_bytes().into_owned();
+        insert_entry(active_key, active);
+        let manual_key = RelaySetupKey::from_canonical_targets(&[principal(92)]);
+        let manual_entry = RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
+            RelayCreationPhase::RelayFunded,
+        ));
+        insert_entry(manual_key, manual_entry.clone());
+        reconcile_interrupted_creating_entries_after_upgrade();
+        assert_eq!(
+            get_entry(active_key).unwrap().to_bytes().as_ref(),
+            active_bytes.as_slice()
+        );
+        assert_eq!(get_entry(manual_key), Some(manual_entry));
     }
 
     #[test]
@@ -1573,27 +1925,65 @@ mod tests {
     }
 
     #[test]
-    fn exact_set_state_is_single_flight_but_overlap_is_independent() {
+    fn exact_set_idempotency_and_overlapping_active_sets_are_independent() {
         reset();
-        let ab = RelaySetupKey::from_canonical_targets(&[principal(1), principal(2)]);
-        let bc = RelaySetupKey::from_canonical_targets(&[principal(2), principal(3)]);
+        let a = CanonicalRelayTargetSet::canonicalize(vec![principal(1)])
+            .unwrap()
+            .key();
+        let ab = CanonicalRelayTargetSet::canonicalize(vec![principal(1), principal(2)])
+            .unwrap()
+            .key();
+        let bc = CanonicalRelayTargetSet::canonicalize(vec![principal(2), principal(3)])
+            .unwrap()
+            .key();
+        let ba = CanonicalRelayTargetSet::canonicalize(vec![principal(2), principal(1)])
+            .unwrap()
+            .key();
+        assert_eq!(ab, ba);
+        assert_ne!(a, ab);
         assert!(reserve(ab).is_ok());
         assert!(matches!(
             reserve(ab),
             Err(RelaySetupNotifyResult::InProgress { .. })
         ));
         assert!(reserve(bc).is_ok());
-        let relay = principal(74);
+        let relay_a = principal(73);
+        let relay_ab = principal(74);
+        let relay_bc = principal(75);
+        insert_entry(
+            a,
+            RelaySetupEntry::Active {
+                relay_canister_id: relay_a,
+            },
+        );
         insert_entry(
             ab,
             RelaySetupEntry::Active {
-                relay_canister_id: relay,
+                relay_canister_id: relay_ab,
+            },
+        );
+        insert_entry(
+            bc,
+            RelaySetupEntry::Active {
+                relay_canister_id: relay_bc,
             },
         );
         assert_eq!(
-            notify_for_entry(get_entry(ab).unwrap()),
+            notify_for_entry(get_entry(ba).unwrap()),
             RelaySetupNotifyResult::Active {
-                relay_canister_id: relay
+                relay_canister_id: relay_ab
+            }
+        );
+        assert_eq!(
+            notify_for_entry(get_entry(a).unwrap()),
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: relay_a
+            }
+        );
+        assert_eq!(
+            notify_for_entry(get_entry(bc).unwrap()),
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: relay_bc
             }
         );
     }
@@ -1736,6 +2126,167 @@ mod tests {
     }
 
     #[test]
+    fn every_target_is_probed_before_spend_and_mixed_auto_routes_succeed() {
+        reset();
+        let direct_target = principal(1);
+        let sns_swap_target = principal(2);
+        let probe = MixedRouteCyclesProbe {
+            direct_target,
+            sns_swap_target,
+            sns_root: principal(3),
+            expose_sns_route: true,
+            calls: Mutex::new(Vec::new()),
+        };
+        let ledger = MockLedger::new(
+            [325_000_000, 322_990_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        );
+        let cmc = MockCmc {
+            notify_calls: AtomicUsize::new(0),
+        };
+        let management = MockManagement {
+            relay_id: principal(80),
+            create_error: None,
+            create_calls: AtomicUsize::new(0),
+            installs: Mutex::new(Vec::new()),
+        };
+        let result = block_on(notify_with_clients_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![sns_swap_target, direct_target],
+            },
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &MockFiduciary,
+        ));
+        assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
+        let calls = probe.calls.lock().unwrap();
+        assert_eq!(calls[0], format!("self:{direct_target}"));
+        assert_eq!(calls[1], format!("self:{sns_swap_target}"));
+        let list_position = calls.iter().position(|call| call == "list_sns").unwrap();
+        let swap_position = calls
+            .iter()
+            .position(|call| call == &format!("sns_swap:{sns_swap_target}"))
+            .unwrap();
+        assert!(calls[2..list_position]
+            .iter()
+            .all(|call| call.starts_with("blackhole:")));
+        assert!(list_position < swap_position);
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn one_unobservable_target_prevents_all_irreversible_operations() {
+        reset();
+        let direct_target = principal(1);
+        let unobservable_target = principal(2);
+        let probe = MixedRouteCyclesProbe {
+            direct_target,
+            sns_swap_target: unobservable_target,
+            sns_root: principal(3),
+            expose_sns_route: false,
+            calls: Mutex::new(Vec::new()),
+        };
+        let ledger = MockLedger::new([325_000_000], []);
+        let cmc = MockCmc {
+            notify_calls: AtomicUsize::new(0),
+        };
+        let management = MockManagement {
+            relay_id: principal(80),
+            create_error: None,
+            create_calls: AtomicUsize::new(0),
+            installs: Mutex::new(Vec::new()),
+        };
+        let result = block_on(notify_with_clients_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![direct_target, unobservable_target],
+            },
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &MockFiduciary,
+        ));
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::FailedPreSpend { .. }
+        ));
+        assert_eq!(
+            probe
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| call.starts_with("self:"))
+                .count(),
+            2
+        );
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn same_key_async_notify_contention_has_one_workflow_and_one_in_progress_result() {
+        reset();
+        let args = RelayTargetSetArgs {
+            target_canister_ids: vec![principal(1)],
+        };
+        let ledger = MockLedger::new(
+            [300_000_000, 300_000_000, 297_990_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        );
+        let probe = YieldingCyclesProbe {
+            blackhole_calls: AtomicUsize::new(0),
+        };
+        let cmc = ReadBarrierCmc::new();
+        let management = MockManagement {
+            relay_id: principal(80),
+            create_error: None,
+            create_calls: AtomicUsize::new(0),
+            installs: Mutex::new(Vec::new()),
+        };
+        let fiduciary = MockFiduciary;
+
+        let first = notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        );
+        let second = notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        );
+        let (first, second) = block_on(futures::future::join(first, second));
+        assert!(matches!(
+            (&first, &second),
+            (
+                RelaySetupNotifyResult::Active { .. },
+                RelaySetupNotifyResult::InProgress { .. }
+            ) | (
+                RelaySetupNotifyResult::InProgress { .. },
+                RelaySetupNotifyResult::Active { .. }
+            )
+        ));
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn ambiguous_transfer_and_dispatched_create_are_never_replayed() {
         reset();
         let args = RelayTargetSetArgs {
@@ -1825,7 +2376,7 @@ mod tests {
         };
         let (ledger, probe, cmc, management, fiduciary) = mocks(
             MockLedger::new(
-                [775_000_000, 767_990_000],
+                [775_000_000, 772_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
             ),
             true,
@@ -1849,8 +2400,15 @@ mod tests {
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 20);
         let transfers = ledger.transfers.lock().unwrap();
         assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].amount, Nat::from(2_000_000u64));
         assert_eq!(transfers[1].to, relay_subaccount_one(principal(80)));
-        assert_eq!(transfers[1].amount, Nat::from(767_980_000u64));
+        assert_eq!(transfers[1].amount, Nat::from(772_980_000u64));
+        assert!(
+            transfers[1].amount
+                >= config().relay_cycle_safety_margin_e8s
+                    + config().relay_min_subaccount_one_seed_e8s
+                    + 19 * EXTRA_TARGET_CHARGE_E8S
+        );
         drop(transfers);
 
         #[derive(CandidType, Deserialize)]
