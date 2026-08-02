@@ -541,16 +541,16 @@ fn setup_view_for_historian(
             Ok(value) => value,
             Err(message) => return RelaySetupViewResult::Err(message),
         };
-        if canonical_relay.is_none() {
+        let existing_entry = canonical_relay
+            .map(|relay_canister_id| RelaySetupEntry::Active { relay_canister_id })
+            .or_else(|| get_entry(key));
+        if existing_entry.is_none() {
             if let Err(message) = targets.validate_for_new_setup(&state.config, historian) {
                 return RelaySetupViewResult::Err(message);
             }
         }
-        let entry = canonical_relay
-            .map(|relay_canister_id| RelaySetupEntry::Active { relay_canister_id })
-            .or_else(|| get_entry(key));
-        let setup_state = setup_state(entry.clone());
-        let active_or_blocked = entry.is_some();
+        let setup_state = setup_state(existing_entry.clone());
+        let active_or_blocked = existing_entry.is_some();
         let factory_available = factory_blocked_reason(&state.config).is_none();
         let expose_account = !active_or_blocked && factory_available;
         let setup_account = expose_account.then(|| setup_account_for(historian, key));
@@ -759,11 +759,11 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
         Ok(None) => {}
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
     }
-    if let Err(message) = targets.validate_for_new_setup(&config, historian) {
-        return RelaySetupNotifyResult::FailedPreSpend { message };
-    }
     if let Some(entry) = get_entry(key) {
         return notify_for_entry(entry);
+    }
+    if let Err(message) = targets.validate_for_new_setup(&config, historian) {
+        return RelaySetupNotifyResult::FailedPreSpend { message };
     }
     if let Some(message) = factory_blocked_reason(&config) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
@@ -1380,12 +1380,15 @@ mod tests {
     #[derive(Clone, Copy)]
     enum LedgerOutcome {
         Accepted(u64),
+        Duplicate(u64),
+        Rejected,
         Ambiguous,
     }
 
     struct MockLedger {
         balances: Mutex<VecDeque<u64>>,
         fees: Mutex<VecDeque<u64>>,
+        fee_failures: Mutex<VecDeque<bool>>,
         outcomes: Mutex<VecDeque<LedgerOutcome>>,
         balance_calls: AtomicUsize,
         fee_calls: AtomicUsize,
@@ -1400,6 +1403,7 @@ mod tests {
             Self {
                 balances: Mutex::new(balances.into_iter().collect()),
                 fees: Mutex::new(VecDeque::new()),
+                fee_failures: Mutex::new(VecDeque::new()),
                 outcomes: Mutex::new(outcomes.into_iter().collect()),
                 balance_calls: AtomicUsize::new(0),
                 fee_calls: AtomicUsize::new(0),
@@ -1411,12 +1415,26 @@ mod tests {
             self.fees = Mutex::new(fees.into_iter().collect());
             self
         }
+
+        fn with_fee_failures(mut self, failures: impl IntoIterator<Item = bool>) -> Self {
+            self.fee_failures = Mutex::new(failures.into_iter().collect());
+            self
+        }
     }
 
     #[async_trait::async_trait]
     impl LedgerClient for MockLedger {
         async fn fee_e8s(&self) -> Result<u64, ClientError> {
             self.fee_calls.fetch_add(1, Ordering::SeqCst);
+            if self
+                .fee_failures
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(false)
+            {
+                return Err(ClientError::Call("ledger fee read failed".to_string()));
+            }
             Ok(self.fees.lock().unwrap().pop_front().unwrap_or(10_000))
         }
 
@@ -1436,6 +1454,10 @@ mod tests {
             self.transfers.lock().unwrap().push(arg);
             match self.outcomes.lock().unwrap().pop_front() {
                 Some(LedgerOutcome::Accepted(block)) => Ok(Ok(Nat::from(block))),
+                Some(LedgerOutcome::Duplicate(block)) => Ok(Err(TransferError::Duplicate {
+                    duplicate_of: Nat::from(block),
+                })),
+                Some(LedgerOutcome::Rejected) => Ok(Err(TransferError::TemporarilyUnavailable)),
                 Some(LedgerOutcome::Ambiguous) => {
                     Err(ClientError::Call("ambiguous ledger transport".to_string()))
                 }
@@ -1445,7 +1467,11 @@ mod tests {
     }
 
     struct MockCmc {
+        rate_calls: AtomicUsize,
         notify_calls: AtomicUsize,
+        rate_error: Option<String>,
+        notify_error: Option<String>,
+        minted_cycles: u128,
     }
 
     struct ReadBarrierCmc {
@@ -1497,6 +1523,10 @@ mod tests {
     #[async_trait::async_trait]
     impl CmcClient for MockCmc {
         async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
+            self.rate_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(error) = &self.rate_error {
+                return Err(ClientError::Call(error.clone()));
+            }
             Ok(IcpXdrConversionRate {
                 timestamp_seconds: 1,
                 xdr_permyriad_per_icp: 1_000_000,
@@ -1509,7 +1539,13 @@ mod tests {
             _block_index: u64,
         ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
             self.notify_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(2_000_000_000_000)
+            if let Some(error) = &self.notify_error {
+                Err(jupiter_ic_clients::cmc::NotifyTopUpError::Transport(
+                    error.clone(),
+                ))
+            } else {
+                Ok(self.minted_cycles)
+            }
         }
     }
 
@@ -1735,8 +1771,13 @@ mod tests {
     struct MockManagement {
         relay_id: Principal,
         create_error: Option<String>,
+        install_error: Option<String>,
+        update_error: Option<String>,
         create_calls: AtomicUsize,
+        status_calls: AtomicUsize,
+        update_calls: AtomicUsize,
         installs: Mutex<Vec<jupiter_ic_clients::management::InstallCodeArgs>>,
+        status_results: Mutex<VecDeque<Result<AuditedCanisterStatus, String>>>,
     }
 
     #[async_trait::async_trait]
@@ -1761,13 +1802,17 @@ mod tests {
             args: &jupiter_ic_clients::management::InstallCodeArgs,
         ) -> Result<(), String> {
             self.installs.lock().unwrap().push(args.clone());
-            Ok(())
+            self.install_error.clone().map_or(Ok(()), Err)
         }
 
         async fn canister_status(
             &self,
             _canister_id: Principal,
         ) -> Result<AuditedCanisterStatus, String> {
+            self.status_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(result) = self.status_results.lock().unwrap().pop_front() {
+                return result;
+            }
             Ok(AuditedCanisterStatus {
                 status: AuditedCanisterStatusKind::Running,
                 module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
@@ -1782,11 +1827,27 @@ mod tests {
             &self,
             _args: &jupiter_ic_clients::management::UpdateSettingsArgs,
         ) -> Result<(), String> {
-            Ok(())
+            self.update_calls.fetch_add(1, Ordering::SeqCst);
+            self.update_error.clone().map_or(Ok(()), Err)
         }
     }
 
-    struct MockFiduciary;
+    struct MockFiduciary {
+        calls: AtomicUsize,
+        result:
+            Mutex<Option<Result<crate::clients::blackhole::BlackholeCanisterStatus, ClientError>>>,
+        clear_cycles_minted_on_call: bool,
+    }
+
+    impl MockFiduciary {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                result: Mutex::new(None),
+                clear_cycles_minted_on_call: false,
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl BlackholeClient for MockFiduciary {
@@ -1794,6 +1855,22 @@ mod tests {
             &self,
             _canister_id: Principal,
         ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.clear_cycles_minted_on_call {
+                state::with_relay_setup_entries_map(|map| {
+                    let Some(entry) = map.iter().next() else {
+                        return;
+                    };
+                    let (key, value) = entry.into_pair();
+                    if let RelaySetupEntry::Creating(mut progress) = value {
+                        progress.cycles_minted = None;
+                        map.insert(key, RelaySetupEntry::Creating(progress));
+                    }
+                });
+            }
+            if let Some(result) = self.result.lock().unwrap().take() {
+                return result;
+            }
             Ok(crate::clients::blackhole::BlackholeCanisterStatus {
                 status: BlackholeCanisterStatusKind::Running,
                 module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
@@ -1827,15 +1904,24 @@ mod tests {
                 blackhole_calls: AtomicUsize::new(0),
             },
             MockCmc {
+                rate_calls: AtomicUsize::new(0),
                 notify_calls: AtomicUsize::new(0),
+                rate_error: None,
+                notify_error: None,
+                minted_cycles: 2_000_000_000_000,
             },
             MockManagement {
                 relay_id: principal(80),
                 create_error: create_error.map(str::to_string),
+                install_error: None,
+                update_error: None,
                 create_calls: AtomicUsize::new(0),
+                status_calls: AtomicUsize::new(0),
+                update_calls: AtomicUsize::new(0),
                 installs: Mutex::new(Vec::new()),
+                status_results: Mutex::new(VecDeque::new()),
             },
-            MockFiduciary,
+            MockFiduciary::new(),
         )
     }
 
@@ -2174,6 +2260,211 @@ mod tests {
     }
 
     #[test]
+    fn active_entry_precedes_new_target_policy_for_ledger_index_and_cmc() {
+        let historian = principal(42);
+        let target = principal(1);
+        let relay = principal(73);
+
+        for protected_field in ["ledger", "index", "cmc"] {
+            reset();
+            let key = RelaySetupKey::from_canonical_targets(&[target]);
+            insert_entry(
+                key,
+                RelaySetupEntry::Active {
+                    relay_canister_id: relay,
+                },
+            );
+            state::with_state_mut_sections(state::DIRTY_ROOT, |state| match protected_field {
+                "ledger" => state.config.ledger_canister_id = target,
+                "index" => state.config.index_canister_id = target,
+                "cmc" => state.config.cmc_canister_id = Some(target),
+                _ => unreachable!(),
+            });
+
+            let view = setup_view_for_historian(
+                RelayTargetSetArgs {
+                    target_canister_ids: vec![target],
+                },
+                historian,
+            );
+            assert!(matches!(
+                view,
+                RelaySetupViewResult::Ok(RelaySetupView {
+                    state: RelaySetupState::Active { relay_canister_id },
+                    ..
+                }) if relay_canister_id == relay
+            ));
+
+            let (ledger, probe, cmc, management, fiduciary) =
+                mocks(MockLedger::new([], []), false, Some("must not create"));
+            let notify = block_on(notify_with_clients_for_historian(
+                RelayTargetSetArgs {
+                    target_canister_ids: vec![target],
+                },
+                historian,
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+                &fiduciary,
+            ));
+            assert_eq!(
+                notify,
+                RelaySetupNotifyResult::Active {
+                    relay_canister_id: relay,
+                }
+            );
+            assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+            assert!(ledger.transfers.lock().unwrap().is_empty());
+            assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+            assert!(management.installs.lock().unwrap().is_empty());
+            assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn manual_recovery_entry_precedes_new_target_policy_without_mutation_or_calls() {
+        reset();
+        let historian = principal(42);
+        let target = principal(1);
+        let key = RelaySetupKey::from_canonical_targets(&[target]);
+        let mut progress = progress_for_phase(RelayCreationPhase::CodeInstalled);
+        progress.relay_canister_id = Some(principal(73));
+        progress.last_error = Some("stored manual recovery detail".to_string());
+        let entry = RelaySetupEntry::ManualRecoveryRequired(progress.clone());
+        let original_bytes = entry.to_bytes().into_owned();
+        insert_entry(key, entry);
+        state::with_state_mut_sections(state::DIRTY_ROOT, |state| {
+            state.config.faucet_canister_id = Some(target);
+            state.config.relay_factory_enabled = false;
+        });
+
+        let view = setup_view_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![target],
+            },
+            historian,
+        );
+        assert!(matches!(
+            view,
+            RelaySetupViewResult::Ok(RelaySetupView {
+                state: RelaySetupState::ManualRecoveryRequired {
+                    phase: RelayCreationPhase::CodeInstalled,
+                    relay_canister_id: Some(relay_canister_id),
+                    message,
+                },
+                ..
+            }) if relay_canister_id == principal(73) && message == "stored manual recovery detail"
+        ));
+
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([], []), false, Some("must not create"));
+        let notify = block_on(notify_with_clients_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![target],
+            },
+            historian,
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert_eq!(
+            notify,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CodeInstalled,
+                relay_canister_id: Some(principal(73)),
+                message: "stored manual recovery detail".to_string(),
+            }
+        );
+        assert_eq!(
+            get_entry(key).unwrap().to_bytes().as_ref(),
+            original_bytes.as_slice()
+        );
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
+        assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn creating_entry_precedes_new_target_policy_without_external_work() {
+        reset();
+        let historian = principal(42);
+        let target = principal(1);
+        let key = RelaySetupKey::from_canonical_targets(&[target]);
+        let mut progress = progress_for_phase(RelayCreationPhase::CmcTransferAccepted);
+        progress.relay_canister_id = None;
+        insert_entry(key, RelaySetupEntry::Creating(progress));
+        state::with_state_mut_sections(state::DIRTY_ROOT, |state| {
+            state.config.cmc_canister_id = Some(target);
+        });
+
+        let view = setup_view_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![target],
+            },
+            historian,
+        );
+        assert!(matches!(
+            view,
+            RelaySetupViewResult::Ok(RelaySetupView {
+                state: RelaySetupState::InProgress {
+                    phase: RelayCreationPhase::CmcTransferAccepted,
+                    relay_canister_id: None,
+                },
+                ..
+            })
+        ));
+
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([], []), false, Some("must not create"));
+        let notify = block_on(notify_with_clients_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![target],
+            },
+            historian,
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert_eq!(
+            notify,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                relay_canister_id: None,
+            }
+        );
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
+        assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn static_and_underfunded_calls_make_only_the_permitted_external_reads() {
         reset();
         let (ledger, probe, cmc, management, fiduciary) =
@@ -2242,6 +2533,106 @@ mod tests {
     }
 
     #[test]
+    fn pre_spend_read_and_live_requirement_failures_leave_no_durable_or_external_work() {
+        let args = RelayTargetSetArgs {
+            target_canister_ids: vec![principal(1)],
+        };
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([], []), true, None);
+        let balance_failure = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            balance_failure,
+            RelaySetupNotifyResult::FailedPreSpend { .. }
+        ));
+        assert!(debug_setup_entries().is_empty());
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+
+        reset();
+        let ledger = MockLedger::new([300_000_000], []).with_fee_failures([true]);
+        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let fee_failure = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            fee_failure,
+            RelaySetupNotifyResult::FailedPreSpend { .. }
+        ));
+        assert!(debug_setup_entries().is_empty());
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+
+        reset();
+        let (ledger, probe, mut cmc, management, fiduciary) =
+            mocks(MockLedger::new([300_000_000], []), true, None);
+        cmc.rate_error = Some("CMC rate unavailable".to_string());
+        let rate_failure = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            rate_failure,
+            RelaySetupNotifyResult::FailedPreSpend { .. }
+        ));
+        assert!(debug_setup_entries().is_empty());
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+
+        clear_setup_entries_for_debug();
+        let mut cfg = config();
+        cfg.relay_setup_min_e8s = 1;
+        state::set_state(State::new(cfg, 0));
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([107_039_999], []), true, None);
+        let below_current = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert_eq!(
+            below_current,
+            RelaySetupNotifyResult::BelowCurrentRequirement {
+                balance_e8s: 107_039_999,
+                required_e8s: 107_040_000,
+                shortfall_e8s: 1,
+            }
+        );
+        assert!(debug_setup_entries().is_empty());
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn failed_probe_removes_reservation_before_any_spend() {
         reset();
         let (ledger, probe, cmc, management, fiduciary) =
@@ -2284,14 +2675,24 @@ mod tests {
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
         let cmc = MockCmc {
+            rate_calls: AtomicUsize::new(0),
             notify_calls: AtomicUsize::new(0),
+            rate_error: None,
+            notify_error: None,
+            minted_cycles: 2_000_000_000_000,
         };
         let management = MockManagement {
             relay_id: principal(80),
             create_error: None,
+            install_error: None,
+            update_error: None,
             create_calls: AtomicUsize::new(0),
+            status_calls: AtomicUsize::new(0),
+            update_calls: AtomicUsize::new(0),
             installs: Mutex::new(Vec::new()),
+            status_results: Mutex::new(VecDeque::new()),
         };
+        let fiduciary = MockFiduciary::new();
         let result = block_on(notify_with_clients_for_historian(
             RelayTargetSetArgs {
                 target_canister_ids: vec![sns_swap_target, direct_target],
@@ -2301,7 +2702,7 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &MockFiduciary,
+            &fiduciary,
         ));
         assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
         let calls = probe.calls.lock().unwrap();
@@ -2333,14 +2734,24 @@ mod tests {
         };
         let ledger = MockLedger::new([325_000_000], []);
         let cmc = MockCmc {
+            rate_calls: AtomicUsize::new(0),
             notify_calls: AtomicUsize::new(0),
+            rate_error: None,
+            notify_error: None,
+            minted_cycles: 2_000_000_000_000,
         };
         let management = MockManagement {
             relay_id: principal(80),
             create_error: None,
+            install_error: None,
+            update_error: None,
             create_calls: AtomicUsize::new(0),
+            status_calls: AtomicUsize::new(0),
+            update_calls: AtomicUsize::new(0),
             installs: Mutex::new(Vec::new()),
+            status_results: Mutex::new(VecDeque::new()),
         };
+        let fiduciary = MockFiduciary::new();
         let result = block_on(notify_with_clients_for_historian(
             RelayTargetSetArgs {
                 target_canister_ids: vec![direct_target, unobservable_target],
@@ -2350,7 +2761,7 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &MockFiduciary,
+            &fiduciary,
         ));
         assert!(matches!(
             result,
@@ -2388,10 +2799,15 @@ mod tests {
         let management = MockManagement {
             relay_id: principal(80),
             create_error: None,
+            install_error: None,
+            update_error: None,
             create_calls: AtomicUsize::new(0),
+            status_calls: AtomicUsize::new(0),
+            update_calls: AtomicUsize::new(0),
             installs: Mutex::new(Vec::new()),
+            status_results: Mutex::new(VecDeque::new()),
         };
-        let fiduciary = MockFiduciary;
+        let fiduciary = MockFiduciary::new();
 
         let first = notify_with_clients_for_historian(
             args.clone(),
@@ -2426,6 +2842,129 @@ mod tests {
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 1);
         assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cmc_transfer_and_notification_boundaries_are_journaled_without_replay() {
+        let args = RelayTargetSetArgs {
+            target_canister_ids: vec![principal(1)],
+        };
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Duplicate(10), LedgerOutcome::Accepted(11)],
+            ),
+            true,
+            None,
+        );
+        let duplicate = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert_eq!(
+            duplicate,
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: principal(80),
+            }
+        );
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Rejected]),
+            true,
+            None,
+        );
+        let rejected = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            rejected,
+            RelaySetupNotifyResult::FailedPreSpend { .. }
+        ));
+        assert!(debug_setup_entries().is_empty());
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+
+        reset();
+        let (ledger, probe, mut cmc, management, fiduciary) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        cmc.notify_error = Some("CMC notification transport failed".to_string());
+        let notify_error = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            notify_error,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                ..
+            }
+        ));
+        let repeated = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            repeated,
+            RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+
+        reset();
+        let (ledger, probe, mut cmc, management, fiduciary) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        cmc.minted_cycles = config().relay_initial_cycles - 1;
+        let insufficient_cycles = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            insufficient_cycles,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                ..
+            }
+        ));
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -2507,6 +3046,256 @@ mod tests {
             RelaySetupNotifyResult::ManualRecoveryRequired { .. }
         ));
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn install_failure_reconciliation_accepts_only_the_approved_live_hash() {
+        let args = RelayTargetSetArgs {
+            target_canister_ids: vec![principal(1)],
+        };
+        let approved_status = || AuditedCanisterStatus {
+            status: AuditedCanisterStatusKind::Running,
+            module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
+            settings: AuditedCanisterSettings {
+                controllers: vec![principal(42)],
+                log_visibility: jupiter_ic_clients::management::LogVisibility::Public,
+            },
+        };
+
+        reset();
+        let (ledger, probe, cmc, mut management, fiduciary) = mocks(
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+            ),
+            true,
+            None,
+        );
+        management.install_error = Some("install callback reported failure".to_string());
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(approved_status()));
+        let reconciled = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert_eq!(
+            reconciled,
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: principal(80),
+            }
+        );
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 2);
+
+        reset();
+        let (ledger, probe, cmc, mut management, fiduciary) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        management.install_error = Some("install failed".to_string());
+        let mut wrong_hash = approved_status();
+        wrong_hash.module_hash = Some(vec![0; 32]);
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(wrong_hash));
+        let wrong_hash_result = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            wrong_hash_result,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::ChildCreated,
+                relay_canister_id: Some(relay_canister_id),
+                ..
+            } if relay_canister_id == principal(80)
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+
+        reset();
+        let (ledger, probe, cmc, mut management, fiduciary) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        management.install_error = Some("install failed".to_string());
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Err("status lookup failed".to_string()));
+        let status_error_result = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            status_error_result,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::ChildCreated,
+                relay_canister_id: Some(relay_canister_id),
+                ..
+            } if relay_canister_id == principal(80)
+        ));
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn relay_funding_read_transfer_and_replay_boundaries_are_fail_closed() {
+        let args = RelayTargetSetArgs {
+            target_canister_ids: vec![principal(1)],
+        };
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        let balance_failure = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            balance_failure,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CodeInstalled,
+                ..
+            }
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+
+        reset();
+        let ledger = MockLedger::new([300_000_000, 297_990_000], [LedgerOutcome::Accepted(10)])
+            .with_fee_failures([false, true]);
+        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let fee_failure = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            fee_failure,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CodeInstalled,
+                ..
+            }
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Duplicate(11)],
+            ),
+            true,
+            None,
+        );
+        let duplicate = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(duplicate, RelaySetupNotifyResult::Active { .. }));
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Rejected],
+            ),
+            true,
+            None,
+        );
+        let rejected = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            rejected,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::RelayFundingPrepared,
+                ..
+            }
+        ));
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Ambiguous],
+            ),
+            true,
+            None,
+        );
+        let ambiguous = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            ambiguous,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::RelayFundingPrepared,
+                ..
+            }
+        ));
+        let repeated = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            repeated,
+            RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
     }
 
     #[test]
@@ -2666,7 +3455,7 @@ mod tests {
     }
 
     #[test]
-    fn controller_audits_compare_sets_and_reject_extras() {
+    fn handoff_audits_cover_pre_and_post_status_hash_controller_and_log_requirements() {
         let expected_hash = approved_relay_onchain_module_hash().unwrap();
         let historian = principal(42);
         let mut status = AuditedCanisterStatus {
@@ -2678,7 +3467,154 @@ mod tests {
             },
         };
         assert!(validate_pre_handoff(&status, &expected_hash, historian).is_ok());
+        status.status = AuditedCanisterStatusKind::Stopped;
+        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        status.status = AuditedCanisterStatusKind::Running;
+        status.module_hash = Some(vec![0; 32]);
+        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        status.module_hash = Some(expected_hash.to_vec());
         status.settings.controllers = vec![historian, principal(90)];
         assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        status.settings.controllers = vec![historian];
+        status.settings.log_visibility = jupiter_ic_clients::management::LogVisibility::Controllers;
+        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+
+        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+        let mut post_status = crate::clients::blackhole::BlackholeCanisterStatus {
+            status: BlackholeCanisterStatusKind::Running,
+            module_hash: Some(expected_hash.to_vec()),
+            cycles: Nat::from(1_000_000u64),
+            settings: crate::clients::blackhole::BlackholeSettings {
+                controllers: vec![fiduciary],
+            },
+            memory_size: None,
+            memory_metrics: None,
+        };
+        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_ok());
+        post_status.status = BlackholeCanisterStatusKind::Stopped;
+        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_err());
+        post_status.status = BlackholeCanisterStatusKind::Running;
+        post_status.module_hash = Some(vec![0; 32]);
+        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_err());
+        post_status.module_hash = Some(expected_hash.to_vec());
+        post_status.settings.controllers.push(principal(90));
+        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_err());
+    }
+
+    #[test]
+    fn handoff_errors_are_reconciled_and_activation_requires_complete_progress() {
+        let args = RelayTargetSetArgs {
+            target_canister_ids: vec![principal(1)],
+        };
+        let successful_ledger = || {
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+            )
+        };
+
+        reset();
+        let (ledger, probe, cmc, mut management, fiduciary) =
+            mocks(successful_ledger(), true, None);
+        management.update_error = Some("update_settings callback failed".to_string());
+        let observed_success = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            observed_success,
+            RelaySetupNotifyResult::Active { .. }
+        ));
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 1);
+
+        reset();
+        let (ledger, probe, cmc, mut management, fiduciary) =
+            mocks(successful_ledger(), true, None);
+        management.update_error = Some("update_settings callback failed".to_string());
+        fiduciary.result.lock().unwrap().replace(Ok(
+            crate::clients::blackhole::BlackholeCanisterStatus {
+                status: BlackholeCanisterStatusKind::Running,
+                module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
+                cycles: Nat::from(1_000_000u64),
+                settings: crate::clients::blackhole::BlackholeSettings {
+                    controllers: vec![principal(90)],
+                },
+                memory_size: None,
+                memory_metrics: None,
+            },
+        ));
+        let observed_incorrect = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            observed_incorrect,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::HandoffAttempted,
+                ..
+            }
+        ));
+
+        reset();
+        let (ledger, probe, cmc, management, fiduciary) = mocks(successful_ledger(), true, None);
+        fiduciary
+            .result
+            .lock()
+            .unwrap()
+            .replace(Err(ClientError::Call(
+                "Fiduciary status unavailable".to_string(),
+            )));
+        let fiduciary_error = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            fiduciary_error,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::HandoffAttempted,
+                ..
+            }
+        ));
+
+        reset();
+        let (ledger, probe, cmc, management, mut fiduciary) =
+            mocks(successful_ledger(), true, None);
+        fiduciary.clear_cycles_minted_on_call = true;
+        let incomplete = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            incomplete,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::HandoffAttempted,
+                ..
+            }
+        ));
+        assert!(matches!(
+            get_entry(RelaySetupKey::from_canonical_targets(&[principal(1)])),
+            Some(RelaySetupEntry::ManualRecoveryRequired(_))
+        ));
     }
 }

@@ -354,6 +354,26 @@ mod tests {
         assert_eq!(decoded.activated_at_ts, Some(11));
     }
 
+    fn retired_canonical_projection_entry(
+        config: &Config,
+        target: Principal,
+    ) -> RetiredRelayRegistryEntry {
+        RetiredRelayRegistryEntry {
+            relay_canister_id: config.canonical_relay_canister_id.unwrap(),
+            target_canister_id: target,
+            kind: RetiredRelayRegistryKind::Canonical,
+            status: RetiredRelayRegistryStatus::Active,
+            setup_account: None,
+            setup_account_identifier: None,
+            setup_amount_e8s: None,
+            setup_tx_ids: Vec::new(),
+            final_controllers: None,
+            log_visibility_public: None,
+            created_at_ts: None,
+            activated_at_ts: None,
+        }
+    }
+
     #[test]
     fn prelaunch_relay_cutover_accepts_empty_or_canonical_projection_only() {
         reset_test_storage();
@@ -453,6 +473,57 @@ mod tests {
         let job = RetiredRelaySetupJob::from_bytes(Cow::Owned(bytes));
         with_retired_relay_setup_jobs_map(|map| {
             map.insert(PrincipalKey::from(target), job);
+        });
+        validate_retired_relay_factory_state(&config);
+    }
+
+    #[test]
+    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
+    fn prelaunch_relay_cutover_rejects_wrong_canonical_relay_id() {
+        reset_test_storage();
+        let config = sample_config();
+        with_retired_relay_registry_map(|map| {
+            for target in &config.canonical_relay_targets {
+                let mut entry = retired_canonical_projection_entry(&config, *target);
+                if target == &config.canonical_relay_targets[0] {
+                    entry.relay_canister_id = principal(&[90]);
+                }
+                map.insert(PrincipalKey::from(*target), entry);
+            }
+        });
+        validate_retired_relay_factory_state(&config);
+    }
+
+    #[test]
+    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
+    fn prelaunch_relay_cutover_rejects_wrong_canonical_target() {
+        reset_test_storage();
+        let config = sample_config();
+        with_retired_relay_registry_map(|map| {
+            for target in &config.canonical_relay_targets {
+                let mut entry = retired_canonical_projection_entry(&config, *target);
+                if target == &config.canonical_relay_targets[0] {
+                    entry.target_canister_id = principal(&[91]);
+                }
+                map.insert(PrincipalKey::from(*target), entry);
+            }
+        });
+        validate_retired_relay_factory_state(&config);
+    }
+
+    #[test]
+    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
+    fn prelaunch_relay_cutover_rejects_non_active_canonical_status() {
+        reset_test_storage();
+        let config = sample_config();
+        with_retired_relay_registry_map(|map| {
+            for target in &config.canonical_relay_targets {
+                let mut entry = retired_canonical_projection_entry(&config, *target);
+                if target == &config.canonical_relay_targets[0] {
+                    entry.status = RetiredRelayRegistryStatus::Pending;
+                }
+                map.insert(PrincipalKey::from(*target), entry);
+            }
         });
         validate_retired_relay_factory_state(&config);
     }
