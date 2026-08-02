@@ -98,6 +98,18 @@ pub(super) fn guard_debug_api_not_production() {
 }
 
 pub(super) fn config_from_init_args(args: InitArgs) -> Config {
+    let canonical_relay_targets_explicitly_empty = args
+        .canonical_relay_targets
+        .as_ref()
+        .is_some_and(Vec::is_empty);
+    let canonical_relay_canister_id = match args.canonical_relay_canister_id {
+        Some(relay_canister_id) => Some(relay_canister_id),
+        None if canonical_relay_targets_explicitly_empty => None,
+        None => Some(mainnet_relay_id()),
+    };
+    let canonical_relay_targets = args
+        .canonical_relay_targets
+        .unwrap_or_else(mainnet_canonical_relay_targets);
     let cfg = Config {
         staking_account: args.staking_account,
         output_source_account: args
@@ -145,13 +157,8 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
         io_surplus_neuron_id: args
             .io_surplus_neuron_id
             .unwrap_or(DEFAULT_IO_SURPLUS_NEURON_ID),
-        canonical_relay_canister_id: Some(
-            args.canonical_relay_canister_id
-                .unwrap_or_else(mainnet_relay_id),
-        ),
-        canonical_relay_targets: args
-            .canonical_relay_targets
-            .unwrap_or_else(mainnet_canonical_relay_targets),
+        canonical_relay_canister_id,
+        canonical_relay_targets,
     };
     validate_config(&cfg);
     cfg
@@ -690,7 +697,6 @@ pub(super) fn init(args: InitArgs) {
     state::init_stable_storage();
     let mut st = State::new(cfg, now_secs);
     initialize_config_defaults_if_missing(&mut st);
-    ensure_canonical_relay_tracking(&mut st);
     normalize_runtime_state(&mut st);
     state::set_state(st);
     scheduler::install_timers();

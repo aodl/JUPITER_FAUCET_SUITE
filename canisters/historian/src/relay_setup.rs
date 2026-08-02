@@ -429,6 +429,43 @@ fn current_requirement_e8s(
         .ok_or_else(|| "relay setup requirement overflow".to_string())
 }
 
+fn minimum_final_relay_funding_e8s(config: &Config, target_count: usize) -> Result<u64, String> {
+    let extra = extra_target_charge_e8s(target_count)?;
+    config
+        .relay_min_subaccount_one_seed_e8s
+        .checked_add(config.relay_cycle_safety_margin_e8s)
+        .and_then(|value| value.checked_add(extra))
+        .ok_or_else(|| "minimum final Relay funding overflow".to_string())
+}
+
+pub(crate) fn validate_canonical_relay_config(config: &Config) -> Result<(), String> {
+    match (
+        config.canonical_relay_canister_id,
+        config.canonical_relay_targets.is_empty(),
+    ) {
+        (None, true) => Ok(()),
+        (None, false) => {
+            Err("canonical Relay targets require a configured canonical Relay canister".to_string())
+        }
+        (Some(_), true) => {
+            Err("configured canonical Relay requires at least one target".to_string())
+        }
+        (Some(relay_canister_id), false) => {
+            if relay_canister_id == Principal::anonymous() {
+                return Err("canonical Relay canister must not be anonymous".to_string());
+            }
+            if relay_canister_id == Principal::management_canister() {
+                return Err(
+                    "canonical Relay canister must not be the management canister".to_string(),
+                );
+            }
+            CanonicalRelayTargetSet::canonicalize(config.canonical_relay_targets.clone())
+                .map(|_| ())
+                .map_err(|err| format!("configured canonical Relay target set is invalid: {err}"))
+        }
+    }
+}
+
 fn canonical_relay_match(
     config: &Config,
     requested_key: RelaySetupKey,
@@ -1019,13 +1056,27 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
             );
         }
     };
+    let minimum_final_relay_funding = match minimum_final_relay_funding_e8s(&config, targets.len())
+    {
+        Ok(amount) => amount,
+        Err(message) => {
+            return manual_recovery(key, RelayCreationPhase::CodeInstalled, message);
+        }
+    };
     let funding_amount = match remaining_balance.checked_sub(funding_fee) {
-        Some(amount) if amount >= config.relay_min_subaccount_one_seed_e8s => amount,
-        _ => {
+        Some(amount) if amount >= minimum_final_relay_funding => amount,
+        Some(_) => {
             return manual_recovery(
                 key,
                 RelayCreationPhase::CodeInstalled,
-                "post-conversion balance cannot fund the configured Relay subaccount-one seed",
+                "post-conversion balance is below the promised minimum Relay funding",
+            );
+        }
+        None => {
+            return manual_recovery(
+                key,
+                RelayCreationPhase::CodeInstalled,
+                "post-conversion balance cannot cover the current ledger fee",
             );
         }
     };
@@ -1334,6 +1385,7 @@ mod tests {
 
     struct MockLedger {
         balances: Mutex<VecDeque<u64>>,
+        fees: Mutex<VecDeque<u64>>,
         outcomes: Mutex<VecDeque<LedgerOutcome>>,
         balance_calls: AtomicUsize,
         fee_calls: AtomicUsize,
@@ -1347,11 +1399,17 @@ mod tests {
         ) -> Self {
             Self {
                 balances: Mutex::new(balances.into_iter().collect()),
+                fees: Mutex::new(VecDeque::new()),
                 outcomes: Mutex::new(outcomes.into_iter().collect()),
                 balance_calls: AtomicUsize::new(0),
                 fee_calls: AtomicUsize::new(0),
                 transfers: Mutex::new(Vec::new()),
             }
+        }
+
+        fn with_fees(mut self, fees: impl IntoIterator<Item = u64>) -> Self {
+            self.fees = Mutex::new(fees.into_iter().collect());
+            self
         }
     }
 
@@ -1359,7 +1417,7 @@ mod tests {
     impl LedgerClient for MockLedger {
         async fn fee_e8s(&self) -> Result<u64, ClientError> {
             self.fee_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(10_000)
+            Ok(self.fees.lock().unwrap().pop_front().unwrap_or(10_000))
         }
 
         async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
@@ -1793,10 +1851,49 @@ mod tests {
             xdr_permyriad_per_icp: 1_000_000,
         };
         assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(2_000_000));
+        assert_eq!(minimum_final_relay_funding_e8s(&cfg, 1), Ok(105_020_000));
+        assert_eq!(minimum_final_relay_funding_e8s(&cfg, 2), Ok(130_020_000));
+        assert_eq!(minimum_final_relay_funding_e8s(&cfg, 20), Ok(580_020_000));
         assert_eq!(
             current_requirement_e8s(&cfg, 1, 10_000, &rate),
             Ok(300_000_000)
         );
+    }
+
+    #[test]
+    fn canonical_relay_config_accepts_structural_sets_and_rejects_invalid_pairings() {
+        let mut cfg = config();
+        cfg.canonical_relay_canister_id = None;
+        cfg.canonical_relay_targets.clear();
+        assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
+
+        cfg.canonical_relay_canister_id = Some(principal(70));
+        cfg.canonical_relay_targets = (0..255)
+            .map(|index| Principal::from_slice(&[0x7f, (index >> 8) as u8, index as u8]))
+            .collect();
+        assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
+        validate_config(&cfg);
+        cfg.canonical_relay_targets.truncate(21);
+        assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
+        validate_config(&cfg);
+
+        cfg.canonical_relay_targets
+            .push(cfg.canonical_relay_targets[0]);
+        assert!(validate_canonical_relay_config(&cfg).is_err());
+        cfg.canonical_relay_targets = (0..256)
+            .map(|index| Principal::from_slice(&[0x7f, (index >> 8) as u8, index as u8]))
+            .collect();
+        assert!(validate_canonical_relay_config(&cfg).is_err());
+
+        cfg.canonical_relay_targets.clear();
+        assert!(validate_canonical_relay_config(&cfg).is_err());
+        cfg.canonical_relay_targets = vec![principal(1)];
+        cfg.canonical_relay_canister_id = None;
+        assert!(validate_canonical_relay_config(&cfg).is_err());
+        cfg.canonical_relay_canister_id = Some(Principal::anonymous());
+        assert!(validate_canonical_relay_config(&cfg).is_err());
+        cfg.canonical_relay_canister_id = Some(Principal::management_canister());
+        assert!(validate_canonical_relay_config(&cfg).is_err());
     }
 
     #[test]
@@ -2029,6 +2126,51 @@ mod tests {
                 relay_canister_id: principal(70)
             }
         );
+    }
+
+    #[test]
+    fn canonical_exact_set_alone_may_contain_protected_protocol_targets() {
+        clear_setup_entries_for_debug();
+        let historian = principal(42);
+        let mut cfg = config();
+        let protected = vec![
+            historian,
+            jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+            cfg.ledger_canister_id,
+            cfg.index_canister_id,
+            cfg.cmc_canister_id.unwrap(),
+        ];
+        cfg.canonical_relay_targets = protected.clone();
+        assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
+        state::set_state(State::new(cfg, 0));
+
+        let exact = setup_view_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: protected.clone(),
+            },
+            historian,
+        );
+        assert!(matches!(
+            exact,
+            RelaySetupViewResult::Ok(RelaySetupView {
+                state: RelaySetupState::Active {
+                    relay_canister_id
+                },
+                ..
+            }) if relay_canister_id == principal(70)
+        ));
+
+        for target in protected {
+            assert!(matches!(
+                setup_view_for_historian(
+                    RelayTargetSetArgs {
+                        target_canister_ids: vec![target],
+                    },
+                    historian,
+                ),
+                RelaySetupViewResult::Err(_)
+            ));
+        }
     }
 
     #[test]
@@ -2365,6 +2507,77 @@ mod tests {
             RelaySetupNotifyResult::ManualRecoveryRequired { .. }
         ));
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn rising_final_fee_requires_manual_recovery_without_relay_funding() {
+        clear_setup_entries_for_debug();
+        let mut cfg = config();
+        cfg.relay_setup_min_e8s = 1;
+        state::set_state(State::new(cfg, 0));
+        let ledger = MockLedger::new([107_040_000, 105_030_000], [LedgerOutcome::Accepted(10)])
+            .with_fees([10_000, 10_001]);
+        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let result = block_on(notify_with_clients_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![principal(1)],
+            },
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CodeInstalled,
+                relay_canister_id: Some(relay_canister_id),
+                ..
+            } if relay_canister_id == principal(80)
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        let key = RelaySetupKey::from_canonical_targets(&[principal(1)]);
+        let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
+            panic!("setup must require manual recovery")
+        };
+        assert_eq!(progress.relay_canister_id, Some(principal(80)));
+        assert_eq!(progress.relay_funding_transfer, None);
+    }
+
+    #[test]
+    fn exact_final_funding_minimum_is_accepted() {
+        clear_setup_entries_for_debug();
+        let mut cfg = config();
+        cfg.relay_setup_min_e8s = 1;
+        state::set_state(State::new(cfg, 0));
+        let ledger = MockLedger::new(
+            [107_040_000, 105_030_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        )
+        .with_fees([10_000, 10_000]);
+        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let result = block_on(notify_with_clients_for_historian(
+            RelayTargetSetArgs {
+                target_canister_ids: vec![principal(1)],
+            },
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert_eq!(
+            result,
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: principal(80),
+            }
+        );
+        let transfers = ledger.transfers.lock().unwrap();
+        assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[1].amount, Nat::from(105_020_000u64));
     }
 
     #[test]

@@ -49,6 +49,9 @@ pub(crate) fn validate_config(cfg: &Config) {
     if let Some(faucet_canister_id) = cfg.faucet_canister_id {
         assert_non_anonymous_principal("faucet_canister_id", faucet_canister_id);
     }
+    if let Err(message) = crate::relay_setup::validate_canonical_relay_config(cfg) {
+        panic!("{message}");
+    }
     assert!(
         cfg.output_source_account != cfg.output_account,
         "output_source_account and output_account must be distinct"
