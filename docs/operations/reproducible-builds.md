@@ -109,7 +109,9 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --mode upgrade
 ```
 
-Pause the self-service factory during the Historian maintenance window, verify no setup entry is `Creating`, take a canister snapshot or equivalent backup, and record pre-upgrade query results for after-upgrade comparison. Active hash-to-Relay mappings and independent target/Relay tracking reasons are preserved by the upgrade. Historian does not upgrade or reconstruct blackholed children. Deploy the frontend after backend verification.
+Deploy the maintenance frontend, then record all public query evidence while Historian is still running. The maintenance frontend prevents ordinary UI submissions but is not a security boundary. Stop Historian and wait until it is `Stopped`; this is the authoritative self-service factory pause and call drain. Create and download a snapshot, upgrade in place, start Historian, and compare the public evidence. Active mappings can be verified through known exact target sets, and independent `RelayTarget`/`RelayInstance` counts must be preserved. The production canister cannot enumerate every setup hash because `debug_api` entry listing exists only in local tests, PocketIC, and non-production debug builds.
+
+At the first cutover, memory 25 is new and has no pre-existing `Creating` entry. The one-time retired-memory gate must accept only empty retired state or the complete configured canonical Relay projection. If the upgrade or gate fails, do not proceed; restore the retained snapshot through the rehearsed rollback procedure. On later upgrades, `Reserved`/`ProbingTargets` entries are removed, later `Creating` phases become `ManualRecoveryRequired`, and existing `Active`/`ManualRecoveryRequired` entries are preserved. Retain the snapshot until controlled acceptance is complete. Historian does not upgrade or reconstruct blackholed children. Deploy the final frontend only after backend verification.
 
 Lifecycle summary:
 

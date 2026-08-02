@@ -715,19 +715,30 @@ fn activate_target_set(
         .setup_account
         .context("new target set should expose setup account")?;
     let fee = icrc1_fee(pic, ledger)?;
-    let _ = icrc1_transfer(
-        pic,
-        ledger,
-        Principal::anonymous(),
-        TransferArg {
-            from_subaccount: None,
-            to: setup_account,
-            fee: Some(Nat::from(fee)),
-            created_at_time: None,
-            memo: None,
-            amount: Nat::from(800_000_000u64),
-        },
-    )?;
+    let split_one = (view.nominal_minimum_e8s - 1) / 2;
+    let deposits = [1, split_one, view.nominal_minimum_e8s - 1 - split_one];
+    assert!(deposits
+        .iter()
+        .all(|amount| *amount < view.nominal_minimum_e8s));
+    for amount in deposits {
+        let _ = icrc1_transfer(
+            pic,
+            ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: setup_account,
+                fee: Some(Nat::from(fee)),
+                created_at_time: None,
+                memo: None,
+                amount: Nat::from(amount),
+            },
+        )?;
+    }
+    assert_eq!(
+        support::ledger::icrc1_balance(pic, ledger, &setup_account)?,
+        view.nominal_minimum_e8s
+    );
     let result: RelaySetupNotifyResult = update_one(
         pic,
         historian,
@@ -820,6 +831,30 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
     tick_n(&pic, 30);
     assert_spawned_relay_faucet_identity(&pic, index, singleton_relay)?;
     assert_spawned_relay_faucet_identity(&pic, index, multi_relay)?;
+    let multi_logs = pic
+        .fetch_canister_logs(multi_relay, Principal::anonymous())
+        .map_err(|error| anyhow!("fetch multi-target Relay logs failed: {error:?}"))?
+        .iter()
+        .map(|record| String::from_utf8_lossy(&record.content).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let canonical_targets = targets
+        .iter()
+        .map(Principal::to_text)
+        .collect::<Vec<_>>()
+        .join("|");
+    let mut effective_targets = targets.clone();
+    effective_targets.push(multi_relay);
+    effective_targets.sort();
+    effective_targets.dedup();
+    let effective_targets = effective_targets
+        .iter()
+        .map(Principal::to_text)
+        .collect::<Vec<_>>()
+        .join("|");
+    assert!(multi_logs.contains(&format!("managed_canisters={canonical_targets}")));
+    assert!(multi_logs.contains(&format!("effective_managed_canisters={effective_targets}")));
+    assert!(multi_logs.contains("max_transfers_per_tick=22"));
     for relay in [singleton_relay, multi_relay] {
         assert_eq!(pic.get_controllers(relay), vec![fiduciary]);
         let status = pic
@@ -953,6 +988,173 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
             .iter()
             .any(|item| item.canister_id == target));
     }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn active_setup_survives_target_becoming_configured_cmc_without_external_work() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let cmc = support::principals::cycles_minting_canister();
+    let governance = support::principals::nns_governance();
+    let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+    let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
+    install_status_proxy(&pic, thirteen)?;
+    create_fixed_canister(&pic, fiduciary)?;
+    pic.add_cycles(fiduciary, 5_000_000_000_000);
+    pic.install_canister(
+        fiduciary,
+        real_blackhole::real_blackhole_wasm()?,
+        vec![],
+        None,
+    );
+    set_controllers_exact(&pic, fiduciary, vec![fiduciary])?;
+    create_fixed_canister(&pic, governance)?;
+    pic.add_cycles(governance, 5_000_000_000_000);
+    pic.install_canister(governance, nns_governance_wasm()?, vec![], None);
+
+    let target = pic.create_canister();
+    pic.add_cycles(target, 5_000_000_000_000);
+    set_controllers_exact(&pic, target, vec![thirteen])?;
+    let historian = pic.create_canister();
+    pic.add_cycles(historian, 40_000_000_000_000);
+    pic.install_canister(
+        historian,
+        relay_enabled_historian_wasm()?,
+        encode_one(self_service_historian_init(ledger, index, cmc, fiduciary))?,
+        None,
+    );
+
+    let relay = activate_target_set(&pic, historian, ledger, vec![target])?;
+    let counts_before: PublicCounts = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    let relay_targets_before: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayTarget),
+        },
+    )?;
+    let relay_instances_before: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayInstance),
+        },
+    )?;
+
+    pic.upgrade_canister(
+        historian,
+        relay_enabled_historian_wasm()?,
+        encode_one(HistorianUpgradeArg {
+            enable_sns_tracking: None,
+            scan_interval_seconds: None,
+            cycles_interval_seconds: None,
+            min_tx_e8s: None,
+            max_cycles_entries_per_canister: None,
+            max_commitment_entries_per_canister: None,
+            max_index_pages_per_tick: None,
+            max_canisters_per_cycles_tick: None,
+            sns_wasm_canister_id: None,
+            xrc_canister_id: None,
+            cmc_canister_id: Some(target),
+            faucet_canister_id: None,
+        })?,
+        None,
+    )
+    .map_err(|error| anyhow!("Historian policy-change upgrade failed: {error:?}"))?;
+    tick_n(&pic, 10);
+
+    let view: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_setup_view",
+        RelayTargetSetArgs {
+            target_canister_ids: vec![target],
+        },
+    )?;
+    assert!(matches!(
+        view,
+        RelaySetupViewResult::Ok(RelaySetupView {
+            state: RelaySetupState::Active { relay_canister_id },
+            ..
+        }) if relay_canister_id == relay
+    ));
+    let notify: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_setup",
+        RelayTargetSetArgs {
+            target_canister_ids: vec![target],
+        },
+    )?;
+    assert!(matches!(
+        notify,
+        RelaySetupNotifyResult::Active { relay_canister_id } if relay_canister_id == relay
+    ));
+
+    let counts_after: PublicCounts = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_eq!(counts_after, counts_before);
+    let relay_targets_after: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayTarget),
+        },
+    )?;
+    let relay_instances_after: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayInstance),
+        },
+    )?;
+    assert_eq!(relay_targets_after.items, relay_targets_before.items);
+    assert_eq!(
+        relay_targets_after.next_start_after,
+        relay_targets_before.next_start_after
+    );
+    assert_eq!(relay_instances_after.items, relay_instances_before.items);
+    assert_eq!(
+        relay_instances_after.next_start_after,
+        relay_instances_before.next_start_after
+    );
+    assert!(relay_instances_after
+        .items
+        .iter()
+        .any(|item| item.canister_id == relay));
     Ok(())
 }
 

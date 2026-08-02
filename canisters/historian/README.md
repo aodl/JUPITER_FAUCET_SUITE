@@ -409,12 +409,15 @@ After upgrade, verify the runtime config from public logs:
 icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
 ```
 
-Before stopping the canister, record pre-upgrade query results for later comparison. Stopping `jupiter_historian` is the executable self-service factory pause for this deployment.
+Deploy a maintenance frontend that prevents ordinary UI submissions, then record all public query evidence before stopping the canister. The maintenance frontend is not a security boundary. Stopping `jupiter_historian` and waiting until it is `Stopped` is the authoritative self-service factory pause and call drain for this deployment. There is no runtime factory-disable update method.
+
+For the first cutover, memory 25 is new and has no pre-existing `Creating` entry to enumerate. The one-time retired-memory gate is authoritative: it accepts empty retired state or the complete configured canonical Relay projection. If the upgrade or gate fails, do not proceed; restore the snapshot using the rehearsed rollback procedure.
 
 Tested `icp 0.2.6` maintenance sequence:
 
 ```bash
 icp canister stop jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
 SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
 icp canister snapshot list jupiter_historian --environment ic --json
 icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
@@ -432,13 +435,15 @@ icp canister start jupiter_historian --environment ic
 icp canister status jupiter_historian --environment ic --json
 ```
 
-Before a future upgrade, disable the factory and verify no setup entry is `Creating`. Active hash-to-Relay mappings and independent tracking reasons are preserved by the in-place upgrade. Verify histories, first-seen metadata, cursors, totals, active mappings, automatic cycles probing, and `RelayTarget`/`RelayInstance` counts before re-enabling setup.
+After the first upgrade, verify public state and the new setup API, perform controlled singleton and overlapping multi-target acceptance setups, and retain the snapshot until acceptance is complete.
+
+For later upgrades, record public state and known exact target-set mappings, stop and snapshot Historian, upgrade in place, start it, then verify the known mappings and `RelayTarget`/`RelayInstance` counts before restoring normal UI access. Verify any interrupted post-spend setup is `ManualRecoveryRequired`: `Reserved`/`ProbingTargets` entries are removed, every later `Creating` phase becomes `ManualRecoveryRequired`, and existing `Active`/`ManualRecoveryRequired` entries are preserved. Production cannot enumerate every target-set hash.
 
 ## Debug interface
 
 The production canister exposes the query interface described above.
 
-Additional debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC testing only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production historian principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The debug Candid surface is committed at:
+Additional debug-only methods are gated behind the `debug_api` feature and are available only to local tests, PocketIC, and non-production debug builds. They are not a production preflight mechanism and must not be called against the production Historian. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production historian principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The debug Candid surface is committed at:
 
 - [`jupiter_historian_debug.did`](jupiter_historian_debug.did)
 

@@ -58,27 +58,40 @@ After an upgrade, interrupted `Reserved` and `ProbingTargets` entries are remove
 
 ## Manual recovery
 
-`ManualRecoveryRequired` is intentionally terminal for public automation. Controller/debug preflight exposes the setup hash, entry variant, phase, and optional Relay ID. Operators investigate the stored transfer timestamp/amount/fee/block, live ledger state, management state, and Fiduciary state through separately reviewed operational procedures. Unexpected deposits, including deposits after activation, also require operator-assisted recovery; they are not automatically swept or refunded.
+`ManualRecoveryRequired` is intentionally terminal for public automation. For a known exact target set, the production setup query exposes the phase, optional Relay ID, and bounded message. Operators investigate ledger state, management state, and Fiduciary state through separately reviewed operational procedures. Debug entry listing is available only to local tests, PocketIC, and non-production debug builds; it is not a production preflight or enumeration mechanism. Unexpected deposits, including deposits after activation, also require operator-assisted recovery; they are not automatically swept or refunded.
 
 ## Pre-launch cutover and deployment sequence
 
-No self-service setup has been used, so the upgrade performs no migration. It traps if retired setup-job memory contains a row or if retired registry memory contains anything other than the configured canonical Relay projection.
+No self-service setup has been used, so the upgrade performs no migration. Memory 25 is new at this cutover, so no pre-existing `Creating` entry exists to enumerate. The upgrade traps if retired setup-job memory contains a row or if retired registry memory contains anything other than the complete configured canonical Relay projection. This one-time retired-memory gate is authoritative for unexpected pre-launch Relay state.
 
 Mainnet install args enable `relay_factory_enabled = opt true`. Because `notify_relay_setup` is public and can consume historian cycles after sufficient funding, production monitoring must cover factory concurrency, child-creation cycle spend, and manual-recovery entries.
 
 Production rollout order:
 
-1. Deploy a maintenance frontend that disables new setup.
-2. Disable the Relay factory.
-3. Snapshot Historian.
-4. Prove no retired self-service state exists.
-5. Verify no setup entry is `Creating`.
-6. Upgrade Historian in place; do not reinstall it.
-7. Verify active mappings and independent tracking reasons.
-8. Deploy the final frontend.
-9. Perform one singleton setup.
-10. Perform one overlapping multi-target setup.
-11. Verify child module hashes, running status, and Fiduciary-only controllers.
-12. Re-enable the factory.
+1. Deploy a maintenance frontend that prevents ordinary UI submissions. It is not the factory security boundary.
+2. Record all pre-upgrade public query evidence while Historian is still running.
+3. Stop Historian and wait until its status is `Stopped`; this is the authoritative factory pause and call drain.
+4. Create and download a snapshot.
+5. Upgrade Historian in place; do not reinstall it.
+6. Start Historian.
+7. Verify public state and the new setup API.
+8. Perform one controlled singleton setup and one overlapping multi-target setup.
+9. Verify child module hashes, running status, Fiduciary-only controllers, and independent tracking counts.
+10. Retain the snapshot until acceptance is complete, then restore normal UI access.
 
-For subsequent Historian upgrades, disable the factory, verify no entry is `Creating`, drain calls, upgrade in place, verify active entries and tracking counts, then re-enable the factory.
+If the upgrade or one-time cutover gate fails, do not proceed. Restore the snapshot according to the rehearsed rollback procedure and prove the restored canister is queryable before rescheduling the cutover.
+
+For later Historian upgrades:
+
+1. Deploy the maintenance frontend.
+2. Record public state and active mappings for known exact target sets.
+3. Stop Historian and wait until its status is `Stopped`.
+4. Create and download a snapshot.
+5. Upgrade Historian in place.
+6. Start Historian.
+7. Verify active mappings through the known exact target sets; production cannot enumerate every target-set hash.
+8. Verify `RelayTarget` and `RelayInstance` counts.
+9. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
+10. Re-enable normal UI access.
+
+The post-upgrade rule remains: `Reserved`/`ProbingTargets` entries are removed; every later `Creating` phase becomes `ManualRecoveryRequired`; `Active` and existing `ManualRecoveryRequired` entries are preserved.
