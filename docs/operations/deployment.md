@@ -80,7 +80,9 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 First deploy a maintenance frontend that prevents ordinary UI submissions. The maintenance frontend is not a security boundary. Stopping `jupiter_historian` is the executable self-service factory pause and the authoritative call drain for this deployment. Record all public query evidence while Historian is still running, then stop it and wait until its status is `Stopped` before creating/downloading the snapshot and performing the in-place upgrade. There is no runtime factory-disable update method.
 
-For the first cutover, memory 25 is new, so there is no pre-existing `Creating` entry to enumerate. The upgrade's one-time retired-memory gate is authoritative: retired setup-job memory must be empty, and retired registry memory must be empty or exactly the complete configured canonical Relay projection. If the upgrade or this gate fails, do not proceed; restore the snapshot using the rehearsed rollback procedure.
+For the first cutover, memory 25 is new, so there is no pre-existing `Creating` entry to enumerate. The upgrade's one-time retired-memory gate is authoritative. Retired registry memory must be empty or exactly the complete configured canonical Relay projection. Retired setup-job memory must be empty except for the one operator-authorized abandoned pre-launch job keyed by target `2lo52-kiaaa-aaaar-qaqta-cai`; that exception is accepted only when its full reviewed stable fingerprint matches, including the completed CMC conversion at block `37414364`, the unresolved create attempt with no recorded child, the completed refund evidence, and the absence of installation, Relay funding, or controller-handoff evidence. Every other retired setup job blocks the upgrade.
+
+After all retired registry and setup invariants pass, the authorized job is removed from retired memory 24 and memory 24 is required to be logically empty. The job is not inserted into memory 25 and does not add `RelayTarget` or `RelayInstance` tracking. The old deterministic Ledger setup account and its remaining 105,140,000 e8s are intentionally abandoned: no cutover code reads, transfers, refunds, sweeps, burns, or reuses that balance. Ledger history and downloaded snapshots remain historical evidence; application-level map deletion does not erase either. If the upgrade or this gate fails, do not proceed; restore the snapshot using the rehearsed rollback procedure.
 
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
 
@@ -125,7 +127,7 @@ After upgrade, verify:
 - Module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash.
 - Controllers are unchanged.
 - Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
-- For the first cutover, the new memory-25 setup map opens empty and the new setup API accepts controlled queries.
+- For the first cutover, retired memory 24 is logically empty, the new memory-25 setup map opens empty, and the abandoned singleton target returns a fresh `NotFunded` setup view with an account different from the retired singleton account.
 - For later upgrades, known exact target sets still return their original active Relay mappings.
 - Automatic cycles probing is active.
 - `RelayTarget` and `RelayInstance` tracking reasons and counts are preserved independently.
