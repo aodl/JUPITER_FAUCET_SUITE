@@ -62,7 +62,11 @@ After an upgrade, interrupted `Reserved` and `ProbingTargets` entries are remove
 
 ## Pre-launch cutover and deployment sequence
 
-No self-service setup has been used, so the upgrade performs no migration. Memory 25 is new at this cutover, so no pre-existing `Creating` entry exists to enumerate. The upgrade traps if retired setup-job memory contains a row or if retired registry memory contains anything other than the complete configured canonical Relay projection. This one-time retired-memory gate is authoritative for unexpected pre-launch Relay state.
+Memory 25 is new at this cutover, so no pre-existing `Creating` entry exists to enumerate. The first production cutover recognizes one operator-authorized abandoned pre-launch job for target `2lo52-kiaaa-aaaar-qaqta-cai`. It is accepted only when its complete reviewed stable fingerprint matches, including the old singleton setup identity, `ManualRecoveryRequired` low-minted-cycles diagnostic, completed CMC conversion at block `37414364`, exact unresolved create attempt, completed refund metadata, timestamps and amounts, and the absence of any child, installation, Relay funding, sweep, or controller-handoff evidence.
+
+The cutover validates the complete retired registry and every other first-cutover invariant before changing memory 24. It then removes that exact job from retired memory 24, proves memory 24 is logically empty, and opens memory 25 empty. The job is not migrated as `Creating`, `Active`, or `ManualRecoveryRequired`, and it creates no target or Relay tracking reason. The old deterministic Ledger account and its remaining 105,140,000 e8s are intentionally abandoned; no new production code reads or transfers that balance. The Ledger transaction history and retained/downloaded snapshots are not erased.
+
+This is not a general legacy migration policy. Any other setup job or near-match traps, as does retired registry state other than an empty registry or the complete configured canonical Relay projection. The compatibility rule remains in the code so a snapshot restored during the rollback window can still upgrade directly from the pre-cutover Historian. It becomes inert after the successful first cutover because memory 25 is then initialized.
 
 Mainnet install args enable `relay_factory_enabled = opt true`. Because `notify_relay_setup` is public and can consume historian cycles after sufficient funding, production monitoring must cover factory concurrency, child-creation cycle spend, and manual-recovery entries.
 

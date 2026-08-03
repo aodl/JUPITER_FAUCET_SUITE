@@ -3,6 +3,11 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
+use ic_stable_structures::{
+    memory_manager::{MemoryId, MemoryManager, VirtualMemory},
+    storable::Bound,
+    StableBTreeMap, Storable, VectorMemory,
+};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
@@ -11,13 +16,18 @@ use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsResult,
 };
 use pocket_ic::PocketIc;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
 #[path = "support/mod.rs"]
 mod support;
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::path::PathBuf;
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -36,6 +46,7 @@ static SNS_WASM_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static PRE_CUTOVER_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_ENABLED_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -60,7 +71,67 @@ fn historian_wasm() -> Result<Vec<u8>> {
         Some("debug_api"),
     )
 }
+
+fn pre_cutover_historian_wasm() -> Result<Vec<u8>> {
+    const BASE_REVISION: &str = "98c871a85af91320a5dfc59b5b040727e21aa094";
+    if let Some(bytes) = PRE_CUTOVER_HISTORIAN_WASM.get() {
+        return Ok(bytes.clone());
+    }
+    if let Some(path) = std::env::var_os("JUPITER_HISTORIAN_PRE_CUTOVER_WASM") {
+        let bytes = std::fs::read(PathBuf::from(path))?;
+        let _ = PRE_CUTOVER_HISTORIAN_WASM.set(bytes.clone());
+        return Ok(bytes);
+    }
+
+    let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+    let unique = format!(
+        "jupiter-historian-pre-cutover-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    let worktree = std::env::temp_dir().join(unique);
+    let add_status = Command::new("git")
+        .args(["worktree", "add", "--detach"])
+        .arg(&worktree)
+        .arg(BASE_REVISION)
+        .current_dir(&workspace_root)
+        .status()
+        .context("create pre-cutover Historian worktree")?;
+    if !add_status.success() {
+        bail!("git worktree add failed for pre-cutover Historian");
+    }
+
+    let build_result = (|| {
+        let status = Command::new("./tools/scripts/build-canister")
+            .arg("jupiter-historian")
+            .current_dir(&worktree)
+            .status()
+            .context("build pre-cutover Historian")?;
+        if !status.success() {
+            bail!("pre-cutover Historian build failed");
+        }
+        std::fs::read(worktree.join("release-artifacts/jupiter_historian.wasm"))
+            .context("read pre-cutover Historian Wasm")
+    })();
+    let remove_status = Command::new("git")
+        .args(["worktree", "remove", "--force"])
+        .arg(&worktree)
+        .current_dir(&workspace_root)
+        .status()
+        .context("remove pre-cutover Historian worktree")?;
+    if !remove_status.success() {
+        bail!("failed to remove pre-cutover Historian worktree");
+    }
+    let bytes = build_result?;
+    let _ = PRE_CUTOVER_HISTORIAN_WASM.set(bytes.clone());
+    Ok(bytes)
+}
 fn relay_wasm() -> Result<Vec<u8>> {
+    if let Some(path) = std::env::var_os("JUPITER_RELAY_TEST_WASM") {
+        return std::fs::read(PathBuf::from(path)).context("read JUPITER_RELAY_TEST_WASM");
+    }
     support::wasm::build_wasm_cached_for_test(&RELAY_WASM, "jupiter-relay", None)
 }
 fn status_proxy_wasm() -> Result<Vec<u8>> {
@@ -75,6 +146,12 @@ fn nns_governance_wasm() -> Result<Vec<u8>> {
 fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
     if let Some(bytes) = RELAY_ENABLED_HISTORIAN_WASM.get() {
         return Ok(bytes.clone());
+    }
+    if let Some(path) = std::env::var_os("JUPITER_HISTORIAN_CANDIDATE_WASM") {
+        let bytes =
+            std::fs::read(PathBuf::from(path)).context("read JUPITER_HISTORIAN_CANDIDATE_WASM")?;
+        let _ = RELAY_ENABLED_HISTORIAN_WASM.set(bytes.clone());
+        return Ok(bytes);
     }
     let relay = relay_wasm()?;
     let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
@@ -565,12 +642,408 @@ enum RelaySetupNotifyResult {
     },
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+enum RetiredFixtureSetupStatus {
+    ManualRecoveryRequired,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+struct RetiredFixturePayment {
+    target_canister_id: Principal,
+    tx_id: u64,
+    from_account_identifier: String,
+    amount_e8s: u64,
+    timestamp_nanos: Option<u64>,
+    processed: bool,
+    refunded: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+enum RetiredFixtureTransferKind {
+    CmcConversion,
+    Refund,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+enum RetiredFixturePhase {
+    CycleNotifySucceeded,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+struct RetiredFixtureTransfer {
+    kind: RetiredFixtureTransferKind,
+    from_subaccount: Option<[u8; 32]>,
+    from_account_identifier: String,
+    to: Account,
+    to_account_identifier: String,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo: Option<Vec<u8>>,
+    created_at_time_nanos: u64,
+    block_index: Option<u64>,
+    completed: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+struct RetiredFixtureCreateAttempt {
+    target_canister_id: Principal,
+    created_at_ts: u64,
+    initial_cycles: u128,
+    raw_relay_wasm_hash_hex: Option<String>,
+    install_payload_hash_hex: Option<String>,
+    relay_wasm_hash_hex: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+struct RetiredFixtureJob {
+    target_canister_id: Principal,
+    setup_account: Account,
+    setup_account_identifier: String,
+    status: RetiredFixtureSetupStatus,
+    relay_canister_id: Option<Principal>,
+    last_indexed_setup_tx_id: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    setup_amount_seen_e8s: u64,
+    setup_amount_processed_e8s: u64,
+    payments: Vec<RetiredFixturePayment>,
+    cycle_conversion_e8s: Option<u64>,
+    cycle_transfer_block_index: Option<u64>,
+    cycles_minted: Option<u128>,
+    relay_initial_cycles: Option<u128>,
+    relay_funding_e8s: Option<u64>,
+    relay_funding_block_index: Option<u64>,
+    phase: Option<RetiredFixturePhase>,
+    cycle_transfer: Option<RetiredFixtureTransfer>,
+    relay_funding_transfer: Option<RetiredFixtureTransfer>,
+    existing_relay_sweep_transfer: Option<RetiredFixtureTransfer>,
+    refund_transfers: Vec<RetiredFixtureTransfer>,
+    relay_create_attempt: Option<RetiredFixtureCreateAttempt>,
+    code_installed: bool,
+    relay_funding_accepted: bool,
+    blackhole_update_attempted: bool,
+    blackhole_confirmed: bool,
+    refund_attempt_count: u32,
+    last_refund_attempt_ts: Option<u64>,
+    refund_blocks: Vec<u64>,
+    created_at_ts: u64,
+    updated_at_ts: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+enum RetiredFixtureRegistryKind {
+    Canonical,
+    SelfService,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+enum RetiredFixtureRegistryStatus {
+    Active,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+struct RetiredFixtureRegistryEntry {
+    relay_canister_id: Principal,
+    target_canister_id: Principal,
+    kind: RetiredFixtureRegistryKind,
+    status: RetiredFixtureRegistryStatus,
+    setup_account: Option<Account>,
+    setup_account_identifier: Option<String>,
+    setup_amount_e8s: Option<u64>,
+    setup_tx_ids: Vec<u64>,
+    final_controllers: Option<Vec<Principal>>,
+    log_visibility_public: Option<bool>,
+    created_at_ts: Option<u64>,
+    activated_at_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RetiredRecoveryStatus {
+    ManualRecoveryRequired,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RetiredRecoveryView {
+    target_canister_id: Principal,
+    status: RetiredRecoveryStatus,
+    last_error: Option<String>,
+    relay_canister_id: Option<Principal>,
+    setup_account_identifier: String,
+}
+
+#[derive(Clone, Debug, CandidType)]
+struct RetiredRecoveryArgs {
+    target_canister_id: Principal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct FixturePrincipalKey(Vec<u8>);
+
+impl Storable for FixturePrincipalKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.0)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        Self(bytes.into_owned())
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 29,
+        is_fixed_size: false,
+    };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FixtureBytes(Vec<u8>);
+
+impl Storable for FixtureBytes {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.0)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        Self(bytes.into_owned())
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct FixtureSetupKey([u8; 32]);
+
+impl Storable for FixtureSetupKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.0)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        Self(bytes.as_ref().try_into().expect("32-byte setup key"))
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 32,
+        is_fixed_size: true,
+    };
+}
+
+type FixtureMemory = VirtualMemory<VectorMemory>;
+
 fn real_icp_ledger_principal() -> Principal {
     support::principals::icp_ledger()
 }
 
 fn real_icp_index_principal() -> Principal {
     support::principals::icp_index()
+}
+
+fn abandoned_relay_target() -> Principal {
+    Principal::from_text("2lo52-kiaaa-aaaar-qaqta-cai").unwrap()
+}
+
+fn production_historian() -> Principal {
+    Principal::from_text("j5gs6-uiaaa-aaaar-qb5cq-cai").unwrap()
+}
+
+fn retired_fixture_job() -> RetiredFixtureJob {
+    let target = abandoned_relay_target();
+    let historian = production_historian();
+    let setup_subaccount = jupiter_ic_clients::account::relay_setup_subaccount(target);
+    let setup_identifier = "54467f93c896278cad2d7a6190b021c7f69e393389d96e8a2b47a1ee5e2ad5ab";
+    let payer = "production-payer-account".to_string();
+    RetiredFixtureJob {
+        target_canister_id: target,
+        setup_account: Account {
+            owner: historian,
+            subaccount: Some(setup_subaccount),
+        },
+        setup_account_identifier: setup_identifier.to_string(),
+        status: RetiredFixtureSetupStatus::ManualRecoveryRequired,
+        relay_canister_id: None,
+        last_indexed_setup_tx_id: Some(37_414_358),
+        setup_tx_ids: vec![37_414_222, 37_414_358],
+        setup_amount_seen_e8s: 300_000_000,
+        setup_amount_processed_e8s: 0,
+        payments: vec![
+            RetiredFixturePayment {
+                target_canister_id: target,
+                tx_id: 37_414_222,
+                from_account_identifier: payer.clone(),
+                amount_e8s: 100_000_000,
+                timestamp_nanos: Some(1_783_774_380_958_013_045),
+                processed: false,
+                refunded: true,
+            },
+            RetiredFixturePayment {
+                target_canister_id: target,
+                tx_id: 37_414_358,
+                from_account_identifier: payer.clone(),
+                amount_e8s: 200_000_000,
+                timestamp_nanos: Some(1_783_775_049_246_080_846),
+                processed: false,
+                refunded: false,
+            },
+        ],
+        cycle_conversion_e8s: Some(94_950_000),
+        cycle_transfer_block_index: Some(37_414_364),
+        cycles_minted: Some(1_590_792_300_000),
+        relay_initial_cycles: None,
+        relay_funding_e8s: None,
+        relay_funding_block_index: None,
+        phase: Some(RetiredFixturePhase::CycleNotifySucceeded),
+        cycle_transfer: Some(RetiredFixtureTransfer {
+            kind: RetiredFixtureTransferKind::CmcConversion,
+            from_subaccount: Some(setup_subaccount),
+            from_account_identifier: setup_identifier.to_string(),
+            to: Account {
+                owner: jupiter_ic_clients::constants::cycles_minting_canister_id(),
+                subaccount: Some(jupiter_ic_clients::account::principal_to_subaccount(
+                    historian,
+                )),
+            },
+            to_account_identifier:
+                "7a09fb19b536cb547f8e345b46413b213da91c48c58f93565bb474615fc52e21"
+                    .to_string(),
+            amount_e8s: 94_950_000,
+            fee_e8s: 10_000,
+            memo: Some(1_347_768_404u64.to_le_bytes().to_vec()),
+            created_at_time_nanos: 1_783_775_072_224_720_476,
+            block_index: Some(37_414_364),
+            completed: true,
+        }),
+        relay_funding_transfer: None,
+        existing_relay_sweep_transfer: None,
+        refund_transfers: vec![RetiredFixtureTransfer {
+            kind: RetiredFixtureTransferKind::Refund,
+            from_subaccount: Some(setup_subaccount),
+            from_account_identifier: setup_identifier.to_string(),
+            to: Account {
+                owner: Principal::anonymous(),
+                subaccount: None,
+            },
+            to_account_identifier: payer,
+            amount_e8s: 99_990_000,
+            fee_e8s: 10_000,
+            memo: Some(0x4a52_5246u64.to_le_bytes().to_vec()),
+            created_at_time_nanos: 1_783_774_405_254_587_251,
+            block_index: Some(37_414_223),
+            completed: true,
+        }],
+        relay_create_attempt: Some(RetiredFixtureCreateAttempt {
+            target_canister_id: target,
+            created_at_ts: 1_783_784_987,
+            initial_cycles: 1_000_000_000_000,
+            raw_relay_wasm_hash_hex: None,
+            install_payload_hash_hex: None,
+            relay_wasm_hash_hex: None,
+        }),
+        code_installed: false,
+        relay_funding_accepted: false,
+        blackhole_update_attempted: false,
+        blackhole_confirmed: false,
+        refund_attempt_count: 1,
+        last_refund_attempt_ts: Some(1_783_774_405),
+        refund_blocks: vec![37_414_223],
+        created_at_ts: 1_783_774_396,
+        updated_at_ts: 1_783_851_665,
+        last_error: Some("CMC notify minted 1590792300000 cycles, below configured relay_initial_cycles 2000000000000; refusing create_canister to avoid historian subsidy after conversion".to_string()),
+    }
+}
+
+fn write_retired_fixture(
+    pic: &PocketIc,
+    historian: Principal,
+    canonical_target: Principal,
+    canonical_relay: Principal,
+    invalid_registry: bool,
+) -> Result<()> {
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    let manager = MemoryManager::init(stable_memory.clone());
+    let mut setup_jobs = StableBTreeMap::<FixturePrincipalKey, FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(24)),
+    );
+    setup_jobs.insert(
+        FixturePrincipalKey(abandoned_relay_target().as_slice().to_vec()),
+        FixtureBytes(encode_one(retired_fixture_job())?),
+    );
+    let mut registry = StableBTreeMap::<FixturePrincipalKey, FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(22)),
+    );
+    let (key, entry) = if invalid_registry {
+        (
+            abandoned_relay_target(),
+            RetiredFixtureRegistryEntry {
+                relay_canister_id: canonical_relay,
+                target_canister_id: abandoned_relay_target(),
+                kind: RetiredFixtureRegistryKind::SelfService,
+                status: RetiredFixtureRegistryStatus::Active,
+                setup_account: None,
+                setup_account_identifier: None,
+                setup_amount_e8s: None,
+                setup_tx_ids: Vec::new(),
+                final_controllers: None,
+                log_visibility_public: None,
+                created_at_ts: None,
+                activated_at_ts: None,
+            },
+        )
+    } else {
+        (
+            canonical_target,
+            RetiredFixtureRegistryEntry {
+                relay_canister_id: canonical_relay,
+                target_canister_id: canonical_target,
+                kind: RetiredFixtureRegistryKind::Canonical,
+                status: RetiredFixtureRegistryStatus::Active,
+                setup_account: None,
+                setup_account_identifier: None,
+                setup_amount_e8s: None,
+                setup_tx_ids: Vec::new(),
+                final_controllers: None,
+                log_visibility_public: None,
+                created_at_ts: None,
+                activated_at_ts: None,
+            },
+        )
+    };
+    registry.insert(
+        FixturePrincipalKey(key.as_slice().to_vec()),
+        FixtureBytes(encode_one(entry)?),
+    );
+    drop(registry);
+    drop(setup_jobs);
+    drop(manager);
+    let bytes = stable_memory.borrow().clone();
+    pic.set_stable_memory(
+        historian,
+        bytes,
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+    Ok(())
+}
+
+fn retired_and_current_setup_map_lengths(pic: &PocketIc, historian: Principal) -> (u64, u64) {
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    let manager = MemoryManager::init(stable_memory);
+    let retired = StableBTreeMap::<FixturePrincipalKey, FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(24)),
+    );
+    let current = StableBTreeMap::<FixtureSetupKey, FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(25)),
+    );
+    (retired.len(), current.len())
 }
 
 fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
@@ -770,6 +1243,276 @@ fn assert_spawned_relay_faucet_identity(
             .any(|item| item.transaction.icrc1_memo.as_deref() == Some(expected_memo.as_slice())),
         "spawned Relay {relay} must use its own principal in its Faucet memo; transactions={:?}",
         page.transactions
+    );
+    Ok(())
+}
+
+fn prepare_pre_cutover_fixture(
+    base_wasm: &[u8],
+    invalid_registry: bool,
+) -> Result<(PocketIc, Principal)> {
+    let pic = build_pic_with_real_icp();
+    let historian = production_historian();
+    let canonical_target = pic.create_canister();
+    let canonical_relay = pic.create_canister();
+    for canister in [canonical_target, canonical_relay] {
+        pic.add_cycles(canister, 5_000_000_000_000);
+    }
+    create_fixed_canister(&pic, historian)?;
+    pic.add_cycles(historian, 40_000_000_000_000);
+    let mut init = self_service_historian_init(
+        real_icp_ledger_principal(),
+        real_icp_index_principal(),
+        support::principals::cycles_minting_canister(),
+        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+    );
+    init.canonical_relay_canister_id = Some(canonical_relay);
+    init.canonical_relay_targets = Some(vec![canonical_target]);
+    pic.install_canister(historian, base_wasm.to_vec(), encode_one(init)?, None);
+    write_retired_fixture(
+        &pic,
+        historian,
+        canonical_target,
+        canonical_relay,
+        invalid_registry,
+    )?;
+    pic.advance_time(Duration::from_secs(2));
+    tick_n(&pic, 5);
+    pic.upgrade_canister(
+        historian,
+        base_wasm.to_vec(),
+        encode_one(HistorianUpgradeArg {
+            enable_sns_tracking: None,
+            scan_interval_seconds: None,
+            cycles_interval_seconds: None,
+            min_tx_e8s: None,
+            max_cycles_entries_per_canister: None,
+            max_commitment_entries_per_canister: None,
+            max_index_pages_per_tick: None,
+            max_canisters_per_cycles_tick: None,
+            sns_wasm_canister_id: None,
+            xrc_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+        })?,
+        None,
+    )
+    .map_err(|error| anyhow!("load pre-cutover stable fixture: {error:?}"))?;
+    tick_n(&pic, 5);
+    Ok((pic, historian))
+}
+
+fn query_retired_recovery_view(
+    pic: &PocketIc,
+    historian: Principal,
+) -> Result<RetiredRecoveryView> {
+    query_one(
+        pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_setup_recovery_view",
+        RetiredRecoveryArgs {
+            target_canister_id: abandoned_relay_target(),
+        },
+    )
+}
+
+#[test]
+#[ignore]
+fn exact_base_abandoned_relay_cutover_is_atomic_and_one_time() -> Result<()> {
+    require_ignored_flag()?;
+    let base_wasm = pre_cutover_historian_wasm()?;
+    let candidate_wasm = relay_enabled_historian_wasm()?;
+    let base_hash = Sha256::digest(&base_wasm).to_vec();
+
+    let (negative_pic, negative_historian) = prepare_pre_cutover_fixture(&base_wasm, true)?;
+    let recovery_before = query_retired_recovery_view(&negative_pic, negative_historian)?;
+    assert_eq!(recovery_before.target_canister_id, abandoned_relay_target());
+    assert_eq!(
+        recovery_before.status,
+        RetiredRecoveryStatus::ManualRecoveryRequired
+    );
+    assert!(recovery_before.relay_canister_id.is_none());
+    let failed_upgrade = negative_pic.upgrade_canister(
+        negative_historian,
+        candidate_wasm.clone(),
+        encode_one(HistorianUpgradeArg {
+            enable_sns_tracking: None,
+            scan_interval_seconds: None,
+            cycles_interval_seconds: None,
+            min_tx_e8s: None,
+            max_cycles_entries_per_canister: None,
+            max_commitment_entries_per_canister: None,
+            max_index_pages_per_tick: None,
+            max_canisters_per_cycles_tick: None,
+            sns_wasm_canister_id: None,
+            xrc_canister_id: None,
+            cmc_canister_id: None,
+            faucet_canister_id: None,
+        })?,
+        None,
+    );
+    assert!(
+        failed_upgrade.is_err(),
+        "invalid retired registry must reject upgrade"
+    );
+    let status_after_failure = negative_pic
+        .canister_status(negative_historian, Some(Principal::anonymous()))
+        .map_err(|error| anyhow!("status after rejected cutover: {error:?}"))?;
+    assert_eq!(
+        status_after_failure.module_hash.as_deref(),
+        Some(base_hash.as_slice())
+    );
+    let recovery_after = query_retired_recovery_view(&negative_pic, negative_historian)?;
+    assert_eq!(recovery_after.target_canister_id, abandoned_relay_target());
+    assert_eq!(
+        retired_and_current_setup_map_lengths(&negative_pic, negative_historian),
+        (1, 0)
+    );
+
+    let (positive_pic, positive_historian) = prepare_pre_cutover_fixture(&base_wasm, false)?;
+    let base_stable_snapshot = positive_pic.get_stable_memory(positive_historian);
+    positive_pic.advance_time(Duration::from_secs(2));
+    tick_n(&positive_pic, 5);
+    positive_pic
+        .upgrade_canister(
+            positive_historian,
+            candidate_wasm.clone(),
+            encode_one(HistorianUpgradeArg {
+                enable_sns_tracking: None,
+                scan_interval_seconds: None,
+                cycles_interval_seconds: None,
+                min_tx_e8s: None,
+                max_cycles_entries_per_canister: None,
+                max_commitment_entries_per_canister: None,
+                max_index_pages_per_tick: None,
+                max_canisters_per_cycles_tick: None,
+                sns_wasm_canister_id: None,
+                xrc_canister_id: None,
+                cmc_canister_id: None,
+                faucet_canister_id: None,
+            })?,
+            None,
+        )
+        .map_err(|error| anyhow!("exact abandoned-job cutover failed: {error:?}"))?;
+    tick_n(&positive_pic, 5);
+    assert_eq!(
+        retired_and_current_setup_map_lengths(&positive_pic, positive_historian),
+        (0, 0)
+    );
+    let view: RelaySetupViewResult = query_one(
+        &positive_pic,
+        positive_historian,
+        Principal::anonymous(),
+        "get_relay_setup_view",
+        RelayTargetSetArgs {
+            target_canister_ids: vec![abandoned_relay_target()],
+        },
+    )?;
+    let RelaySetupViewResult::Ok(view) = view else {
+        bail!("abandoned singleton target view was rejected after cutover")
+    };
+    assert_eq!(view.state, RelaySetupState::NotFunded);
+    let new_setup_account = view.setup_account.context("fresh setup account missing")?;
+    let legacy_setup_account = Account {
+        owner: positive_historian,
+        subaccount: Some(jupiter_ic_clients::account::relay_setup_subaccount(
+            abandoned_relay_target(),
+        )),
+    };
+    assert_ne!(new_setup_account, legacy_setup_account);
+    let relay_targets: ListCanistersResponse = query_one(
+        &positive_pic,
+        positive_historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayTarget),
+        },
+    )?;
+    assert!(relay_targets
+        .items
+        .iter()
+        .all(|item| item.canister_id != abandoned_relay_target()));
+    let public_counts_before: PublicCounts = query_one(
+        &positive_pic,
+        positive_historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+
+    positive_pic.advance_time(Duration::from_secs(2));
+    tick_n(&positive_pic, 5);
+    positive_pic
+        .upgrade_canister(
+            positive_historian,
+            candidate_wasm,
+            encode_one(HistorianUpgradeArg {
+                enable_sns_tracking: None,
+                scan_interval_seconds: None,
+                cycles_interval_seconds: None,
+                min_tx_e8s: None,
+                max_cycles_entries_per_canister: None,
+                max_commitment_entries_per_canister: None,
+                max_index_pages_per_tick: None,
+                max_canisters_per_cycles_tick: None,
+                sns_wasm_canister_id: None,
+                xrc_canister_id: None,
+                cmc_canister_id: None,
+                faucet_canister_id: None,
+            })?,
+            None,
+        )
+        .map_err(|error| anyhow!("candidate-to-candidate upgrade failed: {error:?}"))?;
+    assert_eq!(
+        retired_and_current_setup_map_lengths(&positive_pic, positive_historian),
+        (0, 0)
+    );
+    let public_counts_after: PublicCounts = query_one(
+        &positive_pic,
+        positive_historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_eq!(public_counts_after, public_counts_before);
+
+    positive_pic.advance_time(Duration::from_secs(2));
+    tick_n(&positive_pic, 5);
+    positive_pic.set_stable_memory(
+        positive_historian,
+        base_stable_snapshot,
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+    positive_pic
+        .upgrade_canister(
+            positive_historian,
+            base_wasm,
+            encode_one(HistorianUpgradeArg {
+                enable_sns_tracking: None,
+                scan_interval_seconds: None,
+                cycles_interval_seconds: None,
+                min_tx_e8s: None,
+                max_cycles_entries_per_canister: None,
+                max_commitment_entries_per_canister: None,
+                max_index_pages_per_tick: None,
+                max_canisters_per_cycles_tick: None,
+                sns_wasm_canister_id: None,
+                xrc_canister_id: None,
+                cmc_canister_id: None,
+                faucet_canister_id: None,
+            })?,
+            None,
+        )
+        .map_err(|error| anyhow!("snapshot rollback to pre-cutover Historian failed: {error:?}"))?;
+    let restored = query_retired_recovery_view(&positive_pic, positive_historian)?;
+    assert_eq!(restored.target_canister_id, abandoned_relay_target());
+    assert_eq!(
+        retired_and_current_setup_map_lengths(&positive_pic, positive_historian),
+        (1, 0)
     );
     Ok(())
 }
