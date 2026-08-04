@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn prelaunch_relay_cutover_removes_exact_authorized_job_without_migrating_or_tracking_it() {
+    fn prelaunch_relay_cutover_removes_authorized_job_without_migrating_or_tracking_it() {
         reset_test_storage();
         let config = sample_config();
         let target = authorized_abandoned_relay_target();
@@ -572,148 +572,59 @@ mod tests {
     }
 
     #[test]
-    fn prelaunch_relay_cutover_rejects_every_material_near_match_before_deletion() {
+    fn prelaunch_relay_cutover_accepts_abandoned_bookkeeping_differences() {
         type Mutation = fn(&mut RetiredRelaySetupJob);
         let mutations: &[(&str, Mutation)] = &[
-            ("wrong target", |job| {
-                job.target_canister_id = principal(&[201])
-            }),
-            ("wrong status", |job| {
-                job.status = RetiredRelaySetupStatus::Pending
-            }),
-            ("wrong last error", |job| {
-                job.last_error = Some("other failure".to_string())
-            }),
-            ("wrong setup owner", |job| {
-                job.setup_account.owner = principal(&[202])
-            }),
-            ("wrong setup subaccount", |job| {
-                job.setup_account.subaccount = Some([3; 32])
-            }),
-            ("wrong setup identifier", |job| {
-                job.setup_account_identifier.push('0')
-            }),
-            ("wrong indexed payment", |job| {
+            ("different indexed cursor", |job| {
                 job.last_indexed_setup_tx_id = Some(1)
             }),
-            ("wrong setup tx ids", |job| job.setup_tx_ids[0] = 1),
-            ("wrong payment target", |job| {
-                job.payments[0].target_canister_id = principal(&[203])
+            ("different setup tx ids", |job| {
+                job.setup_tx_ids = vec![9, 3, 7]
             }),
-            ("wrong payment amount", |job| {
-                job.payments[0].amount_e8s += 1
+            ("empty payments", |job| job.payments.clear()),
+            ("different payment fields", |job| {
+                job.payments[0].target_canister_id = principal(&[201]);
+                job.payments[0].tx_id = 1;
+                job.payments[0].from_account_identifier = "other-payer".to_string();
+                job.payments[0].amount_e8s = 1;
+                job.payments[0].timestamp_nanos = None;
+                job.payments[0].processed = true;
+                job.payments[0].refunded = false;
+                job.payments.reverse();
             }),
-            ("wrong payment timestamp", |job| {
-                job.payments[0].timestamp_nanos = Some(1)
+            ("different setup amounts", |job| {
+                job.setup_amount_seen_e8s = 1;
+                job.setup_amount_processed_e8s = 2;
             }),
-            ("processed payment", |job| job.payments[0].processed = true),
-            ("wrong refund marker", |job| {
-                job.payments[0].refunded = false
-            }),
-            ("different payment source", |job| {
-                job.payments[1].from_account_identifier.push('x')
-            }),
-            ("wrong CMC block", |job| {
-                job.cycle_transfer_block_index = Some(1)
-            }),
-            ("wrong conversion amount", |job| {
-                job.cycle_conversion_e8s = Some(1)
-            }),
-            ("wrong CMC transfer kind", |job| {
-                job.cycle_transfer.as_mut().unwrap().kind = RetiredRelaySetupTransferKind::Refund
-            }),
-            ("wrong CMC transfer source", |job| {
-                job.cycle_transfer.as_mut().unwrap().from_subaccount = Some([4; 32])
-            }),
-            ("wrong CMC transfer destination", |job| {
-                job.cycle_transfer.as_mut().unwrap().to.owner = principal(&[204])
-            }),
-            ("wrong CMC memo", |job| {
-                job.cycle_transfer.as_mut().unwrap().memo = Some(vec![0])
-            }),
-            ("wrong transfer fee", |job| {
-                job.cycle_transfer.as_mut().unwrap().fee_e8s += 1
-            }),
-            ("wrong transfer timestamp", |job| {
-                job.cycle_transfer.as_mut().unwrap().created_at_time_nanos += 1
-            }),
-            ("incomplete CMC transfer", |job| {
-                job.cycle_transfer.as_mut().unwrap().completed = false
-            }),
-            ("missing CMC block", |job| {
-                job.cycle_transfer.as_mut().unwrap().block_index = None
-            }),
-            ("wrong minted cycles", |job| job.cycles_minted = Some(1)),
-            ("missing minted cycles", |job| job.cycles_minted = None),
             ("legacy initial cycles recorded", |job| {
-                job.relay_initial_cycles = Some(1_000_000_000_000)
+                job.relay_initial_cycles = Some(7)
             }),
-            ("missing create attempt", |job| {
-                job.relay_create_attempt = None
+            ("legacy funding estimate recorded", |job| {
+                job.relay_funding_e8s = Some(8)
             }),
-            ("wrong create target", |job| {
-                job.relay_create_attempt
-                    .as_mut()
-                    .unwrap()
-                    .target_canister_id = principal(&[205])
-            }),
-            ("wrong create cycles", |job| {
-                job.relay_create_attempt.as_mut().unwrap().initial_cycles += 1
-            }),
-            ("wrong create timestamp", |job| {
-                job.relay_create_attempt.as_mut().unwrap().created_at_ts += 1
-            }),
-            ("Relay id present", |job| {
-                job.relay_canister_id = Some(principal(&[206]))
-            }),
-            ("code installed", |job| job.code_installed = true),
-            ("Relay funding transfer present", |job| {
-                job.relay_funding_transfer = job.cycle_transfer.clone()
-            }),
-            ("Relay funding block present", |job| {
-                job.relay_funding_block_index = Some(1)
-            }),
-            ("Relay funding amount present", |job| {
-                job.relay_funding_e8s = Some(1)
-            }),
-            ("Relay funding accepted", |job| {
-                job.relay_funding_accepted = true
-            }),
-            ("existing sweep present", |job| {
-                job.existing_relay_sweep_transfer = job.cycle_transfer.clone()
-            }),
-            ("handoff attempted", |job| {
-                job.blackhole_update_attempted = true
-            }),
-            ("handoff confirmed", |job| job.blackhole_confirmed = true),
-            ("missing refund", |job| job.refund_transfers.clear()),
-            ("additional refund", |job| {
-                job.refund_transfers.push(job.refund_transfers[0].clone())
-            }),
-            ("incomplete refund", |job| {
-                job.refund_transfers[0].completed = false
-            }),
-            ("missing refund transfer block", |job| {
-                job.refund_transfers[0].block_index = None
-            }),
-            ("wrong refund block metadata", |job| {
-                job.refund_blocks[0] += 1
-            }),
-            ("wrong refund attempt count", |job| {
-                job.refund_attempt_count += 1
-            }),
-            ("wrong refund attempt timestamp", |job| {
-                job.last_refund_attempt_ts = Some(1)
-            }),
-            ("wrong phase", |job| {
+            ("different phase", |job| {
                 job.phase = Some(RetiredRelaySetupPhase::PreSpend)
             }),
-            ("wrong setup amount", |job| job.setup_amount_seen_e8s += 1),
-            ("wrong processed amount", |job| {
-                job.setup_amount_processed_e8s += 1
+            ("different CMC transfer timestamp", |job| {
+                job.cycle_transfer.as_mut().unwrap().created_at_time_nanos = 1
             }),
-            ("wrong creation timestamp", |job| job.created_at_ts += 1),
-            ("wrong update timestamp", |job| job.updated_at_ts += 1),
+            ("different create-attempt timestamp", |job| {
+                job.relay_create_attempt.as_mut().unwrap().created_at_ts = 1
+            }),
+            ("no refunds", |job| job.refund_transfers.clear()),
+            ("different refunds", |job| {
+                let refund = job.refund_transfers[0].clone();
+                job.refund_transfers = vec![refund.clone(), refund]
+            }),
+            ("different refund bookkeeping", |job| {
+                job.refund_attempt_count = 99;
+                job.last_refund_attempt_ts = None;
+                job.refund_blocks = vec![1, 2, 3];
+            }),
+            ("different job timestamps", |job| {
+                job.created_at_ts = 1;
+                job.updated_at_ts = 2;
+            }),
         ];
 
         for (name, mutate) in mutations {
@@ -724,13 +635,237 @@ mod tests {
             mutate(&mut job);
             insert_authorized_abandoned_relay_job(job);
 
-            let result = std::panic::catch_unwind(|| validate_retired_relay_factory_state(&config));
+            validate_retired_relay_factory_state(&config);
 
-            assert!(result.is_err(), "near-match unexpectedly accepted: {name}");
+            with_retired_relay_setup_jobs_map(|map| {
+                assert!(map.is_empty(), "bookkeeping variant retained: {name}");
+            });
+            with_relay_setup_entries_map(|map| {
+                assert!(map.is_empty(), "bookkeeping variant migrated: {name}");
+            });
+            with_canister_tracking_reasons_map(|map| {
+                assert!(
+                    map.get(&PrincipalKey::from(target)).is_none(),
+                    "bookkeeping variant added tracking: {name}"
+                );
+            });
+        }
+    }
+
+    fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+        panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("")
+    }
+
+    #[test]
+    fn prelaunch_relay_cutover_rejects_every_safety_invariant_mismatch_before_deletion() {
+        type Mutation = fn(&mut RetiredRelaySetupJob);
+        let mutations: &[(&str, Mutation, &str)] = &[
+            (
+                "wrong target",
+                |job| job.target_canister_id = principal(&[201]),
+                "target",
+            ),
+            (
+                "wrong status",
+                |job| job.status = RetiredRelaySetupStatus::Pending,
+                "status",
+            ),
+            (
+                "wrong last error",
+                |job| job.last_error = Some("other failure".to_string()),
+                "diagnostic",
+            ),
+            (
+                "wrong setup owner",
+                |job| job.setup_account.owner = principal(&[202]),
+                "setup_account",
+            ),
+            (
+                "wrong setup subaccount",
+                |job| job.setup_account.subaccount = Some([3; 32]),
+                "setup_account",
+            ),
+            (
+                "wrong setup identifier",
+                |job| job.setup_account_identifier.push('0'),
+                "setup_account",
+            ),
+            (
+                "wrong CMC block",
+                |job| job.cycle_transfer_block_index = Some(1),
+                "cmc_transfer",
+            ),
+            (
+                "wrong conversion amount",
+                |job| job.cycle_conversion_e8s = Some(1),
+                "cmc_transfer",
+            ),
+            (
+                "missing CMC transfer",
+                |job| job.cycle_transfer = None,
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC transfer kind",
+                |job| {
+                    job.cycle_transfer.as_mut().unwrap().kind =
+                        RetiredRelaySetupTransferKind::Refund
+                },
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC transfer source",
+                |job| job.cycle_transfer.as_mut().unwrap().from_subaccount = Some([4; 32]),
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC source identifier",
+                |job| {
+                    job.cycle_transfer
+                        .as_mut()
+                        .unwrap()
+                        .from_account_identifier
+                        .push('0')
+                },
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC transfer destination",
+                |job| job.cycle_transfer.as_mut().unwrap().to.owner = principal(&[204]),
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC destination identifier",
+                |job| {
+                    job.cycle_transfer
+                        .as_mut()
+                        .unwrap()
+                        .to_account_identifier
+                        .push('0')
+                },
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC memo",
+                |job| job.cycle_transfer.as_mut().unwrap().memo = Some(vec![0]),
+                "cmc_transfer",
+            ),
+            (
+                "wrong CMC transfer amount",
+                |job| job.cycle_transfer.as_mut().unwrap().amount_e8s += 1,
+                "cmc_transfer",
+            ),
+            (
+                "wrong transfer fee",
+                |job| job.cycle_transfer.as_mut().unwrap().fee_e8s += 1,
+                "cmc_transfer",
+            ),
+            (
+                "incomplete CMC transfer",
+                |job| job.cycle_transfer.as_mut().unwrap().completed = false,
+                "cmc_transfer",
+            ),
+            (
+                "missing CMC block",
+                |job| job.cycle_transfer.as_mut().unwrap().block_index = None,
+                "cmc_transfer",
+            ),
+            (
+                "wrong minted cycles",
+                |job| job.cycles_minted = Some(1),
+                "cycles_minted",
+            ),
+            (
+                "missing minted cycles",
+                |job| job.cycles_minted = None,
+                "cycles_minted",
+            ),
+            (
+                "missing create attempt",
+                |job| job.relay_create_attempt = None,
+                "create_attempt",
+            ),
+            (
+                "wrong create target",
+                |job| {
+                    job.relay_create_attempt
+                        .as_mut()
+                        .unwrap()
+                        .target_canister_id = principal(&[205])
+                },
+                "create_attempt",
+            ),
+            (
+                "wrong create cycles",
+                |job| job.relay_create_attempt.as_mut().unwrap().initial_cycles += 1,
+                "create_attempt",
+            ),
+            (
+                "Relay id present",
+                |job| job.relay_canister_id = Some(principal(&[206])),
+                "relay_child",
+            ),
+            (
+                "code installed",
+                |job| job.code_installed = true,
+                "relay_install",
+            ),
+            (
+                "Relay funding transfer present",
+                |job| job.relay_funding_transfer = job.cycle_transfer.clone(),
+                "relay_funding",
+            ),
+            (
+                "Relay funding block present",
+                |job| job.relay_funding_block_index = Some(1),
+                "relay_funding",
+            ),
+            (
+                "Relay funding accepted",
+                |job| job.relay_funding_accepted = true,
+                "relay_funding",
+            ),
+            (
+                "existing sweep present",
+                |job| job.existing_relay_sweep_transfer = job.cycle_transfer.clone(),
+                "relay_sweep",
+            ),
+            (
+                "handoff attempted",
+                |job| job.blackhole_update_attempted = true,
+                "controller_handoff",
+            ),
+            (
+                "handoff confirmed",
+                |job| job.blackhole_confirmed = true,
+                "controller_handoff",
+            ),
+        ];
+
+        for (name, mutate, expected_invariant) in mutations {
+            reset_test_storage();
+            let config = sample_config();
+            let target = authorized_abandoned_relay_target();
+            let mut job = authorized_abandoned_relay_job();
+            mutate(&mut job);
+            insert_authorized_abandoned_relay_job(job);
+
+            let panic = std::panic::catch_unwind(|| validate_retired_relay_factory_state(&config))
+                .expect_err("safety mismatch unexpectedly accepted");
+
+            assert_eq!(
+                panic_message(panic.as_ref()),
+                format!("authorized abandoned Relay setup mismatch: {expected_invariant}"),
+                "wrong safety diagnostic: {name}"
+            );
             with_retired_relay_setup_jobs_map(|map| {
                 assert!(
                     map.get(&PrincipalKey::from(target)).is_some(),
-                    "near-match was deleted before rejection: {name}"
+                    "safety mismatch was deleted before rejection: {name}"
                 );
             });
         }
@@ -821,9 +956,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "retired Relay setup-job memory contains unexpected pre-launch state"
-    )]
+    #[should_panic(expected = "authorized abandoned Relay setup mismatch: target")]
     fn prelaunch_relay_cutover_rejects_other_old_setup_jobs() {
         reset_test_storage();
         let config = sample_config();
