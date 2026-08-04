@@ -862,7 +862,8 @@ fn retired_fixture_job() -> RetiredFixtureJob {
     let historian = production_historian();
     let setup_subaccount = jupiter_ic_clients::account::relay_setup_subaccount(target);
     let setup_identifier = "54467f93c896278cad2d7a6190b021c7f69e393389d96e8a2b47a1ee5e2ad5ab";
-    let payer = "production-payer-account".to_string();
+    // These deliberately non-production bookkeeping values prove that the cutover depends only
+    // on the reviewed safety invariants below, not abandoned accounting reconstruction.
     RetiredFixtureJob {
         target_canister_id: target,
         setup_account: Account {
@@ -872,37 +873,18 @@ fn retired_fixture_job() -> RetiredFixtureJob {
         setup_account_identifier: setup_identifier.to_string(),
         status: RetiredFixtureSetupStatus::ManualRecoveryRequired,
         relay_canister_id: None,
-        last_indexed_setup_tx_id: Some(37_414_358),
-        setup_tx_ids: vec![37_414_222, 37_414_358],
-        setup_amount_seen_e8s: 300_000_000,
-        setup_amount_processed_e8s: 0,
-        payments: vec![
-            RetiredFixturePayment {
-                target_canister_id: target,
-                tx_id: 37_414_222,
-                from_account_identifier: payer.clone(),
-                amount_e8s: 100_000_000,
-                timestamp_nanos: Some(1_783_774_380_958_013_045),
-                processed: false,
-                refunded: true,
-            },
-            RetiredFixturePayment {
-                target_canister_id: target,
-                tx_id: 37_414_358,
-                from_account_identifier: payer.clone(),
-                amount_e8s: 200_000_000,
-                timestamp_nanos: Some(1_783_775_049_246_080_846),
-                processed: false,
-                refunded: false,
-            },
-        ],
+        last_indexed_setup_tx_id: Some(1),
+        setup_tx_ids: vec![9, 3, 7],
+        setup_amount_seen_e8s: 1,
+        setup_amount_processed_e8s: 2,
+        payments: Vec::new(),
         cycle_conversion_e8s: Some(94_950_000),
         cycle_transfer_block_index: Some(37_414_364),
         cycles_minted: Some(1_590_792_300_000),
-        relay_initial_cycles: None,
-        relay_funding_e8s: None,
+        relay_initial_cycles: Some(7),
+        relay_funding_e8s: Some(8),
         relay_funding_block_index: None,
-        phase: Some(RetiredFixturePhase::CycleNotifySucceeded),
+        phase: None,
         cycle_transfer: Some(RetiredFixtureTransfer {
             kind: RetiredFixtureTransferKind::CmcConversion,
             from_subaccount: Some(setup_subaccount),
@@ -919,31 +901,16 @@ fn retired_fixture_job() -> RetiredFixtureJob {
             amount_e8s: 94_950_000,
             fee_e8s: 10_000,
             memo: Some(1_347_768_404u64.to_le_bytes().to_vec()),
-            created_at_time_nanos: 1_783_775_072_224_720_476,
+            created_at_time_nanos: 1,
             block_index: Some(37_414_364),
             completed: true,
         }),
         relay_funding_transfer: None,
         existing_relay_sweep_transfer: None,
-        refund_transfers: vec![RetiredFixtureTransfer {
-            kind: RetiredFixtureTransferKind::Refund,
-            from_subaccount: Some(setup_subaccount),
-            from_account_identifier: setup_identifier.to_string(),
-            to: Account {
-                owner: Principal::anonymous(),
-                subaccount: None,
-            },
-            to_account_identifier: payer,
-            amount_e8s: 99_990_000,
-            fee_e8s: 10_000,
-            memo: Some(0x4a52_5246u64.to_le_bytes().to_vec()),
-            created_at_time_nanos: 1_783_774_405_254_587_251,
-            block_index: Some(37_414_223),
-            completed: true,
-        }],
+        refund_transfers: Vec::new(),
         relay_create_attempt: Some(RetiredFixtureCreateAttempt {
             target_canister_id: target,
-            created_at_ts: 1_783_784_987,
+            created_at_ts: 1,
             initial_cycles: 1_000_000_000_000,
             raw_relay_wasm_hash_hex: None,
             install_payload_hash_hex: None,
@@ -953,11 +920,11 @@ fn retired_fixture_job() -> RetiredFixtureJob {
         relay_funding_accepted: false,
         blackhole_update_attempted: false,
         blackhole_confirmed: false,
-        refund_attempt_count: 1,
-        last_refund_attempt_ts: Some(1_783_774_405),
-        refund_blocks: vec![37_414_223],
-        created_at_ts: 1_783_774_396,
-        updated_at_ts: 1_783_851_665,
+        refund_attempt_count: 99,
+        last_refund_attempt_ts: None,
+        refund_blocks: vec![1, 2, 3],
+        created_at_ts: 1,
+        updated_at_ts: 2,
         last_error: Some("CMC notify minted 1590792300000 cycles, below configured relay_initial_cycles 2000000000000; refusing create_canister to avoid historian subsidy after conversion".to_string()),
     }
 }
