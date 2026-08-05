@@ -8,7 +8,7 @@ The durable active relationship is only:
 target-set hash -> Relay canister ID
 ```
 
-Memory ID 25 contains the single definitive setup map. Retired memories 22–24 are validated only during the first cutover and are never reused or rewritten. Active entries contain only the Relay principal. Target principals are not stored with the entry, no target-to-Relay registry exists, and Historian never inspects a blackholed child to reconstruct its targets.
+Memory ID 25 contains the single definitive setup map. Retired registry memory 22 is validated only during the first cutover, and retired setup-job memory 24 is purged only after that validation succeeds. Retired memories are never reused by the new setup system. Active entries contain only the Relay principal. Target principals are not stored with the entry, no target-to-Relay registry exists, and Historian never inspects a blackholed child to reconstruct its targets.
 
 Targets and Relay instances are tracked independently. Successful activation adds `RelayTarget` to every canonical target and `RelayInstance` to the child. Overlapping sets are valid, and set semantics keep each tracked-principal count unique. Tracker source classification obtains Relay principals through paginated `list_canisters` calls filtered by `RelayInstance`; observed ledger transfers determine which Relay sent a commitment.
 
@@ -62,40 +62,41 @@ After an upgrade, interrupted `Reserved` and `ProbingTargets` entries are remove
 
 ## Pre-launch cutover and deployment sequence
 
-Memory 25 is new at this cutover, so no pre-existing `Creating` entry exists to enumerate. The first production cutover recognizes one operator-authorized abandoned pre-launch job for target `2lo52-kiaaa-aaaar-qaqta-cai`. It is accepted only when its reviewed safety-critical fingerprint matches: the old singleton setup identity, the exact `ManualRecoveryRequired` low-minted-cycles diagnostic, the completed CMC conversion at block `37414364`, the exact unresolved create attempt with no recorded child, and strict absence of installation, Relay funding, an existing-Relay sweep, or controller-handoff evidence. Abandoned payment, refund, cursor, amount, phase, and timestamp bookkeeping is deliberately ignored because it does not indicate a child or downstream spending.
+Memory 25 is new at this cutover, so no pre-existing `Creating` entry exists to enumerate. Production was confirmed to contain multiple pre-launch setup-job records. The operator was the sole pre-launch user and explicitly authorized abandoning every legacy setup job, every deterministic setup-account balance, all associated cycles, and any possible unrecorded or incomplete child attempt. No legacy recovery record needs to survive in the new system. The first cutover therefore does not inspect, identify, enumerate, classify, or individually validate memory-24 targets or job contents.
 
-The cutover validates the complete retired registry and every other first-cutover invariant before changing memory 24. It then removes that exact job from retired memory 24, proves memory 24 is logically empty, and opens memory 25 empty. The job is not migrated as `Creating`, `Active`, or `ManualRecoveryRequired`, and it creates no target or Relay tracking reason. The old deterministic Ledger account and its remaining 105,140,000 e8s are intentionally abandoned; no new production code reads or transfers that balance. The Ledger transaction history and retained/downloaded snapshots are not erased.
+The cutover first validates the complete retired registry. Memory 22 must be empty or exactly the complete configured canonical Relay projection: its length must equal the configured target count, every configured target must exist under its matching key, and every entry must use the configured canonical Relay ID with matching target, `Canonical` kind, and `Active` status. Any self-service, partial, extra, incorrect, or inconsistent registry traps before memory 24 changes, leaving every retired job intact even before IC upgrade rollback semantics are considered.
 
-This is not a general legacy migration policy. Any other setup job or near-match traps, as does retired registry state other than an empty registry or the complete configured canonical Relay projection. The compatibility rule remains in the code so a snapshot restored during the rollback window can still upgrade directly from the pre-cutover Historian. It becomes inert after the successful first cutover because memory 25 is then initialized.
+After registry validation, the cutover logically clears memory 24 with `clear_new()` without iterating, reading, or decoding any stored key or value, proves memory 24 is empty, opens memory 25, and proves memory 25 is empty. Nothing is migrated as `Creating`, `Active`, or `ManualRecoveryRequired`, and no `RelayTarget`, `RelayInstance`, audit record, cursor, or migration-status state is created. No Ledger, Index, CMC, or management-canister call occurs.
+
+Old Ledger balances, Ledger history, cycles, and possible orphaned child canisters are neither recovered nor erased; they are deliberately abandoned in place. The new target-set setup system starts empty. This is a one-time bootstrap decision based on the operator's pre-launch ownership and authorization, not a general future migration policy. After a successful cutover, memory 25 marks the new system as initialized and later upgrades do not rerun the purge path.
 
 Mainnet install args enable `relay_factory_enabled = opt true`. Because `notify_relay_setup` is public and can consume historian cycles after sufficient funding, production monitoring must cover factory concurrency, child-creation cycle spend, and manual-recovery entries.
 
 Production rollout order:
 
-1. Deploy a maintenance frontend that prevents ordinary UI submissions. It is not the factory security boundary.
-2. Record all pre-upgrade public query evidence while Historian is still running.
-3. Stop Historian and wait until its status is `Stopped`; this is the authoritative factory pause and call drain.
-4. Create and download a snapshot.
-5. Upgrade Historian in place; do not reinstall it.
-6. Start Historian.
+1. Record all pre-upgrade public query evidence while Historian is still running.
+2. Stop Historian and wait until its status is `Stopped`; this is the authoritative factory pause and call drain.
+3. Create and download a snapshot.
+4. Upgrade Historian in place; do not reinstall it.
+5. While Historian remains stopped, deploy the matching multi-target frontend.
+6. Start Historian only after both deployments succeed.
 7. Verify public state and the new setup API.
 8. Perform one controlled singleton setup and one overlapping multi-target setup.
 9. Verify child module hashes, running status, Fiduciary-only controllers, and independent tracking counts.
-10. Retain the snapshot until acceptance is complete, then restore normal UI access.
+10. Retain the snapshot until acceptance is complete.
 
 If the upgrade or one-time cutover gate fails, do not proceed. Restore the snapshot according to the rehearsed rollback procedure and prove the restored canister is queryable before rescheduling the cutover.
 
 For later Historian upgrades:
 
-1. Deploy the maintenance frontend.
-2. Record public state and active mappings for known exact target sets.
-3. Stop Historian and wait until its status is `Stopped`.
-4. Create and download a snapshot.
-5. Upgrade Historian in place.
-6. Start Historian.
-7. Verify active mappings through the known exact target sets; production cannot enumerate every target-set hash.
-8. Verify `RelayTarget` and `RelayInstance` counts.
-9. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
-10. Re-enable normal UI access.
+1. Record public state and active mappings for known exact target sets.
+2. Stop Historian and wait until its status is `Stopped`.
+3. Create and download a snapshot.
+4. Upgrade Historian in place.
+5. Start Historian.
+6. Verify active mappings through the known exact target sets; production cannot enumerate every target-set hash.
+7. Verify `RelayTarget` and `RelayInstance` counts.
+8. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
+9. Re-enable normal UI access.
 
 The post-upgrade rule remains: `Reserved`/`ProbingTargets` entries are removed; every later `Creating` phase becomes `ManualRecoveryRequired`; `Active` and existing `ManualRecoveryRequired` entries are preserved.

@@ -374,181 +374,223 @@ mod tests {
         }
     }
 
-    fn authorized_abandoned_relay_job() -> RetiredRelaySetupJob {
-        let target = authorized_abandoned_relay_target();
-        let historian = production_historian_id();
-        let setup_subaccount = jupiter_ic_clients::account::relay_setup_subaccount(target);
-        let payer_account_identifier = "production-payer-account".to_string();
-        let setup_account = Account {
-            owner: historian,
-            subaccount: Some(setup_subaccount),
-        };
-        RetiredRelaySetupJob {
-            target_canister_id: target,
-            setup_account,
-            setup_account_identifier: LEGACY_SETUP_ACCOUNT_IDENTIFIER.to_string(),
-            status: RetiredRelaySetupStatus::ManualRecoveryRequired,
-            relay_canister_id: None,
-            last_indexed_setup_tx_id: Some(SECOND_SETUP_PAYMENT_BLOCK),
-            setup_tx_ids: vec![FIRST_SETUP_PAYMENT_BLOCK, SECOND_SETUP_PAYMENT_BLOCK],
-            setup_amount_seen_e8s: 300_000_000,
-            setup_amount_processed_e8s: 0,
-            payments: vec![
-                RetiredRelaySetupPayment {
-                    target_canister_id: target,
-                    tx_id: FIRST_SETUP_PAYMENT_BLOCK,
-                    from_account_identifier: payer_account_identifier.clone(),
-                    amount_e8s: 100_000_000,
-                    timestamp_nanos: Some(1_783_774_380_958_013_045),
-                    processed: false,
-                    refunded: true,
-                },
-                RetiredRelaySetupPayment {
-                    target_canister_id: target,
-                    tx_id: SECOND_SETUP_PAYMENT_BLOCK,
-                    from_account_identifier: payer_account_identifier.clone(),
-                    amount_e8s: 200_000_000,
-                    timestamp_nanos: Some(1_783_775_049_246_080_846),
-                    processed: false,
-                    refunded: false,
-                },
-            ],
-            cycle_conversion_e8s: Some(94_950_000),
-            cycle_transfer_block_index: Some(CMC_TRANSFER_BLOCK),
-            cycles_minted: Some(1_590_792_300_000),
-            relay_initial_cycles: None,
-            relay_funding_e8s: None,
-            relay_funding_block_index: None,
-            phase: Some(RetiredRelaySetupPhase::CycleNotifySucceeded),
-            cycle_transfer: Some(RetiredRelaySetupTransferRecord {
-                kind: RetiredRelaySetupTransferKind::CmcConversion,
-                from_subaccount: Some(setup_subaccount),
-                from_account_identifier: LEGACY_SETUP_ACCOUNT_IDENTIFIER.to_string(),
-                to: Account {
-                    owner: jupiter_ic_clients::constants::cycles_minting_canister_id(),
-                    subaccount: Some(jupiter_ic_clients::account::principal_to_subaccount(
-                        historian,
-                    )),
-                },
-                to_account_identifier: CMC_SETUP_ACCOUNT_IDENTIFIER.to_string(),
-                amount_e8s: 94_950_000,
-                fee_e8s: 10_000,
-                memo: Some(1_347_768_404u64.to_le_bytes().to_vec()),
-                created_at_time_nanos: 1_783_775_072_224_720_476,
-                block_index: Some(CMC_TRANSFER_BLOCK),
-                completed: true,
-            }),
-            relay_funding_transfer: None,
-            existing_relay_sweep_transfer: None,
-            refund_transfers: vec![RetiredRelaySetupTransferRecord {
-                kind: RetiredRelaySetupTransferKind::Refund,
-                from_subaccount: Some(setup_subaccount),
-                from_account_identifier: LEGACY_SETUP_ACCOUNT_IDENTIFIER.to_string(),
-                to: Account {
-                    owner: Principal::anonymous(),
-                    subaccount: None,
-                },
-                to_account_identifier: payer_account_identifier,
-                amount_e8s: 99_990_000,
-                fee_e8s: 10_000,
-                memo: Some(0x4a52_5246u64.to_le_bytes().to_vec()),
-                created_at_time_nanos: 1_783_774_405_254_587_251,
-                block_index: Some(REFUND_BLOCK),
-                completed: true,
-            }],
-            relay_create_attempt: Some(RetiredRelayCreateAttempt {
-                target_canister_id: target,
-                created_at_ts: 1_783_784_987,
-                initial_cycles: 1_000_000_000_000,
-            }),
-            code_installed: false,
-            relay_funding_accepted: false,
-            blackhole_update_attempted: false,
-            blackhole_confirmed: false,
-            refund_attempt_count: 1,
-            last_refund_attempt_ts: Some(1_783_774_405),
-            refund_blocks: vec![REFUND_BLOCK],
-            created_at_ts: 1_783_774_396,
-            updated_at_ts: 1_783_851_665,
-            last_error: Some(LOW_MINTED_CYCLES_DIAGNOSTIC.to_string()),
+    fn retired_transfer(
+        kind: RetiredRelaySetupTransferKind,
+        target: Principal,
+        discriminator: u8,
+    ) -> RetiredRelaySetupTransferRecord {
+        RetiredRelaySetupTransferRecord {
+            kind,
+            from_subaccount: Some([discriminator; 32]),
+            from_account_identifier: format!("source-{discriminator}"),
+            to: Account {
+                owner: target,
+                subaccount: Some([discriminator.wrapping_add(1); 32]),
+            },
+            to_account_identifier: format!("destination-{discriminator}"),
+            amount_e8s: u64::from(discriminator) + 1_000_000,
+            fee_e8s: 10_000,
+            memo: Some(vec![discriminator, discriminator.wrapping_add(1)]),
+            created_at_time_nanos: u64::from(discriminator) + 100,
+            block_index: Some(u64::from(discriminator) + 200),
+            completed: true,
         }
     }
 
-    fn insert_authorized_abandoned_relay_job(job: RetiredRelaySetupJob) {
+    fn arbitrary_retired_relay_job(
+        target: Principal,
+        status: RetiredRelaySetupStatus,
+        discriminator: u8,
+    ) -> RetiredRelaySetupJob {
+        RetiredRelaySetupJob {
+            target_canister_id: target,
+            setup_account: Account {
+                owner: principal(&[discriminator, 1]),
+                subaccount: Some([discriminator; 32]),
+            },
+            setup_account_identifier: format!("setup-account-{discriminator}"),
+            status,
+            relay_canister_id: Some(principal(&[discriminator, 2])),
+            last_indexed_setup_tx_id: Some(u64::from(discriminator) + 10),
+            setup_tx_ids: vec![u64::from(discriminator) + 10, u64::from(discriminator) + 11],
+            setup_amount_seen_e8s: 400_000_000 + u64::from(discriminator),
+            setup_amount_processed_e8s: 300_000_000 + u64::from(discriminator),
+            payments: vec![RetiredRelaySetupPayment {
+                target_canister_id: target,
+                tx_id: u64::from(discriminator) + 10,
+                from_account_identifier: format!("payer-{discriminator}"),
+                amount_e8s: 400_000_000,
+                timestamp_nanos: Some(u64::from(discriminator) + 20),
+                processed: true,
+                refunded: true,
+            }],
+            cycle_conversion_e8s: Some(100_000_000 + u64::from(discriminator)),
+            cycle_transfer_block_index: Some(u64::from(discriminator) + 200),
+            cycles_minted: Some(2_000_000_000_000 + u128::from(discriminator)),
+            relay_initial_cycles: Some(1_000_000_000_000 + u128::from(discriminator)),
+            relay_funding_e8s: Some(100_000_000 + u64::from(discriminator)),
+            relay_funding_block_index: Some(u64::from(discriminator) + 201),
+            phase: Some(RetiredRelaySetupPhase::Active),
+            cycle_transfer: Some(retired_transfer(
+                RetiredRelaySetupTransferKind::CmcConversion,
+                target,
+                discriminator,
+            )),
+            relay_funding_transfer: Some(retired_transfer(
+                RetiredRelaySetupTransferKind::RelayFunding,
+                target,
+                discriminator.wrapping_add(1),
+            )),
+            existing_relay_sweep_transfer: Some(retired_transfer(
+                RetiredRelaySetupTransferKind::ExistingRelaySweep,
+                target,
+                discriminator.wrapping_add(2),
+            )),
+            refund_transfers: vec![retired_transfer(
+                RetiredRelaySetupTransferKind::Refund,
+                target,
+                discriminator.wrapping_add(3),
+            )],
+            relay_create_attempt: Some(RetiredRelayCreateAttempt {
+                target_canister_id: target,
+                created_at_ts: u64::from(discriminator) + 300,
+                initial_cycles: 1_000_000_000_000 + u128::from(discriminator),
+            }),
+            code_installed: true,
+            relay_funding_accepted: true,
+            blackhole_update_attempted: true,
+            blackhole_confirmed: true,
+            refund_attempt_count: 2,
+            last_refund_attempt_ts: Some(u64::from(discriminator) + 400),
+            refund_blocks: vec![u64::from(discriminator) + 202],
+            created_at_ts: u64::from(discriminator) + 500,
+            updated_at_ts: u64::from(discriminator) + 600,
+            last_error: Some(format!("arbitrary retired error {discriminator}")),
+        }
+    }
+
+    fn insert_retired_relay_job(target: Principal, job: RetiredRelaySetupJob) {
         with_retired_relay_setup_jobs_map(|map| {
-            map.insert(PrincipalKey::from(authorized_abandoned_relay_target()), job);
+            map.insert(PrincipalKey::from(target), job);
         });
     }
 
-    #[test]
-    fn prelaunch_relay_cutover_accepts_empty_or_canonical_projection_only() {
-        reset_test_storage();
-        let config = sample_config();
-        validate_retired_relay_factory_state(&config);
-
+    fn insert_complete_canonical_projection(config: &Config) {
         with_retired_relay_registry_map(|map| {
             for target in &config.canonical_relay_targets {
                 map.insert(
                     PrincipalKey::from(*target),
-                    RetiredRelayRegistryEntry {
-                        relay_canister_id: config.canonical_relay_canister_id.unwrap(),
-                        target_canister_id: *target,
-                        kind: RetiredRelayRegistryKind::Canonical,
-                        status: RetiredRelayRegistryStatus::Active,
-                        setup_account: None,
-                        setup_account_identifier: None,
-                        setup_amount_e8s: None,
-                        setup_tx_ids: Vec::new(),
-                        final_controllers: None,
-                        log_visibility_public: None,
-                        created_at_ts: None,
-                        activated_at_ts: None,
-                    },
+                    retired_canonical_projection_entry(config, *target),
                 );
             }
         });
-        validate_retired_relay_factory_state(&config);
     }
 
     #[test]
-    fn prelaunch_relay_cutover_removes_authorized_job_without_migrating_or_tracking_it() {
+    fn prelaunch_relay_cutover_accepts_empty_retired_setup_memory() {
         reset_test_storage();
         let config = sample_config();
-        let target = authorized_abandoned_relay_target();
-        insert_authorized_abandoned_relay_job(authorized_abandoned_relay_job());
-        with_retired_relay_registry_map(|map| {
-            for canonical_target in &config.canonical_relay_targets {
-                map.insert(
-                    PrincipalKey::from(*canonical_target),
-                    retired_canonical_projection_entry(&config, *canonical_target),
-                );
-            }
-        });
 
         validate_retired_relay_factory_state(&config);
 
         with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
-        assert!(relay_setup_entries_memory_initialized());
-        with_relay_setup_entries_map(|map| {
-            assert!(map.is_empty());
-        });
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
+    }
+
+    #[test]
+    fn prelaunch_relay_cutover_purges_arbitrary_job_without_migrating_or_tracking_it() {
+        reset_test_storage();
+        let config = sample_config();
+        let target = principal(&[70]);
+        insert_retired_relay_job(
+            target,
+            arbitrary_retired_relay_job(target, RetiredRelaySetupStatus::Active, 70),
+        );
+
+        validate_retired_relay_factory_state(&config);
+
+        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
         with_canister_tracking_reasons_map(|map| {
             assert!(map.get(&PrincipalKey::from(target)).is_none());
         });
     }
 
     #[test]
-    fn prelaunch_relay_cutover_validates_registry_before_deleting_authorized_job() {
+    fn prelaunch_relay_cutover_purges_multiple_unrelated_jobs_with_every_legacy_status() {
         reset_test_storage();
         let config = sample_config();
-        let target = authorized_abandoned_relay_target();
-        insert_authorized_abandoned_relay_job(authorized_abandoned_relay_job());
+        let statuses = [
+            RetiredRelaySetupStatus::NotFunded,
+            RetiredRelaySetupStatus::BelowMinimum,
+            RetiredRelaySetupStatus::InsufficientForCurrentRate,
+            RetiredRelaySetupStatus::Pending,
+            RetiredRelaySetupStatus::ConvertingCycles,
+            RetiredRelaySetupStatus::CycleTransferAccepted,
+            RetiredRelaySetupStatus::CycleNotifySucceeded,
+            RetiredRelaySetupStatus::CreatingCanister,
+            RetiredRelaySetupStatus::CanisterCreated,
+            RetiredRelaySetupStatus::InstallingCode,
+            RetiredRelaySetupStatus::CodeInstalled,
+            RetiredRelaySetupStatus::SettingPublicLogs,
+            RetiredRelaySetupStatus::FundingRelaySubaccountOne,
+            RetiredRelaySetupStatus::Blackholing,
+            RetiredRelaySetupStatus::Active,
+            RetiredRelaySetupStatus::SweepingToExistingRelay,
+            RetiredRelaySetupStatus::SweptToExistingRelay,
+            RetiredRelaySetupStatus::SweepBelowDust,
+            RetiredRelaySetupStatus::RefundAvailable,
+            RetiredRelaySetupStatus::Refunding,
+            RetiredRelaySetupStatus::Refunded,
+            RetiredRelaySetupStatus::IndexNotReady,
+            RetiredRelaySetupStatus::FailedRetryable,
+            RetiredRelaySetupStatus::FailedTerminal,
+            RetiredRelaySetupStatus::Ambiguous,
+            RetiredRelaySetupStatus::ManualRecoveryRequired,
+        ];
+        let mut targets = Vec::new();
+        for (index, status) in statuses.into_iter().enumerate() {
+            let discriminator = index as u8 + 30;
+            let target = principal(&[discriminator]);
+            targets.push(target);
+            insert_retired_relay_job(
+                target,
+                arbitrary_retired_relay_job(target, status, discriminator),
+            );
+        }
+
+        validate_retired_relay_factory_state(&config);
+
+        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
+        with_canister_tracking_reasons_map(|map| {
+            for target in targets {
+                assert!(map.get(&PrincipalKey::from(target)).is_none());
+            }
+        });
+    }
+
+    #[test]
+    fn prelaunch_relay_cutover_validates_registry_before_purging_any_job() {
+        reset_test_storage();
+        let config = sample_config();
+        let targets = [principal(&[80]), principal(&[81]), principal(&[82])];
+        for (index, target) in targets.into_iter().enumerate() {
+            insert_retired_relay_job(
+                target,
+                arbitrary_retired_relay_job(
+                    target,
+                    RetiredRelaySetupStatus::ManualRecoveryRequired,
+                    index as u8 + 80,
+                ),
+            );
+        }
         with_retired_relay_registry_map(|map| {
             map.insert(
-                PrincipalKey::from(target),
+                PrincipalKey::from(targets[0]),
                 RetiredRelayRegistryEntry {
                     relay_canister_id: principal(&[89]),
-                    target_canister_id: target,
+                    target_canister_id: targets[0],
                     kind: RetiredRelayRegistryKind::SelfService,
                     status: RetiredRelayRegistryStatus::Active,
                     setup_account: None,
@@ -567,336 +609,46 @@ mod tests {
 
         assert!(result.is_err());
         with_retired_relay_setup_jobs_map(|map| {
-            assert!(map.get(&PrincipalKey::from(target)).is_some());
+            assert_eq!(map.len(), targets.len() as u64);
+            for target in targets {
+                assert!(map.get(&PrincipalKey::from(target)).is_some());
+            }
         });
     }
 
     #[test]
-    fn prelaunch_relay_cutover_accepts_abandoned_bookkeeping_differences() {
-        type Mutation = fn(&mut RetiredRelaySetupJob);
-        let mutations: &[(&str, Mutation)] = &[
-            ("different indexed cursor", |job| {
-                job.last_indexed_setup_tx_id = Some(1)
-            }),
-            ("different setup tx ids", |job| {
-                job.setup_tx_ids = vec![9, 3, 7]
-            }),
-            ("empty payments", |job| job.payments.clear()),
-            ("different payment fields", |job| {
-                job.payments[0].target_canister_id = principal(&[201]);
-                job.payments[0].tx_id = 1;
-                job.payments[0].from_account_identifier = "other-payer".to_string();
-                job.payments[0].amount_e8s = 1;
-                job.payments[0].timestamp_nanos = None;
-                job.payments[0].processed = true;
-                job.payments[0].refunded = false;
-                job.payments.reverse();
-            }),
-            ("different setup amounts", |job| {
-                job.setup_amount_seen_e8s = 1;
-                job.setup_amount_processed_e8s = 2;
-            }),
-            ("legacy initial cycles recorded", |job| {
-                job.relay_initial_cycles = Some(7)
-            }),
-            ("legacy funding estimate recorded", |job| {
-                job.relay_funding_e8s = Some(8)
-            }),
-            ("different phase", |job| {
-                job.phase = Some(RetiredRelaySetupPhase::PreSpend)
-            }),
-            ("different CMC transfer timestamp", |job| {
-                job.cycle_transfer.as_mut().unwrap().created_at_time_nanos = 1
-            }),
-            ("different create-attempt timestamp", |job| {
-                job.relay_create_attempt.as_mut().unwrap().created_at_ts = 1
-            }),
-            ("no refunds", |job| job.refund_transfers.clear()),
-            ("different refunds", |job| {
-                let refund = job.refund_transfers[0].clone();
-                job.refund_transfers = vec![refund.clone(), refund]
-            }),
-            ("different refund bookkeeping", |job| {
-                job.refund_attempt_count = 99;
-                job.last_refund_attempt_ts = None;
-                job.refund_blocks = vec![1, 2, 3];
-            }),
-            ("different job timestamps", |job| {
-                job.created_at_ts = 1;
-                job.updated_at_ts = 2;
-            }),
+    fn prelaunch_relay_cutover_preserves_valid_canonical_registry_while_purging_all_jobs() {
+        reset_test_storage();
+        let config = sample_config();
+        insert_complete_canonical_projection(&config);
+        let jobs = [
+            (principal(&[90]), RetiredRelaySetupStatus::Refunded),
+            (
+                principal(&[91]),
+                RetiredRelaySetupStatus::ManualRecoveryRequired,
+            ),
+            (principal(&[92]), RetiredRelaySetupStatus::Active),
         ];
-
-        for (name, mutate) in mutations {
-            reset_test_storage();
-            let config = sample_config();
-            let target = authorized_abandoned_relay_target();
-            let mut job = authorized_abandoned_relay_job();
-            mutate(&mut job);
-            insert_authorized_abandoned_relay_job(job);
-
-            validate_retired_relay_factory_state(&config);
-
-            with_retired_relay_setup_jobs_map(|map| {
-                assert!(map.is_empty(), "bookkeeping variant retained: {name}");
-            });
-            with_relay_setup_entries_map(|map| {
-                assert!(map.is_empty(), "bookkeeping variant migrated: {name}");
-            });
-            with_canister_tracking_reasons_map(|map| {
-                assert!(
-                    map.get(&PrincipalKey::from(target)).is_none(),
-                    "bookkeeping variant added tracking: {name}"
-                );
-            });
-        }
-    }
-
-    fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
-        panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .unwrap_or("")
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_rejects_every_safety_invariant_mismatch_before_deletion() {
-        type Mutation = fn(&mut RetiredRelaySetupJob);
-        let mutations: &[(&str, Mutation, &str)] = &[
-            (
-                "wrong target",
-                |job| job.target_canister_id = principal(&[201]),
-                "target",
-            ),
-            (
-                "wrong status",
-                |job| job.status = RetiredRelaySetupStatus::Pending,
-                "status",
-            ),
-            (
-                "wrong last error",
-                |job| job.last_error = Some("other failure".to_string()),
-                "diagnostic",
-            ),
-            (
-                "wrong setup owner",
-                |job| job.setup_account.owner = principal(&[202]),
-                "setup_account",
-            ),
-            (
-                "wrong setup subaccount",
-                |job| job.setup_account.subaccount = Some([3; 32]),
-                "setup_account",
-            ),
-            (
-                "wrong setup identifier",
-                |job| job.setup_account_identifier.push('0'),
-                "setup_account",
-            ),
-            (
-                "wrong CMC block",
-                |job| job.cycle_transfer_block_index = Some(1),
-                "cmc_transfer",
-            ),
-            (
-                "wrong conversion amount",
-                |job| job.cycle_conversion_e8s = Some(1),
-                "cmc_transfer",
-            ),
-            (
-                "missing CMC transfer",
-                |job| job.cycle_transfer = None,
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC transfer kind",
-                |job| {
-                    job.cycle_transfer.as_mut().unwrap().kind =
-                        RetiredRelaySetupTransferKind::Refund
-                },
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC transfer source",
-                |job| job.cycle_transfer.as_mut().unwrap().from_subaccount = Some([4; 32]),
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC source identifier",
-                |job| {
-                    job.cycle_transfer
-                        .as_mut()
-                        .unwrap()
-                        .from_account_identifier
-                        .push('0')
-                },
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC transfer destination",
-                |job| job.cycle_transfer.as_mut().unwrap().to.owner = principal(&[204]),
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC destination identifier",
-                |job| {
-                    job.cycle_transfer
-                        .as_mut()
-                        .unwrap()
-                        .to_account_identifier
-                        .push('0')
-                },
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC memo",
-                |job| job.cycle_transfer.as_mut().unwrap().memo = Some(vec![0]),
-                "cmc_transfer",
-            ),
-            (
-                "wrong CMC transfer amount",
-                |job| job.cycle_transfer.as_mut().unwrap().amount_e8s += 1,
-                "cmc_transfer",
-            ),
-            (
-                "wrong transfer fee",
-                |job| job.cycle_transfer.as_mut().unwrap().fee_e8s += 1,
-                "cmc_transfer",
-            ),
-            (
-                "incomplete CMC transfer",
-                |job| job.cycle_transfer.as_mut().unwrap().completed = false,
-                "cmc_transfer",
-            ),
-            (
-                "missing CMC block",
-                |job| job.cycle_transfer.as_mut().unwrap().block_index = None,
-                "cmc_transfer",
-            ),
-            (
-                "wrong minted cycles",
-                |job| job.cycles_minted = Some(1),
-                "cycles_minted",
-            ),
-            (
-                "missing minted cycles",
-                |job| job.cycles_minted = None,
-                "cycles_minted",
-            ),
-            (
-                "missing create attempt",
-                |job| job.relay_create_attempt = None,
-                "create_attempt",
-            ),
-            (
-                "wrong create target",
-                |job| {
-                    job.relay_create_attempt
-                        .as_mut()
-                        .unwrap()
-                        .target_canister_id = principal(&[205])
-                },
-                "create_attempt",
-            ),
-            (
-                "wrong create cycles",
-                |job| job.relay_create_attempt.as_mut().unwrap().initial_cycles += 1,
-                "create_attempt",
-            ),
-            (
-                "Relay id present",
-                |job| job.relay_canister_id = Some(principal(&[206])),
-                "relay_child",
-            ),
-            (
-                "code installed",
-                |job| job.code_installed = true,
-                "relay_install",
-            ),
-            (
-                "Relay funding transfer present",
-                |job| job.relay_funding_transfer = job.cycle_transfer.clone(),
-                "relay_funding",
-            ),
-            (
-                "Relay funding block present",
-                |job| job.relay_funding_block_index = Some(1),
-                "relay_funding",
-            ),
-            (
-                "Relay funding accepted",
-                |job| job.relay_funding_accepted = true,
-                "relay_funding",
-            ),
-            (
-                "existing sweep present",
-                |job| job.existing_relay_sweep_transfer = job.cycle_transfer.clone(),
-                "relay_sweep",
-            ),
-            (
-                "handoff attempted",
-                |job| job.blackhole_update_attempted = true,
-                "controller_handoff",
-            ),
-            (
-                "handoff confirmed",
-                |job| job.blackhole_confirmed = true,
-                "controller_handoff",
-            ),
-        ];
-
-        for (name, mutate, expected_invariant) in mutations {
-            reset_test_storage();
-            let config = sample_config();
-            let target = authorized_abandoned_relay_target();
-            let mut job = authorized_abandoned_relay_job();
-            mutate(&mut job);
-            insert_authorized_abandoned_relay_job(job);
-
-            let panic = std::panic::catch_unwind(|| validate_retired_relay_factory_state(&config))
-                .expect_err("safety mismatch unexpectedly accepted");
-
-            assert_eq!(
-                panic_message(panic.as_ref()),
-                format!("authorized abandoned Relay setup mismatch: {expected_invariant}"),
-                "wrong safety diagnostic: {name}"
+        for (index, (target, status)) in jobs.into_iter().enumerate() {
+            insert_retired_relay_job(
+                target,
+                arbitrary_retired_relay_job(target, status, index as u8 + 90),
             );
-            with_retired_relay_setup_jobs_map(|map| {
-                assert!(
-                    map.get(&PrincipalKey::from(target)).is_some(),
-                    "safety mismatch was deleted before rejection: {name}"
+        }
+
+        validate_retired_relay_factory_state(&config);
+
+        with_retired_relay_registry_map(|map| {
+            assert_eq!(map.len(), config.canonical_relay_targets.len() as u64);
+            for target in &config.canonical_relay_targets {
+                assert_eq!(
+                    map.get(&PrincipalKey::from(*target)),
+                    Some(retired_canonical_projection_entry(&config, *target))
                 );
-            });
-        }
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_rejects_wrong_key_and_additional_job() {
-        for additional_job in [false, true] {
-            reset_test_storage();
-            let config = sample_config();
-            let expected = authorized_abandoned_relay_target();
-            with_retired_relay_setup_jobs_map(|map| {
-                let key = if additional_job {
-                    expected
-                } else {
-                    principal(&[207])
-                };
-                map.insert(PrincipalKey::from(key), authorized_abandoned_relay_job());
-                if additional_job {
-                    map.insert(
-                        PrincipalKey::from(principal(&[208])),
-                        authorized_abandoned_relay_job(),
-                    );
-                }
-            });
-
-            let result = std::panic::catch_unwind(|| validate_retired_relay_factory_state(&config));
-
-            assert!(result.is_err());
-            with_retired_relay_setup_jobs_map(|map| assert!(!map.is_empty()));
-        }
+            }
+        });
+        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
     }
 
     #[test]
@@ -951,21 +703,6 @@ mod tests {
                     activated_at_ts: None,
                 },
             );
-        });
-        validate_retired_relay_factory_state(&config);
-    }
-
-    #[test]
-    #[should_panic(expected = "authorized abandoned Relay setup mismatch: target")]
-    fn prelaunch_relay_cutover_rejects_other_old_setup_jobs() {
-        reset_test_storage();
-        let config = sample_config();
-        let legacy = legacy_setup_job(LegacyRelaySetupStatusV1::Pending);
-        let target = legacy.target_canister_id;
-        let bytes = candid::encode_one(legacy).unwrap();
-        let job = RetiredRelaySetupJob::from_bytes(Cow::Owned(bytes));
-        with_retired_relay_setup_jobs_map(|map| {
-            map.insert(PrincipalKey::from(target), job);
         });
         validate_retired_relay_factory_state(&config);
     }

@@ -1,129 +1,10 @@
 use super::*;
 
-pub(super) const AUTHORIZED_ABANDONED_RELAY_TARGET: &str = "2lo52-kiaaa-aaaar-qaqta-cai";
-pub(super) const PRODUCTION_HISTORIAN_ID: &str = "j5gs6-uiaaa-aaaar-qb5cq-cai";
-pub(super) const LEGACY_SETUP_ACCOUNT_IDENTIFIER: &str =
-    "54467f93c896278cad2d7a6190b021c7f69e393389d96e8a2b47a1ee5e2ad5ab";
-pub(super) const CMC_SETUP_ACCOUNT_IDENTIFIER: &str =
-    "7a09fb19b536cb547f8e345b46413b213da91c48c58f93565bb474615fc52e21";
-pub(super) const LOW_MINTED_CYCLES_DIAGNOSTIC: &str = "CMC notify minted 1590792300000 cycles, below configured relay_initial_cycles 2000000000000; refusing create_canister to avoid historian subsidy after conversion";
-#[cfg(test)]
-pub(super) const FIRST_SETUP_PAYMENT_BLOCK: u64 = 37_414_222;
-#[cfg(test)]
-pub(super) const REFUND_BLOCK: u64 = 37_414_223;
-#[cfg(test)]
-pub(super) const SECOND_SETUP_PAYMENT_BLOCK: u64 = 37_414_358;
-pub(super) const CMC_TRANSFER_BLOCK: u64 = 37_414_364;
-
 pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
-pub(super) fn authorized_abandoned_relay_target() -> Principal {
-    Principal::from_text(AUTHORIZED_ABANDONED_RELAY_TARGET)
-        .expect("invalid authorized abandoned Relay target")
-}
-
-pub(super) fn production_historian_id() -> Principal {
-    Principal::from_text(PRODUCTION_HISTORIAN_ID).expect("invalid production Historian principal")
-}
-
-fn validate_authorized_abandoned_prelaunch_relay_job(
-    key: &PrincipalKey,
-    job: &RetiredRelaySetupJob,
-) -> Result<(), &'static str> {
-    let target = authorized_abandoned_relay_target();
-    let historian = production_historian_id();
-    let legacy_subaccount = jupiter_ic_clients::account::relay_setup_subaccount(target);
-    let setup_account = Account {
-        owner: historian,
-        subaccount: Some(legacy_subaccount),
-    };
-    let cmc_account = Account {
-        owner: jupiter_ic_clients::constants::cycles_minting_canister_id(),
-        subaccount: Some(jupiter_ic_clients::account::principal_to_subaccount(
-            historian,
-        )),
-    };
-
-    if key != &PrincipalKey::from(target) || job.target_canister_id != target {
-        return Err("target");
-    }
-    if job.setup_account != setup_account
-        || job.setup_account_identifier != LEGACY_SETUP_ACCOUNT_IDENTIFIER
-    {
-        return Err("setup_account");
-    }
-    if job.status != RetiredRelaySetupStatus::ManualRecoveryRequired {
-        return Err("status");
-    }
-    if job.last_error.as_deref() != Some(LOW_MINTED_CYCLES_DIAGNOSTIC) {
-        return Err("diagnostic");
-    }
-    let Some(cycle_transfer) = job.cycle_transfer.as_ref() else {
-        return Err("cmc_transfer");
-    };
-    if job.cycle_conversion_e8s != Some(94_950_000)
-        || job.cycle_transfer_block_index != Some(CMC_TRANSFER_BLOCK)
-        || cycle_transfer.kind != RetiredRelaySetupTransferKind::CmcConversion
-        || cycle_transfer.from_subaccount != setup_account.subaccount
-        || cycle_transfer.from_account_identifier != LEGACY_SETUP_ACCOUNT_IDENTIFIER
-        || cycle_transfer.to != cmc_account
-        || cycle_transfer.to_account_identifier != CMC_SETUP_ACCOUNT_IDENTIFIER
-        || cycle_transfer.amount_e8s != 94_950_000
-        || cycle_transfer.fee_e8s != 10_000
-        || cycle_transfer.memo != Some(1_347_768_404u64.to_le_bytes().to_vec())
-        || cycle_transfer.block_index != Some(CMC_TRANSFER_BLOCK)
-        || !cycle_transfer.completed
-    {
-        return Err("cmc_transfer");
-    }
-    if job.cycles_minted != Some(1_590_792_300_000) {
-        return Err("cycles_minted");
-    }
-    let Some(create_attempt) = job.relay_create_attempt.as_ref() else {
-        return Err("create_attempt");
-    };
-    if create_attempt.target_canister_id != target
-        || create_attempt.initial_cycles != 1_000_000_000_000
-    {
-        return Err("create_attempt");
-    }
-    if job.relay_canister_id.is_some() {
-        return Err("relay_child");
-    }
-    if job.code_installed {
-        return Err("relay_install");
-    }
-    if job.relay_funding_transfer.is_some()
-        || job.relay_funding_block_index.is_some()
-        || job.relay_funding_accepted
-    {
-        return Err("relay_funding");
-    }
-    if job.existing_relay_sweep_transfer.is_some() {
-        return Err("relay_sweep");
-    }
-    if job.blackhole_update_attempted || job.blackhole_confirmed {
-        return Err("controller_handoff");
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
-    let abandoned_job_key = with_retired_relay_setup_jobs_map(|map| {
-        assert!(
-            map.len() <= 1,
-            "retired Relay setup-job memory contains unexpected pre-launch state"
-        );
-        map.iter().next().map(|entry| {
-            let (key, job) = entry.into_pair();
-            if let Err(invariant) = validate_authorized_abandoned_prelaunch_relay_job(&key, &job) {
-                panic!("authorized abandoned Relay setup mismatch: {invariant}");
-            }
-            key
-        })
-    });
+fn validate_retired_registry(config: &Config) {
     with_retired_relay_registry_map(|map| {
         if !map.is_empty() {
             let Some(canonical_relay_canister_id) = config.canonical_relay_canister_id else {
@@ -147,30 +28,21 @@ pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
                 );
             }
         }
-        assert!(
-            map.get(&PrincipalKey::from(authorized_abandoned_relay_target()))
-                .is_none(),
-            "retired Relay registry contains unexpected self-service state"
-        );
     });
-    if let Some(key) = abandoned_job_key {
-        with_retired_relay_setup_jobs_map(|map| {
-            assert!(
-                map.remove(&key).is_some(),
-                "authorized retired Relay setup job disappeared during cutover"
-            );
-            assert!(
-                map.is_empty(),
-                "retired Relay setup-job memory was not emptied during cutover"
-            );
-        });
-    }
+}
+
+pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
+    validate_retired_registry(config);
+
     with_retired_relay_setup_jobs_map(|map| {
+        map.clear_new();
+
         assert!(
             map.is_empty(),
             "retired Relay setup-job memory was not emptied during cutover"
         );
     });
+
     with_relay_setup_entries_map(|map| {
         assert!(
             map.is_empty(),
