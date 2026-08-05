@@ -78,11 +78,13 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-First deploy a maintenance frontend that prevents ordinary UI submissions. The maintenance frontend is not a security boundary. Stopping `jupiter_historian` is the executable self-service factory pause and the authoritative call drain for this deployment. Record all public query evidence while Historian is still running, then stop it and wait until its status is `Stopped` before creating/downloading the snapshot and performing the in-place upgrade. There is no runtime factory-disable update method.
+Stopping `jupiter_historian` is the executable self-service factory pause and the authoritative call drain for this deployment. Record all public query evidence while Historian is still running, then stop it and wait until its status is `Stopped` before creating/downloading the snapshot and performing the in-place upgrade. Keep Historian stopped while deploying the matching multi-target frontend, and start Historian only after both deployments succeed. There is no runtime factory-disable update method.
 
-For the first cutover, memory 25 is new, so there is no pre-existing `Creating` entry to enumerate. The upgrade's one-time retired-memory gate is authoritative. Retired registry memory must be empty or exactly the complete configured canonical Relay projection. Retired setup-job memory must be empty except for the one operator-authorized abandoned pre-launch job keyed by target `2lo52-kiaaa-aaaar-qaqta-cai`; that exception is accepted only when its reviewed safety-critical fingerprint matches. The fingerprint requires the old singleton setup identity, the exact `ManualRecoveryRequired` low-minted-cycles diagnostic, the completed CMC conversion at block `37414364`, the exact unresolved create attempt with no recorded child, and strict absence of installation, Relay funding, an existing-Relay sweep, or controller-handoff evidence. Abandoned payment, refund, cursor, amount, phase, and timestamp bookkeeping is not part of this safety decision. Every other retired setup job blocks the upgrade.
+For the first cutover, memory 25 is new, so there is no pre-existing `Creating` entry to enumerate. Production was confirmed to contain multiple pre-launch setup-job records. The operator was the sole pre-launch user and explicitly authorized abandoning every legacy job, deterministic setup-account balance, and associated cycle balance, including any unrecorded or incomplete child attempt. The upgrade therefore does not identify, classify, or validate individual memory-24 targets or job contents.
 
-After all retired registry and setup invariants pass, the authorized job is removed from retired memory 24 and memory 24 is required to be logically empty. The job is not inserted into memory 25 and does not add `RelayTarget` or `RelayInstance` tracking. The old deterministic Ledger setup account and its remaining 105,140,000 e8s are intentionally abandoned: no cutover code reads, transfers, refunds, sweeps, burns, or reuses that balance. Ledger history and downloaded snapshots remain historical evidence; application-level map deletion does not erase either. If the upgrade or this gate fails, do not proceed; restore the snapshot using the rehearsed rollback procedure.
+The retired registry remains the fail-closed safety gate and is validated before memory 24 changes. It must be empty or exactly the complete configured canonical Relay projection: the map length must equal the configured canonical target count, every configured target must be present under its own key, and every entry must use the configured canonical Relay ID with matching target, `Canonical` kind, and `Active` status. Any self-service, partial, extra, incorrect, or inconsistent registry traps before purge. After that validation succeeds, the cutover logically clears memory 24 with `clear_new()` without iterating, reading, or decoding any stored key or value, proves memory 24 is empty, opens memory 25, and proves the new target-set setup map is empty. No memory-24 entry is migrated or creates `Creating`, `Active`, `ManualRecoveryRequired`, `RelayTarget`, or `RelayInstance` state.
+
+No cutover call is made to the Ledger, Index, CMC, or management canister. Old Ledger balances, Ledger history, cycles, and possible orphaned child canisters are neither recovered nor erased; they are deliberately abandoned in place. The new target-set setup system starts empty. This is a one-time bootstrap decision based on the operator's pre-launch ownership, not a general policy for future migrations. If the upgrade or registry gate fails, do not proceed; restore the snapshot using the rehearsed rollback procedure.
 
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
 
@@ -107,6 +109,7 @@ SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic -
 icp canister snapshot list jupiter_historian --environment ic --json
 icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet_frontend --environment ic --mode upgrade
 icp canister start jupiter_historian --environment ic
 icp canister status jupiter_historian --environment ic --json
 ```
@@ -127,40 +130,38 @@ After upgrade, verify:
 - Module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash.
 - Controllers are unchanged.
 - Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
-- For the first cutover, retired memory 24 is logically empty, the new memory-25 setup map opens empty, and the abandoned singleton target returns a fresh `NotFunded` setup view with an account different from the retired singleton account.
+- For the first cutover, retired memory 24 is logically empty, the new memory-25 setup map opens empty, and each known retired target set returns a fresh `NotFunded` setup view without legacy target or Relay tracking.
 - For later upgrades, known exact target sets still return their original active Relay mappings.
 - Automatic cycles probing is active.
 - `RelayTarget` and `RelayInstance` tracking reasons and counts are preserved independently.
 - New cycles samples append to existing histories.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
 
-Deploy the frontend only after backend verification is complete.
+Deploy the matching multi-target frontend while Historian remains stopped after its successful upgrade. Start Historian only after both deployments succeed.
 
 The pre-launch cutover sequence is:
 
-1. Deploy the maintenance frontend that prevents ordinary UI submissions.
-2. Record all pre-upgrade public query evidence while Historian is still running.
-3. Stop Historian and wait until its status is `Stopped`.
-4. Create and download a snapshot.
-5. Upgrade Historian in place; do not reinstall it. The one-time retired-memory gate must accept the state.
-6. Start Historian.
+1. Record all pre-upgrade public query evidence while Historian is still running.
+2. Stop Historian and wait until its status is `Stopped`.
+3. Create and download a snapshot.
+4. Upgrade Historian in place; do not reinstall it. The one-time retired-memory gate must accept the state.
+5. While Historian remains stopped, deploy the matching multi-target frontend.
+6. Start Historian only after both deployments succeed.
 7. Verify preserved public state and the new setup API.
 8. Perform one controlled singleton setup and one overlapping multi-target setup.
 9. Verify each child module hash, running status, Fiduciary-only controller set, and independent tracking counts.
-10. Retain the snapshot until acceptance is complete, then restore normal UI access.
+10. Retain the snapshot until acceptance is complete.
 
 For later Historian upgrades:
 
-1. Deploy the maintenance frontend.
-2. Record public state and known exact target-set mappings.
-3. Stop Historian and wait until its status is `Stopped`.
-4. Create and download a snapshot.
-5. Upgrade Historian in place.
-6. Start Historian.
-7. Verify active mappings through the known exact target sets.
-8. Verify `RelayTarget` and `RelayInstance` counts.
-9. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
-10. Re-enable normal UI access.
+1. Record public state and known exact target-set mappings.
+2. Stop Historian and wait until its status is `Stopped`.
+3. Create and download a snapshot.
+4. Upgrade Historian in place.
+5. Start Historian.
+6. Verify active mappings through the known exact target sets.
+7. Verify `RelayTarget` and `RelayInstance` counts.
+8. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
 
 Self-service children are blackholed and are never upgraded or reconstructed by Historian.
 
