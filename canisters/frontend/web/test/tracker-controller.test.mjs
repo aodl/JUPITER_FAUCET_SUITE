@@ -280,7 +280,7 @@ test('tracker renders cycles-only data for recognized relay instances', async ()
     assert.match(html, /4\.2000T cycles/);
     assert.doesNotMatch(html, /Total committed/);
     assert.doesNotMatch(html, /Qualifying commitments/);
-    assert.doesNotMatch(html, /not a recognised commitment beneficiary/);
+    assert.doesNotMatch(html, /not a recognized commitment beneficiary/);
     assert.doesNotMatch(html, /Commitment history is updated/);
     assert.match(html, /Cycles balances are sampled by historian cycles sweeps/);
   });
@@ -935,7 +935,7 @@ test('tracker hides observed CMC top-up card when no top-ups are loaded', async 
   });
 });
 
-test('observed CMC chart renders two Relay instances as separately coloured tracker links', async () => {
+test('observed CMC chart renders two Relay instances as separately colored tracker links', async () => {
   const nodes = trackerNodes();
   const target = 'jufzc-caaaa-aaaar-qb5da-cai';
   const relayA = 'u2qkp-aqaaa-aaaar-qb7ea-cai';
@@ -1170,7 +1170,7 @@ test('observed CMC chart bounds explicit Relay segments and discloses visible ov
     assert.match(html, /data-source-segment="relay"/);
     assert.match(html, /Other Relay instances/);
     assert.match(html, /Additional Relay canisters grouped in “Other Relay instances” \(2\)/);
-    assert.match(html, /These Relay canister IDs share one grouped graph colour/);
+    assert.match(html, /These Relay canister IDs share one grouped graph color/);
 
     const links = relayTrackerLinks(html);
     assert.equal(links.length, relayCanisterIds.length);

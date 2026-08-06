@@ -834,12 +834,12 @@ export function createTrackerController({
         ${isRaw
           ? renderTrackerLoadingCard({
               title: transferTitle,
-              subtitle: `Observed incoming ICP transfers into the ${parsed.kind === 'neuronStake' ? 'staking' : 'canister'} account, colour-coded by source.`,
+              subtitle: `Observed incoming ICP transfers into the ${parsed.kind === 'neuronStake' ? 'staking' : 'canister'} account, color-coded by source.`,
               message: 'Loading incoming ICP transfer history…',
             })
           : `${renderTrackerLoadingCard({
               title: 'Observed CMC top-ups',
-              subtitle: 'Transfers to the CMC deposit account in the selected range, colour-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.',
+              subtitle: 'Transfers to the CMC deposit account in the selected range, color-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.',
               message: 'Loading observed CMC top-up history…',
             })}
             ${renderTrackerLoadingCard({
@@ -1013,7 +1013,7 @@ export function createTrackerController({
     return `
       <details class="tracker-relay-overflow-details">
         <summary>Additional Relay canisters grouped in “Other Relay instances” (${escapeHtml(formatInteger(visibleOverflowRelayCanisterIds.length))})</summary>
-        <p>These Relay canister IDs share one grouped graph colour.</p>
+        <p>These Relay canister IDs share one grouped graph color.</p>
         <div class="tracker-source-legend tracker-relay-overflow-list">
           ${legendSegments(groupedSegments, true)}
         </div>
@@ -1109,7 +1109,7 @@ export function createTrackerController({
       ${hasObservedCmcTopUps ? `<div class="tracker-chart-card">
         <div class="tracker-chart-header">
           <h3>Observed CMC top-ups</h3>
-          <span>Transfers to the CMC deposit account in the selected range, colour-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.</span>
+          <span>Transfers to the CMC deposit account in the selected range, color-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.</span>
         </div>
         ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), segments: sourceSegments, buckets })}
         ${renderRelayOverflowDisclosure(relayPlan, data?.cmcTransfers?.items || [])}
@@ -1149,8 +1149,8 @@ export function createTrackerController({
     const result = document.getElementById('tracker-result');
     if (!result) return;
     const detail = data?.isRecognized
-      ? 'Historian recognises this principal, but not as a memo-registered commitment beneficiary.'
-      : 'This principal is not a recognised commitment beneficiary.';
+      ? 'Historian recognizes this principal, but not as a memo-registered commitment beneficiary.'
+      : 'This principal is not a recognized commitment beneficiary.';
     result.innerHTML = `
       <div class="tracker-empty-state">
         <p>${escapeHtml(detail)}</p>
@@ -1429,7 +1429,7 @@ export function createTrackerController({
         <div class="tracker-chart-card">
           <div class="tracker-chart-header">
             <h3>${escapeHtml(title)}</h3>
-            <span>Observed incoming ICP transfers into the ${isNeuron ? 'staking' : 'canister'} account, colour-coded by source.</span>
+            <span>Observed incoming ICP transfers into the ${isNeuron ? 'staking' : 'canister'} account, color-coded by source.</span>
           </div>
           ${transferLoadingNote}
           ${transferLimitNote}

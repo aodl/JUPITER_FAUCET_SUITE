@@ -263,6 +263,7 @@ test('About pane includes social links and projects slide', () => {
   const about = sectionMarkup('about');
   assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol/);
   assert.match(about, /href="https:\/\/internetcomputer\.org\/"[^>]*>Internet Computer<\/a>/);
+  assert.match(about, /designed for tamper-proof, "unstoppable" on-chain services/);
   assert.match(about, /href="https:\/\/learn\.internetcomputer\.org\/hc\/en-us\/articles\/34573913497108-Cycles"[^>]*>Internet Computer cycles guide<\/a>/);
   assert.match(about, /class="about-social-links"[^>]*aria-label="Jupiter Faucet social links"/);
   assert.match(about, /href="https:\/\/oc\.app\/community\/xfokc-3yaaa-aaaac-be5ia-cai\/channel\/3626918149"[^>]*>[\s\S]*Open Chat Community[\s\S]*Onchain Q&amp;A/);
@@ -385,9 +386,9 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /newly minted <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
   assert.match(howItWorks, /<strong>0%–19%<\/strong> distributed to <strong>SNS jUP stakers<\/strong>/);
   assert.match(howItWorks, /<strong>0%–1%<\/strong> restaked into/);
-  assert.match(howItWorks, /pre-requisite for truly unstoppable canisters is a secure and decentralized network/);
+  assert.match(howItWorks, /prerequisite for truly unstoppable canisters is a secure and decentralized network/);
   assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*jUP SNS tokens will be minted/);
-  assert.match(howItWorks, /jUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalised/);
+  assert.match(howItWorks, /jUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalized/);
   assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>committed ICP<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d[^>]*>staking account<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);
@@ -419,7 +420,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /Declared neurons must be\s*'public'\s*in order for Jupiter Faucet to derive their staking accounts/);
   assert.match(howItWorks, /href="#memo-builder"[^>]*data-panel="memo-builder"[^>]*>memo builder<\/a>/);
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> You can adjust the <code>canister<\/code>\/<code>neuron<\/code>,\s*<code>title<\/code>, and <code>label<\/code> parameters/);
-  assert.match(howItWorks, /customise the memo helper\s*form for a smoother user experience/);
+  assert.match(howItWorks, /customize the memo helper\s*form for a smoother user experience/);
   assert.doesNotMatch(howItWorks, /next slide/);
   assert.doesNotMatch(howItWorks, /<a class="memo-builder-tip-url/);
   assert.match(howItWorks, /id="memo-builder-tip-url"[^>]*data-copy-value="#memo-builder\?canister=\{protocol canister ID\}&amp;title=\{custom title\}&amp;label=\{custom label\}"/);
@@ -435,7 +436,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /perpetually pay into the IO neuron's staking account/);
   assert.match(howItWorks, /In this particular\s+case a <code>'\.'<\/code> suffix is superfluous/);
   assert.doesNotMatch(howItWorks, /<strong>Extra tip:<\/strong>/);
-  assert.match(howItWorks, /A relay canister provides one stable target for ICP transfers/);
+  assert.match(howItWorks, /A relay canister provides one stable destination for ICP transfers/);
+  assert.match(howItWorks, /steadily growing cycles balance for configured target canisters/);
   assert.match(howItWorks, /topping up 1% more\s*cycles than needed to restore the previously sampled balance/);
   assert.match(howItWorks, /<strong>Example:<\/strong> The full suite of Jupiter Faucet protocol canisters are managed by a single/);
   assert.match(howItWorks, /href="\/#metric-tracker\?memo=u2qkp-aqaaa-aaaar-qb7ea-cai\.&amp;range=month"[^>]*data-panel="metric-tracker"[^>]*>relay canister<\/a>/);
@@ -464,7 +466,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(memoBuilder, /id="memo-builder-title"[^>]*>Memo Builder<\/h3>/);
   assert.match(memoBuilder, /id="memo-builder-prefill-note"[^>]*hidden/);
   assert.match(memoBuilder, /This memo helper simplifies constructing a memo from your chosen ID/);
-  assert.match(memoBuilder, /protocol\s+canister that facilitates a specialised top-up flow/);
+  assert.match(memoBuilder, /protocol\s+canister that facilitates a specialized top-up flow/);
   assert.match(memoBuilder, /id="memo-builder-safety-notice"[^>]*hidden/);
   assert.match(memoBuilder, /<strong>Health &amp; Safety Notice:<\/strong>/);
   assert.match(memoBuilder, /identified\s+the controller of the <span id="memo-builder-safety-target-kind">protocol canister<\/span>/);

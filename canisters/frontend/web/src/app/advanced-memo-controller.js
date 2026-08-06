@@ -7,7 +7,7 @@ import {
   shouldApplyAdvancedMemoUrlTargetValue,
 } from '../advanced-memo-builder.js';
 
-const PREFILL_CANISTER_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a protocol canister that facilitates a specialised top-up flow.';
+const PREFILL_CANISTER_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a protocol canister that facilitates a specialized top-up flow.';
 const PREFILL_NEURON_NOTE = 'This memo helper simplifies constructing a memo from your chosen ID and a public protocol neuron.';
 
 export function currentPageUrlForFragment(value, currentHref = window.location.href) {
