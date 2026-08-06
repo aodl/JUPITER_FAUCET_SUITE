@@ -26,6 +26,13 @@ pub(super) fn log_error(message: &str) {
     ));
 }
 
+pub(super) fn log_structured_error(event: &str, fields: &[(&str, String)]) {
+    let mut event_fields = Vec::with_capacity(fields.len() + 1);
+    event_fields.push((FIELD_EVENT, event.to_string()));
+    event_fields.extend(fields.iter().cloned());
+    emit_log_line(format_event_line("relay", "ERR", &event_fields));
+}
+
 pub(crate) fn log_lifecycle(
     event: &str,
     main_interval_seconds: u64,

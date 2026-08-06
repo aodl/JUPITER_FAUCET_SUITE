@@ -73,7 +73,7 @@ Subaccount 1 exists for two cases:
 1. Memo is unavailable. Some funding paths can send ICP but cannot attach the required Jupiter Faucet memo. For example, minting maturity can send or mint ICP to Relay subaccount 1, and Relay later forwards the ICP with the correct memo.
 2. ICP arrives in small pieces. If ICP arrives in dribs and drabs below Jupiter Faucet's minimum qualifying commitment threshold, sending each piece directly to Jupiter Faucet would not create qualifying commitments. Relay subaccount 1 accumulates those pieces until it can make one qualifying commitment.
 
-Once subaccount 1 holds enough ICP to send at least the qualifying commitment amount after paying the ledger fee, Relay forwards `balance - fee` to the Jupiter Faucet neuron staking account and attaches the memo for Relay. Jupiter Faucet then treats that as a normal commitment that perpetually pays raw ICP back to Relay's default account.
+Once subaccount 1 holds enough ICP to send at least the qualifying commitment amount after paying the resolved ledger fee, Relay forwards `balance - fee` to the Jupiter Faucet neuron staking account and attaches the memo for Relay. Jupiter Faucet then treats that as a normal commitment that perpetually pays raw ICP back to Relay's default account.
 
 Subaccount 1 eventually produces the same kind of perpetual funding stream as workflow 2. It just lets Relay assemble the commitment when the sender cannot do so directly.
 
@@ -104,12 +104,42 @@ Subaccount 1 flow:
 
 1. ICP arrives at Relay subaccount 1.
 2. Relay checks subaccount 1 on each main tick.
-3. If the balance is below `1 ICP + ledger fee`, Relay leaves it there.
+3. If the balance is below the inclusive minimum described below, Relay leaves it there.
 4. Once the balance can produce at least a qualifying net commitment, Relay sends `balance - fee` to the Jupiter Faucet neuron staking account.
 5. Relay attaches memo `u2qkpaqaaaaaaarqb7eacai.Relay`.
 6. Jupiter Faucet records the commitment.
 7. Future Faucet payouts from that commitment flow as raw ICP to Relay's default account.
 8. Relay then uses that default-account ICP for managed-canister top-ups and surplus routing.
+
+## ICP Ledger Fee Resolution and Thresholds
+
+Relay queries the configured ledger's `icrc1_fee` whenever it builds a new fee-dependent subaccount-1 or default-account plan. Fee resolution is live fee, then the heap-only last-known fee, then a `10_000` e8s bootstrap fallback. The bootstrap value is an emergency contingency, not a permanent ICP ledger invariant. A failed live read emits a structured Relay error log with the planning context, ledger error, selected `cached` or `bootstrap` source, and selected fee. An ordinary successful live read emits no extra error log.
+
+Every staged transfer pins and explicitly supplies its resolved fee, including deterministic retries. A definitive ledger `BadFee` records the expected fee when it fits `u64`, invalidates the stale plan, and reports `ledger_fee_changed`; Relay does not continue later transfers from that plan. If `BadFee` arrives only after an uncertain first attempt, the current transfer remains ambiguous because the first attempt might have been accepted. Relay neither mutates nor rebuilds an ambiguous transfer under a new identity. The last-known fee is runtime heap state and resets on a replacement upgrade with the rest of Relay's heap state.
+
+The exact inclusive thresholds are:
+
+```text
+F = resolved ICP ledger fee in e8s
+N = number of configured raw-ICP surplus recipients
+
+subaccount_1_minimum_balance = 100,000,000 + F
+surplus_minimum_available_after_topups = N × (100,000,000 + F)
+```
+
+The surplus formula applies to ICP remaining after managed-canister top-up requirements, retained-balance accounting, and all other surplus safety gates.
+
+```text
+At F = 10,000:
+
+subaccount 1:
+100,010,000 e8s = 1.0001 ICP
+
+production surplus with two recipients:
+200,020,000 e8s = 2.0002 ICP
+```
+
+Exactly those amounts qualify; both comparisons are inclusive.
 
 ## When should I use which workflow?
 
@@ -211,9 +241,10 @@ RELAY_PROBE_FAILURE canister_id=<principal> consecutive_failures=<nat32> error=<
 RELAY_TARGET_PROBE canister_id=<principal> consecutive_probe_failures=<nat32> classification=<observable|transient_probe_failure|target_unavailable_after_consecutive_probe_failures> skipped_reason=<escaped-text-or-null>
 relay LIFECYCLE event=<init_complete|post_upgrade_complete> timers_installed=true main_interval_seconds=<nat64>
 relay ERR message=<escaped-text>
+relay ERR event=<ledger_fee_fallback|ledger_fee_changed> context=<subaccount_1|default_account> ...
 ```
 
-`RELAY_SUMMARY` aggregates the per-canister recovery view: `total_target_topup_cycles` is the tick's total CMC target for observable targets, `total_actual_minted_cycles` is cycles returned by successful CMC notify calls, `total_carried_deficit_cycles` is pre-existing recovery debt, `total_remaining_deficit_cycles` is unrecovered debt after the tick, and `deficit_canister_count` is the number of observable planned canisters still blocking surplus. The min/max fields identify the lowest observed cycles sample and largest remaining recovery deficit, while `canister_skip_counts` summarizes routine skip reasons without one line per canister. `RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated fresh burn, carried recovery deficit, the mode-specific top-up target, planned top-up e8s, sent top-up e8s, actual minted cycles, remaining recovery deficit, and skipped reason if any. Relay emits `RELAY_CANISTER` detail only for actionable cases such as accepted or minted top-ups, transfer failure or ambiguity context, and abnormal per-canister skipped reasons. `planned_topup_e8s` is the intended net CMC top-up amount. `sent_topup_e8s` is the accepted net amount actually sent to CMC, and is zero if the transfer was not accepted. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_TARGET_PROBE` logs expose transient probe failures and targets that are unavailable after consecutive probe failures; observable targets are summarized instead of logged one by one. `RELAY_FAUCET_COMMITMENT` logs show successful, ambiguous, or failed subaccount-1 forwarding attempts without printing raw memo bytes. Healthy empty scans and below-threshold scans are quiet; they do not produce repeated public log lines or durable status records. Canister logs are public observability, not durable full history.
+`RELAY_SUMMARY` aggregates the per-canister recovery view: `total_target_topup_cycles` is the tick's total CMC target for observable targets, `total_actual_minted_cycles` is cycles returned by successful CMC notify calls, `total_carried_deficit_cycles` is pre-existing recovery debt, `total_remaining_deficit_cycles` is unrecovered debt after the tick, and `deficit_canister_count` is the number of observable planned canisters still blocking surplus. The min/max fields identify the lowest observed cycles sample and largest remaining recovery deficit, while `canister_skip_counts` summarizes routine skip reasons without one line per canister. `ledger_fee_changed` means a definitive fee rejection invalidated the current allocation plan; `ledger_balance_read_failed` means the default-account ledger balance could not be read. `RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated fresh burn, carried recovery deficit, the mode-specific top-up target, planned top-up e8s, sent top-up e8s, actual minted cycles, remaining recovery deficit, and skipped reason if any. Relay emits `RELAY_CANISTER` detail only for actionable cases such as accepted or minted top-ups, transfer failure or ambiguity context, and abnormal per-canister skipped reasons. `planned_topup_e8s` is the intended net CMC top-up amount. `sent_topup_e8s` is the accepted net amount actually sent to CMC, and is zero if the transfer was not accepted. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_TARGET_PROBE` logs expose transient probe failures and targets that are unavailable after consecutive probe failures; observable targets are summarized instead of logged one by one. `RELAY_FAUCET_COMMITMENT` logs show successful, ambiguous, or failed subaccount-1 forwarding attempts without printing raw memo bytes. Structured `ledger_fee_fallback` error logs identify cached or bootstrap fallback use. Healthy empty scans and below-threshold scans are quiet; they do not produce repeated public log lines or durable status records. Canister logs are public observability, not durable full history.
 
 ## Status and Recovery
 
@@ -247,7 +278,7 @@ Relay-minted cycles come from successful CMC `notify_top_up` responses. This pre
 
 ## Lifecycle
 
-Relay is replacement-style and heap-only. It does not persist config or operational state in stable memory. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, consecutive probe failure counts, conversion estimates, summaries, active jobs, pending transfers, faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
+Relay is replacement-style and heap-only. It does not persist config or operational state in stable memory. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, consecutive probe failure counts, conversion estimates, last-known ledger fee, summaries, active jobs, pending transfers, faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
 
 Relay upgrades are non-resumable. Avoid upgrading during active Relay work where practical, including active top-ups, ambiguous transfers, or CMC notify sequences. If an operation is interrupted, Relay starts fresh from the supplied `InitArgs`. After upgrade, confirm the fresh `CONFIG` log, check managed canister cycle balances, and manually top up or reconcile if needed.
 
@@ -280,7 +311,7 @@ If the live CMC conversion-rate refresh fails or returns unusable data, Relay ma
 
 Relay always executes canister top-ups before raw ICP surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, Relay spends only on canister top-ups and routes no raw ICP surplus. Underfunded, failed, ambiguous, or NoFunds rounds persist the unmet `target_topup_cycles - actual_minted_cycles` as `recovery_deficit_cycles` for that canister. Future ticks add that carried deficit to the fresh-burn target until it is recovered. Surplus routing is allowed only after relay self-management, observable-target top-up planning, retained ICP accounting, and ledger fees are satisfied, and no observable planned canister recovery deficit remains. Targets skipped after the consecutive-probe-failure threshold do not block surplus for that run.
 
-Raw ICP surplus is routed only when every configured raw ICP recipient receives at least 1 ICP net of ledger fee. If the equal net share is below 1 ICP, Relay sends no raw ICP surplus transfers and keeps the ICP in its default ledger account for a future tick.
+Raw ICP surplus is routed only when every configured raw ICP recipient receives at least 1 ICP net of the resolved ledger fee. If the equal net share is below 1 ICP, Relay sends no raw ICP surplus transfers and keeps the ICP in its default ledger account for a future tick. The exact inclusive threshold is defined in [ICP Ledger Fee Resolution and Thresholds](#icp-ledger-fee-resolution-and-thresholds).
 
 This threshold applies uniformly to all raw ICP surplus recipients, including canister targets and neuron targets.
 
@@ -333,6 +364,8 @@ The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. 
 ## Retry Safety
 
 Each pending transfer stores a heap/runtime `created_at_time` and memo. Immediate ledger retries reuse the same identity during the current Wasm lifetime, and ledger `Duplicate` is treated as an accepted transfer using the duplicate block index. Once a ledger transfer is accepted, CMC `Processing` and transport-like notify failures are retried once inline. Repeated uncertainty is recorded as ambiguous rather than blindly retried with a changed transfer identity.
+
+A first-attempt `BadFee` is a definitive rejection: Relay records the ledger's representable expected fee, accounts the rejected amount as known-unspent, marks the summary `ledger_fee_changed`, and stops the stale allocation job before any later transfer starts. A `BadFee` after an uncertain first attempt instead leaves the current amount ambiguous and still stops later stale-fee work. Never-started allocations remain known-unspent for the completed summary and future planning.
 
 Subaccount-1 Jupiter Faucet commitment forwarding uses the same deterministic transfer identity and ledger duplicate handling. After a ledger-accepted transfer to the Jupiter Faucet neuron staking account, Relay marks the transfer complete and schedules NNS Governance `claim_or_refresh_neuron` on a zero-delay timer; a refresh failure is logged as a follow-up failure and does not roll back or duplicate the accepted ledger transfer.
 

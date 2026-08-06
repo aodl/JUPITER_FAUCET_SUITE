@@ -178,6 +178,7 @@ enum DebugNotifyBehavior {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum DebugNextTransferError {
     TemporarilyUnavailable,
+    BadFee { expected_fee_e8s: u64 },
     Duplicate { duplicate_of: u64 },
 }
 
@@ -409,6 +410,26 @@ impl RelayEnv {
             encode_args((relay_account, amount_e8s))?,
         )?;
         Ok(())
+    }
+
+    fn set_ledger_fee(&self, fee_e8s: u64) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_set_fee",
+            fee_e8s,
+        )
+    }
+
+    fn set_ledger_fee_query_failure(&self, value: bool) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_set_fee_query_failure",
+            value,
+        )
     }
 
     fn add_relay_cycles(&self, cycles: u128) {
@@ -770,6 +791,63 @@ fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<
         || logs.contains(&String::from_utf8(expected_memo).unwrap())
     {
         bail!("expected faucet commitment log without raw memo bytes, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_commitment_uses_bootstrap_fee_when_fee_query_fails_without_cache() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.set_ledger_fee_query_failure(true)?;
+    env.credit_relay_subaccount_one(100_010_000)?;
+
+    let _ = env.tick_relay()?;
+    let transfers = env.transfers()?;
+    if transfers.len() != 1
+        || nat_to_u64(&transfers[0].amount) != 100_000_000
+        || nat_to_u64(&transfers[0].fee) != 10_000
+    {
+        bail!("expected bootstrap-fee subaccount-1 transfer, got {transfers:?}");
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("context=subaccount_1")
+        || !logs.contains("fallback_source=bootstrap")
+        || !logs.contains("fee_e8s=10000")
+    {
+        bail!("expected structured bootstrap fee fallback log, got {logs}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn subaccount_one_commitment_uses_cached_live_fee_when_later_fee_query_fails() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.set_ledger_fee(20_000)?;
+
+    let _ = env.tick_relay()?;
+    env.set_ledger_fee_query_failure(true)?;
+    env.credit_relay_subaccount_one(100_020_000)?;
+
+    let _ = env.tick_relay()?;
+    let transfers = env.transfers()?;
+    if transfers.len() != 1
+        || nat_to_u64(&transfers[0].amount) != 100_000_000
+        || nat_to_u64(&transfers[0].fee) != 20_000
+    {
+        bail!("expected cached-live-fee subaccount-1 transfer, got {transfers:?}");
+    }
+    let logs = env.logs_text()?;
+    if !logs.contains("context=subaccount_1")
+        || !logs.contains("fallback_source=cached")
+        || !logs.contains("fee_e8s=20000")
+    {
+        bail!("expected structured cached fee fallback log, got {logs}");
     }
     Ok(())
 }

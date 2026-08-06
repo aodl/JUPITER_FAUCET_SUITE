@@ -60,6 +60,7 @@ service : {
 
   debug_reset : () -> ();
   debug_set_fee : (nat64) -> ();
+  debug_set_fee_query_failure : (bool) -> ();
   debug_set_next_error : (opt DebugNextTransferError) -> ();
   debug_set_error_script : (vec DebugNextTransferError) -> ();
   debug_credit : (Account, nat64) -> ();

@@ -87,6 +87,7 @@ pub struct LegacyTransferRecord {
 #[derive(Default)]
 struct LedgerState {
     fee_e8s: u64,
+    fee_query_failure: bool,
     next_error: Option<DebugNextTransferError>,
     next_error_script: VecDeque<DebugNextTransferError>,
     balances: HashMap<AccountKey, u128>,
@@ -137,7 +138,13 @@ fn init() {}
 
 #[ic_cdk::query]
 fn icrc1_fee() -> Nat {
-    ST.with(|s| Nat::from(s.borrow().fee_e8s))
+    ST.with(|s| {
+        let st = s.borrow();
+        if st.fee_query_failure {
+            ic_cdk::trap("debug injected icrc1_fee failure");
+        }
+        Nat::from(st.fee_e8s)
+    })
 }
 
 #[ic_cdk::query]
@@ -352,6 +359,11 @@ fn debug_reset() {
 #[ic_cdk::update]
 fn debug_set_fee(fee_e8s: u64) {
     ST.with(|s| s.borrow_mut().fee_e8s = fee_e8s);
+}
+
+#[ic_cdk::update]
+fn debug_set_fee_query_failure(value: bool) {
+    ST.with(|s| s.borrow_mut().fee_query_failure = value);
 }
 
 #[ic_cdk::update]

@@ -241,6 +241,14 @@ Canister-specific README sections define production canister IDs, artifact names
 - [`canisters/historian/README.md`](../../canisters/historian/README.md)
 - [`canisters/relay/README.md`](../../canisters/relay/README.md)
 
+For Relay fee verification, query the ICP ledger and compare the result with `fee_e8s` in a recent `RELAY_SUMMARY`:
+
+```bash
+icp canister call ryjl3-tyaaa-aaaaa-aaaba-cai icrc1_fee '()' --environment ic
+```
+
+Also inspect Relay error logs for `ledger_fee_fallback` with a `cached` or `bootstrap` source, and for `ledger_fee_changed`. A normal ICP ledger fee change should not require a Relay configuration upgrade.
+
 For module-hash verification and deterministic rebuild checks, see [reproducible builds](reproducible-builds.md).
 
 ## Troubleshooting

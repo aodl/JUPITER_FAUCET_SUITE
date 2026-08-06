@@ -10,7 +10,9 @@ use crate::clients::{CmcClient, GovernanceClient, LedgerClient};
 use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::{probe_cycles_batch, RelayCyclesProbeClient};
 use crate::scheduler::guards::MainGuard;
-use crate::scheduler::logging::{log_cycles_and_config, log_error, log_summary};
+use crate::scheduler::logging::{
+    log_cycles_and_config, log_error, log_structured_error, log_summary,
+};
 use crate::scheduler::transfer::{
     drive_pending_faucet_commitment_transfer, drive_pending_transfer,
 };
@@ -19,6 +21,53 @@ use crate::state::{
     PendingTransfer, PendingTransferKind, PendingTransferPhase, ProbeFailure, RelayMode,
     RelaySummary, SurplusTarget, TargetProbeClassification, TargetProbeStatus,
 };
+
+/// Bootstrap/emergency contingency used only when neither a live ledger fee nor a heap-cached
+/// last-known fee is available. This is not an invariant of the ICP ledger.
+const ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S: u64 = 10_000;
+
+#[derive(Clone, Copy)]
+enum LedgerFeeResolutionContext {
+    SubaccountOne,
+    DefaultAccount,
+}
+
+impl LedgerFeeResolutionContext {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SubaccountOne => "subaccount_1",
+            Self::DefaultAccount => "default_account",
+        }
+    }
+}
+
+async fn resolve_icp_ledger_fee_e8s<L: LedgerClient>(
+    ledger: &L,
+    context: LedgerFeeResolutionContext,
+) -> u64 {
+    match ledger.fee_e8s().await {
+        Ok(fee_e8s) => {
+            state::with_state_mut(|st| st.last_known_ledger_fee_e8s = Some(fee_e8s));
+            fee_e8s
+        }
+        Err(err) => {
+            let cached = state::with_state(|st| st.last_known_ledger_fee_e8s);
+            let (fallback_source, fee_e8s) = cached
+                .map(|fee_e8s| ("cached", fee_e8s))
+                .unwrap_or(("bootstrap", ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S));
+            log_structured_error(
+                "ledger_fee_fallback",
+                &[
+                    ("context", context.as_str().to_string()),
+                    ("error", err.to_string()),
+                    ("fallback_source", fallback_source.to_string()),
+                    ("fee_e8s", fee_e8s.to_string()),
+                ],
+            );
+            fee_e8s
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransferPlanStep {
@@ -142,16 +191,19 @@ async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
     ledger: &L,
     governance: &G,
 ) {
+    plan_faucet_commitment_with_self(now_nanos, ic_cdk::api::canister_self(), ledger, governance)
+        .await;
+}
+
+async fn plan_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
+    now_nanos: u64,
+    self_id: candid::Principal,
+    ledger: &L,
+    governance: &G,
+) {
     let cfg = state::with_state(|st| st.config.clone());
-    let self_id = ic_cdk::api::canister_self();
     let source = logic::relay_subaccount_one_account(self_id);
-    let fee = match ledger.fee_e8s().await {
-        Ok(v) => v,
-        Err(err) => {
-            log_error(&format!("subaccount 1 fee read failed: {err}"));
-            return;
-        }
-    };
+    let fee = resolve_icp_ledger_fee_e8s(ledger, LedgerFeeResolutionContext::SubaccountOne).await;
     let balance = match ledger.balance_of_e8s(source).await {
         Ok(v) => v,
         Err(err) => {
@@ -334,7 +386,7 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
                 RelaySummary::started(RelayMode::Degraded, now_nanos, managed.len() as u32);
             summary.completed_at_ts_nanos = Some(now_nanos);
             summary.min_cycles_balance = min_cycles;
-            summary.skipped_surplus_reason = Some("probe_failed".to_string());
+            summary.skipped_surplus_reason = Some("ledger_balance_read_failed".to_string());
             summary.probe_failures.push(ProbeFailure {
                 canister_id: cfg.ledger_canister_id,
                 error: format!("balance read failed: {err}"),
@@ -347,27 +399,7 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
             return;
         }
     };
-    let fee = match ledger.fee_e8s().await {
-        Ok(v) => v,
-        Err(err) => {
-            let mut summary =
-                RelaySummary::started(RelayMode::Degraded, now_nanos, managed.len() as u32);
-            summary.completed_at_ts_nanos = Some(now_nanos);
-            summary.default_account_balance_start_e8s = balance;
-            summary.min_cycles_balance = min_cycles;
-            summary.skipped_surplus_reason = Some("probe_failed".to_string());
-            summary.probe_failures.push(ProbeFailure {
-                canister_id: cfg.ledger_canister_id,
-                error: format!("fee read failed: {err}"),
-                consecutive_failures: 0,
-            });
-            summary.probe_failures.extend(probe_update.failures);
-            summary.target_probe_statuses = probe_update.statuses;
-            log_summary(&summary);
-            state::with_state_mut(|st| st.last_summary = Some(summary));
-            return;
-        }
-    };
+    let fee = resolve_icp_ledger_fee_e8s(ledger, LedgerFeeResolutionContext::DefaultAccount).await;
 
     if balance == 0 {
         let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
@@ -980,6 +1012,42 @@ fn complete_job(now_nanos: u64) {
     });
 }
 
+pub(super) fn stop_active_job_for_ledger_fee_change(now_nanos: u64) {
+    state::with_state_mut(|st| {
+        let Some(job) = st.active_job.as_mut() else {
+            return;
+        };
+        debug_assert!(
+            job.pending_transfer.is_none(),
+            "fee-invalidated pending transfer must be accounted before stopping the job"
+        );
+
+        let remaining_topup_gross_e8s = job
+            .canisters
+            .iter()
+            .skip(job.next_transfer_index as usize)
+            .filter(|sample| sample.amount_e8s > 0)
+            .fold(0_u64, |total, sample| {
+                total.saturating_add(sample.gross_share_e8s)
+            });
+        let remaining_surplus_gross_e8s = job
+            .surplus_transfers
+            .iter()
+            .skip(job.surplus_transfer_index as usize)
+            .filter(|sample| sample.amount_e8s > 0)
+            .fold(0_u64, |total, sample| {
+                total.saturating_add(sample.gross_share_e8s)
+            });
+        job.summary.known_unspent_e8s = job
+            .summary
+            .known_unspent_e8s
+            .saturating_add(remaining_topup_gross_e8s)
+            .saturating_add(remaining_surplus_gross_e8s);
+        job.summary.skipped_surplus_reason = Some("ledger_fee_changed".to_string());
+    });
+    complete_job(now_nanos);
+}
+
 fn complete_baseline_sample(
     st: &mut crate::state::State,
     current_cycles: std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
@@ -1074,7 +1142,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
@@ -1182,6 +1250,67 @@ mod tests {
         default_balance_e8s: u64,
         fee_e8s: u64,
         transfers: Mutex<Vec<TransferArg>>,
+    }
+
+    struct FeePlanningLedger {
+        live_fee_e8s: Option<u64>,
+        subaccount_one_balance_e8s: u64,
+    }
+
+    struct FeeChangingCommitmentLedger {
+        live_fee_e8s: AtomicU64,
+        transfer_count: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for FeeChangingCommitmentLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(self.live_fee_e8s.load(Ordering::SeqCst))
+        }
+
+        async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+            Ok(
+                if account.subaccount == Some(logic::relay_subaccount_one()) {
+                    100_020_000
+                } else {
+                    0
+                },
+            )
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            self.transfer_count.fetch_add(1, Ordering::SeqCst);
+            self.live_fee_e8s.store(20_000, Ordering::SeqCst);
+            Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(20_000_u64),
+            }))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for FeePlanningLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            self.live_fee_e8s
+                .ok_or_else(|| ClientError::Call("mock fee query failed".to_string()))
+        }
+
+        async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+            if account.subaccount == Some(logic::relay_subaccount_one()) {
+                Ok(self.subaccount_one_balance_e8s)
+            } else {
+                Ok(0)
+            }
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            unreachable!("fee planning tests do not execute transfers")
+        }
     }
 
     impl MockSchedulerLedger {
@@ -1548,6 +1677,111 @@ mod tests {
 
     struct MockCmcConversionClient {
         calls: AtomicUsize,
+    }
+
+    fn plan_faucet_commitment_for_fee_test(
+        live_fee_e8s: Option<u64>,
+        cached_fee_e8s: Option<u64>,
+        balance_e8s: u64,
+    ) -> PendingFaucetCommitmentTransfer {
+        let mut st = State::new(base_config(), 0);
+        st.last_known_ledger_fee_e8s = cached_fee_e8s;
+        state::set_state(st);
+        let ledger = FeePlanningLedger {
+            live_fee_e8s,
+            subaccount_one_balance_e8s: balance_e8s,
+        };
+
+        block_on(plan_faucet_commitment_with_self(
+            10_000_000_000,
+            relay_self(),
+            &ledger,
+            &MockSchedulerGovernance,
+        ));
+
+        state::with_state(|st| {
+            st.active_faucet_commitment_transfer
+                .clone()
+                .expect("fee-dependent faucet commitment plan")
+        })
+    }
+
+    #[test]
+    fn live_ledger_fee_is_used_by_plan_and_cached() {
+        let pending = plan_faucet_commitment_for_fee_test(Some(20_000), None, 100_020_000);
+
+        assert_eq!(pending.fee_e8s, 20_000);
+        assert_eq!(pending.transfer.amount_e8s, 100_000_000);
+        state::with_state(|st| assert_eq!(st.last_known_ledger_fee_e8s, Some(20_000)));
+    }
+
+    #[test]
+    fn cached_ledger_fee_is_used_by_plan_when_live_query_fails() {
+        let pending = plan_faucet_commitment_for_fee_test(None, Some(20_000), 100_020_000);
+
+        assert_eq!(pending.fee_e8s, 20_000);
+        assert_eq!(pending.transfer.amount_e8s, 100_000_000);
+        state::with_state(|st| assert_eq!(st.last_known_ledger_fee_e8s, Some(20_000)));
+    }
+
+    #[test]
+    fn bootstrap_ledger_fee_is_used_by_plan_without_live_or_cached_fee() {
+        let pending = plan_faucet_commitment_for_fee_test(None, None, 100_010_000);
+
+        assert_eq!(pending.fee_e8s, ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S);
+        assert_eq!(pending.transfer.amount_e8s, 100_000_000);
+        state::with_state(|st| assert_eq!(st.last_known_ledger_fee_e8s, None));
+    }
+
+    #[test]
+    fn subaccount_one_first_bad_fee_allows_later_tick_to_plan_fresh_identity() {
+        state::set_state(State::new(base_config(), 0));
+        let ledger = FeeChangingCommitmentLedger {
+            live_fee_e8s: AtomicU64::new(10_000),
+            transfer_count: AtomicUsize::new(0),
+        };
+
+        block_on(plan_faucet_commitment_with_self(
+            10_000_000_000,
+            relay_self(),
+            &ledger,
+            &MockSchedulerGovernance,
+        ));
+        let original = state::with_state(|st| {
+            st.active_faucet_commitment_transfer
+                .clone()
+                .expect("original staged transfer")
+        });
+        assert_eq!(original.fee_e8s, 10_000);
+        assert_eq!(original.transfer.amount_e8s, 100_010_000);
+
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &MockSchedulerGovernance,
+            10_000_000_001,
+        )));
+        assert_eq!(ledger.transfer_count.load(Ordering::SeqCst), 1);
+        state::with_state(|st| assert!(st.active_faucet_commitment_transfer.is_none()));
+
+        block_on(plan_faucet_commitment_with_self(
+            20_000_000_000,
+            relay_self(),
+            &ledger,
+            &MockSchedulerGovernance,
+        ));
+        state::with_state(|st| {
+            let replacement = st
+                .active_faucet_commitment_transfer
+                .as_ref()
+                .expect("fresh transfer on later tick");
+            assert_eq!(replacement.fee_e8s, 20_000);
+            assert_eq!(replacement.transfer.amount_e8s, 100_000_000);
+            assert_eq!(replacement.transfer.created_at_time_nanos, 20_000_000_000);
+            assert_ne!(
+                replacement.transfer.created_at_time_nanos,
+                original.transfer.created_at_time_nanos
+            );
+        });
     }
 
     impl MockCmcConversionClient {

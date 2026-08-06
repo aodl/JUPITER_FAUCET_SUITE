@@ -4,7 +4,7 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, Transfer
 
 use crate::clients::{ClientError, CmcClient, GovernanceClient, LedgerClient};
 use crate::logic;
-use crate::scheduler::logging::{emit_log_line, log_error};
+use crate::scheduler::logging::{emit_log_line, log_error, log_structured_error};
 use crate::state::{
     self, PendingFaucetCommitmentTransfer, PendingTransfer, PendingTransferKind,
     PendingTransferPhase,
@@ -54,6 +54,7 @@ enum DebugSuccessfulTransferInjection {
 enum TransferAttemptOutcome {
     Accepted(u64),
     ImmediateRetryable,
+    BadFee(Nat),
     Failed,
 }
 
@@ -131,13 +132,47 @@ async fn transfer_once<L: LedgerClient>(ledger: &L, arg: TransferArg) -> Transfe
             | TransferError::CreatedInFuture { .. }
             | TransferError::GenericError { .. },
         )) => TransferAttemptOutcome::ImmediateRetryable,
+        Ok(Err(TransferError::BadFee { expected_fee })) => {
+            TransferAttemptOutcome::BadFee(expected_fee)
+        }
         Ok(Err(
-            TransferError::BadFee { .. }
-            | TransferError::BadBurn { .. }
+            TransferError::BadBurn { .. }
             | TransferError::InsufficientFunds { .. }
             | TransferError::TooOld,
         )) => TransferAttemptOutcome::Failed,
         Err(_) => TransferAttemptOutcome::ImmediateRetryable,
+    }
+}
+
+fn record_bad_fee(context: &'static str, planned_fee_e8s: u64, expected_fee: &Nat) {
+    match u64::try_from(expected_fee.0.clone()) {
+        Ok(expected_fee_e8s) => {
+            state::with_state_mut(|st| {
+                st.last_known_ledger_fee_e8s = Some(expected_fee_e8s);
+            });
+            log_structured_error(
+                "ledger_fee_changed",
+                &[
+                    ("context", context.to_string()),
+                    ("planned_fee_e8s", planned_fee_e8s.to_string()),
+                    ("expected_fee_e8s", expected_fee_e8s.to_string()),
+                ],
+            );
+        }
+        Err(_) => {
+            log_structured_error(
+                "ledger_fee_changed",
+                &[
+                    ("context", context.to_string()),
+                    ("planned_fee_e8s", planned_fee_e8s.to_string()),
+                    ("expected_fee", expected_fee.to_string()),
+                    (
+                        "conversion_error",
+                        "expected_fee_out_of_u64_range".to_string(),
+                    ),
+                ],
+            );
+        }
     }
 }
 
@@ -193,17 +228,30 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                 staged.created_at_time_nanos,
                 memo,
             );
+            let planned_fee_e8s = state::with_state(|st| st.active_job.as_ref().unwrap().fee_e8s);
             let block_index = match transfer_once(ledger, first_arg).await {
                 TransferAttemptOutcome::Accepted(v) => v,
                 TransferAttemptOutcome::ImmediateRetryable => {
                     match transfer_once(ledger, second_arg).await {
                         TransferAttemptOutcome::Accepted(v) => v,
+                        TransferAttemptOutcome::BadFee(expected_fee) => {
+                            record_bad_fee("default_account", planned_fee_e8s, &expected_fee);
+                            mark_pending_ambiguous();
+                            super::tick::stop_active_job_for_ledger_fee_change(now_nanos);
+                            return true;
+                        }
                         TransferAttemptOutcome::ImmediateRetryable
                         | TransferAttemptOutcome::Failed => {
                             mark_pending_ambiguous();
                             return true;
                         }
                     }
+                }
+                TransferAttemptOutcome::BadFee(expected_fee) => {
+                    record_bad_fee("default_account", planned_fee_e8s, &expected_fee);
+                    mark_pending_failed();
+                    super::tick::stop_active_job_for_ledger_fee_change(now_nanos);
+                    return true;
                 }
                 TransferAttemptOutcome::Failed => {
                     mark_pending_failed();
@@ -339,12 +387,22 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
                 TransferAttemptOutcome::ImmediateRetryable => {
                     match transfer_once(ledger, second_arg).await {
                         TransferAttemptOutcome::Accepted(v) => v,
+                        TransferAttemptOutcome::BadFee(expected_fee) => {
+                            record_bad_fee("subaccount_1", staged.fee_e8s, &expected_fee);
+                            mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
+                            return true;
+                        }
                         TransferAttemptOutcome::ImmediateRetryable
                         | TransferAttemptOutcome::Failed => {
                             mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
                             return true;
                         }
                     }
+                }
+                TransferAttemptOutcome::BadFee(expected_fee) => {
+                    record_bad_fee("subaccount_1", staged.fee_e8s, &expected_fee);
+                    mark_faucet_commitment_failed("subaccount_1_ledger_fee_changed");
+                    return true;
                 }
                 TransferAttemptOutcome::Failed => {
                     mark_faucet_commitment_failed("subaccount_1_transfer_failed");
@@ -617,6 +675,7 @@ pub(super) fn mark_pending_ambiguous_after_acceptance() {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::collections::VecDeque;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -672,6 +731,56 @@ mod tests {
 
     struct CountingLedger {
         transfer_count: AtomicUsize,
+    }
+
+    enum ScriptedTransferOutcome {
+        CallFailure,
+        BadFee(Nat),
+    }
+
+    struct ScriptedLedger {
+        outcomes: std::sync::Mutex<VecDeque<ScriptedTransferOutcome>>,
+        transfers: std::sync::Mutex<Vec<TransferArg>>,
+    }
+
+    impl ScriptedLedger {
+        fn new(outcomes: Vec<ScriptedTransferOutcome>) -> Self {
+            Self {
+                outcomes: std::sync::Mutex::new(outcomes.into()),
+                transfers: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn transfer_count(&self) -> usize {
+            self.transfers.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for ScriptedLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10)
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
+            Ok(1_500)
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            self.transfers.lock().unwrap().push(arg);
+            match self.outcomes.lock().unwrap().pop_front() {
+                Some(ScriptedTransferOutcome::CallFailure) => {
+                    Err(ClientError::Call("mock uncertain transfer".to_string()))
+                }
+                Some(ScriptedTransferOutcome::BadFee(expected_fee)) => {
+                    Ok(Err(TransferError::BadFee { expected_fee }))
+                }
+                None => panic!("unexpected transfer attempt"),
+            }
+        }
     }
 
     impl CountingLedger {
@@ -867,6 +976,40 @@ mod tests {
         state::set_state(st);
     }
 
+    fn install_pending_job_with_never_started_topups() {
+        install_pending_job(PendingTransferPhase::AwaitingTransfer);
+        let canister_b = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let canister_c = principal("rkp4c-7iaaa-aaaaa-aaaca-cai");
+        state::with_state_mut(|st| {
+            st.config.managed_canisters.extend([canister_b, canister_c]);
+            let job = st.active_job.as_mut().expect("active job");
+            let additional = [(canister_b, 200_u64), (canister_c, 300_u64)]
+                .into_iter()
+                .map(|(canister_id, gross_share_e8s)| CanisterBurnSample {
+                    canister_id,
+                    previous_cycles: Some(1_000),
+                    current_cycles: 900,
+                    relay_minted_cycles: 0,
+                    burn_cycles: 100,
+                    carried_deficit_cycles: 0,
+                    target_topup_cycles: 101,
+                    gross_share_e8s,
+                    amount_e8s: gross_share_e8s - job.fee_e8s,
+                    sent_topup_e8s: 0,
+                    actual_minted_cycles: 0,
+                    remaining_deficit_cycles: 101,
+                    skipped_reason: None,
+                })
+                .collect::<Vec<_>>();
+            job.balance_start_e8s = 1_500;
+            job.next_transfer_index = 1;
+            job.canisters.extend(additional.clone());
+            job.summary.canisters.extend(additional);
+            job.summary.planned_retained_e8s = 100;
+            job.summary.known_unspent_e8s = 100;
+        });
+    }
+
     #[test]
     fn ledger_acceptance_is_counted_before_cmc_notify_finishes() {
         install_pending_job(PendingTransferPhase::AwaitingTransfer);
@@ -935,6 +1078,149 @@ mod tests {
             assert_eq!(summary.failed_transfers, 1);
             assert_eq!(summary.known_unspent_e8s, 1_000);
             assert_eq!(summary.ambiguous_e8s, 0);
+        });
+    }
+
+    #[test]
+    fn first_bad_fee_stops_job_and_releases_never_started_topups_as_known_unspent() {
+        install_pending_job_with_never_started_topups();
+        let ledger =
+            ScriptedLedger::new(vec![ScriptedTransferOutcome::BadFee(Nat::from(20_000_u64))]);
+
+        assert!(block_on(drive_pending_transfer(
+            &ledger,
+            &MintingCmc { minted_cycles: 321 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        )));
+
+        assert_eq!(ledger.transfer_count(), 1);
+        state::with_state(|st| {
+            assert!(st.active_job.is_none());
+            assert_eq!(st.last_known_ledger_fee_e8s, Some(20_000));
+            let summary = st.last_summary.as_ref().expect("completed summary");
+            assert_eq!(summary.failed_transfers, 1);
+            assert_eq!(summary.ambiguous_transfers, 0);
+            assert_eq!(summary.ledger_transfer_count, 0);
+            assert_eq!(summary.known_unspent_e8s, 1_500);
+            assert_eq!(summary.ambiguous_e8s, 0);
+            assert_eq!(
+                summary.skipped_surplus_reason.as_deref(),
+                Some("ledger_fee_changed")
+            );
+        });
+    }
+
+    #[test]
+    fn bad_fee_after_uncertain_first_attempt_stops_job_and_keeps_current_ambiguous() {
+        install_pending_job_with_never_started_topups();
+        let ledger = ScriptedLedger::new(vec![
+            ScriptedTransferOutcome::CallFailure,
+            ScriptedTransferOutcome::BadFee(Nat::from(20_000_u64)),
+        ]);
+
+        assert!(block_on(drive_pending_transfer(
+            &ledger,
+            &MintingCmc { minted_cycles: 321 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        )));
+
+        assert_eq!(ledger.transfer_count(), 2);
+        state::with_state(|st| {
+            assert!(st.active_job.is_none());
+            assert_eq!(st.last_known_ledger_fee_e8s, Some(20_000));
+            let summary = st.last_summary.as_ref().expect("completed summary");
+            assert_eq!(summary.failed_transfers, 0);
+            assert_eq!(summary.ambiguous_transfers, 1);
+            assert_eq!(summary.ledger_transfer_count, 0);
+            assert_eq!(summary.known_unspent_e8s, 600);
+            assert_eq!(summary.ambiguous_e8s, 900);
+            assert_eq!(
+                summary.skipped_surplus_reason.as_deref(),
+                Some("ledger_fee_changed")
+            );
+        });
+    }
+
+    #[test]
+    fn unrepresentable_bad_fee_stops_job_without_overwriting_cached_fee() {
+        install_pending_job_with_never_started_topups();
+        state::with_state_mut(|st| st.last_known_ledger_fee_e8s = Some(15_000));
+        let ledger = ScriptedLedger::new(vec![ScriptedTransferOutcome::BadFee(Nat(
+            candid::Nat::from(u128::from(u64::MAX) + 1).0,
+        ))]);
+
+        assert!(block_on(drive_pending_transfer(
+            &ledger,
+            &MintingCmc { minted_cycles: 321 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        )));
+
+        state::with_state(|st| {
+            assert!(st.active_job.is_none());
+            assert_eq!(st.last_known_ledger_fee_e8s, Some(15_000));
+            assert_eq!(
+                st.last_summary
+                    .as_ref()
+                    .and_then(|summary| summary.skipped_surplus_reason.as_deref()),
+                Some("ledger_fee_changed")
+            );
+        });
+    }
+
+    #[test]
+    fn subaccount_one_first_bad_fee_clears_staged_transfer_and_caches_expected_fee() {
+        install_pending_faucet_commitment(PendingTransferPhase::AwaitingTransfer);
+        crate::scheduler::logging::TEST_LOG_LINES.with(|lines| lines.borrow_mut().clear());
+        let ledger =
+            ScriptedLedger::new(vec![ScriptedTransferOutcome::BadFee(Nat::from(20_000_u64))]);
+
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &RefreshGovernance::fail_times(0),
+            2,
+        )));
+
+        assert_eq!(ledger.transfer_count(), 1);
+        state::with_state(|st| {
+            assert!(st.active_faucet_commitment_transfer.is_none());
+            assert_eq!(st.last_known_ledger_fee_e8s, Some(20_000));
+        });
+        crate::scheduler::logging::TEST_LOG_LINES.with(|lines| {
+            let text = lines.borrow().join("\n");
+            assert!(text.contains("skipped_reason=subaccount_1_ledger_fee_changed"));
+            assert!(text.contains("planned_fee_e8s=10000"));
+            assert!(text.contains("expected_fee_e8s=20000"));
+        });
+    }
+
+    #[test]
+    fn subaccount_one_bad_fee_after_uncertain_first_attempt_remains_ambiguous() {
+        install_pending_faucet_commitment(PendingTransferPhase::AwaitingTransfer);
+        crate::scheduler::logging::TEST_LOG_LINES.with(|lines| lines.borrow_mut().clear());
+        let ledger = ScriptedLedger::new(vec![
+            ScriptedTransferOutcome::CallFailure,
+            ScriptedTransferOutcome::BadFee(Nat::from(20_000_u64)),
+        ]);
+
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &RefreshGovernance::fail_times(0),
+            2,
+        )));
+
+        assert_eq!(ledger.transfer_count(), 2);
+        state::with_state(|st| {
+            assert!(st.active_faucet_commitment_transfer.is_none());
+            assert_eq!(st.last_known_ledger_fee_e8s, Some(20_000));
+        });
+        crate::scheduler::logging::TEST_LOG_LINES.with(|lines| {
+            assert!(lines
+                .borrow()
+                .join("\n")
+                .contains("skipped_reason=subaccount_1_transfer_ambiguous"));
         });
     }
 

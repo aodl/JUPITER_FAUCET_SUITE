@@ -30,7 +30,7 @@ max(
 + 0.25 ICP * (target count - 1)
 ```
 
-The query view displays the nominal minimum and current ledger balance. The authoritative live requirement is computed only when a user presses **Create Relay**. `notify_relay_setup` reads the live balance, ledger fee, and CMC rate and returns the exact balance, requirement, and shortfall when underfunded. The frontend retains that returned requirement while polling. Underfunded requests leave the deposit in place and write no setup entry.
+The query view displays the nominal minimum and current ledger balance. The authoritative live requirement is computed only when a user presses **Create Relay**. `notify_relay_setup` independently reads the live ledger fee, balance, and CMC rate and returns the exact balance, requirement, and shortfall when underfunded. The frontend retains that returned requirement while polling. Underfunded requests leave the deposit in place and write no setup entry.
 
 After sufficient funding, Historian synchronously reserves the exact hash. At most four distinct funded setups may be in `Creating`; a same-hash caller receives the existing phase without making further external calls. Every target must pass the shared Auto cycles probe before the first ledger transfer.
 
@@ -48,7 +48,9 @@ Operator triage distinguishes `create_canister ambiguous relay ID loss` from `in
 
 ## Child configuration and handoff
 
-Relay `InitArgs` use the canonical targets held in the active call, `blackhole_canister_id = null`, and `max_transfers_per_tick = target_count + 2`. The two additional slots cover Relay self and surplus transfers. The CMC receives only the ICP conversion amount. Historian then rereads the setup-account balance and transfers `balance - current ledger fee` to subaccount one owned by the spawned Relay. The safety margin, extra-target charge, configured seed, and any additional balance therefore fund Relay subaccount one. Its Faucet memo remains `<spawned Relay principal without hyphens>.Relay`; it never uses the canonical production Relay identity.
+Relay `InitArgs` use the canonical targets held in the active call, `blackhole_canister_id = null`, and `max_transfers_per_tick = target_count + 2`. The two additional slots cover Relay self and surplus transfers. The CMC receives only the ICP conversion amount. Historian then rereads both the live ledger fee and the setup-account balance before transferring `balance - current ledger fee` to subaccount one owned by the spawned Relay. This second fee read is deliberate because Relay creation can span enough external work for the fee to change. The safety margin, extra-target charge, configured seed, and any additional balance therefore fund Relay subaccount one. Its Faucet memo remains `<spawned Relay principal without hyphens>.Relay`; it never uses the canonical production Relay identity.
+
+Historian's irreversible setup workflow remains fail-closed or manual-recovery-oriented. Relay's runtime heap cache and bootstrap fee fallback apply only after Relay exists; they do not silently change Historian's authoritative requirement, final funding transfer, or other irreversible setup phases.
 
 Before handoff, management state must report a running child, the approved Relay module hash, exactly Historian as controller, and public logs. Historian then requests exactly Fiduciary as controller with public logs. The post-handoff audit uses Fiduciary's real blackhole interface and requires running status, the approved hash, and exactly Fiduciary as controller. A reported `update_settings` error is accepted only if the observed final state is correct.
 
