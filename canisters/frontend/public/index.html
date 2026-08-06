@@ -615,9 +615,9 @@
                 that raw ICP to keep itself topped up along with configured canisters. Surplus ICP
                 (if any) can then be routed to a configured DAO treasury or other account. The
                 Jupiter Faucet protocol's own relay canister routes 50% of any surplus ICP back into
-                the Jupiter Faucet neuron itself (forever increasing the rate of future ICP back
-                into the relay). The relay routes remaining surplus ICP into the IO neuron's
-                staking account (described below).
+                the Jupiter Faucet neuron itself (forever increasing the rate of future
+                maturity-minted ICP back into the relay). The relay routes remaining surplus ICP
+                into the IO neuron's staking account (described below).
               </p>
               <p class="nav-panel-content">
                 Anyone can deploy their own relay canister (specifying their own selection of target
@@ -629,7 +629,8 @@
                   <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
                   tool (any surplus ICP will automatically be routed to the IO neuron staking
                   account, increasing the minimum APY for all IO holders and therefore increasing
-                  the value of rewards for jUP stakers).
+                  the value of
+                  <a href="/#how-it-works:1" data-panel="how-it-works" class="pane-external-link">rewards for jUP stakers</a>).
                 </li>
                 <li>
                   Alternatively, developers can pull the
@@ -680,7 +681,7 @@
               <fieldset class="memo-builder-fieldset" id="memo-builder-mode-fieldset">
                 <legend class="memo-builder-label">Target mode</legend>
                 <label class="memo-builder-radio">
-                  <input type="radio" name="memo-builder-mode" value="rawIcp" checked />
+                  <input type="radio" name="memo-builder-mode" value="rawIcp" />
                   <span>Canister default account</span>
                 </label>
                 <label class="memo-builder-radio">
@@ -688,7 +689,7 @@
                   <span>Public neuron staking account</span>
                 </label>
                 <label class="memo-builder-radio">
-                  <input type="radio" name="memo-builder-mode" value="cycles" />
+                  <input type="radio" name="memo-builder-mode" value="cycles" checked />
                   <span>Cycles top-up canister</span>
                 </label>
               </fieldset>

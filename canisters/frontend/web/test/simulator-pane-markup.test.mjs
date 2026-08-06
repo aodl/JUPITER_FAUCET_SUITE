@@ -443,9 +443,10 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /raw ICP top-ups described in the\s*<a href="\/#how-it-works:2"[^>]*data-panel="how-it-works"[^>]*>Advanced Usage<\/a>/);
   assert.match(howItWorks, /This ensures Jupiter Faucet perpetually transfers raw ICP rather than\s*directly topping up the relay canister with cycles/);
   assert.match(howItWorks, /routes 50% of any surplus ICP back into\s*the Jupiter Faucet neuron/);
-  assert.match(howItWorks, /remaining surplus ICP into the IO neuron's\s*staking account \(described below\)/);
+  assert.match(howItWorks, /forever increasing the rate of future\s*maturity-minted ICP back into the relay/);
+  assert.match(howItWorks, /remaining surplus ICP\s*into the IO neuron's\s*staking account \(described below\)/);
   assert.match(howItWorks, /<strong>Example:<\/strong>[\s\S]*This flow depends on raw ICP top-ups[\s\S]*Anyone can deploy their own relay canister/);
-  assert.match(howItWorks, /any surplus ICP will automatically be routed to the IO neuron staking\s*account, increasing the minimum APY for all IO holders and therefore increasing\s*the value of rewards for jUP stakers/);
+  assert.match(howItWorks, /any surplus ICP will automatically be routed to the IO neuron staking\s*account, increasing the minimum APY for all IO holders and therefore increasing\s*the value of\s*<a href="\/#how-it-works:1"[^>]*data-panel="how-it-works"[^>]*>rewards for jUP stakers<\/a>/);
   assert.match(howItWorks, /href="\/#relay-setup"[^>]*data-panel="relay-setup"[^>]*>Relay Setup<\/a>/);
   assert.match(howItWorks, /href="\/#source"[^>]*data-panel="source"[^>]*>source code<\/a>/);
   assert.match(howItWorks, /A relay canister also accepts ICP transfers into its\s*<code>'1'<\/code> subaccount/);
@@ -472,8 +473,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(memoBuilder, /Jupiter Faucet\s+is not responsible for lost funds resulting from user indiscretion/);
   assert.match(memoBuilder, /id="memo-builder-url-context"/);
   assert.match(memoBuilder, /id="memo-builder-mode-fieldset"/);
-  assert.match(memoBuilder, /value="rawIcp" checked/);
-  assert.doesNotMatch(memoBuilder, /value="cycles" checked/);
+  assert.doesNotMatch(memoBuilder, /value="rawIcp" checked/);
+  assert.match(memoBuilder, /value="cycles" checked/);
   assert.match(memoBuilder, /Cycles top-up canister/);
   assert.match(memoBuilder, /value="rawIcp"/);
   assert.match(memoBuilder, /Canister default account/);
@@ -572,7 +573,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(mainJs, /document\.addEventListener\('navpanel:open', render\)/);
   assert.match(mainJs, /document\.addEventListener\('navpanel:pagechange', render\)/);
   assert.match(mainJs, /if \(sanitizedCanister\) \{[\s\S]*\} else if \(sanitizedNeuron\) \{/);
-  assert.match(mainJs, /\|\| 'rawIcp'/);
+  assert.match(mainJs, /\|\| 'cycles'/);
   assert.match(mainJs, /sanitizeCanisterPrincipalText/);
   assert.match(mainJs, /sanitizeNeuronIdText/);
   assert.doesNotMatch(mainJs, /removeHyphensButton/);

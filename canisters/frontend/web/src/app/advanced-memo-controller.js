@@ -128,7 +128,7 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     }
     lastAppliedPrefillFragment = currentFragment;
   };
-  const currentMode = () => builder.querySelector('input[name="memo-builder-mode"]:checked')?.value || 'rawIcp';
+  const currentMode = () => builder.querySelector('input[name="memo-builder-mode"]:checked')?.value || 'cycles';
   const optionalMemoText = () => optionalInput?.textContent || '';
   const setOptionalMemoText = (text) => {
     if (!optionalInput) return;
