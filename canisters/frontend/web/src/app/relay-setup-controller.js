@@ -37,6 +37,25 @@ export function parseRelayTargetSet(text) {
   return principals;
 }
 
+export function duplicateRelayTargetIndexes(values) {
+  const canonicalIndexes = new Map();
+  values.forEach((rawValue, index) => {
+    try {
+      const canonical = Principal.fromText(String(rawValue || '').trim()).toText();
+      const indexes = canonicalIndexes.get(canonical) || [];
+      indexes.push(index);
+      canonicalIndexes.set(canonical, indexes);
+    } catch {
+      // Incomplete and malformed principals are handled when the form is submitted.
+    }
+  });
+  return new Set(
+    [...canonicalIndexes.values()]
+      .filter((indexes) => indexes.length > 1)
+      .flat(),
+  );
+}
+
 function crc32(bytes) {
   let value = 0xffffffff;
   for (const byte of bytes) {
@@ -158,6 +177,211 @@ export function createRelaySetupController({
   };
   let generation = 0;
   let pollHandle = null;
+  let nextTargetFieldId = 2;
+
+  function targetList() {
+    return document.getElementById('relay-setup-target-list');
+  }
+
+  function targetInputs() {
+    const list = targetList();
+    return list?.querySelectorAll
+      ? Array.from(list.querySelectorAll('[data-relay-target-input]'))
+      : [];
+  }
+
+  function targetRows() {
+    const list = targetList();
+    return list?.querySelectorAll
+      ? Array.from(list.querySelectorAll('[data-relay-target-row]'))
+      : [];
+  }
+
+  function targetValues() {
+    return targetInputs().map((input) => String(input.value || '').trim());
+  }
+
+  function legacyTargetInput() {
+    return document.getElementById('relay-setup-target-input');
+  }
+
+  function syncTargetInputSnapshot({ force = false } = {}) {
+    const legacyInput = legacyTargetInput();
+    const values = targetValues();
+    if (legacyInput && values.length > 0
+      && (force || values.some(Boolean) || !String(legacyInput.value || '').trim())) {
+      legacyInput.value = values.join('\n');
+    }
+    return String(legacyInput?.value || '').trim();
+  }
+
+  function setTargetFieldError(input, message = '') {
+    const row = input?.closest?.('[data-relay-target-row]');
+    const error = row?.querySelector?.('[data-relay-target-error]');
+    if (error) {
+      error.textContent = message;
+      error.hidden = !message;
+    }
+    row?.classList?.toggle?.('relay-setup-target-row--error', Boolean(message));
+    if (message) input?.setAttribute?.('aria-invalid', 'true');
+    else input?.removeAttribute?.('aria-invalid');
+  }
+
+  function validateVisibleTargetFields({ includeIncomplete = false } = {}) {
+    const inputs = targetInputs();
+    const values = targetValues();
+    const duplicates = duplicateRelayTargetIndexes(values);
+    const errors = values.map((value, index) => {
+      if (duplicates.has(index)) return 'Duplicate canister ID. Each target must be unique.';
+      if (!includeIncomplete) return '';
+      if (!value) return 'Enter a canister ID or remove this field.';
+      try {
+        Principal.fromText(value);
+        return '';
+      } catch {
+        return 'Enter a valid canister ID.';
+      }
+    });
+    inputs.forEach((input, index) => setTargetFieldError(input, errors[index]));
+
+    const warning = document.getElementById('relay-setup-warning');
+    const hasDuplicates = duplicates.size > 0;
+    const hasEmptyFields = inputs.length > 0 && values.some((value) => !value);
+    if (warning) {
+      warning.textContent = hasDuplicates
+        ? 'Duplicate target canisters found. Change or remove one before checking the target set.'
+        : '';
+      warning.hidden = !hasDuplicates;
+    }
+    const submitButton = document.getElementById('relay-setup-submit');
+    if (submitButton) submitButton.disabled = hasDuplicates || hasEmptyFields;
+    return {
+      valid: errors.every((message) => !message),
+      firstInvalidInput: inputs[errors.findIndex(Boolean)] || null,
+      firstError: errors.find(Boolean) || '',
+    };
+  }
+
+  function announceTargetChange(message) {
+    setText('relay-setup-target-announcement', message);
+  }
+
+  function updateTargetRows() {
+    const rows = targetRows();
+    rows.forEach((row, index) => {
+      const number = index + 1;
+      const label = row.querySelector?.('[data-relay-target-label]');
+      const removeButton = row.querySelector?.('[data-relay-target-remove]');
+      if (label) label.textContent = `Target canister ${number}`;
+      if (removeButton) {
+        removeButton.hidden = rows.length === 1;
+        removeButton.setAttribute?.('aria-label', `Remove target canister ${number}`);
+      }
+    });
+    const addButton = document.getElementById('relay-setup-add-target');
+    if (addButton) addButton.disabled = rows.length >= MAX_TARGETS;
+    setText(
+      'relay-setup-target-count-hint',
+      `${rows.length} target canister${rows.length === 1 ? '' : 's'}`,
+    );
+  }
+
+  function createTargetRow() {
+    const rowId = nextTargetFieldId;
+    nextTargetFieldId += 1;
+    const row = document.createElement('div');
+    row.className = 'relay-setup-target-row';
+    row.dataset.relayTargetRow = 'true';
+
+    const label = document.createElement('label');
+    label.className = 'relay-setup-target-label';
+    label.dataset.relayTargetLabel = 'true';
+    label.htmlFor = `relay-setup-target-${rowId}`;
+
+    const controls = document.createElement('div');
+    controls.className = 'relay-setup-target-controls';
+
+    const input = document.createElement('input');
+    input.className = 'tracker-input mono relay-setup-target-input';
+    input.id = `relay-setup-target-${rowId}`;
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.autocapitalize = 'none';
+    input.spellcheck = false;
+    input.placeholder = 'Canister ID';
+    input.dataset.relayTargetInput = 'true';
+    input.setAttribute('aria-describedby', `relay-setup-target-hint relay-setup-target-error-${rowId}`);
+
+    const removeButton = document.createElement('button');
+    removeButton.className = 'pane-page-button relay-setup-remove-target';
+    removeButton.type = 'button';
+    removeButton.textContent = 'Remove';
+    removeButton.dataset.relayTargetRemove = 'true';
+
+    const error = document.createElement('p');
+    error.className = 'relay-setup-target-error';
+    error.id = `relay-setup-target-error-${rowId}`;
+    error.dataset.relayTargetError = 'true';
+    error.hidden = true;
+
+    controls.append(input, removeButton);
+    row.append(label, controls, error);
+    return row;
+  }
+
+  function invalidateCurrentTargetSet() {
+    generation += 1;
+    stopPolling();
+    state.targets = [];
+    state.view = null;
+    state.balanceE8s = null;
+    state.notifyResult = null;
+    state.requiredBalanceOverride = null;
+    state.error = '';
+    state.loading = false;
+    state.creating = false;
+    render();
+  }
+
+  function handleVisibleTargetChange() {
+    const inputText = syncTargetInputSnapshot({ force: true });
+    if (inputText !== state.inputText) invalidateCurrentTargetSet();
+    validateVisibleTargetFields();
+  }
+
+  function addTargetField() {
+    const list = targetList();
+    const rows = targetRows();
+    if (!list || rows.length >= MAX_TARGETS) return;
+    const row = createTargetRow();
+    list.append(row);
+    updateTargetRows();
+    syncTargetInputSnapshot({ force: true });
+    invalidateCurrentTargetSet();
+    validateVisibleTargetFields();
+    row.querySelector?.('[data-relay-target-input]')?.focus?.();
+    announceTargetChange(`Target canister ${rows.length + 1} added.`);
+  }
+
+  function removeTargetField(button) {
+    const row = button?.closest?.('[data-relay-target-row]');
+    if (!row) return;
+    const rows = targetRows();
+    const removedIndex = rows.indexOf(row);
+    if (rows.length === 1) {
+      const input = row.querySelector?.('[data-relay-target-input]');
+      if (input) input.value = '';
+    } else {
+      row.remove?.();
+    }
+    updateTargetRows();
+    syncTargetInputSnapshot({ force: true });
+    invalidateCurrentTargetSet();
+    validateVisibleTargetFields();
+    const inputs = targetInputs();
+    inputs[Math.min(Math.max(removedIndex, 0), inputs.length - 1)]?.focus?.();
+    announceTargetChange(`Target canister removed. ${inputs.length} field${inputs.length === 1 ? '' : 's'} remaining.`);
+  }
 
   function stopPolling() {
     if (pollHandle !== null) clearIntervalFn(pollHandle);
@@ -172,7 +396,7 @@ export function createRelaySetupController({
 
   function inputStillCurrent(expected, requestGeneration) {
     return generation === requestGeneration
-      && String(document.getElementById('relay-setup-target-input')?.value || '').trim() === expected;
+      && syncTargetInputSnapshot() === expected;
   }
 
   async function historianBundle() {
@@ -338,8 +562,8 @@ export function createRelaySetupController({
   }
 
   async function submitTarget() {
-    const input = document.getElementById('relay-setup-target-input');
-    const inputText = String(input?.value || '').trim();
+    const input = legacyTargetInput();
+    const inputText = syncTargetInputSnapshot();
     generation += 1;
     const requestGeneration = generation;
     stopPolling();
@@ -352,6 +576,16 @@ export function createRelaySetupController({
     state.error = '';
     state.loading = true;
     try {
+      const visibleInputs = targetInputs();
+      const usesVisibleFields = visibleInputs.length > 0
+        && (targetValues().some(Boolean) || !inputText);
+      if (usesVisibleFields) {
+        const validation = validateVisibleTargetFields({ includeIncomplete: true });
+        if (!validation.valid) {
+          validation.firstInvalidInput?.focus?.();
+          throw new Error(validation.firstError);
+        }
+      }
       state.targets = parseRelayTargetSet(inputText);
       render();
       await refresh({ expectedInput: inputText, requestGeneration });
@@ -360,7 +594,7 @@ export function createRelaySetupController({
       state.targets = [];
       state.error = normalizeError(error);
       state.loading = false;
-      input?.focus?.();
+      (targetInputs()[0] || input)?.focus?.();
       render();
     }
   }
@@ -429,6 +663,27 @@ export function createRelaySetupController({
         render();
       });
     }
+    const list = targetList();
+    if (list && list.dataset.bound !== 'true') {
+      list.dataset.bound = 'true';
+      list.addEventListener('input', (event) => {
+        if (!event.target?.matches?.('[data-relay-target-input]')) return;
+        handleVisibleTargetChange();
+      });
+      list.addEventListener('click', (event) => {
+        const removeButton = event.target?.closest?.('[data-relay-target-remove]');
+        if (!removeButton) return;
+        removeTargetField(removeButton);
+      });
+      updateTargetRows();
+      syncTargetInputSnapshot({ force: true });
+      validateVisibleTargetFields();
+    }
+    const addButton = document.getElementById('relay-setup-add-target');
+    if (addButton && addButton.dataset.bound !== 'true') {
+      addButton.dataset.bound = 'true';
+      addButton.addEventListener('click', addTargetField);
+    }
     const form = document.getElementById('relay-setup-form');
     if (form && form.dataset.bound !== 'true') {
       form.dataset.bound = 'true';
@@ -446,5 +701,17 @@ export function createRelaySetupController({
     bindCopy('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
   }
 
-  return { state, bindPane, submitTarget, createRelay, refresh, stopPolling, teardown: stopPolling, render };
+  return {
+    state,
+    bindPane,
+    submitTarget,
+    createRelay,
+    refresh,
+    stopPolling,
+    teardown: stopPolling,
+    render,
+    addTargetField,
+    removeTargetField,
+    validateVisibleTargetFields,
+  };
 }

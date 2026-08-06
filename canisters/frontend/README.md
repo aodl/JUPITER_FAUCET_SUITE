@@ -104,7 +104,7 @@ No browser requests are made to custom `/dashboard/*` routes.
 
 ### Self-service Relay setup
 
-The setup textarea accepts comma, newline, or whitespace-separated principal text and rejects empty, invalid, duplicate, or over-20-target input before calling Historian. Historian remains authoritative for canonical raw-byte ordering and protected-target validation.
+Relay Setup presents one canister-ID field per target, with controls to add or remove fields up to the 20-target limit. Duplicate canister IDs are identified inline as the user edits; empty, invalid, duplicate, or over-limit target sets are still rejected before calling Historian. Historian remains authoritative for canonical raw-byte ordering and protected-target validation.
 
 The returned view displays canonical order and nominal target-count pricing. For a new available exact set, the browser reads its informational balance directly from the ICP ledger with `icrc1_balance_of`; it never scans the index or submits a transaction reference. The browser polls while that setup account is visible, but funding never triggers creation automatically. The **Create Relay** button calls `notify_relay_setup` with only the target vector. If notification returns a higher authoritative live requirement, the browser retains and displays it across query refreshes until the balance is sufficient for a later explicit create attempt. Active and manual-recovery states stop polling and hide payment controls, and stale responses cannot replace a newer target-set view.
 

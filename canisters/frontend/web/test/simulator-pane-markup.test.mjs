@@ -788,6 +788,29 @@ test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
   assert.doesNotMatch(navbarJs, /positionMenuRails|getBoundingClientRect|let actionsMenuOpen|let metricsMenuOpen|activePanelKey|metric-rail--visible/);
 });
 
+test('Relay Setup uses accessible repeatable target fields', () => {
+  const relaySetup = sectionMarkup('relay-setup');
+
+  assert.match(relaySetup, /<fieldset class="relay-setup-target-fieldset">/);
+  assert.match(relaySetup, /<legend class="tracker-label">Target canisters<\/legend>/);
+  assert.doesNotMatch(relaySetup, /Target canisters \(1–20\)/);
+  assert.match(relaySetup, /Enter one canister ID per field/);
+  assert.match(relaySetup, /id="relay-setup-target-list"/);
+  assert.match(relaySetup, /data-relay-target-input="true"/);
+  assert.match(relaySetup, /id="relay-setup-add-target"[^>]*>Add another canister<\/button>/);
+  assert.match(relaySetup, /data-relay-target-remove="true"[^>]*hidden>Remove<\/button>/);
+  assert.match(relaySetup, /id="relay-setup-target-count-hint"[^>]*>1 target canister<\/span>/);
+  assert.match(relaySetup, /<div class="relay-setup-target-actions">[\s\S]*id="relay-setup-add-target"[\s\S]*id="relay-setup-submit"[^>]*disabled[^>]*>Check target set<\/button>[\s\S]*<\/div>/);
+  assert.match(relaySetup, /id="relay-setup-warning"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(relaySetup, /<div class="tracker-empty-state">\s*<p id="relay-setup-prompt-text">Individual target canisters may be covered as part of more than one Relay\. Submitting the exact same target set returns the existing Relay \(an exact duplicate is prevented\)\. The target set is immutable after Relay creation\.<\/p>\s*<\/div>/);
+  assert.equal(relaySetup.match(/Individual target canisters may be covered as part of more than one Relay\./g)?.length, 1);
+  assert.doesNotMatch(relaySetup, /Separate canister IDs with newlines, commas, or spaces/);
+  assert.doesNotMatch(relaySetup, /<textarea/);
+  assert.match(metricsCss, /\.relay-setup-target-row--error \{[\s\S]*border-color:/);
+  assert.match(metricsCss, /\.relay-setup-target-input\[aria-invalid="true"\]/);
+  assert.match(metricsCss, /\.relay-setup-submit \{[\s\S]*margin-left: auto;/);
+});
+
 test('Patron Commitments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
   assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);

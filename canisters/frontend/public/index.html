@@ -967,16 +967,32 @@
             <p class="nav-panel-subtitle">Create an immutable Jupiter Relay for one to twenty target canisters without login.</p>
             <p class="nav-panel-content">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about <a href="/#how-it-works:3" data-panel="how-it-works" class="pane-external-link">what a relay canister is and how it works</a> and set up a new relay using the instructions below.</p>
             <form class="tracker-form relay-setup-form" id="relay-setup-form">
-              <label class="tracker-label" for="relay-setup-target-input">Target canister IDs (1–20)</label>
-              <div class="tracker-input-row">
-                <textarea class="tracker-input mono" id="relay-setup-target-input" rows="4" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Separate canister IDs with newlines, commas, or spaces"></textarea>
-                <button class="pane-page-button" id="relay-setup-submit" type="submit">Check target set</button>
-              </div>
+              <fieldset class="relay-setup-target-fieldset">
+                <legend class="tracker-label">Target canisters</legend>
+                <p class="relay-setup-target-hint" id="relay-setup-target-hint">Enter one canister ID per field. The target set becomes immutable when the Relay is created.</p>
+                <div class="relay-setup-target-list" id="relay-setup-target-list">
+                  <div class="relay-setup-target-row" data-relay-target-row="true">
+                    <label class="relay-setup-target-label" for="relay-setup-target-1" data-relay-target-label="true">Target canister 1</label>
+                    <div class="relay-setup-target-controls">
+                      <input class="tracker-input mono relay-setup-target-input" id="relay-setup-target-1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Canister ID" aria-describedby="relay-setup-target-hint relay-setup-target-error-1" data-relay-target-input="true" />
+                      <button class="pane-page-button relay-setup-remove-target" type="button" aria-label="Remove target canister 1" data-relay-target-remove="true" hidden>Remove</button>
+                    </div>
+                    <p class="relay-setup-target-error" id="relay-setup-target-error-1" data-relay-target-error="true" hidden></p>
+                  </div>
+                </div>
+                <input id="relay-setup-target-input" type="hidden" />
+                <div class="relay-setup-target-actions">
+                  <button class="pane-page-button relay-setup-add-target" id="relay-setup-add-target" type="button">Add another canister</button>
+                  <span class="relay-setup-target-count" id="relay-setup-target-count-hint">1 target canister</span>
+                  <button class="pane-page-button relay-setup-submit" id="relay-setup-submit" type="submit" disabled>Check target set</button>
+                </div>
+                <p class="relay-setup-target-announcement" id="relay-setup-target-announcement" role="status" aria-live="polite"></p>
+              </fieldset>
             </form>
-            <p class="pane-status-note tracker-status-note" id="relay-setup-warning" hidden></p>
+            <p class="pane-status-note tracker-status-note tracker-status-note--error" id="relay-setup-warning" role="status" aria-live="polite" hidden></p>
             <div class="tracker-result" id="relay-setup-result">
               <div class="tracker-empty-state">
-                <p id="relay-setup-prompt-text">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about what a relay canister is and how it works and set up a new relay using the instructions below.</p>
+                <p id="relay-setup-prompt-text">Individual target canisters may be covered as part of more than one Relay. Submitting the exact same target set returns the existing Relay (an exact duplicate is prevented). The target set is immutable after Relay creation.</p>
               </div>
             </div>
             <dl class="pane-detail-grid tracker-summary-grid relay-setup-grid" id="relay-setup-summary" hidden>
@@ -1014,7 +1030,6 @@
               <button class="pane-page-button" id="relay-setup-create" type="button" disabled>Create Relay</button>
             </section>
             <section id="relay-setup-existing-relay" hidden></section>
-            <p class="pane-status-note tracker-status-note">Targets may be covered by more than one Relay. The target set is immutable after Relay creation. Submitting the same canonical target set returns the existing Relay.</p>
           </div>
         </article>
 

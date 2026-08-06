@@ -5,6 +5,7 @@ import { Principal } from '@icp-sdk/core/principal';
 
 import {
   createRelaySetupController,
+  duplicateRelayTargetIndexes,
   icrcAccountText,
   parseRelayTargetSet,
 } from '../src/app/relay-setup-controller.js';
@@ -30,11 +31,60 @@ class FakeElement {
     this.focused = false;
     this.href = '';
     this.title = '';
+    this.className = '';
+    this.children = [];
+    this.parentElement = null;
+    this.tagName = 'div';
+    this.classList = {
+      toggle: (name, enabled) => {
+        const classes = new Set(this.className.split(/\s+/u).filter(Boolean));
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        this.className = [...classes].join(' ');
+      },
+    };
   }
 
   addEventListener(type, listener) { this.listeners.set(type, listener); }
   focus() { this.focused = true; }
   removeAttribute(name) { this.attributes.delete(name); this[name] = ''; }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
+  append(...children) {
+    children.forEach((child) => {
+      child.parentElement = this;
+      this.children.push(child);
+    });
+  }
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+    this.parentElement = null;
+  }
+  matches(selector) {
+    const dataAttribute = selector.match(/^\[data-([a-z0-9-]+)\]$/u)?.[1];
+    if (!dataAttribute) return false;
+    const key = dataAttribute.replace(/-([a-z])/gu, (_match, letter) => letter.toUpperCase());
+    return key in this.dataset;
+  }
+  closest(selector) {
+    for (let node = this; node; node = node.parentElement) {
+      if (node.matches(selector)) return node;
+    }
+    return null;
+  }
+  querySelectorAll(selector) {
+    const matches = [];
+    const visit = (node) => {
+      node.children.forEach((child) => {
+        if (child.matches(selector)) matches.push(child);
+        visit(child);
+      });
+    };
+    visit(this);
+    return matches;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
 
 const DOM_IDS = [
@@ -48,13 +98,18 @@ const DOM_IDS = [
   'relay-setup-existing-relay', 'copy-relay-setup-icrc-account',
   'copy-relay-setup-account-identifier', 'relay-setup-icrc-account-link',
   'relay-setup-account-identifier-link',
+  'relay-setup-target-list', 'relay-setup-add-target', 'relay-setup-target-count-hint',
+  'relay-setup-target-announcement', 'relay-setup-warning', 'relay-setup-submit',
 ];
 
 async function withDom(run) {
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
   const nodes = new Map(DOM_IDS.map((id) => [id, new FakeElement(id)]));
-  globalThis.document = { getElementById: (id) => nodes.get(id) || null };
+  globalThis.document = {
+    getElementById: (id) => nodes.get(id) || null,
+    createElement: () => new FakeElement(''),
+  };
   globalThis.window = {
     location: { origin: 'https://example.test' },
     setInterval: () => 1,
@@ -64,6 +119,27 @@ async function withDom(run) {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
   }
+}
+
+function seedTargetRow(nodes, value = '') {
+  const row = new FakeElement('');
+  row.dataset.relayTargetRow = 'true';
+  const label = new FakeElement('');
+  label.dataset.relayTargetLabel = 'true';
+  const controls = new FakeElement('');
+  const input = new FakeElement('relay-setup-target-1');
+  input.dataset.relayTargetInput = 'true';
+  input.value = value;
+  const remove = new FakeElement('');
+  remove.dataset.relayTargetRemove = 'true';
+  remove.hidden = true;
+  const error = new FakeElement('relay-setup-target-error-1');
+  error.dataset.relayTargetError = 'true';
+  error.hidden = true;
+  controls.append(input, remove);
+  row.append(label, controls, error);
+  nodes.get('relay-setup-target-list').append(row);
+  return { row, label, input, remove, error };
 }
 
 function setupAccount() {
@@ -206,6 +282,66 @@ test('parser accepts twenty targets', () => {
 test('parser rejects twenty-one targets', () => {
   const text = Array.from({ length: 21 }, (_, index) => Principal.fromUint8Array(Uint8Array.of(index + 1)).toText()).join('\n');
   assert.throws(() => parseRelayTargetSet(text), /no more than 20/i);
+});
+
+test('duplicate detection catches valid repeated canister IDs and ignores incomplete entries', () => {
+  assert.deepEqual([...duplicateRelayTargetIndexes([TARGET_A, TARGET_A, '', 'not-yet-valid'])], [0, 1]);
+  assert.deepEqual([...duplicateRelayTargetIndexes([TARGET_A, TARGET_B])], []);
+});
+
+test('repeatable target fields add, flag duplicates immediately, and remove cleanly', async () => {
+  await withDom(async (nodes) => {
+    const first = seedTargetRow(nodes);
+    const harness = controllerHarness();
+    harness.controller.bindPane();
+    const list = nodes.get('relay-setup-target-list');
+
+    assert.equal(nodes.get('relay-setup-submit').disabled, true);
+    first.input.value = TARGET_A;
+    list.listeners.get('input')({ target: first.input });
+    assert.equal(nodes.get('relay-setup-submit').disabled, false);
+
+    await nodes.get('relay-setup-add-target').listeners.get('click')();
+    const inputs = list.querySelectorAll('[data-relay-target-input]');
+    const removeButtons = list.querySelectorAll('[data-relay-target-remove]');
+    assert.equal(inputs.length, 2);
+    assert.equal(inputs[1].focused, true);
+    assert.equal(removeButtons.every((button) => button.hidden === false), true);
+    assert.equal(nodes.get('relay-setup-target-count-hint').textContent, '2 target canisters');
+    assert.equal(nodes.get('relay-setup-submit').disabled, true);
+
+    inputs[1].value = TARGET_A;
+    list.listeners.get('input')({ target: inputs[1] });
+    assert.equal(inputs[0].getAttribute('aria-invalid'), 'true');
+    assert.equal(inputs[1].getAttribute('aria-invalid'), 'true');
+    assert.equal(nodes.get('relay-setup-warning').hidden, false);
+    assert.equal(nodes.get('relay-setup-submit').disabled, true);
+
+    inputs[1].value = TARGET_B;
+    list.listeners.get('input')({ target: inputs[1] });
+    assert.equal(inputs[0].getAttribute('aria-invalid'), null);
+    assert.equal(inputs[1].getAttribute('aria-invalid'), null);
+    assert.equal(nodes.get('relay-setup-warning').hidden, true);
+    assert.equal(nodes.get('relay-setup-submit').disabled, false);
+
+    list.listeners.get('click')({ target: first.remove });
+    const remainingInputs = list.querySelectorAll('[data-relay-target-input]');
+    assert.equal(remainingInputs.length, 1);
+    assert.equal(remainingInputs[0].value, TARGET_B);
+    assert.equal(remainingInputs[0].focused, true);
+    assert.equal(list.querySelector('[data-relay-target-remove]').hidden, true);
+    assert.equal(nodes.get('relay-setup-target-count-hint').textContent, '1 target canister');
+    assert.equal(nodes.get('relay-setup-submit').disabled, false);
+    assert.match(nodes.get('relay-setup-target-announcement').textContent, /1 field remaining/);
+
+    for (let index = 1; index < 20; index += 1) {
+      await nodes.get('relay-setup-add-target').listeners.get('click')();
+    }
+    assert.equal(list.querySelectorAll('[data-relay-target-input]').length, 20);
+    assert.equal(nodes.get('relay-setup-add-target').disabled, true);
+    await nodes.get('relay-setup-add-target').listeners.get('click')();
+    assert.equal(list.querySelectorAll('[data-relay-target-input]').length, 20);
+  });
 });
 
 test('canonical backend ordering is displayed', async () => {
