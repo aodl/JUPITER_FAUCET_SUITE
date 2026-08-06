@@ -219,7 +219,7 @@ export function createSimulatorController({ copyTextToClipboard, neuronId }) {
     if (assumption) {
       const dashboardHref = `https://dashboard.internetcomputer.org/neuron/${neuronId.toString()}`;
       const ageBonusCopy = state.ageBonusAvailable
-        ? `The effective top-up APY discounts the current age-bonus component (${formatAgeBonusDisplay(state.ageBonusBasisPoints)}) because Jupiter Faucet routes that component to SNS holders instead of CMC top-ups.`
+        ? `The effective top-up APY discounts the current age-bonus component—${formatAgeBonusDisplay(state.ageBonusBasisPoints)}—because Jupiter Faucet routes that component to SNS holders instead of CMC top-ups.`
         : 'Neuron age-bonus details are still loading; the projection temporarily assumes no age-bonus diversion.';
       const rateSnapshot = state.icpXdrRateSnapshot;
       const rateCopy = rateSnapshot

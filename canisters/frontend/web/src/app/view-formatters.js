@@ -134,7 +134,7 @@ export function formatBasisPointsAsPercent(value, decimals = 1) {
 
 export function formatAgeBonusDisplay(ageBonusBasisPoints) {
   const maturityShare = calculateAgeBonusMaturityShareBasisPoints(ageBonusBasisPoints);
-  return `${formatBasisPointsAsPercent(maturityShare)} of maturity diverted (${formatBasisPointsAsPercent(ageBonusBasisPoints)} age bonus)`;
+  return `${formatBasisPointsAsPercent(maturityShare)} of total maturity diverted (${formatBasisPointsAsPercent(ageBonusBasisPoints)} age bonus relative to base maturity)`;
 }
 
 export function formatInteger(value) {

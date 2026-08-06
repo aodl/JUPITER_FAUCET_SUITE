@@ -697,6 +697,8 @@ test('simulator and Jupiter Stake expose age-bonus discount information', () => 
   const simulator = sectionMarkup('simulator');
   const stake = sectionMarkup('metric-stake');
 
+  assert.match(viewFormattersJs, /of total maturity diverted/);
+  assert.match(viewFormattersJs, /age bonus relative to base maturity/);
   assert.match(simulator, /Age bonus diverted/);
   assert.match(simulator, /id="simulator-age-bonus"/);
   assert.match(simulator, /Effective top-up APY/);
