@@ -27,6 +27,11 @@ impl MainGuard {
         });
     }
 
+    #[cfg(feature = "debug_api")]
+    pub(super) fn release_without_finishing(mut self) {
+        self.release();
+    }
+
     fn release(&mut self) {
         if !self.inner.is_active() {
             return;

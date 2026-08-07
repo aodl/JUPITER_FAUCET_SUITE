@@ -1,64 +1,40 @@
 # Jupiter SNS Rewards
 
-`jupiter-sns-rewards` is the placeholder rewards canister in the Jupiter Faucet Suite.
+`jupiter-sns-rewards` maintains the current SNS-neuron owner index used by Relay reward attribution. It remains the recipient of the disburser's age-bonus flow, but it does not yet calculate or distribute the future general SNS rewards program.
 
-See the suite overview in [`../../README.md`](../../README.md).
+Production canister: `jupiter_sns_rewards` / `alk7f-5aaaa-aaaar-qb4ra-cai`.
 
-Unless otherwise noted, command examples in this README are run from the repository root.
+## Owner snapshots
 
-## Current mainnet canister recorded in this repo
+The canister is configured with one SNS Root. OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` is the temporary development configuration; it will be replaced by the jUP SNS Root after launch. At the start of every complete scan, the canister calls Root `list_sns_canisters` and pins the returned Root, Governance, and Ledger IDs. Governance and Ledger IDs are never independently configured.
 
-- canister ID: `alk7f-5aaaa-aaaar-qb4ra-cai`
-- subnet: Fiduciary (`pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae`)
+A daily scan crawls Governance `list_neurons` in bounded 100-neuron pages, processing one page per timer message. Progress and the exclusive neuron cursor are stable and resume after upgrade. Slot A and slot B stable maps provide active/staging publication: a refresh writes only the inactive map, and the metadata cell exposes it only after the complete scan succeeds. Failed or partial refreshes leave the preceding active snapshot public.
 
-## Role in the live wiring
+A neuron qualifies when `cached_neuron_stake_e8s.saturating_sub(neuron_fees_e8s) > 0`. Its owner is the principal with the most distinct permission codes after entries for the same principal are unioned. A tie uses the lexicographically smallest raw principal bytes. This deterministic heuristic is an attribution policy, not a claim that every unusual multi-principal permission arrangement has one objectively correct owner.
 
-This canister is the configured recipient for **95% of the disburser's age-bonus ICP flow**.
+Each selected principal is indexed once under its default ICP AccountIdentifier (`subaccount = null`, the all-zero subaccount). Explicit ICP subaccounts are not indexed.
 
-Its main practical role is to reserve the production canister principal and its default ledger account so that reward-distribution logic can be added later without changing the live routing destination.
+## Relay API
 
-## Implementation
+- `get_relay_reward_context` returns the active snapshot's Root, Governance, Ledger, snapshot ID, and scan timestamps. It returns `null` until a complete snapshot exists for the configured Root.
+- `resolve_default_icp_accounts` resolves at most 128 ordered 32-byte account identifiers for an exact active snapshot ID. It never reads staging data or exposes neuron details.
 
-The implementation is intentionally empty:
+There is no registration API, owner-list API, production force-scan method, or token-distribution method.
 
-- no public methods
-- no timers
-- no stable state
-- `init` is a no-op
-- there is no upgrade hook because no runtime reinitialization is required
+## Stable lifecycle
 
-That means the canister is a principal / account placeholder, not a live reward-distribution engine.
+Configuration, active snapshot metadata, scan cursor, and both owner maps are stable. An ordinary no-argument upgrade preserves them and resumes an incomplete scan. `post_upgrade` accepts `Option<UpgradeArgs>`:
 
-## Intended future role
+- no argument, outer `null`, or `reward_sns_root_canister_id = null`: preserve the Root;
+- `reward_sns_root_canister_id = opt null`: clear the Root;
+- `reward_sns_root_canister_id = opt opt principal "..."`: replace the Root.
 
-Once Jupiter-specific SNS reward logic lands, this canister is the natural place for that distribution policy to live because the [disburser](../disburser) already routes the primary age-bonus flow here.
+Clearing or changing Root immediately clears both maps, the active snapshot, and any in-progress scan. Ownership from OpenChat therefore cannot remain active after switching to jUP.
 
-Until then, it can largely be ignored when trying to understand the operational path.
+Fresh install arguments are checked in at [`mainnet-install-args.did`](mainnet-install-args.did). Because the existing production principal was previously an empty placeholder, the first configuration uses a temporary nested upgrade argument rather than the fresh-install file; see [deployment operations](../../docs/operations/deployment.md).
 
-## Build and upgrade
+## Operations
 
-Production canister: `jupiter_sns_rewards` / `alk7f-5aaaa-aaaar-qb4ra-cai`
+Build with `./tools/scripts/build-canister jupiter-sns-rewards`. Observe `SNS_REWARD_SCAN`, `SNS_REWARDS_CONFIG`, and lifecycle logs. Before relying on a snapshot, verify the context Root and Root-resolved Ledger, the completion timestamp, and that no scan failure followed the publication log.
 
-Build:
-
-```bash
-./tools/scripts/build-canister jupiter-sns-rewards
-```
-
-Upgrade:
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_sns_rewards \
-  --environment ic \
-  --mode upgrade
-```
-
-## Future historian / SNS testing note
-
-[Historian](../historian) SNS coverage is generic and mock-based. Once the actual Jupiter SNS configuration is represented in-repo, the historian and [end-to-end test paths](../../tests/pocketic) should be extended to cover the live Jupiter SNS reward topology specifically.
-
-## Related docs
-
-- suite overview: [`../../README.md`](../../README.md)
-- disburser routing policy: [`../disburser/README.md`](../disburser/README.md)
-- historian notes: [`../historian/README.md`](../historian/README.md)
+Optional OpenChat development verification is read-only: query OpenChat Root, confirm it resolves Root `3e3x2-xyaaa-aaaaq-aaalq-cai`, Governance `2jvtu-yqaaa-aaaaq-aaama-cai`, and CHAT Ledger `2ouva-viaaa-aaaaq-aaamq-cai`; observe a complete snapshot; then query the context. Any real CHAT transfer belongs only in a separately reviewed, controlled deployment with an explicitly reviewed amount. Do not use an immutable production Relay for the first real-value smoke test without reviewing ambiguity recovery.

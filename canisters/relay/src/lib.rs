@@ -1,5 +1,6 @@
 mod clients;
 mod logic;
+mod reward_state;
 mod scheduler;
 mod state;
 
@@ -14,6 +15,8 @@ pub struct InitArgs {
     pub cmc_canister_id: Option<Principal>,
     pub governance_canister_id: Option<Principal>,
     pub blackhole_canister_id: Option<Principal>,
+    pub sns_rewards_canister_id: Option<Principal>,
+    pub icp_index_canister_id: Option<Principal>,
     pub main_interval_seconds: Option<u64>,
     pub max_transfers_per_tick: Option<u32>,
     pub surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
@@ -46,6 +49,14 @@ fn mainnet_governance_id() -> Principal {
 
 fn mainnet_blackhole_id() -> Principal {
     constants::blackhole_canister_id()
+}
+
+fn mainnet_sns_rewards_id() -> Principal {
+    constants::jupiter_sns_rewards_id()
+}
+
+fn mainnet_icp_index_id() -> Principal {
+    constants::icp_index_id()
 }
 
 #[cfg(any(test, feature = "debug_api"))]
@@ -153,6 +164,12 @@ fn config_from_init_args(args: InitArgs) -> crate::state::Config {
             .governance_canister_id
             .unwrap_or_else(mainnet_governance_id),
         blackhole_canister_id,
+        sns_rewards_canister_id: args
+            .sns_rewards_canister_id
+            .unwrap_or_else(mainnet_sns_rewards_id),
+        icp_index_canister_id: args
+            .icp_index_canister_id
+            .unwrap_or_else(mainnet_icp_index_id),
         cycles_probe_policy,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60).max(60),
         max_transfers_per_tick: args.max_transfers_per_tick,
@@ -206,6 +223,7 @@ fn initialize_from_config(cfg: crate::state::Config, lifecycle_event: &'static s
     crate::logic::validate_config(&cfg, self_canister_principal_for_validation())
         .expect("invalid relay config");
     crate::state::set_state(crate::state::State::new(cfg, now_secs));
+    crate::reward_state::initialize_if_uninitialized();
     crate::scheduler::install_timers();
     crate::scheduler::schedule_startup_liveness_tick();
     let main_interval_seconds = crate::state::with_state(|st| st.config.main_interval_seconds);
@@ -252,6 +270,8 @@ pub struct DebugConfig {
     pub cmc_canister_id: Principal,
     pub governance_canister_id: Principal,
     pub blackhole_canister_id: Principal,
+    pub sns_rewards_canister_id: Principal,
+    pub icp_index_canister_id: Principal,
     pub cycles_probe_policy: CyclesProbePolicy,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
@@ -301,6 +321,8 @@ fn debug_config() -> DebugConfig {
         cmc_canister_id: st.config.cmc_canister_id,
         governance_canister_id: st.config.governance_canister_id,
         blackhole_canister_id: st.config.blackhole_canister_id,
+        sns_rewards_canister_id: st.config.sns_rewards_canister_id,
+        icp_index_canister_id: st.config.icp_index_canister_id,
         cycles_probe_policy: st.config.cycles_probe_policy.clone(),
         main_interval_seconds: st.config.main_interval_seconds,
         max_transfers_per_tick: st.config.max_transfers_per_tick,
@@ -318,6 +340,20 @@ fn debug_config() -> DebugConfig {
 async fn debug_main_tick() {
     guard_debug_api_not_production();
     crate::scheduler::debug_main_tick_impl().await;
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+async fn debug_reward_sweep() {
+    guard_debug_api_not_production();
+    crate::scheduler::debug_reward_sweep_impl().await;
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::query]
+fn debug_reward_state() -> crate::reward_state::RewardState {
+    guard_debug_api_not_production();
+    crate::reward_state::get()
 }
 
 #[cfg(feature = "debug_api")]
@@ -392,6 +428,8 @@ mod tests {
             cmc_canister_id: None,
             governance_canister_id: None,
             blackhole_canister_id: None,
+            sns_rewards_canister_id: None,
+            icp_index_canister_id: None,
             main_interval_seconds: Some(12),
             max_transfers_per_tick: Some(3),
             surplus_canister_recipients: None,
@@ -400,6 +438,42 @@ mod tests {
                 memo: Vec::new(),
             }],
         }
+    }
+
+    #[derive(CandidType)]
+    struct LegacyInitArgs {
+        managed_canisters: Vec<Principal>,
+        ledger_canister_id: Option<Principal>,
+        cmc_canister_id: Option<Principal>,
+        governance_canister_id: Option<Principal>,
+        blackhole_canister_id: Option<Principal>,
+        main_interval_seconds: Option<u64>,
+        max_transfers_per_tick: Option<u32>,
+        surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+        surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
+    }
+
+    #[test]
+    fn legacy_init_args_decode_with_reward_dependency_defaults() {
+        let sample = sample_init_args();
+        let legacy = LegacyInitArgs {
+            managed_canisters: sample.managed_canisters,
+            ledger_canister_id: sample.ledger_canister_id,
+            cmc_canister_id: sample.cmc_canister_id,
+            governance_canister_id: sample.governance_canister_id,
+            blackhole_canister_id: sample.blackhole_canister_id,
+            main_interval_seconds: sample.main_interval_seconds,
+            max_transfers_per_tick: sample.max_transfers_per_tick,
+            surplus_canister_recipients: sample.surplus_canister_recipients,
+            surplus_neuron_recipients: sample.surplus_neuron_recipients,
+        };
+        let bytes = encode_args((legacy,)).unwrap();
+        let (decoded,): (InitArgs,) = decode_args(&bytes).unwrap();
+        assert_eq!(decoded.sns_rewards_canister_id, None);
+        assert_eq!(decoded.icp_index_canister_id, None);
+        let config = config_from_init_args(decoded);
+        assert_eq!(config.sns_rewards_canister_id, mainnet_sns_rewards_id());
+        assert_eq!(config.icp_index_canister_id, mainnet_icp_index_id());
     }
 
     fn assert_committed_did_matches_rust_service(did_file: &str) {

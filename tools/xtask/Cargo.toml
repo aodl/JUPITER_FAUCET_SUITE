@@ -32,3 +32,7 @@ path = "../../tests/pocketic/jupiter_disburser_integration.rs"
 [[test]]
 name = "e2e"
 path = "../../tests/pocketic/e2e.rs"
+
+[[test]]
+name = "jupiter_sns_rewards_integration"
+path = "../../tests/pocketic/jupiter_sns_rewards_integration.rs"

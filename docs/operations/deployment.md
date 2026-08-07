@@ -187,6 +187,7 @@ Fresh install argument files live with their owning canisters:
 - [`canisters/faucet/mainnet-install-args.did`](../../canisters/faucet/mainnet-install-args.did)
 - [`canisters/historian/mainnet-install-args.did`](../../canisters/historian/mainnet-install-args.did)
 - [`canisters/relay/mainnet-install-args.did`](../../canisters/relay/mainnet-install-args.did)
+- [`canisters/sns-rewards/mainnet-install-args.did`](../../canisters/sns-rewards/mainnet-install-args.did)
 
 `mainnet-install-args.did` files are fresh-install/reinstall `InitArgs`. Do not use those files for ordinary production upgrades, except Relay where upgrades intentionally require full replacement `InitArgs`.
 
@@ -205,12 +206,46 @@ For config-changing upgrades, Disburser, Faucet, and Historian use the canister'
 | `jupiter_disburser` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | `jupiter_faucet` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | `jupiter_historian` | `InitArgs` from checked-in `mainnet-install-args.did` for brand-new canister only | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved; existing production canister must not be reinstalled |
-| `jupiter_relay` | `InitArgs` from checked-in `mainnet-install-args.did` | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
+| `jupiter_relay` | `InitArgs` from checked-in `mainnet-install-args.did` | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap configuration/operations reset; isolated stable SNS reward journal preserved |
 | `jupiter_faucet_frontend` | No install args | No args | No args | Asset canister state managed by frontend asset lifecycle |
 | `jupiter_lifeline` | No install args | No args | No args | Minimal support canister state |
-| `jupiter_sns_rewards` | No install args | No args | No args | Placeholder/reward-recipient canister state |
+| `jupiter_sns_rewards` | `InitArgs` with optional SNS Root | No args | Temporary nested `Option<UpgradeArgs>` | Stable configuration, active owner snapshot, staging scan, and cursor preserved when Root is unchanged |
 
-Relay upgrades are replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If an in-flight operation is interrupted, Relay starts fresh from the supplied `InitArgs`. After upgrade, confirm the fresh `CONFIG` log, confirm the first successful tick is `BaselineOnly`, check managed canister cycle balances, and manually top up or reconcile if needed.
+Relay ordinary operations remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`; the stable SNS reward cursor and pending transfer survive. After upgrade, confirm the fresh `CONFIG` log, reward journal state, first successful `BaselineOnly` tick, managed-canister cycle balances, and any required reconciliation.
+
+## SNS rewards lifecycle and Root switch
+
+`jupiter_sns_rewards` discovers Governance and Ledger from its one configured SNS Root. The checked-in fresh-install argument configures OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` only as a development placeholder. No Governance, CHAT Ledger, or future jUP Ledger ID is separately configured.
+
+Routine upgrades pass no argument and preserve configuration, active/staging maps, published snapshot, and an incomplete scan cursor. Configuration-changing upgrades pass an optional `UpgradeArgs` record. The nested field semantics are:
+
+| Argument | Result |
+| --- | --- |
+| no argument or outer `null` | preserve Root |
+| outer `opt record { reward_sns_root_canister_id = null }` | preserve Root |
+| outer `opt record { reward_sns_root_canister_id = opt null }` | clear Root and invalidate both owner maps |
+| outer `opt record { reward_sns_root_canister_id = opt opt principal "..." }` | replace Root and invalidate both owner maps |
+
+For the first upgrade from the former empty placeholder, prepare a temporary reviewed argument file containing:
+
+```did
+(opt record {
+  reward_sns_root_canister_id = opt opt principal "3e3x2-xyaaa-aaaaq-aaalq-cai";
+})
+```
+
+Then use the ordinary canonical deployment workflow with that temporary file as `--args-file`. Codex must not perform this production upgrade. After completion, wait for `SNS_REWARD_SCAN status=completed` and query `get_relay_reward_context`; confirm the Root, Root-resolved Governance/Ledger, snapshot ID, and scan timestamps. Relay `CONFIG` logs must show canonical SNS-rewards canister `alk7f-5aaaa-aaaar-qb4ra-cai` and ICP Index `qhbym-qaaaa-aaaaa-aaafq-cai`.
+
+Before switching from OpenChat to jUP:
+
+1. Confirm every Relay has no pending or ambiguous SNS reward transfer.
+2. Reconcile any remaining development CHAT balance.
+3. Upgrade `jupiter-sns-rewards` with a temporary nested argument naming the reviewed jUP SNS Root.
+4. Wait for the first complete jUP owner snapshot.
+5. Verify the context exposes the expected Root-derived jUP Ledger.
+6. Allow Relay to begin the new Root epoch with an empty processed commitment cursor.
+
+A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay does not carry its processed cursor between Roots and never caches the reward Ledger ID. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
 
 ## Local development builds
 

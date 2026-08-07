@@ -111,6 +111,24 @@ Subaccount 1 flow:
 7. Future Faucet payouts from that commitment flow as raw ICP to Relay's default account.
 8. Relay then uses that default-account ICP for managed-canister top-ups and surplus routing.
 
+## SNS reward attribution
+
+Subaccount 1 remains memo-less: incoming ICP memos are neither required nor consulted. It is intended for protocols that accumulate or drip-feed ICP, funding paths that cannot attach the Faucet memo, and exceptional flows such as maturity minted directly to Relay.
+
+Once a week, at the start of an accepted daily main tick, Relay asks the configured `jupiter-sns-rewards` canister for a fresh completed owner snapshot and its Root-resolved token Ledger. Relay never caches the SNS Ledger ID. It then reads its live reward-token balance and that Ledger's live `icrc1_fee`; the ICP fee cache and `10_000` e8s bootstrap fallback do not apply. A transfer is economical only when the balance exceeds the fee and `fee * 10 <= balance - fee`. Exactly 10% qualifies; anything greater waits with the token pot untouched. A pending transfer is driven on every daily tick.
+
+Relay scans its own subaccount-1 account through the real ICP Index, bounded to 10 pages, 10,000 transactions, and 128 distinct sources. The first sweep for each SNS Root may consider all bounded historical completed commitments. Later sweeps begin strictly after the stable processed Faucet-commitment transaction ID. Transactions at or after the owner snapshot's scan-start timestamp wait for a later snapshot. The actual completed commitment is reconstructed chronologically as credited deposits whose sum equals the outgoing Faucet amount plus that transaction's actual ICP fee; newer unforwarded deposits remain open and do not participate.
+
+An eligible source is an indexed SNS neuron owner's exact default ICP account (`subaccount = null`), not Relay subaccount 1. Named subaccounts, exchanges, custodians, wallet canisters, unknown accounts, and mints are ineligible. Owner discovery is automatic and has no registration endpoint. The completed owner snapshot may classify the preceding unprocessed commitment batch retroactively.
+
+Eligible credits aggregate per principal. All unknown and minted funding forms one competing ineligible bucket. One principal wins the whole current economical token pot only if its eligible total is uniquely largest among eligible principals and strictly exceeds the ineligible total. Contributor ties are never broken. A definitive tie or no-winner batch advances the commitment cursor without sending tokens, so only the token pot rolls forward; a later unique winner may receive that accumulated pot.
+
+This is not a proportional or historically exact donor-reward system. It is a deliberately bounded protocol-oriented attribution policy for a blackholed Relay.
+
+The transfer identity pins Ledger, recipient, amount, explicit fee, versioned commitment memo, and creation timestamp in stable memory before the first await. Success and `Duplicate` advance the commitment cursor. A first-attempt definitive rejection clears the pending transfer without advancing; an explicit retryable rejection retries once with the identical identity. Transport uncertainty followed by anything other than success or `Duplicate` becomes stable ambiguity. An ambiguous transfer blocks only new reward adjudication, never ordinary ICP work, and is accepted conservatively if a later pinned-ledger balance is below the original observed balance. No new identity, reward-ledger history scan, force-clear endpoint, fee fallback, or Ledger cache is used.
+
+The SNS Root defines the epoch. A new Root resets the processed commitment cursor only when no prior pending transfer exists. Operators must not switch Root while any Relay reports a pending or ambiguous reward transfer.
+
 ## ICP Ledger Fee Resolution and Thresholds
 
 Relay queries the configured ledger's `icrc1_fee` whenever it builds a new fee-dependent subaccount-1 or default-account plan. Fee resolution is live fee, then the heap-only last-known fee, then a `10_000` e8s bootstrap fallback. The bootstrap value is an emergency contingency, not a permanent ICP ledger invariant. A failed live read emits a structured Relay error log with the planning context, ledger error, selected `cached` or `bootstrap` source, and selected fee. An ordinary successful live read emits no extra error log.
@@ -216,7 +234,7 @@ Cycles: <relay_self_cycles_balance>
 CONFIG relay_canister_id=...
 ```
 
-The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ledger, CMC, NNS Governance, blackhole, interval, transfer limit, surplus recipients, surplus memo lengths, and whether the configured production managed set matches the known Jupiter suite set.
+The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ICP Ledger, CMC, NNS Governance, blackhole, SNS rewards canister, ICP Index, interval, transfer limit, surplus recipients, surplus memo lengths, and whether the configured production managed set matches the known Jupiter suite set.
 
 After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with [`mainnet-install-args.did`](mainnet-install-args.did), and using the [frontend source pane](../frontend). Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 
@@ -278,9 +296,11 @@ Relay-minted cycles come from successful CMC `notify_top_up` responses. This pre
 
 ## Lifecycle
 
-Relay is replacement-style and heap-only. It does not persist config or operational state in stable memory. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, consecutive probe failure counts, conversion estimates, last-known ledger fee, summaries, active jobs, pending transfers, faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
+Relay configuration and ordinary operational state remain replacement-style and heap-only. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, consecutive probe failure counts, conversion estimates, last-known ICP ledger fee, summaries, allocation jobs, ICP pending transfers, Faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
 
-Relay upgrades are non-resumable. Avoid upgrading during active Relay work where practical, including active top-ups, ambiguous transfers, or CMC notify sequences. If an operation is interrupted, Relay starts fresh from the supplied `InitArgs`. After upgrade, confirm the fresh `CONFIG` log, check managed canister cycle balances, and manually top up or reconcile if needed.
+The narrow exception is one stable SNS reward journal: epoch Root, processed Faucet-commitment cursor, last sweep attempt, and any fully pinned pending reward-token transfer survive a canonical upgrade. A reinstall clears this stable state with the canister's stable memory. No other Relay state was moved to stable memory.
+
+Ordinary ICP allocation work remains non-resumable. Avoid upgrading during active Relay work where practical, especially ICP top-ups, ambiguous ICP transfers, or CMC notify sequences. After upgrade, Relay starts fresh from supplied `InitArgs` for that ordinary work while preserving the SNS reward journal. Confirm the fresh `CONFIG` log, reward journal state, managed-canister cycle balances, and any required reconciliation.
 
 This is intentional and differs from Faucet, Disburser, and Historian, which preserve safety-critical stable state across ordinary upgrades.
 
@@ -391,7 +411,7 @@ Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
 
 ### Routine replacement upgrade
 
-Routine Relay upgrades pass the full reviewed `InitArgs` file. Relay intentionally requires full InitArgs on upgrade because it does not persist config in stable memory. Under this replacement-style lifecycle, Relay does not support no-arg upgrades and does not support Relay UpgradeArgs.
+Routine Relay upgrades pass the full reviewed `InitArgs` file. Relay intentionally requires full InitArgs on upgrade because configuration remains heap-only. Under this replacement-style lifecycle, Relay does not support no-arg upgrades and does not support Relay UpgradeArgs. The isolated SNS reward journal survives.
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \

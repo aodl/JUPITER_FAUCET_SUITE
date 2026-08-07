@@ -339,7 +339,7 @@ build_selected() {
       build_one "jupiter-relay" "jupiter-relay" "jupiter_relay" "canisters/relay/jupiter_relay.did" "jupiter_relay" "JUPITER_RELAY_PROD_CANISTER_ID" "jupiter_relay"
       ;;
     jupiter-sns-rewards)
-      build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "canisters/sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards"
+      build_one "jupiter-sns-rewards" "jupiter-sns-rewards" "jupiter_sns_rewards" "canisters/sns-rewards/jupiter_sns_rewards.did" "jupiter_sns_rewards" "JUPITER_SNS_REWARDS_PROD_CANISTER_ID" "jupiter_sns_rewards"
       ;;
     jupiter-faucet-frontend)
       build_frontend_bundle

@@ -6,6 +6,11 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::icrc1::transfer::TransferArg;
+use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::index::{
+    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
+};
 use pocket_ic::PocketIc;
 
 #[path = "support/mod.rs"]
@@ -28,6 +33,9 @@ static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_PROD_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static SNS_REWARDS_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static SNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn ledger_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
@@ -47,6 +55,19 @@ fn relay_wasm() -> Result<Vec<u8>> {
 fn relay_prod_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&RELAY_PROD_WASM, "jupiter-relay", None)
 }
+fn sns_rewards_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(
+        &SNS_REWARDS_WASM,
+        "jupiter-sns-rewards",
+        Some("debug_api"),
+    )
+}
+fn sns_root_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&SNS_ROOT_WASM, "mock-sns-root", None)
+}
+fn sns_governance_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&SNS_GOVERNANCE_WASM, "mock-sns-governance", None)
+}
 
 fn wasm_contains(bytes: &[u8], needle: &[u8]) -> bool {
     bytes.windows(needle.len()).any(|window| window == needle)
@@ -63,6 +84,69 @@ struct RelayInitArg {
     max_transfers_per_tick: Option<u32>,
     surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
     surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
+}
+
+#[derive(Clone, Debug, CandidType)]
+struct RewardRelayInitArg {
+    managed_canisters: Vec<Principal>,
+    ledger_canister_id: Option<Principal>,
+    cmc_canister_id: Option<Principal>,
+    governance_canister_id: Option<Principal>,
+    blackhole_canister_id: Option<Principal>,
+    sns_rewards_canister_id: Option<Principal>,
+    icp_index_canister_id: Option<Principal>,
+    main_interval_seconds: Option<u64>,
+    max_transfers_per_tick: Option<u32>,
+    surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
+    surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
+}
+
+#[derive(CandidType)]
+struct SnsRewardsInitArgs {
+    reward_sns_root_canister_id: Option<Principal>,
+}
+
+#[derive(CandidType)]
+struct SnsNeuronId {
+    id: Vec<u8>,
+}
+
+#[derive(CandidType)]
+struct SnsNeuronPermission {
+    principal: Option<Principal>,
+    permission_type: Vec<i32>,
+}
+
+#[derive(CandidType)]
+struct SnsNeuron {
+    id: Option<SnsNeuronId>,
+    permissions: Vec<SnsNeuronPermission>,
+    cached_neuron_stake_e8s: u64,
+    neuron_fees_e8s: u64,
+}
+
+#[derive(CandidType)]
+struct SnsExtensions {
+    extension_canister_ids: Vec<Principal>,
+}
+
+#[derive(CandidType)]
+struct ListSnsCanistersResponse {
+    root: Option<Principal>,
+    governance: Option<Principal>,
+    ledger: Option<Principal>,
+    swap: Option<Principal>,
+    index: Option<Principal>,
+    dapps: Vec<Principal>,
+    archives: Vec<Principal>,
+    extensions: Option<SnsExtensions>,
+}
+
+#[derive(CandidType, Deserialize)]
+struct RewardJournalView {
+    epoch_sns_root_canister_id: Option<Principal>,
+    processed_through_commitment_tx_id: Option<u64>,
+    last_sweep_attempt_timestamp_seconds: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -195,6 +279,8 @@ struct TransferRecord {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
+    last_main_run_ts: u64,
+    main_lock_state_ts: Option<u64>,
     active_job_present: bool,
     active_job_pending_transfer_present: bool,
     active_faucet_commitment_transfer_present: bool,
@@ -1954,5 +2040,410 @@ fn relay_reinstall_starts_without_summary_or_active_job() -> Result<()> {
     if summary.mode != RelayMode::BaselineOnly {
         bail!("expected first tick after reinstall to establish a fresh baseline, got {summary:?}");
     }
+    Ok(())
+}
+
+fn real_icp_transfer(
+    pic: &PocketIc,
+    ledger: Principal,
+    caller: Principal,
+    to: Account,
+    amount_e8s: u64,
+) -> Result<u64> {
+    support::ledger::icrc1_transfer(
+        pic,
+        ledger,
+        caller,
+        TransferArg {
+            from_subaccount: None,
+            to,
+            fee: Some(Nat::from(support::ledger::ICP_LEDGER_FEE_E8S)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(amount_e8s),
+        },
+    )
+}
+
+fn wait_for_real_index_transactions(
+    pic: &PocketIc,
+    index: Principal,
+    account_identifier: &str,
+    minimum: usize,
+) -> Result<()> {
+    for _ in 0..60 {
+        let result: GetAccountIdentifierTransactionsResult = query_one(
+            pic,
+            index,
+            Principal::anonymous(),
+            "get_account_identifier_transactions",
+            GetAccountIdentifierTransactionsArgs {
+                max_results: 1_000,
+                start: None,
+                account_identifier: account_identifier.to_string(),
+            },
+        )?;
+        if matches!(result, GetAccountIdentifierTransactionsResult::Ok(ref page) if page.transactions.len() >= minimum)
+        {
+            return Ok(());
+        }
+        pic.advance_time(Duration::from_secs(1));
+        tick_n(pic, 5);
+    }
+    bail!("real ICP Index did not expose {minimum} expected account transactions")
+}
+
+#[test]
+#[ignore]
+fn relay_attributes_real_icp_indexed_commitment_to_sns_owner() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = support::ledger::build_pic_with_real_icp();
+    let icp_ledger = support::principals::icp_ledger();
+    let icp_index = support::principals::icp_index();
+    let root = pic.create_canister();
+    let sns_governance = pic.create_canister();
+    let reward_ledger = pic.create_canister();
+    let sns_rewards = pic.create_canister();
+    let cmc = pic.create_canister();
+    let nns_governance = pic.create_canister();
+    let blackhole = pic.create_canister();
+    let relay = pic.create_canister();
+    for canister in [
+        root,
+        sns_governance,
+        reward_ledger,
+        sns_rewards,
+        cmc,
+        nns_governance,
+        blackhole,
+        relay,
+    ] {
+        pic.add_cycles(canister, 5_000_000_000_000);
+    }
+    pic.install_canister(root, sns_root_wasm()?, vec![], None);
+    pic.install_canister(sns_governance, sns_governance_wasm()?, vec![], None);
+    pic.install_canister(reward_ledger, ledger_wasm()?, vec![], None);
+    pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+    pic.install_canister(nns_governance, governance_wasm()?, vec![], None);
+    pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
+
+    let root_context = ListSnsCanistersResponse {
+        root: Some(root),
+        governance: Some(sns_governance),
+        ledger: Some(reward_ledger),
+        swap: None,
+        index: None,
+        dapps: vec![],
+        archives: vec![],
+        extensions: None,
+    };
+    let _: () = update_one(
+        &pic,
+        root,
+        Principal::anonymous(),
+        "debug_set_canisters",
+        root_context,
+    )?;
+    let owner_a = Principal::self_authenticating(&[1; 32]);
+    let owner_b = Principal::self_authenticating(&[2; 32]);
+    let unknown = Principal::self_authenticating(&[3; 32]);
+    let neurons = [owner_a, owner_b]
+        .into_iter()
+        .enumerate()
+        .map(|(index, owner)| SnsNeuron {
+            id: Some(SnsNeuronId {
+                id: vec![(index + 1) as u8; 32],
+            }),
+            permissions: vec![SnsNeuronPermission {
+                principal: Some(owner),
+                permission_type: vec![1, 2, 3],
+            }],
+            cached_neuron_stake_e8s: 100_000_000,
+            neuron_fees_e8s: 0,
+        })
+        .collect::<Vec<_>>();
+    let _: () = update_one(
+        &pic,
+        sns_governance,
+        Principal::anonymous(),
+        "debug_set_neurons",
+        neurons,
+    )?;
+
+    let relay_init = RewardRelayInitArg {
+        managed_canisters: vec![],
+        ledger_canister_id: Some(icp_ledger),
+        cmc_canister_id: Some(cmc),
+        governance_canister_id: Some(nns_governance),
+        blackhole_canister_id: Some(blackhole),
+        sns_rewards_canister_id: Some(sns_rewards),
+        icp_index_canister_id: Some(icp_index),
+        main_interval_seconds: Some(31_536_000),
+        max_transfers_per_tick: None,
+        surplus_canister_recipients: None,
+        surplus_neuron_recipients: vec![],
+    };
+    pic.install_canister(relay, relay_wasm()?, encode_one(relay_init.clone())?, None);
+
+    for (owner, amount) in [
+        (owner_a, 450_000_000),
+        (owner_b, 350_000_000),
+        (unknown, 150_000_000),
+    ] {
+        real_icp_transfer(
+            &pic,
+            icp_ledger,
+            Principal::anonymous(),
+            Account {
+                owner,
+                subaccount: None,
+            },
+            amount,
+        )?;
+    }
+    let relay_subaccount = Account {
+        owner: relay,
+        subaccount: Some(relay_subaccount_one()),
+    };
+    for (owner, amount) in [
+        (owner_a, 300_000_000),
+        (owner_b, 200_000_000),
+        (unknown, 100_000_000),
+    ] {
+        real_icp_transfer(&pic, icp_ledger, owner, relay_subaccount, amount)?;
+    }
+
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_main_tick")?;
+    let relay_account_identifier = account_identifier_text(relay, Some(relay_subaccount_one()));
+    wait_for_real_index_transactions(&pic, icp_index, &relay_account_identifier, 4)?;
+
+    pic.advance_time(Duration::from_secs(1));
+    pic.install_canister(
+        sns_rewards,
+        sns_rewards_wasm()?,
+        encode_one(SnsRewardsInitArgs {
+            reward_sns_root_canister_id: Some(root),
+        })?,
+        None,
+    );
+    let _: () = update_noargs(&pic, sns_rewards, Principal::anonymous(), "debug_scan_tick")?;
+
+    let reward_balance = 1_000_000_u64;
+    let reward_fee = 1_000_u64;
+    let _: () = update_one(
+        &pic,
+        reward_ledger,
+        Principal::anonymous(),
+        "debug_set_fee",
+        reward_fee,
+    )?;
+    let _: () = update_bytes(
+        &pic,
+        reward_ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((
+            Account {
+                owner: relay,
+                subaccount: None,
+            },
+            reward_balance,
+        ))?,
+    )?;
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_reward_sweep")?;
+    let after_tie_sweep: DebugState =
+        query_one(&pic, relay, Principal::anonymous(), "debug_state", ())?;
+    if after_tie_sweep.main_lock_state_ts != Some(0) {
+        bail!(
+            "debug reward sweep did not release MainGuard: {:?}",
+            after_tie_sweep.main_lock_state_ts
+        );
+    }
+
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &pic,
+            reward_ledger,
+            &Account {
+                owner: owner_a,
+                subaccount: None,
+            }
+        )?,
+        reward_balance - reward_fee
+    );
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &pic,
+            reward_ledger,
+            &Account {
+                owner: owner_b,
+                subaccount: None,
+            }
+        )?,
+        0
+    );
+    let journal: RewardJournalView = query_one(
+        &pic,
+        relay,
+        Principal::anonymous(),
+        "debug_reward_state",
+        (),
+    )?;
+    if journal.epoch_sns_root_canister_id != Some(root)
+        || journal.processed_through_commitment_tx_id.is_none()
+    {
+        bail!("reward journal did not record the completed real ICP commitment");
+    }
+    let processed_cursor = journal.processed_through_commitment_tx_id;
+    let transfers: Vec<TransferRecord> = query_one(
+        &pic,
+        reward_ledger,
+        Principal::anonymous(),
+        "debug_transfers",
+        (),
+    )?;
+    let reward_transfer = transfers.last().context("missing reward transfer")?;
+    if reward_transfer.to.owner != owner_a
+        || nat_to_u64(&reward_transfer.amount) != reward_balance - reward_fee
+        || nat_to_u64(&reward_transfer.fee) != reward_fee
+    {
+        bail!("reward transfer did not pin winner, amount, and live fee: {reward_transfer:?}");
+    }
+    let logs = pic
+        .fetch_canister_logs(relay, Principal::anonymous())
+        .map_err(|err| anyhow::anyhow!("fetch relay logs failed: {err:?}"))?;
+    if !logs.iter().any(|entry| {
+        String::from_utf8_lossy(&entry.content).contains("RELAY_SNS_REWARD status=accepted")
+    }) {
+        bail!("missing accepted structured Relay SNS reward log");
+    }
+
+    pic.advance_time(Duration::from_secs(5 * 60));
+    tick_n(&pic, 5);
+    pic.upgrade_canister(
+        relay,
+        relay_wasm()?,
+        encode_one(relay_init)?,
+        Some(Principal::anonymous()),
+    )
+    .map_err(|err| anyhow::anyhow!("reward-journal Relay upgrade failed: {err:?}"))?;
+    let restored: RewardJournalView = query_one(
+        &pic,
+        relay,
+        Principal::anonymous(),
+        "debug_reward_state",
+        (),
+    )?;
+    if restored.epoch_sns_root_canister_id != Some(root)
+        || restored.processed_through_commitment_tx_id != processed_cursor
+    {
+        bail!("Relay upgrade did not preserve stable reward epoch and cursor");
+    }
+
+    for (owner, amount) in [(owner_a, 60_000_000), (owner_b, 60_000_000)] {
+        real_icp_transfer(&pic, icp_ledger, owner, relay_subaccount, amount)?;
+    }
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_main_tick")?;
+    wait_for_real_index_transactions(&pic, icp_index, &relay_account_identifier, 7)?;
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_main_tick")?;
+    pic.advance_time(Duration::from_secs(1));
+    tick_n(&pic, 5);
+    let _: () = update_noargs(&pic, sns_rewards, Principal::anonymous(), "debug_scan_tick")?;
+    let rollover_credit = 500_000_u64;
+    let _: () = update_bytes(
+        &pic,
+        reward_ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((
+            Account {
+                owner: relay,
+                subaccount: None,
+            },
+            rollover_credit,
+        ))?,
+    )?;
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_reward_sweep")?;
+    let tie_guard_state: DebugState =
+        query_one(&pic, relay, Principal::anonymous(), "debug_state", ())?;
+    if tie_guard_state.main_lock_state_ts != Some(0) {
+        bail!("tied reward sweep did not release MainGuard: {tie_guard_state:?}");
+    }
+    if tie_guard_state.active_faucet_commitment_transfer_present {
+        bail!("tied batch left a pending Faucet commitment transfer");
+    }
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &pic,
+            reward_ledger,
+            &Account {
+                owner: relay,
+                subaccount: None,
+            }
+        )?,
+        rollover_credit,
+        "tied batch must close while preserving the token pot"
+    );
+    let tied_journal: RewardJournalView = query_one(
+        &pic,
+        relay,
+        Principal::anonymous(),
+        "debug_reward_state",
+        (),
+    )?;
+    if tied_journal.processed_through_commitment_tx_id == processed_cursor {
+        bail!("tied batch did not advance the completed commitment cursor");
+    }
+
+    for (owner, amount) in [(owner_a, 80_000_000), (unknown, 30_000_000)] {
+        real_icp_transfer(&pic, icp_ledger, owner, relay_subaccount, amount)?;
+    }
+    pic.advance_time(Duration::from_secs(60));
+    tick_n(&pic, 10);
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_main_tick")?;
+    let trailing_balance = support::ledger::icrc1_balance(&pic, icp_ledger, &relay_subaccount)?;
+    if trailing_balance != 0 {
+        let state_after: DebugState =
+            query_one(&pic, relay, Principal::anonymous(), "debug_state", ())?;
+        let logs = pic
+            .fetch_canister_logs(relay, Principal::anonymous())
+            .map_err(|err| anyhow::anyhow!("fetch relay logs failed: {err:?}"))?;
+        let recent = logs
+            .iter()
+            .rev()
+            .take(12)
+            .map(|entry| String::from_utf8_lossy(&entry.content).into_owned())
+            .collect::<Vec<_>>();
+        bail!("later Relay Faucet forwarding left {trailing_balance} e8s in subaccount 1; state={state_after:?}; recent logs={recent:?}");
+    }
+    wait_for_real_index_transactions(&pic, icp_index, &relay_account_identifier, 10)?;
+    pic.advance_time(Duration::from_secs(1));
+    let _: () = update_noargs(&pic, sns_rewards, Principal::anonymous(), "debug_scan_tick")?;
+    let _: () = update_bytes(
+        &pic,
+        reward_ledger,
+        Principal::anonymous(),
+        "debug_credit",
+        encode_args((
+            Account {
+                owner: relay,
+                subaccount: None,
+            },
+            rollover_credit,
+        ))?,
+    )?;
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_reward_sweep")?;
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &pic,
+            reward_ledger,
+            &Account {
+                owner: owner_a,
+                subaccount: None,
+            }
+        )?,
+        (reward_balance - reward_fee) + (2 * rollover_credit - reward_fee),
+        "later unique winner must receive the accumulated token pot"
+    );
     Ok(())
 }

@@ -46,30 +46,32 @@ impl IcrcLedgerCanister {
     }
 
     pub async fn fee_e8s(&self) -> Result<u64, ClientError> {
+        nat_to_u64(&self.fee().await?)
+    }
+
+    pub async fn fee(&self) -> Result<Nat, ClientError> {
         let resp = Call::bounded_wait(self.ledger_id, "icrc1_fee")
             .change_timeout(20)
             .await
             .map_err(|e| ClientError::Call(format!("{e:?}")))?;
 
-        let fee_nat: Nat = resp
-            .candid()
-            .map_err(|e| ClientError::Call(format!("decode icrc1_fee failed: {e:?}")))?;
-
-        nat_to_u64(&fee_nat)
+        resp.candid()
+            .map_err(|e| ClientError::Call(format!("decode icrc1_fee failed: {e:?}")))
     }
 
     pub async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+        nat_to_u64(&self.balance_of(account).await?)
+    }
+
+    pub async fn balance_of(&self, account: Account) -> Result<Nat, ClientError> {
         let resp = Call::bounded_wait(self.ledger_id, "icrc1_balance_of")
             .with_arg(account)
             .change_timeout(20)
             .await
             .map_err(|e| ClientError::Call(format!("{e:?}")))?;
 
-        let bal_nat: Nat = resp
-            .candid()
-            .map_err(|e| ClientError::Call(format!("decode icrc1_balance_of failed: {e:?}")))?;
-
-        nat_to_u64(&bal_nat)
+        resp.candid()
+            .map_err(|e| ClientError::Call(format!("decode icrc1_balance_of failed: {e:?}")))
     }
 
     pub async fn transfer(

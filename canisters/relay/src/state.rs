@@ -25,6 +25,8 @@ pub struct Config {
     pub cmc_canister_id: Principal,
     pub governance_canister_id: Principal,
     pub blackhole_canister_id: Principal,
+    pub sns_rewards_canister_id: Principal,
+    pub icp_index_canister_id: Principal,
     pub cycles_probe_policy: CyclesProbePolicy,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
@@ -375,7 +377,7 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         .collect::<Vec<_>>()
         .join("|");
     format!(
-        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, cycles_probe_policy={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, production_managed_set_match={}",
+        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, sns_rewards_canister_id={}, icp_index_canister_id={}, cycles_probe_policy={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, production_managed_set_match={}",
         self_id.to_text(),
         principal_list(&cfg.managed_canisters),
         principal_list(&effective),
@@ -383,6 +385,8 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         cfg.cmc_canister_id.to_text(),
         cfg.governance_canister_id.to_text(),
         cfg.blackhole_canister_id.to_text(),
+        cfg.sns_rewards_canister_id.to_text(),
+        cfg.icp_index_canister_id.to_text(),
         cycles_probe_policy_text(&cfg.cycles_probe_policy),
         cfg.main_interval_seconds,
         cfg.max_transfers_per_tick
@@ -713,6 +717,8 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
+            icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
                 canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             },

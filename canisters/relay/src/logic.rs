@@ -253,6 +253,8 @@ pub(crate) fn validate_config(cfg: &Config, self_id: Principal) -> Result<(), St
     validate_canister_principal("cmc_canister_id", cfg.cmc_canister_id)?;
     validate_canister_principal("governance_canister_id", cfg.governance_canister_id)?;
     validate_canister_principal("blackhole_canister_id", cfg.blackhole_canister_id)?;
+    validate_canister_principal("sns_rewards_canister_id", cfg.sns_rewards_canister_id)?;
+    validate_canister_principal("icp_index_canister_id", cfg.icp_index_canister_id)?;
 
     if cfg.max_transfers_per_tick == Some(0) {
         return Err("max_transfers_per_tick must be greater than zero when set".to_string());
@@ -736,6 +738,8 @@ mod tests {
             cmc_canister_id: canister_b(),
             governance_canister_id: canister_b(),
             blackhole_canister_id: canister_b(),
+            sns_rewards_canister_id: canister_b(),
+            icp_index_canister_id: canister_b(),
             cycles_probe_policy:
                 jupiter_ic_clients::cycles_probe::CyclesProbePolicy::FixedBlackhole {
                     canister_id: canister_b(),

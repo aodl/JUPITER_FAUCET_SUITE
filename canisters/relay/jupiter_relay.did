@@ -6,6 +6,8 @@ type InitArgs = record {
   cmc_canister_id : opt principal;
   governance_canister_id : opt principal;
   blackhole_canister_id : opt principal;
+  sns_rewards_canister_id : opt principal;
+  icp_index_canister_id : opt principal;
   main_interval_seconds : opt nat64;
   max_transfers_per_tick : opt nat32;
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;

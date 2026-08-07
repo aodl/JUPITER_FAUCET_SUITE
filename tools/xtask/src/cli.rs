@@ -5,6 +5,7 @@ pub(crate) enum TestComponent {
     Faucet,
     Historian,
     Relay,
+    SnsRewards,
     Frontend,
     E2e,
 }
@@ -18,7 +19,7 @@ pub(crate) enum TestScope {
 }
 
 pub(crate) fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScope)> {
-    use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Relay, Test};
+    use TestComponent::{Disburser, E2e, Faucet, Frontend, Historian, Relay, SnsRewards, Test};
     use TestScope::{All, LocalIntegration, PocketicIntegration, Unit};
 
     match cmd {
@@ -38,6 +39,9 @@ pub(crate) fn parse_scoped_command(cmd: &str) -> Option<(TestComponent, TestScop
         "relay_local_integration" => Some((Relay, LocalIntegration)),
         "relay_pocketic_integration" => Some((Relay, PocketicIntegration)),
         "relay_all" => Some((Relay, All)),
+        "sns_rewards_unit" => Some((SnsRewards, Unit)),
+        "sns_rewards_pocketic_integration" => Some((SnsRewards, PocketicIntegration)),
+        "sns_rewards_all" => Some((SnsRewards, All)),
         "frontend_unit" => Some((Frontend, Unit)),
         "frontend_local_integration" => Some((Frontend, LocalIntegration)),
         "frontend_all" => Some((Frontend, All)),

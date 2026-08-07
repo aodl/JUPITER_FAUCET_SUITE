@@ -1,0 +1,13 @@
+type InitArgs = record { reward_sns_root_canister_id : opt principal };
+type RelayRewardContext = record { sns_root_canister_id : principal; sns_governance_canister_id : principal; sns_ledger_canister_id : principal; snapshot_id : nat64; scan_started_at_timestamp_nanos : nat64; scan_completed_at_timestamp_nanos : nat64 };
+type ResolveDefaultIcpAccountsArgs = record { snapshot_id : nat64; account_identifiers : vec blob };
+type ResolveDefaultIcpAccountsResult = variant { Ok : vec opt principal; SnapshotChanged; TooManyAccounts; InvalidAccountIdentifier : record { index : nat32 } };
+type OwnerIndexSlot = variant { A; B };
+type OwnerSnapshot = record { snapshot_id : nat64; active_slot : OwnerIndexSlot; sns_root_canister_id : principal; sns_governance_canister_id : principal; sns_ledger_canister_id : principal; scan_started_at_timestamp_nanos : nat64; scan_completed_at_timestamp_nanos : nat64; neuron_count : nat64; owner_count : nat64 };
+type DebugState = record { configured_root : opt principal; scan_active : bool; scan_cursor : opt blob; pages_processed : nat32; neurons_processed : nat64; active_snapshot : opt OwnerSnapshot; active_slot_size : nat64; staging_slot_size : nat64 };
+service : (InitArgs) -> {
+  get_relay_reward_context : () -> (opt RelayRewardContext) query;
+  resolve_default_icp_accounts : (ResolveDefaultIcpAccountsArgs) -> (ResolveDefaultIcpAccountsResult) query;
+  debug_scan_tick : () -> ();
+  debug_state : () -> (DebugState) query;
+};

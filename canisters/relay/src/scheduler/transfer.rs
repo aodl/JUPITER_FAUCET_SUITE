@@ -684,7 +684,7 @@ mod tests {
     use super::*;
     use crate::state::{
         ActiveRelayJob, ActiveRelayMode, CanisterBurnSample, Config, CyclesSampleSource,
-        CyclesSnapshot, RelayMode, RelaySummary, State,
+        CyclesSnapshot, RelayMode, RelaySummary, State, SurplusTarget, SurplusTransferSample,
     };
     use jupiter_ic_clients::cycles_probe::CyclesProbePolicy;
 
@@ -874,6 +874,8 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
+            icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
                 canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             },
@@ -945,6 +947,8 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
+            icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
                 canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             },
@@ -1007,6 +1011,50 @@ mod tests {
             job.summary.canisters.extend(additional);
             job.summary.planned_retained_e8s = 100;
             job.summary.known_unspent_e8s = 100;
+        });
+    }
+
+    fn install_pending_surplus_with_never_started_shares() {
+        install_pending_job(PendingTransferPhase::AwaitingTransfer);
+        let owners = [
+            principal("jufzc-caaaa-aaaar-qb5da-cai"),
+            principal("afisn-gqaaa-aaaar-qb4qa-cai"),
+            principal("acjuz-liaaa-aaaar-qb4qq-cai"),
+        ];
+        let plans = owners
+            .into_iter()
+            .zip([200_u64, 300, 400])
+            .map(|(owner, gross_share_e8s)| SurplusTransferSample {
+                target: SurplusTarget::Canister(owner),
+                account: Account {
+                    owner,
+                    subaccount: None,
+                },
+                gross_share_e8s,
+                amount_e8s: gross_share_e8s - 10,
+                memo_len: None,
+                skipped_reason: None,
+            })
+            .collect::<Vec<_>>();
+        state::with_state_mut(|st| {
+            let job = st.active_job.as_mut().expect("active job");
+            job.next_transfer_index = job.canisters.len() as u32;
+            job.surplus_transfers = plans.clone();
+            job.surplus_memos = vec![None; plans.len()];
+            job.surplus_transfer_index = 1;
+            job.summary.surplus_transfers = plans.clone();
+            job.summary.known_unspent_e8s = 100;
+            job.pending_transfer = Some(PendingTransfer {
+                kind: PendingTransferKind::SurplusIcp {
+                    target: plans[0].target.clone(),
+                    account: plans[0].account,
+                    memo: None,
+                },
+                gross_share_e8s: plans[0].gross_share_e8s,
+                amount_e8s: plans[0].amount_e8s,
+                created_at_time_nanos: 1,
+                phase: PendingTransferPhase::AwaitingTransfer,
+            });
         });
     }
 
@@ -1104,6 +1152,32 @@ mod tests {
             assert_eq!(summary.ledger_transfer_count, 0);
             assert_eq!(summary.known_unspent_e8s, 1_500);
             assert_eq!(summary.ambiguous_e8s, 0);
+            assert_eq!(
+                summary.skipped_surplus_reason.as_deref(),
+                Some("ledger_fee_changed")
+            );
+        });
+    }
+
+    #[test]
+    fn first_bad_fee_on_surplus_restores_every_later_never_started_gross_share() {
+        install_pending_surplus_with_never_started_shares();
+        let ledger =
+            ScriptedLedger::new(vec![ScriptedTransferOutcome::BadFee(Nat::from(20_000_u64))]);
+
+        assert!(block_on(drive_pending_transfer(
+            &ledger,
+            &MintingCmc { minted_cycles: 0 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        )));
+
+        assert_eq!(ledger.transfer_count(), 1, "no stale-fee surplus may start");
+        state::with_state(|st| {
+            assert!(st.active_job.is_none());
+            let summary = st.last_summary.as_ref().expect("completed summary");
+            assert_eq!(summary.known_unspent_e8s, 1_000);
+            assert_eq!(summary.failed_transfers, 1);
             assert_eq!(
                 summary.skipped_surplus_reason.as_deref(),
                 Some("ledger_fee_changed")

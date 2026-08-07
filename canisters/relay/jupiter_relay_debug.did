@@ -8,6 +8,8 @@ type InitArgs = record {
   cmc_canister_id : opt principal;
   governance_canister_id : opt principal;
   blackhole_canister_id : opt principal;
+  sns_rewards_canister_id : opt principal;
+  icp_index_canister_id : opt principal;
   main_interval_seconds : opt nat64;
   max_transfers_per_tick : opt nat32;
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
@@ -19,6 +21,8 @@ type Config = record {
   cmc_canister_id : principal;
   governance_canister_id : principal;
   blackhole_canister_id : principal;
+  sns_rewards_canister_id : principal;
+  icp_index_canister_id : principal;
   cycles_probe_policy : CyclesProbePolicy;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
@@ -135,11 +139,35 @@ type DebugConfig = record {
   cmc_canister_id : principal;
   governance_canister_id : principal;
   blackhole_canister_id : principal;
+  sns_rewards_canister_id : principal;
+  icp_index_canister_id : principal;
   cycles_probe_policy : CyclesProbePolicy;
   main_interval_seconds : nat64;
   max_transfers_per_tick : opt nat32;
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
+};
+type PendingRewardTransferStatus = variant { AwaitingTransfer; Ambiguous };
+type PendingRewardTransfer = record {
+  sns_root_canister_id : principal;
+  sns_ledger_canister_id : principal;
+  snapshot_id : nat64;
+  through_commitment_tx_id : nat64;
+  recipient : Account;
+  observed_balance : nat;
+  fee : nat;
+  amount : nat;
+  memo : blob;
+  created_at_time_nanos : nat64;
+  attempt_started : bool;
+  uncertain_attempt_seen : bool;
+  status : PendingRewardTransferStatus;
+};
+type RewardState = record {
+  epoch_sns_root_canister_id : opt principal;
+  processed_through_commitment_tx_id : opt nat64;
+  last_sweep_attempt_timestamp_seconds : nat64;
+  pending_transfer : opt PendingRewardTransfer;
 };
 service : (InitArgs) -> {
   debug_main_tick : () -> ();
@@ -150,4 +178,6 @@ service : (InitArgs) -> {
   debug_force_clear_active_job : () -> ();
   debug_abort_after_successful_transfer : (bool) -> ();
   debug_trap_after_successful_transfer : (bool) -> ();
+  debug_reward_sweep : () -> ();
+  debug_reward_state : () -> (RewardState) query;
 }

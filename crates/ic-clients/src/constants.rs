@@ -18,6 +18,7 @@ pub const ORDERED_PRODUCTION_BLACKHOLE_CANISTER_IDS: [&str; 2] = [
 ];
 pub const NNS_ROOT_ID: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 pub const SNS_WASM_ID: &str = "qaa6y-5yaaa-aaaaa-aaafa-cai";
+pub const JUPITER_SNS_REWARDS_ID: &str = "alk7f-5aaaa-aaaar-qb4ra-cai";
 
 fn principal_from_text(text: &str, label: &str) -> Principal {
     Principal::from_text(text).unwrap_or_else(|_| panic!("invalid hardcoded {label} principal"))
@@ -76,6 +77,10 @@ pub fn sns_wasm_id() -> Principal {
     principal_from_text(SNS_WASM_ID, "SNS-WASM")
 }
 
+pub fn jupiter_sns_rewards_id() -> Principal {
+    principal_from_text(JUPITER_SNS_REWARDS_ID, "Jupiter SNS rewards")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +106,7 @@ mod tests {
         );
         assert_eq!(NNS_ROOT_ID, "r7inp-6aaaa-aaaaa-aaabq-cai");
         assert_eq!(SNS_WASM_ID, "qaa6y-5yaaa-aaaaa-aaafa-cai");
+        assert_eq!(JUPITER_SNS_REWARDS_ID, "alk7f-5aaaa-aaaar-qb4ra-cai");
     }
 
     #[test]
@@ -134,5 +140,6 @@ mod tests {
         assert!(!is_production_blackhole_canister_id(icp_ledger_id()));
         assert_eq!(nns_root_id().to_text(), NNS_ROOT_ID);
         assert_eq!(sns_wasm_id().to_text(), SNS_WASM_ID);
+        assert_eq!(jupiter_sns_rewards_id().to_text(), JUPITER_SNS_REWARDS_ID);
     }
 }

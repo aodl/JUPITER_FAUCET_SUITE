@@ -2,7 +2,7 @@ use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 use sha2::{Digest, Sha224};
 
-pub fn account_identifier_text(owner: Principal, subaccount: Option<[u8; 32]>) -> String {
+pub fn account_identifier_bytes(owner: Principal, subaccount: Option<[u8; 32]>) -> [u8; 32] {
     let subaccount = subaccount.unwrap_or([0u8; 32]);
     let mut hasher = Sha224::new();
     hasher.update(b"\x0Aaccount-id");
@@ -13,7 +13,11 @@ pub fn account_identifier_text(owner: Principal, subaccount: Option<[u8; 32]>) -
     let mut bytes = [0u8; 32];
     bytes[..4].copy_from_slice(&checksum);
     bytes[4..].copy_from_slice(&hash);
-    hex::encode(bytes)
+    bytes
+}
+
+pub fn account_identifier_text(owner: Principal, subaccount: Option<[u8; 32]>) -> String {
+    hex::encode(account_identifier_bytes(owner, subaccount))
 }
 
 pub fn account_identifier_text_for_account(account: &Account) -> String {
@@ -22,7 +26,9 @@ pub fn account_identifier_text_for_account(account: &Account) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::account_identifier::{account_identifier_text, account_identifier_text_for_account};
+    use crate::account_identifier::{
+        account_identifier_bytes, account_identifier_text, account_identifier_text_for_account,
+    };
     use candid::Principal;
     use icrc_ledger_types::icrc1::account::Account;
 
@@ -59,6 +65,32 @@ mod tests {
         assert_eq!(
             account_identifier_text_for_account(&account),
             account_identifier_text(account.owner, account.subaccount)
+        );
+    }
+
+    #[test]
+    fn byte_and_text_results_agree() {
+        let owner = Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap();
+        let mut subaccount = [0u8; 32];
+        subaccount[31] = 1;
+
+        assert_eq!(
+            hex::encode(account_identifier_bytes(owner, Some(subaccount))),
+            account_identifier_text(owner, Some(subaccount))
+        );
+    }
+
+    #[test]
+    fn explicit_subaccounts_produce_distinct_identifiers() {
+        let owner = Principal::from_text("qaa6y-5yaaa-aaaaa-aaafa-cai").unwrap();
+        let mut one = [0u8; 32];
+        one[31] = 1;
+        let mut two = [0u8; 32];
+        two[31] = 2;
+
+        assert_ne!(
+            account_identifier_bytes(owner, Some(one)),
+            account_identifier_bytes(owner, Some(two))
         );
     }
 }

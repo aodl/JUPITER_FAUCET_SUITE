@@ -144,6 +144,8 @@ pub(crate) async fn run_main_tick_with_clients<
     }
 
     log_cycles_and_config();
+    #[cfg(not(test))]
+    super::reward_sweep::process(now_nanos, now_secs, false).await;
     if !resume_or_start_faucet_commitment(now_nanos, ledger, governance).await {
         log_error("relay tick stopped after debug faucet commitment transfer injection");
         guard.finish(now_secs);
@@ -1165,6 +1167,8 @@ mod tests {
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
             blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
+            sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
+            icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
                 canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             },

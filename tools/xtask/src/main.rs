@@ -184,6 +184,7 @@ fn candid_path_for_canister(canister: &str) -> Option<String> {
             "canisters/historian/jupiter_historian_debug.did"
         }
         "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => "canisters/relay/jupiter_relay_debug.did",
+        "jupiter_sns_rewards_dbg" => "canisters/sns-rewards/jupiter_sns_rewards_debug.did",
         "mock_icrc_ledger" => "tests/mocks/mock-icrc-ledger/mock_icrc_ledger.did",
         "mock_nns_governance" => "tests/mocks/mock-nns-governance/mock_nns_governance.did",
         "mock_icp_index" => "tests/mocks/mock-icp-index/mock_icp_index.did",
@@ -192,6 +193,7 @@ fn candid_path_for_canister(canister: &str) -> Option<String> {
         "mock_blackhole" => "tests/mocks/mock-blackhole/mock_blackhole.did",
         "mock_sns_wasm" => "tests/mocks/mock-sns-wasm/mock_sns_wasm.did",
         "mock_sns_root" => "tests/mocks/mock-sns-root/mock_sns_root.did",
+        "mock_sns_governance" => "tests/mocks/mock-sns-governance/mock_sns_governance.did",
         _ => return None,
     };
     let path = std::path::Path::new(&repo)
@@ -283,6 +285,7 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         "mock_blackhole" => run_cargo_build("mock-blackhole", &[]),
         "mock_sns_wasm" => run_cargo_build("mock-sns-wasm", &[]),
         "mock_sns_root" => run_cargo_build("mock-sns-root", &[]),
+        "mock_sns_governance" => run_cargo_build("mock-sns-governance", &[]),
         "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => {
             run_cargo_build("jupiter-disburser", &["debug_api"])
         }
@@ -295,6 +298,7 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => {
             run_cargo_build("jupiter-relay", &["debug_api"])
         }
+        "jupiter_sns_rewards_dbg" => run_cargo_build("jupiter-sns-rewards", &["debug_api"]),
         _ => bail!("no local build mapping configured for {canister}"),
     }?;
     embed_candid_metadata(canister)
@@ -1554,6 +1558,7 @@ fn cmd_setup() -> Result<()> {
     deploy_local_canister("mock_blackhole", None)?;
     deploy_local_canister("mock_sns_wasm", None)?;
     deploy_local_canister("mock_sns_root", None)?;
+    deploy_local_canister("mock_sns_governance", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -1562,11 +1567,18 @@ fn cmd_setup() -> Result<()> {
     let xrc_id = canister_id("mock_xrc")?;
     let blackhole_id = canister_id("mock_blackhole")?;
     let sns_wasm_id = canister_id("mock_sns_wasm")?;
+    let sns_root_id = canister_id("mock_sns_root")?;
     let rescue = principal_of_identity()?;
 
     let r1 = Principal::management_canister();
     let r2 = short_test_principal();
     let r3 = rescue;
+
+    let sns_rewards_args = format!(
+        "(record {{ reward_sns_root_canister_id = opt principal \"{}\" }},)",
+        sns_root_id.trim()
+    );
+    deploy_local_canister("jupiter_sns_rewards_dbg", Some(&sns_rewards_args))?;
 
     let args = format!(
         r#"(record {{
@@ -1748,6 +1760,7 @@ fn wasm_path_for_canister(canister: &str) -> Result<String> {
         "mock_blackhole" => "target/wasm32-unknown-unknown/release/mock_blackhole.wasm",
         "mock_sns_wasm" => "target/wasm32-unknown-unknown/release/mock_sns_wasm.wasm",
         "mock_sns_root" => "target/wasm32-unknown-unknown/release/mock_sns_root.wasm",
+        "mock_sns_governance" => "target/wasm32-unknown-unknown/release/mock_sns_governance.wasm",
         "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => {
             "target/wasm32-unknown-unknown/release/jupiter_disburser.wasm"
         }
@@ -1759,6 +1772,9 @@ fn wasm_path_for_canister(canister: &str) -> Result<String> {
         }
         "jupiter_relay_dbg" | "jupiter_relay_args_dbg" => {
             "target/wasm32-unknown-unknown/release/jupiter_relay.wasm"
+        }
+        "jupiter_sns_rewards_dbg" => {
+            "target/wasm32-unknown-unknown/release/jupiter_sns_rewards.wasm"
         }
         _ => bail!("no explicit wasm path configured for {canister}"),
     };
@@ -5402,6 +5418,27 @@ fn run_unit_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     )
 }
 
+fn run_unit_sns_rewards_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "sns-rewards",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "jupiter-sns-rewards",
+            "--lib",
+            "--",
+            "--color",
+            "always",
+        ],
+        &root,
+        &[],
+    )
+}
+
 fn ensure_frontend_node_modules() -> Result<()> {
     let root = repo_root();
     let root_path = std::path::Path::new(&root);
@@ -5606,6 +5643,30 @@ fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     )
 }
 
+fn run_pocketic_sns_rewards_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = pocketic_test_env()?;
+    run_cargo_test_suite(
+        outcomes,
+        "pocketic",
+        "sns-rewards",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "jupiter-sns-rewards",
+            "--test",
+            "jupiter_sns_rewards_integration",
+            "--",
+            "--ignored",
+            "--color",
+            "always",
+        ],
+        &root,
+        &common_env,
+    )
+}
+
 fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     let common_env = pocketic_test_env()?;
@@ -5651,12 +5712,14 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
             run_unit_faucet_suite(outcomes)?;
             run_unit_historian_suite(outcomes)?;
             run_unit_relay_suite(outcomes)?;
+            run_unit_sns_rewards_suite(outcomes)?;
             run_frontend_unit_suite(outcomes)?;
         }
         TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_unit_faucet_suite(outcomes)?,
         TestComponent::Historian => run_unit_historian_suite(outcomes)?,
         TestComponent::Relay => run_unit_relay_suite(outcomes)?,
+        TestComponent::SnsRewards => run_unit_sns_rewards_suite(outcomes)?,
         TestComponent::Frontend => run_frontend_unit_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_unit is not supported; use e2e_all"),
     }
@@ -5676,6 +5739,9 @@ fn run_local_component(
             run_local_historian_config_roundtrip_scenario(outcomes)?;
         }
         TestComponent::Relay => run_local_relay_scenarios(outcomes)?,
+        TestComponent::SnsRewards => bail!(
+            "sns_rewards_local_integration is not supported; use sns_rewards_pocketic_integration"
+        ),
         TestComponent::Frontend => run_frontend_local_suite(outcomes)?,
         TestComponent::E2e => bail!("e2e_local_integration is not supported; use e2e_all"),
     }
@@ -5692,12 +5758,14 @@ fn run_pocketic_component(
             run_pocketic_faucet_suite(outcomes)?;
             run_pocketic_historian_suite(outcomes)?;
             run_pocketic_relay_suite(outcomes)?;
+            run_pocketic_sns_rewards_suite(outcomes)?;
             run_e2e_suite(outcomes)?;
         }
         TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,
         TestComponent::Faucet => run_pocketic_faucet_suite(outcomes)?,
         TestComponent::Historian => run_pocketic_historian_suite(outcomes)?,
         TestComponent::Relay => run_pocketic_relay_suite(outcomes)?,
+        TestComponent::SnsRewards => run_pocketic_sns_rewards_suite(outcomes)?,
         TestComponent::Frontend => bail!("frontend_pocketic_integration is not supported; use frontend_all or frontend_local_integration"),
         TestComponent::E2e => run_e2e_suite(outcomes)?,
     }
@@ -5731,6 +5799,10 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
             | TestComponent::Relay => {
                 run_unit_component(&mut outcomes, component)?;
                 run_local_component(&mut outcomes, component)?;
+                run_pocketic_component(&mut outcomes, component)?;
+            }
+            TestComponent::SnsRewards => {
+                run_unit_component(&mut outcomes, component)?;
                 run_pocketic_component(&mut outcomes, component)?;
             }
             TestComponent::Frontend => {
@@ -5784,6 +5856,11 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
             "the relay pocketic integration suite failed"
         }
         (TestComponent::Relay, TestScope::All) => "one or more relay test suites failed",
+        (TestComponent::SnsRewards, TestScope::Unit) => "the SNS rewards unit test suite failed",
+        (TestComponent::SnsRewards, TestScope::PocketicIntegration) => {
+            "the SNS rewards pocketic integration suite failed"
+        }
+        (TestComponent::SnsRewards, TestScope::All) => "one or more SNS rewards test suites failed",
         (TestComponent::Frontend, TestScope::Unit) => "the frontend unit test suite failed",
         (TestComponent::Frontend, TestScope::LocalIntegration) => {
             "one or more frontend local icp integration scenarios failed"
@@ -5829,6 +5906,11 @@ fn run_scoped_command(component: TestComponent, scope: TestScope) -> Result<()> 
             "relay_pocketic_integration complete"
         }
         (TestComponent::Relay, TestScope::All) => "relay_all complete",
+        (TestComponent::SnsRewards, TestScope::Unit) => "sns_rewards_unit complete",
+        (TestComponent::SnsRewards, TestScope::PocketicIntegration) => {
+            "sns_rewards_pocketic_integration complete"
+        }
+        (TestComponent::SnsRewards, TestScope::All) => "sns_rewards_all complete",
         (TestComponent::Frontend, TestScope::Unit) => "frontend_unit complete",
         (TestComponent::Frontend, TestScope::LocalIntegration) => {
             "frontend_local_integration complete"
@@ -5918,6 +6000,9 @@ fn main() -> Result<()> {
                  - relay_local_integration
                  - relay_pocketic_integration
                  - relay_all
+                 - sns_rewards_unit
+                 - sns_rewards_pocketic_integration
+                 - sns_rewards_all
                  - frontend_unit
                  - frontend_local_integration
                  - frontend_all

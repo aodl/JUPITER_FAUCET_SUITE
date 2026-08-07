@@ -81,6 +81,11 @@ canisters:
       steps:
         - type: pre-built
           path: target/wasm32-unknown-unknown/release/mock_sns_root.wasm
+  - name: mock_sns_governance
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_sns_governance.wasm
   - name: jupiter_disburser_dbg
     build:
       steps:
@@ -101,6 +106,11 @@ canisters:
       steps:
         - type: pre-built
           path: target/wasm32-unknown-unknown/release/jupiter_relay.wasm
+  - name: jupiter_sns_rewards_dbg
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/jupiter_sns_rewards.wasm
   - name: jupiter_disburser_args_dbg
     build:
       steps:
@@ -141,10 +151,12 @@ environments:
       - mock_blackhole
       - mock_sns_wasm
       - mock_sns_root
+      - mock_sns_governance
       - jupiter_disburser_dbg
       - jupiter_faucet_dbg
       - jupiter_historian_dbg
       - jupiter_relay_dbg
+      - jupiter_sns_rewards_dbg
       - jupiter_disburser_args_dbg
       - jupiter_faucet_args_dbg
       - jupiter_historian_args_dbg

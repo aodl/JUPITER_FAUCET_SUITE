@@ -1534,8 +1534,10 @@ dependencies = [
  "async-trait",
  "candid",
  "candid_parser 0.1.4",
+ "hex",
  "ic-cdk",
  "ic-cdk-timers",
+ "ic-stable-structures 0.7.2",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1552,8 +1554,21 @@ dependencies = [
 name = "jupiter-sns-rewards"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "candid",
+ "candid_parser 0.1.4",
+ "hex",
  "ic-cdk",
+ "ic-cdk-timers",
+ "ic-stable-structures 0.7.2",
+ "icrc-ledger-types",
+ "jupiter-build-support",
+ "jupiter-canister-logging",
+ "jupiter-ic-clients",
+ "pocket-ic",
+ "serde",
+ "slog",
+ "tokio",
 ]
 
 [[package]]
@@ -1851,6 +1866,15 @@ dependencies = [
  "candid",
  "ic-cdk",
  "jupiter-nns-types",
+ "serde",
+]
+
+[[package]]
+name = "mock-sns-governance"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk",
  "serde",
 ]
 

@@ -1,0 +1,12 @@
+type NeuronId = record { id : blob };
+type NeuronPermission = record { principal : opt principal; permission_type : vec int32 };
+type Neuron = record { id : opt NeuronId; permissions : vec NeuronPermission; cached_neuron_stake_e8s : nat64; neuron_fees_e8s : nat64 };
+type ListNeurons = record { of_principal : opt principal; limit : nat32; start_page_at : opt NeuronId };
+type ListNeuronsResponse = record { neurons : vec Neuron };
+service : {
+  list_neurons : (ListNeurons) -> (ListNeuronsResponse);
+  debug_set_neurons : (vec Neuron) -> ();
+  debug_fail_next_call : () -> ();
+  debug_calls : () -> (vec ListNeurons) query;
+  debug_reset_calls : () -> ();
+};

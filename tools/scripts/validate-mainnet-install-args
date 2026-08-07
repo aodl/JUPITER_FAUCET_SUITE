@@ -17,6 +17,7 @@ MAINNET = {
     "blackhole": "77deu-baaaa-aaaar-qb6za-cai",
     "blackhole_13_node_subnet": "e3mmv-5qaaa-aaaah-aadma-cai",
     "sns_wasm": "qaa6y-5yaaa-aaaaa-aaafa-cai",
+    "openchat_root": "3e3x2-xyaaa-aaaaq-aaalq-cai",
 }
 
 CANISTER_IDS = json.loads((REPO_ROOT / ".icp" / "data" / "mappings" / "ic.ids.json").read_text())
@@ -432,6 +433,8 @@ def validate_relay_debug_did(path: Path) -> None:
         "debug_force_clear_active_job",
         "debug_abort_after_successful_transfer",
         "debug_trap_after_successful_transfer",
+        "debug_reward_sweep",
+        "debug_reward_state",
     ]
     for method in expected:
         if not re.search(rf"\b{re.escape(method)}\b", text):
@@ -1111,6 +1114,45 @@ def relay_surplus_recipient_errors(text: str, path: Path) -> list[str]:
     return errors
 
 
+def validate_sns_rewards() -> None:
+    args_path = REPO_ROOT / "canisters" / "sns-rewards" / "mainnet-install-args.did"
+    if not args_path.exists():
+        fail(f"{args_path} is missing")
+    args_text = args_path.read_text()
+    require_opt_principal(
+        args_text,
+        "reward_sns_root_canister_id",
+        MAINNET["openchat_root"],
+        args_path,
+    )
+    for forbidden in ("governance_canister_id", "ledger_canister_id"):
+        if re.search(rf"\b{forbidden}\b", args_text):
+            fail(f"{args_path} must not configure `{forbidden}` independently of SNS Root")
+
+    did_path = REPO_ROOT / "canisters" / "sns-rewards" / "jupiter_sns_rewards.did"
+    did_text = did_path.read_text()
+    service_match = re.search(
+        r"service\s*:\s*\(\s*InitArgs\s*\)\s*->\s*\{(?P<body>.*?)\}\s*;?\s*$",
+        did_text,
+        re.S,
+    )
+    if not service_match:
+        fail(f"{did_path} SNS rewards production DID must use InitArgs")
+    methods = set(re.findall(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", service_match.group("body")))
+    expected_methods = {"get_relay_reward_context", "resolve_default_icp_accounts"}
+    if methods != expected_methods:
+        fail(
+            f"{did_path} SNS rewards production methods mismatch: "
+            f"got {sorted(methods)} expected {sorted(expected_methods)}"
+        )
+
+    debug_path = REPO_ROOT / "canisters" / "sns-rewards" / "jupiter_sns_rewards_debug.did"
+    debug_text = debug_path.read_text()
+    for method in ("debug_scan_tick", "debug_state"):
+        if not re.search(rf"\b{method}\b", debug_text):
+            fail(f"{debug_path} is missing debug SNS rewards method `{method}`")
+
+
 def validate_relay() -> None:
     if "jupiter_relay" not in CANISTER_IDS:
         fail(".icp/data/mappings/ic.ids.json is missing jupiter_relay")
@@ -1128,6 +1170,8 @@ def validate_relay() -> None:
     require_opt_principal(text, "cmc_canister_id", MAINNET["cmc"], path)
     require_opt_principal(text, "governance_canister_id", MAINNET["governance"], path)
     require_opt_principal(text, "blackhole_canister_id", MAINNET["blackhole"], path)
+    require_opt_principal(text, "sns_rewards_canister_id", PROD["jupiter_sns_rewards"], path)
+    require_opt_principal(text, "icp_index_canister_id", MAINNET["index"], path)
     require_interval(text, "main_interval_seconds", 86400, path)
     compact_relay_memo = f"{PROD['jupiter_relay'].replace('-', '')}.Relay"
     if compact_relay_memo != EXPECTED_RELAY_JUPITER_FAUCET_COMMITMENT_MEMO:
@@ -1503,6 +1547,7 @@ def main() -> None:
     validate_historian_production_upgrade_preflight()
     historian_min_tx_e8s = validate_historian()
     validate_relay_setup_recovery_runbook()
+    validate_sns_rewards()
     validate_relay()
     validate_release_build_script_uses_release_dids()
     if faucet_min_tx_e8s != historian_min_tx_e8s:
@@ -1514,11 +1559,15 @@ def main() -> None:
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "disburser" / "jupiter_disburser.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "historian" / "jupiter_historian.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "relay" / "jupiter_relay.did")
+    validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "sns-rewards" / "jupiter_sns_rewards.did")
     validate_relay_prod_did(REPO_ROOT / "canisters" / "relay" / "jupiter_relay.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "canisters" / "faucet" / "jupiter_faucet_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "canisters" / "disburser" / "jupiter_disburser_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "canisters" / "historian" / "jupiter_historian_debug.did")
     validate_debug_methods_present_in_debug_did(REPO_ROOT / "canisters" / "relay" / "jupiter_relay_debug.did")
+    validate_debug_methods_present_in_debug_did(
+        REPO_ROOT / "canisters" / "sns-rewards" / "jupiter_sns_rewards_debug.did"
+    )
     validate_relay_debug_did(REPO_ROOT / "canisters" / "relay" / "jupiter_relay_debug.did")
     validate_relay_docs_and_smoke_are_log_only()
     print("mainnet install-args and DID validation OK")

@@ -1,0 +1,4 @@
+// OpenChat is a development placeholder. Replace this Root with the jUP SNS Root after launch.
+(record {
+  reward_sns_root_canister_id = opt principal "3e3x2-xyaaa-aaaaq-aaalq-cai";
+})
