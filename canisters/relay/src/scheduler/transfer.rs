@@ -115,7 +115,7 @@ fn memo_for_pending(pending: &PendingTransfer) -> Vec<u8> {
     }
 }
 
-fn created_at_time_is_valid(created_at_time_nanos: u64, now_nanos: u64) -> bool {
+pub(super) fn created_at_time_is_valid(created_at_time_nanos: u64, now_nanos: u64) -> bool {
     now_nanos.saturating_sub(created_at_time_nanos) <= LEDGER_CREATED_AT_VALID_WINDOW_NANOS
 }
 

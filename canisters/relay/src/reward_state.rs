@@ -23,6 +23,7 @@ pub struct PendingRewardTransfer {
     pub sns_ledger_canister_id: Principal,
     pub snapshot_id: u64,
     pub through_commitment_tx_id: u64,
+    pub next_carried_credit_start_tx_id: Option<u64>,
     pub recipient: Account,
     pub observed_balance: Nat,
     pub fee: Nat,
@@ -38,6 +39,7 @@ pub struct PendingRewardTransfer {
 pub struct RewardState {
     pub epoch_sns_root_canister_id: Option<Principal>,
     pub processed_through_commitment_tx_id: Option<u64>,
+    pub carried_credit_start_tx_id: Option<u64>,
     pub last_sweep_attempt_timestamp_seconds: u64,
     pub pending_transfer: Option<PendingRewardTransfer>,
 }
@@ -128,8 +130,27 @@ mod tests {
         let state = RewardState {
             epoch_sns_root_canister_id: Some(Principal::from_slice(&[1])),
             processed_through_commitment_tx_id: Some(9),
+            carried_credit_start_tx_id: Some(8),
             last_sweep_attempt_timestamp_seconds: 10,
-            pending_transfer: None,
+            pending_transfer: Some(PendingRewardTransfer {
+                sns_root_canister_id: Principal::from_slice(&[1]),
+                sns_ledger_canister_id: Principal::from_slice(&[2]),
+                snapshot_id: 3,
+                through_commitment_tx_id: 12,
+                next_carried_credit_start_tx_id: Some(11),
+                recipient: Account {
+                    owner: Principal::from_slice(&[4]),
+                    subaccount: None,
+                },
+                observed_balance: Nat::from(1_000_u64),
+                fee: Nat::from(10_u64),
+                amount: Nat::from(990_u64),
+                memo: b"JRS1".to_vec(),
+                created_at_time_nanos: 5,
+                attempt_started: true,
+                uncertain_attempt_seen: true,
+                status: PendingRewardTransferStatus::Ambiguous,
+            }),
         };
         let encoded = candid::encode_one(VersionedRewardState::V1(state.clone())).unwrap();
         let decoded: VersionedRewardState = candid::decode_one(&encoded).unwrap();
@@ -145,5 +166,12 @@ mod tests {
         mutate(|state| state.processed_through_commitment_tx_id = Some(42));
         initialize_if_uninitialized();
         assert_eq!(get().processed_through_commitment_tx_id, Some(42));
+    }
+
+    #[test]
+    fn uninitialized_reward_state_initializes_to_final_schema() {
+        with_cell(|cell| cell.set(VersionedRewardState::Uninitialized));
+        initialize_if_uninitialized();
+        assert_eq!(get(), RewardState::default());
     }
 }

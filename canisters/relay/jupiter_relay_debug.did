@@ -153,6 +153,7 @@ type PendingRewardTransfer = record {
   sns_ledger_canister_id : principal;
   snapshot_id : nat64;
   through_commitment_tx_id : nat64;
+  next_carried_credit_start_tx_id : opt nat64;
   recipient : Account;
   observed_balance : nat;
   fee : nat;
@@ -166,6 +167,7 @@ type PendingRewardTransfer = record {
 type RewardState = record {
   epoch_sns_root_canister_id : opt principal;
   processed_through_commitment_tx_id : opt nat64;
+  carried_credit_start_tx_id : opt nat64;
   last_sweep_attempt_timestamp_seconds : nat64;
   pending_transfer : opt PendingRewardTransfer;
 };

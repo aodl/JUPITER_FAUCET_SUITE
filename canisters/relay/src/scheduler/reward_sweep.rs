@@ -1,18 +1,23 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use async_trait::async_trait;
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::{account_identifier_bytes, account_identifier_text};
-use jupiter_ic_clients::index::{IcpIndexCanister, IndexOperation, IndexTransactionWithId};
+use jupiter_ic_clients::index::{
+    GetAccountIdentifierTransactionsResponse, IcpIndexCanister, IndexOperation,
+    IndexTransactionWithId,
+};
 use jupiter_ic_clients::ledger::IcrcLedgerCanister;
 
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::GovernanceClient;
 use crate::reward_state::{self, PendingRewardTransfer, PendingRewardTransferStatus};
+use crate::scheduler::transfer::created_at_time_is_valid;
 use crate::{logic, state};
 
 pub(crate) const REWARD_SWEEP_INTERVAL_SECONDS: u64 = 7 * 24 * 60 * 60;
@@ -171,7 +176,9 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         log.reason = Some(reason.to_string());
         return Ok(());
     }
-    let processed_from = reward_state::get().processed_through_commitment_tx_id;
+    let reward_boundary = reward_state::get();
+    let processed_from = reward_boundary.processed_through_commitment_tx_id;
+    let carried_credit_start = reward_boundary.carried_credit_start_tx_id;
     log.processed_from = processed_from;
 
     let reward_ledger = IcrcLedgerCanister::new(context.sns_ledger_canister_id);
@@ -211,6 +218,7 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         cfg.icp_index_canister_id,
         relay_account_identifier,
         processed_from,
+        carried_credit_start,
     )
     .await?;
     log.scanned_transactions = transactions.len();
@@ -223,6 +231,7 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
     let batch = reconstruct_batch(
         &transactions,
         processed_from,
+        carried_credit_start,
         context.scan_started_at_timestamp_nanos,
         &account_identifier_text(relay, Some(logic::relay_subaccount_one())),
         &faucet_account_identifier,
@@ -279,7 +288,11 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         log.status = "no_winner";
         log.reason = Some(no_winner_reason(&eligible, ineligible).to_string());
         reward_state::mutate(|state| {
-            state.processed_through_commitment_tx_id = Some(batch.through_commitment_tx_id)
+            advance_reward_boundary(
+                state,
+                batch.through_commitment_tx_id,
+                batch.next_carried_credit_start_tx_id,
+            )
         });
         return Ok(());
     };
@@ -290,6 +303,7 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         sns_ledger_canister_id: context.sns_ledger_canister_id,
         snapshot_id: context.snapshot_id,
         through_commitment_tx_id: batch.through_commitment_tx_id,
+        next_carried_credit_start_tx_id: batch.next_carried_credit_start_tx_id,
         recipient: Account {
             owner: winner,
             subaccount: None,
@@ -315,18 +329,64 @@ async fn scan_history(
     index_id: Principal,
     account_identifier: String,
     prior_cursor: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
 ) -> Result<Vec<IndexTransactionWithId>, String> {
     let index = IcpIndexCanister::new(index_id);
+    scan_history_with_index(
+        &index,
+        account_identifier,
+        prior_cursor,
+        carried_credit_start_tx_id,
+    )
+    .await
+}
+
+#[async_trait]
+trait RewardHistoryClient: Send + Sync {
+    async fn get_transactions(
+        &self,
+        account_identifier: String,
+        start: Option<u64>,
+        max_results: u64,
+    ) -> Result<GetAccountIdentifierTransactionsResponse, String>;
+}
+
+#[async_trait]
+impl RewardHistoryClient for IcpIndexCanister {
+    async fn get_transactions(
+        &self,
+        account_identifier: String,
+        start: Option<u64>,
+        max_results: u64,
+    ) -> Result<GetAccountIdentifierTransactionsResponse, String> {
+        self.get_account_identifier_transactions(account_identifier, start, max_results)
+            .await
+            .map_err(|_| "history_read_failed".to_string())
+    }
+}
+
+async fn scan_history_with_index<I: RewardHistoryClient>(
+    index: &I,
+    account_identifier: String,
+    prior_cursor: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
+) -> Result<Vec<IndexTransactionWithId>, String> {
+    match (prior_cursor, carried_credit_start_tx_id) {
+        (None, Some(_)) => return Err("history_carry_without_cursor".to_string()),
+        (Some(cursor), Some(carried)) if carried >= cursor => {
+            return Err("history_carry_invalid".to_string())
+        }
+        _ => {}
+    }
     let mut start = None;
+    let mut seen_starts = BTreeSet::new();
     let mut transactions = Vec::new();
     let mut boundary_found = false;
+    let mut cursor_found = prior_cursor.is_none();
+    let mut previous_tx_id = None;
     for _ in 0..ICP_HISTORY_MAX_PAGES {
         let page = index
-            .get_account_identifier_transactions(
-                account_identifier.clone(),
-                start,
-                ICP_HISTORY_PAGE_SIZE,
-            )
+            .get_transactions(account_identifier.clone(), start, ICP_HISTORY_PAGE_SIZE)
             .await
             .map_err(|_| "history_read_failed".to_string())?;
         if page.transactions.is_empty() {
@@ -334,37 +394,73 @@ async fn scan_history(
             break;
         }
         for transaction in &page.transactions {
-            if Some(transaction.id) == prior_cursor {
+            if previous_tx_id.is_some_and(|previous| transaction.id >= previous) {
+                return Err("history_pagination_non_progressing".to_string());
+            }
+            previous_tx_id = Some(transaction.id);
+
+            if let Some(cursor) = prior_cursor {
+                if !cursor_found {
+                    match transaction.id.cmp(&cursor) {
+                        std::cmp::Ordering::Greater => {}
+                        std::cmp::Ordering::Equal => {
+                            cursor_found = true;
+                            if carried_credit_start_tx_id.is_none() {
+                                boundary_found = true;
+                                break;
+                            }
+                            continue;
+                        }
+                        std::cmp::Ordering::Less => {
+                            return Err("history_cursor_not_found".to_string())
+                        }
+                    }
+                } else if let Some(carried) = carried_credit_start_tx_id {
+                    if transaction.id < carried {
+                        return Err("history_carried_credit_not_found".to_string());
+                    }
+                }
+            }
+
+            transactions.push(transaction.clone());
+            if transactions.len() > ICP_HISTORY_MAX_TRANSACTIONS {
+                return Err("history_limit_exceeded".to_string());
+            }
+            if carried_credit_start_tx_id == Some(transaction.id) {
                 boundary_found = true;
                 break;
-            }
-            if prior_cursor.is_some_and(|cursor| transaction.id < cursor) {
-                return Err("history_cursor_not_found".to_string());
-            }
-            transactions.push(transaction.clone());
-            if transactions.len() >= ICP_HISTORY_MAX_TRANSACTIONS {
-                return Err("history_limit_exceeded".to_string());
             }
         }
         if boundary_found {
             break;
         }
         let oldest_in_page = page.transactions.last().expect("nonempty page").id;
-        if prior_cursor.is_none()
-            && (page.transactions.len() < ICP_HISTORY_PAGE_SIZE as usize
-                || page.oldest_tx_id == Some(oldest_in_page))
-        {
-            boundary_found = true;
-            break;
+        let reached_history_start = page.transactions.len() < ICP_HISTORY_PAGE_SIZE as usize
+            || page.oldest_tx_id == Some(oldest_in_page);
+        if reached_history_start {
+            if prior_cursor.is_none() {
+                boundary_found = true;
+                break;
+            }
+            return Err(if !cursor_found {
+                "history_cursor_not_found"
+            } else {
+                "history_carried_credit_not_found"
+            }
+            .to_string());
         }
-        if start == Some(oldest_in_page) {
-            return Err("history_limit_exceeded".to_string());
+        if start == Some(oldest_in_page) || !seen_starts.insert(oldest_in_page) {
+            return Err("history_pagination_non_progressing".to_string());
         }
         start = Some(oldest_in_page);
     }
     if !boundary_found {
-        return Err(if prior_cursor.is_some() {
+        return Err(if transactions.len() >= ICP_HISTORY_MAX_TRANSACTIONS {
+            "history_limit_exceeded"
+        } else if !cursor_found {
             "history_cursor_not_found"
+        } else if carried_credit_start_tx_id.is_some() {
+            "history_carried_credit_not_found"
         } else {
             "history_limit_exceeded"
         }
@@ -376,9 +472,17 @@ async fn scan_history(
 #[derive(Debug, PartialEq, Eq)]
 struct ContributionBatch {
     through_commitment_tx_id: u64,
+    next_carried_credit_start_tx_id: Option<u64>,
     completed_commitments: usize,
     sources: BTreeMap<[u8; 32], u64>,
     ineligible_e8s: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct FundingCredit {
+    tx_id: u64,
+    source: Option<[u8; 32]>,
+    amount_e8s: u64,
 }
 
 fn decode_account_identifier(text: &str) -> Option<[u8; 32]> {
@@ -407,6 +511,15 @@ fn economical_reward_amount(balance: &Nat, fee: &Nat) -> Result<Nat, &'static st
     Ok(amount)
 }
 
+fn advance_reward_boundary(
+    state: &mut reward_state::RewardState,
+    through_commitment_tx_id: u64,
+    next_carried_credit_start_tx_id: Option<u64>,
+) {
+    state.processed_through_commitment_tx_id = Some(through_commitment_tx_id);
+    state.carried_credit_start_tx_id = next_carried_credit_start_tx_id;
+}
+
 fn apply_reward_epoch(root: Principal, now_secs: u64) -> Result<(), &'static str> {
     let current = reward_state::get();
     if current.epoch_sns_root_canister_id == Some(root) {
@@ -418,6 +531,7 @@ fn apply_reward_epoch(root: Principal, now_secs: u64) -> Result<(), &'static str
     reward_state::mutate(|state| {
         state.epoch_sns_root_canister_id = Some(root);
         state.processed_through_commitment_tx_id = None;
+        state.carried_credit_start_tx_id = None;
         state.last_sweep_attempt_timestamp_seconds = 0;
     });
     reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = now_secs);
@@ -453,6 +567,7 @@ fn classify_sources(
 fn reconstruct_batch(
     transactions: &[IndexTransactionWithId],
     prior_cursor: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
     cutoff_nanos: u64,
     relay_account_identifier: &str,
     faucet_account_identifier: &str,
@@ -460,16 +575,19 @@ fn reconstruct_batch(
 ) -> Result<Option<ContributionBatch>, String> {
     let mut chronological = transactions.to_vec();
     chronological.sort_by_key(|transaction| transaction.id);
-    let mut open_total = 0_u64;
-    let mut open_sources = BTreeMap::<[u8; 32], u64>::new();
-    let mut open_ineligible = 0_u64;
+    let mut funding = VecDeque::<FundingCredit>::new();
     let mut batch_sources = BTreeMap::<[u8; 32], u64>::new();
     let mut batch_ineligible = 0_u64;
     let mut through = None;
     let mut completed = 0usize;
     for entry in chronological {
-        if prior_cursor.is_some_and(|cursor| entry.id <= cursor) {
-            continue;
+        if let Some(cursor) = prior_cursor {
+            if entry.id == cursor
+                || (entry.id < cursor
+                    && !carried_credit_start_tx_id.is_some_and(|carried| entry.id >= carried))
+            {
+                continue;
+            }
         }
         let timestamp = entry
             .transaction
@@ -499,24 +617,32 @@ fn reconstruct_batch(
                         .e8s()
                         .checked_add(fee.e8s())
                         .ok_or_else(|| "commitment_reconciliation_failed".to_string())?;
-                    if open_total != gross {
-                        return Err("commitment_reconciliation_failed".to_string());
+                    let mut remaining = gross;
+                    while remaining > 0 {
+                        let credit = funding
+                            .pop_front()
+                            .ok_or_else(|| "commitment_reconciliation_failed".to_string())?;
+                        if credit.amount_e8s > remaining {
+                            return Err("commitment_reconciliation_failed".to_string());
+                        }
+                        remaining -= credit.amount_e8s;
+                        if let Some(source) = credit.source {
+                            add_checked(
+                                batch_sources.entry(source).or_default(),
+                                credit.amount_e8s,
+                            )?;
+                        } else {
+                            add_checked(&mut batch_ineligible, credit.amount_e8s)?;
+                        }
                     }
-                    for (source, value) in std::mem::take(&mut open_sources) {
-                        add_checked(batch_sources.entry(source).or_default(), value)?;
-                    }
-                    add_checked(&mut batch_ineligible, open_ineligible)?;
-                    open_total = 0;
-                    open_ineligible = 0;
                     through = Some(entry.id);
                     completed += 1;
                 } else if to == relay_account_identifier {
-                    add_checked(&mut open_total, amount.e8s())?;
-                    if let Some(source) = decode_account_identifier(from) {
-                        add_checked(open_sources.entry(source).or_default(), amount.e8s())?;
-                    } else {
-                        add_checked(&mut open_ineligible, amount.e8s())?;
-                    }
+                    funding.push_back(FundingCredit {
+                        tx_id: entry.id,
+                        source: decode_account_identifier(from),
+                        amount_e8s: amount.e8s(),
+                    });
                 }
             }
             IndexOperation::TransferFrom {
@@ -525,17 +651,19 @@ fn reconstruct_batch(
                 if from == relay_account_identifier {
                     return Err("unexpected_subaccount_debit".to_string());
                 } else if to == relay_account_identifier {
-                    add_checked(&mut open_total, amount.e8s())?;
-                    if let Some(source) = decode_account_identifier(from) {
-                        add_checked(open_sources.entry(source).or_default(), amount.e8s())?;
-                    } else {
-                        add_checked(&mut open_ineligible, amount.e8s())?;
-                    }
+                    funding.push_back(FundingCredit {
+                        tx_id: entry.id,
+                        source: decode_account_identifier(from),
+                        amount_e8s: amount.e8s(),
+                    });
                 }
             }
             IndexOperation::Mint { to, amount } if to == relay_account_identifier => {
-                add_checked(&mut open_total, amount.e8s())?;
-                add_checked(&mut open_ineligible, amount.e8s())?;
+                funding.push_back(FundingCredit {
+                    tx_id: entry.id,
+                    source: None,
+                    amount_e8s: amount.e8s(),
+                });
             }
             IndexOperation::Burn { from, .. } if from == relay_account_identifier => {
                 return Err("unexpected_subaccount_debit".to_string());
@@ -548,11 +676,17 @@ fn reconstruct_batch(
             _ => {}
         }
     }
-    Ok(through.map(|through_commitment_tx_id| ContributionBatch {
-        through_commitment_tx_id,
-        completed_commitments: completed,
-        sources: batch_sources,
-        ineligible_e8s: batch_ineligible,
+    Ok(through.map(|through_commitment_tx_id| {
+        let next_carried_credit_start_tx_id = funding
+            .front()
+            .and_then(|credit| (credit.tx_id < through_commitment_tx_id).then_some(credit.tx_id));
+        ContributionBatch {
+            through_commitment_tx_id,
+            next_carried_credit_start_tx_id,
+            completed_commitments: completed,
+            sources: batch_sources,
+            ineligible_e8s: batch_ineligible,
+        }
     }))
 }
 
@@ -597,19 +731,39 @@ enum AttemptOutcome {
     Uncertain,
 }
 
-async fn transfer_once(
-    ledger: &IcrcLedgerCanister,
-    pending: &PendingRewardTransfer,
-) -> AttemptOutcome {
-    let arg = TransferArg {
+#[async_trait]
+trait RewardLedgerClient: Send + Sync {
+    async fn balance_of(&self, account: Account) -> Result<Nat, ()>;
+    async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, ()>;
+}
+
+#[async_trait]
+impl RewardLedgerClient for IcrcLedgerCanister {
+    async fn balance_of(&self, account: Account) -> Result<Nat, ()> {
+        self.balance_of(account).await.map_err(|_| ())
+    }
+
+    async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, ()> {
+        self.transfer(arg).await.map_err(|_| ())
+    }
+}
+
+fn reward_transfer_arg(pending: &PendingRewardTransfer) -> TransferArg {
+    TransferArg {
         from_subaccount: None,
         to: pending.recipient,
         fee: Some(pending.fee.clone()),
         created_at_time: Some(pending.created_at_time_nanos),
         memo: Some(Memo::from(pending.memo.clone())),
         amount: pending.amount.clone(),
-    };
-    match ledger.transfer(arg).await {
+    }
+}
+
+async fn transfer_once<L: RewardLedgerClient>(
+    ledger: &L,
+    pending: &PendingRewardTransfer,
+) -> AttemptOutcome {
+    match ledger.transfer(reward_transfer_arg(pending)).await {
         Ok(Ok(_)) | Ok(Err(TransferError::Duplicate { .. })) => AttemptOutcome::Accepted,
         Ok(Err(TransferError::BadFee { expected_fee })) => AttemptOutcome::BadFee(expected_fee),
         Ok(Err(
@@ -628,8 +782,15 @@ async fn transfer_once(
 
 fn accept_pending(reason: &str) {
     reward_state::mutate(|state| {
-        if let Some(pending) = state.pending_transfer.take() {
-            state.processed_through_commitment_tx_id = Some(pending.through_commitment_tx_id);
+        if let Some(pending) = state.pending_transfer.as_ref() {
+            let through_commitment_tx_id = pending.through_commitment_tx_id;
+            let next_carried_credit_start_tx_id = pending.next_carried_credit_start_tx_id;
+            advance_reward_boundary(
+                state,
+                through_commitment_tx_id,
+                next_carried_credit_start_tx_id,
+            );
+            state.pending_transfer = None;
         }
     });
     ic_cdk::println!("RELAY_SNS_REWARD_TRANSFER status=accepted reason={reason}");
@@ -676,14 +837,25 @@ impl PendingDriveResult {
     }
 }
 
-async fn drive_pending(_now_nanos: u64) -> PendingDriveResult {
+async fn drive_pending(now_nanos: u64) -> PendingDriveResult {
     let Some(pending) = reward_state::get().pending_transfer else {
         return PendingDriveResult::Held;
     };
     let ledger = IcrcLedgerCanister::new(pending.sns_ledger_canister_id);
+    drive_pending_with_ledger(now_nanos, ic_cdk::api::canister_self(), &ledger).await
+}
+
+async fn drive_pending_with_ledger<L: RewardLedgerClient>(
+    now_nanos: u64,
+    relay_account_owner: Principal,
+    ledger: &L,
+) -> PendingDriveResult {
+    let Some(pending) = reward_state::get().pending_transfer else {
+        return PendingDriveResult::Held;
+    };
     if pending.status == PendingRewardTransferStatus::Ambiguous {
         let relay_account = Account {
-            owner: ic_cdk::api::canister_self(),
+            owner: relay_account_owner,
             subaccount: None,
         };
         if let Ok(current) = ledger.balance_of(relay_account).await {
@@ -692,7 +864,16 @@ async fn drive_pending(_now_nanos: u64) -> PendingDriveResult {
                 return PendingDriveResult::Accepted;
             }
         }
-        return PendingDriveResult::Held;
+        if !created_at_time_is_valid(pending.created_at_time_nanos, now_nanos) {
+            return PendingDriveResult::Held;
+        }
+        return match transfer_once(ledger, &pending).await {
+            AttemptOutcome::Accepted => {
+                accept_pending("accepted_or_duplicate_after_ambiguity_retry");
+                PendingDriveResult::Accepted
+            }
+            _ => PendingDriveResult::Ambiguous,
+        };
     }
     let restored_started_attempt = pending.attempt_started;
     reward_state::mutate(|state| {
@@ -703,7 +884,7 @@ async fn drive_pending(_now_nanos: u64) -> PendingDriveResult {
             }
         }
     });
-    let first = transfer_once(&ledger, &pending).await;
+    let first = transfer_once(ledger, &pending).await;
     match first {
         AttemptOutcome::Accepted => {
             accept_pending("accepted_or_duplicate");
@@ -734,7 +915,7 @@ async fn drive_pending(_now_nanos: u64) -> PendingDriveResult {
                     pending.attempt_started = true;
                 }
             });
-            match transfer_once(&ledger, &pending).await {
+            match transfer_once(ledger, &pending).await {
                 AttemptOutcome::Accepted => {
                     accept_pending("accepted_or_duplicate_after_retry");
                     PendingDriveResult::Accepted
@@ -764,6 +945,7 @@ async fn drive_pending(_now_nanos: u64) -> PendingDriveResult {
 mod tests {
     use super::*;
     use jupiter_ic_clients::index::{IndexTimeStamp, IndexTransaction, Tokens};
+    use std::sync::Mutex;
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
@@ -774,6 +956,7 @@ mod tests {
             sns_ledger_canister_id: principal(9),
             snapshot_id: 3,
             through_commitment_tx_id: 44,
+            next_carried_credit_start_tx_id: Some(43),
             recipient: Account {
                 owner: principal(8),
                 subaccount: None,
@@ -854,6 +1037,385 @@ mod tests {
         )
     }
 
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    struct MockHistory {
+        pages: Mutex<VecDeque<Result<GetAccountIdentifierTransactionsResponse, String>>>,
+    }
+
+    impl MockHistory {
+        fn new(pages: Vec<GetAccountIdentifierTransactionsResponse>) -> Self {
+            Self {
+                pages: Mutex::new(pages.into_iter().map(Ok).collect()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RewardHistoryClient for MockHistory {
+        async fn get_transactions(
+            &self,
+            _account_identifier: String,
+            _start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, String> {
+            self.pages
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err("unexpected_history_call".to_string()))
+        }
+    }
+
+    fn history_page(
+        ids: impl IntoIterator<Item = u64>,
+        oldest_tx_id: u64,
+    ) -> GetAccountIdentifierTransactionsResponse {
+        GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            transactions: ids
+                .into_iter()
+                .map(|id| {
+                    tx(
+                        id,
+                        id,
+                        IndexOperation::Mint {
+                            to: "relay".to_string(),
+                            amount: Tokens::new(1),
+                        },
+                        None,
+                    )
+                })
+                .collect(),
+            oldest_tx_id: Some(oldest_tx_id),
+        }
+    }
+
+    fn scan_mock(
+        pages: Vec<GetAccountIdentifierTransactionsResponse>,
+        prior_cursor: Option<u64>,
+        carried_credit_start_tx_id: Option<u64>,
+    ) -> Result<Vec<IndexTransactionWithId>, String> {
+        block_on(scan_history_with_index(
+            &MockHistory::new(pages),
+            "relay".to_string(),
+            prior_cursor,
+            carried_credit_start_tx_id,
+        ))
+    }
+
+    struct MockRewardLedger {
+        balances: Mutex<VecDeque<Result<Nat, ()>>>,
+        outcomes: Mutex<VecDeque<Result<Result<BlockIndex, TransferError>, ()>>>,
+        args: Mutex<Vec<TransferArg>>,
+    }
+
+    impl MockRewardLedger {
+        fn new(
+            balances: Vec<Result<Nat, ()>>,
+            outcomes: Vec<Result<Result<BlockIndex, TransferError>, ()>>,
+        ) -> Self {
+            Self {
+                balances: Mutex::new(balances.into()),
+                outcomes: Mutex::new(outcomes.into()),
+                args: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RewardLedgerClient for MockRewardLedger {
+        async fn balance_of(&self, _account: Account) -> Result<Nat, ()> {
+            self.balances.lock().unwrap().pop_front().unwrap_or(Err(()))
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ()> {
+            self.args.lock().unwrap().push(arg);
+            self.outcomes.lock().unwrap().pop_front().unwrap_or(Err(()))
+        }
+    }
+
+    fn stage_pending(staged: PendingRewardTransfer, cursor: u64, carry: Option<u64>) {
+        reward_state::reset_for_test();
+        reward_state::mutate(|state| {
+            state.processed_through_commitment_tx_id = Some(cursor);
+            state.carried_credit_start_tx_id = carry;
+            state.pending_transfer = Some(staged);
+        });
+    }
+
+    #[test]
+    fn history_first_epoch_collects_all_available_transactions() {
+        let scanned = scan_mock(vec![history_page((1..=3_u64).rev(), 1)], None, None).unwrap();
+        assert_eq!(
+            scanned.iter().map(|tx| tx.id).collect::<Vec<_>>(),
+            vec![3, 2, 1]
+        );
+    }
+
+    #[test]
+    fn history_cursor_without_carry_is_exclusive() {
+        let scanned = scan_mock(vec![history_page((1..=5_u64).rev(), 1)], Some(3), None).unwrap();
+        assert_eq!(
+            scanned.iter().map(|tx| tx.id).collect::<Vec<_>>(),
+            vec![5, 4]
+        );
+    }
+
+    #[test]
+    fn history_cursor_with_carry_collects_both_intervals_but_not_cursor() {
+        let scanned =
+            scan_mock(vec![history_page((1..=5_u64).rev(), 1)], Some(3), Some(1)).unwrap();
+        assert_eq!(
+            scanned.iter().map(|tx| tx.id).collect::<Vec<_>>(),
+            vec![5, 4, 2, 1]
+        );
+    }
+
+    #[test]
+    fn history_missing_cursor_and_missing_carry_fail_closed() {
+        assert_eq!(
+            scan_mock(vec![history_page([5, 4], 4)], Some(3), None).unwrap_err(),
+            "history_cursor_not_found"
+        );
+        assert_eq!(
+            scan_mock(vec![history_page([5, 4, 3, 2], 2)], Some(3), Some(1)).unwrap_err(),
+            "history_carried_credit_not_found"
+        );
+        assert_eq!(
+            scan_mock(vec![history_page([5, 4, 2], 2)], Some(4), Some(3)).unwrap_err(),
+            "history_carried_credit_not_found"
+        );
+    }
+
+    #[test]
+    fn history_rejects_invalid_carry_combinations_without_reading() {
+        assert_eq!(
+            scan_mock(vec![], None, Some(1)).unwrap_err(),
+            "history_carry_without_cursor"
+        );
+        for carried in [3, 4] {
+            assert_eq!(
+                scan_mock(vec![], Some(3), Some(carried)).unwrap_err(),
+                "history_carry_invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn history_repeated_pagination_cursor_fails_closed() {
+        let first = history_page((2..=1_001_u64).rev(), 1);
+        let second = history_page([2], 1);
+        assert_eq!(
+            scan_mock(vec![first, second], Some(1), None).unwrap_err(),
+            "history_pagination_non_progressing"
+        );
+    }
+
+    #[test]
+    fn history_exact_limit_succeeds_and_one_more_fails() {
+        fn pages(newest: u64, oldest: u64) -> Vec<GetAccountIdentifierTransactionsResponse> {
+            let mut pages = Vec::new();
+            let mut high = newest;
+            while high >= oldest {
+                let low = high.saturating_sub(ICP_HISTORY_PAGE_SIZE - 1).max(oldest);
+                pages.push(history_page((low..=high).rev(), oldest));
+                if low == oldest {
+                    break;
+                }
+                high = low - 1;
+            }
+            pages
+        }
+
+        assert_eq!(
+            scan_mock(pages(10_000, 1), None, None).unwrap().len(),
+            ICP_HISTORY_MAX_TRANSACTIONS
+        );
+        assert_eq!(
+            scan_mock(pages(10_001, 1), None, None).unwrap_err(),
+            "history_limit_exceeded"
+        );
+    }
+
+    #[test]
+    fn concurrent_suffix_is_carried_without_funding_first_commitment() {
+        let relay = "11".repeat(32);
+        let faucet = "22".repeat(32);
+        let source_a = "33".repeat(32);
+        let source_b = "44".repeat(32);
+        let memo = b"relay".to_vec();
+        let history = vec![
+            transfer(1, 1, source_a.clone(), relay.clone(), 100_010_000, 0, None),
+            transfer(2, 2, source_b, relay.clone(), 20_000_000, 0, None),
+            transfer(
+                3,
+                3,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10_000,
+                Some(memo.clone()),
+            ),
+        ];
+        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.through_commitment_tx_id, 3);
+        assert_eq!(batch.next_carried_credit_start_tx_id, Some(2));
+        assert_eq!(
+            batch.sources,
+            BTreeMap::from([(decode_account_identifier(&source_a).unwrap(), 100_010_000)])
+        );
+    }
+
+    #[test]
+    fn carried_credit_funds_next_commitment_before_new_credit() {
+        let relay = "11".repeat(32);
+        let faucet = "22".repeat(32);
+        let source_b = "44".repeat(32);
+        let memo = b"relay".to_vec();
+        let history = vec![
+            transfer(2, 2, source_b.clone(), relay.clone(), 20_000_000, 0, None),
+            transfer(4, 4, source_b.clone(), relay.clone(), 80_010_000, 0, None),
+            transfer(
+                5,
+                5,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10_000,
+                Some(memo.clone()),
+            ),
+        ];
+        let batch = reconstruct_batch(&history, Some(3), Some(2), 10, &relay, &faucet, &memo)
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.through_commitment_tx_id, 5);
+        assert_eq!(batch.next_carried_credit_start_tx_id, None);
+        assert_eq!(
+            batch.sources,
+            BTreeMap::from([(decode_account_identifier(&source_b).unwrap(), 100_010_000)])
+        );
+    }
+
+    #[test]
+    fn several_concurrent_suffix_credits_preserve_earliest_boundary() {
+        let relay = "11".repeat(32);
+        let faucet = "22".repeat(32);
+        let source = "33".repeat(32);
+        let memo = b"relay".to_vec();
+        let history = vec![
+            transfer(1, 1, source.clone(), relay.clone(), 100_010_000, 0, None),
+            transfer(2, 2, source.clone(), relay.clone(), 20_000_000, 0, None),
+            transfer(3, 3, source, relay.clone(), 30_000_000, 0, None),
+            transfer(
+                4,
+                4,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10_000,
+                Some(memo.clone()),
+            ),
+        ];
+        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.next_carried_credit_start_tx_id, Some(2));
+    }
+
+    #[test]
+    fn fifo_never_splits_overshooting_credit_and_rejects_insufficient_queue() {
+        let relay = "11".repeat(32);
+        let faucet = "22".repeat(32);
+        let source = "33".repeat(32);
+        let memo = b"relay".to_vec();
+        for credits in [vec![60_000_000, 50_000_010], vec![60_000_000, 30_000_000]] {
+            let mut history = credits
+                .into_iter()
+                .enumerate()
+                .map(|(index, amount)| {
+                    transfer(
+                        index as u64 + 1,
+                        index as u64 + 1,
+                        source.clone(),
+                        relay.clone(),
+                        amount,
+                        0,
+                        None,
+                    )
+                })
+                .collect::<Vec<_>>();
+            history.push(transfer(
+                3,
+                3,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10,
+                Some(memo.clone()),
+            ));
+            assert_eq!(
+                reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo).unwrap_err(),
+                "commitment_reconciliation_failed"
+            );
+        }
+    }
+
+    #[test]
+    fn suffix_can_fund_later_commitment_in_same_scan() {
+        let relay = "11".repeat(32);
+        let faucet = "22".repeat(32);
+        let source_a = "33".repeat(32);
+        let source_b = "44".repeat(32);
+        let memo = b"relay".to_vec();
+        let history = vec![
+            transfer(1, 1, source_a.clone(), relay.clone(), 100_010_000, 0, None),
+            transfer(2, 2, source_b.clone(), relay.clone(), 20_000_000, 0, None),
+            transfer(
+                3,
+                3,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10_000,
+                Some(memo.clone()),
+            ),
+            transfer(4, 4, source_b.clone(), relay.clone(), 80_010_000, 0, None),
+            transfer(
+                5,
+                5,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10_000,
+                Some(memo.clone()),
+            ),
+        ];
+        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.completed_commitments, 2);
+        assert_eq!(batch.next_carried_credit_start_tx_id, None);
+        assert_eq!(
+            batch.sources,
+            BTreeMap::from([
+                (decode_account_identifier(&source_a).unwrap(), 100_010_000),
+                (decode_account_identifier(&source_b).unwrap(), 100_010_000),
+            ])
+        );
+    }
+
     #[test]
     fn reconstructs_multiple_completed_segments_and_ignores_trailing_deposit() {
         let relay = "11".repeat(32);
@@ -899,12 +1461,13 @@ mod tests {
             ),
             transfer(5, 5, source, relay.clone(), 50_000_000, 10_000, None),
         ];
-        let batch = reconstruct_batch(&history, None, 10, &relay, &faucet, &memo)
+        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
             .unwrap()
             .unwrap();
         assert_eq!(batch.through_commitment_tx_id, 4);
         assert_eq!(batch.completed_commitments, 2);
         assert_eq!(batch.sources.values().sum::<u64>(), 300_020_000);
+        assert_eq!(batch.next_carried_credit_start_tx_id, None);
     }
 
     #[test]
@@ -926,7 +1489,7 @@ mod tests {
             ),
         ];
         assert!(
-            reconstruct_batch(&history, None, 10, &relay, &faucet, &memo)
+            reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
                 .unwrap()
                 .is_none()
         );
@@ -961,7 +1524,7 @@ mod tests {
                 Some(memo.clone()),
             ),
         ];
-        let batch = reconstruct_batch(&history, Some(2), 10, &relay, &faucet, &memo)
+        let batch = reconstruct_batch(&history, Some(2), None, 10, &relay, &faucet, &memo)
             .unwrap()
             .unwrap();
         assert_eq!(batch.through_commitment_tx_id, 4);
@@ -979,6 +1542,7 @@ mod tests {
         let source = "33".repeat(32);
         assert!(reconstruct_batch(
             &[transfer(1, 1, source, relay.clone(), 100_000_000, 0, None)],
+            None,
             None,
             10,
             &relay,
@@ -1017,7 +1581,7 @@ mod tests {
                 Some(memo.clone()),
             ),
         ];
-        let batch = reconstruct_batch(&history, None, 10, &relay, &faucet, &memo)
+        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -1047,13 +1611,13 @@ mod tests {
                 ),
             ];
             assert_eq!(
-                reconstruct_batch(&history, None, 10, &relay, &faucet, &memo).unwrap_err(),
+                reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo).unwrap_err(),
                 "commitment_reconciliation_failed"
             );
         }
         let history = vec![transfer(1, 1, relay.clone(), source, 1, 10_000, None)];
         assert_eq!(
-            reconstruct_batch(&history, None, 10, &relay, &faucet, &memo).unwrap_err(),
+            reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo).unwrap_err(),
             "unexpected_subaccount_debit"
         );
     }
@@ -1082,6 +1646,7 @@ mod tests {
                 reconstruct_batch(
                     &[tx(1, 1, operation, None)],
                     None,
+                    None,
                     10,
                     &relay,
                     &faucet,
@@ -1093,15 +1658,34 @@ mod tests {
         }
         let overflow = vec![
             transfer(1, 1, source.clone(), relay.clone(), u64::MAX, 0, None),
-            transfer(2, 2, source, relay.clone(), 1, 0, None),
+            transfer(
+                2,
+                2,
+                relay.clone(),
+                faucet.clone(),
+                u64::MAX - 10,
+                10,
+                Some(b"relay".to_vec()),
+            ),
+            transfer(3, 3, source, relay.clone(), u64::MAX, 0, None),
+            transfer(
+                4,
+                4,
+                relay.clone(),
+                faucet.clone(),
+                u64::MAX - 10,
+                10,
+                Some(b"relay".to_vec()),
+            ),
         ];
         assert_eq!(
-            reconstruct_batch(&overflow, None, 10, &relay, &faucet, b"relay").unwrap_err(),
+            reconstruct_batch(&overflow, None, None, 10, &relay, &faucet, b"relay").unwrap_err(),
             "contribution_overflow"
         );
         let self_transfer = transfer(1, 1, relay.clone(), relay.clone(), 1, 1, None);
         assert_eq!(
-            reconstruct_batch(&[self_transfer], None, 10, &relay, &faucet, b"relay").unwrap_err(),
+            reconstruct_batch(&[self_transfer], None, None, 10, &relay, &faucet, b"relay")
+                .unwrap_err(),
             "unexpected_subaccount_debit"
         );
     }
@@ -1187,6 +1771,178 @@ mod tests {
     }
 
     #[test]
+    fn no_winner_closure_writes_cursor_and_carry_together() {
+        reward_state::reset_for_test();
+        reward_state::mutate(|state| advance_reward_boundary(state, 9, Some(8)));
+        let state = reward_state::get();
+        assert_eq!(state.processed_through_commitment_tx_id, Some(9));
+        assert_eq!(state.carried_credit_start_tx_id, Some(8));
+    }
+
+    #[test]
+    fn staged_pending_transfer_contains_proposed_next_carry_boundary() {
+        let staged = pending(principal(1));
+        assert_eq!(staged.next_carried_credit_start_tx_id, Some(43));
+        stage_pending(staged.clone(), 7, Some(6));
+        assert_eq!(reward_state::get().pending_transfer, Some(staged));
+    }
+
+    #[test]
+    fn ambiguous_balance_reduction_accepts_without_retry_and_advances_both_boundaries() {
+        let mut staged = pending(principal(1));
+        staged.status = PendingRewardTransferStatus::Ambiguous;
+        stage_pending(staged, 7, Some(6));
+        let ledger = MockRewardLedger::new(vec![Ok(Nat::from(999_u64))], vec![]);
+        assert!(matches!(
+            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            PendingDriveResult::Accepted
+        ));
+        let state = reward_state::get();
+        assert_eq!(state.processed_through_commitment_tx_id, Some(44));
+        assert_eq!(state.carried_credit_start_tx_id, Some(43));
+        assert!(state.pending_transfer.is_none());
+        assert!(ledger.args.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ambiguous_exact_retry_success_and_duplicate_resolve() {
+        for outcome in [
+            Ok(Nat::from(77_u64)),
+            Err(TransferError::Duplicate {
+                duplicate_of: Nat::from(77_u64),
+            }),
+        ] {
+            let mut staged = pending(principal(1));
+            staged.status = PendingRewardTransferStatus::Ambiguous;
+            stage_pending(staged, 7, Some(6));
+            let ledger = MockRewardLedger::new(vec![Ok(Nat::from(1_000_u64))], vec![Ok(outcome)]);
+            assert!(matches!(
+                block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+                PendingDriveResult::Accepted
+            ));
+            let state = reward_state::get();
+            assert_eq!(state.processed_through_commitment_tx_id, Some(44));
+            assert_eq!(state.carried_credit_start_tx_id, Some(43));
+            assert!(state.pending_transfer.is_none());
+        }
+    }
+
+    #[test]
+    fn incoming_tokens_can_mask_debit_until_exact_duplicate_resolves() {
+        let mut staged = pending(principal(1));
+        staged.status = PendingRewardTransferStatus::Ambiguous;
+        stage_pending(staged, 7, Some(6));
+        let ledger = MockRewardLedger::new(
+            vec![Ok(Nat::from(1_500_u64))],
+            vec![Ok(Err(TransferError::Duplicate {
+                duplicate_of: Nat::from(77_u64),
+            }))],
+        );
+        assert!(matches!(
+            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            PendingDriveResult::Accepted
+        ));
+    }
+
+    #[test]
+    fn every_nonaccepted_ambiguous_retry_stays_ambiguous_without_advancing() {
+        let outcomes = vec![
+            Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(11_u64),
+            })),
+            Ok(Err(TransferError::InsufficientFunds {
+                balance: Nat::from(0_u64),
+            })),
+            Ok(Err(TransferError::TemporarilyUnavailable)),
+            Err(()),
+        ];
+        for outcome in outcomes {
+            let mut staged = pending(principal(1));
+            staged.status = PendingRewardTransferStatus::Ambiguous;
+            stage_pending(staged.clone(), 7, Some(6));
+            let ledger = MockRewardLedger::new(vec![Ok(Nat::from(1_000_u64))], vec![outcome]);
+            assert!(matches!(
+                block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+                PendingDriveResult::Ambiguous
+            ));
+            let state = reward_state::get();
+            assert_eq!(state.processed_through_commitment_tx_id, Some(7));
+            assert_eq!(state.carried_credit_start_tx_id, Some(6));
+            assert_eq!(state.pending_transfer, Some(staged));
+        }
+    }
+
+    #[test]
+    fn expired_ambiguous_identity_is_not_retried() {
+        let mut staged = pending(principal(1));
+        staged.status = PendingRewardTransferStatus::Ambiguous;
+        stage_pending(staged.clone(), 7, Some(6));
+        let ledger = MockRewardLedger::new(vec![Ok(Nat::from(1_000_u64))], vec![]);
+        assert!(matches!(
+            block_on(drive_pending_with_ledger(u64::MAX, principal(99), &ledger)),
+            PendingDriveResult::Held
+        ));
+        assert!(ledger.args.lock().unwrap().is_empty());
+        assert_eq!(reward_state::get().pending_transfer, Some(staged));
+    }
+
+    #[test]
+    fn ambiguous_retry_reuses_byte_identical_pinned_identity() {
+        let mut staged = pending(principal(1));
+        staged.status = PendingRewardTransferStatus::Ambiguous;
+        let expected = reward_transfer_arg(&staged);
+        stage_pending(staged, 7, Some(6));
+        let ledger = MockRewardLedger::new(
+            vec![Ok(Nat::from(1_000_u64))],
+            vec![Ok(Err(TransferError::Duplicate {
+                duplicate_of: Nat::from(77_u64),
+            }))],
+        );
+        let _ = block_on(drive_pending_with_ledger(56, principal(99), &ledger));
+        assert_eq!(ledger.args.lock().unwrap().as_slice(), &[expected]);
+    }
+
+    #[test]
+    fn first_attempt_rejection_and_ambiguity_leave_old_boundary_unchanged() {
+        let mut rejected = pending(principal(1));
+        rejected.attempt_started = false;
+        stage_pending(rejected, 7, Some(6));
+        let ledger = MockRewardLedger::new(
+            vec![],
+            vec![Ok(Err(TransferError::InsufficientFunds {
+                balance: Nat::from(0_u64),
+            }))],
+        );
+        assert!(matches!(
+            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            PendingDriveResult::Rejected
+        ));
+        let state = reward_state::get();
+        assert_eq!(state.processed_through_commitment_tx_id, Some(7));
+        assert_eq!(state.carried_credit_start_tx_id, Some(6));
+
+        let mut ambiguous = pending(principal(1));
+        ambiguous.attempt_started = false;
+        stage_pending(ambiguous, 7, Some(6));
+        let ledger = MockRewardLedger::new(
+            vec![],
+            vec![
+                Err(()),
+                Ok(Err(TransferError::BadFee {
+                    expected_fee: Nat::from(11_u64),
+                })),
+            ],
+        );
+        assert!(matches!(
+            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            PendingDriveResult::Ambiguous
+        ));
+        let state = reward_state::get();
+        assert_eq!(state.processed_through_commitment_tx_id, Some(7));
+        assert_eq!(state.carried_credit_start_tx_id, Some(6));
+    }
+
+    #[test]
     fn root_epoch_change_resets_cursor_but_same_root_preserves_it() {
         reward_state::reset_for_test();
         let first = principal(1);
@@ -1194,6 +1950,7 @@ mod tests {
         reward_state::mutate(|state| {
             state.epoch_sns_root_canister_id = Some(first);
             state.processed_through_commitment_tx_id = Some(7);
+            state.carried_credit_start_tx_id = Some(6);
             state.last_sweep_attempt_timestamp_seconds = 8;
         });
         apply_reward_epoch(first, 100).unwrap();
@@ -1201,12 +1958,14 @@ mod tests {
             reward_state::get().processed_through_commitment_tx_id,
             Some(7)
         );
+        assert_eq!(reward_state::get().carried_credit_start_tx_id, Some(6));
         assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 8);
 
         apply_reward_epoch(second, 100).unwrap();
         let changed = reward_state::get();
         assert_eq!(changed.epoch_sns_root_canister_id, Some(second));
         assert_eq!(changed.processed_through_commitment_tx_id, None);
+        assert_eq!(changed.carried_credit_start_tx_id, None);
         assert_eq!(changed.last_sweep_attempt_timestamp_seconds, 100);
     }
 
@@ -1218,6 +1977,7 @@ mod tests {
         reward_state::mutate(|state| {
             state.epoch_sns_root_canister_id = Some(old_root);
             state.processed_through_commitment_tx_id = Some(7);
+            state.carried_credit_start_tx_id = Some(6);
             state.pending_transfer = Some(staged.clone());
         });
         assert_eq!(
@@ -1227,6 +1987,7 @@ mod tests {
         let held = reward_state::get();
         assert_eq!(held.epoch_sns_root_canister_id, Some(old_root));
         assert_eq!(held.processed_through_commitment_tx_id, Some(7));
+        assert_eq!(held.carried_credit_start_tx_id, Some(6));
         assert_eq!(held.pending_transfer, Some(staged));
     }
 
@@ -1248,10 +2009,12 @@ mod tests {
         assert!(ambiguous.uncertain_attempt_seen);
         assert_eq!(ambiguous.status, PendingRewardTransferStatus::Ambiguous);
         assert_eq!(reward_state::get().processed_through_commitment_tx_id, None);
+        assert_eq!(reward_state::get().carried_credit_start_tx_id, None);
 
         clear_rejected("test");
         assert!(reward_state::get().pending_transfer.is_none());
         assert_eq!(reward_state::get().processed_through_commitment_tx_id, None);
+        assert_eq!(reward_state::get().carried_credit_start_tx_id, None);
 
         reward_state::mutate(|state| state.pending_transfer = Some(staged));
         accept_pending("test");
@@ -1260,5 +2023,6 @@ mod tests {
             reward_state::get().processed_through_commitment_tx_id,
             Some(44)
         );
+        assert_eq!(reward_state::get().carried_credit_start_tx_id, Some(43));
     }
 }

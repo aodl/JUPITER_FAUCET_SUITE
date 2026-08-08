@@ -217,6 +217,17 @@ Relay ordinary operations remain replacement-style and non-resumable. Avoid upgr
 
 `jupiter_sns_rewards` discovers Governance and Ledger from its one configured SNS Root. The checked-in fresh-install argument configures OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` only as a development placeholder. No Governance, CHAT Ledger, or future jUP Ledger ID is separately configured.
 
+Before enabling the canonical Relay reward path for its first historical sweep, verify that the canonical Relay subaccount-1 history fits within 10,000 transactions, contains no unsupported historical debit, reconciles into completed Faucet commitments, and contains no more than 128 distinct source accounts in one adjudicated batch. Do not bypass or raise these runtime bounds during deployment.
+
+Use this deployment order for the first usable reward epoch:
+
+1. Upgrade or configure `jupiter_sns_rewards`.
+2. Wait for a complete fresh owner snapshot.
+3. Verify `get_relay_reward_context` exposes the expected Root-derived Ledger.
+4. Only then upgrade Relay.
+
+This avoids consuming Relay's weekly attempt before usable owner context exists.
+
 Routine upgrades pass no argument and preserve configuration, active/staging maps, published snapshot, and an incomplete scan cursor. Configuration-changing upgrades pass an optional `UpgradeArgs` record. The nested field semantics are:
 
 | Argument | Result |
@@ -245,7 +256,7 @@ Before switching from OpenChat to jUP:
 5. Verify the context exposes the expected Root-derived jUP Ledger.
 6. Allow Relay to begin the new Root epoch with an empty processed commitment cursor.
 
-A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay does not carry its processed cursor between Roots and never caches the reward Ledger ID. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
+A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay does not carry its processed cursor or carried-credit boundary between Roots and never caches the reward Ledger ID. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
 
 ## Local development builds
 
