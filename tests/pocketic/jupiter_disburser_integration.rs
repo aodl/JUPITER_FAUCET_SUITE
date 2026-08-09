@@ -245,7 +245,7 @@ struct FaucetSummary {
     ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
-    remainder_to_self_e8s: u64,
+    remainder_to_relay_e8s: u64,
 }
 
 // Logic constants (duplicated from crate::logic for E2E assertions)

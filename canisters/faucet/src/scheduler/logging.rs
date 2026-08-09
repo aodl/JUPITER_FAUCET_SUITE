@@ -28,7 +28,7 @@ pub(super) fn log_cycles() {
 
 pub(super) fn format_summary_log(summary: &state::Summary) -> String {
     format!(
-        "SUMMARY:funding_tx_id={} funding_amount_e8s={} pot_start_e8s={} round_end_latest_tx_id={} round_end_time_nanos={} effective_denom_e8s={} last_processed_funding_tx_id={} topped_up_count={} topped_up_sum_e8s={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_self_e8s={} pot_remaining_e8s={}",
+        "SUMMARY:funding_tx_id={} funding_amount_e8s={} pot_start_e8s={} round_end_latest_tx_id={} round_end_time_nanos={} effective_denom_e8s={} last_processed_funding_tx_id={} topped_up_count={} topped_up_sum_e8s={} failed_topups={} ambiguous_topups={} ignored_under_threshold={} ignored_bad_memo={} remainder_to_relay_e8s={} pot_remaining_e8s={}",
         summary.funding_tx_id.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()),
         summary.funding_amount_e8s.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()),
         summary.pot_start_e8s,
@@ -42,7 +42,7 @@ pub(super) fn format_summary_log(summary: &state::Summary) -> String {
         summary.ambiguous_topups,
         summary.ignored_under_threshold,
         summary.ignored_bad_memo,
-        summary.remainder_to_self_e8s,
+        summary.remainder_to_relay_e8s,
         summary.pot_remaining_e8s
     )
 }
@@ -57,7 +57,7 @@ pub(super) fn log_current_config() {
 }
 
 pub(super) fn log_current_state() {
-    let line = state::with_state(|st| state::runtime_state_log_line(st));
+    let line = state::with_state(state::runtime_state_log_line);
     emit_log_line(line);
 }
 

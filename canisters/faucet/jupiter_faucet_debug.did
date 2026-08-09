@@ -104,7 +104,7 @@ type Summary = record {
   ambiguous_topups : nat64;
   ignored_under_threshold : nat64;
   ignored_bad_memo : nat64;
-  remainder_to_self_e8s : nat64;
+  remainder_to_relay_e8s : nat64;
 };
 service : (InitArgs) -> {
   debug_accounts : () -> (DebugAccounts) query;

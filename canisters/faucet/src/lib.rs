@@ -85,6 +85,11 @@ fn mainnet_blackhole_id() -> Principal {
     constants::blackhole_canister_id()
 }
 
+pub(crate) fn canonical_relay_canister_id() -> Principal {
+    Principal::from_text(env!("JUPITER_RELAY_PROD_CANISTER_ID"))
+        .expect("invalid embedded canonical Relay canister principal")
+}
+
 #[cfg(any(test, feature = "debug_api"))]
 fn production_canister_id() -> Principal {
     Principal::from_text(env!("JUPITER_FAUCET_PROD_CANISTER_ID"))
@@ -368,16 +373,24 @@ fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
     decode_post_upgrade_args_from_bytes(&raw).unwrap_or_else(|err| ic_cdk::trap(&err))
 }
 
+fn validate_upgrade_quiescence(st: &State) -> Result<(), String> {
+    if st.active_payout_job.is_some() {
+        Err(crate::state::UPGRADE_QUIESCENCE_ERROR.to_string())
+    } else {
+        Ok(())
+    }
+}
+
 #[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
 fn post_upgrade(args: Option<UpgradeArgs>) {
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::init_stable_storage();
     let mut st = crate::state::restore_state_from_stable()
         .expect("stable state missing during faucet post_upgrade");
+    validate_upgrade_quiescence(&st).unwrap_or_else(|err| ic_cdk::trap(&err));
     let actions = apply_upgrade_args_to_state(&mut st, args, now_secs);
     crate::state::set_state(st);
     crate::scheduler::install_timers();
-    crate::scheduler::schedule_immediate_resume_if_needed();
     if actions.schedule_immediate_controller_reconcile {
         crate::scheduler::schedule_immediate_rescue_reconcile();
     }
@@ -856,6 +869,24 @@ mod tests {
         .unwrap();
         let err = expect_decode_err(&raw);
         assert!(err.contains("received install-only fields in faucet UpgradeArgs"));
+    }
+
+    #[test]
+    fn upgrade_quiescence_accepts_idle_state_and_rejects_active_job() {
+        let mut st = State::new(sample_config(), 1_000);
+        assert_eq!(validate_upgrade_quiescence(&st), Ok(()));
+
+        st.active_payout_job = Some(crate::state::ActivePayoutJob::new(
+            1,
+            10_000,
+            100_000_000,
+            200_000_000,
+            1_000_000_000,
+        ));
+        assert_eq!(
+            validate_upgrade_quiescence(&st),
+            Err(crate::state::UPGRADE_QUIESCENCE_ERROR.to_string())
+        );
     }
 
     #[test]

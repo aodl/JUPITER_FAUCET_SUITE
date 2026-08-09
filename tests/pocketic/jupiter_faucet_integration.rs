@@ -21,6 +21,12 @@ mod support;
 
 const ICP_LEDGER_FEE_E8S: u64 = support::ledger::ICP_LEDGER_FEE_E8S;
 
+fn canonical_relay_canister_id() -> Result<Principal> {
+    Ok(Principal::from_text(env!(
+        "JUPITER_RELAY_PROD_CANISTER_ID"
+    ))?)
+}
+
 fn require_ignored_flag() -> Result<()> {
     // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
     // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
@@ -177,7 +183,7 @@ struct FaucetSummary {
     ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
-    remainder_to_self_e8s: u64,
+    remainder_to_relay_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -693,16 +699,6 @@ impl FaucetEnv {
         )
     }
 
-    fn set_real_trap_after_successful_transfers(&self, n: Option<u32>) -> Result<()> {
-        update_one(
-            &self.pic,
-            self.faucet,
-            Principal::anonymous(),
-            "debug_set_real_trap_after_successful_transfers",
-            n,
-        )
-    }
-
     fn rescue_tick(&self) -> Result<()> {
         update_noargs::<()>(
             &self.pic,
@@ -819,17 +815,6 @@ impl FaucetEnv {
             "debug_transfers",
             (),
         )
-    }
-
-    fn ledger_fee_e8s(&self) -> Result<u64> {
-        let fee: Nat = query_one(
-            &self.pic,
-            self.ledger,
-            Principal::anonymous(),
-            "icrc1_fee",
-            (),
-        )?;
-        Ok(nat_to_u64(&fee))
     }
 
     fn debug_canister_info_probe(
@@ -1156,7 +1141,7 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
     let summary = env.summary()?;
     if summary.topped_up_count != 1
         || summary.topped_up_sum_e8s != 99_990_000
-        || summary.remainder_to_self_e8s != 0
+        || summary.remainder_to_relay_e8s != 0
     {
         bail!("unexpected raw ICP summary: {summary:?}");
     }
@@ -1216,7 +1201,7 @@ fn faucet_numeric_neuron_id_memo_routes_to_resolved_staking_account_without_cmc_
     let summary = env.summary()?;
     if summary.topped_up_count != 1
         || summary.topped_up_sum_e8s != 99_990_000
-        || summary.remainder_to_self_e8s != 0
+        || summary.remainder_to_relay_e8s != 0
     {
         bail!("unexpected neuron stake summary: {summary:?}");
     }
@@ -1556,7 +1541,7 @@ fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
     if summary.topped_up_count != 1
         || summary.topped_up_sum_e8s != expected_net_top_up
         || summary.failed_topups != 0
-        || summary.remainder_to_self_e8s != 0
+        || summary.remainder_to_relay_e8s != 0
     {
         bail!("unexpected real NNS neuron top-up summary: {summary:?}");
     }
@@ -1608,101 +1593,51 @@ fn faucet_raw_icp_memo_directive_allows_empty_transfer_memo_after_dot() -> Resul
     let summary = env.summary()?;
     if summary.topped_up_count != 1
         || summary.topped_up_sum_e8s != 99_990_000
-        || summary.remainder_to_self_e8s != 0
+        || summary.remainder_to_relay_e8s != 0
     {
         bail!("unexpected empty-memo raw ICP summary: {summary:?}");
     }
 
     Ok(())
 }
-
 #[test]
 #[ignore]
-fn faucet_raw_icp_upgrade_recovery_preserves_transfer_memo_and_skips_cmc_notify() -> Result<()> {
+fn faucet_upgrade_rejects_current_state_with_active_payout_job() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
         init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
     })?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-    let compact_target = target.to_text().replace('-', "");
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
-    env.append_transfer(
-        100_000_000,
-        Some(format!("{compact_target}.vault42").into_bytes()),
-    )?;
-
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.set_trap_after_successful_transfers(Some(1))?;
     env.main_tick()?;
 
-    let st_mid = env.state()?;
-    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
-        bail!("expected interrupted raw ICP payout job without final summary before upgrade");
-    }
-    let transfers_mid = env.ledger_transfers()?;
-    if transfers_mid.len() != 1 {
-        bail!(
-            "expected exactly one raw ICP ledger transfer to land before upgrade, got {}",
-            transfers_mid.len()
-        );
-    }
-    if transfers_mid[0].to
-        != (Account {
-            owner: target,
-            subaccount: None,
-        })
-    {
-        bail!(
-            "expected raw ICP transfer to target default account before upgrade, got {:?}",
-            transfers_mid[0].to
-        );
-    }
-    if transfers_mid[0].memo.as_deref() != Some(b"vault42".as_slice()) {
-        bail!(
-            "expected raw ICP transfer memo vault42 before upgrade, got {:?}",
-            transfers_mid[0].memo
-        );
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected interrupted raw ICP payout not to call notify_top_up before upgrade");
+    let st_before = env.state()?;
+    if !st_before.active_payout_job_present || st_before.last_summary_present {
+        bail!("expected an active payout job before testing the upgrade guard");
     }
 
-    env.upgrade()?;
-
-    let st_after_upgrade = env.state()?;
-    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
-        bail!("expected interrupted raw ICP payout job to remain persisted immediately after upgrade before auto-resume fires");
+    let err = env
+        .upgrade()
+        .expect_err("upgrade with an active payout job must be rejected");
+    let diagnostic = format!("{err:#}");
+    if !diagnostic.contains(
+        "faucet upgrade requires no active payout job; allow the payout to finish before upgrading",
+    ) {
+        bail!("unexpected active-job upgrade rejection: {diagnostic}");
     }
 
-    env.advance_time_and_tick(1, 20);
-
-    let transfers_after = env.ledger_transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected post-upgrade raw ICP recovery to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected raw ICP recovery not to call notify_top_up after upgrade");
-    }
-    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
-    let summary = env.summary()?;
-    if summary.topped_up_count != 1
-        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
-        || summary.failed_topups != 0
-        || summary.ambiguous_topups != 0
-    {
-        bail!("unexpected summary after raw ICP upgrade recovery: {summary:?}");
-    }
-
-    let st_done = env.state()?;
-    if st_done.active_payout_job_present || !st_done.last_summary_present {
-        bail!("expected post-upgrade raw ICP recovery to finalize the interrupted payout job");
+    let st_after = env.state()?;
+    if !st_after.active_payout_job_present || st_after.last_summary_present {
+        bail!("rejected upgrade must leave the current active payout state unchanged");
     }
 
     Ok(())
 }
-
 #[test]
 #[ignore]
 fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks() -> Result<()> {
@@ -1740,9 +1675,9 @@ fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> 
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
-    env.credit_payout(90_000_000)?;
-    env.credit_staking(90_000_000)?;
-    env.append_transfer(90_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.set_cmc_script(vec![
         DebugNotifyBehavior::Processing,
         DebugNotifyBehavior::Ok,
@@ -1930,369 +1865,6 @@ fn faucet_characterizes_short_valid_principal_text_without_hardcoded_suffix() ->
         .collect();
     if matching.len() != 1 {
         bail!("expected exactly one CMC notification for parser-accepted short principal text target {target}, got {notifies:?}");
-    }
-
-    Ok(())
-}
-
-#[test]
-#[ignore]
-fn faucet_upgrade_with_partial_progress_resumes_cursor_and_preserves_completed_work() -> Result<()>
-{
-    require_ignored_flag()?;
-    let env = FaucetEnv::new()?;
-    let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-    let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
-
-    env.credit_staking(800_000_000)?;
-    env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
-    env.append_repeated_transfer(499, 1_000_000, Some(first.to_text().into_bytes()))?;
-    env.append_transfer(101_000_000, Some(second.to_text().into_bytes()))?;
-    append_funding_tranche(&env, &env.funding_source_account, 120_000_000)?;
-    env.set_index_get_script(vec![
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
-        DebugIndexGetBehavior::Ok,
-    ])?;
-
-    env.main_tick()?;
-
-    let st = env.state()?;
-    if !st.active_payout_job_present || st.last_summary_present {
-        bail!("expected partial progress with an active job cursor and no final summary after mid-scan index failure");
-    }
-    let notifications_before = env.notifications()?;
-    if notifications_before
-        .iter()
-        .filter(|n| n.canister_id == first)
-        .count()
-        != 1
-    {
-        bail!("expected first beneficiary to be fully processed before upgrade");
-    }
-    if notifications_before
-        .iter()
-        .filter(|n| n.canister_id == second)
-        .count()
-        != 0
-    {
-        bail!("expected second beneficiary not to be processed before upgrade");
-    }
-
-    env.upgrade()?;
-    env.main_tick()?;
-
-    let notifications_after = env.notifications()?;
-    if notifications_after
-        .iter()
-        .filter(|n| n.canister_id == first)
-        .count()
-        != 1
-    {
-        bail!("expected first beneficiary not to be replayed within the same active job after upgrade");
-    }
-    if notifications_after
-        .iter()
-        .filter(|n| n.canister_id == second)
-        .count()
-        != 1
-    {
-        bail!("expected second beneficiary to complete exactly once after upgrade resume");
-    }
-    let summary = env.summary()?;
-    if summary.topped_up_count != 2 {
-        bail!(
-            "expected two completed beneficiary top-ups after resume, got {}",
-            summary.topped_up_count
-        );
-    }
-
-    Ok(())
-}
-
-#[test]
-#[ignore]
-fn faucet_upgrade_with_partial_progress_resumes_automatically_without_waiting_for_main_interval(
-) -> Result<()> {
-    require_ignored_flag()?;
-    let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
-    })?;
-    let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-    let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
-
-    env.credit_staking(800_000_000)?;
-    env.append_transfer(200_000_000, Some(first.to_text().into_bytes()))?;
-    env.append_repeated_transfer(499, 1_000_000, Some(first.to_text().into_bytes()))?;
-    env.append_transfer(101_000_000, Some(second.to_text().into_bytes()))?;
-    append_funding_tranche(&env, &env.funding_source_account, 120_000_000)?;
-    env.set_index_get_script(vec![
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Ok,
-        DebugIndexGetBehavior::Err("mid-scan failure".to_string()),
-        DebugIndexGetBehavior::Ok,
-    ])?;
-
-    env.main_tick()?;
-
-    let st_before = env.state()?;
-    if !st_before.active_payout_job_present || st_before.last_summary_present {
-        bail!("expected partial progress with an active job cursor and no final summary before upgrade");
-    }
-    env.upgrade()?;
-
-    let st_after_upgrade = env.state()?;
-    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
-        bail!("expected active payout job to remain persisted immediately after upgrade before the one-shot resume tick fires");
-    }
-
-    env.advance_time_and_tick(1, 20);
-
-    let notifications_after = env.notifications()?;
-    if notifications_after
-        .iter()
-        .filter(|n| n.canister_id == first)
-        .count()
-        != 1
-    {
-        bail!("expected first beneficiary not to be replayed by the automatic post-upgrade resume tick");
-    }
-    if notifications_after
-        .iter()
-        .filter(|n| n.canister_id == second)
-        .count()
-        != 1
-    {
-        bail!("expected second beneficiary to complete exactly once via the automatic post-upgrade resume tick");
-    }
-    let summary = env.summary()?;
-    if summary.topped_up_count != 2 {
-        bail!("expected automatic post-upgrade resume to finish the active job without waiting for the main interval, got {} completed top-ups", summary.topped_up_count);
-    }
-
-    Ok(())
-}
-
-#[test]
-#[ignore]
-fn faucet_upgrade_during_transfer_notify_boundary_recovers_without_duplicate_transfer() -> Result<()>
-{
-    require_ignored_flag()?;
-    let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
-        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
-    })?;
-    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-
-    env.credit_payout(100_000_000)?;
-    env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
-
-    env.set_trap_after_successful_transfers(Some(1))?;
-    env.main_tick()?;
-
-    let st_mid = env.state()?;
-    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
-        bail!("expected injected interruption to leave an active payout job without final summary before upgrade");
-    }
-    let transfers_mid = env.ledger_transfers()?;
-    if transfers_mid.len() != 1 {
-        bail!(
-            "expected exactly one beneficiary ledger transfer to land before upgrade, got {}",
-            transfers_mid.len()
-        );
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected interruption before notify_top_up to leave no CMC notifications before upgrade");
-    }
-
-    env.upgrade()?;
-
-    let st_after_upgrade = env.state()?;
-    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
-        bail!("expected interrupted payout job to remain persisted immediately after upgrade before auto-resume fires");
-    }
-
-    env.advance_time_and_tick(1, 20);
-
-    let transfers_after = env.ledger_transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected post-upgrade recovery to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
-    }
-    let notes = env.notifications()?;
-    if notes.len() != 1 || notes[0].canister_id != target {
-        bail!("expected exactly one beneficiary notification after post-upgrade recovery, got {notes:?}");
-    }
-
-    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
-    let summary = env.summary()?;
-    if summary.topped_up_count != 1
-        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
-        || summary.failed_topups != 0
-    {
-        bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
-    }
-
-    let st_done = env.state()?;
-    if st_done.active_payout_job_present || !st_done.last_summary_present {
-        bail!("expected post-upgrade recovery to finalize the interrupted payout job");
-    }
-
-    Ok(())
-}
-
-#[test]
-#[ignore]
-fn faucet_upgrade_clears_stale_lock_and_auto_resumes_interrupted_payout_job() -> Result<()> {
-    require_ignored_flag()?;
-    let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
-        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
-    })?;
-    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-
-    env.credit_payout(100_000_000)?;
-    env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
-
-    env.set_trap_after_successful_transfers(Some(1))?;
-    env.main_tick()?;
-
-    let st_mid = env.state()?;
-    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
-        bail!("expected injected interruption to leave an active payout job without final summary before upgrade");
-    }
-    let transfers_mid = env.ledger_transfers()?;
-    if transfers_mid.len() != 1 {
-        bail!(
-            "expected exactly one beneficiary ledger transfer to land before upgrade, got {}",
-            transfers_mid.len()
-        );
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected interruption before notify_top_up to leave no CMC notifications before upgrade");
-    }
-
-    let now_secs = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
-    env.set_main_lock_expires_at_ts(Some(now_secs + 7 * 24 * 60 * 60))?;
-
-    env.upgrade()?;
-
-    let st_after_upgrade = env.state()?;
-    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
-        bail!("expected interrupted payout job to remain persisted immediately after upgrade before auto-resume fires");
-    }
-
-    env.advance_time_and_tick(1, 20);
-
-    let transfers_after = env.ledger_transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected post-upgrade recovery to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
-    }
-    let notes = env.notifications()?;
-    if notes.len() != 1 || notes[0].canister_id != target {
-        bail!("expected exactly one beneficiary notification after post-upgrade recovery, got {notes:?}");
-    }
-
-    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
-    let summary = env.summary()?;
-    if summary.topped_up_count != 1
-        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
-        || summary.failed_topups != 0
-    {
-        bail!("unexpected summary after post-upgrade recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
-    }
-
-    let st_done = env.state()?;
-    if st_done.active_payout_job_present || !st_done.last_summary_present {
-        bail!("expected post-upgrade recovery to finalize the interrupted payout job");
-    }
-
-    Ok(())
-}
-
-#[test]
-#[ignore]
-fn faucet_real_trap_during_transfer_notify_boundary_recovers_without_duplicate_transfer(
-) -> Result<()> {
-    require_ignored_flag()?;
-    let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
-        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
-    })?;
-    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-
-    env.credit_payout(100_000_000)?;
-    env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
-
-    env.set_real_trap_after_successful_transfers(Some(1))?;
-    env.append_pending_funding_tranches()?;
-    let trapped = update_noargs::<()>(
-        &env.pic,
-        env.faucet,
-        Principal::anonymous(),
-        "debug_main_tick",
-    );
-    if trapped.is_ok() {
-        bail!("expected debug_main_tick to reject after injected real trap");
-    }
-    tick_n(&env.pic, 10);
-
-    let st_mid = env.state()?;
-    if !st_mid.active_payout_job_present || st_mid.last_summary_present {
-        bail!(
-            "expected real trap to leave an active payout job without final summary before upgrade"
-        );
-    }
-    let transfers_mid = env.ledger_transfers()?;
-    if transfers_mid.len() != 1 {
-        bail!(
-            "expected exactly one beneficiary ledger transfer to land before upgrade, got {}",
-            transfers_mid.len()
-        );
-    }
-    if !env.notifications()?.is_empty() {
-        bail!(
-            "expected real trap before notify_top_up to leave no CMC notifications before upgrade"
-        );
-    }
-
-    env.upgrade()?;
-
-    let st_after_upgrade = env.state()?;
-    if !st_after_upgrade.active_payout_job_present || st_after_upgrade.last_summary_present {
-        bail!("expected trapped payout job to remain persisted immediately after upgrade before auto-resume fires");
-    }
-
-    env.advance_time_and_tick(1, 20);
-
-    let transfers_after = env.ledger_transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected post-upgrade recovery after real trap to reuse the original ledger transfer without duplication, got {} transfers", transfers_after.len());
-    }
-    let notes = env.notifications()?;
-    if notes.len() != 1 || notes[0].canister_id != target {
-        bail!("expected exactly one beneficiary notification after post-upgrade recovery from real trap, got {notes:?}");
-    }
-
-    let expected_topped_up_sum_e8s = 100_000_000u64.saturating_sub(env.ledger_fee_e8s()?);
-    let summary = env.summary()?;
-    if summary.topped_up_count != 1
-        || summary.topped_up_sum_e8s != expected_topped_up_sum_e8s
-        || summary.failed_topups != 0
-    {
-        bail!("unexpected summary after post-upgrade real-trap recovery: topped_up_count={} topped_up_sum_e8s={} failed_topups={}", summary.topped_up_count, summary.topped_up_sum_e8s, summary.failed_topups);
-    }
-
-    let st_done = env.state()?;
-    if st_done.active_payout_job_present || !st_done.last_summary_present {
-        bail!("expected post-upgrade real-trap recovery to finalize the interrupted payout job");
     }
 
     Ok(())
@@ -2533,13 +2105,13 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
     let summary = env.summary()?;
     if summary.topped_up_count != 1
         || summary.failed_topups != 0
-        || summary.remainder_to_self_e8s != 0
+        || summary.remainder_to_relay_e8s != 0
     {
         bail!(
-            "expected duplicate-on-inline-retry path to count as success with no remainder in the full-pot case, got topped_up_count={} failed_topups={} remainder_to_self_e8s={}",
+            "expected duplicate-on-inline-retry path to count as success with no Relay remainder in the full-pot case, got topped_up_count={} failed_topups={} remainder_to_relay_e8s={}",
             summary.topped_up_count,
             summary.failed_topups,
-            summary.remainder_to_self_e8s
+            summary.remainder_to_relay_e8s
         );
     }
 
@@ -2557,7 +2129,7 @@ fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Resul
         vec![
             DebugNotifyBehavior::Refunded {
                 reason: "refunded".to_string(),
-                block_index: Some(7),
+                block_index: None,
             },
             DebugNotifyBehavior::Ok,
         ],
@@ -2624,11 +2196,11 @@ fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transf
         vec![
             DebugNotifyBehavior::Refunded {
                 reason: "refunded".to_string(),
-                block_index: Some(7),
+                block_index: None,
             },
             DebugNotifyBehavior::Refunded {
                 reason: "still refunded".to_string(),
-                block_index: Some(7),
+                block_index: None,
             },
         ],
         vec![
@@ -2684,11 +2256,119 @@ fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transf
 
 #[test]
 #[ignore]
-fn faucet_retry_exhaustion_skips_commitment_and_finishes_with_remainder_accounting() -> Result<()> {
+fn faucet_proven_cmc_refund_uses_reduced_raw_fallback_without_second_notify() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-    let faucet_id = env.faucet;
+
+    env.credit_payout(100_000_000)?;
+    // The mock CMC cannot execute the real refund Ledger transfer, so explicitly provide the
+    // exact G - 4F refund while leaving the funding tranche itself at exactly 100_000_000 e8s.
+    env.credit_payout_balance_only(99_960_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.set_cmc_script(vec![DebugNotifyBehavior::Refunded {
+        reason: "proven refund".to_string(),
+        block_index: Some(700),
+    }])?;
+
+    env.main_tick()?;
+
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != 2 {
+        bail!("expected original CMC transfer plus one raw fallback, got {transfers:?}");
+    }
+    if transfers[1].to
+        != (Account {
+            owner: target,
+            subaccount: None,
+        })
+        || transfers[1].memo != Some(Vec::new())
+    {
+        bail!(
+            "unexpected proven-refund fallback route: {:?}",
+            transfers[1]
+        );
+    }
+    if transfers[0].created_at_time == transfers[1].created_at_time {
+        bail!("proven-refund fallback must use a fresh created_at_time");
+    }
+    let fallback_amount = u64::try_from(transfers[1].amount.0.clone())?;
+    if fallback_amount != 99_950_000 {
+        bail!("expected G - 5F raw fallback amount, got {fallback_amount}");
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("proven refund must not issue a redundant second CMC notification");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 1
+        || summary.topped_up_sum_e8s != 99_950_000
+        || summary.failed_topups != 0
+        || summary.ambiguous_topups != 0
+        || summary.remainder_to_relay_e8s != 0
+        || summary.pot_remaining_e8s != 0
+    {
+        bail!("unexpected proven-refund summary: {summary:?}");
+    }
+    let payout_balance = icrc1_balance(&env.pic, env.ledger, &env.accounts.payout)?;
+    if payout_balance != 0 {
+        bail!("expected exact refund and fallback accounting to leave zero payout balance, got {payout_balance}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_quiescent_upgrade_then_empty_history_sends_remainder_to_canonical_relay() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    if env.state()?.active_payout_job_present {
+        bail!("new Faucet must be quiescent before upgrade");
+    }
+    env.upgrade()?;
+    if env.state()?.active_payout_job_present {
+        bail!("quiescent Faucet must remain quiescent after upgrade");
+    }
+
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.main_tick()?;
+
+    let summary = env.summary()?;
+    if summary.topped_up_count != 0
+        || summary.failed_topups != 0
+        || summary.ambiguous_topups != 0
+        || summary.remainder_to_relay_e8s != 99_990_000
+    {
+        bail!("unexpected Relay-remainder summary: {summary:?}");
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("Relay remainder must not call the CMC");
+    }
+    let transfers = env.ledger_transfers()?;
+    let expected_account = Account {
+        owner: canonical_relay_canister_id()?,
+        subaccount: None,
+    };
+    if transfers.len() != 1
+        || transfers[0].to != expected_account
+        || transfers[0].memo != Some(Vec::new())
+    {
+        bail!(
+            "expected one empty-memo transfer to canonical Relay default account, got {transfers:?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_definite_retryable_rejections_use_one_raw_fallback() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
@@ -2704,28 +2384,31 @@ fn faucet_retry_exhaustion_skips_commitment_and_finishes_with_remainder_accounti
         bail!("expected exhausted inline retry path to complete the job within one tick");
     }
     let summary = env.summary()?;
-    if summary.failed_topups != 0 || summary.ambiguous_topups != 1 || summary.topped_up_count != 0 {
+    if summary.failed_topups != 0 || summary.ambiguous_topups != 0 || summary.topped_up_count != 1 {
         bail!(
-            "expected exhausted inline retry path to record one ambiguous top-up and no beneficiary success, got failed_topups={} ambiguous_topups={} topped_up_count={}",
+            "expected definite retryable rejections to complete one raw fallback, got failed_topups={} ambiguous_topups={} topped_up_count={}",
             summary.failed_topups,
             summary.ambiguous_topups,
             summary.topped_up_count
         );
     }
-    if summary.remainder_to_self_e8s != 99_990_000 || summary.pot_remaining_e8s != 0 {
+    if summary.remainder_to_relay_e8s != 0 || summary.pot_remaining_e8s != 0 {
         bail!(
-            "expected exhausted inline retry path to finish via full remainder-to-self accounting, got remainder_to_self_e8s={} pot_remaining_e8s={}",
-            summary.remainder_to_self_e8s,
+            "expected successful raw fallback to leave no remainder, got remainder_to_relay_e8s={} pot_remaining_e8s={}",
+            summary.remainder_to_relay_e8s,
             summary.pot_remaining_e8s
         );
     }
     let transfers = env.ledger_transfers()?;
     if transfers.len() != 1 {
-        bail!("expected only the fallback remainder transfer after inline retry exhaustion, got {} transfers", transfers.len());
+        bail!(
+            "expected exactly one accepted raw fallback transfer, got {} transfers",
+            transfers.len()
+        );
     }
     let notes = env.notifications()?;
-    if notes.len() != 1 || notes[0].canister_id != faucet_id {
-        bail!("expected inline retry exhaustion to end with exactly one self notification, got {notes:?}");
+    if !notes.is_empty() {
+        bail!("expected raw fallback not to notify CMC, got {notes:?}");
     }
 
     Ok(())
@@ -2739,7 +2422,6 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
     let env = FaucetEnv::new()?;
     let failed_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let success_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
-    let faucet_id = env.faucet;
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(200_000_000)?;
@@ -2756,18 +2438,18 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
         bail!("expected inline retry exhaustion on the first commitment not to leave work behind");
     }
     let summary = env.summary()?;
-    if summary.topped_up_count != 1 || summary.failed_topups != 0 || summary.ambiguous_topups != 1 {
+    if summary.topped_up_count != 2 || summary.failed_topups != 0 || summary.ambiguous_topups != 0 {
         bail!(
-            "expected one later success and one exhausted inline retry ambiguity, got topped_up_count={} failed_topups={} ambiguous_topups={}",
+            "expected one raw fallback and one later cycles success, got topped_up_count={} failed_topups={} ambiguous_topups={}",
             summary.topped_up_count,
             summary.failed_topups,
             summary.ambiguous_topups
         );
     }
-    if summary.remainder_to_self_e8s != 49_990_000 {
+    if summary.remainder_to_relay_e8s != 0 {
         bail!(
-            "expected remaining half of the pot to be returned to self, got {}",
-            summary.remainder_to_self_e8s
+            "expected both half-pot payouts to leave no remainder, got relay={}",
+            summary.remainder_to_relay_e8s,
         );
     }
     let notes = env.notifications()?;
@@ -2779,17 +2461,15 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
         .iter()
         .filter(|n| n.canister_id == failed_target)
         .count();
-    let self_count = notes.iter().filter(|n| n.canister_id == faucet_id).count();
-    if success_count != 1 || failed_count != 0 || self_count != 1 {
+    if success_count != 1 || failed_count != 0 {
         bail!(
-            "expected only the later commitment and the self remainder to notify successfully, got success_count={} failed_count={} self_count={}",
+            "expected only the later cycles commitment to notify successfully, got success_count={} failed_count={}",
             success_count,
             failed_count,
-            self_count
         );
     }
     if env.ledger_transfers()?.len() != 2 {
-        bail!("expected one beneficiary transfer plus one self remainder transfer after inline retry exhaustion");
+        bail!("expected one raw fallback transfer plus one later CMC-deposit transfer");
     }
 
     Ok(())

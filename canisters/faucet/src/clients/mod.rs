@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
+use jupiter_ic_clients::cmc::NotifyTopUpError;
 
 use crate::clients::index::GetAccountIdentifierTransactionsResponse;
 
@@ -17,10 +18,6 @@ pub(crate) enum ClientError {
     Call(String),
     #[error("conversion error: {0}")]
     Convert(String),
-    #[error("retryable CMC notify error: {0}")]
-    RetryableNotify(String),
-    #[error("terminal CMC notify error: {0}")]
-    TerminalNotify(String),
 }
 
 impl From<jupiter_ic_clients::ClientError> for ClientError {
@@ -58,7 +55,7 @@ pub(crate) trait CmcClient: Send + Sync {
         &self,
         canister_id: Principal,
         block_index: u64,
-    ) -> Result<(), ClientError>;
+    ) -> Result<u128, NotifyTopUpError>;
 }
 
 #[async_trait]

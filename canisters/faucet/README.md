@@ -189,7 +189,9 @@ The detailed reward-environment caveats and the rationale for the PocketIC whale
 
 ### 5) Any unallocated remainder stays useful
 
-At the end of a completed payout job, any remainder that was not successfully allocated to beneficiaries can be sent as a **remainder-to-self** CMC top-up, as long as the remaining gross amount is greater than the ledger fee. Internally the faucet tracks `gross_outflow_e8s` as **ledger-accepted outflow**, not as a promise that every corresponding top-up ultimately produced useful beneficiary cycles. That distinction matters at failure boundaries: summary accounting treats value as committed once the ledger has accepted the transfer identity, while beneficiary success / failure / ambiguity is tracked separately.
+At the end of a payout job, any spendable remainder is sent as raw ICP to the build-time canonical Jupiter Relay's default ICP account. The transfer uses an empty memo, does not call the CMC, and explicitly does **not** use Relay subaccount 1.
+
+Internally the faucet tracks `gross_outflow_e8s` as **Ledger-accepted outflow plus narrowly scoped conservative reservations** for ambiguous or expired raw-fallback and Relay-cleanup identities. Only allocations proven not to have been committed by the Ledger are automatically part of the remainder. A definitely rejected raw fallback therefore leaves its gross credit eligible for Relay cleanup, while an ambiguous or expired raw fallback is reserved and is not swept. Likewise, an ambiguous or expired `RemainderToRelay` Ledger identity is not replaced with a fresh cleanup identity. This can leave actual ICP in the payout account when an ambiguous transfer did not land, but it prevents later funding-tranche liquidity from funding a duplicate allocation. The longstanding ambiguity accounting for original beneficiary, explicit raw-ICP, and neuron transfers is intentionally unchanged.
 
 ### 6) A computed share at or below the fee is not a failure
 
@@ -233,9 +235,17 @@ The subaccount layout is:
 That matches the standard top-up pattern used before calling `notify_top_up`.
 For ICRC-1 transfers, the faucet encodes the CMC top-up memo as an 8-byte **little-endian** blob so it matches how the CMC interprets ICRC memo bytes.
 
+If the original CMC-deposit Ledger transfer is conclusively rejected before acceptance, the faucet makes one bounded raw-ICP fallback to the original target canister's default account. This fallback uses a fresh `created_at_time`, an empty memo, no subaccount, and no CMC notification. Ambiguous Ledger outcomes, expired transfer identities, and accepted transfers whose block index cannot be represented internally do not trigger the fallback.
+
+After an accepted beneficiary transfer, `notify_top_up` normally preserves the existing inline retry and failed-versus-ambiguous classification. The exception is `Refunded { block_index = opt ... }`: a present refund block proves that the expected reduced refund returned to the Faucet payout account, so the Faucet does not issue a redundant second notification and immediately attempts the same one-time raw fallback. A missing refund block does not release value and does not trigger fallback.
+
+For original gross share `G` and Ledger fee `F`, the original CMC transfer sends `G - F`. The expected current CMC refund deducts one refund-transfer fee plus the CMC top-up refund fee of two additional Ledger fees, so the released credit is `G - 4F`; the raw fallback then sends `G - 5F` after its own Ledger fee. Every multiplication and subtraction in this transition is checked. An arithmetic or accounting mismatch latches `AccountingInvariantBroken` and leaves the unproven value reserved.
+
+If that raw fallback is definitely rejected, its proven no-debit gross remains available for one Relay remainder cleanup. If its duplicate-safe Ledger attempts remain ambiguous, or its persisted identity expires, the fallback gross is conservatively added back to `gross_outflow_e8s` before the pending transfer is cleared, so it cannot be swept to Relay under a new identity.
+
 For `canister_id.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
 
-The production suite uses this raw ICP route to fund `jupiter-relay` via the memo `u2qkp-aqaaa-aaaar-qb7ea-cai.`.
+The production suite also supports explicit raw-ICP directives to Relay independently of final remainder cleanup.
 
 For neuron ID directives, the faucet reads the public NNS neuron, transfers ICP to NNS Governance with the neuron's staking subaccount, and then best-effort refreshes the neuron. It does not call CMC `notify_top_up`. A refresh failure does not roll back an accepted ledger transfer, so operators may need to manually refresh the declared neuron if the NNS refresh path is temporarily unavailable during payout processing.
 
@@ -253,12 +263,11 @@ Default timers are:
 - `rescue_interval_seconds = 1 day`
 - index page size = `500`
 
-Each interval timer is clamped to at least 60 seconds by the runtime code. On `post_upgrade`, if an `ActivePayoutJob` already exists, the faucet also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the regular cadence. There is no separate deferred retry queue or backoff worker: retries are attempted inline during the same payout pass. If an ordinary transient failure ends a payout tick early, the active job remains persisted. It can then resume either on the next scheduled main tick or, if the daily rescue tick fires first, as the final action of that rescue tick via a forced main resume. The historical replay itself is chunked by index pages and by async transfer/notify boundaries, so no payout job relies on one monolithic message execution.
-The PocketIC integration suite includes an end-to-end upgrade test that interrupts a live payout after the ledger transfer lands but before the faucet persists acceptance/notify progress, then upgrades and verifies duplicate-proof recovery to a single final notification.
+Each interval timer is clamped to at least 60 seconds by the runtime code. There is no separate deferred retry queue or backoff worker: retries are attempted inline during the same payout pass. If an ordinary transient failure ends a payout tick early, the active job remains persisted and can resume on the next scheduled main tick or, if the daily rescue tick fires first, as the final action of that rescue tick via a forced main resume. The historical replay itself is chunked by index pages and by async transfer/notify boundaries, so no payout job relies on one monolithic message execution.
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. If a payout job is being recovered, forced resume ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, funding source account, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, active payout funding tranche, and any forced rescue reason.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, and any forced rescue reason.
 
 ### Main tick sequence
 
@@ -276,9 +285,10 @@ On each successful main tick, the canister:
 7. scans the staking account through the ICP index canister, page by page
 8. evaluates each eligible incoming transfer independently
 9. for each eligible beneficiary commitment, performs ledger transfer then `notify_top_up`
-10. if a transfer fails before acceptance or a post-acceptance notify fails, retries that step immediately once in-line
-11. when scanning is complete, optionally sends the remainder-to-self top-up
-12. finalizes the job into a persisted summary and applies health observations
+10. if a beneficiary CMC-deposit transfer is conclusively rejected, completes one raw fallback before scanning another beneficiary; ambiguous transfer outcomes do not fallback
+11. if CMC proves a refund with a refund block, releases the checked reduced credit and completes the same one raw fallback without a redundant notification
+12. when scanning is complete, optionally sends the raw-ICP remainder to the canonical Relay default account
+13. finalizes the job into a persisted summary and applies health observations
 
 ## Retry and failure behavior
 
@@ -292,18 +302,18 @@ An active payout job persists:
 - the scan cursor (`next_start`)
 - aggregate counters used for the eventual summary
 - CMC attempt / success counters used by rescue heuristics
-- the currently in-flight top-up phase (`AwaitingTransfer` vs `TransferAccepted`) together with the original `created_at_time`, so an upgrade can resume safely at the ledger or notify boundary
+- the currently in-flight top-up phase (`AwaitingTransfer` vs `TransferAccepted`) together with the original `created_at_time`, so ordinary scheduler retries preserve the Ledger identity
 
-The runtime still does **not** buffer an unbounded deferred retry queue; it only persists the single in-flight transfer/notify phase for the active job. That keeps state bounded, and the faucet's recovery model remains cadence-based after an ordinary failed tick: interrupted work is preserved rather than discarded, then retried on the next available scheduler opportunity. In practice that means `post_upgrade` triggers an immediate forced resume, and otherwise the unfinished job is resumed either by the next main tick or by the daily rescue tick's final forced main resume if that arrives first.
+The runtime still does **not** buffer an unbounded deferred retry queue; it only persists the single in-flight transfer/notify phase for the active job. That keeps state bounded, and the faucet's recovery model remains cadence-based after an ordinary failed tick: interrupted work is preserved rather than discarded, then retried on the next available scheduler opportunity.
 
 ### What is retried
 
 The faucet retries at most once, immediately and inline, at these two ambiguous boundaries:
 
-- ledger transfer failed before a block index was obtained
+- ledger call or response was uncertain before a usable block index was obtained
 - CMC `notify_top_up` failed after a ledger transfer had already been accepted (typed terminal replies are still retried once safely, then classified separately if they remain terminal)
 
-Typed terminal `notify_top_up` rejections such as `Refunded`, `TransactionTooOld`, and `InvalidTransaction` are still retried once safely after an accepted ledger transfer; if both notify attempts remain terminal, the beneficiary is counted as a deterministic failure rather than an ambiguity.
+Typed terminal `TransactionTooOld`, `InvalidTransaction`, and `Refunded` replies without a refund block are still retried once safely after an accepted ledger transfer; if both notify attempts remain terminal, the beneficiary is counted as a deterministic failure rather than an ambiguity. `Refunded` with a refund block is already terminal proof of returned value and transitions immediately to the checked raw fallback instead.
 
 ### Duplicate-proof behavior
 
@@ -325,7 +335,7 @@ This keeps memory bounded and avoids long-lived paused payout jobs. It also mean
 
 ### Logging policy
 
-To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups` and `ambiguous_topups`, not one log line per beneficiary top-up attempt. `failed_topups` is used for deterministic beneficiary failures; `ambiguous_topups` is used when the faucet exhausts its one inline retry at a boundary where a prior ledger / CMC action may already have taken effect. These counters are beneficiary-only; a failed remainder-to-self cleanup transfer does not increment either one.
+To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups` and `ambiguous_topups`, not one log line per beneficiary top-up attempt. `failed_topups` is used for deterministic beneficiary failures; `ambiguous_topups` is used when the faucet exhausts its one inline retry at a boundary where a prior ledger / CMC action may already have taken effect. These counters are beneficiary-only; a failed Relay remainder cleanup does not increment them.
 
 ## Rescue and blackhole policy
 
@@ -350,7 +360,7 @@ When blackhole mode is armed, time-based controller reconciliation follows the s
 - middle window: `> 7 days` and `<= 14 days` → no controller change
 - broken: `> 14 days` → blackhole + rescue controller + self
 
-Only successful CMC `notify_top_up` completions update this health timestamp. Raw ICP routes and neuron staking-account transfers are successful value transfers, but they do not prove the cycles top-up notification path is healthy.
+Only successful CMC `notify_top_up` completions update this health timestamp. Raw ICP routes, raw cycles fallbacks, Relay remainders, and neuron staking-account transfers are successful value transfers, but they do not prove the cycles top-up notification path is healthy.
 
 There is also a bootstrap rescue condition:
 
@@ -416,7 +426,9 @@ A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-i
 
 Production canister: `jupiter_faucet` / `acjuz-liaaa-aaaar-qb4qq-cai`
 
-The production faucet has completed a payout. Use upgrade for the production path so stable state, payout progress, summaries, funding cursors, and recovery state are preserved.
+The production faucet has completed a payout. Use upgrade for the production path so stable summaries, funding cursors, and recovery state are preserved. Upgrades require `active_payout_job = None`.
+
+Before stopping, snapshotting, or upgrading the Faucet, inspect the public `STATE` log and require `active_payout_job_present=false`. The post-upgrade guard traps if this precondition is missed. The pre-Relay stable schema is decode-compatible only for quiescent state. Upgrades with an active payout job are deliberately rejected rather than carrying retired payout-route execution code.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
@@ -519,7 +531,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
 6. Confirm logs show the reconciled config:
 
 ```text
-CONFIG ... funding_source_account=uccpi-cqaaa-aaaar-qby3q-cai:none ... main_interval_seconds=86400 ... rescue_interval_seconds=86400 ... min_tx_e8s=100000000 ... stake_recognition_delay_seconds=604800
+CONFIG ... canonical_relay_canister_id=<embedded-relay-principal> ... funding_source_account=uccpi-cqaaa-aaaar-qby3q-cai:none ... main_interval_seconds=86400 ... rescue_interval_seconds=86400 ... min_tx_e8s=100000000 ... stake_recognition_delay_seconds=604800
 ```
 
 7. Confirm logs show the recovered cursor and cleared forced rescue state:
@@ -537,7 +549,7 @@ FUNDING:result=found tx_id=37108711 ...
 9. After payout completion, confirm the summary advances the cursor:
 
 ```text
-SUMMARY:funding_tx_id=37108711 ... last_processed_funding_tx_id=37108711 ...
+SUMMARY:funding_tx_id=37108711 ... last_processed_funding_tx_id=37108711 ... remainder_to_relay_e8s=...
 ```
 
 Warnings:
@@ -552,7 +564,7 @@ Warnings:
 Before upgrade:
 
 - Confirm the faucet canister ID is the intended production principal and will not change.
-- Confirm no active payout job or pending transfer/notification is in progress from logs and operational state.
+- Confirm the public `STATE` log explicitly reports `active_payout_job_present=false`.
 - Confirm the payout account is empty, dust-only, or otherwise at the expected balance for the planned upgrade window.
 - Run [`python3 ./tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args) and confirm the production install args still set `stake_recognition_delay_seconds = 604800`.
 
@@ -671,7 +683,7 @@ These are for local integration and PocketIC tests only. Debug builds also check
 
 - [`jupiter_faucet_debug.did`](jupiter_faucet_debug.did)
 
-Notable fault-injection helpers include both `debug_set_trap_after_successful_transfers` (simulated early abort) and `debug_set_real_trap_after_successful_transfers` (actual post-await trap) for upgrade-boundary PocketIC tests.
+Notable fault-injection helpers include both `debug_set_trap_after_successful_transfers` (simulated early abort) and `debug_set_real_trap_after_successful_transfers` (actual post-await trap) for scheduler-boundary PocketIC tests.
 
 ## Build and test
 

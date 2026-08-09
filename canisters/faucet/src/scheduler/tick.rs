@@ -63,16 +63,6 @@ pub(crate) fn install_timers() {
     });
 }
 
-pub(crate) fn schedule_immediate_resume_if_needed() {
-    let has_active_job = state::with_state(|st| st.active_payout_job.is_some());
-    if !has_active_job {
-        return;
-    }
-    ic_cdk_timers::set_timer(Duration::from_secs(1), async {
-        main_tick(true).await;
-    });
-}
-
 pub(crate) fn schedule_immediate_rescue_reconcile() {
     ic_cdk_timers::set_timer(Duration::from_secs(1), async {
         rescue_tick().await;

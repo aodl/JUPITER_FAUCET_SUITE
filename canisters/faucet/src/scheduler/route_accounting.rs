@@ -478,17 +478,21 @@ pub(super) async fn process_payout(
         }
 
         if job.scan_complete {
-            let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
-            if remainder_gross_e8s > job.fee_e8s && job.remainder_to_self_e8s == 0 {
-                let self_id = self_canister_principal();
+            let remainder_gross_e8s = job
+                .pot_start_e8s
+                .checked_sub(job.gross_outflow_e8s)
+                .expect("validated payout accounting");
+            if remainder_gross_e8s > job.fee_e8s && job.remainder_to_relay_e8s == 0 {
                 let pending = PendingNotification {
-                    kind: TransferKind::RemainderToSelf,
-                    beneficiary: self_id,
+                    kind: TransferKind::RemainderToRelay,
+                    beneficiary: crate::canonical_relay_canister_id(),
                     gross_share_e8s: remainder_gross_e8s,
-                    amount_e8s: remainder_gross_e8s.saturating_sub(job.fee_e8s),
+                    amount_e8s: remainder_gross_e8s
+                        .checked_sub(job.fee_e8s)
+                        .expect("remainder exceeds ledger fee"),
                     block_index: 0,
                     next_start: None,
-                    transfer_memo: None,
+                    transfer_memo: Some(Vec::new()),
                     destination_subaccount: None,
                     neuron_id: None,
                 };

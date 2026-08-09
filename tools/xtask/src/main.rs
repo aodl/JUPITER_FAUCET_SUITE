@@ -374,6 +374,16 @@ fn canister_id(name: &str) -> Result<String> {
     Ok(out.trim().to_string())
 }
 
+fn production_canister_id(name: &str) -> Result<Principal> {
+    let mapping_path = std::path::Path::new(&repo_root()).join(".icp/data/mappings/ic.ids.json");
+    let mapping: serde_json::Value = serde_json::from_str(&fs::read_to_string(&mapping_path)?)?;
+    let text = mapping
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .with_context(|| format!("missing {name} in {}", mapping_path.display()))?;
+    Principal::from_text(text).with_context(|| format!("invalid canonical principal for {name}"))
+}
+
 fn try_canister_id(name: &str) -> Result<Option<String>> {
     let root = repo_root();
     let output = Command::new("icp")
@@ -539,7 +549,7 @@ struct FaucetSummary {
     ambiguous_topups: u64,
     ignored_under_threshold: u64,
     ignored_bad_memo: u64,
-    remainder_to_self_e8s: u64,
+    remainder_to_relay_e8s: u64,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -2790,7 +2800,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         label(
             "icp",
             "faucet",
-            "empty history returns payout remainder to self",
+            "empty history sends payout remainder to canonical Relay",
         ),
         || {
             let _: () = call_raw("mock_icrc_ledger", "debug_reset", "()")?;
@@ -2800,7 +2810,6 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
 
             let accounts: FaucetDebugAccounts =
                 call_raw_noargs("jupiter_faucet_dbg", "debug_accounts")?;
-            let faucet_id = Principal::from_text(canister_id("jupiter_faucet_dbg")?.trim())?;
 
             let _: () = call_raw(
                 "mock_icrc_ledger",
@@ -2821,17 +2830,32 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             let summary: Option<FaucetSummary> =
                 call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
             let summary = summary.context("expected faucet summary after empty-history payout")?;
-            if summary.topped_up_count != 0 || summary.remainder_to_self_e8s != 99_990_000 {
+            if summary.topped_up_count != 0 || summary.remainder_to_relay_e8s != 99_990_000 {
                 bail!(
-                "expected empty history to send whole payout remainder to self, got topped_up_count={} remainder_to_self_e8s={}",
+                "expected empty history to send whole payout remainder to Relay, got topped_up_count={} remainder_to_relay_e8s={}",
                 summary.topped_up_count,
-                summary.remainder_to_self_e8s
+                summary.remainder_to_relay_e8s,
             );
             }
 
             let notes: Vec<NotifyRecord> = call_raw_noargs("mock_cmc", "debug_notifications")?;
-            if notes.len() != 1 || notes[0].canister_id != faucet_id {
-                bail!("expected exactly one remainder notification to faucet self, got {notes:?}");
+            if !notes.is_empty() {
+                bail!("expected Relay remainder not to notify CMC, got {notes:?}");
+            }
+            let transfers: Vec<TransferRecord> =
+                call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
+            let expected_relay = production_canister_id("jupiter_relay")?;
+            if transfers.len() != 1
+                || transfers[0].to
+                    != (Account {
+                        owner: expected_relay,
+                        subaccount: None,
+                    })
+                || transfers[0].memo != Some(Vec::new())
+            {
+                bail!(
+                    "expected one empty-memo transfer to canonical Relay default account, got {transfers:?}"
+                );
             }
 
             Ok(())
@@ -2981,10 +3005,10 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                 summary.ignored_bad_memo
             );
             }
-            if summary.remainder_to_self_e8s != 0 {
+            if summary.remainder_to_relay_e8s != 0 {
                 bail!(
-                    "expected no fallback remainder after full first-tranche allocation, got {}",
-                    summary.remainder_to_self_e8s
+                    "expected no remainder after full first-tranche allocation, got relay={}",
+                    summary.remainder_to_relay_e8s,
                 );
             }
 
@@ -3194,7 +3218,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             for (label, script) in [
             (
                 "Refunded",
-                "(vec { variant { Refunded = record { reason = \"refunded\"; block_index = opt (7:nat64) } }; variant { Ok } })",
+                "(vec { variant { Refunded = record { reason = \"refunded\"; block_index = null } }; variant { Ok } })",
             ),
             (
                 "TransactionTooOld",
@@ -3313,21 +3337,21 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                     call_raw_noargs("jupiter_faucet_dbg", "debug_last_summary")?;
                 let summary = summary
                     .context("expected faucet summary after deterministic ledger rejection")?;
-                if summary.failed_topups != 1 || summary.topped_up_count != 0 {
-                    bail!("expected {label} path to count exactly one failed top-up and zero successful beneficiary top-ups, got failed_topups={} topped_up_count={}", summary.failed_topups, summary.topped_up_count);
+                if summary.failed_topups != 0 || summary.topped_up_count != 1 {
+                    bail!("expected {label} path to complete exactly one raw fallback payout, got failed_topups={} topped_up_count={}", summary.failed_topups, summary.topped_up_count);
                 }
-                if summary.remainder_to_self_e8s != 99_990_000 {
-                    bail!("expected {label} path to leave the failed beneficiary share in the faucet and send the full remainder to self, got {}", summary.remainder_to_self_e8s);
+                if summary.remainder_to_relay_e8s != 0 {
+                    bail!("expected {label} raw fallback to consume the full allocation without remainder, got relay={}", summary.remainder_to_relay_e8s);
                 }
                 let transfers_after: Vec<TransferRecord> =
                     call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
                 if transfers_after.len() != 1 {
-                    bail!("expected {label} path to produce only the fallback remainder transfer, got {} transfers", transfers_after.len());
+                    bail!("expected {label} path to produce exactly one accepted raw fallback transfer, got {} transfers", transfers_after.len());
                 }
                 let notes_after: Vec<NotifyRecord> =
                     call_raw_noargs("mock_cmc", "debug_notifications")?;
-                if notes_after.len() != 1 || notes_after[0].canister_id != accounts.payout.owner {
-                    bail!("expected {label} path to finish with exactly one self notification for the fallback remainder, got {notes_after:?}");
+                if !notes_after.is_empty() {
+                    bail!("expected {label} raw fallback not to notify CMC, got {notes_after:?}");
                 }
             }
 

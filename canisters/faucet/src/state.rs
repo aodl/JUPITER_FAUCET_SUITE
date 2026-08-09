@@ -58,13 +58,14 @@ fn opt_forced_rescue_reason_text(value: Option<&ForcedRescueReason>) -> String {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, funding_source_account={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
+        "CONFIG staking_account={}, payout_subaccount={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, governance_canister_id={}, canonical_relay_canister_id={}, funding_source_account={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, expected_first_staking_tx_id={}, main_interval_seconds={}, rescue_interval_seconds={}, min_tx_e8s={}, stake_recognition_delay_seconds={}",
         account_text(&cfg.staking_account),
         subaccount_text(&cfg.payout_subaccount),
         cfg.ledger_canister_id.to_text(),
         cfg.index_canister_id.to_text(),
         cfg.cmc_canister_id.to_text(),
         opt_principal_text(cfg.governance_canister_id),
+        crate::canonical_relay_canister_id().to_text(),
         account_text(&cfg.funding_source_account),
         cfg.rescue_controller.to_text(),
         opt_principal_text(cfg.blackhole_controller),
@@ -81,13 +82,14 @@ pub(crate) fn runtime_state_log_line(st: &State) -> String {
     let active_funding_scan = st.active_funding_scan.as_ref();
     let active_payout_job = st.active_payout_job.as_ref();
     format!(
-        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={}",
+        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_job_present={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={}",
         opt_u64_text(st.last_processed_funding_tx_id),
         opt_forced_rescue_reason_text(st.forced_rescue_reason.as_ref()),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.cursor)),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.candidate).map(|candidate| candidate.tx_id)),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.candidate).map(|candidate| candidate.amount_e8s)),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.anchor_last_processed_funding_tx_id)),
+        active_payout_job.is_some(),
         opt_u64_text(active_payout_job.and_then(|job| job.funding_tx_id)),
         opt_u64_text(active_payout_job.and_then(|job| job.funding_amount_e8s)),
     )
@@ -96,18 +98,22 @@ pub(crate) fn runtime_state_log_line(st: &State) -> String {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TransferKind {
     Beneficiary,
+    CyclesTopUpRawFallback,
     RawIcp,
     NeuronStake,
-    RemainderToSelf,
+    RemainderToRelay,
 }
 
 impl TransferKind {
     pub(crate) fn is_beneficiary_payout(&self) -> bool {
-        matches!(self, Self::Beneficiary | Self::RawIcp | Self::NeuronStake)
+        matches!(
+            self,
+            Self::Beneficiary | Self::CyclesTopUpRawFallback | Self::RawIcp | Self::NeuronStake
+        )
     }
 
     pub(crate) fn requires_cmc_notify(&self) -> bool {
-        matches!(self, Self::Beneficiary | Self::RemainderToSelf)
+        matches!(self, Self::Beneficiary)
     }
 }
 
@@ -268,7 +274,7 @@ pub(crate) struct Summary {
     pub ambiguous_topups: u64,
     pub ignored_under_threshold: u64,
     pub ignored_bad_memo: u64,
-    pub remainder_to_self_e8s: u64,
+    pub remainder_to_relay_e8s: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -303,7 +309,7 @@ pub(crate) struct ActivePayoutJob {
     pub failed_topups: u64,
     #[serde(default)]
     pub ambiguous_topups: u64,
-    pub remainder_to_self_e8s: u64,
+    pub remainder_to_relay_e8s: u64,
     #[serde(default)]
     pub pending_transfer: Option<PendingTransfer>,
     #[serde(default)]
@@ -367,7 +373,7 @@ impl ActivePayoutJob {
             topped_up_max_e8s: None,
             failed_topups: 0,
             ambiguous_topups: 0,
-            remainder_to_self_e8s: 0,
+            remainder_to_relay_e8s: 0,
             pending_transfer: None,
             skip_candidate_start_tx_id: None,
             skip_candidate_end_tx_id: None,
@@ -494,12 +500,244 @@ impl State {
     }
 }
 
+// Decode-only representation of the exact stable wire shape written before Relay remainder
+// routing was introduced. These types must never enter current payout execution.
+#[allow(dead_code)]
+#[derive(CandidType, Deserialize)]
+enum PreRelayTransferKind {
+    Beneficiary,
+    RawIcp,
+    NeuronStake,
+    RemainderToSelf,
+}
+
+#[allow(dead_code)]
+#[derive(CandidType, Deserialize)]
+struct PreRelayPendingNotification {
+    kind: PreRelayTransferKind,
+    beneficiary: Principal,
+    gross_share_e8s: u64,
+    amount_e8s: u64,
+    block_index: u64,
+    next_start: Option<u64>,
+    transfer_memo: Option<Vec<u8>>,
+    destination_subaccount: Option<[u8; 32]>,
+    neuron_id: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(CandidType, Deserialize)]
+enum PreRelayPendingTransferPhase {
+    AwaitingTransfer,
+    TransferAccepted,
+}
+
+#[allow(dead_code)]
+#[derive(CandidType, Deserialize)]
+struct PreRelayPendingTransfer {
+    notification: PreRelayPendingNotification,
+    created_at_time_nanos: u64,
+    phase: PreRelayPendingTransferPhase,
+}
+
+#[derive(CandidType, Deserialize)]
+struct PreRelaySummary {
+    pot_start_e8s: u64,
+    pot_remaining_e8s: u64,
+    denom_staking_balance_e8s: u64,
+    effective_denom_staking_balance_e8s: Option<u64>,
+    funding_tx_id: Option<u64>,
+    funding_amount_e8s: Option<u64>,
+    round_end_latest_tx_id: Option<u64>,
+    round_end_time_nanos: Option<u64>,
+    last_processed_funding_tx_id: Option<u64>,
+    topped_up_count: u64,
+    topped_up_sum_e8s: u64,
+    topped_up_min_e8s: Option<u64>,
+    topped_up_max_e8s: Option<u64>,
+    failed_topups: u64,
+    ambiguous_topups: u64,
+    ignored_under_threshold: u64,
+    ignored_bad_memo: u64,
+    remainder_to_self_e8s: u64,
+}
+
+impl From<PreRelaySummary> for Summary {
+    fn from(value: PreRelaySummary) -> Self {
+        Self {
+            pot_start_e8s: value.pot_start_e8s,
+            pot_remaining_e8s: value.pot_remaining_e8s,
+            denom_staking_balance_e8s: value.denom_staking_balance_e8s,
+            effective_denom_staking_balance_e8s: value.effective_denom_staking_balance_e8s,
+            funding_tx_id: value.funding_tx_id,
+            funding_amount_e8s: value.funding_amount_e8s,
+            round_end_latest_tx_id: value.round_end_latest_tx_id,
+            round_end_time_nanos: value.round_end_time_nanos,
+            last_processed_funding_tx_id: value.last_processed_funding_tx_id,
+            topped_up_count: value.topped_up_count,
+            topped_up_sum_e8s: value.topped_up_sum_e8s,
+            topped_up_min_e8s: value.topped_up_min_e8s,
+            topped_up_max_e8s: value.topped_up_max_e8s,
+            failed_topups: value.failed_topups,
+            ambiguous_topups: value.ambiguous_topups,
+            ignored_under_threshold: value.ignored_under_threshold,
+            ignored_bad_memo: value.ignored_bad_memo,
+            remainder_to_relay_e8s: 0,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(CandidType, Deserialize)]
+struct PreRelayActivePayoutJob {
+    id: u64,
+    fee_e8s: u64,
+    pot_start_e8s: u64,
+    denom_staking_balance_e8s: u64,
+    next_start: Option<u64>,
+    scan_complete: bool,
+    ignored_under_threshold: u64,
+    ignored_bad_memo: u64,
+    gross_outflow_e8s: u64,
+    topped_up_count: u64,
+    topped_up_sum_e8s: u64,
+    topped_up_min_e8s: Option<u64>,
+    topped_up_max_e8s: Option<u64>,
+    failed_topups: u64,
+    ambiguous_topups: u64,
+    remainder_to_self_e8s: u64,
+    pending_transfer: Option<PreRelayPendingTransfer>,
+    skip_candidate_start_tx_id: Option<u64>,
+    skip_candidate_end_tx_id: Option<u64>,
+    skip_candidate_tx_count: u64,
+    next_created_at_time_nanos: u64,
+    observed_oldest_tx_id: Option<u64>,
+    observed_latest_tx_id: Option<u64>,
+    cmc_attempt_count: Option<u64>,
+    cmc_success_count: Option<u64>,
+    cmc_attempted_beneficiaries: Option<Vec<Principal>>,
+    round_start_time_nanos: Option<u64>,
+    round_start_staking_balance_e8s: Option<u64>,
+    round_start_latest_tx_id: Option<u64>,
+    round_end_time_nanos: Option<u64>,
+    round_end_latest_tx_id: Option<u64>,
+    effective_denom_staking_balance_e8s: Option<u64>,
+    effective_denom_scan_complete: Option<bool>,
+    round_end_staking_balance_e8s: Option<u64>,
+    funding_tx_id: Option<u64>,
+    funding_tx_timestamp_nanos: Option<u64>,
+    funding_amount_e8s: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize)]
+struct PreRelayState {
+    config: Config,
+    last_summary: Option<PreRelaySummary>,
+    last_successful_transfer_ts: Option<u64>,
+    last_rescue_check_ts: u64,
+    rescue_triggered: bool,
+    blackhole_armed_since_ts: Option<u64>,
+    forced_rescue_reason: Option<ForcedRescueReason>,
+    skip_range_invariant_fault: Option<bool>,
+    consecutive_index_anchor_failures: Option<u8>,
+    consecutive_index_latest_invariant_failures: Option<u8>,
+    consecutive_index_latest_unreadable_failures: Option<u8>,
+    consecutive_cmc_zero_success_runs: Option<u8>,
+    last_observed_staking_balance_e8s: Option<u64>,
+    last_observed_latest_tx_id: Option<u64>,
+    main_lock_state_ts: Option<u64>,
+    payout_nonce: u64,
+    active_payout_job: Option<PreRelayActivePayoutJob>,
+    last_main_run_ts: u64,
+    current_round_start_time_nanos: Option<u64>,
+    current_round_start_staking_balance_e8s: Option<u64>,
+    current_round_start_latest_tx_id: Option<u64>,
+    last_processed_funding_tx_id: Option<u64>,
+    active_funding_scan: Option<FundingScanState>,
+}
+
+pub(crate) const UPGRADE_QUIESCENCE_ERROR: &str =
+    "faucet upgrade requires no active payout job; allow the payout to finish before upgrading";
+
+impl TryFrom<PreRelayState> for State {
+    type Error = String;
+
+    fn try_from(value: PreRelayState) -> Result<Self, Self::Error> {
+        if value.active_payout_job.is_some() {
+            return Err(UPGRADE_QUIESCENCE_ERROR.to_string());
+        }
+        Ok(Self {
+            config: value.config,
+            last_summary: value.last_summary.map(Into::into),
+            last_successful_transfer_ts: value.last_successful_transfer_ts,
+            last_rescue_check_ts: value.last_rescue_check_ts,
+            rescue_triggered: value.rescue_triggered,
+            blackhole_armed_since_ts: value.blackhole_armed_since_ts,
+            forced_rescue_reason: value.forced_rescue_reason,
+            skip_range_invariant_fault: value.skip_range_invariant_fault,
+            consecutive_index_anchor_failures: value.consecutive_index_anchor_failures,
+            consecutive_index_latest_invariant_failures: value
+                .consecutive_index_latest_invariant_failures,
+            consecutive_index_latest_unreadable_failures: value
+                .consecutive_index_latest_unreadable_failures,
+            consecutive_cmc_zero_success_runs: value.consecutive_cmc_zero_success_runs,
+            last_observed_staking_balance_e8s: value.last_observed_staking_balance_e8s,
+            last_observed_latest_tx_id: value.last_observed_latest_tx_id,
+            main_lock_state_ts: value.main_lock_state_ts,
+            payout_nonce: value.payout_nonce,
+            active_payout_job: None,
+            last_main_run_ts: value.last_main_run_ts,
+            current_round_start_time_nanos: value.current_round_start_time_nanos,
+            current_round_start_staking_balance_e8s: value.current_round_start_staking_balance_e8s,
+            current_round_start_latest_tx_id: value.current_round_start_latest_tx_id,
+            last_processed_funding_tx_id: value.last_processed_funding_tx_id,
+            active_funding_scan: value.active_funding_scan,
+        })
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(CandidType, Deserialize)]
+enum PreRelayVersionedStableState {
+    Uninitialized,
+    V1(PreRelayState),
+}
+
 // Stable-state enum shape is part of the upgrade contract; boxing V1 would change Candid.
 #[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) enum VersionedStableState {
     Uninitialized,
     V1(State),
+}
+
+pub(crate) fn decode_versioned_stable_state(bytes: &[u8]) -> Result<VersionedStableState, String> {
+    let current_decode = candid::decode_one::<VersionedStableState>(bytes).and_then(|current| {
+        let canonical_current = candid::encode_one(&current)?;
+        if canonical_current == bytes {
+            Ok(current)
+        } else {
+            // Candid may coerce an incompatible `opt record` payload to `null`. Requiring the
+            // stable cell's canonical current encoding makes the current-path decode lossless.
+            Err(candid::Error::msg(
+                "current faucet stable state did not decode losslessly",
+            ))
+        }
+    });
+    match current_decode {
+        Ok(current) => Ok(current),
+        Err(current_error) => match candid::decode_one::<PreRelayVersionedStableState>(bytes) {
+            Ok(PreRelayVersionedStableState::Uninitialized) => {
+                Ok(VersionedStableState::Uninitialized)
+            }
+            Ok(PreRelayVersionedStableState::V1(state)) => {
+                State::try_from(state).map(VersionedStableState::V1)
+            }
+            Err(pre_relay_error) => Err(format!(
+                "failed to decode current or pre-Relay faucet stable state: current={current_error}; pre_relay={pre_relay_error}"
+            )),
+        },
+    }
 }
 
 impl Storable for VersionedStableState {
@@ -512,7 +750,7 @@ impl Storable for VersionedStableState {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode faucet stable state")
+        decode_versioned_stable_state(bytes.as_ref()).unwrap_or_else(|err| panic!("{err}"))
     }
 
     const BOUND: Bound = Bound::Unbounded;
@@ -801,6 +1039,10 @@ mod tests {
         assert!(line.contains("index_canister_id="));
         assert!(line.contains("cmc_canister_id="));
         assert!(line.contains("governance_canister_id="));
+        assert!(line.contains(&format!(
+            "canonical_relay_canister_id={}",
+            crate::canonical_relay_canister_id()
+        )));
         assert!(line.contains("funding_source_account="));
         assert!(line.contains("rescue_controller="));
         assert!(line.contains("blackhole_controller="));
@@ -813,8 +1055,23 @@ mod tests {
     }
 
     #[test]
+    fn transfer_kind_route_semantics_are_explicit() {
+        assert!(TransferKind::Beneficiary.is_beneficiary_payout());
+        assert!(TransferKind::Beneficiary.requires_cmc_notify());
+        assert!(TransferKind::CyclesTopUpRawFallback.is_beneficiary_payout());
+        assert!(!TransferKind::CyclesTopUpRawFallback.requires_cmc_notify());
+        assert!(TransferKind::RawIcp.is_beneficiary_payout());
+        assert!(!TransferKind::RawIcp.requires_cmc_notify());
+        assert!(TransferKind::NeuronStake.is_beneficiary_payout());
+        assert!(!TransferKind::NeuronStake.requires_cmc_notify());
+        assert!(!TransferKind::RemainderToRelay.is_beneficiary_payout());
+        assert!(!TransferKind::RemainderToRelay.requires_cmc_notify());
+    }
+
+    #[test]
     fn runtime_state_log_line_includes_recovery_observability_fields() {
         let mut st = State::new(sample_config(), 0);
+        assert!(runtime_state_log_line(&st).contains("active_payout_job_present=false"));
         st.last_processed_funding_tx_id = Some(42);
         st.forced_rescue_reason = Some(ForcedRescueReason::FundingTrancheBalanceMismatch);
         st.active_funding_scan = Some(FundingScanState {
@@ -839,6 +1096,7 @@ mod tests {
         assert!(line.contains("active_funding_scan_candidate_tx_id=43"));
         assert!(line.contains("active_funding_scan_candidate_amount_e8s=100000000"));
         assert!(line.contains("active_funding_scan_anchor_last_processed_funding_tx_id=41"));
+        assert!(line.contains("active_payout_job_present=true"));
         assert!(line.contains("active_payout_funding_tx_id=43"));
         assert!(line.contains("active_payout_funding_amount_e8s=100000000"));
     }
@@ -887,7 +1145,6 @@ mod tests {
         #[derive(CandidType, Deserialize)]
         enum LegacyTransferKind {
             Beneficiary,
-            RemainderToSelf,
         }
 
         #[derive(CandidType, Deserialize)]
@@ -916,131 +1173,328 @@ mod tests {
         assert_eq!(decoded.transfer_memo, None);
     }
 
-    #[test]
-    fn current_faucet_state_decodes_legacy_shape_with_safe_defaults() {
-        #[derive(CandidType, Deserialize)]
-        struct LegacyActivePayoutJob {
-            id: u64,
-            fee_e8s: u64,
-            pot_start_e8s: u64,
-            denom_staking_balance_e8s: u64,
-            next_start: Option<u64>,
-            scan_complete: bool,
-            ignored_under_threshold: u64,
-            ignored_bad_memo: u64,
-            gross_outflow_e8s: u64,
-            topped_up_count: u64,
-            topped_up_sum_e8s: u64,
-            topped_up_min_e8s: Option<u64>,
-            topped_up_max_e8s: Option<u64>,
-            failed_topups: u64,
-            ambiguous_topups: u64,
-            remainder_to_self_e8s: u64,
-            skip_candidate_tx_count: u64,
-            next_created_at_time_nanos: u64,
-            observed_oldest_tx_id: Option<u64>,
-            observed_latest_tx_id: Option<u64>,
-            cmc_attempt_count: Option<u64>,
-            cmc_success_count: Option<u64>,
+    #[allow(dead_code)]
+    #[derive(CandidType, Deserialize)]
+    enum FrozenPreRelayTransferKind {
+        Beneficiary,
+        RawIcp,
+        NeuronStake,
+        RemainderToSelf,
+    }
+
+    #[allow(dead_code)]
+    #[derive(CandidType, Deserialize)]
+    struct FrozenPreRelayPendingNotification {
+        kind: FrozenPreRelayTransferKind,
+        beneficiary: Principal,
+        gross_share_e8s: u64,
+        amount_e8s: u64,
+        block_index: u64,
+        next_start: Option<u64>,
+        transfer_memo: Option<Vec<u8>>,
+        destination_subaccount: Option<[u8; 32]>,
+        neuron_id: Option<u64>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(CandidType, Deserialize)]
+    enum FrozenPreRelayPendingTransferPhase {
+        AwaitingTransfer,
+        TransferAccepted,
+    }
+
+    #[allow(dead_code)]
+    #[derive(CandidType, Deserialize)]
+    struct FrozenPreRelayPendingTransfer {
+        notification: FrozenPreRelayPendingNotification,
+        created_at_time_nanos: u64,
+        phase: FrozenPreRelayPendingTransferPhase,
+    }
+
+    #[derive(CandidType, Deserialize)]
+    struct FrozenPreRelaySummary {
+        pot_start_e8s: u64,
+        pot_remaining_e8s: u64,
+        denom_staking_balance_e8s: u64,
+        effective_denom_staking_balance_e8s: Option<u64>,
+        funding_tx_id: Option<u64>,
+        funding_amount_e8s: Option<u64>,
+        round_end_latest_tx_id: Option<u64>,
+        round_end_time_nanos: Option<u64>,
+        last_processed_funding_tx_id: Option<u64>,
+        topped_up_count: u64,
+        topped_up_sum_e8s: u64,
+        topped_up_min_e8s: Option<u64>,
+        topped_up_max_e8s: Option<u64>,
+        failed_topups: u64,
+        ambiguous_topups: u64,
+        ignored_under_threshold: u64,
+        ignored_bad_memo: u64,
+        remainder_to_self_e8s: u64,
+    }
+
+    #[allow(dead_code)]
+    #[derive(CandidType, Deserialize)]
+    struct FrozenPreRelayActivePayoutJob {
+        id: u64,
+        fee_e8s: u64,
+        pot_start_e8s: u64,
+        denom_staking_balance_e8s: u64,
+        next_start: Option<u64>,
+        scan_complete: bool,
+        ignored_under_threshold: u64,
+        ignored_bad_memo: u64,
+        gross_outflow_e8s: u64,
+        topped_up_count: u64,
+        topped_up_sum_e8s: u64,
+        topped_up_min_e8s: Option<u64>,
+        topped_up_max_e8s: Option<u64>,
+        failed_topups: u64,
+        ambiguous_topups: u64,
+        remainder_to_self_e8s: u64,
+        pending_transfer: Option<FrozenPreRelayPendingTransfer>,
+        skip_candidate_start_tx_id: Option<u64>,
+        skip_candidate_end_tx_id: Option<u64>,
+        skip_candidate_tx_count: u64,
+        next_created_at_time_nanos: u64,
+        observed_oldest_tx_id: Option<u64>,
+        observed_latest_tx_id: Option<u64>,
+        cmc_attempt_count: Option<u64>,
+        cmc_success_count: Option<u64>,
+        cmc_attempted_beneficiaries: Option<Vec<Principal>>,
+        round_start_time_nanos: Option<u64>,
+        round_start_staking_balance_e8s: Option<u64>,
+        round_start_latest_tx_id: Option<u64>,
+        round_end_time_nanos: Option<u64>,
+        round_end_latest_tx_id: Option<u64>,
+        effective_denom_staking_balance_e8s: Option<u64>,
+        effective_denom_scan_complete: Option<bool>,
+        round_end_staking_balance_e8s: Option<u64>,
+        funding_tx_id: Option<u64>,
+        funding_tx_timestamp_nanos: Option<u64>,
+        funding_amount_e8s: Option<u64>,
+    }
+
+    #[derive(CandidType, Deserialize)]
+    struct FrozenPreRelayState {
+        config: Config,
+        last_summary: Option<FrozenPreRelaySummary>,
+        last_successful_transfer_ts: Option<u64>,
+        last_rescue_check_ts: u64,
+        rescue_triggered: bool,
+        blackhole_armed_since_ts: Option<u64>,
+        forced_rescue_reason: Option<ForcedRescueReason>,
+        skip_range_invariant_fault: Option<bool>,
+        consecutive_index_anchor_failures: Option<u8>,
+        consecutive_index_latest_invariant_failures: Option<u8>,
+        consecutive_index_latest_unreadable_failures: Option<u8>,
+        consecutive_cmc_zero_success_runs: Option<u8>,
+        last_observed_staking_balance_e8s: Option<u64>,
+        last_observed_latest_tx_id: Option<u64>,
+        main_lock_state_ts: Option<u64>,
+        payout_nonce: u64,
+        active_payout_job: Option<FrozenPreRelayActivePayoutJob>,
+        last_main_run_ts: u64,
+        current_round_start_time_nanos: Option<u64>,
+        current_round_start_staking_balance_e8s: Option<u64>,
+        current_round_start_latest_tx_id: Option<u64>,
+        last_processed_funding_tx_id: Option<u64>,
+        active_funding_scan: Option<FundingScanState>,
+    }
+
+    #[allow(clippy::large_enum_variant)]
+    #[derive(CandidType, Deserialize)]
+    enum FrozenPreRelayVersionedStableState {
+        Uninitialized,
+        V1(FrozenPreRelayState),
+    }
+
+    fn frozen_pre_relay_summary() -> FrozenPreRelaySummary {
+        FrozenPreRelaySummary {
+            pot_start_e8s: 1_000,
+            pot_remaining_e8s: 100,
+            denom_staking_balance_e8s: 2_000,
+            effective_denom_staking_balance_e8s: Some(2_000),
+            funding_tx_id: Some(7),
+            funding_amount_e8s: Some(1_000),
+            round_end_latest_tx_id: Some(6),
+            round_end_time_nanos: Some(70),
+            last_processed_funding_tx_id: Some(7),
+            topped_up_count: 1,
+            topped_up_sum_e8s: 890,
+            topped_up_min_e8s: Some(890),
+            topped_up_max_e8s: Some(890),
+            failed_topups: 0,
+            ambiguous_topups: 0,
+            ignored_under_threshold: 0,
+            ignored_bad_memo: 0,
+            remainder_to_self_e8s: 90,
         }
+    }
 
-        #[derive(CandidType, Deserialize)]
-        struct LegacyState {
-            config: Config,
-            last_summary: Option<Summary>,
-            last_successful_transfer_ts: Option<u64>,
-            last_rescue_check_ts: u64,
-            rescue_triggered: bool,
-            blackhole_armed_since_ts: Option<u64>,
-            forced_rescue_reason: Option<ForcedRescueReason>,
-            consecutive_index_anchor_failures: Option<u8>,
-            consecutive_index_latest_invariant_failures: Option<u8>,
-            consecutive_cmc_zero_success_runs: Option<u8>,
-            last_observed_staking_balance_e8s: Option<u64>,
-            last_observed_latest_tx_id: Option<u64>,
-            main_lock_state_ts: Option<u64>,
-            payout_nonce: u64,
-            active_payout_job: Option<LegacyActivePayoutJob>,
-            last_main_run_ts: u64,
-        }
-
-        // Mirrors the pre-change stable enum layout; boxing would change the Candid shape under test.
-        #[allow(clippy::large_enum_variant)]
-        #[derive(CandidType, Deserialize)]
-        enum LegacyVersionedStableState {
-            Uninitialized,
-            V1(LegacyState),
-        }
-
-        let legacy = LegacyVersionedStableState::V1(LegacyState {
-            config: sample_config(),
-            last_summary: None,
-            last_successful_transfer_ts: Some(77),
-            last_rescue_check_ts: 88,
-            rescue_triggered: false,
-            blackhole_armed_since_ts: Some(99),
-            forced_rescue_reason: Some(ForcedRescueReason::CmcZeroSuccessRuns),
-            consecutive_index_anchor_failures: Some(1),
-            consecutive_index_latest_invariant_failures: Some(2),
-            consecutive_cmc_zero_success_runs: Some(3),
-            last_observed_staking_balance_e8s: Some(4_000),
-            last_observed_latest_tx_id: Some(44),
-            main_lock_state_ts: Some(55),
-            payout_nonce: 7,
-            active_payout_job: None,
-            last_main_run_ts: 66,
-        });
-        let bytes = candid::encode_one(legacy).expect("encode legacy faucet shape");
-        let decoded: VersionedStableState =
-            candid::decode_one(&bytes).expect("decode legacy faucet shape");
-
-        let VersionedStableState::V1(restored) = decoded else {
-            panic!("expected V1 faucet state");
-        };
-        assert_eq!(restored.last_successful_transfer_ts, Some(77));
-        assert_eq!(restored.skip_range_invariant_fault, None);
-        assert_eq!(restored.consecutive_index_latest_unreadable_failures, None);
-        assert_eq!(restored.current_round_start_time_nanos, None);
-        assert_eq!(restored.last_processed_funding_tx_id, None);
-        assert_eq!(restored.active_funding_scan, None);
-        assert_eq!(restored.last_summary, None);
-        assert!(restored.active_payout_job.is_none());
-
-        let legacy_job = LegacyActivePayoutJob {
+    fn frozen_pre_relay_active_job() -> FrozenPreRelayActivePayoutJob {
+        FrozenPreRelayActivePayoutJob {
             id: 9,
             fee_e8s: 10,
             pot_start_e8s: 1_000,
             denom_staking_balance_e8s: 2_000,
-            next_start: Some(12),
-            scan_complete: false,
-            ignored_under_threshold: 2,
-            ignored_bad_memo: 4,
-            gross_outflow_e8s: 500,
-            topped_up_count: 2,
-            topped_up_sum_e8s: 500,
-            topped_up_min_e8s: Some(200),
-            topped_up_max_e8s: Some(300),
-            failed_topups: 1,
+            next_start: Some(6),
+            scan_complete: true,
+            ignored_under_threshold: 0,
+            ignored_bad_memo: 0,
+            gross_outflow_e8s: 900,
+            topped_up_count: 1,
+            topped_up_sum_e8s: 890,
+            topped_up_min_e8s: Some(890),
+            topped_up_max_e8s: Some(890),
+            failed_topups: 0,
             ambiguous_topups: 0,
             remainder_to_self_e8s: 0,
+            pending_transfer: Some(FrozenPreRelayPendingTransfer {
+                notification: FrozenPreRelayPendingNotification {
+                    kind: FrozenPreRelayTransferKind::RemainderToSelf,
+                    beneficiary: principal(&[8]),
+                    gross_share_e8s: 100,
+                    amount_e8s: 90,
+                    block_index: 10,
+                    next_start: None,
+                    transfer_memo: None,
+                    destination_subaccount: None,
+                    neuron_id: None,
+                },
+                created_at_time_nanos: 99,
+                phase: FrozenPreRelayPendingTransferPhase::TransferAccepted,
+            }),
+            skip_candidate_start_tx_id: None,
+            skip_candidate_end_tx_id: None,
             skip_candidate_tx_count: 0,
-            next_created_at_time_nanos: 123_456,
+            next_created_at_time_nanos: 100,
             observed_oldest_tx_id: Some(1),
-            observed_latest_tx_id: Some(12),
-            cmc_attempt_count: Some(5),
-            cmc_success_count: Some(2),
-        };
-        let job_bytes = candid::encode_one(legacy_job).expect("encode legacy active job shape");
-        let job: ActivePayoutJob =
-            candid::decode_one(&job_bytes).expect("decode legacy active job shape");
-        assert_eq!(job.id, 9);
-        assert_eq!(job.ambiguous_topups, 0);
-        assert_eq!(job.pending_transfer, None);
-        assert_eq!(job.cmc_attempted_beneficiaries, None);
-        assert_eq!(job.effective_denom_scan_complete, None);
-        assert_eq!(job.funding_amount_e8s, None);
+            observed_latest_tx_id: Some(6),
+            cmc_attempt_count: Some(1),
+            cmc_success_count: Some(1),
+            cmc_attempted_beneficiaries: Some(vec![principal(&[8])]),
+            round_start_time_nanos: Some(1),
+            round_start_staking_balance_e8s: Some(2_000),
+            round_start_latest_tx_id: Some(1),
+            round_end_time_nanos: Some(70),
+            round_end_latest_tx_id: Some(6),
+            effective_denom_staking_balance_e8s: Some(2_000),
+            effective_denom_scan_complete: Some(true),
+            round_end_staking_balance_e8s: Some(2_000),
+            funding_tx_id: Some(7),
+            funding_tx_timestamp_nanos: Some(70),
+            funding_amount_e8s: Some(1_000),
+        }
     }
 
+    fn frozen_pre_relay_state(
+        active_payout_job: Option<FrozenPreRelayActivePayoutJob>,
+    ) -> FrozenPreRelayVersionedStableState {
+        FrozenPreRelayVersionedStableState::V1(FrozenPreRelayState {
+            config: sample_config(),
+            last_summary: Some(frozen_pre_relay_summary()),
+            last_successful_transfer_ts: Some(7),
+            last_rescue_check_ts: 8,
+            rescue_triggered: false,
+            blackhole_armed_since_ts: None,
+            forced_rescue_reason: None,
+            skip_range_invariant_fault: Some(false),
+            consecutive_index_anchor_failures: Some(0),
+            consecutive_index_latest_invariant_failures: Some(0),
+            consecutive_index_latest_unreadable_failures: Some(0),
+            consecutive_cmc_zero_success_runs: Some(0),
+            last_observed_staking_balance_e8s: Some(2_000),
+            last_observed_latest_tx_id: Some(6),
+            main_lock_state_ts: Some(0),
+            payout_nonce: 9,
+            active_payout_job,
+            last_main_run_ts: 7,
+            current_round_start_time_nanos: Some(1),
+            current_round_start_staking_balance_e8s: Some(2_000),
+            current_round_start_latest_tx_id: Some(1),
+            last_processed_funding_tx_id: Some(6),
+            active_funding_scan: Some(FundingScanState {
+                anchor_last_processed_funding_tx_id: Some(5),
+                cursor: Some(4),
+                candidate: Some(FundingTrancheState {
+                    tx_id: 6,
+                    timestamp_nanos: 70,
+                    amount_e8s: 1_000,
+                }),
+            }),
+        })
+    }
+
+    #[test]
+    fn current_state_roundtrip_preserves_nonzero_remainder_to_relay_e8s() {
+        let mut st = State::new(sample_config(), 1_000);
+        st.last_summary = Some(Summary {
+            remainder_to_relay_e8s: 12_345_678,
+            ..Summary::default()
+        });
+        let bytes = candid::encode_one(VersionedStableState::V1(st))
+            .expect("encode current faucet stable state");
+
+        let VersionedStableState::V1(restored) =
+            decode_versioned_stable_state(&bytes).expect("decode current faucet stable state")
+        else {
+            panic!("expected current V1 faucet state");
+        };
+
+        assert_eq!(
+            restored
+                .last_summary
+                .expect("current summary should survive")
+                .remainder_to_relay_e8s,
+            12_345_678
+        );
+    }
+
+    #[test]
+    fn quiescent_pre_relay_state_decodes_and_discards_old_self_remainder() {
+        let bytes = candid::encode_one(frozen_pre_relay_state(None))
+            .expect("encode frozen quiescent pre-Relay state");
+
+        let VersionedStableState::V1(restored) =
+            decode_versioned_stable_state(&bytes).expect("decode quiescent pre-Relay state")
+        else {
+            panic!("expected restored V1 state");
+        };
+
+        assert!(restored.active_payout_job.is_none());
+        assert_eq!(restored.last_successful_transfer_ts, Some(7));
+        assert_eq!(restored.last_rescue_check_ts, 8);
+        assert_eq!(restored.payout_nonce, 9);
+        assert_eq!(restored.current_round_start_time_nanos, Some(1));
+        assert_eq!(restored.last_processed_funding_tx_id, Some(6));
+        assert_eq!(
+            restored
+                .active_funding_scan
+                .expect("funding scan should survive")
+                .cursor,
+            Some(4)
+        );
+        assert_eq!(
+            restored
+                .last_summary
+                .expect("summary should survive")
+                .remainder_to_relay_e8s,
+            0
+        );
+    }
+
+    #[test]
+    fn pre_relay_state_with_active_payout_job_is_rejected() {
+        let bytes = candid::encode_one(frozen_pre_relay_state(Some(frozen_pre_relay_active_job())))
+            .expect("encode frozen active pre-Relay state");
+
+        let err = decode_versioned_stable_state(&bytes)
+            .err()
+            .expect("active pre-Relay state must be rejected");
+
+        assert_eq!(err, UPGRADE_QUIESCENCE_ERROR);
+    }
     #[test]
     fn with_state_mut_persists_updates_to_stable_storage() {
         reset_test_storage();

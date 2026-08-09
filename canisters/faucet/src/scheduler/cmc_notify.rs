@@ -25,7 +25,7 @@ pub(super) fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
     })
 }
 pub(super) fn increment_cmc_attempts(pending: &PendingNotification) {
-    if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
+    if !pending.kind.requires_cmc_notify() {
         return;
     }
     state::with_state_mut(|st| {
@@ -36,7 +36,7 @@ pub(super) fn increment_cmc_attempts(pending: &PendingNotification) {
 }
 
 pub(super) fn note_attempted_beneficiary(pending: &PendingNotification) {
-    if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
+    if !pending.kind.requires_cmc_notify() {
         return;
     }
     state::with_state_mut(|st| {
@@ -50,7 +50,7 @@ pub(super) fn note_attempted_beneficiary(pending: &PendingNotification) {
 }
 
 pub(super) fn increment_cmc_successes(pending: &PendingNotification) {
-    if !pending.kind.requires_cmc_notify() || pending.kind == TransferKind::RemainderToSelf {
+    if !pending.kind.requires_cmc_notify() {
         return;
     }
     state::with_state_mut(|st| {
@@ -138,8 +138,9 @@ pub(super) fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TransferAttemptOutcome {
     Accepted(u64),
-    ImmediateRetryable,
-    Failed,
+    DefiniteNoDebit { retryable: bool },
+    Uncertain,
+    AcceptedWithUnusableBlockIndex,
 }
 
 pub(super) async fn transfer_once(
@@ -151,29 +152,28 @@ pub(super) async fn transfer_once(
         "persistence batch must be dropped before ledger transfer"
     );
     match ledger.transfer(arg).await {
-        Err(_) => TransferAttemptOutcome::ImmediateRetryable,
+        Err(_) => TransferAttemptOutcome::Uncertain,
         Ok(Ok(block)) => match u64::try_from(block.0.clone()) {
             Ok(v) => TransferAttemptOutcome::Accepted(v),
-            Err(_) => TransferAttemptOutcome::Failed,
+            Err(_) => TransferAttemptOutcome::AcceptedWithUnusableBlockIndex,
         },
         Ok(Err(TransferError::Duplicate { duplicate_of })) => {
             match u64::try_from(duplicate_of.0.clone()) {
                 Ok(v) => TransferAttemptOutcome::Accepted(v),
-                Err(_) => TransferAttemptOutcome::Failed,
+                Err(_) => TransferAttemptOutcome::AcceptedWithUnusableBlockIndex,
             }
         }
         Ok(Err(TransferError::TemporarilyUnavailable)) => {
-            TransferAttemptOutcome::ImmediateRetryable
+            TransferAttemptOutcome::DefiniteNoDebit { retryable: true }
         }
-        Ok(Err(_)) => TransferAttemptOutcome::Failed,
+        Ok(Err(_)) => TransferAttemptOutcome::DefiniteNoDebit { retryable: false },
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum NotifyAttemptOutcome {
     Succeeded,
-    Retryable,
-    Terminal,
+    Error(jupiter_ic_clients::cmc::NotifyTopUpError),
 }
 
 pub(super) async fn notify_once(
@@ -190,11 +190,8 @@ pub(super) async fn notify_once(
         .notify_top_up(pending.beneficiary, pending.block_index)
         .await
     {
-        Ok(()) => NotifyAttemptOutcome::Succeeded,
-        Err(crate::clients::ClientError::TerminalNotify(_)) => NotifyAttemptOutcome::Terminal,
-        Err(crate::clients::ClientError::RetryableNotify(_))
-        | Err(crate::clients::ClientError::Call(_))
-        | Err(crate::clients::ClientError::Convert(_)) => NotifyAttemptOutcome::Retryable,
+        Ok(_) => NotifyAttemptOutcome::Succeeded,
+        Err(err) => NotifyAttemptOutcome::Error(err),
     }
 }
 pub(super) fn record_completed_transfer(now_secs: u64, pending: &PendingNotification) {

@@ -349,7 +349,10 @@ pub(crate) fn record_ledger_accepted_transfer(
 
 pub(crate) fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &PendingNotification) {
     match pending.kind {
-        TransferKind::Beneficiary | TransferKind::RawIcp | TransferKind::NeuronStake => {
+        TransferKind::Beneficiary
+        | TransferKind::CyclesTopUpRawFallback
+        | TransferKind::RawIcp
+        | TransferKind::NeuronStake => {
             job.topped_up_count = job.topped_up_count.saturating_add(1);
             job.topped_up_sum_e8s = job.topped_up_sum_e8s.saturating_add(pending.amount_e8s);
             job.topped_up_min_e8s = Some(
@@ -363,7 +366,7 @@ pub(crate) fn apply_notified_transfer(job: &mut ActivePayoutJob, pending: &Pendi
                     .unwrap_or(pending.amount_e8s),
             );
         }
-        TransferKind::RemainderToSelf => job.remainder_to_self_e8s = pending.amount_e8s,
+        TransferKind::RemainderToRelay => job.remainder_to_relay_e8s = pending.amount_e8s,
     }
 }
 
@@ -386,7 +389,7 @@ pub(crate) fn summary_from_job(job: &ActivePayoutJob) -> Summary {
         ambiguous_topups: job.ambiguous_topups,
         ignored_under_threshold: job.ignored_under_threshold,
         ignored_bad_memo: job.ignored_bad_memo,
-        remainder_to_self_e8s: job.remainder_to_self_e8s,
+        remainder_to_relay_e8s: job.remainder_to_relay_e8s,
     }
 }
 
@@ -1131,7 +1134,7 @@ mod tests {
     #[test]
     fn summary_tracks_separate_same_beneficiary_commitments_and_remainder_without_aggregation() {
         let a = target_canister();
-        let self_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
+        let relay_id = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let mut job = ActivePayoutJob::new(1, 10_000, 40_0000_0000, 10_0000_0000, 123);
         let p1 = PendingNotification {
             kind: TransferKind::Beneficiary,
@@ -1156,8 +1159,8 @@ mod tests {
             neuron_id: None,
         };
         let p3 = PendingNotification {
-            kind: TransferKind::RemainderToSelf,
-            beneficiary: self_id,
+            kind: TransferKind::RemainderToRelay,
+            beneficiary: relay_id,
             gross_share_e8s: 24_0000_0000,
             amount_e8s: 23_9999_0000,
             block_index: 3,
@@ -1174,7 +1177,7 @@ mod tests {
         apply_notified_transfer(&mut job, &p3);
         let summary = summary_from_job(&job);
         assert_eq!(summary.topped_up_count, 2);
-        assert_eq!(summary.remainder_to_self_e8s, 23_9999_0000);
+        assert_eq!(summary.remainder_to_relay_e8s, 23_9999_0000);
         assert_eq!(summary.pot_remaining_e8s, 0);
     }
 
@@ -1194,7 +1197,7 @@ mod tests {
             neuron_id: None,
         };
         let p2 = PendingNotification {
-            kind: TransferKind::RemainderToSelf,
+            kind: TransferKind::RemainderToRelay,
             beneficiary,
             gross_share_e8s: 60_000_000,
             amount_e8s: 59_990_000,
@@ -1211,7 +1214,7 @@ mod tests {
         let summary = summary_from_job(&job);
         assert_eq!(summary.topped_up_count, 1);
         assert_eq!(summary.topped_up_sum_e8s, 39_990_000);
-        assert_eq!(summary.remainder_to_self_e8s, 59_990_000);
+        assert_eq!(summary.remainder_to_relay_e8s, 59_990_000);
         assert_eq!(summary.pot_remaining_e8s, 0);
     }
 
@@ -1365,7 +1368,7 @@ mod tests {
             let remainder_gross_e8s = job.pot_start_e8s.saturating_sub(job.gross_outflow_e8s);
             if remainder_gross_e8s > fee_e8s {
                 let remainder = PendingNotification {
-                    kind: TransferKind::RemainderToSelf,
+                    kind: TransferKind::RemainderToRelay,
                     beneficiary: self_id,
                     gross_share_e8s: remainder_gross_e8s,
                     amount_e8s: remainder_gross_e8s.saturating_sub(fee_e8s),
@@ -1383,19 +1386,19 @@ mod tests {
             assert_eq!(summary.pot_start_e8s, pot_start_e8s);
             assert_eq!(job.gross_outflow_e8s.saturating_add(summary.pot_remaining_e8s), pot_start_e8s,
                 "accepted gross outflow plus remaining pot should conserve the pot even across mixed notify outcomes");
-            if summary.remainder_to_self_e8s > 0 {
+            if summary.remainder_to_relay_e8s > 0 {
                 assert_eq!(
                     summary.pot_remaining_e8s, 0,
                     "once a remainder transfer is sent there should be no pot left in-state"
                 );
             }
-            assert!(summary.pot_remaining_e8s <= fee_e8s || summary.remainder_to_self_e8s == 0,
+            assert!(summary.pot_remaining_e8s <= fee_e8s || summary.remainder_to_relay_e8s == 0,
                 "only fee-sized dust may remain undistributed before a remainder transfer is recorded");
             assert!(
                 summary.topped_up_sum_e8s <= job.gross_outflow_e8s,
                 "notified beneficiary net payouts cannot exceed accepted gross outflow"
             );
-            assert!(summary.remainder_to_self_e8s <= pot_start_e8s);
+            assert!(summary.remainder_to_relay_e8s <= pot_start_e8s);
         }
     }
 
@@ -1404,7 +1407,7 @@ mod tests {
         let job = ActivePayoutJob::new(11, 10_000, 70_000_000, 200_000_000, 1);
         let summary = summary_from_job(&job);
         assert_eq!(summary.topped_up_count, 0);
-        assert_eq!(summary.remainder_to_self_e8s, 0);
+        assert_eq!(summary.remainder_to_relay_e8s, 0);
         assert_eq!(summary.pot_remaining_e8s, 70_000_000);
     }
 
