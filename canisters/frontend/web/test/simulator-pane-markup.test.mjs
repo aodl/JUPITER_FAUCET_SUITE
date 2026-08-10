@@ -403,6 +403,60 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.doesNotMatch(howItWorks, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a>/);
 });
 
+test('cycles help opens a dedicated observability slide with actionable route guidance', () => {
+  const howItWorks = sectionMarkup('how-it-works');
+  assert.match(
+    bootstrapJs,
+    /href="#metric-tracker" data-tooltip-navigation>Memo Tracker<\/a>/
+  );
+  assert.match(
+    bootstrapJs,
+    /class="pane-page-button pane-fixed-tooltip-more-info" href="#how-it-works:4" data-tooltip-navigation>More info<\/a>/
+  );
+  assert.match(
+    bootstrapJs,
+    /Cycles observability is attempted automatically through recognized blackhole and SNS routes/
+  );
+  assert.doesNotMatch(bootstrapJs, /For ordinary canisters, cycles observability/);
+  assert.match(
+    bootstrapJs,
+    /<div class="pane-fixed-tooltip-actions">\s*<button class="pane-fixed-tooltip-close"/
+  );
+  assert.match(
+    bootstrapJs,
+    /const moreInfoLink = textNode\?\.querySelector\('\.pane-fixed-tooltip-more-info'\);\s*if \(moreInfoLink && actionsNode\) actionsNode\.prepend\(moreInfoLink\)/
+  );
+  assert.match(
+    bootstrapJs,
+    /event\.target\.closest\('\[data-tooltip-navigation\]'\)[\s\S]*popover\.hidden = true/
+  );
+  assert.match(howItWorks, /data-page="4"[\s\S]*<h3 class="pane-section-title">Cycles Observability<\/h3>/);
+  assert.match(howItWorks, /Registering a canister through a qualifying memo commitment tells the\s*<a href="#metric-tracker"[^>]*>Memo Tracker<\/a>\s*what to track/);
+  assert.match(howItWorks, /e3mmv-5qaaa-aaaah-aadma-cai[^>]*>[\s\S]*13-node blackhole<\/a>/);
+  assert.match(howItWorks, /77deu-baaaa-aaaar-qb6za-cai[^>]*>[\s\S]*Fiduciary blackhole<\/a>/);
+  assert.match(howItWorks, /Both are immutable, run the same independently reproducible\s*blackhole Wasm/);
+  assert.match(howItWorks, /trust-in-canisters\/#black-holed-canisters[^>]*>documented by DFINITY<\/a>/);
+  assert.match(howItWorks, /introduces no trusted operator and does not remove existing controllers/);
+  assert.match(howItWorks, /<strong>SNS routes:<\/strong>/);
+  assert.doesNotMatch(howItWorks, /Direct self balance/);
+  assert.doesNotMatch(howItWorks, /Cached positive route/);
+  assert.doesNotMatch(howItWorks, /Historian/);
+  assert.doesNotMatch(howItWorks, /Adding a controller changes the canister's security/);
+  assert.match(howItWorks, /<strong>TL;DR:<\/strong>/);
+  assert.match(howItWorks, /Non-SNS target canisters require a recognized blackhole controller/);
+  assert.match(howItWorks, /cycles for SNS-governed dapps are observable by default/);
+  assert.match(howItWorks, /href="#how-it-works" data-page-target="0"[^>]*>Jupiter Faucet<\/a>/);
+  assert.match(howItWorks, /href="#how-it-works:3" data-page-target="3"[^>]*>Jupiter Relay<\/a>/);
+  assert.match(howItWorks, /Jupiter Relay<\/a>\s*target canisters must expose their cycles so the Relay can calculate how much each needs/);
+  const memoTrackerReferences = howItWorks.match(/Memo Tracker/g) || [];
+  const memoTrackerLinks = howItWorks.match(/href="#metric-tracker"[^>]*>Memo Tracker<\/a>/g) || [];
+  assert.equal(memoTrackerReferences.length, memoTrackerLinks.length);
+  assert.match(howItWorks, /data-page="4" aria-label="Cycles Observability" aria-selected="false"/);
+  assert.match(metricsCss, /\.pane-fixed-tooltip-more-info \{[\s\S]*display: inline-flex;[\s\S]*text-decoration: none;/);
+  assert.match(metricsCss, /\.pane-fixed-tooltip-actions \{[\s\S]*display: flex;[\s\S]*align-items: center;[\s\S]*gap: 10px;/);
+  assert.match(metricsCss, /\.pane-fixed-tooltip-close \{[\s\S]*margin-left: auto;/);
+});
+
 test('How it works pane includes advanced usage memo builder without restoring simulator controls', () => {
   const howItWorks = sectionMarkup('how-it-works');
   const memoBuilder = sectionMarkup('memo-builder');
@@ -412,6 +466,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /data-page="1"/);
   assert.match(howItWorks, /data-page="2"/);
   assert.match(howItWorks, /data-page="3"/);
+  assert.match(howItWorks, /data-page="4"/);
   assert.match(howItWorks, /data-page="1"[\s\S]*Base maturity[\s\S]*data-page="2"[\s\S]*Advanced Usage[\s\S]*data-page="3"[\s\S]*Relay Canisters/);
   assert.match(howItWorks, /Advanced Usage/);
   assert.match(howItWorks, /three memo-directed flows/);
@@ -421,7 +476,6 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /href="#memo-builder"[^>]*data-panel="memo-builder"[^>]*>memo builder<\/a>/);
   assert.match(howItWorks, /<strong>Developer tip:<\/strong> You can adjust the <code>canister<\/code>\/<code>neuron<\/code>,\s*<code>title<\/code>, and <code>label<\/code> parameters/);
   assert.match(howItWorks, /customize the memo helper\s*form for a smoother user experience/);
-  assert.doesNotMatch(howItWorks, /next slide/);
   assert.doesNotMatch(howItWorks, /<a class="memo-builder-tip-url/);
   assert.match(howItWorks, /id="memo-builder-tip-url"[^>]*data-copy-value="#memo-builder\?canister=\{protocol canister ID\}&amp;title=\{custom title\}&amp;label=\{custom label\}"/);
   assert.match(howItWorks, /memo-builder-tip-url mono[\s\S]*#memo-builder\?canister=/);
@@ -437,6 +491,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /In this particular\s+case a <code>'\.'<\/code> suffix is superfluous/);
   assert.doesNotMatch(howItWorks, /<strong>Extra tip:<\/strong>/);
   assert.match(howItWorks, /A relay canister provides one stable destination for ICP transfers/);
+  assert.match(howItWorks, /<strong>Target requirement:<\/strong> Every Relay target canister must make its cycles\s*balance publicly observable/);
+  assert.match(howItWorks, /href="#how-it-works:4" data-page-target="4"[^>]*>Cycles Observability<\/a>\s*on the next slide/);
   assert.match(howItWorks, /steadily growing cycles balance for configured target canisters/);
   assert.match(howItWorks, /topping up 1% more\s*cycles than needed to restore the previously sampled balance/);
   assert.match(howItWorks, /<strong>Example:<\/strong> The full suite of Jupiter Faucet protocol canisters are managed by a single/);

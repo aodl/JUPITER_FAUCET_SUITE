@@ -600,6 +600,12 @@
                 canister (provided enough ICP is perpetually supplied into the relay canister).
               </p>
               <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>Target requirement:</strong> Every Relay target canister must make its cycles
+                balance publicly observable so the Relay can measure consumption and calculate each
+                top-up. See <a href="#how-it-works:4" data-page-target="4" class="pane-external-link">Cycles Observability</a>
+                on the next slide.
+              </p>
+              <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Example:</strong> The full suite of Jupiter Faucet protocol canisters are managed by a single
                 <a href="/#metric-tracker?memo=u2qkp-aqaaa-aaaar-qb7ea-cai.&amp;range=month" data-panel="metric-tracker" class="pane-external-link">relay canister</a>.
                 Anyone who wishes to contribute an ICP commitment can use the
@@ -651,11 +657,50 @@
               </p>
             </div>
 
+            <div class="nav-panel-page" data-page="4">
+              <h3 class="pane-section-title">Cycles Observability</h3>
+              <p class="nav-panel-content">
+                Registering a canister through a qualifying memo commitment tells the
+                <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">Memo Tracker</a>
+                what to track. Its cycles balance can be displayed through one of these routes:
+              </p>
+              <ul class="nav-panel-content">
+                <li>
+                  <strong>Recognized blackhole:</strong> An ordinary target is observable when either the
+                  <a href="https://dashboard.internetcomputer.org/canister/e3mmv-5qaaa-aaaah-aadma-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link">13-node blackhole</a>
+                  or the
+                  <a href="https://dashboard.internetcomputer.org/canister/77deu-baaaa-aaaar-qb6za-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link">Fiduciary blackhole</a>
+                  is one of its controllers. Both are immutable, run the same independently reproducible
+                  blackhole Wasm <a href="https://docs.internetcomputer.org/guides/canister-management/trust-in-canisters/#black-holed-canisters" target="_blank" rel="noopener noreferrer" class="pane-external-link">documented by DFINITY</a>,
+                  and can only make canister status public. Adding either as an additional controller
+                  introduces no trusted operator and does not remove existing controllers; it simply lets
+                  the <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">Memo Tracker</a>
+                  read the target's cycles balance.
+                </li>
+                <li>
+                  <strong>SNS routes:</strong> Deployed SNS canisters and dapps governed by an SNS can be
+                  observed through that SNS. These targets do not need a recognized blackhole controller.
+                </li>
+              </ul>
+              <p class="nav-panel-content memo-builder-safety-notice">
+                <strong>TL;DR:</strong> Non-SNS target canisters require a recognized blackhole controller
+                if you want cycles history displayed in the
+                <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">Memo Tracker</a>;
+                cycles for SNS-governed dapps are observable by default. Newly tracked canisters may remain
+                pending until their initial probe or the next cycles sweep completes. While
+                <a href="#how-it-works" data-page-target="0" class="pane-external-link">Jupiter Faucet</a>
+                perpetually tops up target canisters whether or not their cycles are publicly observable,
+                <a href="#how-it-works:3" data-page-target="3" class="pane-external-link">Jupiter Relay</a>
+                target canisters must expose their cycles so the Relay can calculate how much each needs.
+              </p>
+            </div>
+
             <div class="nav-panel-dots" role="tablist">
               <button class="nav-panel-dot is-active" type="button" data-page="0" aria-label="Page 1" aria-selected="true"></button>
               <button class="nav-panel-dot" type="button" data-page="1" aria-label="Maturity and rewards" aria-selected="false"></button>
               <button class="nav-panel-dot" type="button" data-page="2" aria-label="Advanced Usage" aria-selected="false"></button>
               <button class="nav-panel-dot" type="button" data-page="3" aria-label="Relay Canisters" aria-selected="false"></button>
+              <button class="nav-panel-dot" type="button" data-page="4" aria-label="Cycles Observability" aria-selected="false"></button>
             </div>
 
         </article>

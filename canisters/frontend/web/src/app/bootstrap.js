@@ -30,8 +30,9 @@ const FRONTEND_CONFIG = __JUPITER_FRONTEND_CONFIG__;
 const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
-      <p>Cycles balances are sampled periodically by historian.</p>
-      <p>For ordinary canisters, cycles observability is attempted automatically through direct self status, recognized blackhole routes, cached positive routes, and SNS routes. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
+      <p>Cycles balances are sampled periodically by the <a class="pane-external-link" href="#metric-tracker" data-tooltip-navigation>Memo Tracker</a>.</p>
+      <p>Cycles observability is attempted automatically through recognized blackhole and SNS routes. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
+      <a class="pane-page-button pane-fixed-tooltip-more-info" href="#how-it-works:4" data-tooltip-navigation>More info</a>
     </div>`,
 };
 
@@ -234,7 +235,9 @@ function ensureInlineTooltipPopover() {
   popover.innerHTML = `
     <div class="pane-fixed-tooltip-card" role="status" aria-live="polite">
       <div class="pane-fixed-tooltip-text" id="pane-fixed-tooltip-text"></div>
-      <button class="pane-fixed-tooltip-close" type="button" aria-label="Close help">Close</button>
+      <div class="pane-fixed-tooltip-actions">
+        <button class="pane-fixed-tooltip-close" type="button" aria-label="Close help">Close</button>
+      </div>
     </div>`;
   document.body.appendChild(popover);
   popover.addEventListener('pointerdown', (event) => {
@@ -242,6 +245,9 @@ function ensureInlineTooltipPopover() {
   });
   popover.addEventListener('click', (event) => {
     event.stopPropagation();
+    if (event.target instanceof Element && event.target.closest('[data-tooltip-navigation]')) {
+      popover.hidden = true;
+    }
   });
   popover.querySelector('.pane-fixed-tooltip-close')?.addEventListener('click', (event) => {
     event.preventDefault();
@@ -255,6 +261,8 @@ function ensureInlineTooltipPopover() {
 function showInlineTooltipPopover(content, { trustedHtml = false } = {}) {
   const popover = ensureInlineTooltipPopover();
   const textNode = popover.querySelector('#pane-fixed-tooltip-text');
+  const actionsNode = popover.querySelector('.pane-fixed-tooltip-actions');
+  actionsNode?.querySelector('.pane-fixed-tooltip-more-info')?.remove();
   if (textNode) {
     if (trustedHtml) {
       textNode.innerHTML = content;
@@ -262,6 +270,8 @@ function showInlineTooltipPopover(content, { trustedHtml = false } = {}) {
       textNode.textContent = content;
     }
   }
+  const moreInfoLink = textNode?.querySelector('.pane-fixed-tooltip-more-info');
+  if (moreInfoLink && actionsNode) actionsNode.prepend(moreInfoLink);
   popover.hidden = false;
 }
 

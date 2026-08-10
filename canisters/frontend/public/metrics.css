@@ -597,8 +597,19 @@
   margin: 0;
 }
 
+.pane-fixed-tooltip-more-info {
+  display: inline-flex;
+  text-decoration: none;
+}
+
+.pane-fixed-tooltip-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .pane-fixed-tooltip-close {
-  justify-self: end;
+  margin-left: auto;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.08);
   color: inherit;
