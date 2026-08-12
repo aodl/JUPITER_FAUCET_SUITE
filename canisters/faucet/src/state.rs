@@ -82,9 +82,20 @@ pub(crate) fn runtime_state_log_line(st: &State) -> String {
     let active_funding_scan = st.active_funding_scan.as_ref();
     let active_payout_job = st.active_payout_job.as_ref();
     format!(
-        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_job_present={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={}",
+        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} last_observed_staking_balance_e8s={} last_observed_latest_tx_id={} consecutive_index_anchor_failures={} consecutive_index_latest_invariant_failures={} consecutive_index_latest_unreadable_failures={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_job_present={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={}",
         opt_u64_text(st.last_processed_funding_tx_id),
         opt_forced_rescue_reason_text(st.forced_rescue_reason.as_ref()),
+        opt_u64_text(st.last_observed_staking_balance_e8s),
+        opt_u64_text(st.last_observed_latest_tx_id),
+        opt_u64_text(st.consecutive_index_anchor_failures.map(u64::from)),
+        opt_u64_text(
+            st.consecutive_index_latest_invariant_failures
+                .map(u64::from)
+        ),
+        opt_u64_text(
+            st.consecutive_index_latest_unreadable_failures
+                .map(u64::from)
+        ),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.cursor)),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.candidate).map(|candidate| candidate.tx_id)),
         opt_u64_text(active_funding_scan.and_then(|scan| scan.candidate).map(|candidate| candidate.amount_e8s)),
@@ -1074,6 +1085,11 @@ mod tests {
         assert!(runtime_state_log_line(&st).contains("active_payout_job_present=false"));
         st.last_processed_funding_tx_id = Some(42);
         st.forced_rescue_reason = Some(ForcedRescueReason::FundingTrancheBalanceMismatch);
+        st.last_observed_staking_balance_e8s = Some(300_000_000);
+        st.last_observed_latest_tx_id = Some(1234);
+        st.consecutive_index_anchor_failures = Some(1);
+        st.consecutive_index_latest_invariant_failures = Some(2);
+        st.consecutive_index_latest_unreadable_failures = Some(3);
         st.active_funding_scan = Some(FundingScanState {
             anchor_last_processed_funding_tx_id: Some(41),
             cursor: Some(500),
@@ -1092,6 +1108,11 @@ mod tests {
         assert!(line.starts_with("STATE:"));
         assert!(line.contains("last_processed_funding_tx_id=42"));
         assert!(line.contains("forced_rescue_reason=FundingTrancheBalanceMismatch"));
+        assert!(line.contains("last_observed_staking_balance_e8s=300000000"));
+        assert!(line.contains("last_observed_latest_tx_id=1234"));
+        assert!(line.contains("consecutive_index_anchor_failures=1"));
+        assert!(line.contains("consecutive_index_latest_invariant_failures=2"));
+        assert!(line.contains("consecutive_index_latest_unreadable_failures=3"));
         assert!(line.contains("active_funding_scan_cursor=500"));
         assert!(line.contains("active_funding_scan_candidate_tx_id=43"));
         assert!(line.contains("active_funding_scan_candidate_amount_e8s=100000000"));

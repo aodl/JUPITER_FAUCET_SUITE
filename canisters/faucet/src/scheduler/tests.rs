@@ -225,7 +225,9 @@ mod tests {
             _account: Account,
         ) -> Result<u64, crate::clients::ClientError> {
             assert_no_persistence_batch();
-            panic!("balance_of_e8s should not be called")
+            Err(crate::clients::ClientError::Call(
+                "scripted transfer-only ledger has no balance observation".to_string(),
+            ))
         }
         async fn transfer(
             &self,
@@ -479,6 +481,67 @@ mod tests {
                 balance: 0,
                 oldest_tx_id: self.txs.first().map(|tx| tx.id),
                 transactions: out,
+            })
+        }
+    }
+
+    /// Models the real ICP Index account-history contract: newest first, with `start`
+    /// excluding the boundary and walking toward older transactions.
+    struct NewestFirstExclusiveIndex {
+        txs: Vec<IndexTransactionWithId>,
+        balance_e8s: u64,
+        starts: Arc<Mutex<Vec<Option<u64>>>>,
+    }
+
+    impl NewestFirstExclusiveIndex {
+        fn new(txs: Vec<IndexTransactionWithId>, balance_e8s: u64) -> Self {
+            assert!(txs.windows(2).all(|pair| pair[0].id > pair[1].id));
+            Self {
+                txs,
+                balance_e8s,
+                starts: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn starts(&self) -> Vec<Option<u64>> {
+            self.starts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl IndexClient for NewestFirstExclusiveIndex {
+        async fn get_account_identifier_transactions(
+            &self,
+            account_identifier: String,
+            start: Option<u64>,
+            max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
+            self.starts.lock().unwrap().push(start);
+            let start_idx = match start {
+                None => 0,
+                Some(boundary) => self
+                    .txs
+                    .iter()
+                    .position(|tx| tx.id == boundary)
+                    .map(|index| index + 1)
+                    .unwrap_or(self.txs.len()),
+            };
+            let transactions = self.txs[start_idx..]
+                .iter()
+                .filter(|tx| {
+                    matches!(
+                        &tx.transaction.operation,
+                        IndexOperation::Transfer { to, .. } if to == &account_identifier
+                    )
+                })
+                .take(max_results as usize)
+                .cloned()
+                .collect();
+            Ok(GetAccountIdentifierTransactionsResponse {
+                balance: self.balance_e8s,
+                oldest_tx_id: self.txs.last().map(|tx| tx.id),
+                transactions,
             })
         }
     }
@@ -2992,6 +3055,11 @@ mod tests {
         let mut st = state::State::new(cfg, now_secs);
         st.last_processed_funding_tx_id = Some(42);
         st.forced_rescue_reason = Some(ForcedRescueReason::FundingTrancheBalanceMismatch);
+        st.last_observed_staking_balance_e8s = Some(200_000_000);
+        st.last_observed_latest_tx_id = Some(1234);
+        st.consecutive_index_anchor_failures = Some(1);
+        st.consecutive_index_latest_invariant_failures = Some(2);
+        st.consecutive_index_latest_unreadable_failures = Some(3);
         st.active_funding_scan = Some(state::FundingScanState {
             anchor_last_processed_funding_tx_id: Some(41),
             cursor: Some(500),
@@ -3025,6 +3093,11 @@ mod tests {
             .expect("completed main tick should emit STATE log");
         assert!(state_line.contains("last_processed_funding_tx_id=42"));
         assert!(state_line.contains("forced_rescue_reason=FundingTrancheBalanceMismatch"));
+        assert!(state_line.contains("last_observed_staking_balance_e8s=200000000"));
+        assert!(state_line.contains("last_observed_latest_tx_id=1234"));
+        assert!(state_line.contains("consecutive_index_anchor_failures=1"));
+        assert!(state_line.contains("consecutive_index_latest_invariant_failures=2"));
+        assert!(state_line.contains("consecutive_index_latest_unreadable_failures=3"));
         assert!(state_line.contains("active_funding_scan_cursor=500"));
         assert!(state_line.contains("active_funding_scan_candidate_tx_id=43"));
         assert!(state_line.contains("active_funding_scan_candidate_amount_e8s=100000000"));
@@ -3425,8 +3498,15 @@ mod tests {
             commitment_tx(1, &staking_id, 50_000_000, None),
         ]);
 
-        let scan = run_ready(scan_latest_tx_id(&index, staking_id, None));
-        assert_eq!(scan, LatestScan::Read(Some(3)), "latest scan should treat the first tx on a real-index newest-first page as the latest tx id");
+        let scan = run_ready(scan_latest_observation(&index, staking_id, None));
+        assert_eq!(
+            scan,
+            LatestScan::Read {
+                balance_e8s: 0,
+                latest_tx_id: Some(3),
+            },
+            "latest scan should treat the first tx on a real-index newest-first page as the latest tx id"
+        );
     }
 
     #[test]
@@ -3655,7 +3735,11 @@ mod tests {
             }),
         ]);
 
-        let latest = run_ready(scan_latest_tx_id(&index, "staking".to_string(), Some(10)));
+        let latest = run_ready(scan_latest_observation(
+            &index,
+            "staking".to_string(),
+            Some(10),
+        ));
         assert_eq!(latest, LatestScan::InvariantBroken);
     }
 
@@ -3777,7 +3861,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_latest_tx_id_uses_exclusive_start_cursor_contract() {
+    fn scan_latest_observation_supports_synthetic_ascending_exclusive_cursor() {
         let cfg = test_config();
         let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let index = ExclusiveIndex::new(vec![
@@ -3786,8 +3870,14 @@ mod tests {
             commitment_tx(12, &staking_id, 1, None),
         ]);
 
-        let latest = run_ready(scan_latest_tx_id(&index, staking_id, Some(10)));
-        assert_eq!(latest, LatestScan::Read(Some(12)));
+        let latest = run_ready(scan_latest_observation(&index, staking_id, Some(10)));
+        assert_eq!(
+            latest,
+            LatestScan::Read {
+                balance_e8s: 0,
+                latest_tx_id: Some(12),
+            }
+        );
         assert_eq!(index.starts(), vec![Some(10)]);
     }
 
@@ -3801,20 +3891,477 @@ mod tests {
         state::clear_skip_ranges();
         state::set_state(st);
 
-        state::with_state_mut(|st| apply_latest_observation(st, 200, LatestScan::Read(Some(10))));
+        state::with_state_mut(|st| {
+            apply_latest_observation(
+                st,
+                200,
+                LatestScan::Read {
+                    balance_e8s: 200,
+                    latest_tx_id: Some(10),
+                },
+            )
+        });
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(1));
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
             assert_eq!(st.forced_rescue_reason, None);
         });
 
-        state::with_state_mut(|st| apply_latest_observation(st, 200, LatestScan::Read(Some(10))));
+        state::with_state_mut(|st| {
+            apply_latest_observation(
+                st,
+                200,
+                LatestScan::Read {
+                    balance_e8s: 200,
+                    latest_tx_id: Some(10),
+                },
+            )
+        });
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
             assert_eq!(
                 st.forced_rescue_reason,
                 Some(ForcedRescueReason::IndexLatestInvariantBroken)
             );
+        });
+    }
+
+    #[test]
+    fn changed_balance_reads_newest_first_head_and_advances_health_monotonically() {
+        let now_secs = 5_025_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        let index = NewestFirstExclusiveIndex::new(
+            (1..=4)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            200,
+        );
+        run_ready(probe_index_health(&index, &staking_id, 200));
+        assert_eq!(
+            index.starts(),
+            vec![None, None],
+            "both the anchor probe and latest-head scan must begin at the real Index head"
+        );
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(200));
+            assert_eq!(st.last_observed_latest_tx_id, Some(4));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+
+        let next_index = NewestFirstExclusiveIndex::new(
+            (1..=5)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            300,
+        );
+        run_ready(probe_index_health(&next_index, &staking_id, 300));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
+            assert_eq!(st.last_observed_latest_tx_id, Some(5));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+    }
+
+    #[test]
+    fn concurrent_index_tip_balance_keeps_latest_health_observation_coherent() {
+        let now_secs = 5_040_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        let index = NewestFirstExclusiveIndex::new(
+            (1..=5)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            300,
+        );
+        run_ready(probe_index_health(&index, &staking_id, 200));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
+            assert_eq!(st.last_observed_latest_tx_id, Some(5));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+
+        run_ready(probe_index_health(&index, &staking_id, 300));
+        assert_eq!(
+            index.starts(),
+            vec![None, None, None],
+            "the coherent Index-tip balance must prevent a redundant latest-head scan while retaining the anchor probe"
+        );
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
+            assert_eq!(st.last_observed_latest_tx_id, Some(5));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+    }
+
+    #[test]
+    fn unchanged_newest_first_head_still_fails_closed_after_two_changed_balance_observations() {
+        let now_secs = 5_050_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        let index = NewestFirstExclusiveIndex::new(
+            (1..=3)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            200,
+        );
+
+        run_ready(probe_index_health(&index, &staking_id, 200));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(1));
+            assert_eq!(st.forced_rescue_reason, None);
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+        });
+
+        run_ready(probe_index_health(&index, &staking_id, 200));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
+            assert_eq!(
+                st.forced_rescue_reason,
+                Some(ForcedRescueReason::IndexLatestInvariantBroken)
+            );
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+        });
+    }
+
+    #[test]
+    fn transient_stale_newest_first_head_heals_on_real_advancement() {
+        let now_secs = 5_075_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        let stale = NewestFirstExclusiveIndex::new(
+            (1..=3)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            200,
+        );
+        run_ready(probe_index_health(&stale, &staking_id, 200));
+        assert_eq!(
+            state::with_state(|st| st.consecutive_index_latest_invariant_failures),
+            Some(1)
+        );
+
+        let healed = NewestFirstExclusiveIndex::new(
+            (1..=4)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            200,
+        );
+        run_ready(probe_index_health(&healed, &staking_id, 200));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(200));
+            assert_eq!(st.last_observed_latest_tx_id, Some(4));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+    }
+
+    #[test]
+    fn backward_latest_observations_never_replace_durable_health_baseline() {
+        let now_secs = 5_090_u64;
+        let cfg = test_config();
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(10);
+        st.consecutive_index_latest_invariant_failures = Some(0);
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        for expected_failures in 1..=2 {
+            state::with_state_mut(|st| {
+                apply_latest_observation(
+                    st,
+                    200,
+                    LatestScan::Read {
+                        balance_e8s: 200,
+                        latest_tx_id: Some(9),
+                    },
+                )
+            });
+            state::with_state(|st| {
+                assert_eq!(
+                    st.consecutive_index_latest_invariant_failures,
+                    Some(expected_failures)
+                );
+                assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+                assert_eq!(st.last_observed_latest_tx_id, Some(10));
+            });
+        }
+        assert_eq!(
+            state::with_state(|st| st.forced_rescue_reason.clone()),
+            Some(ForcedRescueReason::IndexLatestInvariantBroken)
+        );
+    }
+
+    #[test]
+    fn descending_payout_pages_keep_the_newest_observed_tx_and_cannot_regress_health() {
+        let now_secs = 5_095_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(10);
+        st.active_payout_job = Some(ActivePayoutJob::new(
+            1,
+            10_000,
+            1,
+            200,
+            now_secs * 1_000_000_000,
+        ));
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        for ids in [[7, 6, 5], [4, 3, 2]] {
+            note_index_page(&GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                oldest_tx_id: Some(1),
+                transactions: ids
+                    .into_iter()
+                    .map(|id| commitment_tx(id, &staking_id, 100, None))
+                    .collect(),
+            });
+        }
+        let job = state::with_state(|st| st.active_payout_job.clone().unwrap());
+        assert_eq!(job.observed_latest_tx_id, Some(7));
+
+        state::with_state_mut(|st| apply_job_health_observations(st, &job, false));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(10));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+    }
+
+    #[test]
+    fn commitment_during_multi_page_payout_cannot_seed_a_mixed_health_baseline() {
+        let now_secs = 5_098_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        st.consecutive_index_latest_invariant_failures = Some(0);
+        st.active_payout_job = Some(ActivePayoutJob::new(
+            1,
+            10_000,
+            1,
+            200,
+            now_secs * 1_000_000_000,
+        ));
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        for ids in [[5, 4], [3, 2]] {
+            note_index_page(&GetAccountIdentifierTransactionsResponse {
+                balance: 300,
+                oldest_tx_id: Some(1),
+                transactions: ids
+                    .into_iter()
+                    .map(|id| commitment_tx(id, &staking_id, 100, None))
+                    .collect(),
+            });
+        }
+        let job = state::with_state(|st| st.active_payout_job.clone().unwrap());
+        assert_eq!(job.observed_latest_tx_id, Some(5));
+
+        state::with_state_mut(|st| apply_job_health_observations(st, &job, false));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+        });
+
+        let fresh_tip = NewestFirstExclusiveIndex::new(
+            (1..=5)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            300,
+        );
+        run_ready(refresh_index_latest_health_after_payout(
+            &fresh_tip,
+            &staking_id,
+            200,
+        ));
+        run_ready(probe_index_health(&fresh_tip, &staking_id, 300));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
+            assert_eq!(st.last_observed_latest_tx_id, Some(5));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+    }
+
+    #[test]
+    fn stale_post_payout_index_still_latches_rescue_after_two_observations() {
+        let now_secs = 5_099_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        st.consecutive_index_latest_invariant_failures = Some(0);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        let stale = NewestFirstExclusiveIndex::new(
+            (1..=3)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            200,
+        );
+
+        run_ready(refresh_index_latest_health_after_payout(
+            &stale,
+            &staking_id,
+            200,
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(1));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+
+        run_ready(refresh_index_latest_health_after_payout(
+            &stale,
+            &staking_id,
+            200,
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(
+                st.forced_rescue_reason,
+                Some(ForcedRescueReason::IndexLatestInvariantBroken)
+            );
+        });
+    }
+
+    #[test]
+    fn unreadable_post_payout_index_still_latches_rescue_after_two_observations() {
+        let now_secs = 5_100_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        let unreadable = ScriptedIndex::new(vec![IndexResponseStep::Err, IndexResponseStep::Err]);
+
+        run_ready(refresh_index_latest_health_after_payout(
+            &unreadable,
+            &staking_id,
+            200,
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(1));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
+        });
+
+        run_ready(refresh_index_latest_health_after_payout(
+            &unreadable,
+            &staking_id,
+            200,
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(3));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(2));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(
+                st.forced_rescue_reason,
+                Some(ForcedRescueReason::IndexLatestUnreadable)
+            );
+        });
+    }
+
+    #[test]
+    fn advancing_post_payout_index_heals_latest_failure_counters() {
+        let now_secs = 5_101_u64;
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg, now_secs);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(3);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        let unreadable = ScriptedIndex::new(vec![IndexResponseStep::Err]);
+
+        run_ready(refresh_index_latest_health_after_payout(
+            &unreadable,
+            &staking_id,
+            200,
+        ));
+        assert_eq!(
+            state::with_state(|st| st.consecutive_index_latest_unreadable_failures),
+            Some(1)
+        );
+
+        let advanced = NewestFirstExclusiveIndex::new(
+            (1..=4)
+                .rev()
+                .map(|id| commitment_tx(id, &staking_id, 100, None))
+                .collect(),
+            250,
+        );
+        run_ready(refresh_index_latest_health_after_payout(
+            &advanced,
+            &staking_id,
+            200,
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(250));
+            assert_eq!(st.last_observed_latest_tx_id, Some(4));
+            assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
+            assert_eq!(st.forced_rescue_reason, None);
         });
     }
 

@@ -5,7 +5,6 @@ pub(super) async fn probe_index_health(
     denom_balance_e8s: u64,
 ) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
-    let prev_latest = state::with_state(|st| st.last_observed_latest_tx_id);
     let first_page = match index
         .get_account_identifier_transactions(staking_id.to_string(), None, 1)
         .await
@@ -29,15 +28,9 @@ pub(super) async fn probe_index_health(
     state::with_state_mut(|st| apply_anchor_observation(st, first_page.oldest_tx_id));
 
     if prev_balance.is_none() {
-        let latest_tx_id = scan_latest_tx_id(index, staking_id.to_string(), None).await;
+        let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
         state::with_state_mut(|st| {
-            st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
-            st.last_observed_latest_tx_id = match latest_tx_id {
-                LatestScan::Read(latest_tx_id) => latest_tx_id,
-                LatestScan::Unreadable | LatestScan::InvariantBroken => None,
-            };
-            st.consecutive_index_latest_invariant_failures = Some(0);
-            st.consecutive_index_latest_unreadable_failures = Some(0);
+            apply_latest_observation(st, denom_balance_e8s, latest_observation)
         });
         return;
     }
@@ -46,13 +39,30 @@ pub(super) async fn probe_index_health(
         return;
     }
 
-    let latest_tx_id = scan_latest_tx_id(index, staking_id.to_string(), prev_latest).await;
-    state::with_state_mut(|st| apply_latest_observation(st, denom_balance_e8s, latest_tx_id));
+    let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
+    state::with_state_mut(|st| apply_latest_observation(st, denom_balance_e8s, latest_observation));
+}
+
+pub(super) async fn refresh_index_latest_health_after_payout(
+    index: &impl IndexClient,
+    staking_id: &str,
+    denom_balance_e8s: u64,
+) {
+    let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
+    if prev_balance == Some(denom_balance_e8s) {
+        return;
+    }
+
+    let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
+    state::with_state_mut(|st| apply_latest_observation(st, denom_balance_e8s, latest_observation));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LatestScan {
-    Read(Option<u64>),
+    Read {
+        balance_e8s: u64,
+        latest_tx_id: Option<u64>,
+    },
     Unreadable,
     InvariantBroken,
 }
@@ -129,17 +139,23 @@ pub(super) fn tx_is_after_cursor_for_page(
     }
 }
 
-pub(super) async fn scan_latest_tx_id(
+pub(super) async fn scan_latest_observation(
     index: &impl IndexClient,
     staking_id: String,
     start: Option<u64>,
 ) -> LatestScan {
     let mut cursor = start;
     let mut latest = start;
+    let mut latest_balance_e8s = None;
     let mut pages_scanned = 0u64;
     loop {
         if pages_scanned >= MAX_INDEX_PAGES_PER_LATEST_SCAN {
-            return LatestScan::Read(latest);
+            return latest_balance_e8s
+                .map(|balance_e8s| LatestScan::Read {
+                    balance_e8s,
+                    latest_tx_id: latest,
+                })
+                .unwrap_or(LatestScan::InvariantBroken);
         }
         pages_scanned = pages_scanned.saturating_add(1);
         let resp = match index
@@ -149,9 +165,13 @@ pub(super) async fn scan_latest_tx_id(
             Ok(resp) => resp,
             Err(_) => return LatestScan::Unreadable,
         };
+        latest_balance_e8s = Some(resp.balance);
         let page_latest = index_page_latest_tx_id(&resp.transactions);
         if page_latest.is_none() {
-            return LatestScan::Read(latest);
+            return LatestScan::Read {
+                balance_e8s: resp.balance,
+                latest_tx_id: latest,
+            };
         }
         let descending = index_page_descending(&resp.transactions);
         if descending {
@@ -160,7 +180,10 @@ pub(super) async fn scan_latest_tx_id(
                 (None, next) => next,
                 (prev, None) => prev,
             };
-            return LatestScan::Read(latest);
+            return LatestScan::Read {
+                balance_e8s: resp.balance,
+                latest_tx_id: latest,
+            };
         }
         if cursor
             .zip(page_latest)
@@ -172,7 +195,10 @@ pub(super) async fn scan_latest_tx_id(
         latest = page_latest;
         cursor = index_page_next_cursor(&resp.transactions);
         if resp.transactions.len() < PAGE_SIZE as usize {
-            return LatestScan::Read(latest);
+            return LatestScan::Read {
+                balance_e8s: resp.balance,
+                latest_tx_id: latest,
+            };
         }
     }
 }
@@ -205,11 +231,15 @@ pub(super) fn apply_latest_observation(
         st.last_observed_latest_tx_id,
     ) {
         (None, _) => {
-            st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
-            st.last_observed_latest_tx_id = match latest_scan {
-                LatestScan::Read(latest_tx_id) => latest_tx_id,
-                LatestScan::Unreadable | LatestScan::InvariantBroken => None,
+            let (observed_balance_e8s, latest_tx_id) = match latest_scan {
+                LatestScan::Read {
+                    balance_e8s,
+                    latest_tx_id,
+                } => (balance_e8s, latest_tx_id),
+                LatestScan::Unreadable | LatestScan::InvariantBroken => (denom_balance_e8s, None),
             };
+            st.last_observed_staking_balance_e8s = Some(observed_balance_e8s);
+            st.last_observed_latest_tx_id = latest_tx_id;
             st.consecutive_index_latest_invariant_failures = Some(0);
             st.consecutive_index_latest_unreadable_failures = Some(0);
         }
@@ -217,14 +247,17 @@ pub(super) fn apply_latest_observation(
         (Some(_), prev_latest_tx_id) => match latest_scan {
             LatestScan::Unreadable => record_latest_unreadable_failure(st),
             LatestScan::InvariantBroken => record_latest_invariant_failure(st),
-            LatestScan::Read(latest_tx_id) => {
-                let latest_changed = match (prev_latest_tx_id, latest_tx_id) {
-                    (Some(prev), Some(latest)) => latest != prev,
+            LatestScan::Read {
+                balance_e8s,
+                latest_tx_id,
+            } => {
+                let latest_advanced = match (prev_latest_tx_id, latest_tx_id) {
+                    (Some(prev), Some(latest)) => latest > prev,
                     (None, Some(_)) => true,
                     (_, None) => false,
                 };
-                if latest_changed {
-                    st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
+                if latest_advanced {
+                    st.last_observed_staking_balance_e8s = Some(balance_e8s);
                     st.last_observed_latest_tx_id = latest_tx_id;
                     st.consecutive_index_latest_invariant_failures = Some(0);
                     st.consecutive_index_latest_unreadable_failures = Some(0);
@@ -284,11 +317,6 @@ pub(super) fn apply_job_health_observations(
     zero_success_run_counts: bool,
 ) {
     apply_anchor_observation(st, job.observed_oldest_tx_id);
-    apply_latest_observation(
-        st,
-        job.denom_staking_balance_e8s,
-        LatestScan::Read(job.observed_latest_tx_id),
-    );
     apply_cmc_run_result(
         st,
         job.cmc_attempt_count.unwrap_or(0),

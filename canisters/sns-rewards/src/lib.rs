@@ -112,7 +112,6 @@ fn resolve_default_icp_accounts(
 fn initialize(config: state::Config, event: &str) {
     state::initialize(config);
     scheduler::install_timers();
-    scheduler::schedule_immediate_scan_check();
     logging::lifecycle(event);
 }
 
@@ -150,7 +149,6 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
         }
     }
     scheduler::install_timers();
-    scheduler::schedule_immediate_scan_check();
     logging::lifecycle("post_upgrade_complete");
 }
 

@@ -2547,9 +2547,9 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                 .filter(|c| c.account_identifier == staking_id)
                 .map(|c| c.start)
                 .collect();
-            if starts.len() != 3 || starts.iter().any(|start| start.is_some()) {
+            if starts.len() != 4 || starts.iter().any(|start| start.is_some()) {
                 bail!(
-                "expected first-tranche denominator pre-scan and both payout scans to start from the beginning, got starts {starts:?} from calls {calls:?}"
+                "expected first-tranche denominator pre-scan, both payout scans, and coherent post-payout health refresh to start from the beginning, got starts {starts:?} from calls {calls:?}"
             );
             }
 

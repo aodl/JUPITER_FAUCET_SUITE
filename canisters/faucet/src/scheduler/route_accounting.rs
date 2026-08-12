@@ -514,6 +514,16 @@ pub(super) async fn process_payout(
             }
             assert_no_persistence_batch_for_async();
             finalize_completed_job(status_client).await;
+            assert_no_persistence_batch_for_async();
+            if let Ok(post_payout_balance_e8s) = ledger.balance_of_e8s(cfg.staking_account).await {
+                assert_no_persistence_batch_for_async();
+                refresh_index_latest_health_after_payout(
+                    index,
+                    &staking_id,
+                    post_payout_balance_e8s,
+                )
+                .await;
+            }
             maybe_latch_bootstrap_rescue(now_secs);
             return true;
         }

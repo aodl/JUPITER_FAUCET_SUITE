@@ -110,6 +110,184 @@ fn neuron_id(value: u32) -> Vec<u8> {
     id
 }
 
+struct TimerScanEnv {
+    pic: pocket_ic::PocketIc,
+    root: Principal,
+    governance: Principal,
+    ledger: Principal,
+    rewards: Principal,
+}
+
+impl TimerScanEnv {
+    fn new(valid_initial_resolution: bool) -> Result<Self> {
+        let pic = support::pocketic::builder()
+            .with_application_subnet()
+            .build();
+        let root = pic.create_canister();
+        let governance = pic.create_canister();
+        let ledger = pic.create_canister();
+        let rewards = pic.create_canister();
+        for canister in [root, governance, ledger, rewards] {
+            pic.add_cycles(canister, 5_000_000_000_000);
+        }
+        pic.install_canister(root, wasm(&ROOT_WASM, "mock-sns-root", None)?, vec![], None);
+        pic.install_canister(
+            governance,
+            wasm(&GOVERNANCE_WASM, "mock-sns-governance", None)?,
+            vec![],
+            None,
+        );
+        pic.install_canister(
+            ledger,
+            wasm(&LEDGER_WASM, "mock-icrc-ledger", None)?,
+            vec![],
+            None,
+        );
+        let env = Self {
+            pic,
+            root,
+            governance,
+            ledger,
+            rewards,
+        };
+        if valid_initial_resolution {
+            env.set_valid_resolution()?;
+        } else {
+            env.set_resolution(ListSnsCanistersResponse {
+                root: Some(root),
+                governance: None,
+                ledger: Some(ledger),
+                swap: None,
+                index: None,
+                dapps: vec![],
+                archives: vec![],
+                extensions: None,
+            })?;
+        }
+        let owner = Principal::from_slice(&[7]);
+        let _: () = update_one(
+            &env.pic,
+            governance,
+            Principal::anonymous(),
+            "debug_set_neurons",
+            vec![Neuron {
+                id: Some(NeuronId { id: neuron_id(1) }),
+                permissions: vec![NeuronPermission {
+                    principal: Some(owner),
+                    permission_type: vec![1],
+                }],
+                cached_neuron_stake_e8s: 100,
+                neuron_fees_e8s: 0,
+            }],
+        )?;
+        env.pic.install_canister(
+            rewards,
+            wasm(&REWARDS_WASM, "jupiter-sns-rewards", Some("debug_api"))?,
+            encode_one(InitArgs {
+                reward_sns_root_canister_id: Some(root),
+            })?,
+            None,
+        );
+        Ok(env)
+    }
+
+    fn set_resolution(&self, response: ListSnsCanistersResponse) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.root,
+            Principal::anonymous(),
+            "debug_set_canisters",
+            response,
+        )
+    }
+
+    fn set_valid_resolution(&self) -> Result<()> {
+        self.set_resolution(ListSnsCanistersResponse {
+            root: Some(self.root),
+            governance: Some(self.governance),
+            ledger: Some(self.ledger),
+            swap: None,
+            index: None,
+            dapps: vec![],
+            archives: vec![],
+            extensions: None,
+        })
+    }
+
+    fn context(&self) -> Result<Option<RelayRewardContext>> {
+        query_one(
+            &self.pic,
+            self.rewards,
+            Principal::anonymous(),
+            "get_relay_reward_context",
+            (),
+        )
+    }
+}
+
+#[test]
+#[ignore = "PocketIC integration"]
+fn timer_starts_second_snapshot_at_the_next_daily_due_boundary() -> Result<()> {
+    support::assertions::require_ignored_flag()?;
+    let env = TimerScanEnv::new(true)?;
+    support::calls::tick_n(&env.pic, 20);
+    let first = env
+        .context()?
+        .expect("fresh immediate scan should complete");
+    assert_eq!(first.snapshot_id, 1);
+
+    env.pic.advance_time(std::time::Duration::from_secs(86_399));
+    support::calls::tick_n(&env.pic, 10);
+    assert_eq!(
+        env.context()?
+            .expect("first snapshot remains active")
+            .snapshot_id,
+        1,
+        "the next scan must not start before its accepted-start due time"
+    );
+
+    env.pic.advance_time(std::time::Duration::from_secs(2));
+    support::calls::tick_n(&env.pic, 20);
+    let second = env
+        .context()?
+        .expect("daily one-shot timer should complete the second scan");
+    assert_eq!(second.snapshot_id, 2);
+    assert!(second.scan_started_at_timestamp_nanos > first.scan_started_at_timestamp_nanos);
+    assert!(
+        second
+            .scan_started_at_timestamp_nanos
+            .saturating_sub(first.scan_started_at_timestamp_nanos)
+            < 2 * 86_400 * 1_000_000_000,
+        "the second scan must not slip to the following daily interval"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "PocketIC integration"]
+fn failed_root_resolution_retries_without_consuming_daily_cadence() -> Result<()> {
+    support::assertions::require_ignored_flag()?;
+    let env = TimerScanEnv::new(false)?;
+    support::calls::tick_n(&env.pic, 20);
+    assert!(env.context()?.is_none());
+
+    env.set_valid_resolution()?;
+    env.pic.advance_time(std::time::Duration::from_secs(59));
+    support::calls::tick_n(&env.pic, 10);
+    assert!(
+        env.context()?.is_none(),
+        "failed resolution must not fabricate an accepted scan start"
+    );
+
+    env.pic.advance_time(std::time::Duration::from_secs(2));
+    support::calls::tick_n(&env.pic, 20);
+    let recovered = env
+        .context()?
+        .expect("Root resolution should retry promptly after a transient failure");
+    assert_eq!(recovered.snapshot_id, 1);
+    Ok(())
+}
+
 #[test]
 #[ignore = "PocketIC integration"]
 fn owner_scan_is_resumable_atomic_and_invalidated_on_root_change() -> Result<()> {
@@ -242,6 +420,29 @@ fn owner_scan_is_resumable_atomic_and_invalidated_on_root_change() -> Result<()>
         query_one(&pic, rewards, Principal::anonymous(), "debug_state", ())?;
     assert!(!completed.scan_active);
     assert_eq!(completed.active_slot_size, 1);
+
+    let now_nanos = pic.get_time().as_nanos_since_unix_epoch() as u64;
+    let next_due_nanos = context
+        .scan_started_at_timestamp_nanos
+        .saturating_add(86_400 * 1_000_000_000);
+    pic.advance_time(std::time::Duration::from_nanos(
+        next_due_nanos.saturating_sub(now_nanos).saturating_add(1),
+    ));
+    support::calls::tick_n(&pic, 30);
+    let next_context: Option<RelayRewardContext> = query_one(
+        &pic,
+        rewards,
+        Principal::anonymous(),
+        "get_relay_reward_context",
+        (),
+    )?;
+    let next_context =
+        next_context.expect("restored scan completion should arm the following daily scan");
+    assert_eq!(next_context.snapshot_id, context.snapshot_id + 1);
+    assert!(
+        next_context.scan_started_at_timestamp_nanos >= next_due_nanos,
+        "the subsequent scan should begin at or after the restored scan's daily due boundary"
+    );
 
     let upgrade = encode_args((Some(UpgradeArgs {
         reward_sns_root_canister_id: Some(Some(root_two)),

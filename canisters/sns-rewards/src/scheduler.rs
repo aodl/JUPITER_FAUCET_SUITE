@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{cell::RefCell, time::Duration};
 
 use jupiter_ic_clients::sns::{ListSnsCanistersResponse, SnsRootCanister};
 use jupiter_ic_clients::timer_guard::{LeaseFinish, TimerLeaseGuard};
@@ -9,6 +9,14 @@ use crate::policy::{
     SNS_OWNER_SCAN_MAX_PAGES,
 };
 use crate::state::{self, OwnerIndexSlot, OwnerScan, OwnerSnapshot};
+
+const SCAN_START_RETRY_SECONDS: u64 = 60;
+const SCAN_BUSY_RECHECK_SECONDS: u64 = 60;
+const SCAN_PAGE_FAILURE_RECHECK_SECONDS: u64 = 5 * 60;
+
+thread_local! {
+    static NEXT_SCAN_TIMER: RefCell<Option<ic_cdk_timers::TimerId>> = const { RefCell::new(None) };
+}
 
 struct ScanGuard {
     inner: TimerLeaseGuard,
@@ -39,19 +47,39 @@ impl Drop for ScanGuard {
 }
 
 pub(crate) fn install_timers() {
-    ic_cdk_timers::set_timer_interval(
-        Duration::from_secs(SNS_OWNER_SCAN_INTERVAL_SECONDS),
-        || async {
-            scan_tick(false).await;
-        },
-    );
+    schedule_scan_check(Duration::ZERO, cfg!(feature = "debug_api"));
 }
 
-pub(crate) fn schedule_immediate_scan_check() {
-    ic_cdk_timers::set_timer(Duration::ZERO, async {
-        // Debug builds retain one-step control for deterministic staging and upgrade tests.
-        scan_tick(cfg!(feature = "debug_api")).await;
+fn schedule_scan_check(delay: Duration, force: bool) {
+    let timer_id = ic_cdk_timers::set_timer(delay, async move {
+        NEXT_SCAN_TIMER.with_borrow_mut(|timer| {
+            timer.take();
+        });
+        scan_tick(force).await;
     });
+    NEXT_SCAN_TIMER.with_borrow_mut(|timer| {
+        if let Some(previous_timer_id) = timer.replace(timer_id) {
+            ic_cdk_timers::clear_timer(previous_timer_id);
+        }
+    });
+}
+
+fn next_due_delay(last_started_at_nanos: u64, now_nanos: u64) -> Duration {
+    if last_started_at_nanos == 0 {
+        return Duration::ZERO;
+    }
+    let due_at = last_started_at_nanos
+        .saturating_add(SNS_OWNER_SCAN_INTERVAL_SECONDS.saturating_mul(1_000_000_000));
+    Duration::from_nanos(due_at.saturating_sub(now_nanos))
+}
+
+fn schedule_next_due_check(now_nanos: u64) {
+    let last_started_at_nanos = state::with_state(|st| st.last_scan_started_at_timestamp_nanos);
+    schedule_scan_check(next_due_delay(last_started_at_nanos, now_nanos), false);
+}
+
+fn schedule_start_retry() {
+    schedule_scan_check(Duration::from_secs(SCAN_START_RETRY_SECONDS), false);
 }
 
 fn schedule_continuation() {
@@ -64,6 +92,9 @@ pub(crate) async fn scan_tick(force: bool) {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let Some(_guard) = ScanGuard::acquire(now_secs) else {
+        if !force {
+            schedule_scan_check(Duration::from_secs(SCAN_BUSY_RECHECK_SECONDS), false);
+        }
         return;
     };
 
@@ -74,30 +105,53 @@ pub(crate) async fn scan_tick(force: bool) {
                 || now_nanos.saturating_sub(st.last_scan_started_at_timestamp_nanos)
                     >= SNS_OWNER_SCAN_INTERVAL_SECONDS * 1_000_000_000
         });
-        if !due || !start_scan(now_nanos).await {
+        if !due {
+            schedule_next_due_check(now_nanos);
             return;
         }
+        match start_scan().await {
+            StartScanResult::Started(started_at_nanos) => {
+                schedule_next_due_check(started_at_nanos);
+            }
+            StartScanResult::NotConfigured => return,
+            StartScanResult::Failed => {
+                schedule_start_retry();
+                return;
+            }
+        }
     }
-    process_one_page(now_nanos, !force).await;
+    match process_one_page(ic_cdk::api::time(), !force).await {
+        PageResult::InProgress => {}
+        PageResult::Completed => schedule_next_due_check(ic_cdk::api::time()),
+        PageResult::Failed => schedule_scan_check(
+            Duration::from_secs(SCAN_PAGE_FAILURE_RECHECK_SECONDS),
+            false,
+        ),
+    }
 }
 
-async fn start_scan(now_nanos: u64) -> bool {
+enum StartScanResult {
+    Started(u64),
+    NotConfigured,
+    Failed,
+}
+
+async fn start_scan() -> StartScanResult {
     let Some(root) = state::with_state(|st| st.config.reward_sns_root_canister_id) else {
-        return false;
+        return StartScanResult::NotConfigured;
     };
-    state::with_state_mut(|st| st.last_scan_started_at_timestamp_nanos = now_nanos);
     let resolved = match SnsRootCanister.list_sns_canisters(root).await {
         Ok(value) => value,
         Err(err) => {
             crate::logging::scan("failed", None, None, Some(&err.to_string()));
-            return false;
+            return StartScanResult::Failed;
         }
     };
     let (governance, ledger) = match resolve_components(root, &resolved) {
         Ok(components) => components,
         Err(reason) => {
             crate::logging::scan("failed", None, None, Some(reason));
-            return false;
+            return StartScanResult::Failed;
         }
     };
     let staging_slot = state::with_state(|st| {
@@ -107,6 +161,7 @@ async fn start_scan(now_nanos: u64) -> bool {
             .unwrap_or(OwnerIndexSlot::A)
     });
     state::clear_slot(staging_slot);
+    let now_nanos = ic_cdk::api::time();
     let scan = OwnerScan {
         staging_slot,
         sns_root_canister_id: root,
@@ -117,9 +172,12 @@ async fn start_scan(now_nanos: u64) -> bool {
         pages_processed: 0,
         neurons_processed: 0,
     };
-    state::with_state_mut(|st| st.scan = Some(scan.clone()));
+    state::with_state_mut(|st| {
+        st.last_scan_started_at_timestamp_nanos = now_nanos;
+        st.scan = Some(scan.clone());
+    });
     crate::logging::scan("started", Some(&scan), None, None);
-    true
+    StartScanResult::Started(now_nanos)
 }
 
 fn resolve_components(
@@ -161,13 +219,19 @@ fn fail_scan(reason: &str) {
     state::with_state_mut(|st| st.scan = None);
 }
 
-async fn process_one_page(now_nanos: u64, schedule_next_page: bool) {
+enum PageResult {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+async fn process_one_page(now_nanos: u64, schedule_next_page: bool) -> PageResult {
     let Some(scan) = state::with_state(|st| st.scan.clone()) else {
-        return;
+        return PageResult::Failed;
     };
     if scan.pages_processed >= SNS_OWNER_SCAN_MAX_PAGES {
         fail_scan("page_cap_reached");
-        return;
+        return PageResult::Failed;
     }
     let response = match crate::clients::list_neurons(
         scan.sns_governance_canister_id,
@@ -178,14 +242,14 @@ async fn process_one_page(now_nanos: u64, schedule_next_page: bool) {
         Ok(value) => value,
         Err(err) => {
             fail_scan(&err);
-            return;
+            return PageResult::Failed;
         }
     };
     let next_cursor = match validate_page(&scan, &response.neurons) {
         Ok(value) => value,
         Err(err) => {
             fail_scan(&err);
-            return;
+            return PageResult::Failed;
         }
     };
     for neuron in &response.neurons {
@@ -207,10 +271,11 @@ async fn process_one_page(now_nanos: u64, schedule_next_page: bool) {
     if !is_final {
         if updated.pages_processed >= SNS_OWNER_SCAN_MAX_PAGES {
             fail_scan("page_cap_reached");
+            return PageResult::Failed;
         } else if schedule_next_page {
             schedule_continuation();
         }
-        return;
+        return PageResult::InProgress;
     }
     let snapshot = state::with_state_mut(|st| {
         let completed = st.scan.take().expect("completed owner scan");
@@ -230,6 +295,7 @@ async fn process_one_page(now_nanos: u64, schedule_next_page: bool) {
         snapshot
     });
     crate::logging::scan("completed", None, Some(&snapshot), None);
+    PageResult::Completed
 }
 
 #[cfg(test)]
@@ -336,5 +402,23 @@ mod tests {
             resolve_components(root, &response(Some(root), Some(governance), None)),
             Err("missing_ledger")
         );
+    }
+
+    #[test]
+    fn next_due_delay_is_derived_from_the_accepted_scan_start() {
+        let accepted_at = 123_456_789_000_u64;
+        let almost_due = accepted_at + SNS_OWNER_SCAN_INTERVAL_SECONDS * 1_000_000_000 - 17;
+        assert_eq!(
+            next_due_delay(accepted_at, almost_due),
+            Duration::from_nanos(17)
+        );
+        assert_eq!(
+            next_due_delay(
+                accepted_at,
+                accepted_at + SNS_OWNER_SCAN_INTERVAL_SECONDS * 1_000_000_000
+            ),
+            Duration::ZERO
+        );
+        assert_eq!(next_due_delay(0, accepted_at), Duration::ZERO);
     }
 }

@@ -112,6 +112,58 @@ thread_local! {
     static ST: RefCell<State> = RefCell::new(State::default());
 }
 
+fn account_balance_e8s(txs: &[IndexTransactionWithId], account_identifier: &str) -> u64 {
+    txs.iter()
+        .fold(0_u64, |balance, tx| match &tx.transaction.operation {
+            IndexOperation::Approve { fee, from, .. } if from == account_identifier => {
+                balance.saturating_sub(fee.e8s)
+            }
+            IndexOperation::Burn { from, amount, .. } if from == account_identifier => {
+                balance.saturating_sub(amount.e8s)
+            }
+            IndexOperation::Mint { to, amount } if to == account_identifier => {
+                balance.saturating_add(amount.e8s)
+            }
+            IndexOperation::Transfer {
+                to,
+                fee,
+                from,
+                amount,
+                ..
+            } => {
+                let balance = if from == account_identifier {
+                    balance.saturating_sub(amount.e8s.saturating_add(fee.e8s))
+                } else {
+                    balance
+                };
+                if to == account_identifier {
+                    balance.saturating_add(amount.e8s)
+                } else {
+                    balance
+                }
+            }
+            IndexOperation::TransferFrom {
+                to,
+                fee,
+                from,
+                amount,
+                ..
+            } => {
+                let balance = if from == account_identifier {
+                    balance.saturating_sub(amount.e8s.saturating_add(fee.e8s))
+                } else {
+                    balance
+                };
+                if to == account_identifier {
+                    balance.saturating_add(amount.e8s)
+                } else {
+                    balance
+                }
+            }
+            _ => balance,
+        })
+}
+
 #[ic_cdk::init]
 fn init() {}
 
@@ -169,7 +221,7 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
         });
 
         GetResp::Ok(GetAccountIdentifierTransactionsResponse {
-            balance: 0,
+            balance: account_balance_e8s(&st.txs, &args.account_identifier),
             oldest_tx_id: st.txs.first().map(|t| t.id),
             transactions: out,
         })

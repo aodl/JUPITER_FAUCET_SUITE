@@ -4,7 +4,10 @@
 use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use jupiter_ic_clients::index::{
+    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
+};
 use jupiter_nns_types::{
     list_neurons, manage_neuron, manage_neuron_response, ListNeurons, ListNeuronsResponse,
     ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
@@ -865,6 +868,131 @@ impl FaucetEnv {
             .map_err(|e| anyhow!("upgrade_canister reject: {e:?}"))?;
         tick_n(&self.pic, 5);
         Ok(())
+    }
+}
+
+struct RealIcpIndexHealthEnv {
+    pic: PocketIc,
+    ledger: Principal,
+    index: Principal,
+    faucet: Principal,
+    staking_account: Account,
+    staking_id: String,
+}
+
+impl RealIcpIndexHealthEnv {
+    fn new() -> Result<Self> {
+        let pic = support::ledger::build_pic_with_real_icp();
+        let ledger = support::principals::icp_ledger();
+        let index = support::principals::icp_index();
+        let cmc = pic.create_canister();
+        let governance = pic.create_canister();
+        let blackhole = pic.create_canister();
+        let lifeline = pic.create_canister();
+        let faucet = pic.create_canister();
+        for canister in [cmc, governance, blackhole, lifeline, faucet] {
+            pic.add_cycles(canister, 5_000_000_000_000);
+        }
+        pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(governance, governance_wasm()?, vec![], None);
+        pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
+        pic.install_canister(lifeline, lifeline_wasm()?, vec![], None);
+
+        let staking_account = Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([9u8; 32]),
+        };
+        pic.install_canister(
+            faucet,
+            faucet_wasm()?,
+            encode_one(FaucetInitArg {
+                staking_account: staking_account.clone(),
+                payout_subaccount: None,
+                ledger_canister_id: Some(ledger),
+                index_canister_id: Some(index),
+                cmc_canister_id: Some(cmc),
+                governance_canister_id: Some(governance),
+                funding_source_account: strict_funding_source_account()?,
+                rescue_controller: lifeline,
+                blackhole_controller: Some(blackhole),
+                blackhole_armed: Some(false),
+                expected_first_staking_tx_id: None,
+                main_interval_seconds: Some(60),
+                rescue_interval_seconds: Some(60),
+                stake_recognition_delay_seconds: Some(1),
+                min_tx_e8s: Some(100_000_000),
+            })?,
+            None,
+        );
+        let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
+        Ok(Self {
+            pic,
+            ledger,
+            index,
+            faucet,
+            staking_account,
+            staking_id,
+        })
+    }
+
+    fn transfer_to_staking(&self, amount_e8s: u64, memo: Vec<u8>) -> Result<u64> {
+        support::ledger::icrc1_transfer(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: self.staking_account.clone(),
+                fee: Some(Nat::from(ICP_LEDGER_FEE_E8S)),
+                created_at_time: None,
+                memo: Some(Memo::from(memo)),
+                amount: Nat::from(amount_e8s),
+            },
+        )
+    }
+
+    fn wait_for_index_tx(&self, tx_id: u64) -> Result<()> {
+        for _ in 0..60 {
+            let result: GetAccountIdentifierTransactionsResult = query_one(
+                &self.pic,
+                self.index,
+                Principal::anonymous(),
+                "get_account_identifier_transactions",
+                GetAccountIdentifierTransactionsArgs {
+                    max_results: 1_000,
+                    start: None,
+                    account_identifier: self.staking_id.clone(),
+                },
+            )?;
+            if matches!(result, GetAccountIdentifierTransactionsResult::Ok(ref page) if page.transactions.iter().any(|tx| tx.id == tx_id))
+            {
+                return Ok(());
+            }
+            self.pic.advance_time(Duration::from_secs(1));
+            tick_n(&self.pic, 5);
+        }
+        bail!("real ICP Index did not expose staking transaction {tx_id}")
+    }
+
+    fn main_tick(&self) -> Result<()> {
+        update_noargs::<()>(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )?;
+        tick_n(&self.pic, 20);
+        Ok(())
+    }
+
+    fn state(&self) -> Result<DebugState> {
+        query_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )
     }
 }
 
@@ -1748,11 +1876,12 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
         .filter(|c| c.account_identifier == env.staking_id)
         .map(|c| c.start)
         .collect();
-    if first_starts != vec![None, None] {
+    if first_starts.is_empty() || first_starts.iter().any(Option::is_some) {
         bail!(
-            "expected first payout job to begin scanning from start, got starts {first_starts:?}"
+            "expected first payout job and its health observations to begin at the account-history head, got starts {first_starts:?}"
         );
     }
+    let first_call_count = first_starts.len();
 
     env.credit_payout(60_000_000)?;
     env.main_tick()?;
@@ -1778,8 +1907,8 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
         .filter(|c| c.account_identifier == env.staking_id)
         .map(|c| c.start)
         .collect();
-    if starts != vec![None, None, None] {
-        bail!("expected each new payout job to rescan from start, got starts {starts:?}");
+    if starts.len() <= first_call_count || starts[first_call_count..].iter().any(Option::is_some) {
+        bail!("expected each new payout job and its health observations to rescan from the account-history head, got starts {starts:?}");
     }
 
     Ok(())
@@ -3032,6 +3161,52 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected anchor-loss forced rescue to widen controllers, got {controllers:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_real_icp_index_head_advances_health_without_false_latest_invariant_latch() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RealIcpIndexHealthEnv::new()?;
+
+    env.main_tick()?;
+    let baseline = env.state()?;
+    if baseline.last_observed_staking_balance_e8s != Some(0)
+        || baseline.last_observed_latest_tx_id.is_some()
+    {
+        bail!("unexpected empty real-Index health baseline: {baseline:?}");
+    }
+
+    let first_tx = env.transfer_to_staking(100_000_000, b"first-health-observation".to_vec())?;
+    env.wait_for_index_tx(first_tx)?;
+    env.main_tick()?;
+    let first = env.state()?;
+    if first.last_observed_staking_balance_e8s != Some(100_000_000)
+        || first.last_observed_latest_tx_id != Some(first_tx)
+        || first.consecutive_index_latest_invariant_failures != 0
+        || first.consecutive_index_latest_unreadable_failures != 0
+        || first.forced_rescue_reason.is_some()
+    {
+        bail!("first real ICP Index advancement was not healthy: {first:?}");
+    }
+
+    let second_tx = env.transfer_to_staking(100_000_000, b"second-health-observation".to_vec())?;
+    if second_tx <= first_tx {
+        bail!("real ICP Ledger transaction IDs did not advance: {first_tx} then {second_tx}");
+    }
+    env.wait_for_index_tx(second_tx)?;
+    env.main_tick()?;
+    let second = env.state()?;
+    if second.last_observed_staking_balance_e8s != Some(200_000_000)
+        || second.last_observed_latest_tx_id != Some(second_tx)
+        || second.consecutive_index_latest_invariant_failures != 0
+        || second.consecutive_index_latest_unreadable_failures != 0
+        || second.forced_rescue_reason.is_some()
+    {
+        bail!("second real ICP Index advancement was not healthy: {second:?}");
     }
 
     Ok(())

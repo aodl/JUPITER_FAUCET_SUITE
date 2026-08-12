@@ -128,8 +128,12 @@ pub(super) fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
             if job.observed_oldest_tx_id.is_none() {
                 job.observed_oldest_tx_id = resp.oldest_tx_id;
             }
-            if let Some(latest) = resp.transactions.last().map(|tx| tx.id) {
-                job.observed_latest_tx_id = Some(latest);
+            if let Some(latest) = index_page_latest_tx_id(&resp.transactions) {
+                job.observed_latest_tx_id = Some(
+                    job.observed_latest_tx_id
+                        .map(|observed| observed.max(latest))
+                        .unwrap_or(latest),
+                );
             }
         }
     });
