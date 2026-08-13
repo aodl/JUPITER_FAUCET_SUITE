@@ -6,7 +6,7 @@ Production canister: `jupiter_sns_rewards` / `alk7f-5aaaa-aaaar-qb4ra-cai`.
 
 ## Owner snapshots
 
-The canister is configured with one SNS Root. OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` is the temporary development configuration; it will be replaced by the jUP SNS Root after launch. At the start of every complete scan, the canister calls Root `list_sns_canisters` and pins the returned Root, Governance, and Ledger IDs. Governance and Ledger IDs are never independently configured.
+`reward_sns_root_canister_id` is the canister's sole configured external component. OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` is the temporary development configuration; it will be replaced by the jUP SNS Root after launch. At the start of every complete scan, the canister calls Root `list_sns_canisters` and pins the returned Root, Governance, and Ledger IDs. Governance and Ledger IDs are Root-resolved and are never independently configured.
 
 A daily scan crawls Governance `list_neurons` in bounded 100-neuron pages, processing one page per timer message. The next daily opportunity is a one-shot timer derived from the durable accepted scan-start timestamp, so timer phase cannot skip a due scan for another day. Root/component resolution must succeed before an attempt records that timestamp; a failed start is retried without consuming the daily cadence. Progress and the exclusive neuron cursor are stable and resume after upgrade. Slot A and slot B stable maps provide active/staging publication: a refresh writes only the inactive map, and the metadata cell exposes it only after the complete scan succeeds. Failed or partial refreshes leave the preceding active snapshot public.
 
@@ -35,6 +35,14 @@ Fresh install arguments are checked in at [`mainnet-install-args.did`](mainnet-i
 
 ## Operations
 
-Build with `./tools/scripts/build-canister jupiter-sns-rewards`. Observe `SNS_REWARD_SCAN`, `SNS_REWARDS_CONFIG`, and lifecycle logs. Before relying on a snapshot, verify the context Root and Root-resolved Ledger, the completion timestamp, and that no scan failure followed the publication log.
+Build with `./tools/scripts/build-canister jupiter-sns-rewards`. The canister emits its effective configuration immediately after init or upgrade and every 24 hours in this explicit form:
+
+```text
+SNS_REWARDS_CONFIG reward_sns_root_canister_id=<principal-or-null>
+```
+
+The periodic configuration record reads the current runtime state and is emitted independently of scan success, including while Root resolution fails continuously. Its interval timer is observability-only: it never invokes `scan_tick`, changes scan due-ness, or mutates snapshot, cursor, or accepted-start state. Owner scanning remains on the durable accepted-start-derived one-shot scheduler. `SNS_REWARD_SCAN` records continue to show the Root and Root-resolved Governance and Ledger pinned for each accepted scan.
+
+Observe `SNS_REWARD_SCAN`, `SNS_REWARDS_CONFIG`, and lifecycle logs. Before relying on a snapshot, verify the context Root and Root-resolved Ledger, the completion timestamp, and that no scan failure followed the publication log.
 
 Optional OpenChat development verification is read-only: query OpenChat Root, confirm it resolves Root `3e3x2-xyaaa-aaaaq-aaalq-cai`, Governance `2jvtu-yqaaa-aaaaq-aaama-cai`, and CHAT Ledger `2ouva-viaaa-aaaaq-aaamq-cai`; observe a complete snapshot; then query the context. Any real CHAT transfer belongs only in a separately reviewed, controlled deployment with an explicitly reviewed amount. Do not use an immutable production Relay for the first real-value smoke test without reviewing ambiguity recovery.

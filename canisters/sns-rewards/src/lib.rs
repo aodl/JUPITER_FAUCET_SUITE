@@ -113,6 +113,7 @@ fn initialize(config: state::Config, event: &str) {
     state::initialize(config);
     scheduler::install_timers();
     logging::lifecycle(event);
+    logging::config();
 }
 
 #[ic_cdk::init]
@@ -145,11 +146,12 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     if let Some(Some(new_root)) = args.map(|value| value.reward_sns_root_canister_id) {
         if state::with_state(|st| st.config.reward_sns_root_canister_id) != new_root {
             state::invalidate_for_root(new_root);
-            ic_cdk::println!("SNS_REWARDS_CONFIG status=root_changed_invalidated");
+            ic_cdk::println!("SNS_REWARDS_LIFECYCLE event=root_changed_invalidated");
         }
     }
     scheduler::install_timers();
     logging::lifecycle("post_upgrade_complete");
+    logging::config();
 }
 
 #[cfg(feature = "debug_api")]

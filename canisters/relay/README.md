@@ -236,7 +236,9 @@ Cycles: <relay_self_cycles_balance>
 CONFIG relay_canister_id=...
 ```
 
-The `CONFIG` line includes the configured managed canisters, effective managed canisters including relay self, ICP Ledger, CMC, NNS Governance, blackhole, SNS rewards canister, ICP Index, interval, transfer limit, surplus recipients, surplus memo lengths, and whether the configured production managed set matches the known Jupiter suite set.
+The recurring `CONFIG` line makes the complete effective Relay configuration publicly reconstructable. It includes the configured managed canisters, effective managed canisters including relay self, ICP Ledger, CMC, NNS Governance, blackhole, SNS rewards canister, ICP Index, cycles-probe policy, interval, transfer limit, surplus recipients, surplus memo lengths, lossless surplus memo values, and whether the configured production managed set matches the known Jupiter suite set.
+
+`surplus_recipients` and `surplus_recipient_memos` are ordered in lockstep. `none` represents the effective internal value `None`; `hex:<lowercase hexadecimal bytes>` represents the effective internal value `Some(bytes)`. Public Relay `InitArgs` normalize an empty memo blob to `None`, so an empty install or replacement-style upgrade argument is logged as `none`. The formatter defensively retains `hex:` as the lossless representation of an internal `Some(vec![])`, but current public arguments do not preserve that state. Binary memo bytes are never truncated or interpreted as UTF-8. The existing `surplus_recipient_memo_lengths` field remains available as a convenience. This is a public log-format and observability guarantee only and does not change allocation, transfers, scheduling, stable state, or lifecycle behavior.
 
 After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with [`mainnet-install-args.did`](mainnet-install-args.did), and using the [frontend source pane](../frontend). Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
 

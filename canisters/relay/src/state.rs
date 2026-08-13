@@ -376,8 +376,17 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         })
         .collect::<Vec<_>>()
         .join("|");
+    let surplus_recipient_memo_values = cfg
+        .surplus_recipients
+        .iter()
+        .map(|recipient| match recipient.memo.as_deref() {
+            None => "none".to_string(),
+            Some(memo) => format!("hex:{}", hex_bytes(memo)),
+        })
+        .collect::<Vec<_>>()
+        .join("|");
     format!(
-        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, sns_rewards_canister_id={}, icp_index_canister_id={}, cycles_probe_policy={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, production_managed_set_match={}",
+        "CONFIG relay_canister_id={}, managed_canisters={}, effective_managed_canisters={}, ledger_canister_id={}, cmc_canister_id={}, governance_canister_id={}, blackhole_canister_id={}, sns_rewards_canister_id={}, icp_index_canister_id={}, cycles_probe_policy={}, main_interval_seconds={}, max_transfers_per_tick={}, surplus_recipient_count={}, surplus_recipients={}, surplus_recipient_memo_lengths={}, surplus_recipient_memos={}, production_managed_set_match={}",
         self_id.to_text(),
         principal_list(&cfg.managed_canisters),
         principal_list(&effective),
@@ -395,6 +404,11 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         cfg.surplus_recipients.len(),
         if surplus_recipients.is_empty() { "none" } else { &surplus_recipients },
         if surplus_recipient_memos.is_empty() { "none" } else { &surplus_recipient_memos },
+        if surplus_recipient_memo_values.is_empty() {
+            "none"
+        } else {
+            &surplus_recipient_memo_values
+        },
         production_managed_set_matches(&cfg.managed_canisters),
     )
 }
@@ -748,21 +762,22 @@ mod tests {
         assert!(line.contains("surplus_recipient_count=0"));
         assert!(line.contains("surplus_recipients=none"));
         assert!(line.contains("surplus_recipient_memo_lengths=none"));
+        assert!(line.contains("surplus_recipient_memos=none"));
         assert!(line.contains("production_managed_set_match=true"));
     }
 
     #[test]
-    fn runtime_config_log_line_includes_surplus_recipients_and_memos() {
+    fn runtime_config_log_is_lossless_for_reachable_effective_config() {
         let self_id = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
         let mut cfg = base_config();
         cfg.surplus_recipients = vec![
             SurplusRecipient {
                 target: SurplusTarget::Canister(principal("jufzc-caaaa-aaaar-qb5da-cai")),
-                memo: Some(vec![1, 2]),
+                memo: None,
             },
             SurplusRecipient {
                 target: SurplusTarget::Neuron(42),
-                memo: None,
+                memo: Some(vec![0x00, 0x01, 0x7f, 0x80, 0xff]),
             },
         ];
 
@@ -770,7 +785,46 @@ mod tests {
 
         assert!(line.contains("surplus_recipient_count=2"));
         assert!(line.contains("surplus_recipients=canister:jufzc-caaaa-aaaar-qb5da-cai|neuron:42"));
-        assert!(line.contains("surplus_recipient_memo_lengths=2|null"));
+        assert!(line.contains("surplus_recipient_memo_lengths=null|5"));
+        assert!(line.contains("surplus_recipient_memos=none|hex:00017f80ff"));
+    }
+
+    #[test]
+    fn runtime_config_formatter_distinguishes_internal_present_empty_memo() {
+        let self_id = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        let mut cfg = base_config();
+        cfg.surplus_recipients = vec![SurplusRecipient {
+            target: SurplusTarget::Neuron(42),
+            // Defensive formatter coverage: public InitArgs normalize an empty
+            // memo to None, so this internal state is not currently reachable
+            // through the production install/upgrade argument path.
+            memo: Some(vec![]),
+        }];
+
+        let line = runtime_config_log_line(&cfg, self_id);
+
+        assert!(line.contains("surplus_recipient_memo_lengths=0"));
+        assert!(line.contains("surplus_recipient_memos=hex:"));
+        assert!(!line.contains("surplus_recipient_memos=none"));
+    }
+
+    #[test]
+    fn runtime_config_distinguishes_same_length_surplus_memos() {
+        let self_id = principal("u2qkp-aqaaa-aaaar-qb7ea-cai");
+        let mut first = base_config();
+        first.surplus_recipients = vec![SurplusRecipient {
+            target: SurplusTarget::Neuron(42),
+            memo: Some(vec![0xaa, 0xbb]),
+        }];
+        let mut second = first.clone();
+        second.surplus_recipients[0].memo = Some(vec![0xaa, 0xcc]);
+
+        let first_line = runtime_config_log_line(&first, self_id);
+        let second_line = runtime_config_log_line(&second, self_id);
+
+        assert!(first_line.contains("surplus_recipient_memos=hex:aabb"));
+        assert!(second_line.contains("surplus_recipient_memos=hex:aacc"));
+        assert_ne!(first_line, second_line);
     }
 
     #[test]

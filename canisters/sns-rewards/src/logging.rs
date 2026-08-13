@@ -8,6 +8,18 @@ fn principal(value: Option<Principal>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
+pub(crate) fn runtime_config_log_line(config: &state::Config) -> String {
+    format!(
+        "SNS_REWARDS_CONFIG reward_sns_root_canister_id={}",
+        principal(config.reward_sns_root_canister_id)
+    )
+}
+
+pub(crate) fn config() {
+    let line = state::with_state(|st| runtime_config_log_line(&st.config));
+    ic_cdk::println!("{}", line);
+}
+
 fn cursor(value: Option<&[u8]>) -> String {
     value.map(hex::encode).unwrap_or_else(|| "null".to_string())
 }
@@ -65,4 +77,33 @@ pub(crate) fn lifecycle(event: &str) {
         event,
         principal(root)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_config_log_is_complete_for_configured_root() {
+        let root = Principal::from_slice(&[1, 2, 3]);
+        let config = state::Config {
+            reward_sns_root_canister_id: Some(root),
+        };
+
+        assert_eq!(
+            runtime_config_log_line(&config),
+            format!(
+                "SNS_REWARDS_CONFIG reward_sns_root_canister_id={}",
+                root.to_text()
+            )
+        );
+    }
+
+    #[test]
+    fn runtime_config_log_is_complete_for_unconfigured_root() {
+        assert_eq!(
+            runtime_config_log_line(&state::Config::default()),
+            "SNS_REWARDS_CONFIG reward_sns_root_canister_id=null"
+        );
+    }
 }

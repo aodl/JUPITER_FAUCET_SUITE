@@ -13,6 +13,7 @@ use crate::state::{self, OwnerIndexSlot, OwnerScan, OwnerSnapshot};
 const SCAN_START_RETRY_SECONDS: u64 = 60;
 const SCAN_BUSY_RECHECK_SECONDS: u64 = 60;
 const SCAN_PAGE_FAILURE_RECHECK_SECONDS: u64 = 5 * 60;
+pub(crate) const CONFIG_LOG_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 
 thread_local! {
     static NEXT_SCAN_TIMER: RefCell<Option<ic_cdk_timers::TimerId>> = const { RefCell::new(None) };
@@ -47,7 +48,16 @@ impl Drop for ScanGuard {
 }
 
 pub(crate) fn install_timers() {
+    install_config_log_timer();
     schedule_scan_check(Duration::ZERO, cfg!(feature = "debug_api"));
+}
+
+// Configuration observability is intentionally independent of the durable,
+// accepted-start-derived owner-scan scheduler and never invokes scan work.
+fn install_config_log_timer() {
+    ic_cdk_timers::set_timer_interval(Duration::from_secs(CONFIG_LOG_INTERVAL_SECONDS), || async {
+        crate::logging::config();
+    });
 }
 
 fn schedule_scan_check(delay: Duration, force: bool) {

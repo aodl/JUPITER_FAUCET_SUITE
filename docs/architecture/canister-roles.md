@@ -18,6 +18,22 @@ These canisters are deliberately conservative about public production APIs. Most
 
 The historian keeps bounded, dashboard-friendly views in canister state. The ICP ledger and archive canisters remain the source of full transfer history.
 
+### Public runtime configuration invariant
+
+Every production canister with install-time or mutable runtime configuration periodically re-publishes its complete effective configuration in public canister logs. This keeps the running configuration community-verifiable after the original install or upgrade records have rolled out of bounded log history. The recurring representation describes values actually in use after defaults, upgrades, clamps, and other normalization—not merely the original argument payload.
+
+The representation must distinguish every materially different effective configuration, including lossless deterministic encodings for binary values and distinct encodings for absent versus present-empty values where both are valid effective runtime states. A dedicated configuration-only publication mechanism must not depend on unrelated external services being healthy. Canisters that publish configuration through an established recurring operational or health path must document that cadence and coupling explicitly. Adding a persistent or effective configuration field therefore also requires updating the recurring representation and its regression tests. Configuration logging is observability only: it must not drive protocol decisions, scheduling due-ness, stable state, payouts, reward attribution, or recovery behavior.
+
+The current implementations are:
+
+- Disburser re-publishes effective `CONFIG` through normal main ticks that reach its established payout/maturity path.
+- Faucet logs effective `CONFIG` with completed main ticks.
+- Historian re-publishes complete effective `CONFIG` through its established periodic cycles-observability path.
+- Relay re-publishes complete effective `CONFIG` on its normal main cadence, including lossless deterministic hexadecimal surplus-recipient memos.
+- SNS Rewards re-publishes its sole configured SNS Root through an independent daily observability-only timer and separately logs the Root/Governance/Ledger context pinned for accepted scans.
+- Lifeline has no install/upgrade runtime configuration beyond code-defined behavior.
+- The frontend has no comparable canister runtime `InitArgs` or `UpgradeArgs` configuration.
+
 ## Recovery and Support
 
 - [`canisters/lifeline`](../../canisters/lifeline) is the minimal recovery/support canister used when a value-moving canister widens controllers after a sustained failure condition.

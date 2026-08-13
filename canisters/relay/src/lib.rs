@@ -592,20 +592,29 @@ mod tests {
     }
 
     #[test]
-    fn public_surplus_conversion_maps_empty_memo_to_none() {
+    fn empty_public_memo_normalizes_to_none_in_runtime_config_log() {
         let owner = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let canister = surplus_canister_recipient_from_public(SurplusCanisterRecipient {
+        let mut args = sample_init_args();
+        args.surplus_canister_recipients = Some(vec![SurplusCanisterRecipient {
             canister_id: owner,
             memo: Vec::new(),
-        })
-        .unwrap();
-        assert_eq!(canister.memo, None);
-
-        let neuron = surplus_neuron_recipient_from_public(SurplusNeuronRecipient {
+        }]);
+        args.surplus_neuron_recipients = vec![SurplusNeuronRecipient {
             neuron_id: 42,
             memo: Vec::new(),
-        });
-        assert_eq!(neuron.memo, None);
+        }];
+
+        let config = config_from_init_args(args);
+
+        assert_eq!(config.surplus_recipients.len(), 2);
+        assert_eq!(config.surplus_recipients[0].memo, None);
+        assert_eq!(config.surplus_recipients[1].memo, None);
+        let line = crate::state::runtime_config_log_line(
+            &config,
+            principal("u2qkp-aqaaa-aaaar-qb7ea-cai"),
+        );
+        assert!(line.contains("surplus_recipient_memo_lengths=null|null"));
+        assert!(line.contains("surplus_recipient_memos=none|none"));
     }
 
     #[test]

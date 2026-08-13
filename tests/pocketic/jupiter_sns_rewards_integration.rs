@@ -223,6 +223,59 @@ impl TimerScanEnv {
             (),
         )
     }
+
+    fn logs_text(&self) -> Result<String> {
+        let records = self
+            .pic
+            .fetch_canister_logs(self.rewards, Principal::anonymous())
+            .map_err(|err| anyhow::anyhow!("fetch SNS rewards logs failed: {err:?}"))?;
+        Ok(records
+            .iter()
+            .map(|record| String::from_utf8_lossy(&record.content).into_owned())
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+}
+
+#[test]
+#[ignore = "PocketIC integration"]
+fn periodic_config_logging_survives_root_resolution_failure() -> Result<()> {
+    support::assertions::require_ignored_flag()?;
+    let env = TimerScanEnv::new(false)?;
+    support::calls::tick_n(&env.pic, 20);
+
+    let expected = format!(
+        "SNS_REWARDS_CONFIG reward_sns_root_canister_id={}",
+        env.root.to_text()
+    );
+    let initial_count = env.logs_text()?.matches(&expected).count();
+    assert_eq!(initial_count, 1, "init should emit one effective CONFIG");
+    assert!(env.context()?.is_none());
+
+    env.pic
+        .advance_time(std::time::Duration::from_secs(24 * 60 * 60 + 1));
+    support::calls::tick_n(&env.pic, 20);
+
+    let logs = env.logs_text()?;
+    assert!(
+        logs.matches(&expected).count() > initial_count,
+        "the independent daily CONFIG timer must log despite persistent Root resolution failure: {logs}"
+    );
+    assert!(
+        env.context()?.is_none(),
+        "CONFIG logging must not create or publish a snapshot"
+    );
+    let debug: DebugState = query_one(
+        &env.pic,
+        env.rewards,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert_eq!(debug.configured_root, Some(env.root));
+    assert!(!debug.scan_active);
+    assert!(debug.active_snapshot.is_none());
+    Ok(())
 }
 
 #[test]
