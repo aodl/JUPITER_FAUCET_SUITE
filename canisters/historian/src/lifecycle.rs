@@ -49,8 +49,6 @@ pub(crate) fn mainnet_faucet_id() -> Principal {
     Principal::from_text("acjuz-liaaa-aaaar-qb4qq-cai").expect("invalid hardcoded faucet principal")
 }
 
-pub(crate) const DEFAULT_IO_SURPLUS_NEURON_ID: u64 = 10_292_412_127_977_304_661;
-
 pub(crate) fn mainnet_relay_id() -> Principal {
     Principal::from_text("u2qkp-aqaaa-aaaar-qb7ea-cai").expect("invalid hardcoded relay principal")
 }
@@ -154,9 +152,6 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .self_service_relay_interval_seconds
             .unwrap_or(86400)
             .max(60),
-        io_surplus_neuron_id: args
-            .io_surplus_neuron_id
-            .unwrap_or(DEFAULT_IO_SURPLUS_NEURON_ID),
         canonical_relay_canister_id,
         canonical_relay_targets,
     };
@@ -465,9 +460,6 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.self_service_relay_interval_seconds == 0 {
         st.config.self_service_relay_interval_seconds = 86400;
     }
-    if st.config.io_surplus_neuron_id == 0 {
-        st.config.io_surplus_neuron_id = DEFAULT_IO_SURPLUS_NEURON_ID;
-    }
     ensure_canonical_relay_tracking(st);
 }
 
@@ -769,9 +761,6 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
         if let Some(v) = args.self_service_relay_interval_seconds {
             st.config.self_service_relay_interval_seconds = v.max(60);
         }
-        if let Some(v) = args.io_surplus_neuron_id {
-            st.config.io_surplus_neuron_id = v;
-        }
         if let Some(v) = args.canonical_relay_canister_id {
             st.config.canonical_relay_canister_id = v;
         }
@@ -823,14 +812,23 @@ pub(crate) fn post_upgrade_with_timestamp(args: Option<UpgradeArgs>, now_secs: u
 }
 
 pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs>, _now_secs: u64) {
-    let first_relay_setup_cutover = !state::relay_setup_entries_memory_initialized();
+    // Reading initialization flags must precede opening either stable map because StableBTreeMap
+    // initialization writes its header and would otherwise erase the distinction between an old
+    // deployment and an already-completed cutover.
+    let first_target_set_relay_setup_cutover =
+        !state::retired_target_set_relay_setup_entries_memory_initialized();
+    let first_full_configuration_relay_setup_cutover =
+        !state::relay_setup_entries_memory_initialized();
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    if first_relay_setup_cutover {
+    if first_target_set_relay_setup_cutover {
         state::validate_retired_relay_factory_state(&st.config);
+    }
+    if first_full_configuration_relay_setup_cutover {
+        state::validate_full_configuration_relay_setup_cutover();
     }
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories

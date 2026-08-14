@@ -694,10 +694,12 @@ enum RelaySetupState {
 #[derive(Debug, CandidType, Deserialize)]
 struct RelaySetupView {
     canonical_target_canister_ids: Vec<Principal>,
+    canonical_surplus_recipient_principals: Vec<Principal>,
     setup_key_identifier: String,
     setup_account: Option<Account>,
     setup_account_identifier: Option<String>,
     target_count: u32,
+    surplus_recipient_count: u32,
     nominal_minimum_e8s: u64,
     factory_available: bool,
     state: RelaySetupState,
@@ -1015,16 +1017,27 @@ fn account_to_candid(account: &Account) -> String {
     )
 }
 
-fn relay_setup_view(targets: &[Principal]) -> Result<RelaySetupView> {
-    let principals = targets
+fn principals_to_candid(principals: &[Principal]) -> String {
+    principals
         .iter()
-        .map(|target| format!("principal \"{}\"", target.to_text()))
+        .map(|principal| format!("principal \"{}\"", principal.to_text()))
         .collect::<Vec<_>>()
-        .join("; ");
+        .join("; ")
+}
+
+fn relay_setup_args_candid(targets: &[Principal], recipients: &[Principal]) -> String {
+    format!(
+        "(record {{ target_canister_ids = vec {{ {} }}; surplus_recipient_principals = vec {{ {} }} }})",
+        principals_to_candid(targets),
+        principals_to_candid(recipients),
+    )
+}
+
+fn relay_setup_view(targets: &[Principal], recipients: &[Principal]) -> Result<RelaySetupView> {
     let result: RelaySetupViewResult = call_raw(
         "jupiter_historian_dbg",
-        "get_relay_setup_view",
-        &format!("(record {{ target_canister_ids = vec {{ {principals} }} }})"),
+        "get_relay_configuration_view",
+        &relay_setup_args_candid(targets, recipients),
     )?;
     match result {
         RelaySetupViewResult::Ok(view) => Ok(view),
@@ -3690,6 +3703,8 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
 
 fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let recipient_a = Principal::from_slice(&[92, 1]);
+    let recipient_b = Principal::from_slice(&[92, 2]);
 
     run_scenario(
         outcomes,
@@ -3697,7 +3712,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         || {
             reset_historian_local_replica_state()?;
             let historian = Principal::from_text(canister_id("jupiter_historian_dbg")?.trim())?;
-            let view = relay_setup_view(&[target])?;
+            let view = relay_setup_view(&[target], &[recipient_a])?;
             let expected_subaccount: [u8; 32] = hex::decode(&view.setup_key_identifier)?
                 .try_into()
                 .map_err(|_| anyhow::Error::msg("setup hash is not 32 bytes"))?;
@@ -3709,15 +3724,37 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 account_identifier_text(expected_account.owner, expected_account.subaccount);
 
             if view.canonical_target_canister_ids != vec![target]
+                || view.canonical_surplus_recipient_principals != vec![recipient_a]
                 || view.setup_account != Some(expected_account)
                 || view.setup_account_identifier.as_deref() != Some(&expected_account_identifier)
                 || view.target_count != 1
+                || view.surplus_recipient_count != 1
                 || view.state != RelaySetupState::NotFunded
             {
                 bail!("unexpected relay setup view: {view:?}");
             }
             if view.nominal_minimum_e8s == 0 {
                 bail!("relay setup view should expose positive economics: {view:?}");
+            }
+            Ok(())
+        },
+    );
+
+    run_scenario(
+        outcomes,
+        label(
+            "icp",
+            "historian",
+            "same targets with different recipients use different setup accounts",
+        ),
+        || {
+            reset_historian_local_replica_state()?;
+            let first = relay_setup_view(&[target], &[recipient_a])?;
+            let second = relay_setup_view(&[target], &[recipient_b])?;
+            if first.setup_key_identifier == second.setup_key_identifier
+                || first.setup_account == second.setup_account
+            {
+                bail!("recipient change did not change Relay configuration identity");
             }
             Ok(())
         },
@@ -3736,11 +3773,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 let spam_target = Principal::from_slice(&[91, id]);
                 let result: RelaySetupNotifyResult = call_raw(
                     "jupiter_historian_dbg",
-                    "notify_relay_setup",
-                    &format!(
-                        r#"(record {{ target_canister_ids = vec {{ principal "{}" }} }})"#,
-                        spam_target.to_text()
-                    ),
+                    "notify_relay_configuration",
+                    &relay_setup_args_candid(&[spam_target], &[recipient_a]),
                 )?;
                 if !matches!(result, RelaySetupNotifyResult::BelowMinimum { .. }) {
                     bail!("expected BelowMinimum for zero-balance notify, got {result:?}");
@@ -3777,7 +3811,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         ),
         || {
             reset_historian_local_replica_state()?;
-            let view = relay_setup_view(&[target])?;
+            let view = relay_setup_view(&[target], &[recipient_a])?;
             let amount = view.nominal_minimum_e8s.saturating_sub(1);
             let setup_account = view.setup_account.context("expected setup account")?;
             let _: () = call_raw(
@@ -3787,11 +3821,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             )?;
             let result: RelaySetupNotifyResult = call_raw(
                 "jupiter_historian_dbg",
-                "notify_relay_setup",
-                &format!(
-                    r#"(record {{ target_canister_ids = vec {{ principal "{}" }} }})"#,
-                    target.to_text()
-                ),
+                "notify_relay_configuration",
+                &relay_setup_args_candid(&[target], &[recipient_a]),
             )?;
             if !matches!(result, RelaySetupNotifyResult::BelowMinimum { .. }) {
                 bail!("expected BelowMinimum notify result, got {result:?}");

@@ -231,13 +231,13 @@ pub(super) fn get_public_status() -> PublicStatus {
 }
 
 #[ic_cdk::query]
-pub(super) fn get_relay_setup_view(args: RelayTargetSetArgs) -> RelaySetupViewResult {
+pub(super) fn get_relay_configuration_view(args: RelaySetupArgs) -> RelaySetupViewResult {
     crate::relay_setup::setup_view(args)
 }
 
 #[ic_cdk::update]
-pub(super) async fn notify_relay_setup(args: RelayTargetSetArgs) -> RelaySetupNotifyResult {
-    crate::relay_setup::notify_relay_setup(args).await
+pub(super) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySetupNotifyResult {
+    crate::relay_setup::notify_relay_configuration(args).await
 }
 
 fn principal_matches_compact_prefix(principal: Principal, prefix: &str) -> bool {

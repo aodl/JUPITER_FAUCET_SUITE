@@ -5,7 +5,6 @@ export const idlFactory = ({ IDL }) => {
   });
   const InitArgs = IDL.Record({
     'canonical_relay_canister_id' : IDL.Opt(IDL.Principal),
-    'io_surplus_neuron_id' : IDL.Opt(IDL.Nat64),
     'min_tx_e8s' : IDL.Opt(IDL.Nat64),
     'cmc_canister_id' : IDL.Opt(IDL.Principal),
     'xrc_canister_id' : IDL.Opt(IDL.Principal),
@@ -172,7 +171,8 @@ export const idlFactory = ({ IDL }) => {
     'total_memory_bytes' : IDL.Opt(IDL.Nat64),
     'last_index_run_ts' : IDL.Opt(IDL.Nat64),
   });
-  const RelayTargetSetArgs = IDL.Record({
+  const RelaySetupArgs = IDL.Record({
+    'surplus_recipient_principals' : IDL.Vec(IDL.Principal),
     'target_canister_ids' : IDL.Vec(IDL.Principal),
   });
   const RelayCreationPhase = IDL.Variant({
@@ -204,6 +204,7 @@ export const idlFactory = ({ IDL }) => {
   const RelaySetupView = IDL.Record({
     'setup_key_identifier' : IDL.Text,
     'canonical_target_canister_ids' : IDL.Vec(IDL.Principal),
+    'canonical_surplus_recipient_principals' : IDL.Vec(IDL.Principal),
     'state' : RelaySetupState,
     'nominal_minimum_e8s' : IDL.Nat64,
     'singleton_nominal_minimum_e8s' : IDL.Nat64,
@@ -212,6 +213,7 @@ export const idlFactory = ({ IDL }) => {
     'extra_target_count' : IDL.Nat64,
     'factory_available' : IDL.Bool,
     'target_count' : IDL.Nat32,
+    'surplus_recipient_count' : IDL.Nat32,
     'setup_account_identifier' : IDL.Opt(IDL.Text),
     'extra_target_unit_charge_e8s' : IDL.Nat64,
   });
@@ -337,8 +339,8 @@ export const idlFactory = ({ IDL }) => {
         [CommitmentHistoryPage],
         ['query'],
       ),
-    'get_relay_setup_view' : IDL.Func(
-        [RelayTargetSetArgs],
+    'get_relay_configuration_view' : IDL.Func(
+        [RelaySetupArgs],
         [RelaySetupViewResult],
         ['query'],
       ),
@@ -357,8 +359,8 @@ export const idlFactory = ({ IDL }) => {
         [ListRecentCommitmentsResponse],
         ['query'],
       ),
-    'notify_relay_setup' : IDL.Func(
-        [RelayTargetSetArgs],
+    'notify_relay_configuration' : IDL.Func(
+        [RelaySetupArgs],
         [RelaySetupNotifyResult],
         [],
       ),
@@ -371,7 +373,6 @@ export const init = ({ IDL }) => {
   });
   const InitArgs = IDL.Record({
     'canonical_relay_canister_id' : IDL.Opt(IDL.Principal),
-    'io_surplus_neuron_id' : IDL.Opt(IDL.Nat64),
     'min_tx_e8s' : IDL.Opt(IDL.Nat64),
     'cmc_canister_id' : IDL.Opt(IDL.Principal),
     'xrc_canister_id' : IDL.Opt(IDL.Principal),

@@ -619,7 +619,7 @@
                 section. This ensures Jupiter Faucet perpetually transfers raw ICP rather than
                 directly topping up the relay canister with cycles. The relay canister then uses
                 that raw ICP to keep itself topped up along with configured canisters. Surplus ICP
-                (if any) can then be routed to a configured DAO treasury or other account. The
+                (if any) can then be routed to configured principals' default ICP accounts. The
                 Jupiter Faucet protocol's own relay canister routes 50% of any surplus ICP back into
                 the Jupiter Faucet neuron itself (forever increasing the rate of future
                 maturity-minted ICP back into the relay). The relay routes remaining surplus ICP
@@ -633,10 +633,8 @@
                 <li>
                   The easiest path to deploying a relay canister is to use the
                   <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
-                  tool (any surplus ICP will automatically be routed to the IO neuron staking
-                  account, increasing the minimum APY for all IO holders and therefore increasing
-                  the value of
-                  <a href="/#how-it-works:1" data-panel="how-it-works" class="pane-external-link">rewards for jUP stakers</a>).
+                  tool, choosing one to five immutable surplus recipient principals. No IO recipient
+                  is added automatically to a self-service Relay.
                 </li>
                 <li>
                   Alternatively, developers can pull the
@@ -1009,35 +1007,55 @@
         <article class="nav-panel-section" data-panel="relay-setup" id="nav-panel-relay-setup">
           <h2 class="nav-panel-title">Relay Setup</h2>
           <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle">Create an immutable Jupiter Relay for one to twenty target canisters without login.</p>
+            <p class="nav-panel-subtitle">Create an immutable Jupiter Relay for one to twenty target canisters and one to five surplus recipients without login.</p>
             <p class="nav-panel-content">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about <a href="/#how-it-works:3" data-panel="how-it-works" class="pane-external-link">what a relay canister is and how it works</a> and set up a new relay using the instructions below.</p>
             <form class="tracker-form relay-setup-form" id="relay-setup-form">
-              <fieldset class="relay-setup-target-fieldset">
+              <fieldset class="relay-setup-principal-fieldset">
                 <legend class="tracker-label">Target canisters</legend>
-                <p class="relay-setup-target-hint" id="relay-setup-target-hint">Enter one canister ID per field. The target set becomes immutable when the Relay is created.</p>
-                <div class="relay-setup-target-list" id="relay-setup-target-list">
-                  <div class="relay-setup-target-row" data-relay-target-row="true">
-                    <label class="relay-setup-target-label" for="relay-setup-target-1" data-relay-target-label="true">Target canister 1</label>
-                    <div class="relay-setup-target-controls">
-                      <input class="tracker-input mono relay-setup-target-input" id="relay-setup-target-1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Canister ID" aria-describedby="relay-setup-target-hint relay-setup-target-error-1" data-relay-target-input="true" />
-                      <button class="pane-page-button relay-setup-remove-target" type="button" aria-label="Remove target canister 1" data-relay-target-remove="true" hidden>Remove</button>
+                <p class="relay-setup-principal-hint" id="relay-setup-target-hint">Enter one canister ID per field. The targets become immutable when the Relay is created.</p>
+                <div class="relay-setup-principal-list" id="relay-setup-target-list">
+                  <div class="relay-setup-principal-row" data-relay-target-row="true">
+                    <label class="relay-setup-principal-label" for="relay-setup-target-1" data-relay-target-label="true">Target canister 1</label>
+                    <div class="relay-setup-principal-controls">
+                      <input class="tracker-input mono relay-setup-principal-input" id="relay-setup-target-1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Canister ID" aria-describedby="relay-setup-target-hint relay-setup-target-error-1" data-relay-target-input="true" />
+                      <button class="pane-page-button relay-setup-remove-principal" type="button" aria-label="Remove target canister 1" data-relay-target-remove="true" hidden>Remove</button>
                     </div>
-                    <p class="relay-setup-target-error" id="relay-setup-target-error-1" data-relay-target-error="true" hidden></p>
+                    <p class="relay-setup-principal-error" id="relay-setup-target-error-1" data-relay-target-error="true" hidden></p>
                   </div>
                 </div>
-                <input id="relay-setup-target-input" type="hidden" />
-                <div class="relay-setup-target-actions">
-                  <button class="pane-page-button relay-setup-add-target" id="relay-setup-add-target" type="button">Add another canister</button>
-                  <span class="relay-setup-target-count" id="relay-setup-target-count-hint">1 target canister</span>
-                  <button class="pane-page-button relay-setup-submit" id="relay-setup-submit" type="submit" disabled>Check target set</button>
+                <div class="relay-setup-principal-actions">
+                  <button class="pane-page-button relay-setup-add-principal" id="relay-setup-add-target" type="button">Add another canister</button>
+                  <span class="relay-setup-principal-count" id="relay-setup-target-count-hint">1 target canister</span>
                 </div>
-                <p class="relay-setup-target-announcement" id="relay-setup-target-announcement" role="status" aria-live="polite"></p>
+                <p class="relay-setup-principal-announcement" id="relay-setup-target-announcement" role="status" aria-live="polite"></p>
+              </fieldset>
+              <fieldset class="relay-setup-principal-fieldset">
+                <legend class="tracker-label">Surplus recipients</legend>
+                <p class="relay-setup-principal-hint" id="relay-setup-recipient-hint">Enter one principal per field. Recipients are immutable, receive equal shares at their default ICP accounts, and may be users or canisters.</p>
+                <div class="relay-setup-principal-list" id="relay-setup-recipient-list">
+                  <div class="relay-setup-principal-row" data-relay-recipient-row="true">
+                    <label class="relay-setup-principal-label" for="relay-setup-recipient-1" data-relay-recipient-label="true">Recipient principal 1</label>
+                    <div class="relay-setup-principal-controls">
+                      <input class="tracker-input mono relay-setup-principal-input" id="relay-setup-recipient-1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Principal" aria-describedby="relay-setup-recipient-hint relay-setup-recipient-error-1" data-relay-recipient-input="true" />
+                      <button class="pane-page-button relay-setup-remove-principal" type="button" aria-label="Remove recipient principal 1" data-relay-recipient-remove="true" hidden>Remove</button>
+                    </div>
+                    <p class="relay-setup-principal-error" id="relay-setup-recipient-error-1" data-relay-recipient-error="true" hidden></p>
+                  </div>
+                </div>
+                <div class="relay-setup-principal-actions">
+                  <button class="pane-page-button relay-setup-add-principal" id="relay-setup-add-recipient" type="button">Add another recipient</button>
+                  <span class="relay-setup-principal-count" id="relay-setup-recipient-count-hint">1 recipient principal</span>
+                  <button class="pane-page-button relay-setup-submit" id="relay-setup-submit" type="submit" disabled>Check Relay configuration</button>
+                </div>
+                <p class="relay-setup-principal-announcement" id="relay-setup-recipient-announcement" role="status" aria-live="polite"></p>
               </fieldset>
             </form>
+            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets and recipients together determine the setup address; changing either creates a different address and independent Relay. Surplus is divided equally between recipients at their default ICP accounts, but Relay top-ups and safety requirements take priority. Each recipient's net share must reach at least 1 ICP. No IO recipient is added automatically.</p>
+            <p class="pane-status-note tracker-status-note tracker-status-note--error"><strong>Check carefully before paying:</strong> deposits sent for an incorrectly selected Relay configuration are not automatically refundable.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error" id="relay-setup-warning" role="status" aria-live="polite" hidden></p>
             <div class="tracker-result" id="relay-setup-result">
               <div class="tracker-empty-state">
-                <p id="relay-setup-prompt-text">Individual target canisters may be covered as part of more than one Relay. Submitting the exact same target set returns the existing Relay (an exact duplicate is prevented). The target set is immutable after Relay creation.</p>
+                <p id="relay-setup-prompt-text">Individual targets may be covered by more than one Relay. Submitting the exact same Relay configuration returns its existing Relay; the targets and recipients are immutable after creation.</p>
               </div>
             </div>
             <dl class="pane-detail-grid tracker-summary-grid relay-setup-grid" id="relay-setup-summary" hidden>
@@ -1046,6 +1064,9 @@
               <div><dt>Factory</dt><dd class="pane-detail-value" id="relay-setup-factory">—</dd></div>
               <div><dt>Target count</dt><dd class="pane-detail-value" id="relay-setup-target-count">—</dd></div>
               <div><dt>Canonical target order</dt><dd class="pane-detail-value mono preserve-lines" id="relay-setup-canonical-targets">—</dd></div>
+              <div><dt>Surplus recipient count</dt><dd class="pane-detail-value" id="relay-setup-recipient-count">—</dd></div>
+              <div><dt>Canonical surplus recipient order</dt><dd class="pane-detail-value mono preserve-lines" id="relay-setup-canonical-recipients">—</dd></div>
+              <div><dt>Configuration hash</dt><dd class="pane-detail-value mono" id="relay-setup-configuration-hash">—</dd></div>
               <div><dt>Base minimum</dt><dd class="pane-detail-value" id="relay-setup-base-minimum">—</dd></div>
               <div><dt>Extra targets</dt><dd class="pane-detail-value" id="relay-setup-extra-count">—</dd></div>
               <div><dt>Charge per extra target</dt><dd class="pane-detail-value" id="relay-setup-extra-unit">—</dd></div>
@@ -1069,7 +1090,7 @@
                 </div>
                 <a class="pane-external-link pane-inline-code-link mono" id="relay-setup-account-identifier-link" href="#" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="relay-setup-account-identifier">—</code></a>
               </div>
-              <p class="pane-status-note tracker-status-note">Setup funding is an aggregate deposit to this target set’s deterministic Historian subaccount. Deposits are not attributed to individual payers and are not automatically refundable.</p>
+              <p class="pane-status-note tracker-status-note">Setup funding is an aggregate deposit to this full Relay configuration’s deterministic Historian subaccount. Targets and recipients jointly determine this address. Deposits are not attributed to individual payers and are not automatically refundable.</p>
             </section>
             <section class="pane-inline-block" id="relay-setup-create-panel" hidden>
               <button class="pane-page-button" id="relay-setup-create" type="button" disabled>Create Relay</button>

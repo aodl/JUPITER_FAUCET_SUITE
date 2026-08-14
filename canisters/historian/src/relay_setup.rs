@@ -1,7 +1,10 @@
+mod recipient_set;
 mod setup_key;
+mod setup_spec;
 mod target_set;
 
 pub(crate) use setup_key::RelaySetupKey;
+use setup_spec::CanonicalRelaySetup;
 use target_set::CanonicalRelayTargetSet;
 
 use crate::clients::blackhole::BlackholeCanisterStatusKind;
@@ -466,21 +469,23 @@ pub(crate) fn validate_canonical_relay_config(config: &Config) -> Result<(), Str
     }
 }
 
-fn canonical_relay_match(
+fn reject_reserved_canonical_target_set(
     config: &Config,
-    requested_key: RelaySetupKey,
-) -> Result<Option<Principal>, String> {
-    let Some(relay_canister_id) = config.canonical_relay_canister_id else {
-        return Ok(None);
-    };
-    // The configured production Relay intentionally covers protocol canisters that are not
-    // eligible for a newly spawned Relay. It shares framing, ordering, duplicate checks, and
-    // hashing with self-service sets, while setup-only protected-target checks apply below only
-    // when the requested hash is not this exact configured set.
+    setup: &CanonicalRelaySetup,
+) -> Result<(), String> {
+    if config.canonical_relay_targets.is_empty() {
+        return Ok(());
+    }
     let canonical =
         CanonicalRelayTargetSet::canonicalize(config.canonical_relay_targets.clone())
             .map_err(|err| format!("configured canonical Relay target set is invalid: {err}"))?;
-    Ok((canonical.key() == requested_key).then_some(relay_canister_id))
+    if canonical.targets() == setup.targets() {
+        return Err(
+            "the canonical Jupiter Relay target set is reserved and cannot be created through self-service"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn factory_blocked_reason(config: &Config) -> Option<String> {
@@ -523,29 +528,26 @@ fn setup_state(entry: Option<RelaySetupEntry>) -> RelaySetupState {
     }
 }
 
-pub(crate) fn setup_view(args: RelayTargetSetArgs) -> RelaySetupViewResult {
+pub(crate) fn setup_view(args: RelaySetupArgs) -> RelaySetupViewResult {
     setup_view_for_historian(args, self_canister_id())
 }
 
-fn setup_view_for_historian(
-    args: RelayTargetSetArgs,
-    historian: Principal,
-) -> RelaySetupViewResult {
+fn setup_view_for_historian(args: RelaySetupArgs, historian: Principal) -> RelaySetupViewResult {
     state::with_state(|state| {
-        let targets = match CanonicalRelayTargetSet::canonicalize(args.target_canister_ids) {
-            Ok(targets) => targets,
+        let setup = match CanonicalRelaySetup::canonicalize(
+            args.target_canister_ids,
+            args.surplus_recipient_principals,
+        ) {
+            Ok(setup) => setup,
             Err(message) => return RelaySetupViewResult::Err(message),
         };
-        let key = targets.key();
-        let canonical_relay = match canonical_relay_match(&state.config, key) {
-            Ok(value) => value,
-            Err(message) => return RelaySetupViewResult::Err(message),
-        };
-        let existing_entry = canonical_relay
-            .map(|relay_canister_id| RelaySetupEntry::Active { relay_canister_id })
-            .or_else(|| get_entry(key));
+        let key = setup.key();
+        if let Err(message) = reject_reserved_canonical_target_set(&state.config, &setup) {
+            return RelaySetupViewResult::Err(message);
+        }
+        let existing_entry = get_entry(key);
         if existing_entry.is_none() {
-            if let Err(message) = targets.validate_for_new_setup(&state.config, historian) {
+            if let Err(message) = setup.validate_for_new_setup(&state.config, historian) {
                 return RelaySetupViewResult::Err(message);
             }
         }
@@ -557,7 +559,7 @@ fn setup_view_for_historian(
         let setup_account_identifier = setup_account
             .as_ref()
             .map(crate::clients::index::account_identifier_text_for_account);
-        let target_count = targets.len();
+        let target_count = setup.target_count();
         let extra_target_count = match target_count
             .checked_sub(1)
             .and_then(|count| u64::try_from(count).ok())
@@ -574,11 +576,14 @@ fn setup_view_for_historian(
             Err(message) => return RelaySetupViewResult::Err(message),
         };
         RelaySetupViewResult::Ok(RelaySetupView {
-            canonical_target_canister_ids: targets.targets().to_vec(),
+            canonical_target_canister_ids: setup.targets().to_vec(),
+            canonical_surplus_recipient_principals: setup.surplus_recipients().to_vec(),
             setup_key_identifier: key.identifier(),
             setup_account,
             setup_account_identifier,
             target_count: u32::try_from(target_count).unwrap_or(u32::MAX),
+            surplus_recipient_count: u32::try_from(setup.surplus_recipient_count())
+                .unwrap_or(u32::MAX),
             singleton_nominal_minimum_e8s: state.config.relay_setup_min_e8s,
             extra_target_count,
             extra_target_unit_charge_e8s: EXTRA_TARGET_CHARGE_E8S,
@@ -700,7 +705,12 @@ fn validate_post_handoff(
     Ok(())
 }
 
-fn relay_init_arg(config: &Config, targets: &CanonicalRelayTargetSet) -> Vec<u8> {
+fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
+    #[derive(CandidType)]
+    struct SurplusCanisterRecipient {
+        canister_id: Principal,
+        memo: Vec<u8>,
+    }
     #[derive(CandidType)]
     struct SurplusNeuronRecipient {
         neuron_id: u64,
@@ -713,32 +723,48 @@ fn relay_init_arg(config: &Config, targets: &CanonicalRelayTargetSet) -> Vec<u8>
         cmc_canister_id: Option<Principal>,
         governance_canister_id: Option<Principal>,
         blackhole_canister_id: Option<Principal>,
+        sns_rewards_canister_id: Option<Principal>,
+        icp_index_canister_id: Option<Principal>,
         main_interval_seconds: Option<u64>,
         max_transfers_per_tick: Option<u32>,
-        surplus_canister_recipients: Option<Vec<()>>,
+        surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
         surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
     }
-    let transfer_cap = u32::try_from(targets.len() + 2).expect("target count is bounded at 20");
+    let transfer_cap = setup
+        .target_count()
+        .checked_add(setup.surplus_recipient_count())
+        .and_then(|count| count.checked_add(1))
+        .and_then(|count| u32::try_from(count).ok())
+        .expect("self-service Relay transfer cap is bounded at 20 + 5 + 1");
     Encode!(&InitArgs {
-        managed_canisters: targets.targets().to_vec(),
+        managed_canisters: setup.targets().to_vec(),
         ledger_canister_id: Some(config.ledger_canister_id),
         cmc_canister_id: config.cmc_canister_id,
         governance_canister_id: Some(jupiter_ic_clients::constants::nns_governance_id()),
         blackhole_canister_id: None,
+        sns_rewards_canister_id: None,
+        icp_index_canister_id: None,
         main_interval_seconds: Some(config.self_service_relay_interval_seconds),
         max_transfers_per_tick: Some(transfer_cap),
-        surplus_canister_recipients: None,
-        surplus_neuron_recipients: vec![SurplusNeuronRecipient {
-            neuron_id: config.io_surplus_neuron_id,
-            memo: Vec::new(),
-        }],
+        surplus_canister_recipients: Some(
+            setup
+                .surplus_recipients()
+                .iter()
+                .copied()
+                .map(|principal| SurplusCanisterRecipient {
+                    canister_id: principal,
+                    memo: Vec::new(),
+                })
+                .collect(),
+        ),
+        surplus_neuron_recipients: Vec::new(),
     })
     .expect("Relay init args should encode")
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
-    args: RelayTargetSetArgs,
+    args: RelaySetupArgs,
     historian: Principal,
     ledger: &dyn LedgerClient,
     cycles_probe_client: &C,
@@ -747,22 +773,21 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     fiduciary_blackhole: &dyn BlackholeClient,
 ) -> RelaySetupNotifyResult {
     let config = state::with_state(|state| state.config.clone());
-    let targets = match CanonicalRelayTargetSet::canonicalize(args.target_canister_ids) {
-        Ok(targets) => targets,
+    let setup = match CanonicalRelaySetup::canonicalize(
+        args.target_canister_ids,
+        args.surplus_recipient_principals,
+    ) {
+        Ok(setup) => setup,
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
     };
-    let key = targets.key();
-    match canonical_relay_match(&config, key) {
-        Ok(Some(relay_canister_id)) => {
-            return RelaySetupNotifyResult::Active { relay_canister_id };
-        }
-        Ok(None) => {}
-        Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
+    let key = setup.key();
+    if let Err(message) = reject_reserved_canonical_target_set(&config, &setup) {
+        return RelaySetupNotifyResult::FailedPreSpend { message };
     }
     if let Some(entry) = get_entry(key) {
         return notify_for_entry(entry);
     }
-    if let Err(message) = targets.validate_for_new_setup(&config, historian) {
+    if let Err(message) = setup.validate_for_new_setup(&config, historian) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
     }
     if let Some(message) = factory_blocked_reason(&config) {
@@ -777,7 +802,7 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
             };
         }
     };
-    let nominal = match nominal_minimum_e8s(&config, targets.len()) {
+    let nominal = match nominal_minimum_e8s(&config, setup.target_count()) {
         Ok(value) => value,
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
     };
@@ -804,7 +829,8 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
             };
         }
     };
-    let required_e8s = match current_requirement_e8s(&config, targets.len(), fee_e8s, &rate) {
+    let required_e8s = match current_requirement_e8s(&config, setup.target_count(), fee_e8s, &rate)
+    {
         Ok(value) => value,
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
     };
@@ -825,7 +851,7 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     {
         return notify_for_entry(get_entry(key).expect("reservation exists"));
     }
-    for target in targets.targets() {
+    for target in setup.targets() {
         let cached_route =
             state::with_state(|state| state.cached_cycles_probe_routes.get(target).cloned());
         let result = probe_cycles(
@@ -992,7 +1018,7 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
             mode: jupiter_ic_clients::management::InstallMode::Install,
             canister_id: relay_canister_id,
             wasm_module: wasm,
-            arg: relay_init_arg(&config, &targets),
+            arg: relay_init_arg(&config, &setup),
         })
         .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
@@ -1056,13 +1082,13 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
             );
         }
     };
-    let minimum_final_relay_funding = match minimum_final_relay_funding_e8s(&config, targets.len())
-    {
-        Ok(amount) => amount,
-        Err(message) => {
-            return manual_recovery(key, RelayCreationPhase::CodeInstalled, message);
-        }
-    };
+    let minimum_final_relay_funding =
+        match minimum_final_relay_funding_e8s(&config, setup.target_count()) {
+            Ok(amount) => amount,
+            Err(message) => {
+                return manual_recovery(key, RelayCreationPhase::CodeInstalled, message);
+            }
+        };
     let funding_amount = match remaining_balance.checked_sub(funding_fee) {
         Some(amount) if amount >= minimum_final_relay_funding => amount,
         Some(_) => {
@@ -1217,14 +1243,14 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     }
     insert_entry(key, RelaySetupEntry::Active { relay_canister_id });
     state::with_state_mut_sections(state::DIRTY_ROOT | state::DIRTY_REGISTRY, |state| {
-        for target in targets.targets() {
+        for target in setup.targets() {
             mark_active_relay_tracked(state, *target, relay_canister_id, Some(now_secs()));
         }
     });
     RelaySetupNotifyResult::Active { relay_canister_id }
 }
 
-pub(crate) async fn notify_relay_setup(args: RelayTargetSetArgs) -> RelaySetupNotifyResult {
+pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySetupNotifyResult {
     let config = state::with_state(|state| state.config.clone());
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(config.ledger_canister_id);
     let cycles_probe_client =
@@ -1285,6 +1311,7 @@ pub(crate) fn debug_setup_entries() -> Vec<RelaySetupDebugEntry> {
 
 #[cfg(any(test, feature = "debug_api"))]
 pub(crate) fn clear_setup_entries_for_debug() {
+    state::with_retired_target_set_relay_setup_entries_map(|map| map.clear_new());
     state::with_relay_setup_entries_map(|map| map.clear_new());
 }
 
@@ -1304,6 +1331,19 @@ mod tests {
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
+    }
+
+    fn setup_args(target_canister_ids: Vec<Principal>) -> RelaySetupArgs {
+        RelaySetupArgs {
+            target_canister_ids,
+            surplus_recipient_principals: vec![principal(200)],
+        }
+    }
+
+    fn key_for_targets(target_canister_ids: &[Principal]) -> RelaySetupKey {
+        CanonicalRelaySetup::canonicalize(target_canister_ids.to_vec(), vec![principal(200)])
+            .expect("test setup should be structurally valid")
+            .key()
     }
 
     fn config() -> Config {
@@ -1344,7 +1384,6 @@ mod tests {
             relay_cycle_safety_margin_e8s: 5_000_000,
             relay_min_subaccount_one_seed_e8s: 100_020_000,
             self_service_relay_interval_seconds: 86_400,
-            io_surplus_neuron_id: 1,
             canonical_relay_canister_id: Some(principal(70)),
             canonical_relay_targets: vec![principal(71), principal(72)],
         }
@@ -2042,14 +2081,14 @@ mod tests {
 
         for (index, phase) in retryable.into_iter().enumerate() {
             reset();
-            let key = RelaySetupKey::from_canonical_targets(&[principal(index as u8 + 1)]);
+            let key = key_for_targets(&[principal(index as u8 + 1)]);
             insert_entry(key, RelaySetupEntry::Creating(progress_for_phase(phase)));
             reconcile_interrupted_creating_entries_after_upgrade();
             assert_eq!(get_entry(key), None, "phase {phase:?}");
         }
         for (index, phase) in manual.into_iter().enumerate() {
             reset();
-            let key = RelaySetupKey::from_canonical_targets(&[principal(index as u8 + 20)]);
+            let key = key_for_targets(&[principal(index as u8 + 20)]);
             insert_entry(key, RelaySetupEntry::Creating(progress_for_phase(phase)));
             reconcile_interrupted_creating_entries_after_upgrade();
             let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
@@ -2063,13 +2102,13 @@ mod tests {
         }
 
         reset();
-        let active_key = RelaySetupKey::from_canonical_targets(&[principal(90)]);
+        let active_key = key_for_targets(&[principal(90)]);
         let active = RelaySetupEntry::Active {
             relay_canister_id: principal(91),
         };
         let active_bytes = active.to_bytes().into_owned();
         insert_entry(active_key, active);
-        let manual_key = RelaySetupKey::from_canonical_targets(&[principal(92)]);
+        let manual_key = key_for_targets(&[principal(92)]);
         let manual_entry = RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
             RelayCreationPhase::RelayFunded,
         ));
@@ -2083,13 +2122,54 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_reconciliation_ignores_retired_memory_25() {
+        reset();
+        let retired_key = key_for_targets(&[principal(1)]);
+        let current_key = key_for_targets(&[principal(2)]);
+        let retired_entry =
+            RelaySetupEntry::Creating(progress_for_phase(RelayCreationPhase::CmcTransferAccepted));
+        state::with_retired_target_set_relay_setup_entries_map(|map| {
+            map.insert(retired_key, retired_entry.clone());
+        });
+        insert_entry(
+            current_key,
+            RelaySetupEntry::Creating(progress_for_phase(RelayCreationPhase::Reserved)),
+        );
+
+        reconcile_interrupted_creating_entries_after_upgrade();
+
+        state::with_retired_target_set_relay_setup_entries_map(|map| {
+            assert_eq!(map.get(&retired_key), Some(retired_entry));
+            map.clear_new();
+        });
+        assert_eq!(get_entry(current_key), None);
+    }
+
+    #[test]
     fn setup_account_is_derived_from_the_hash() {
         let historian = principal(42);
-        let key = RelaySetupKey::from_canonical_targets(&[principal(1)]);
+        let key = key_for_targets(&[principal(1)]);
         assert_eq!(
             setup_account_for(historian, key).subaccount,
             Some(key.bytes())
         );
+    }
+
+    #[test]
+    fn recipient_changes_produce_independent_keys_accounts_and_reservations() {
+        reset();
+        let historian = principal(42);
+        let setup_a =
+            CanonicalRelaySetup::canonicalize(vec![principal(1)], vec![principal(2)]).unwrap();
+        let setup_b =
+            CanonicalRelaySetup::canonicalize(vec![principal(1)], vec![principal(3)]).unwrap();
+        assert_ne!(setup_a.key(), setup_b.key());
+        assert_ne!(
+            setup_account_for(historian, setup_a.key()),
+            setup_account_for(historian, setup_b.key())
+        );
+        assert!(reserve(setup_a.key()).is_ok());
+        assert!(reserve(setup_b.key()).is_ok());
     }
 
     #[test]
@@ -2110,18 +2190,10 @@ mod tests {
     #[test]
     fn exact_set_idempotency_and_overlapping_active_sets_are_independent() {
         reset();
-        let a = CanonicalRelayTargetSet::canonicalize(vec![principal(1)])
-            .unwrap()
-            .key();
-        let ab = CanonicalRelayTargetSet::canonicalize(vec![principal(1), principal(2)])
-            .unwrap()
-            .key();
-        let bc = CanonicalRelayTargetSet::canonicalize(vec![principal(2), principal(3)])
-            .unwrap()
-            .key();
-        let ba = CanonicalRelayTargetSet::canonicalize(vec![principal(2), principal(1)])
-            .unwrap()
-            .key();
+        let a = key_for_targets(&[principal(1)]);
+        let ab = key_for_targets(&[principal(1), principal(2)]);
+        let bc = key_for_targets(&[principal(2), principal(3)]);
+        let ba = key_for_targets(&[principal(2), principal(1)]);
         assert_eq!(ab, ba);
         assert_ne!(a, ab);
         assert!(reserve(ab).is_ok());
@@ -2174,17 +2246,17 @@ mod tests {
     #[test]
     fn fifth_distinct_funded_reservation_is_busy() {
         reset();
-        for byte in 1..=4 {
-            assert!(reserve(RelaySetupKey::from_canonical_targets(&[principal(byte)])).is_ok());
+        for byte in [1, 2, 3, 5] {
+            assert!(reserve(key_for_targets(&[principal(byte)])).is_ok());
         }
         assert_eq!(
-            reserve(RelaySetupKey::from_canonical_targets(&[principal(5)])),
+            reserve(key_for_targets(&[principal(6)])),
             Err(RelaySetupNotifyResult::Busy)
         );
     }
 
     #[test]
-    fn canonical_exact_set_hides_the_setup_account() {
+    fn canonical_exact_set_is_reserved_for_self_service() {
         clear_setup_entries_for_debug();
         let historian = principal(42);
         let mut cfg = config();
@@ -2194,28 +2266,52 @@ mod tests {
         ];
         state::set_state(State::new(cfg, 0));
         let result = setup_view_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![
-                    jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
-                    historian,
-                ],
-            },
+            setup_args(vec![
+                jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+                historian,
+            ]),
             historian,
         );
-        let RelaySetupViewResult::Ok(view) = result else {
-            panic!("expected view")
-        };
-        assert_eq!(view.setup_account, None);
         assert_eq!(
-            view.state,
-            RelaySetupState::Active {
-                relay_canister_id: principal(70)
-            }
+            result,
+            RelaySetupViewResult::Err(
+                "the canonical Jupiter Relay target set is reserved and cannot be created through self-service"
+                    .to_string()
+            )
         );
     }
 
     #[test]
-    fn canonical_exact_set_alone_may_contain_protected_protocol_targets() {
+    fn canonical_exact_set_notify_is_rejected_before_external_work() {
+        reset();
+        let historian = principal(42);
+        state::with_state_mut_sections(state::DIRTY_ROOT, |state| {
+            state.config.canonical_relay_targets = vec![principal(1), principal(2)];
+        });
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([], []), false, Some("must not create"));
+        let result = block_on(notify_with_clients_for_historian(
+            setup_args(vec![principal(2), principal(1)]),
+            historian,
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+        ));
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::FailedPreSpend { message } if message.contains("reserved")
+        ));
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn canonical_exact_set_is_rejected_before_protected_target_policy() {
         clear_setup_entries_for_debug();
         let historian = principal(42);
         let mut cfg = config();
@@ -2230,30 +2326,14 @@ mod tests {
         assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
         state::set_state(State::new(cfg, 0));
 
-        let exact = setup_view_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: protected.clone(),
-            },
-            historian,
+        let exact = setup_view_for_historian(setup_args(protected.clone()), historian);
+        assert!(
+            matches!(exact, RelaySetupViewResult::Err(message) if message.contains("reserved"))
         );
-        assert!(matches!(
-            exact,
-            RelaySetupViewResult::Ok(RelaySetupView {
-                state: RelaySetupState::Active {
-                    relay_canister_id
-                },
-                ..
-            }) if relay_canister_id == principal(70)
-        ));
 
         for target in protected {
             assert!(matches!(
-                setup_view_for_historian(
-                    RelayTargetSetArgs {
-                        target_canister_ids: vec![target],
-                    },
-                    historian,
-                ),
+                setup_view_for_historian(setup_args(vec![target]), historian,),
                 RelaySetupViewResult::Err(_)
             ));
         }
@@ -2267,7 +2347,7 @@ mod tests {
 
         for protected_field in ["ledger", "index", "cmc"] {
             reset();
-            let key = RelaySetupKey::from_canonical_targets(&[target]);
+            let key = key_for_targets(&[target]);
             insert_entry(
                 key,
                 RelaySetupEntry::Active {
@@ -2281,12 +2361,7 @@ mod tests {
                 _ => unreachable!(),
             });
 
-            let view = setup_view_for_historian(
-                RelayTargetSetArgs {
-                    target_canister_ids: vec![target],
-                },
-                historian,
-            );
+            let view = setup_view_for_historian(setup_args(vec![target]), historian);
             assert!(matches!(
                 view,
                 RelaySetupViewResult::Ok(RelaySetupView {
@@ -2298,9 +2373,7 @@ mod tests {
             let (ledger, probe, cmc, management, fiduciary) =
                 mocks(MockLedger::new([], []), false, Some("must not create"));
             let notify = block_on(notify_with_clients_for_historian(
-                RelayTargetSetArgs {
-                    target_canister_ids: vec![target],
-                },
+                setup_args(vec![target]),
                 historian,
                 &ledger,
                 &probe,
@@ -2333,7 +2406,7 @@ mod tests {
         reset();
         let historian = principal(42);
         let target = principal(1);
-        let key = RelaySetupKey::from_canonical_targets(&[target]);
+        let key = key_for_targets(&[target]);
         let mut progress = progress_for_phase(RelayCreationPhase::CodeInstalled);
         progress.relay_canister_id = Some(principal(73));
         progress.last_error = Some("stored manual recovery detail".to_string());
@@ -2345,12 +2418,7 @@ mod tests {
             state.config.relay_factory_enabled = false;
         });
 
-        let view = setup_view_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![target],
-            },
-            historian,
-        );
+        let view = setup_view_for_historian(setup_args(vec![target]), historian);
         assert!(matches!(
             view,
             RelaySetupViewResult::Ok(RelaySetupView {
@@ -2366,9 +2434,7 @@ mod tests {
         let (ledger, probe, cmc, management, fiduciary) =
             mocks(MockLedger::new([], []), false, Some("must not create"));
         let notify = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![target],
-            },
+            setup_args(vec![target]),
             historian,
             &ledger,
             &probe,
@@ -2406,7 +2472,7 @@ mod tests {
         reset();
         let historian = principal(42);
         let target = principal(1);
-        let key = RelaySetupKey::from_canonical_targets(&[target]);
+        let key = key_for_targets(&[target]);
         let mut progress = progress_for_phase(RelayCreationPhase::CmcTransferAccepted);
         progress.relay_canister_id = None;
         insert_entry(key, RelaySetupEntry::Creating(progress));
@@ -2414,12 +2480,7 @@ mod tests {
             state.config.cmc_canister_id = Some(target);
         });
 
-        let view = setup_view_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![target],
-            },
-            historian,
-        );
+        let view = setup_view_for_historian(setup_args(vec![target]), historian);
         assert!(matches!(
             view,
             RelaySetupViewResult::Ok(RelaySetupView {
@@ -2434,9 +2495,7 @@ mod tests {
         let (ledger, probe, cmc, management, fiduciary) =
             mocks(MockLedger::new([], []), false, Some("must not create"));
         let notify = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![target],
-            },
+            setup_args(vec![target]),
             historian,
             &ledger,
             &probe,
@@ -2470,9 +2529,7 @@ mod tests {
         let (ledger, probe, cmc, management, fiduciary) =
             mocks(MockLedger::new([299_999_999], []), true, None);
         let invalid = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![Principal::anonymous()],
-            },
+            setup_args(vec![Principal::anonymous()]),
             principal(42),
             &ledger,
             &probe,
@@ -2487,9 +2544,7 @@ mod tests {
         assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
 
         let below = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![principal(1)],
-            },
+            setup_args(vec![principal(1)]),
             principal(42),
             &ledger,
             &probe,
@@ -2515,9 +2570,7 @@ mod tests {
         disabled.relay_factory_enabled = false;
         state::set_state(State::new(disabled, 0));
         let disabled_result = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![principal(2)],
-            },
+            setup_args(vec![principal(2)]),
             principal(42),
             &ledger,
             &probe,
@@ -2534,9 +2587,7 @@ mod tests {
 
     #[test]
     fn pre_spend_read_and_live_requirement_failures_leave_no_durable_or_external_work() {
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
 
         reset();
         let (ledger, probe, cmc, management, fiduciary) =
@@ -2638,9 +2689,7 @@ mod tests {
         let (ledger, probe, cmc, management, fiduciary) =
             mocks(MockLedger::new([300_000_000], []), false, None);
         let result = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![principal(1)],
-            },
+            setup_args(vec![principal(1)]),
             principal(42),
             &ledger,
             &probe,
@@ -2694,9 +2743,7 @@ mod tests {
         };
         let fiduciary = MockFiduciary::new();
         let result = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![sns_swap_target, direct_target],
-            },
+            setup_args(vec![sns_swap_target, direct_target]),
             principal(42),
             &ledger,
             &probe,
@@ -2753,9 +2800,7 @@ mod tests {
         };
         let fiduciary = MockFiduciary::new();
         let result = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![direct_target, unobservable_target],
-            },
+            setup_args(vec![direct_target, unobservable_target]),
             principal(42),
             &ledger,
             &probe,
@@ -2785,9 +2830,7 @@ mod tests {
     #[test]
     fn same_key_async_notify_contention_has_one_workflow_and_one_in_progress_result() {
         reset();
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
         let ledger = MockLedger::new(
             [300_000_000, 300_000_000, 297_990_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
@@ -2846,9 +2889,7 @@ mod tests {
 
     #[test]
     fn cmc_transfer_and_notification_boundaries_are_journaled_without_replay() {
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
 
         reset();
         let (ledger, probe, cmc, management, fiduciary) = mocks(
@@ -2970,9 +3011,7 @@ mod tests {
     #[test]
     fn ambiguous_transfer_and_dispatched_create_are_never_replayed() {
         reset();
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
         let (ledger, probe, cmc, management, fiduciary) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Ambiguous]),
             true,
@@ -3050,9 +3089,7 @@ mod tests {
 
     #[test]
     fn install_failure_reconciliation_accepts_only_the_approved_live_hash() {
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
         let approved_status = || AuditedCanisterStatus {
             status: AuditedCanisterStatusKind::Running,
             module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
@@ -3161,9 +3198,7 @@ mod tests {
 
     #[test]
     fn relay_funding_read_transfer_and_replay_boundaries_are_fail_closed() {
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
 
         reset();
         let (ledger, probe, cmc, management, fiduciary) = mocks(
@@ -3308,9 +3343,7 @@ mod tests {
             .with_fees([10_000, 10_001]);
         let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
         let result = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![principal(1)],
-            },
+            setup_args(vec![principal(1)]),
             principal(42),
             &ledger,
             &probe,
@@ -3327,7 +3360,7 @@ mod tests {
             } if relay_canister_id == principal(80)
         ));
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
-        let key = RelaySetupKey::from_canonical_targets(&[principal(1)]);
+        let key = key_for_targets(&[principal(1)]);
         let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
             panic!("setup must require manual recovery")
         };
@@ -3348,9 +3381,7 @@ mod tests {
         .with_fees([10_000, 10_000]);
         let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
         let result = block_on(notify_with_clients_for_historian(
-            RelayTargetSetArgs {
-                target_canister_ids: vec![principal(1)],
-            },
+            setup_args(vec![principal(1)]),
             principal(42),
             &ledger,
             &probe,
@@ -3370,11 +3401,15 @@ mod tests {
     }
 
     #[test]
-    fn twenty_target_activation_uses_local_canonical_vector_then_discards_it() {
+    fn maximum_configuration_installs_canonical_principal_recipients_and_cap_26() {
         reset();
         let targets = (100..120).rev().map(principal).collect::<Vec<_>>();
-        let args = RelayTargetSetArgs {
+        let recipients = (200..205).rev().map(principal).collect::<Vec<_>>();
+        let setup = CanonicalRelaySetup::canonicalize(targets.clone(), recipients.clone()).unwrap();
+        let key = setup.key();
+        let args = RelaySetupArgs {
             target_canister_ids: targets,
+            surplus_recipient_principals: recipients,
         };
         let (ledger, probe, cmc, management, fiduciary) = mocks(
             MockLedger::new(
@@ -3414,10 +3449,22 @@ mod tests {
         drop(transfers);
 
         #[derive(CandidType, Deserialize)]
+        struct DecodedSurplusCanisterRecipient {
+            canister_id: Principal,
+            memo: Vec<u8>,
+        }
+        #[derive(CandidType, Deserialize)]
+        struct DecodedSurplusNeuronRecipient {
+            neuron_id: u64,
+            memo: Vec<u8>,
+        }
+        #[derive(CandidType, Deserialize)]
         struct DecodedRelayInitArgs {
             managed_canisters: Vec<Principal>,
             blackhole_canister_id: Option<Principal>,
             max_transfers_per_tick: Option<u32>,
+            surplus_canister_recipients: Option<Vec<DecodedSurplusCanisterRecipient>>,
+            surplus_neuron_recipients: Vec<DecodedSurplusNeuronRecipient>,
         }
         let installs = management.installs.lock().unwrap();
         assert_eq!(installs.len(), 1);
@@ -3427,11 +3474,21 @@ mod tests {
             (100..120).map(principal).collect::<Vec<_>>()
         );
         assert_eq!(init.blackhole_canister_id, None);
-        assert_eq!(init.max_transfers_per_tick, Some(22));
+        assert_eq!(init.max_transfers_per_tick, Some(26));
+        let installed_recipients = init.surplus_canister_recipients.unwrap();
+        assert_eq!(
+            installed_recipients
+                .iter()
+                .map(|recipient| recipient.canister_id)
+                .collect::<Vec<_>>(),
+            (200..205).map(principal).collect::<Vec<_>>()
+        );
+        assert!(installed_recipients
+            .iter()
+            .all(|recipient| recipient.memo.is_empty()));
+        assert!(init.surplus_neuron_recipients.is_empty());
         drop(installs);
 
-        let key =
-            RelaySetupKey::from_canonical_targets(&(100..120).map(principal).collect::<Vec<_>>());
         assert_eq!(
             get_entry(key),
             Some(RelaySetupEntry::Active {
@@ -3503,9 +3560,7 @@ mod tests {
 
     #[test]
     fn handoff_errors_are_reconciled_and_activation_requires_complete_progress() {
-        let args = RelayTargetSetArgs {
-            target_canister_ids: vec![principal(1)],
-        };
+        let args = setup_args(vec![principal(1)]);
         let successful_ledger = || {
             MockLedger::new(
                 [300_000_000, 297_990_000],
@@ -3613,7 +3668,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            get_entry(RelaySetupKey::from_canonical_targets(&[principal(1)])),
+            get_entry(key_for_targets(&[principal(1)])),
             Some(RelaySetupEntry::ManualRecoveryRequired(_))
         ));
     }

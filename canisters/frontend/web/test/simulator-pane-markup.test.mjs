@@ -513,7 +513,9 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /forever increasing the rate of future\s*maturity-minted ICP back into the relay/);
   assert.match(howItWorks, /remaining surplus ICP\s*into the IO neuron's\s*staking account \(described below\)/);
   assert.match(howItWorks, /<strong>Example:<\/strong>[\s\S]*This flow depends on raw ICP top-ups[\s\S]*Anyone can deploy their own relay canister/);
-  assert.match(howItWorks, /any surplus ICP will automatically be routed to the IO neuron staking\s*account, increasing the minimum APY for all IO holders and therefore increasing\s*the value of\s*<a href="\/#how-it-works:1"[^>]*data-panel="how-it-works"[^>]*>rewards for jUP stakers<\/a>/);
+  assert.match(howItWorks, /choosing one to five immutable surplus recipient principals/);
+  assert.match(howItWorks, /No IO recipient\s*is added automatically to a self-service Relay/);
+  assert.doesNotMatch(howItWorks, /surplus ICP will automatically be routed to the IO neuron/);
   assert.match(howItWorks, /href="\/#relay-setup"[^>]*data-panel="relay-setup"[^>]*>Relay Setup<\/a>/);
   assert.match(howItWorks, /href="\/#source"[^>]*data-panel="source"[^>]*>source code<\/a>/);
   assert.match(howItWorks, /A relay canister also accepts ICP transfers into its\s*<code>'1'<\/code> subaccount/);
@@ -855,10 +857,10 @@ test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
   assert.doesNotMatch(navbarJs, /positionMenuRails|getBoundingClientRect|let actionsMenuOpen|let metricsMenuOpen|activePanelKey|metric-rail--visible/);
 });
 
-test('Relay Setup uses accessible repeatable target fields', () => {
+test('Relay Setup uses accessible repeatable target and recipient fields', () => {
   const relaySetup = sectionMarkup('relay-setup');
 
-  assert.match(relaySetup, /<fieldset class="relay-setup-target-fieldset">/);
+  assert.equal(relaySetup.match(/<fieldset class="relay-setup-principal-fieldset">/g)?.length, 2);
   assert.match(relaySetup, /<legend class="tracker-label">Target canisters<\/legend>/);
   assert.doesNotMatch(relaySetup, /Target canisters \(1–20\)/);
   assert.match(relaySetup, /Enter one canister ID per field/);
@@ -867,14 +869,22 @@ test('Relay Setup uses accessible repeatable target fields', () => {
   assert.match(relaySetup, /id="relay-setup-add-target"[^>]*>Add another canister<\/button>/);
   assert.match(relaySetup, /data-relay-target-remove="true"[^>]*hidden>Remove<\/button>/);
   assert.match(relaySetup, /id="relay-setup-target-count-hint"[^>]*>1 target canister<\/span>/);
-  assert.match(relaySetup, /<div class="relay-setup-target-actions">[\s\S]*id="relay-setup-add-target"[\s\S]*id="relay-setup-submit"[^>]*disabled[^>]*>Check target set<\/button>[\s\S]*<\/div>/);
+  assert.match(relaySetup, /<legend class="tracker-label">Surplus recipients<\/legend>/);
+  assert.match(relaySetup, /data-relay-recipient-input="true"/);
+  assert.match(relaySetup, /id="relay-setup-add-recipient"[^>]*>Add another recipient<\/button>/);
+  assert.match(relaySetup, /data-relay-recipient-remove="true"[^>]*hidden>Remove<\/button>/);
+  assert.match(relaySetup, /id="relay-setup-recipient-count-hint"[^>]*>1 recipient principal<\/span>/);
+  assert.match(relaySetup, /id="relay-setup-submit"[^>]*disabled[^>]*>Check Relay configuration<\/button>/);
   assert.match(relaySetup, /id="relay-setup-warning"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(relaySetup, /<div class="tracker-empty-state">\s*<p id="relay-setup-prompt-text">Individual target canisters may be covered as part of more than one Relay\. Submitting the exact same target set returns the existing Relay \(an exact duplicate is prevented\)\. The target set is immutable after Relay creation\.<\/p>\s*<\/div>/);
-  assert.equal(relaySetup.match(/Individual target canisters may be covered as part of more than one Relay\./g)?.length, 1);
+  assert.match(relaySetup, /Targets and recipients together determine the setup address/);
+  assert.match(relaySetup, /incorrectly selected Relay configuration are not automatically refundable/);
+  assert.match(relaySetup, /id="relay-setup-recipient-count"/);
+  assert.match(relaySetup, /id="relay-setup-canonical-recipients"/);
+  assert.match(relaySetup, /id="relay-setup-configuration-hash"/);
   assert.doesNotMatch(relaySetup, /Separate canister IDs with newlines, commas, or spaces/);
   assert.doesNotMatch(relaySetup, /<textarea/);
-  assert.match(metricsCss, /\.relay-setup-target-row--error \{[\s\S]*border-color:/);
-  assert.match(metricsCss, /\.relay-setup-target-input\[aria-invalid="true"\]/);
+  assert.match(metricsCss, /\.relay-setup-principal-row--error \{[\s\S]*border-color:/);
+  assert.match(metricsCss, /\.relay-setup-principal-input\[aria-invalid="true"\]/);
   assert.match(metricsCss, /\.relay-setup-submit \{[\s\S]*margin-left: auto;/);
 });
 

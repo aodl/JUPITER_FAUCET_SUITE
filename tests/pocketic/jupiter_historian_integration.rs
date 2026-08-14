@@ -6,7 +6,7 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
-    StableBTreeMap, Storable, VectorMemory,
+    Memory, StableBTreeMap, Storable, VectorMemory,
 };
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
@@ -228,7 +228,6 @@ struct HistorianInitArg {
     relay_cycle_safety_margin_e8s: Option<u64>,
     relay_min_subaccount_one_seed_e8s: Option<u64>,
     self_service_relay_interval_seconds: Option<u64>,
-    io_surplus_neuron_id: Option<u64>,
     canonical_relay_canister_id: Option<Principal>,
     canonical_relay_targets: Option<Vec<Principal>>,
 }
@@ -369,6 +368,42 @@ struct PublicCounts {
     relay_instance_canister_count: u64,
     total_output_e8s: u64,
     total_rewards_e8s: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct PreCutoverPublicCounts {
+    registered_canister_count: u64,
+    raw_icp_declared_canister_count: Option<u64>,
+    declared_neuron_count: Option<u64>,
+    qualifying_commitment_count: u64,
+    sns_discovered_canister_count: u64,
+    total_output_e8s: u64,
+    total_rewards_e8s: u64,
+}
+
+fn assert_pre_cutover_public_counts_preserved(
+    before: &PreCutoverPublicCounts,
+    after: &PublicCounts,
+) {
+    assert_eq!(
+        after.memo_registered_canister_count,
+        before.registered_canister_count
+    );
+    assert_eq!(
+        after.raw_icp_declared_canister_count,
+        before.raw_icp_declared_canister_count
+    );
+    assert_eq!(after.declared_neuron_count, before.declared_neuron_count);
+    assert_eq!(
+        after.qualifying_commitment_count,
+        before.qualifying_commitment_count
+    );
+    assert_eq!(
+        after.sns_discovered_canister_count,
+        before.sns_discovered_canister_count
+    );
+    assert_eq!(after.total_output_e8s, before.total_output_e8s);
+    assert_eq!(after.total_rewards_e8s, before.total_rewards_e8s);
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -590,17 +625,20 @@ enum RelaySetupState {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct RelayTargetSetArgs {
+struct RelaySetupArgs {
     target_canister_ids: Vec<Principal>,
+    surplus_recipient_principals: Vec<Principal>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RelaySetupView {
     canonical_target_canister_ids: Vec<Principal>,
+    canonical_surplus_recipient_principals: Vec<Principal>,
     setup_key_identifier: String,
     setup_account: Option<Account>,
     setup_account_identifier: Option<String>,
     target_count: u32,
+    surplus_recipient_count: u32,
     nominal_minimum_e8s: u64,
     factory_available: bool,
     state: RelaySetupState,
@@ -1121,16 +1159,55 @@ fn write_opaque_retired_fixture(pic: &PocketIc, historian: Principal) {
     );
 }
 
-fn retired_and_current_setup_map_lengths(pic: &PocketIc, historian: Principal) -> (u64, u64) {
+fn relay_setup_map_lengths(pic: &PocketIc, historian: Principal) -> (u64, u64, u64) {
     let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
     let manager = MemoryManager::init(stable_memory);
     let retired = StableBTreeMap::<FixturePrincipalKey, FixtureBytes, FixtureMemory>::init(
         manager.get(MemoryId::new(24)),
     );
-    let current = StableBTreeMap::<FixtureSetupKey, FixtureBytes, FixtureMemory>::init(
+    let retired_target_set = StableBTreeMap::<FixtureSetupKey, FixtureBytes, FixtureMemory>::init(
         manager.get(MemoryId::new(25)),
     );
-    (retired.len(), current.len())
+    let full_configuration = StableBTreeMap::<FixtureSetupKey, FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    (
+        retired.len(),
+        retired_target_set.len(),
+        full_configuration.len(),
+    )
+}
+
+fn relay_setup_map_initialization(pic: &PocketIc, historian: Principal) -> (bool, bool) {
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    let manager = MemoryManager::init(stable_memory);
+    (
+        manager.get(MemoryId::new(25)).size() > 0,
+        manager.get(MemoryId::new(26)).size() > 0,
+    )
+}
+
+fn replace_retired_jobs_with_target_set_entry(pic: &PocketIc, historian: Principal) {
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    let manager = MemoryManager::init(stable_memory.clone());
+    let mut retired_jobs = StableBTreeMap::<FixturePrincipalKey, FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(24)),
+    );
+    retired_jobs.clear_new();
+    let mut target_set_entries =
+        StableBTreeMap::<FixtureSetupKey, FixtureBytes, FixtureMemory>::init(
+            manager.get(MemoryId::new(25)),
+        );
+    target_set_entries.insert(FixtureSetupKey([0x55; 32]), FixtureBytes(vec![0x01]));
+    drop(target_set_entries);
+    drop(retired_jobs);
+    drop(manager);
+    let bytes = stable_memory.borrow().clone();
+    pic.set_stable_memory(
+        historian,
+        bytes,
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
 }
 
 fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
@@ -1231,7 +1308,6 @@ fn self_service_historian_init(
         relay_cycle_safety_margin_e8s: Some(5_000_000),
         relay_min_subaccount_one_seed_e8s: Some(100_020_000),
         self_service_relay_interval_seconds: Some(3600),
-        io_surplus_neuron_id: Some(11614578985374291210),
         canonical_relay_canister_id: None,
         canonical_relay_targets: None,
     }
@@ -1255,25 +1331,31 @@ fn activate_target_set(
     historian: Principal,
     ledger: Principal,
     targets: Vec<Principal>,
+    surplus_recipients: Vec<Principal>,
 ) -> Result<Principal> {
     let view_result: RelaySetupViewResult = query_one(
         pic,
         historian,
         Principal::anonymous(),
-        "get_relay_setup_view",
-        RelayTargetSetArgs {
+        "get_relay_configuration_view",
+        RelaySetupArgs {
             target_canister_ids: targets.clone(),
+            surplus_recipient_principals: surplus_recipients.clone(),
         },
     )?;
     let view = match view_result {
         RelaySetupViewResult::Ok(view) => view,
-        other => bail!("target-set view was rejected: {other:?}"),
+        other => bail!("Relay configuration view was rejected: {other:?}"),
     };
     assert_eq!(view.target_count as usize, targets.len());
+    assert_eq!(
+        view.surplus_recipient_count as usize,
+        surplus_recipients.len()
+    );
     assert!(view.factory_available);
     let setup_account = view
         .setup_account
-        .context("new target set should expose setup account")?;
+        .context("new Relay configuration should expose setup account")?;
     let fee = icrc1_fee(pic, ledger)?;
     let split_one = (view.nominal_minimum_e8s - 1) / 2;
     let deposits = [1, split_one, view.nominal_minimum_e8s - 1 - split_one];
@@ -1303,14 +1385,15 @@ fn activate_target_set(
         pic,
         historian,
         Principal::anonymous(),
-        "notify_relay_setup",
-        RelayTargetSetArgs {
+        "notify_relay_configuration",
+        RelaySetupArgs {
             target_canister_ids: targets,
+            surplus_recipient_principals: surplus_recipients,
         },
     )?;
     match result {
         RelaySetupNotifyResult::Active { relay_canister_id } => Ok(relay_canister_id),
-        other => bail!("expected Active target-set setup, got {other:?}"),
+        other => bail!("expected Active Relay configuration, got {other:?}"),
     }
 }
 
@@ -1425,7 +1508,7 @@ fn no_op_historian_upgrade_arg() -> HistorianUpgradeArg {
 
 #[test]
 #[ignore]
-fn exact_base_opaque_value_purge_is_atomic_and_one_time() -> Result<()> {
+fn direct_older_cutover_succeeds_but_nonempty_memory_25_fails_closed() -> Result<()> {
     require_ignored_flag()?;
     let base_wasm = pre_cutover_historian_wasm()?;
     let candidate_wasm = relay_enabled_historian_wasm()?;
@@ -1439,8 +1522,8 @@ fn exact_base_opaque_value_purge_is_atomic_and_one_time() -> Result<()> {
 
     let (negative_pic, negative_historian) = prepare_pre_cutover_fixture(&base_wasm, true)?;
     assert_eq!(
-        retired_and_current_setup_map_lengths(&negative_pic, negative_historian),
-        (4, 0)
+        relay_setup_map_lengths(&negative_pic, negative_historian),
+        (4, 0, 0)
     );
     for (target, expected_status) in targets.iter().copied().zip(expected_statuses.clone()) {
         let recovery = query_retired_recovery_view(&negative_pic, negative_historian, target)?;
@@ -1477,18 +1560,29 @@ fn exact_base_opaque_value_purge_is_atomic_and_one_time() -> Result<()> {
         }
     }
     assert_eq!(
-        retired_and_current_setup_map_lengths(&negative_pic, negative_historian),
-        (4, 0)
+        relay_setup_map_lengths(&negative_pic, negative_historian),
+        (4, 0, 0)
     );
     drop(negative_pic);
 
     let (positive_pic, positive_historian) = prepare_pre_cutover_fixture(&base_wasm, false)?;
     assert_eq!(
-        retired_and_current_setup_map_lengths(&positive_pic, positive_historian),
-        (4, 0)
+        relay_setup_map_lengths(&positive_pic, positive_historian),
+        (4, 0, 0)
+    );
+    assert_eq!(
+        relay_setup_map_initialization(&positive_pic, positive_historian),
+        (false, false)
     );
     positive_pic.advance_time(Duration::from_secs(2));
     tick_n(&positive_pic, 5);
+    let public_counts_before_cutover: PreCutoverPublicCounts = query_one(
+        &positive_pic,
+        positive_historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
     positive_pic
         .upgrade_canister(
             positive_historian,
@@ -1496,37 +1590,65 @@ fn exact_base_opaque_value_purge_is_atomic_and_one_time() -> Result<()> {
             encode_one(no_op_historian_upgrade_arg())?,
             None,
         )
-        .map_err(|error| anyhow!("multi-job retired setup purge failed: {error:?}"))?;
-    tick_n(&positive_pic, 5);
+        .map_err(|error| anyhow!("direct memory-24-to-25-to-26 cutover failed: {error:?}"))?;
     assert_eq!(
-        retired_and_current_setup_map_lengths(&positive_pic, positive_historian),
-        (0, 0)
+        relay_setup_map_lengths(&positive_pic, positive_historian),
+        (0, 0, 0)
+    );
+    assert_eq!(
+        relay_setup_map_initialization(&positive_pic, positive_historian),
+        (true, true)
+    );
+    let public_counts_after_cutover: PublicCounts = query_one(
+        &positive_pic,
+        positive_historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_pre_cutover_public_counts_preserved(
+        &public_counts_before_cutover,
+        &public_counts_after_cutover,
     );
 
+    let recipient = Principal::from_slice(&[206]);
+    let mut fresh_configurations = Vec::new();
     for target in targets
         .iter()
         .copied()
         .chain(std::iter::once(opaque_retired_fixture_target()))
     {
-        let view: RelaySetupViewResult = query_one(
+        let result: RelaySetupViewResult = query_one(
             &positive_pic,
             positive_historian,
             Principal::anonymous(),
-            "get_relay_setup_view",
-            RelayTargetSetArgs {
+            "get_relay_configuration_view",
+            RelaySetupArgs {
                 target_canister_ids: vec![target],
+                surplus_recipient_principals: vec![recipient],
             },
         )?;
-        let RelaySetupViewResult::Ok(view) = view else {
-            bail!("purged singleton target view was rejected after cutover")
+        let RelaySetupViewResult::Ok(view) = result else {
+            bail!("fresh full configuration was rejected after direct cutover")
         };
         assert_eq!(view.state, RelaySetupState::NotFunded);
-        let new_setup_account = view.setup_account.context("fresh setup account missing")?;
-        let retired_setup_account = Account {
+        assert_eq!(view.canonical_target_canister_ids, vec![target]);
+        assert_eq!(view.canonical_surplus_recipient_principals, vec![recipient]);
+        assert_eq!(view.target_count, 1);
+        assert_eq!(view.surplus_recipient_count, 1);
+        let full_configuration_account = view
+            .setup_account
+            .context("fresh full-configuration setup account missing")?;
+        let retired_target_only_account = Account {
             owner: positive_historian,
             subaccount: Some(jupiter_ic_clients::account::relay_setup_subaccount(target)),
         };
-        assert_ne!(new_setup_account, retired_setup_account);
+        assert_ne!(full_configuration_account, retired_target_only_account);
+        fresh_configurations.push((
+            target,
+            view.setup_key_identifier,
+            full_configuration_account,
+        ));
     }
 
     let legacy_principals = [
@@ -1557,54 +1679,85 @@ fn exact_base_opaque_value_purge_is_atomic_and_one_time() -> Result<()> {
             .all(|item| !legacy_principals.contains(&item.canister_id)));
     }
 
-    let public_counts_before: PublicCounts = query_one(
+    positive_pic.advance_time(Duration::from_secs(2));
+    tick_n(&positive_pic, 5);
+    let public_counts_before_second_upgrade: PublicCounts = query_one(
         &positive_pic,
         positive_historian,
         Principal::anonymous(),
         "get_public_counts",
         (),
     )?;
-    positive_pic.advance_time(Duration::from_secs(2));
-    tick_n(&positive_pic, 5);
     positive_pic
         .upgrade_canister(
             positive_historian,
-            candidate_wasm,
+            candidate_wasm.clone(),
             encode_one(no_op_historian_upgrade_arg())?,
             None,
         )
         .map_err(|error| anyhow!("candidate-to-candidate upgrade failed: {error:?}"))?;
     assert_eq!(
-        retired_and_current_setup_map_lengths(&positive_pic, positive_historian),
-        (0, 0)
+        relay_setup_map_lengths(&positive_pic, positive_historian),
+        (0, 0, 0)
     );
-    let public_counts_after: PublicCounts = query_one(
+    assert_eq!(
+        relay_setup_map_initialization(&positive_pic, positive_historian),
+        (true, true)
+    );
+    let public_counts_after_second_upgrade: PublicCounts = query_one(
         &positive_pic,
         positive_historian,
         Principal::anonymous(),
         "get_public_counts",
         (),
     )?;
-    assert_eq!(public_counts_after, public_counts_before);
-    for target in targets
-        .iter()
-        .copied()
-        .chain(std::iter::once(opaque_retired_fixture_target()))
-    {
-        let view: RelaySetupViewResult = query_one(
+    assert_eq!(
+        public_counts_after_second_upgrade,
+        public_counts_before_second_upgrade
+    );
+    for (target, expected_key, expected_account) in fresh_configurations {
+        let result: RelaySetupViewResult = query_one(
             &positive_pic,
             positive_historian,
             Principal::anonymous(),
-            "get_relay_setup_view",
-            RelayTargetSetArgs {
+            "get_relay_configuration_view",
+            RelaySetupArgs {
                 target_canister_ids: vec![target],
+                surplus_recipient_principals: vec![recipient],
             },
         )?;
-        let RelaySetupViewResult::Ok(view) = view else {
-            bail!("purged singleton target view was rejected after candidate upgrade")
+        let RelaySetupViewResult::Ok(view) = result else {
+            bail!("fresh full configuration was rejected after candidate upgrade")
         };
         assert_eq!(view.state, RelaySetupState::NotFunded);
+        assert_eq!(view.setup_key_identifier, expected_key);
+        assert_eq!(view.setup_account, Some(expected_account));
     }
+
+    let (nonempty_pic, nonempty_historian) = prepare_pre_cutover_fixture(&base_wasm, false)?;
+    replace_retired_jobs_with_target_set_entry(&nonempty_pic, nonempty_historian);
+    assert_eq!(
+        relay_setup_map_lengths(&nonempty_pic, nonempty_historian),
+        (0, 1, 0)
+    );
+    let failed_upgrade = nonempty_pic.upgrade_canister(
+        nonempty_historian,
+        candidate_wasm,
+        encode_one(no_op_historian_upgrade_arg())?,
+        None,
+    );
+    assert!(
+        failed_upgrade.is_err(),
+        "any retired memory-25 setup entry must fail the memory-26 cutover closed"
+    );
+    assert_eq!(
+        relay_setup_map_lengths(&nonempty_pic, nonempty_historian),
+        (0, 1, 0)
+    );
+    assert_eq!(
+        relay_setup_map_initialization(&nonempty_pic, nonempty_historian),
+        (true, false)
+    );
     Ok(())
 }
 
@@ -1658,8 +1811,127 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         (),
     )?;
 
-    let singleton_relay = activate_target_set(&pic, historian, ledger, vec![targets[0]])?;
-    let multi_relay = activate_target_set(&pic, historian, ledger, targets.clone())?;
+    let recipients = (1..=5)
+        .map(|id| Principal::from_slice(&[0x7e, id]))
+        .collect::<Vec<_>>();
+    let underfunded_args = RelaySetupArgs {
+        target_canister_ids: vec![targets[1]],
+        surplus_recipient_principals: vec![recipients[0]],
+    };
+    let underfunded_view: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        underfunded_args.clone(),
+    )?;
+    let RelaySetupViewResult::Ok(underfunded_view) = underfunded_view else {
+        bail!("underfunded configuration view was rejected")
+    };
+    let zero_result: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        underfunded_args.clone(),
+    )?;
+    assert!(matches!(
+        zero_result,
+        RelaySetupNotifyResult::BelowMinimum { balance_e8s: 0, .. }
+    ));
+    let setup_account = underfunded_view
+        .setup_account
+        .context("underfunded configuration should expose setup account")?;
+    let _ = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: setup_account,
+            fee: Some(Nat::from(icrc1_fee(&pic, ledger)?)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(underfunded_view.nominal_minimum_e8s - 1),
+        },
+    )?;
+    let below_result: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        underfunded_args.clone(),
+    )?;
+    assert!(matches!(
+        below_result,
+        RelaySetupNotifyResult::BelowMinimum { .. }
+    ));
+    let underfunded_view_after_notify: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        underfunded_args,
+    )?;
+    let RelaySetupViewResult::Ok(underfunded_view_after_notify) = underfunded_view_after_notify
+    else {
+        bail!("underfunded configuration became unreadable after notify")
+    };
+    assert!(matches!(
+        underfunded_view_after_notify.state,
+        RelaySetupState::NotFunded { .. }
+    ));
+    let singleton_relay = activate_target_set(
+        &pic,
+        historian,
+        ledger,
+        vec![targets[0]],
+        recipients[..2].to_vec(),
+    )?;
+    let first_singleton_view: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        RelaySetupArgs {
+            target_canister_ids: vec![targets[0]],
+            surplus_recipient_principals: recipients[..2].to_vec(),
+        },
+    )?;
+    let RelaySetupViewResult::Ok(first_singleton_view) = first_singleton_view else {
+        bail!("active singleton configuration was not readable")
+    };
+    let alternate_view: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        RelaySetupArgs {
+            target_canister_ids: vec![targets[0]],
+            surplus_recipient_principals: vec![recipients[4]],
+        },
+    )?;
+    let RelaySetupViewResult::Ok(alternate_view) = alternate_view else {
+        bail!("alternate-recipient configuration was rejected")
+    };
+    assert_ne!(
+        first_singleton_view.setup_key_identifier,
+        alternate_view.setup_key_identifier
+    );
+    assert_ne!(
+        first_singleton_view.setup_account,
+        alternate_view.setup_account
+    );
+    let alternate_relay = activate_target_set(
+        &pic,
+        historian,
+        ledger,
+        vec![targets[0]],
+        vec![recipients[4]],
+    )?;
+    assert_ne!(singleton_relay, alternate_relay);
+    let multi_relay =
+        activate_target_set(&pic, historian, ledger, targets.clone(), recipients.clone())?;
     assert_ne!(singleton_relay, multi_relay);
     pic.advance_time(Duration::from_secs(2));
     tick_n(&pic, 30);
@@ -1688,8 +1960,21 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         .join("|");
     assert!(multi_logs.contains(&format!("managed_canisters={canonical_targets}")));
     assert!(multi_logs.contains(&format!("effective_managed_canisters={effective_targets}")));
-    assert!(multi_logs.contains("max_transfers_per_tick=22"));
-    for relay in [singleton_relay, multi_relay] {
+    assert!(multi_logs.contains("max_transfers_per_tick=26"));
+    assert!(multi_logs.contains("surplus_recipient_count=5"));
+    let canonical_recipients = recipients
+        .iter()
+        .map(|recipient| format!("canister:{}", recipient.to_text()))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert!(multi_logs.contains(&format!(
+        "surplus_recipients={canonical_recipients}, surplus_recipient_memo_lengths="
+    )));
+    assert!(multi_logs.contains("surplus_recipient_memo_lengths=null|null|null|null|null"));
+    assert!(multi_logs.contains("surplus_recipient_memos=none|none|none|none|none"));
+    assert!(!multi_logs.contains("surplus_recipients=neuron:"));
+    assert!(!multi_logs.contains("10292412127977304661"));
+    for relay in [singleton_relay, alternate_relay, multi_relay] {
         assert_eq!(pic.get_controllers(relay), vec![fiduciary]);
         let status = pic
             .canister_status(relay, Some(fiduciary))
@@ -1701,9 +1986,10 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         &pic,
         historian,
         Principal::anonymous(),
-        "get_relay_setup_view",
-        RelayTargetSetArgs {
+        "get_relay_configuration_view",
+        RelaySetupArgs {
             target_canister_ids: targets.iter().rev().copied().collect(),
+            surplus_recipient_principals: recipients.iter().rev().copied().collect(),
         },
     )?;
     let RelaySetupViewResult::Ok(reversed) = reversed else {
@@ -1736,6 +2022,10 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         .items
         .iter()
         .any(|item| item.canister_id == multi_relay));
+    assert!(relays
+        .items
+        .iter()
+        .any(|item| item.canister_id == alternate_relay));
     let counts_after_setup: PublicCounts = query_one(
         &pic,
         historian,
@@ -1749,7 +2039,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
     );
     assert_eq!(
         counts_after_setup.relay_instance_canister_count,
-        counts_before.relay_instance_canister_count + 2
+        counts_before.relay_instance_canister_count + 3
     );
 
     upgrade_historian_without_config_changes(&pic, historian)?;
@@ -1757,9 +2047,10 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         &pic,
         historian,
         Principal::anonymous(),
-        "get_relay_setup_view",
-        RelayTargetSetArgs {
+        "get_relay_configuration_view",
+        RelaySetupArgs {
             target_canister_ids: targets.clone(),
+            surplus_recipient_principals: recipients.clone(),
         },
     )?;
     let RelaySetupViewResult::Ok(after_upgrade) = after_upgrade else {
@@ -1862,7 +2153,8 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
         None,
     );
 
-    let relay = activate_target_set(&pic, historian, ledger, vec![target])?;
+    let recipient = Principal::from_slice(&[0x7e, 42]);
+    let relay = activate_target_set(&pic, historian, ledger, vec![target], vec![recipient])?;
     let counts_before: PublicCounts = query_one(
         &pic,
         historian,
@@ -1919,9 +2211,10 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
         &pic,
         historian,
         Principal::anonymous(),
-        "get_relay_setup_view",
-        RelayTargetSetArgs {
+        "get_relay_configuration_view",
+        RelaySetupArgs {
             target_canister_ids: vec![target],
+            surplus_recipient_principals: vec![recipient],
         },
     )?;
     assert!(matches!(
@@ -1935,9 +2228,10 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
         &pic,
         historian,
         Principal::anonymous(),
-        "notify_relay_setup",
-        RelayTargetSetArgs {
+        "notify_relay_configuration",
+        RelaySetupArgs {
             target_canister_ids: vec![target],
+            surplus_recipient_principals: vec![recipient],
         },
     )?;
     assert!(matches!(
@@ -2080,7 +2374,6 @@ impl Harness {
             relay_cycle_safety_margin_e8s: None,
             relay_min_subaccount_one_seed_e8s: None,
             self_service_relay_interval_seconds: None,
-            io_surplus_neuron_id: None,
             canonical_relay_canister_id: None,
             canonical_relay_targets: Some(Vec::new()),
         };
@@ -2459,7 +2752,6 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
         relay_cycle_safety_margin_e8s: None,
         relay_min_subaccount_one_seed_e8s: None,
         self_service_relay_interval_seconds: None,
-        io_surplus_neuron_id: None,
         canonical_relay_canister_id: None,
         canonical_relay_targets: Some(Vec::new()),
     };
@@ -2667,7 +2959,6 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         relay_cycle_safety_margin_e8s: None,
         relay_min_subaccount_one_seed_e8s: None,
         self_service_relay_interval_seconds: None,
-        io_surplus_neuron_id: None,
         canonical_relay_canister_id: None,
         canonical_relay_targets: Some(Vec::new()),
     };

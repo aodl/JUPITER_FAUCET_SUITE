@@ -25,6 +25,7 @@ mod tests {
         with_neuron_commitment_entry_map(|map| map.clear_new());
         with_retired_relay_registry_map(|map| map.clear_new());
         with_retired_relay_setup_jobs_map(|map| map.clear_new());
+        with_retired_target_set_relay_setup_entries_map(|map| map.clear_new());
         with_relay_setup_entries_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
         clear_persistence_dirty();
@@ -36,8 +37,11 @@ mod tests {
     }
 
     #[test]
-    fn relay_setup_memory_header_is_the_one_time_cutover_marker() {
+    fn relay_setup_memory_headers_are_separate_cutover_markers() {
+        assert!(!retired_target_set_relay_setup_entries_memory_initialized());
         assert!(!relay_setup_entries_memory_initialized());
+        with_retired_target_set_relay_setup_entries_map(|map| assert!(map.is_empty()));
+        assert!(retired_target_set_relay_setup_entries_memory_initialized());
         with_relay_setup_entries_map(|map| assert!(map.is_empty()));
         assert!(relay_setup_entries_memory_initialized());
     }
@@ -80,7 +84,6 @@ mod tests {
             relay_cycle_safety_margin_e8s: 5_000_000,
             relay_min_subaccount_one_seed_e8s: 100_020_000,
             self_service_relay_interval_seconds: 86400,
-            io_surplus_neuron_id: crate::DEFAULT_IO_SURPLUS_NEURON_ID,
             canonical_relay_canister_id: Some(crate::mainnet_relay_id()),
             canonical_relay_targets: crate::mainnet_canonical_relay_targets(),
         }
@@ -117,7 +120,7 @@ mod tests {
             relay_min_subaccount_one_seed_e8s: Some(cfg.relay_min_subaccount_one_seed_e8s),
             self_service_relay_interval_seconds: Some(cfg.self_service_relay_interval_seconds),
             self_service_relay_max_transfers_per_tick: None,
-            io_surplus_neuron_id: Some(cfg.io_surplus_neuron_id),
+            io_surplus_neuron_id: Some(10_292_412_127_977_304_661),
             canonical_relay_canister_id: Some(cfg.canonical_relay_canister_id),
             canonical_relay_targets: Some(cfg.canonical_relay_targets),
         }
@@ -201,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_root_config_discards_blackhole_and_preserves_retained_fields() {
+    fn legacy_root_config_discards_blackhole_and_retired_io_while_preserving_retained_fields() {
         let legacy = LegacyVersionedStableStateV1::Current(LegacyStableRootStateV1 {
             config: legacy_stable_config(),
             last_indexed_staking_tx_id: Some(1),
@@ -251,8 +254,24 @@ mod tests {
         assert_eq!(cfg.output_source_account.owner, principal(&[11]));
         assert_eq!(cfg.sns_wasm_canister_id, principal(&[7]));
         assert_eq!(cfg.xrc_canister_id, principal(&[8]));
+        let rewritten: StableConfig = cfg.into();
+        assert_eq!(rewritten.io_surplus_neuron_id, None);
         assert_eq!(root.last_indexed_staking_tx_id, Some(1));
         assert_eq!(root.last_icp_xdr_rate_error.as_deref(), Some("xrc down"));
+    }
+
+    #[test]
+    fn retired_io_recipient_stable_field_decodes_but_is_ignored_and_not_rewritten() {
+        let mut stable: StableConfig = sample_config().into();
+        assert_eq!(stable.io_surplus_neuron_id, None);
+        stable.io_surplus_neuron_id = Some(10_292_412_127_977_304_661);
+
+        let bytes = candid::encode_one(&stable).unwrap();
+        let decoded: StableConfig = candid::decode_one(&bytes).unwrap();
+        let runtime: Config = decoded.into();
+        let rewritten: StableConfig = runtime.into();
+
+        assert_eq!(rewritten.io_surplus_neuron_id, None);
     }
 
     #[test]
@@ -492,8 +511,43 @@ mod tests {
         let config = sample_config();
 
         validate_retired_relay_factory_state(&config);
+        validate_full_configuration_relay_setup_cutover();
 
         with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
+        with_retired_target_set_relay_setup_entries_map(|map| assert!(map.is_empty()));
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
+    }
+
+    #[test]
+    fn full_configuration_cutover_rejects_nonempty_memory_25_without_clearing_it() {
+        reset_test_storage();
+        let key = crate::relay_setup::RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
+        let entry = crate::relay_setup::RelaySetupEntry::Active {
+            relay_canister_id: principal(&[77]),
+        };
+        with_retired_target_set_relay_setup_entries_map(|map| {
+            map.insert(key, entry.clone());
+        });
+
+        let result = std::panic::catch_unwind(validate_full_configuration_relay_setup_cutover);
+
+        assert!(result.is_err());
+        with_retired_target_set_relay_setup_entries_map(|map| {
+            assert_eq!(map.get(&key), Some(entry));
+        });
+        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
+    }
+
+    #[test]
+    fn direct_older_version_cutover_runs_memory_24_to_25_then_25_to_26() {
+        reset_test_storage();
+        let config = sample_config();
+
+        validate_retired_relay_factory_state(&config);
+        validate_full_configuration_relay_setup_cutover();
+
+        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
+        with_retired_target_set_relay_setup_entries_map(|map| assert!(map.is_empty()));
         with_relay_setup_entries_map(|map| assert!(map.is_empty()));
     }
 

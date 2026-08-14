@@ -82,7 +82,7 @@ Used for:
 - `get_public_status`
 - `list_memo_registered_canister_summaries`
 - `list_recent_commitments`
-- canonical target-set setup through `get_relay_setup_view` and explicit `notify_relay_setup`
+- canonical full-configuration setup through `get_relay_configuration_view` and explicit `notify_relay_configuration`
 - paginated `list_canisters` filtered by `RelayInstance` for tracker source classification
 
 These power the registry table, commitment feed, and historian-backed status surface.
@@ -104,11 +104,11 @@ No browser requests are made to custom `/dashboard/*` routes.
 
 ### Self-service Relay setup
 
-Relay Setup presents one canister-ID field per target, with controls to add or remove fields up to the 20-target limit. Duplicate canister IDs are identified inline as the user edits; empty, invalid, duplicate, or over-limit target sets are still rejected before calling Historian. Historian remains authoritative for canonical raw-byte ordering and protected-target validation.
+Relay Setup presents reusable repeatable principal controls for 1–20 target canisters and 1–5 surplus recipients. Empty, malformed, duplicate-within-category, and over-limit lists are rejected before calling Historian. Recipients are labeled as principals because users and other non-canister principals are valid payment destinations. Historian remains authoritative for raw-byte canonical order, reserved canonical-target rejection, protected-target policy, and recipient policy.
 
-The returned view displays canonical order and nominal target-count pricing. For a new available exact set, the browser reads its informational balance directly from the ICP ledger with `icrc1_balance_of`; it never scans the index or submits a transaction reference. The browser polls while that setup account is visible, but funding never triggers creation automatically. The **Create Relay** button calls `notify_relay_setup` with only the target vector. If notification returns a higher authoritative live requirement, the browser retains and displays it across query refreshes until the balance is sufficient for a later explicit create attempt. Active and manual-recovery states stop polling and hide payment controls, and stale responses cannot replace a newer target-set view.
+The returned view displays both canonical orders, both counts, the configuration hash, and nominal target-count pricing. For a new available configuration, the browser reads its informational balance directly from the ICP ledger with `icrc1_balance_of`; it never scans the index or submits a transaction reference. The browser polls while that setup account is visible, but funding never triggers creation automatically. The **Create Relay** button sends both vectors to `notify_relay_configuration`. One authoritative fingerprint contains both raw input snapshots, so changing either category stops polling, clears account and notification state, and prevents stale query or notify responses from mutating the new configuration. If notification returns a higher live requirement, the browser retains it until funding is sufficient for a later explicit attempt.
 
-Setup deposits are aggregate protocol deposits. They are not attributed to individual payers and are not automatically refundable. Target sets may overlap, become immutable after Relay creation, and return the existing Relay when the same canonical set is submitted again.
+Setup deposits are aggregate protocol deposits. They are not attributed to individual payers and are not automatically refundable. Targets and recipients jointly determine the setup address, are immutable after creation, and return the existing Relay only for the same full configuration. Surplus is divided equally to recipients' default ICP accounts after top-up and safety gates; each net share must reach 1 ICP, and no IO recipient is injected automatically. Creation pricing remains target-based.
 
 ### Dashboard loader behavior
 

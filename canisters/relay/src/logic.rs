@@ -751,6 +751,23 @@ mod tests {
     }
 
     #[test]
+    fn arbitrary_principal_surplus_recipient_resolves_to_default_icp_account() {
+        let owner = Principal::from_slice(&[0x7f, 42]);
+        let recipient = SurplusRecipient {
+            target: SurplusTarget::Canister(owner),
+            memo: None,
+        };
+        let resolved = resolve_canister_surplus_recipient(&recipient).unwrap();
+        assert_eq!(
+            resolved.account,
+            Account {
+                owner,
+                subaccount: None,
+            }
+        );
+    }
+
+    #[test]
     fn skip_reason_constants_preserve_external_strings() {
         assert_eq!(SKIP_REASON_ZERO_BURN, "zero_burn");
         assert_eq!(

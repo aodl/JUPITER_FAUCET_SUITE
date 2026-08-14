@@ -848,9 +848,6 @@ def validate_historian() -> int:
             f"{path} self_service_relay_interval_seconds={interval}; "
             f"expected canonical relay main_interval_seconds={canonical_interval}"
         )
-    io_neuron = extract_nat64(text, "io_surplus_neuron_id", path)
-    if str(io_neuron) != EXPECTED_RELAY_IO_NEURON_CANONICAL:
-        fail(f"{path} io_surplus_neuron_id={io_neuron}; expected {EXPECTED_RELAY_IO_NEURON_CANONICAL}")
     canonical_relay = extract_optional_principal(text, "canonical_relay_canister_id", path)
     if canonical_relay != EXPECTED_RELAY_ID:
         fail(f"{path} canonical_relay_canister_id={canonical_relay}; expected {EXPECTED_RELAY_ID}")
@@ -1026,8 +1023,35 @@ def validate_relay_setup_recovery_runbook() -> None:
             fail(f"{path} must mention {phrase!r}")
     if "Mainnet install args enable `relay_factory_enabled = opt true`." not in text:
         fail(f"{path} must mention the current factory-enabled mainnet state")
-    if "`notify_relay_setup` is public and can consume historian cycles" not in text:
+    if "`notify_relay_configuration` is public and can consume historian cycles" not in text:
         fail(f"{path} must document the public notify cycle-spend monitoring risk")
+
+
+def validate_reproducible_builds_relay_cutover() -> None:
+    path = REPO_ROOT / "docs" / "operations" / "reproducible-builds.md"
+    text = path.read_text()
+    lower = text.lower()
+    obsolete_assertions = [
+        "memory 25 is new",
+        "memory id 25 contains the single definitive setup map",
+        "the one-time retired-memory gate must accept only empty retired state or the complete configured canonical relay projection",
+    ]
+    for assertion in obsolete_assertions:
+        if assertion in lower:
+            fail(f"{path} contains obsolete Relay cutover assertion {assertion!r}")
+    required = [
+        "Memory 24 is the earlier retired pre-launch setup-job area",
+        "memory 25 is the retired target-set-hash setup map",
+        "memory 26 is the definitive full-configuration setup map",
+        "A direct upgrade from a version predating memory 25 first performs the earlier retired-registry/memory-24 validation",
+        "requires memory 25 to contain zero entries",
+        "Any memory-25 entry fails closed",
+        "without being cleared, decoded into the new identity, or migrated",
+        "old target-only setup hashes and addresses are not consulted or reused",
+    ]
+    for phrase in required:
+        if phrase not in text:
+            fail(f"{path} must document the current Relay cutover rule {phrase!r}")
 
 
 def extract_vec_principals(text: str, field: str, path: Path, *, optional: bool = False) -> list[str]:
@@ -1547,6 +1571,7 @@ def main() -> None:
     validate_historian_production_upgrade_preflight()
     historian_min_tx_e8s = validate_historian()
     validate_relay_setup_recovery_runbook()
+    validate_reproducible_builds_relay_cutover()
     validate_sns_rewards()
     validate_relay()
     validate_release_build_script_uses_release_dids()

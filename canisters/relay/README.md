@@ -376,6 +376,8 @@ SurplusNeuronRecipient {
 
 Install args use `surplus_canister_recipients : opt vec SurplusCanisterRecipient`; production sets it to `null` for no canister surplus recipients. Install args use `surplus_neuron_recipients : vec SurplusNeuronRecipient`. An empty `memo = blob ""` means no outgoing ledger memo internally; a non-empty blob is used as the outgoing ledger memo. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer. The NNS claim/refresh endpoint is publicly callable, so a later natural flow or manual/public retry can refresh the neuron; no durable claim-refresh retry queue is maintained.
 
+Historian-created self-service Relays use the canister-style record for arbitrary valid principal recipients, always with an empty memo, so payment goes to each principal's default ICP account. Historian limits that path to five recipients; Relay itself intentionally has no global five-recipient limit because separately installed Relays may use other valid configurations.
+
 Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit account derived from the target canister principal, then call `notify_top_up { canister_id, block_index }`.
 
 Production surplus is split 50/50 between two public NNS neuron recipients:

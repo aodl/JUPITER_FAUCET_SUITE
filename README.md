@@ -25,6 +25,8 @@ At a high level, a participant declares a faucet target by transferring ICP to t
 
 The value-moving canisters expose little or no public production API. Public verification and dashboard data are concentrated in [`canisters/historian`](canisters/historian), [`canisters/frontend`](canisters/frontend), public logs, source code, Candid files, and reproducible build artifacts.
 
+Historian's self-service Relay factory accepts an immutable configuration of 1–20 managed target canisters and 1–5 surplus recipient principals. It canonicalizes both vectors independently, and both jointly determine the deterministic setup address: order changes do not matter, while changing any recipient creates a different configuration. Creation pricing remains target-based. A child Relay pays equal surplus shares to the recipients' default ICP accounts only after top-up and safety gates, with at least `recipient_count × (1 ICP + ledger fee)` of distributable surplus required. Self-service supports no weights, custom memos, custom subaccounts, neuron IDs, or automatic IO recipient. See [Relay setup and recovery](docs/relay-setup-recovery.md).
+
 ## Source Verification and Reproducible Builds
 
 Reproducible builds are part of the trust model for Jupiter Faucet. A deployed canister's Wasm module hash can be compared with locally rebuilt release artifacts so readers can connect public source code to the code running on the Internet Computer.

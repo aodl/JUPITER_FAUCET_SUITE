@@ -984,7 +984,7 @@
   margin: 0 0 14px;
 }
 
-.relay-setup-target-fieldset {
+.relay-setup-principal-fieldset {
   display: grid;
   min-width: 0;
   margin: 0;
@@ -993,25 +993,25 @@
   gap: 10px;
 }
 
-.relay-setup-target-fieldset > legend {
+.relay-setup-principal-fieldset > legend {
   margin-bottom: 4px;
   padding: 0;
 }
 
-.relay-setup-target-hint,
-.relay-setup-target-count {
+.relay-setup-principal-hint,
+.relay-setup-principal-count {
   margin: 0;
   font-size: 13px;
   line-height: 1.45;
   opacity: 0.74;
 }
 
-.relay-setup-target-list {
+.relay-setup-principal-list {
   display: grid;
   gap: 10px;
 }
 
-.relay-setup-target-row {
+.relay-setup-principal-row {
   display: grid;
   gap: 6px;
   padding: 11px;
@@ -1020,51 +1020,51 @@
   background: rgba(255, 255, 255, 0.025);
 }
 
-.relay-setup-target-row--error {
+.relay-setup-principal-row--error {
   border-color: rgba(255, 160, 160, 0.52);
   background: rgba(255, 92, 92, 0.055);
 }
 
-.relay-setup-target-label {
+.relay-setup-principal-label {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
-.relay-setup-target-controls {
+.relay-setup-principal-controls {
   display: flex;
   align-items: stretch;
   gap: 8px;
 }
 
-.relay-setup-target-input[aria-invalid="true"] {
+.relay-setup-principal-input[aria-invalid="true"] {
   border-color: rgba(255, 160, 160, 0.78);
 }
 
-.relay-setup-target-input {
+.relay-setup-principal-input {
   width: 100%;
   box-sizing: border-box;
 }
 
-.relay-setup-remove-target {
+.relay-setup-remove-principal {
   flex: 0 0 auto;
 }
 
-.relay-setup-target-error {
+.relay-setup-principal-error {
   margin: 0;
   color: #ffd3d3;
   font-size: 12px;
   line-height: 1.4;
 }
 
-.relay-setup-target-actions {
+.relay-setup-principal-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.relay-setup-add-target,
+.relay-setup-add-principal,
 .relay-setup-submit {
   justify-self: start;
 }
@@ -1073,7 +1073,7 @@
   margin-left: auto;
 }
 
-.relay-setup-target-announcement {
+.relay-setup-principal-announcement {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1520,7 +1520,7 @@
     flex-direction: column;
   }
 
-  .relay-setup-target-controls {
+  .relay-setup-principal-controls {
     align-items: flex-start;
     flex-direction: column;
   }

@@ -43,10 +43,26 @@ pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
         );
     });
 
+    with_retired_target_set_relay_setup_entries_map(|map| {
+        assert!(
+            map.is_empty(),
+            "retired target-set Relay setup memory contains unexpected first-cutover state"
+        );
+    });
+}
+
+pub(crate) fn validate_full_configuration_relay_setup_cutover() {
+    with_retired_target_set_relay_setup_entries_map(|map| {
+        assert!(
+            map.is_empty(),
+            "retired target-set Relay setup memory 25 is non-empty; refusing full-configuration cutover"
+        );
+    });
+
     with_relay_setup_entries_map(|map| {
         assert!(
             map.is_empty(),
-            "new Relay setup memory contains unexpected first-cutover state"
+            "full-configuration Relay setup memory 26 contains unexpected first-cutover state"
         );
     });
 }

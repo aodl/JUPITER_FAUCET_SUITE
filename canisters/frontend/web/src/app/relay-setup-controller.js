@@ -5,6 +5,7 @@ import { accountIdentifierHex, bytesToHex, readOptional } from '../data/dashboar
 import { DASH, formatIcpE8s, renderCanisterTrackerLink } from './view-formatters.js';
 
 const MAX_TARGETS = 20;
+const MAX_RECIPIENTS = 5;
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
@@ -19,25 +20,51 @@ function principalText(value) {
   return typeof resolved.toText === 'function' ? resolved.toText() : String(resolved);
 }
 
-export function parseRelayTargetSet(text) {
+function parsePrincipalList(text, {
+  maximum,
+  emptyMessage,
+  maximumMessage,
+  invalidLabel,
+  duplicateMessage,
+}) {
   const tokens = String(text || '').split(/[\s,]+/u).map((value) => value.trim()).filter(Boolean);
-  if (tokens.length === 0) throw new Error('Enter at least one target canister ID.');
-  if (tokens.length > MAX_TARGETS) throw new Error(`Enter no more than ${MAX_TARGETS} target canister IDs.`);
+  if (tokens.length === 0) throw new Error(emptyMessage);
+  if (tokens.length > maximum) throw new Error(maximumMessage);
   const principals = tokens.map((value) => {
     try {
       return Principal.fromText(value);
     } catch {
-      throw new Error(`Invalid target canister ID: ${value}`);
+      throw new Error(`Invalid ${invalidLabel}: ${value}`);
     }
   });
   const normalized = principals.map((principal) => principal.toText());
   if (new Set(normalized).size !== normalized.length) {
-    throw new Error('Duplicate target canisters are not allowed.');
+    throw new Error(duplicateMessage);
   }
   return principals;
 }
 
-export function duplicateRelayTargetIndexes(values) {
+export function parseRelayTargetSet(text) {
+  return parsePrincipalList(text, {
+    maximum: MAX_TARGETS,
+    emptyMessage: 'Enter at least one target canister ID.',
+    maximumMessage: `Enter no more than ${MAX_TARGETS} target canister IDs.`,
+    invalidLabel: 'target canister ID',
+    duplicateMessage: 'Duplicate target canisters are not allowed.',
+  });
+}
+
+export function parseRelayRecipientSet(text) {
+  return parsePrincipalList(text, {
+    maximum: MAX_RECIPIENTS,
+    emptyMessage: 'Enter at least one recipient principal.',
+    maximumMessage: `Enter no more than ${MAX_RECIPIENTS} recipient principals.`,
+    invalidLabel: 'recipient principal',
+    duplicateMessage: 'Duplicate surplus recipients are not allowed.',
+  });
+}
+
+export function duplicatePrincipalIndexes(values) {
   const canonicalIndexes = new Map();
   values.forEach((rawValue, index) => {
     try {
@@ -55,6 +82,8 @@ export function duplicateRelayTargetIndexes(values) {
       .flat(),
   );
 }
+
+export const duplicateRelayTargetIndexes = duplicatePrincipalIndexes;
 
 function crc32(bytes) {
   let value = 0xffffffff;
@@ -165,8 +194,9 @@ export function createRelaySetupController({
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 } = {}) {
   const state = {
-    inputText: '',
+    configurationFingerprint: '',
     targets: [],
+    surplusRecipients: [],
     view: null,
     balanceE8s: null,
     notifyResult: null,
@@ -177,84 +207,113 @@ export function createRelaySetupController({
   };
   let generation = 0;
   let pollHandle = null;
-  let nextTargetFieldId = 2;
+  const listSpecs = {
+    target: {
+      listId: 'relay-setup-target-list',
+      addId: 'relay-setup-add-target',
+      countId: 'relay-setup-target-count-hint',
+      announcementId: 'relay-setup-target-announcement',
+      rowSelector: '[data-relay-target-row]',
+      inputSelector: '[data-relay-target-input]',
+      labelSelector: '[data-relay-target-label]',
+      removeSelector: '[data-relay-target-remove]',
+      errorSelector: '[data-relay-target-error]',
+      dataPrefix: 'relayTarget',
+      idPrefix: 'relay-setup-target',
+      hintId: 'relay-setup-target-hint',
+      label: 'Target canister',
+      placeholder: 'Canister ID',
+      noun: 'target canister',
+      maximum: MAX_TARGETS,
+      parse: parseRelayTargetSet,
+      duplicateError: 'Duplicate canister ID. Each target must be unique.',
+    },
+    recipient: {
+      listId: 'relay-setup-recipient-list',
+      addId: 'relay-setup-add-recipient',
+      countId: 'relay-setup-recipient-count-hint',
+      announcementId: 'relay-setup-recipient-announcement',
+      rowSelector: '[data-relay-recipient-row]',
+      inputSelector: '[data-relay-recipient-input]',
+      labelSelector: '[data-relay-recipient-label]',
+      removeSelector: '[data-relay-recipient-remove]',
+      errorSelector: '[data-relay-recipient-error]',
+      dataPrefix: 'relayRecipient',
+      idPrefix: 'relay-setup-recipient',
+      hintId: 'relay-setup-recipient-hint',
+      label: 'Recipient principal',
+      placeholder: 'Principal',
+      noun: 'recipient principal',
+      maximum: MAX_RECIPIENTS,
+      parse: parseRelayRecipientSet,
+      duplicateError: 'Duplicate principal. Each recipient must be unique.',
+    },
+  };
+  const nextFieldIds = { target: 2, recipient: 2 };
 
-  function targetList() {
-    return document.getElementById('relay-setup-target-list');
+  function listNode(kind) {
+    return document.getElementById(listSpecs[kind].listId);
   }
 
-  function targetInputs() {
-    const list = targetList();
+  function listInputs(kind) {
+    const list = listNode(kind);
     return list?.querySelectorAll
-      ? Array.from(list.querySelectorAll('[data-relay-target-input]'))
+      ? Array.from(list.querySelectorAll(listSpecs[kind].inputSelector))
       : [];
   }
 
-  function targetRows() {
-    const list = targetList();
+  function listRows(kind) {
+    const list = listNode(kind);
     return list?.querySelectorAll
-      ? Array.from(list.querySelectorAll('[data-relay-target-row]'))
+      ? Array.from(list.querySelectorAll(listSpecs[kind].rowSelector))
       : [];
   }
 
-  function targetValues() {
-    return targetInputs().map((input) => String(input.value || '').trim());
+  function listValues(kind) {
+    return listInputs(kind).map((input) => String(input.value || '').trim());
   }
 
-  function legacyTargetInput() {
-    return document.getElementById('relay-setup-target-input');
+  function rawListValues(kind) {
+    return listInputs(kind).map((input) => String(input.value || ''));
   }
 
-  function syncTargetInputSnapshot({ force = false } = {}) {
-    const legacyInput = legacyTargetInput();
-    const values = targetValues();
-    if (legacyInput && values.length > 0
-      && (force || values.some(Boolean) || !String(legacyInput.value || '').trim())) {
-      legacyInput.value = values.join('\n');
-    }
-    return String(legacyInput?.value || '').trim();
+  function configurationFingerprint() {
+    return JSON.stringify({
+      targets: rawListValues('target'),
+      surplusRecipients: rawListValues('recipient'),
+    });
   }
 
-  function setTargetFieldError(input, message = '') {
-    const row = input?.closest?.('[data-relay-target-row]');
-    const error = row?.querySelector?.('[data-relay-target-error]');
+  function setFieldError(kind, input, message = '') {
+    const spec = listSpecs[kind];
+    const row = input?.closest?.(spec.rowSelector);
+    const error = row?.querySelector?.(spec.errorSelector);
     if (error) {
       error.textContent = message;
       error.hidden = !message;
     }
-    row?.classList?.toggle?.('relay-setup-target-row--error', Boolean(message));
+    row?.classList?.toggle?.('relay-setup-principal-row--error', Boolean(message));
     if (message) input?.setAttribute?.('aria-invalid', 'true');
     else input?.removeAttribute?.('aria-invalid');
   }
 
-  function validateVisibleTargetFields({ includeIncomplete = false } = {}) {
-    const inputs = targetInputs();
-    const values = targetValues();
-    const duplicates = duplicateRelayTargetIndexes(values);
+  function validateVisibleList(kind, { includeIncomplete = false } = {}) {
+    const spec = listSpecs[kind];
+    const inputs = listInputs(kind);
+    const values = listValues(kind);
+    const duplicates = duplicatePrincipalIndexes(values);
     const errors = values.map((value, index) => {
-      if (duplicates.has(index)) return 'Duplicate canister ID. Each target must be unique.';
+      if (duplicates.has(index)) return spec.duplicateError;
       if (!includeIncomplete) return '';
-      if (!value) return 'Enter a canister ID or remove this field.';
+      if (!value) return `Enter a ${spec.noun} or remove this field.`;
       try {
         Principal.fromText(value);
         return '';
       } catch {
-        return 'Enter a valid canister ID.';
+        return `Enter a valid ${spec.noun}.`;
       }
     });
-    inputs.forEach((input, index) => setTargetFieldError(input, errors[index]));
-
-    const warning = document.getElementById('relay-setup-warning');
-    const hasDuplicates = duplicates.size > 0;
-    const hasEmptyFields = inputs.length > 0 && values.some((value) => !value);
-    if (warning) {
-      warning.textContent = hasDuplicates
-        ? 'Duplicate target canisters found. Change or remove one before checking the target set.'
-        : '';
-      warning.hidden = !hasDuplicates;
-    }
-    const submitButton = document.getElementById('relay-setup-submit');
-    if (submitButton) submitButton.disabled = hasDuplicates || hasEmptyFields;
+    inputs.forEach((input, index) => setFieldError(kind, input, errors[index]));
     return {
       valid: errors.every((message) => !message),
       firstInvalidInput: inputs[errors.findIndex(Boolean)] || null,
@@ -262,66 +321,94 @@ export function createRelaySetupController({
     };
   }
 
-  function announceTargetChange(message) {
-    setText('relay-setup-target-announcement', message);
+  function validateVisibleConfiguration({ includeIncomplete = false } = {}) {
+    const target = validateVisibleList('target', { includeIncomplete });
+    const recipient = validateVisibleList('recipient', { includeIncomplete });
+    const duplicateTarget = duplicatePrincipalIndexes(listValues('target')).size > 0;
+    const duplicateRecipient = duplicatePrincipalIndexes(listValues('recipient')).size > 0;
+    const warning = document.getElementById('relay-setup-warning');
+    if (warning) {
+      warning.textContent = duplicateTarget
+        ? 'Duplicate target canisters found. Change or remove one before checking the Relay configuration.'
+        : (duplicateRecipient
+          ? 'Duplicate surplus recipients found. Change or remove one before checking the Relay configuration.'
+          : '');
+      warning.hidden = !warning.textContent;
+    }
+    const hasEmptyFields = ['target', 'recipient'].some((kind) => (
+      listInputs(kind).length === 0 || listValues(kind).some((value) => !value)
+    ));
+    const submitButton = document.getElementById('relay-setup-submit');
+    if (submitButton) submitButton.disabled = !target.valid || !recipient.valid || hasEmptyFields;
+    return {
+      valid: target.valid && recipient.valid,
+      firstInvalidInput: target.firstInvalidInput || recipient.firstInvalidInput,
+      firstError: target.firstError || recipient.firstError,
+    };
   }
 
-  function updateTargetRows() {
-    const rows = targetRows();
+  function announceListChange(kind, message) {
+    setText(listSpecs[kind].announcementId, message);
+  }
+
+  function updateListRows(kind) {
+    const spec = listSpecs[kind];
+    const rows = listRows(kind);
     rows.forEach((row, index) => {
       const number = index + 1;
-      const label = row.querySelector?.('[data-relay-target-label]');
-      const removeButton = row.querySelector?.('[data-relay-target-remove]');
-      if (label) label.textContent = `Target canister ${number}`;
+      const label = row.querySelector?.(spec.labelSelector);
+      const removeButton = row.querySelector?.(spec.removeSelector);
+      if (label) label.textContent = `${spec.label} ${number}`;
       if (removeButton) {
         removeButton.hidden = rows.length === 1;
-        removeButton.setAttribute?.('aria-label', `Remove target canister ${number}`);
+        removeButton.setAttribute?.('aria-label', `Remove ${spec.noun} ${number}`);
       }
     });
-    const addButton = document.getElementById('relay-setup-add-target');
-    if (addButton) addButton.disabled = rows.length >= MAX_TARGETS;
+    const addButton = document.getElementById(spec.addId);
+    if (addButton) addButton.disabled = rows.length >= spec.maximum;
     setText(
-      'relay-setup-target-count-hint',
-      `${rows.length} target canister${rows.length === 1 ? '' : 's'}`,
+      spec.countId,
+      `${rows.length} ${spec.noun}${rows.length === 1 ? '' : 's'}`,
     );
   }
 
-  function createTargetRow() {
-    const rowId = nextTargetFieldId;
-    nextTargetFieldId += 1;
+  function createPrincipalRow(kind) {
+    const spec = listSpecs[kind];
+    const rowId = nextFieldIds[kind];
+    nextFieldIds[kind] += 1;
     const row = document.createElement('div');
-    row.className = 'relay-setup-target-row';
-    row.dataset.relayTargetRow = 'true';
+    row.className = 'relay-setup-principal-row';
+    row.dataset[`${spec.dataPrefix}Row`] = 'true';
 
     const label = document.createElement('label');
-    label.className = 'relay-setup-target-label';
-    label.dataset.relayTargetLabel = 'true';
-    label.htmlFor = `relay-setup-target-${rowId}`;
+    label.className = 'relay-setup-principal-label';
+    label.dataset[`${spec.dataPrefix}Label`] = 'true';
+    label.htmlFor = `${spec.idPrefix}-${rowId}`;
 
     const controls = document.createElement('div');
-    controls.className = 'relay-setup-target-controls';
+    controls.className = 'relay-setup-principal-controls';
 
     const input = document.createElement('input');
-    input.className = 'tracker-input mono relay-setup-target-input';
-    input.id = `relay-setup-target-${rowId}`;
+    input.className = 'tracker-input mono relay-setup-principal-input';
+    input.id = `${spec.idPrefix}-${rowId}`;
     input.type = 'text';
     input.autocomplete = 'off';
     input.autocapitalize = 'none';
     input.spellcheck = false;
-    input.placeholder = 'Canister ID';
-    input.dataset.relayTargetInput = 'true';
-    input.setAttribute('aria-describedby', `relay-setup-target-hint relay-setup-target-error-${rowId}`);
+    input.placeholder = spec.placeholder;
+    input.dataset[`${spec.dataPrefix}Input`] = 'true';
+    input.setAttribute('aria-describedby', `${spec.hintId} ${spec.idPrefix}-error-${rowId}`);
 
     const removeButton = document.createElement('button');
-    removeButton.className = 'pane-page-button relay-setup-remove-target';
+    removeButton.className = 'pane-page-button relay-setup-remove-principal';
     removeButton.type = 'button';
     removeButton.textContent = 'Remove';
-    removeButton.dataset.relayTargetRemove = 'true';
+    removeButton.dataset[`${spec.dataPrefix}Remove`] = 'true';
 
     const error = document.createElement('p');
-    error.className = 'relay-setup-target-error';
-    error.id = `relay-setup-target-error-${rowId}`;
-    error.dataset.relayTargetError = 'true';
+    error.className = 'relay-setup-principal-error';
+    error.id = `${spec.idPrefix}-error-${rowId}`;
+    error.dataset[`${spec.dataPrefix}Error`] = 'true';
     error.hidden = true;
 
     controls.append(input, removeButton);
@@ -329,10 +416,11 @@ export function createRelaySetupController({
     return row;
   }
 
-  function invalidateCurrentTargetSet() {
+  function invalidateCurrentConfiguration() {
     generation += 1;
     stopPolling();
     state.targets = [];
+    state.surplusRecipients = [];
     state.view = null;
     state.balanceE8s = null;
     state.notifyResult = null;
@@ -343,45 +431,51 @@ export function createRelaySetupController({
     render();
   }
 
-  function handleVisibleTargetChange() {
-    const inputText = syncTargetInputSnapshot({ force: true });
-    if (inputText !== state.inputText) invalidateCurrentTargetSet();
-    validateVisibleTargetFields();
+  function handleVisibleConfigurationChange() {
+    const fingerprint = configurationFingerprint();
+    if (fingerprint !== state.configurationFingerprint) invalidateCurrentConfiguration();
+    validateVisibleConfiguration();
   }
 
-  function addTargetField() {
-    const list = targetList();
-    const rows = targetRows();
-    if (!list || rows.length >= MAX_TARGETS) return;
-    const row = createTargetRow();
+  function addPrincipalField(kind) {
+    const spec = listSpecs[kind];
+    const list = listNode(kind);
+    const rows = listRows(kind);
+    if (!list || rows.length >= spec.maximum) return;
+    const row = createPrincipalRow(kind);
     list.append(row);
-    updateTargetRows();
-    syncTargetInputSnapshot({ force: true });
-    invalidateCurrentTargetSet();
-    validateVisibleTargetFields();
-    row.querySelector?.('[data-relay-target-input]')?.focus?.();
-    announceTargetChange(`Target canister ${rows.length + 1} added.`);
+    updateListRows(kind);
+    invalidateCurrentConfiguration();
+    validateVisibleConfiguration();
+    row.querySelector?.(spec.inputSelector)?.focus?.();
+    announceListChange(kind, `${spec.label} ${rows.length + 1} added.`);
   }
 
-  function removeTargetField(button) {
-    const row = button?.closest?.('[data-relay-target-row]');
+  function removePrincipalField(kind, button) {
+    const spec = listSpecs[kind];
+    const row = button?.closest?.(spec.rowSelector);
     if (!row) return;
-    const rows = targetRows();
+    const rows = listRows(kind);
     const removedIndex = rows.indexOf(row);
     if (rows.length === 1) {
-      const input = row.querySelector?.('[data-relay-target-input]');
+      const input = row.querySelector?.(spec.inputSelector);
       if (input) input.value = '';
     } else {
       row.remove?.();
     }
-    updateTargetRows();
-    syncTargetInputSnapshot({ force: true });
-    invalidateCurrentTargetSet();
-    validateVisibleTargetFields();
-    const inputs = targetInputs();
+    updateListRows(kind);
+    invalidateCurrentConfiguration();
+    validateVisibleConfiguration();
+    const inputs = listInputs(kind);
     inputs[Math.min(Math.max(removedIndex, 0), inputs.length - 1)]?.focus?.();
-    announceTargetChange(`Target canister removed. ${inputs.length} field${inputs.length === 1 ? '' : 's'} remaining.`);
+    announceListChange(kind, `${spec.label} removed. ${inputs.length} field${inputs.length === 1 ? '' : 's'} remaining.`);
   }
+
+  const addTargetField = () => addPrincipalField('target');
+  const addRecipientField = () => addPrincipalField('recipient');
+  const removeTargetField = (button) => removePrincipalField('target', button);
+  const removeRecipientField = (button) => removePrincipalField('recipient', button);
+  const validateVisibleTargetFields = (options) => validateVisibleList('target', options);
 
   function stopPolling() {
     if (pollHandle !== null) clearIntervalFn(pollHandle);
@@ -394,9 +488,9 @@ export function createRelaySetupController({
       || (kind === 'NotFunded' && Boolean(readOptional(view?.setup_account)));
   }
 
-  function inputStillCurrent(expected, requestGeneration) {
+  function configurationStillCurrent(expected, requestGeneration) {
     return generation === requestGeneration
-      && syncTargetInputSnapshot() === expected;
+      && configurationFingerprint() === expected;
   }
 
   async function historianBundle() {
@@ -495,11 +589,14 @@ export function createRelaySetupController({
 
     setHidden('relay-setup-result', Boolean(view || state.error || state.loading));
     setHidden('relay-setup-summary', !view && !state.error && !state.loading);
-    setText('relay-setup-status', state.error || (state.loading ? 'Checking target set…' : (state.creating ? 'Creating Relay…' : (notification?.status || kind || DASH))));
+    setText('relay-setup-status', state.error || (state.loading ? 'Checking Relay configuration…' : (state.creating ? 'Creating Relay…' : (notification?.status || kind || DASH))));
     setText('relay-setup-status-label', notification?.message || recoveryMessage || phase || DASH);
     setText('relay-setup-factory', view?.factory_available ? 'Available' : 'Unavailable');
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
     setText('relay-setup-canonical-targets', view ? view.canonical_target_canister_ids.map(principalText).join('\n') : DASH);
+    setText('relay-setup-recipient-count', view ? String(view.surplus_recipient_count) : DASH);
+    setText('relay-setup-canonical-recipients', view ? view.canonical_surplus_recipient_principals.map(principalText).join('\n') : DASH);
+    setText('relay-setup-configuration-hash', view?.setup_key_identifier || DASH);
     setText('relay-setup-base-minimum', view ? formatIcpE8s(view.singleton_nominal_minimum_e8s) : DASH);
     setText('relay-setup-extra-count', view ? String(view.extra_target_count) : DASH);
     setText('relay-setup-extra-unit', view ? formatIcpE8s(view.extra_target_unit_charge_e8s) : DASH);
@@ -518,18 +615,25 @@ export function createRelaySetupController({
     setHidden('relay-setup-existing-relay', !displayedRelayId);
   }
 
-  async function refresh({ expectedInput = state.inputText, requestGeneration = generation } = {}) {
-    if (!state.targets.length) return;
+  function setupArgs() {
+    return {
+      target_canister_ids: state.targets,
+      surplus_recipient_principals: state.surplusRecipients,
+    };
+  }
+
+  async function refresh({ expectedConfiguration = state.configurationFingerprint, requestGeneration = generation } = {}) {
+    if (!state.targets.length || !state.surplusRecipients.length) return;
     const { agent, historian } = await historianBundle();
-    const result = await historian.get_relay_setup_view({ target_canister_ids: state.targets });
-    if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+    const result = await historian.get_relay_configuration_view(setupArgs());
+    if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
     const view = unwrapView(result);
     let balance = null;
     const account = readOptional(view.setup_account);
     if (account) {
       const ledger = await loadLedger({ agent, historian });
       balance = BigInt(await ledger.icrc1_balance_of(account));
-      if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
     }
     state.view = view;
     state.balanceE8s = balance;
@@ -550,24 +654,23 @@ export function createRelaySetupController({
   function startPolling() {
     stopPolling();
     if (!shouldPoll()) return;
-    const expectedInput = state.inputText;
+    const expectedConfiguration = state.configurationFingerprint;
     const requestGeneration = generation;
     pollHandle = setIntervalFn(() => {
-      void refresh({ expectedInput, requestGeneration }).catch((error) => {
-        if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+      void refresh({ expectedConfiguration, requestGeneration }).catch((error) => {
+        if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
         state.error = normalizeError(error);
         render();
       });
     }, pollIntervalMs);
   }
 
-  async function submitTarget() {
-    const input = legacyTargetInput();
-    const inputText = syncTargetInputSnapshot();
+  async function submitConfiguration() {
+    const fingerprint = configurationFingerprint();
     generation += 1;
     const requestGeneration = generation;
     stopPolling();
-    state.inputText = inputText;
+    state.configurationFingerprint = fingerprint;
     state.view = null;
     state.balanceE8s = null;
     state.creating = false;
@@ -576,32 +679,29 @@ export function createRelaySetupController({
     state.error = '';
     state.loading = true;
     try {
-      const visibleInputs = targetInputs();
-      const usesVisibleFields = visibleInputs.length > 0
-        && (targetValues().some(Boolean) || !inputText);
-      if (usesVisibleFields) {
-        const validation = validateVisibleTargetFields({ includeIncomplete: true });
-        if (!validation.valid) {
-          validation.firstInvalidInput?.focus?.();
-          throw new Error(validation.firstError);
-        }
+      const validation = validateVisibleConfiguration({ includeIncomplete: true });
+      if (!validation.valid) {
+        validation.firstInvalidInput?.focus?.();
+        throw new Error(validation.firstError);
       }
-      state.targets = parseRelayTargetSet(inputText);
+      state.targets = parseRelayTargetSet(listValues('target').join('\n'));
+      state.surplusRecipients = parseRelayRecipientSet(listValues('recipient').join('\n'));
       render();
-      await refresh({ expectedInput: inputText, requestGeneration });
+      await refresh({ expectedConfiguration: fingerprint, requestGeneration });
     } catch (error) {
-      if (!inputStillCurrent(inputText, requestGeneration)) return;
+      if (!configurationStillCurrent(fingerprint, requestGeneration)) return;
       state.targets = [];
+      state.surplusRecipients = [];
       state.error = normalizeError(error);
       state.loading = false;
-      (targetInputs()[0] || input)?.focus?.();
+      (listInputs('target')[0] || listInputs('recipient')[0])?.focus?.();
       render();
     }
   }
 
   async function createRelay() {
-    if (!state.targets.length || state.creating) return;
-    const expectedInput = state.inputText;
+    if (!state.targets.length || !state.surplusRecipients.length || state.creating) return;
+    const expectedConfiguration = state.configurationFingerprint;
     const requestGeneration = generation;
     if (state.requiredBalanceOverride !== null
       && state.balanceE8s !== null
@@ -613,8 +713,8 @@ export function createRelaySetupController({
     render();
     try {
       const { historian } = await historianBundle();
-      const result = await historian.notify_relay_setup({ target_canister_ids: state.targets });
-      if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+      const result = await historian.notify_relay_configuration(setupArgs());
+      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
       state.notifyResult = result;
       state.creating = false;
       const notifyKind = variantName(result);
@@ -623,11 +723,11 @@ export function createRelaySetupController({
       } else if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') {
         state.requiredBalanceOverride = null;
       }
-      await refresh({ expectedInput, requestGeneration });
-      if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+      await refresh({ expectedConfiguration, requestGeneration });
+      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
       if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') stopPolling();
     } catch (error) {
-      if (!inputStillCurrent(expectedInput, requestGeneration)) return;
+      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
       state.creating = false;
       state.error = normalizeError(error);
       render();
@@ -645,51 +745,35 @@ export function createRelaySetupController({
   }
 
   function bindPane() {
-    const input = document.getElementById('relay-setup-target-input');
-    if (input && input.dataset.bound !== 'true') {
-      input.dataset.bound = 'true';
-      input.addEventListener('input', () => {
-        if (String(input.value || '').trim() === state.inputText) return;
-        generation += 1;
-        stopPolling();
-        state.targets = [];
-        state.view = null;
-        state.balanceE8s = null;
-        state.notifyResult = null;
-        state.requiredBalanceOverride = null;
-        state.error = '';
-        state.loading = false;
-        state.creating = false;
-        render();
-      });
+    for (const kind of ['target', 'recipient']) {
+      const spec = listSpecs[kind];
+      const list = listNode(kind);
+      if (list && list.dataset.bound !== 'true') {
+        list.dataset.bound = 'true';
+        list.addEventListener('input', (event) => {
+          if (!event.target?.matches?.(spec.inputSelector)) return;
+          handleVisibleConfigurationChange();
+        });
+        list.addEventListener('click', (event) => {
+          const removeButton = event.target?.closest?.(spec.removeSelector);
+          if (!removeButton) return;
+          removePrincipalField(kind, removeButton);
+        });
+        updateListRows(kind);
+      }
+      const addButton = document.getElementById(spec.addId);
+      if (addButton && addButton.dataset.bound !== 'true') {
+        addButton.dataset.bound = 'true';
+        addButton.addEventListener('click', () => addPrincipalField(kind));
+      }
     }
-    const list = targetList();
-    if (list && list.dataset.bound !== 'true') {
-      list.dataset.bound = 'true';
-      list.addEventListener('input', (event) => {
-        if (!event.target?.matches?.('[data-relay-target-input]')) return;
-        handleVisibleTargetChange();
-      });
-      list.addEventListener('click', (event) => {
-        const removeButton = event.target?.closest?.('[data-relay-target-remove]');
-        if (!removeButton) return;
-        removeTargetField(removeButton);
-      });
-      updateTargetRows();
-      syncTargetInputSnapshot({ force: true });
-      validateVisibleTargetFields();
-    }
-    const addButton = document.getElementById('relay-setup-add-target');
-    if (addButton && addButton.dataset.bound !== 'true') {
-      addButton.dataset.bound = 'true';
-      addButton.addEventListener('click', addTargetField);
-    }
+    validateVisibleConfiguration();
     const form = document.getElementById('relay-setup-form');
     if (form && form.dataset.bound !== 'true') {
       form.dataset.bound = 'true';
       form.addEventListener('submit', (event) => {
         event.preventDefault();
-        void submitTarget();
+        void submitConfiguration();
       });
     }
     const createButton = document.getElementById('relay-setup-create');
@@ -704,14 +788,18 @@ export function createRelaySetupController({
   return {
     state,
     bindPane,
-    submitTarget,
+    submitTarget: submitConfiguration,
+    submitConfiguration,
     createRelay,
     refresh,
     stopPolling,
     teardown: stopPolling,
     render,
     addTargetField,
+    addRecipientField,
     removeTargetField,
+    removeRecipientField,
     validateVisibleTargetFields,
+    validateVisibleConfiguration,
   };
 }

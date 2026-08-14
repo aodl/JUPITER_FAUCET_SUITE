@@ -29,7 +29,8 @@ impl From<Config> for StableConfig {
             relay_min_subaccount_one_seed_e8s: Some(value.relay_min_subaccount_one_seed_e8s),
             self_service_relay_interval_seconds: Some(value.self_service_relay_interval_seconds),
             self_service_relay_max_transfers_per_tick: None,
-            io_surplus_neuron_id: Some(value.io_surplus_neuron_id),
+            // Retired compatibility field: new snapshots must not persist a runtime value.
+            io_surplus_neuron_id: None,
             canonical_relay_canister_id: Some(value.canonical_relay_canister_id),
             canonical_relay_targets: Some(value.canonical_relay_targets),
         }
@@ -73,9 +74,6 @@ impl From<StableConfig> for Config {
             self_service_relay_interval_seconds: value
                 .self_service_relay_interval_seconds
                 .unwrap_or(86400),
-            io_surplus_neuron_id: value
-                .io_surplus_neuron_id
-                .unwrap_or(crate::DEFAULT_IO_SURPLUS_NEURON_ID),
             canonical_relay_canister_id: value
                 .canonical_relay_canister_id
                 .unwrap_or_else(|| Some(crate::mainnet_relay_id())),

@@ -1,4 +1,3 @@
-use super::RelaySetupKey;
 use crate::state::Config;
 use candid::Principal;
 
@@ -66,10 +65,6 @@ impl CanonicalRelayTargetSet {
 
     pub(crate) fn len(&self) -> usize {
         self.0.len()
-    }
-
-    pub(crate) fn key(&self) -> RelaySetupKey {
-        RelaySetupKey::from_canonical_targets(&self.0)
     }
 }
 
@@ -146,7 +141,6 @@ mod tests {
             relay_cycle_safety_margin_e8s: 5_000_000,
             relay_min_subaccount_one_seed_e8s: 100_020_000,
             self_service_relay_interval_seconds: 86_400,
-            io_surplus_neuron_id: 1,
             canonical_relay_canister_id: Some(principal(46)),
             canonical_relay_targets: vec![principal(47)],
         }
@@ -192,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_order_rejects_duplicates_and_drives_hash() {
+    fn canonical_order_rejects_duplicates() {
         let cfg = config();
         let historian = principal(50);
         let ab = CanonicalRelayTargetSet::new(vec![principal(2), principal(1)], &cfg, historian)
@@ -200,16 +194,14 @@ mod tests {
         let ba = CanonicalRelayTargetSet::new(vec![principal(1), principal(2)], &cfg, historian)
             .unwrap();
         assert_eq!(ab.targets(), &[principal(1), principal(2)]);
-        assert_eq!(ab.key(), ba.key());
+        assert_eq!(ab, ba);
         assert!(
             CanonicalRelayTargetSet::new(vec![principal(1), principal(1)], &cfg, historian)
                 .is_err()
         );
         assert_ne!(
-            ab.key(),
-            CanonicalRelayTargetSet::new(vec![principal(1)], &cfg, historian)
-                .unwrap()
-                .key()
+            ab,
+            CanonicalRelayTargetSet::new(vec![principal(1)], &cfg, historian).unwrap()
         );
     }
 }

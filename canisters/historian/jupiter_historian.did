@@ -77,7 +77,6 @@ type InitArgs = record {
   relay_cycle_safety_margin_e8s : opt nat64;
   relay_min_subaccount_one_seed_e8s : opt nat64;
   self_service_relay_interval_seconds : opt nat64;
-  io_surplus_neuron_id : opt nat64;
   canonical_relay_canister_id : opt principal;
   canonical_relay_targets : opt vec principal;
 };
@@ -107,7 +106,6 @@ type UpgradeArgs = record {
   relay_cycle_safety_margin_e8s : opt nat64;
   relay_min_subaccount_one_seed_e8s : opt nat64;
   self_service_relay_interval_seconds : opt nat64;
-  io_surplus_neuron_id : opt nat64;
   canonical_relay_canister_id : opt opt principal;
   canonical_relay_targets : opt vec principal;
 };
@@ -217,13 +215,18 @@ type RelaySetupState = variant {
     message : text;
   };
 };
-type RelayTargetSetArgs = record { target_canister_ids : vec principal };
+type RelaySetupArgs = record {
+  target_canister_ids : vec principal;
+  surplus_recipient_principals : vec principal;
+};
 type RelaySetupView = record {
   canonical_target_canister_ids : vec principal;
+  canonical_surplus_recipient_principals : vec principal;
   setup_key_identifier : text;
   setup_account : opt Account;
   setup_account_identifier : opt text;
   target_count : nat32;
+  surplus_recipient_count : nat32;
   singleton_nominal_minimum_e8s : nat64;
   extra_target_count : nat64;
   extra_target_unit_charge_e8s : nat64;
@@ -308,8 +311,8 @@ service : (InitArgs) -> {
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
-  get_relay_setup_view : (RelayTargetSetArgs) -> (RelaySetupViewResult) query;
-  notify_relay_setup : (RelayTargetSetArgs) -> (RelaySetupNotifyResult);
+  get_relay_configuration_view : (RelaySetupArgs) -> (RelaySetupViewResult) query;
+  notify_relay_configuration : (RelaySetupArgs) -> (RelaySetupNotifyResult);
   find_canisters_by_memo_prefix : (FindCanistersByMemoPrefixArgs) -> (FindCanistersByMemoPrefixResponse) query;
   list_memo_registered_canister_summaries : (ListMemoRegisteredCanisterSummariesArgs) -> (ListMemoRegisteredCanisterSummariesResponse) query;
   list_recent_commitments : (ListRecentCommitmentsArgs) -> (ListRecentCommitmentsResponse) query;

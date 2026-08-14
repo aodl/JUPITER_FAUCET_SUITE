@@ -17,7 +17,8 @@ pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
 // 22: retired legacy target-keyed Relay registry
 // 23: retired/reserved legacy Relay memory
 // 24: retired legacy target-keyed setup jobs
-// 25: definitive relay setup entries by canonical target-set hash
+// 25: retired relay setup entries by canonical target-set hash
+// 26: definitive relay setup entries by full canonical configuration hash
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -47,6 +48,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_RETIRED_RELAY_SETUP_JOBS_MAP: std::cell::RefCell<Option<StableBTreeMap<PrincipalKey, RetiredRelaySetupJob, Memory>>> =
         const { std::cell::RefCell::new(None) };
+    pub(super) static STABLE_RETIRED_TARGET_SET_RELAY_SETUP_ENTRIES_MAP: std::cell::RefCell<Option<StableBTreeMap<crate::relay_setup::RelaySetupKey, crate::relay_setup::RelaySetupEntry, Memory>>> =
+        const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_RELAY_SETUP_ENTRIES_MAP: std::cell::RefCell<Option<StableBTreeMap<crate::relay_setup::RelaySetupKey, crate::relay_setup::RelaySetupEntry, Memory>>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
@@ -72,8 +75,12 @@ pub(crate) const DIRTY_ALL: u8 = DIRTY_ROOT
     | DIRTY_RAW_ICP_COMMITMENTS
     | DIRTY_NEURON_COMMITMENTS;
 
-pub(crate) fn relay_setup_entries_memory_initialized() -> bool {
+pub(crate) fn retired_target_set_relay_setup_entries_memory_initialized() -> bool {
     MEMORY_MANAGER.with(|manager| manager.borrow().get(MemoryId::new(25)).size() > 0)
+}
+
+pub(crate) fn relay_setup_entries_memory_initialized() -> bool {
+    MEMORY_MANAGER.with(|manager| manager.borrow().get(MemoryId::new(26)).size() > 0)
 }
 
 pub(super) fn with_root_stable_cell<R>(
@@ -322,7 +329,7 @@ pub(crate) fn with_relay_setup_entries_map<R>(
     STABLE_RELAY_SETUP_ENTRIES_MAP.with(|map| {
         if map.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(MemoryId::new(25));
+                let memory = manager.borrow().get(MemoryId::new(26));
                 let stable_map = StableBTreeMap::init(memory);
                 *map.borrow_mut() = Some(stable_map);
             });
@@ -331,5 +338,29 @@ pub(crate) fn with_relay_setup_entries_map<R>(
         f(borrow
             .as_mut()
             .expect("historian relay setup entries stable map not initialized"))
+    })
+}
+
+pub(crate) fn with_retired_target_set_relay_setup_entries_map<R>(
+    f: impl FnOnce(
+        &mut StableBTreeMap<
+            crate::relay_setup::RelaySetupKey,
+            crate::relay_setup::RelaySetupEntry,
+            Memory,
+        >,
+    ) -> R,
+) -> R {
+    STABLE_RETIRED_TARGET_SET_RELAY_SETUP_ENTRIES_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager.borrow().get(MemoryId::new(25));
+                let stable_map = StableBTreeMap::init(memory);
+                *map.borrow_mut() = Some(stable_map);
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow
+            .as_mut()
+            .expect("historian retired target-set relay setup entries stable map not initialized"))
     })
 }

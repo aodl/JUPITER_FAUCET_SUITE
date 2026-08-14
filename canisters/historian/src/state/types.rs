@@ -46,8 +46,6 @@ pub(crate) struct Config {
     #[serde(default)]
     pub self_service_relay_interval_seconds: u64,
     #[serde(default)]
-    pub io_surplus_neuron_id: u64,
-    #[serde(default)]
     pub canonical_relay_canister_id: Option<Principal>,
     #[serde(default)]
     pub canonical_relay_targets: Vec<Principal>,
@@ -61,7 +59,7 @@ fn opt_principal_text(principal: Option<Principal>) -> String {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}, relay_factory_enabled={}, relay_setup_min_e8s={}, relay_initial_cycles={}, relay_cycle_safety_margin_e8s={}, relay_min_subaccount_one_seed_e8s={}, self_service_relay_interval_seconds={}, io_surplus_neuron_id={}, canonical_relay_canister_id={}, canonical_relay_targets={}",
+        "CONFIG staking_account={}, output_source_account={}, output_account={}, rewards_account={}, ledger_canister_id={}, index_canister_id={}, cmc_canister_id={}, faucet_canister_id={}, sns_wasm_canister_id={}, xrc_canister_id={}, enable_sns_tracking={}, scan_interval_seconds={}, cycles_interval_seconds={}, min_tx_e8s={}, max_cycles_entries_per_canister={}, max_commitment_entries_per_canister={}, max_index_pages_per_tick={}, max_canisters_per_cycles_tick={}, relay_factory_enabled={}, relay_setup_min_e8s={}, relay_initial_cycles={}, relay_cycle_safety_margin_e8s={}, relay_min_subaccount_one_seed_e8s={}, self_service_relay_interval_seconds={}, canonical_relay_canister_id={}, canonical_relay_targets={}",
         account_text(&cfg.staking_account),
         account_text(&cfg.output_source_account),
         account_text(&cfg.output_account),
@@ -86,7 +84,6 @@ pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
         cfg.relay_cycle_safety_margin_e8s,
         cfg.relay_min_subaccount_one_seed_e8s,
         cfg.self_service_relay_interval_seconds,
-        cfg.io_surplus_neuron_id,
         opt_principal_text(cfg.canonical_relay_canister_id),
         cfg.canonical_relay_targets
             .iter()

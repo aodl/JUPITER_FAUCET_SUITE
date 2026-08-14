@@ -5,8 +5,9 @@ mod legacy_v1;
 mod stable;
 use stable::*;
 pub(crate) use stable::{
-    relay_setup_entries_memory_initialized, with_relay_setup_entries_map, DIRTY_REGISTRY,
-    DIRTY_ROOT,
+    relay_setup_entries_memory_initialized,
+    retired_target_set_relay_setup_entries_memory_initialized, with_relay_setup_entries_map,
+    with_retired_target_set_relay_setup_entries_map, DIRTY_REGISTRY, DIRTY_ROOT,
 };
 mod commitments;
 use commitments::*;

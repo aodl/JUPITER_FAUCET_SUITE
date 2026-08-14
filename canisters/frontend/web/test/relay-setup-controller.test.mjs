@@ -5,14 +5,18 @@ import { Principal } from '@icp-sdk/core/principal';
 
 import {
   createRelaySetupController,
+  duplicatePrincipalIndexes,
   duplicateRelayTargetIndexes,
   icrcAccountText,
+  parseRelayRecipientSet,
   parseRelayTargetSet,
 } from '../src/app/relay-setup-controller.js';
 import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
 
 const TARGET_A = '22255-zqaaa-aaaas-qf6uq-cai';
 const TARGET_B = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
+const RECIPIENT_A = 'bg4sm-wzk';
+const RECIPIENT_B = 'p27bn-tjl';
 const HISTORIAN = 'j5gs6-uiaaa-aaaar-qb5cq-cai';
 const LEDGER = 'ryjl3-tyaaa-aaaaa-aaaba-cai';
 const RELAY = 'br5f7-7uaaa-aaaaa-qaaca-cai';
@@ -88,7 +92,7 @@ class FakeElement {
 }
 
 const DOM_IDS = [
-  'relay-setup-form', 'relay-setup-target-input', 'relay-setup-result',
+  'relay-setup-form', 'relay-setup-result',
   'relay-setup-summary', 'relay-setup-status', 'relay-setup-status-label',
   'relay-setup-factory', 'relay-setup-target-count', 'relay-setup-canonical-targets',
   'relay-setup-base-minimum', 'relay-setup-extra-count', 'relay-setup-extra-unit',
@@ -100,6 +104,9 @@ const DOM_IDS = [
   'relay-setup-account-identifier-link',
   'relay-setup-target-list', 'relay-setup-add-target', 'relay-setup-target-count-hint',
   'relay-setup-target-announcement', 'relay-setup-warning', 'relay-setup-submit',
+  'relay-setup-recipient-list', 'relay-setup-add-recipient', 'relay-setup-recipient-count-hint',
+  'relay-setup-recipient-announcement', 'relay-setup-recipient-count',
+  'relay-setup-canonical-recipients', 'relay-setup-configuration-hash',
 ];
 
 async function withDom(run) {
@@ -142,6 +149,27 @@ function seedTargetRow(nodes, value = '') {
   return { row, label, input, remove, error };
 }
 
+function seedRecipientRow(nodes, value = '') {
+  const row = new FakeElement('');
+  row.dataset.relayRecipientRow = 'true';
+  const label = new FakeElement('');
+  label.dataset.relayRecipientLabel = 'true';
+  const controls = new FakeElement('');
+  const input = new FakeElement('relay-setup-recipient-1');
+  input.dataset.relayRecipientInput = 'true';
+  input.value = value;
+  const remove = new FakeElement('');
+  remove.dataset.relayRecipientRemove = 'true';
+  remove.hidden = true;
+  const error = new FakeElement('relay-setup-recipient-error-1');
+  error.dataset.relayRecipientError = 'true';
+  error.hidden = true;
+  controls.append(input, remove);
+  row.append(label, controls, error);
+  nodes.get('relay-setup-recipient-list').append(row);
+  return { row, label, input, remove, error };
+}
+
 function setupAccount() {
   return {
     owner: Principal.fromText(HISTORIAN),
@@ -151,6 +179,7 @@ function setupAccount() {
 
 function viewFor({
   targets = [TARGET_A],
+  recipients = [RECIPIENT_A],
   account = setupAccount(),
   factoryAvailable = true,
   state = { NotFunded: null },
@@ -159,10 +188,12 @@ function viewFor({
   const extraCount = targetCount - 1;
   return {
     canonical_target_canister_ids: targets.map((value) => Principal.fromText(value)),
+    canonical_surplus_recipient_principals: recipients.map((value) => Principal.fromText(value)),
     setup_key_identifier: 'ab'.repeat(32),
     setup_account: account ? [account] : [],
     setup_account_identifier: account ? [accountIdentifierHex(account)] : [],
     target_count: targetCount,
+    surplus_recipient_count: recipients.length,
     singleton_nominal_minimum_e8s: 300_000_000n,
     extra_target_count: BigInt(extraCount),
     extra_target_unit_charge_e8s: 25_000_000n,
@@ -196,14 +227,14 @@ function controllerHarness({
   let currentView = view;
   let currentBalance = balance;
   const actor = {
-    async get_relay_setup_view(args) {
+    async get_relay_configuration_view(args) {
       calls.view += 1;
       return getView ? getView(args, calls.view) : { Ok: currentView };
     },
     async get_public_status() {
       return { ledger_canister_id: Principal.fromText(LEDGER) };
     },
-    async notify_relay_setup(args) {
+    async notify_relay_configuration(args) {
       calls.notify += 1;
       return notifyRelay ? notifyRelay(args, calls.notify) : notify;
     },
@@ -233,8 +264,17 @@ function controllerHarness({
   };
 }
 
-async function submit(nodes, harness, input = TARGET_A) {
-  nodes.get('relay-setup-target-input').value = input;
+async function submit(nodes, harness, input = TARGET_A, recipients = RECIPIENT_A) {
+  const assignValues = (kind, text, seed) => {
+    const list = nodes.get(`relay-setup-${kind}-list`);
+    const selector = `[data-relay-${kind}-input]`;
+    const values = String(text).split(/[\s,]+/u).filter(Boolean);
+    if (values.length === 0) values.push('');
+    while (list.querySelectorAll(selector).length < values.length) seed(nodes);
+    list.querySelectorAll(selector).forEach((field, index) => { field.value = values[index] ?? ''; });
+  };
+  assignValues('target', input, seedTargetRow);
+  assignValues('recipient', recipients, seedRecipientRow);
   await harness.controller.submitTarget();
 }
 
@@ -251,7 +291,7 @@ test('empty input is rejected without an actor call', async () => {
   await withDom(async (nodes) => {
     const harness = controllerHarness();
     await submit(nodes, harness, '');
-    assert.match(nodes.get('relay-setup-status').textContent, /at least one/i);
+    assert.match(nodes.get('relay-setup-status').textContent, /enter a target/i);
     assert.equal(harness.calls.view, 0);
   });
 });
@@ -260,7 +300,7 @@ test('invalid principal is rejected without an actor call', async () => {
   await withDom(async (nodes) => {
     const harness = controllerHarness();
     await submit(nodes, harness, 'not-a-principal');
-    assert.match(nodes.get('relay-setup-status').textContent, /invalid/i);
+    assert.match(nodes.get('relay-setup-status').textContent, /valid target/i);
     assert.equal(harness.calls.view, 0);
   });
 });
@@ -270,6 +310,15 @@ test('duplicate targets are rejected without an actor call', async () => {
     const harness = controllerHarness();
     await submit(nodes, harness, `${TARGET_A}, ${TARGET_A}`);
     assert.match(nodes.get('relay-setup-status').textContent, /duplicate/i);
+    assert.equal(harness.calls.view, 0);
+  });
+});
+
+test('submission rejects an empty recipient list without an actor call', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness();
+    await submit(nodes, harness, TARGET_A, '');
+    assert.match(nodes.get('relay-setup-status').textContent, /recipient principal/i);
     assert.equal(harness.calls.view, 0);
   });
 });
@@ -284,6 +333,20 @@ test('parser rejects twenty-one targets', () => {
   assert.throws(() => parseRelayTargetSet(text), /no more than 20/i);
 });
 
+test('recipient parser accepts one and five principals and rejects zero or six', () => {
+  const recipients = Array.from({ length: 6 }, (_, index) => Principal.fromUint8Array(Uint8Array.of(0x7f, index + 1)).toText());
+  assert.equal(parseRelayRecipientSet(recipients[0]).length, 1);
+  assert.equal(parseRelayRecipientSet(recipients.slice(0, 5).join('\n')).length, 5);
+  assert.throws(() => parseRelayRecipientSet(''), /at least one/i);
+  assert.throws(() => parseRelayRecipientSet(recipients.join('\n')), /no more than 5/i);
+});
+
+test('recipient parser rejects malformed and duplicate principals', () => {
+  assert.throws(() => parseRelayRecipientSet('not-a-principal'), /invalid recipient principal/i);
+  assert.throws(() => parseRelayRecipientSet(`${RECIPIENT_A}\n${RECIPIENT_A}`), /duplicate/i);
+  assert.deepEqual([...duplicatePrincipalIndexes([RECIPIENT_A, RECIPIENT_A])], [0, 1]);
+});
+
 test('duplicate detection catches valid repeated canister IDs and ignores incomplete entries', () => {
   assert.deepEqual([...duplicateRelayTargetIndexes([TARGET_A, TARGET_A, '', 'not-yet-valid'])], [0, 1]);
   assert.deepEqual([...duplicateRelayTargetIndexes([TARGET_A, TARGET_B])], []);
@@ -292,6 +355,7 @@ test('duplicate detection catches valid repeated canister IDs and ignores incomp
 test('repeatable target fields add, flag duplicates immediately, and remove cleanly', async () => {
   await withDom(async (nodes) => {
     const first = seedTargetRow(nodes);
+    seedRecipientRow(nodes, RECIPIENT_A);
     const harness = controllerHarness();
     harness.controller.bindPane();
     const list = nodes.get('relay-setup-target-list');
@@ -344,11 +408,77 @@ test('repeatable target fields add, flag duplicates immediately, and remove clea
   });
 });
 
+test('repeatable recipient fields stop at five and retain one required row', async () => {
+  await withDom(async (nodes) => {
+    seedTargetRow(nodes, TARGET_A);
+    const first = seedRecipientRow(nodes, RECIPIENT_A);
+    const harness = controllerHarness();
+    harness.controller.bindPane();
+    const list = nodes.get('relay-setup-recipient-list');
+    for (let index = 1; index < 5; index += 1) {
+      nodes.get('relay-setup-add-recipient').listeners.get('click')();
+    }
+    assert.equal(list.querySelectorAll('[data-relay-recipient-input]').length, 5);
+    assert.equal(nodes.get('relay-setup-add-recipient').disabled, true);
+    nodes.get('relay-setup-add-recipient').listeners.get('click')();
+    assert.equal(list.querySelectorAll('[data-relay-recipient-input]').length, 5);
+    list.listeners.get('click')({ target: first.remove });
+    assert.equal(list.querySelectorAll('[data-relay-recipient-input]').length, 4);
+  });
+});
+
 test('canonical backend ordering is displayed', async () => {
   await withDom(async (nodes) => {
     const harness = controllerHarness({ view: viewFor({ targets: [TARGET_A, TARGET_B] }) });
     await submit(nodes, harness, `${TARGET_B}\n${TARGET_A}`);
     assert.equal(nodes.get('relay-setup-canonical-targets').textContent, `${TARGET_A}\n${TARGET_B}`);
+  });
+});
+
+test('canonical recipient order and count are displayed', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({ view: viewFor({ recipients: [RECIPIENT_A, RECIPIENT_B] }) });
+    await submit(nodes, harness, TARGET_A, `${RECIPIENT_B}\n${RECIPIENT_A}`);
+    assert.equal(nodes.get('relay-setup-recipient-count').textContent, '2');
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, `${RECIPIENT_A}\n${RECIPIENT_B}`);
+    assert.equal(nodes.get('relay-setup-configuration-hash').textContent, 'ab'.repeat(32));
+  });
+});
+
+test('same targets with a different recipient trigger a new view and setup account', async () => {
+  await withDom(async (nodes) => {
+    const accountA = setupAccount();
+    const accountB = { ...setupAccount(), subaccount: [Array(32).fill(9)] };
+    const harness = controllerHarness({
+      getView: async (args) => ({
+        Ok: viewFor({
+          recipients: args.surplus_recipient_principals.map((principal) => principal.toText()),
+          account: args.surplus_recipient_principals[0].toText() === RECIPIENT_A ? accountA : accountB,
+        }),
+      }),
+    });
+    await submit(nodes, harness, TARGET_A, RECIPIENT_A);
+    const firstAccount = nodes.get('relay-setup-icrc-account').textContent;
+    await submit(nodes, harness, TARGET_A, RECIPIENT_B);
+    assert.equal(harness.calls.view, 2);
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, firstAccount);
+  });
+});
+
+test('stale view for an earlier recipient set is ignored', async () => {
+  await withDom(async (nodes) => {
+    const pending = deferred();
+    const harness = controllerHarness({
+      getView: async (args, call) => call === 1
+        ? pending.promise
+        : { Ok: viewFor({ recipients: args.surplus_recipient_principals.map((principal) => principal.toText()) }) },
+    });
+    const first = submit(nodes, harness, TARGET_A, RECIPIENT_A);
+    while (harness.calls.view === 0) await Promise.resolve();
+    await submit(nodes, harness, TARGET_A, RECIPIENT_B);
+    pending.resolve({ Ok: viewFor({ recipients: [RECIPIENT_A] }) });
+    await first;
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, RECIPIENT_B);
   });
 });
 
@@ -407,17 +537,20 @@ test('later balance polling enables Create without notifying automatically', asy
   });
 });
 
-test('explicit Create calls notify exactly once with only the target vector', async () => {
+test('view and Create calls carry both configuration vectors', async () => {
   await withDom(async (nodes) => {
-    let args;
+    let viewArgs;
+    let notifyArgs;
     const harness = controllerHarness({
-      notifyRelay: async (value) => { args = value; return { InProgress: { phase: { CreateDispatched: null }, relay_canister_id: [] } }; },
-      getView: async () => ({ Ok: viewFor() }),
+      notifyRelay: async (value) => { notifyArgs = value; return { InProgress: { phase: { CreateDispatched: null }, relay_canister_id: [] } }; },
+      getView: async (value) => { viewArgs = value; return { Ok: viewFor() }; },
     });
     await submit(nodes, harness);
     await harness.controller.createRelay();
     assert.equal(harness.calls.notify, 1);
-    assert.deepEqual(Object.keys(args), ['target_canister_ids']);
+    assert.deepEqual(Object.keys(viewArgs).sort(), ['surplus_recipient_principals', 'target_canister_ids']);
+    assert.deepEqual(Object.keys(notifyArgs).sort(), ['surplus_recipient_principals', 'target_canister_ids']);
+    assert.equal(notifyArgs.surplus_recipient_principals[0].toText(), RECIPIENT_A);
   });
 });
 
@@ -530,7 +663,7 @@ test('transient notify failure is rendered without hiding payment details', asyn
   });
 });
 
-test('stale notify completion cannot mutate a newer target-set view', async () => {
+test('stale notify completion cannot mutate a newer Relay configuration view', async () => {
   await withDom(async (nodes) => {
     const pending = deferred();
     const harness = controllerHarness({
@@ -540,7 +673,7 @@ test('stale notify completion cannot mutate a newer target-set view', async () =
     await submit(nodes, harness, TARGET_A);
     const creatingA = harness.controller.createRelay();
     while (harness.calls.notify === 0) await Promise.resolve();
-    await submit(nodes, harness, TARGET_B);
+    await submit(nodes, harness, TARGET_B, RECIPIENT_B);
     pending.resolve({ Active: { relay_canister_id: Principal.fromText(RELAY) } });
     await creatingA;
     assert.equal(nodes.get('relay-setup-canonical-targets').textContent, TARGET_B);
@@ -588,13 +721,15 @@ test('polling stops and controls hide on ManualRecoveryRequired', async () => {
   });
 });
 
-test('target input change stops polling and clears stale account details', async () => {
+test('recipient input change stops polling and clears stale account details', async () => {
   await withDom(async (nodes) => {
+    seedTargetRow(nodes, TARGET_A);
+    const recipient = seedRecipientRow(nodes, RECIPIENT_A);
     const harness = controllerHarness();
     harness.controller.bindPane();
     await submit(nodes, harness);
-    nodes.get('relay-setup-target-input').value = TARGET_B;
-    nodes.get('relay-setup-target-input').listeners.get('input')();
+    recipient.input.value = RECIPIENT_B;
+    nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.input });
     assert.ok(harness.calls.clears >= 1);
     assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
     assert.equal(nodes.get('relay-setup-icrc-account-link').href, '');
@@ -635,6 +770,13 @@ test('source and markup contain no payment proof, refund, quote, indicative, or 
   }
   assert.doesNotMatch(markup, /Indicative live requirement|payment block|refund button|late-payment sweep/i);
   assert.match(markup, /Create Relay/);
+  assert.match(source, /get_relay_configuration_view/);
+  assert.match(source, /notify_relay_configuration/);
+  assert.doesNotMatch(source, /get_relay_setup_view|notify_relay_setup/);
+  assert.match(markup, /targets and recipients together determine the setup address/i);
+  assert.match(markup, /No IO recipient is added automatically/i);
+  assert.match(markup, /incorrectly selected Relay configuration are not automatically refundable/i);
+  assert.doesNotMatch(markup, /surplus ICP will automatically be routed to the IO neuron/i);
 });
 
 test('ICRC account rendering remains stable', () => {

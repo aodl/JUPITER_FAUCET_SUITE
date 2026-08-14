@@ -25,7 +25,6 @@ pub struct InitArgs {
     pub relay_cycle_safety_margin_e8s: Option<u64>,
     pub relay_min_subaccount_one_seed_e8s: Option<u64>,
     pub self_service_relay_interval_seconds: Option<u64>,
-    pub io_surplus_neuron_id: Option<u64>,
     pub canonical_relay_canister_id: Option<Principal>,
     pub canonical_relay_targets: Option<Vec<Principal>>,
 }
@@ -57,7 +56,6 @@ pub struct UpgradeArgs {
     pub relay_cycle_safety_margin_e8s: Option<u64>,
     pub relay_min_subaccount_one_seed_e8s: Option<u64>,
     pub self_service_relay_interval_seconds: Option<u64>,
-    pub io_surplus_neuron_id: Option<u64>,
     pub canonical_relay_canister_id: Option<Option<Principal>>,
     pub canonical_relay_targets: Option<Vec<Principal>>,
 }
@@ -165,8 +163,9 @@ pub struct PublicStatus {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct RelayTargetSetArgs {
+pub struct RelaySetupArgs {
     pub target_canister_ids: Vec<Principal>,
+    pub surplus_recipient_principals: Vec<Principal>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
@@ -189,10 +188,12 @@ pub enum RelaySetupState {
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
 pub struct RelaySetupView {
     pub canonical_target_canister_ids: Vec<Principal>,
+    pub canonical_surplus_recipient_principals: Vec<Principal>,
     pub setup_key_identifier: String,
     pub setup_account: Option<Account>,
     pub setup_account_identifier: Option<String>,
     pub target_count: u32,
+    pub surplus_recipient_count: u32,
     pub singleton_nominal_minimum_e8s: u64,
     pub extra_target_count: u64,
     pub extra_target_unit_charge_e8s: u64,
