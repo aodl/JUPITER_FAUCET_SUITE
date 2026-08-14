@@ -91,6 +91,15 @@ test('top navbar exposes Simulator and Domains and no longer exposes Partners', 
   assert.doesNotMatch(indexHtml, />Partners<\/a>/i);
 });
 
+test('bottom corner controls remain interactive above an open pane backdrop', () => {
+  assert.match(
+    indexCss,
+    /\.github-corner,\s*\.parthenon-corner \{[^}]*z-index: 20000;/,
+  );
+  assert.match(navbarCss, /\.navbar \{[^}]*z-index: 20000;/);
+  assert.match(navbarCss, /\.nav-panel-backdrop \{[^}]*z-index: 19000;/);
+});
+
 test('hero How link opens the maturity and rewards page', () => {
   assert.match(indexHtml, /<a href="#how-it-works:1"[^>]*data-panel="how-it-works"[^>]*>How\?<\/a>/);
 });
