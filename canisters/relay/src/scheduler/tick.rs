@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::cycles_probe::{CyclesProbeClient, IcCyclesProbeClient};
 
@@ -10,9 +11,12 @@ use crate::clients::{CmcClient, GovernanceClient, LedgerClient};
 use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::{probe_cycles_batch, RelayCyclesProbeClient};
 use crate::scheduler::guards::MainGuard;
-use crate::scheduler::logging::{
-    log_cycles_and_config, log_error, log_structured_error, log_summary,
-};
+#[cfg(test)]
+use crate::scheduler::ledger_fee::ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S;
+use crate::scheduler::ledger_fee::{resolve_icp_ledger_fee_e8s, LedgerFeeResolutionContext};
+#[cfg(not(test))]
+use crate::scheduler::logging::log_cycles_and_config;
+use crate::scheduler::logging::{log_error, log_summary};
 use crate::scheduler::transfer::{
     drive_pending_faucet_commitment_transfer, drive_pending_transfer,
 };
@@ -22,51 +26,16 @@ use crate::state::{
     RelaySummary, SurplusTarget, TargetProbeClassification, TargetProbeStatus,
 };
 
-/// Bootstrap/emergency contingency used only when neither a live ledger fee nor a heap-cached
-/// last-known fee is available. This is not an invariant of the ICP ledger.
-const ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S: u64 = 10_000;
+const SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS: u64 = 1;
+#[cfg(not(test))]
+const SPLITTER_MAIN_CONTINUATION_BUSY_RETRY_SECONDS: u64 = 60;
 
-#[derive(Clone, Copy)]
-enum LedgerFeeResolutionContext {
-    SubaccountOne,
-    DefaultAccount,
-}
-
-impl LedgerFeeResolutionContext {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::SubaccountOne => "subaccount_1",
-            Self::DefaultAccount => "default_account",
-        }
-    }
-}
-
-async fn resolve_icp_ledger_fee_e8s<L: LedgerClient>(
-    ledger: &L,
-    context: LedgerFeeResolutionContext,
-) -> u64 {
-    match ledger.fee_e8s().await {
-        Ok(fee_e8s) => {
-            state::with_state_mut(|st| st.last_known_ledger_fee_e8s = Some(fee_e8s));
-            fee_e8s
-        }
-        Err(err) => {
-            let cached = state::with_state(|st| st.last_known_ledger_fee_e8s);
-            let (fallback_source, fee_e8s) = cached
-                .map(|fee_e8s| ("cached", fee_e8s))
-                .unwrap_or(("bootstrap", ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S));
-            log_structured_error(
-                "ledger_fee_fallback",
-                &[
-                    ("context", context.as_str().to_string()),
-                    ("error", err.to_string()),
-                    ("fallback_source", fallback_source.to_string()),
-                    ("fee_e8s", fee_e8s.to_string()),
-                ],
-            );
-            fee_e8s
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MainTickOutcome {
+    Completed,
+    MainGuardBusy,
+    SplitterGuardBusy,
+    SplitterPaused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,22 +48,23 @@ enum TransferPlanStep {
 pub(crate) fn install_timers() {
     let main_s = state::with_state(|st| st.config.main_interval_seconds.max(60));
     ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s), || async {
-        main_tick(false).await;
+        let _ = main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await;
     });
+    super::splitter::install_retry_timer();
 }
 
 pub(crate) fn schedule_startup_liveness_tick() {
     ic_cdk_timers::set_timer(Duration::from_secs(1), async {
-        main_tick(false).await;
+        let _ = main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await;
     });
 }
 
 #[cfg(feature = "debug_api")]
 pub(crate) async fn debug_main_tick_impl() {
-    main_tick(true).await;
+    let _ = main_tick(true, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await;
 }
 
-async fn main_tick(force: bool) {
+async fn main_tick(force: bool, splitter_busy_retry_delay: Option<u64>) -> MainTickOutcome {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
@@ -102,7 +72,7 @@ async fn main_tick(force: bool) {
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
     let governance = NnsGovernanceCanister::new(cfg.governance_canister_id);
     let cycles_probe = IcCyclesProbeClient::new(jupiter_ic_clients::constants::sns_wasm_id());
-    run_main_tick_with_clients(
+    let outcome = run_main_tick_with_clients(
         force,
         now_nanos,
         now_secs,
@@ -112,6 +82,62 @@ async fn main_tick(force: bool) {
         &cycles_probe,
     )
     .await;
+    if outcome == MainTickOutcome::SplitterGuardBusy {
+        if let Some(delay) = splitter_busy_retry_delay {
+            schedule_splitter_main_continuation_after(delay);
+        }
+    }
+    outcome
+}
+
+fn request_splitter_main_continuation() {
+    state::with_state_mut(|state| state.splitter_main_continuation_requested = true);
+}
+
+fn clear_splitter_main_continuation_request() {
+    state::with_state_mut(|state| {
+        state.splitter_main_continuation_requested = false;
+        state.splitter_main_continuation_timer_pending = false;
+    });
+}
+
+fn schedule_splitter_main_continuation_after(delay_seconds: u64) {
+    let should_schedule = state::with_state_mut(|state| {
+        if !state.splitter_main_continuation_requested
+            || state.splitter_main_continuation_timer_pending
+        {
+            return false;
+        }
+        state.splitter_main_continuation_timer_pending = true;
+        true
+    });
+    if !should_schedule {
+        return;
+    }
+    #[cfg(not(test))]
+    ic_cdk_timers::set_timer(Duration::from_secs(delay_seconds), async {
+        let should_run = state::with_state_mut(|state| {
+            state.splitter_main_continuation_timer_pending = false;
+            state.splitter_main_continuation_requested
+        });
+        if !should_run {
+            return;
+        }
+        if matches!(
+            main_tick(false, None).await,
+            MainTickOutcome::MainGuardBusy | MainTickOutcome::SplitterGuardBusy
+        ) {
+            schedule_splitter_main_continuation_after(
+                SPLITTER_MAIN_CONTINUATION_BUSY_RETRY_SECONDS,
+            );
+        }
+    });
+    #[cfg(test)]
+    let _ = delay_seconds;
+}
+
+pub(super) fn schedule_splitter_main_continuation_if_requested() {
+    schedule_splitter_main_continuation_after(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS);
 }
 
 // The relay scheduler keeps clients explicit so integration tests can model each dependency.
@@ -129,9 +155,40 @@ pub(crate) async fn run_main_tick_with_clients<
     cmc: &C,
     governance: &G,
     cycles_probe: &P,
-) {
+) -> MainTickOutcome {
+    run_main_tick_with_clients_for_relay(
+        force,
+        now_nanos,
+        now_secs,
+        ic_cdk::api::canister_self(),
+        ic_cdk::api::canister_cycle_balance(),
+        ledger,
+        cmc,
+        governance,
+        cycles_probe,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_main_tick_with_clients_for_relay<
+    L: LedgerClient,
+    C: CmcClient,
+    G: GovernanceClient,
+    P: CyclesProbeClient,
+>(
+    force: bool,
+    now_nanos: u64,
+    now_secs: u64,
+    relay_id: Principal,
+    relay_cycles: u128,
+    ledger: &L,
+    cmc: &C,
+    governance: &G,
+    cycles_probe: &P,
+) -> MainTickOutcome {
     let Some(guard) = MainGuard::acquire(now_secs) else {
-        return;
+        return MainTickOutcome::MainGuardBusy;
     };
     if !force {
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
@@ -139,62 +196,91 @@ pub(crate) async fn run_main_tick_with_clients<
             state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
             guard.finish(now_secs);
-            return;
+            return MainTickOutcome::Completed;
         }
     }
 
+    #[cfg(not(test))]
     log_cycles_and_config();
     #[cfg(not(test))]
     super::reward_sweep::process(now_nanos, now_secs, false).await;
-    if !resume_or_start_faucet_commitment(now_nanos, ledger, governance).await {
+    match super::splitter::process_main_stage(now_nanos, now_secs, relay_id, ledger).await {
+        super::splitter::MainStageResult::Ready => {}
+        super::splitter::MainStageResult::GuardBusy => {
+            log_error("relay tick paused while another splitter driver holds the lease");
+            request_splitter_main_continuation();
+            guard.release_without_finishing();
+            return MainTickOutcome::SplitterGuardBusy;
+        }
+        super::splitter::MainStageResult::Unresolved => {
+            log_error("relay tick paused with an unresolved splitter transaction");
+            request_splitter_main_continuation();
+            guard.release_without_finishing();
+            return MainTickOutcome::SplitterPaused;
+        }
+        super::splitter::MainStageResult::Quarantined => {
+            log_error("relay tick paused after quarantining a splitter transaction");
+            request_splitter_main_continuation();
+            guard.release_without_finishing();
+            schedule_splitter_main_continuation_if_requested();
+            return MainTickOutcome::SplitterPaused;
+        }
+    }
+    if !resume_or_start_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance).await {
         log_error("relay tick stopped after debug faucet commitment transfer injection");
         guard.finish(now_secs);
-        return;
+        return MainTickOutcome::Completed;
     }
-    if !resume_or_start_job(now_nanos, ledger, cmc, governance, cycles_probe).await {
+    if !resume_or_start_job_with_self(
+        now_nanos,
+        relay_id,
+        relay_cycles,
+        ledger,
+        cmc,
+        governance,
+        cycles_probe,
+    )
+    .await
+    {
         log_error("relay tick stopped after debug transfer injection");
         guard.finish(now_secs);
-        return;
+        return MainTickOutcome::Completed;
     }
+    clear_splitter_main_continuation_request();
     guard.finish(now_secs);
+    MainTickOutcome::Completed
 }
 
-async fn resume_or_start_job<
+async fn resume_or_start_job_with_self<
     L: LedgerClient,
     C: CmcClient,
     G: GovernanceClient,
     P: CyclesProbeClient,
 >(
     now_nanos: u64,
+    relay_id: Principal,
+    relay_cycles: u128,
     ledger: &L,
     cmc: &C,
     governance: &G,
     cycles_probe: &P,
 ) -> bool {
     if state::with_state(|st| st.active_job.is_none()) {
-        start_job(now_nanos, ledger, cmc, cycles_probe).await;
+        start_job_with_self(now_nanos, relay_id, relay_cycles, ledger, cmc, cycles_probe).await;
     }
     drive_active_job(now_nanos, ledger, cmc, governance).await
 }
 
-async fn resume_or_start_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
+async fn resume_or_start_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
     now_nanos: u64,
+    relay_id: Principal,
     ledger: &L,
     governance: &G,
 ) -> bool {
     if state::with_state(|st| st.active_faucet_commitment_transfer.is_none()) {
-        plan_faucet_commitment(now_nanos, ledger, governance).await;
+        plan_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance).await;
     }
     drive_pending_faucet_commitment_transfer(ledger, governance, now_nanos).await
-}
-
-async fn plan_faucet_commitment<L: LedgerClient, G: GovernanceClient>(
-    now_nanos: u64,
-    ledger: &L,
-    governance: &G,
-) {
-    plan_faucet_commitment_with_self(now_nanos, ic_cdk::api::canister_self(), ledger, governance)
-        .await;
 }
 
 async fn plan_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
@@ -269,17 +355,6 @@ async fn plan_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
             balance_start_e8s: plan.balance_start_e8s,
         });
     });
-}
-
-async fn start_job<L: LedgerClient, C: CmcClient, P: CyclesProbeClient>(
-    now_nanos: u64,
-    ledger: &L,
-    cmc: &C,
-    cycles_probe: &P,
-) {
-    let self_id = ic_cdk::api::canister_self();
-    let self_cycles = ic_cdk::api::canister_cycle_balance();
-    start_job_with_self(now_nanos, self_id, self_cycles, ledger, cmc, cycles_probe).await;
 }
 
 async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient>(
@@ -1141,7 +1216,7 @@ fn retained_e8s(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -1176,6 +1251,56 @@ mod tests {
             max_transfers_per_tick: None,
             surplus_recipients: Vec::new(),
         }
+    }
+
+    fn reset_daily_cadence_state() {
+        let mut config = base_config();
+        config.managed_canisters.clear();
+        config.main_interval_seconds = 86_400;
+        config.surplus_recipients.clear();
+        let mut relay_state = State::new(config, 0);
+        relay_state.last_main_run_ts = 0;
+        relay_state.last_completed_cycles.insert(
+            relay_self(),
+            crate::state::CyclesSnapshot {
+                cycles: 20_000_000_000_000,
+                timestamp_nanos: 1,
+                source: CyclesSampleSource::SelfCanister,
+            },
+        );
+        state::set_state(relay_state);
+        crate::splitter_state::reset_for_test();
+    }
+
+    async fn run_daily_cadence_tick(
+        force: bool,
+        now_secs: u64,
+        ledger: &CadenceLedger,
+    ) -> MainTickOutcome {
+        let outcome = run_main_tick_with_clients_for_relay(
+            force,
+            now_secs * 1_000_000_000,
+            now_secs,
+            relay_self(),
+            10_000_000_000_000,
+            ledger,
+            &MockSchedulerCmc::new(10_000_000_000_000),
+            &MockSchedulerGovernance,
+            &MockSchedulerCyclesProbe::new(BTreeMap::new()),
+        )
+        .await;
+        if outcome == MainTickOutcome::SplitterGuardBusy {
+            schedule_splitter_main_continuation_if_requested();
+        }
+        outcome
+    }
+
+    fn install_active_splitter(now_nanos: u64) {
+        let ledger_id = state::with_state(|state| state.config.ledger_canister_id);
+        crate::splitter_state::set_active_job(crate::splitter_state::ActiveSplitterJob::new(
+            ledger_id,
+            logic::build_splitter_plan(30, 500_000_007, 10_000, now_nanos).unwrap(),
+        ));
     }
 
     fn block_on<F: Future>(mut future: F) -> F::Output {
@@ -1254,6 +1379,68 @@ mod tests {
         default_balance_e8s: u64,
         fee_e8s: u64,
         transfers: Mutex<Vec<TransferArg>>,
+        balance_queries: Mutex<Vec<Account>>,
+    }
+
+    #[derive(Clone, Copy)]
+    enum CadenceTransferOutcome {
+        Accepted(u64),
+        Duplicate(u64),
+        TransportUncertain,
+    }
+
+    struct CadenceLedger {
+        outcomes: Mutex<VecDeque<CadenceTransferOutcome>>,
+        transfers: Mutex<Vec<TransferArg>>,
+        balance_queries: Mutex<Vec<Account>>,
+    }
+
+    impl CadenceLedger {
+        fn new(outcomes: Vec<CadenceTransferOutcome>) -> Self {
+            Self {
+                outcomes: Mutex::new(outcomes.into()),
+                transfers: Mutex::new(Vec::new()),
+                balance_queries: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn balance_queries(&self) -> Vec<Account> {
+            self.balance_queries.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for CadenceLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10_000)
+        }
+
+        async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+            self.balance_queries.lock().unwrap().push(account);
+            Ok(0)
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            self.transfers.lock().unwrap().push(arg);
+            match self
+                .outcomes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(CadenceTransferOutcome::Accepted(99))
+            {
+                CadenceTransferOutcome::Accepted(block) => Ok(Ok(Nat::from(block))),
+                CadenceTransferOutcome::Duplicate(block) => Ok(Err(TransferError::Duplicate {
+                    duplicate_of: Nat::from(block),
+                })),
+                CadenceTransferOutcome::TransportUncertain => Err(ClientError::Call(
+                    "scripted transport uncertainty".to_string(),
+                )),
+            }
+        }
     }
 
     struct FeePlanningLedger {
@@ -1323,6 +1510,7 @@ mod tests {
                 default_balance_e8s,
                 fee_e8s,
                 transfers: Mutex::new(Vec::new()),
+                balance_queries: Mutex::new(Vec::new()),
             }
         }
 
@@ -1338,6 +1526,7 @@ mod tests {
         }
 
         async fn balance_of_e8s(&self, account: Account) -> Result<u64, ClientError> {
+            self.balance_queries.lock().unwrap().push(account);
             if account.subaccount == Some(logic::relay_subaccount_one()) {
                 Ok(0)
             } else {
@@ -2671,5 +2860,164 @@ mod tests {
             job.summary.skipped_surplus_reason.as_deref(),
             Some("no_raw_icp_recipients")
         );
+    }
+
+    #[test]
+    fn splitter_guard_collision_releases_main_cadence_without_finishing() {
+        reset_daily_cadence_state();
+        let now_secs = 100_000;
+        let splitter_guard = super::super::guards::SplitterGuard::acquire(now_secs).unwrap();
+        let ledger = CadenceLedger::new(Vec::new());
+
+        assert_eq!(
+            block_on(run_daily_cadence_tick(true, now_secs, &ledger)),
+            MainTickOutcome::SplitterGuardBusy
+        );
+        assert_eq!(state::with_state(|state| state.last_main_run_ts), 0);
+        assert!(state::with_state(|state| {
+            state.splitter_main_continuation_requested
+                && state.splitter_main_continuation_timer_pending
+        }));
+        drop(splitter_guard);
+    }
+
+    #[test]
+    fn unresolved_splitter_does_not_finish_daily_cadence_or_schedule_downstream_work() {
+        reset_daily_cadence_state();
+        let now_secs = 100_000;
+        install_active_splitter(now_secs * 1_000_000_000);
+        let ledger = CadenceLedger::new(vec![
+            CadenceTransferOutcome::TransportUncertain,
+            CadenceTransferOutcome::TransportUncertain,
+        ]);
+
+        assert_eq!(
+            block_on(run_daily_cadence_tick(true, now_secs, &ledger)),
+            MainTickOutcome::SplitterPaused
+        );
+        assert_eq!(state::with_state(|state| state.last_main_run_ts), 0);
+        assert!(state::with_state(|state| {
+            state.splitter_main_continuation_requested
+                && !state.splitter_main_continuation_timer_pending
+        }));
+
+        assert_eq!(
+            block_on(super::super::splitter::retry_active_splitter_with_client(
+                (now_secs + 1) * 1_000_000_000,
+                now_secs + 1,
+                relay_self(),
+                &ledger,
+            )),
+            Some(super::super::splitter::DriveResult::Unresolved)
+        );
+        assert!(!state::with_state(|state| {
+            state.splitter_main_continuation_timer_pending
+        }));
+        assert!(ledger.balance_queries().is_empty());
+    }
+
+    #[test]
+    fn completed_hourly_retry_continues_subaccount_one_and_default_work_promptly() {
+        reset_daily_cadence_state();
+        let now_secs = 100_000;
+        install_active_splitter(now_secs * 1_000_000_000);
+        let ledger = CadenceLedger::new(vec![
+            CadenceTransferOutcome::TransportUncertain,
+            CadenceTransferOutcome::Duplicate(1),
+            CadenceTransferOutcome::Accepted(2),
+        ]);
+
+        assert_eq!(
+            block_on(run_daily_cadence_tick(true, now_secs, &ledger)),
+            MainTickOutcome::SplitterPaused
+        );
+        assert_eq!(
+            block_on(super::super::splitter::retry_active_splitter_with_client(
+                (now_secs + 1) * 1_000_000_000,
+                now_secs + 1,
+                relay_self(),
+                &ledger,
+            )),
+            Some(super::super::splitter::DriveResult::Completed)
+        );
+        assert!(state::with_state(|state| {
+            state.splitter_main_continuation_timer_pending
+        }));
+
+        // Model the coalesced one-shot timer firing; the daily cadence was not consumed.
+        state::with_state_mut(|state| state.splitter_main_continuation_timer_pending = false);
+        assert_eq!(
+            block_on(run_daily_cadence_tick(false, now_secs + 2, &ledger)),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(
+            state::with_state(|state| state.last_main_run_ts),
+            now_secs + 2
+        );
+        let queries = ledger.balance_queries();
+        assert!(queries
+            .iter()
+            .any(|account| account.subaccount == Some(logic::relay_subaccount_one())));
+        assert!(queries.iter().any(|account| account.subaccount.is_none()));
+        assert!(!state::with_state(|state| {
+            state.splitter_main_continuation_requested
+                || state.splitter_main_continuation_timer_pending
+        }));
+    }
+
+    #[test]
+    fn quarantine_schedules_continuation_and_does_not_block_normal_work() {
+        reset_daily_cadence_state();
+        let now_secs = 100_000;
+        install_active_splitter(1);
+        crate::splitter_state::mutate(|state| {
+            state
+                .active_job
+                .as_mut()
+                .unwrap()
+                .default_leg
+                .attempt_started = true;
+        });
+        let ledger = CadenceLedger::new(Vec::new());
+
+        assert_eq!(
+            block_on(run_daily_cadence_tick(true, now_secs, &ledger)),
+            MainTickOutcome::SplitterPaused
+        );
+        assert_eq!(state::with_state(|state| state.last_main_run_ts), 0);
+        assert!(crate::splitter_state::is_quarantined(30));
+        assert!(state::with_state(|state| {
+            state.splitter_main_continuation_timer_pending
+        }));
+
+        state::with_state_mut(|state| state.splitter_main_continuation_timer_pending = false);
+        assert_eq!(
+            block_on(run_daily_cadence_tick(false, now_secs + 1, &ledger)),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(
+            state::with_state(|state| state.last_main_run_ts),
+            now_secs + 1
+        );
+        let queries = ledger.balance_queries();
+        assert!(queries
+            .iter()
+            .any(|account| account.subaccount == Some(logic::relay_subaccount_one())));
+        assert!(queries.iter().any(|account| account.subaccount.is_none()));
+    }
+
+    #[test]
+    fn ordinary_completed_tick_advances_main_cadence_once() {
+        reset_daily_cadence_state();
+        let now_secs = 100_000;
+        let ledger = CadenceLedger::new(Vec::new());
+        assert_eq!(
+            block_on(run_daily_cadence_tick(true, now_secs, &ledger)),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(state::with_state(|state| state.last_main_run_ts), now_secs);
+        assert!(!state::with_state(|state| {
+            state.splitter_main_continuation_requested
+        }));
     }
 }

@@ -27,6 +27,8 @@ The value-moving canisters expose little or no public production API. Public ver
 
 Historian's self-service Relay factory accepts an immutable configuration of 1–20 managed target canisters and 1–5 surplus recipient principals. It canonicalizes both vectors independently, and both jointly determine the deterministic setup address: order changes do not matter, while changing any recipient creates a different configuration. Creation pricing remains target-based. A child Relay pays equal surplus shares to the recipients' default ICP accounts only after top-up and safety gates, with at least `recipient_count × (1 ICP + ledger fee)` of distributable surplus required. Self-service supports no weights, custom memos, custom subaccounts, neuron IDs, or automatic IO recipient. See [Relay setup and recovery](docs/relay-setup-recovery.md).
 
+Every Relay also has intrinsic fixed splitter subaccounts 10–90. Funding splitter `P` routes a pinned gross `P%` budget to Relay's default account and the complement to its existing subaccount-1 Faucet staging account, with one ledger fee per leg. The two-leg operation is durably journaled before transfer and adds no install argument or public method. See the [Relay README](canisters/relay/README.md#workflow-4-fixed-splitter-subaccounts-1090).
+
 ## Source Verification and Reproducible Builds
 
 Reproducible builds are part of the trust model for Jupiter Faucet. A deployed canister's Wasm module hash can be compared with locally rebuilt release artifacts so readers can connect public source code to the code running on the Internet Computer.

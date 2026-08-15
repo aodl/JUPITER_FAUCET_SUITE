@@ -2,21 +2,23 @@
 
 `jupiter-relay` keeps Jupiter Faucet Suite canisters funded with cycles. Relay spends ICP from its default ICP ledger account to top up managed canisters through CMC. Once managed-canister recovery targets are satisfied, any surplus ICP can be routed to configured surplus recipients.
 
-Relay can be funded in three ways:
+Relay can be funded in four ways:
 
 - direct ICP payment to Relay's default account for immediate one-off liquidity;
 - a Jupiter Faucet commitment that targets Relay and perpetually pays raw ICP into Relay's default account;
-- Relay subaccount 1, which accumulates or memo-fixes ICP and then creates that Jupiter Faucet commitment for Relay.
+- Relay subaccount 1, which accumulates or memo-fixes ICP and then creates that Jupiter Faucet commitment for Relay; and
+- fixed splitter subaccounts 10–90, which divide ICP between Relay's default account and subaccount 1.
 
 Default-account funding is direct liquidity. Faucet commitments are perpetual funding. Subaccount 1 is a staging helper for creating Faucet commitments when a direct commitment is not possible.
 
-## Three ways to fund Relay
+## Four ways to fund Relay
 
 | Workflow | Send ICP to | Use when | What happens | Outcome |
 |---|---|---|---|---|
 | 1. Direct Relay funding | Relay default account | You need ICP available to Relay now for short-term canister-cycle funding, bootstrap, or manual recovery | Relay spends the ICP directly on managed-canister CMC top-ups first, then surplus if safe | One-off operational liquidity; must be replenished periodically |
 | 2. Direct Jupiter Faucet commitment for Relay | Jupiter Faucet neuron staking account, with memo `u2qkp-aqaaa-aaaar-qb7ea-cai.` | You can attach the memo and send at least the qualifying commitment amount | Jupiter Faucet records a commitment whose payout target is Relay's default account in raw ICP form | Recommended perpetual funding stream into Relay |
 | 3. Relay subaccount 1 staging | Relay subaccount 1 `u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1` | You cannot attach the memo, or ICP arrives in small amounts below the Faucet threshold | Relay accumulates the ICP, adds the correct memo, and forwards a qualifying Jupiter Faucet commitment | Helper path that creates the same perpetual Faucet-backed funding stream |
+| 4. Fixed splitters | Relay numbered subaccount 10, 20, …, or 90 | One deposit should be divided predictably between immediate Relay liquidity and Faucet-commitment staging | Relay durably pins and sequentially transfers the configured-by-protocol percentage to the default account and the complement to subaccount 1 | Intrinsic immutable routing; no install argument or endpoint |
 
 ## Workflow 1: Direct Relay default-account funding
 
@@ -111,6 +113,32 @@ Subaccount 1 flow:
 7. Future Faucet payouts from that commitment flow as raw ICP to Relay's default account.
 8. Relay then uses that default-account ICP for managed-canister top-ups and surplus routing.
 
+## Workflow 4: fixed splitter subaccounts 10–90
+
+Every Relay Wasm intrinsically recognizes exactly nine splitter subaccounts: 10, 20, 30, 40, 50, 60, 70, 80, and 90. A numbered subaccount is 32 bytes with 31 zero bytes and the number in the last byte: splitter 10 ends in `0x0a`, splitter 20 in `0x14`, and splitter 90 in `0x5a`. The Relay default account remains `Account { owner: relay_id, subaccount: null }`; an all-zero explicit subaccount is not treated as the default account.
+
+The splitter number is the gross percentage routed to the default account. The complement is routed to the existing subaccount 1:
+
+| Splitter | Default account | Subaccount 1 |
+| --- | ---: | ---: |
+| 10 | 10% | 90% |
+| 20 | 20% | 80% |
+| 30 | 30% | 70% |
+| 40 | 40% | 60% |
+| 50 | 50% | 50% |
+| 60 | 60% | 40% |
+| 70 | 70% | 30% |
+| 80 | 80% | 20% |
+| 90 | 90% | 10% |
+
+For observed balance `B`, splitter percentage `P`, and resolved fee `F`, Relay pins `floor(B × P / 100)` as the default-account gross spending budget and assigns the remainder to subaccount 1. Each leg sends its gross budget minus its own fee. Both gross budgets must exceed `F`, and a completed operation conserves every e8s: the two net amounts plus two fees equal the pinned `B`. The ordinary qualification gate is unchanged from subaccount 1: `B > F` and `B - F >= 1 ICP`. The additional two-leg feasibility check only prevents a non-positive leg under a pathological fee.
+
+The complete two-leg plan, ledger identity, fees, destinations, distinct `created_at_time` values, and progress are written to stable memory before the first ledger call. The default-account leg always executes first. The subaccount-1 leg starts only after the first is accepted or returns `Duplicate`. Later deposits are not absorbed into the pinned plan and remain for a later split. This is safe sequential execution, not a ledger-atomic two-transfer operation.
+
+An hourly retry timer only resumes an already-active splitter identity. It never scans for new balances or directly runs other Relay work. Every await-capable driver step advances a persisted fencing revision; a late callback may update stable state only while its complete job, leg identity, and revision still match. Transport uncertainty keeps the exact identity pinned. An uncertain identity that ages beyond the safe ledger deduplication window is quarantined; that splitter is thereafter skipped so Relay cannot guess whether to re-spend its residual balance, while other splitters and ordinary Relay work remain available. There is no force-clear endpoint.
+
+On an accepted main tick, Relay performs SNS reward work, scans splitters in numeric order, runs the existing subaccount-1 commitment stage, and finally runs default-account allocation. A completed split can therefore feed both downstream stages in that same tick. If splitter work is guarded or unresolved, the main lease is released without consuming the configured main cadence. Completion or quarantine coalesces a bounded one-shot normal continuation so downstream work resumes promptly; an unresolved operation never exposes a partial split to those stages. One full splitter scan is intrinsically bounded to 18 outgoing transfers. Splitter transfers are independent of `max_transfers_per_tick`.
+
 ## SNS reward attribution
 
 Subaccount 1 remains memo-less: incoming ICP memos are neither required nor consulted. It is intended for protocols that accumulate or drip-feed ICP, funding paths that cannot attach the Faucet memo, and exceptional flows such as maturity minted directly to Relay.
@@ -133,7 +161,7 @@ The SNS Root defines the epoch. A new Root resets both the processed commitment 
 
 ## ICP Ledger Fee Resolution and Thresholds
 
-Relay queries the configured ledger's `icrc1_fee` whenever it builds a new fee-dependent subaccount-1 or default-account plan. Fee resolution is live fee, then the heap-only last-known fee, then a `10_000` e8s bootstrap fallback. The bootstrap value is an emergency contingency, not a permanent ICP ledger invariant. A failed live read emits a structured Relay error log with the planning context, ledger error, selected `cached` or `bootstrap` source, and selected fee. An ordinary successful live read emits no extra error log.
+Relay queries the configured ledger's `icrc1_fee` whenever it builds a new fee-dependent splitter, subaccount-1, or default-account plan. Fee resolution is live fee, then the heap-only last-known fee, then a `10_000` e8s bootstrap fallback. The bootstrap value is an emergency contingency, not a permanent ICP ledger invariant. A failed live read emits a structured Relay error log with the planning context (`splitter`, `subaccount_1`, or `default_account`), ledger error, selected `cached` or `bootstrap` source, and selected fee. An ordinary successful live read emits no extra error log.
 
 Every staged transfer pins and explicitly supplies its resolved fee, including deterministic retries. A definitive ledger `BadFee` records the expected fee when it fits `u64`, invalidates the stale plan, and reports `ledger_fee_changed`; Relay does not continue later transfers from that plan. If `BadFee` arrives only after an uncertain first attempt, the current transfer remains ambiguous because the first attempt might have been accepted. Relay neither mutates nor rebuilds an ambiguous transfer under a new identity. The last-known fee is runtime heap state and resets on a replacement upgrade with the rest of Relay's heap state.
 
@@ -246,7 +274,7 @@ After deployment, anyone can verify the installed source/config by building the 
 icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
 ```
 
-Canister logs have finite retention. Operators should archive logs externally if long-term history is required. Logs are intentionally low-noise: timer callbacks that are suppressed by the guard, startup liveness checks that are suppressed by the recent-run guard, empty scans, below-threshold subaccount-1 scans, routine per-canister allocation skips, and observable target-probe statuses do not produce extra public detail lines. Main ticks that actually proceed still emit the documented runtime and financial summary logs.
+Canister logs have finite retention. Operators should archive logs externally if long-term history is required. Logs are intentionally low-noise: timer callbacks that are suppressed by the guard, startup liveness checks that are suppressed by the recent-run guard, empty splitter/subaccount-1 scans, below-threshold splitter/subaccount-1 scans, routine per-canister allocation skips, and observable target-probe statuses do not produce extra public detail lines. Main ticks that actually proceed still emit the documented runtime and financial summary logs.
 
 ## Public Log Records
 
@@ -258,6 +286,7 @@ CONFIG relay_canister_id=...
 RELAY_SUMMARY mode=<BaselineOnly|TopUpThenSurplus|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> min_cycles_canister_id=<principal-or-null> min_cycles_sample=<nat-or-null> total_burn_cycles=<nat> total_target_topup_cycles=<nat> total_actual_minted_cycles=<nat> total_carried_deficit_cycles=<nat> total_remaining_deficit_cycles=<nat> deficit_canister_count=<nat32> max_remaining_deficit_canister_id=<principal-or-null> max_remaining_deficit_cycles=<nat-or-null> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32> conversion_cycles_per_e8=<nat-or-null> surplus_e8s_before_fees=<nat64> skipped_surplus_reason=<escaped-text-or-null> canister_skip_counts=<escaped-reason:count|none> surplus_allowed_despite_unavailable_targets=<bool>
 RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> relay_minted_cycles=<nat> burn_cycles=<nat> carried_deficit_cycles=<nat> target_topup_cycles=<nat> planned_topup_e8s=<nat64> sent_topup_e8s=<nat64> actual_minted_cycles=<nat> remaining_deficit_cycles=<nat> skipped_reason=<escaped-text-or-null>
 RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null> memo_len=<nat32-or-null>
+RELAY_SPLITTER splitter_number=<10|20|...|90> source_owner=<relay-principal> source_subaccount=<hex> balance_start_e8s=<nat64> percentage_to_default=<nat8> default_gross_e8s=<nat64> default_amount_e8s=<nat64> default_fee_e8s=<nat64> default_block_index=<nat> subaccount_one_gross_e8s=<nat64> subaccount_one_amount_e8s=<nat64> subaccount_one_fee_e8s=<nat64> subaccount_one_block_index=<nat> status=completed
 RELAY_FAUCET_COMMITMENT source_owner=<principal> source_subaccount=<hex> destination_owner=<principal> destination_subaccount=<hex-or-null> balance_start_e8s=<nat64> amount_e8s=<nat64> fee_e8s=<nat64> memo_len=<nat32> skipped_reason=<escaped-text-or-null>
 RELAY_PROBE_FAILURE canister_id=<principal> consecutive_failures=<nat32> error=<escaped-text>
 RELAY_TARGET_PROBE canister_id=<principal> consecutive_probe_failures=<nat32> classification=<observable|transient_probe_failure|target_unavailable_after_consecutive_probe_failures> skipped_reason=<escaped-text-or-null>
@@ -296,15 +325,15 @@ estimated_burn_cycles = max(previous_cycles + relay_minted_cycles_since_previous
 
 Relay-minted cycles come from successful CMC `notify_top_up` responses. This prevents relay top-ups from hiding real burn when a canister's net cycles balance increases.
 
-`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the default-account allocation job starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped. Subaccount-1 Jupiter Faucet commitment forwarding is a separate operation with its own at-most-one-transfer-per-run behavior so it can proceed even when the default account has no funds, is degraded, or is blocked by allocation-job state.
+`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the default-account allocation job starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped. Subaccount-1 Jupiter Faucet commitment forwarding is a separate at-most-one-transfer stage. The fixed splitter stage is also separate and is intrinsically bounded to at most 18 outgoing transfers per full scan. Neither stage consumes or is throttled by `max_transfers_per_tick`.
 
 ## Lifecycle
 
 Relay configuration and ordinary operational state remain replacement-style and heap-only. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, consecutive probe failure counts, conversion estimates, last-known ICP ledger fee, summaries, allocation jobs, ICP pending transfers, Faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
 
-The narrow exception is one stable SNS reward journal: epoch Root, processed Faucet-commitment cursor, carried-credit start, last weekly sweep attempt, and any fully pinned pending reward-token transfer survive a canonical upgrade. A reinstall clears this stable state with the canister's stable memory. No other Relay state was moved to stable memory.
+There are two versioned stable journals using non-overlapping stable-memory IDs. Memory 0 retains the existing SNS reward journal unchanged: epoch Root, processed Faucet-commitment cursor, carried-credit start, last weekly sweep attempt, and any fully pinned pending reward-token transfer. Memory 1 stores splitter transactions, driver fencing revisions, and quarantine evidence. Old Relay state with no memory-1 cell initializes an empty splitter journal without rewriting memory 0; initialization never clears an existing journal. Active splitter work survives a same-ledger upgrade, while an upgrade that changes the configured ICP Ledger during an active split fails closed. A reinstall clears both stable memories with the canister's stable memory.
 
-Ordinary ICP allocation work remains non-resumable. Avoid upgrading during active Relay work where practical, especially ICP top-ups, ambiguous ICP transfers, or CMC notify sequences. After upgrade, Relay starts fresh from supplied `InitArgs` for that ordinary work while preserving the SNS reward journal. Confirm the fresh `CONFIG` log, reward journal state, managed-canister cycle balances, and any required reconciliation.
+Ordinary default-account allocation and subaccount-1 work remain non-resumable. Avoid upgrading during active Relay work where practical, especially ICP top-ups, ambiguous ordinary ICP transfers, or CMC notify sequences. After upgrade, Relay starts fresh from supplied `InitArgs` for ordinary work while preserving both the SNS reward journal and fixed-splitter journal. Confirm the fresh `CONFIG` log, both stable journals where applicable, managed-canister cycle balances, and any required reconciliation.
 
 This is intentional and differs from Faucet, Disburser, and Historian, which preserve safety-critical stable state across ordinary upgrades.
 
@@ -417,7 +446,7 @@ Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
 
 ### Routine replacement upgrade
 
-Routine Relay upgrades pass the full reviewed `InitArgs` file. Relay intentionally requires full InitArgs on upgrade because configuration remains heap-only. Under this replacement-style lifecycle, Relay does not support no-arg upgrades and does not support Relay UpgradeArgs. The isolated SNS reward journal survives.
+Routine Relay upgrades pass the full reviewed `InitArgs` file. Relay intentionally requires full InitArgs on upgrade because configuration remains heap-only. Under this replacement-style lifecycle, Relay does not support no-arg upgrades and does not support Relay UpgradeArgs. The isolated SNS reward and fixed-splitter journals survive; an active splitter requires the same configured ICP Ledger.
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \

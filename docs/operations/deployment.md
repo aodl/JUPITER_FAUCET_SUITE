@@ -206,12 +206,12 @@ For config-changing upgrades, Disburser, Faucet, and Historian use the canister'
 | `jupiter_disburser` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | `jupiter_faucet` | `InitArgs` from checked-in `mainnet-install-args.did` | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
 | `jupiter_historian` | `InitArgs` from checked-in `mainnet-install-args.did` for brand-new canister only | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved; existing production canister must not be reinstalled |
-| `jupiter_relay` | `InitArgs` from checked-in `mainnet-install-args.did` | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap configuration/operations reset; isolated stable SNS reward journal preserved |
+| `jupiter_relay` | `InitArgs` from checked-in `mainnet-install-args.did` | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap configuration/ordinary operations reset; stable SNS reward and fixed-splitter journals preserved |
 | `jupiter_faucet_frontend` | No install args | No args | No args | Asset canister state managed by frontend asset lifecycle |
 | `jupiter_lifeline` | No install args | No args | No args | Minimal support canister state |
 | `jupiter_sns_rewards` | `InitArgs` with optional SNS Root | No args | Temporary nested `Option<UpgradeArgs>` | Stable configuration, active owner snapshot, staging scan, and cursor preserved when Root is unchanged |
 
-Relay ordinary operations remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`; the stable SNS reward cursor and pending transfer survive. After upgrade, confirm the fresh `CONFIG` log, reward journal state, first successful `BaselineOnly` tick, managed-canister cycle balances, and any required reconciliation.
+Relay ordinary default-account allocation and subaccount-1 work remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`. Stable memory 0 preserves the SNS reward cursor and pending transfer; stable memory 1 preserves any pinned fixed-splitter transaction and quarantine evidence. An active splitter requires the replacement `InitArgs` to name the same ICP Ledger. After upgrade, confirm the fresh `CONFIG` log, stable journal state, first successful `BaselineOnly` ordinary allocation tick, managed-canister cycle balances, and any required reconciliation.
 
 ## SNS rewards lifecycle and Root switch
 

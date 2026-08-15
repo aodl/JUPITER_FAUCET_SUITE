@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use candid::Principal;
+use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::account::principal_to_subaccount;
 
@@ -14,6 +14,7 @@ pub(crate) const TOPUP_HEADROOM_NUMERATOR: u128 = 101;
 pub(crate) const TOPUP_HEADROOM_DENOMINATOR: u128 = 100;
 pub(crate) const CONVERSION_ESTIMATE_MAX_AGE_NANOS: u64 = 14 * 24 * 60 * 60 * 1_000_000_000;
 pub(crate) const MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S: u64 = 100_000_000;
+pub(crate) const SPLITTER_PERCENTAGES: [u8; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
 pub(crate) const JUPITER_FAUCET_NEURON_ID: u64 = 11_614_578_985_374_291_210;
 pub(crate) const SKIP_REASON_ZERO_BURN: &str = "zero_burn";
 pub(crate) const SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE: &str =
@@ -75,6 +76,31 @@ pub(crate) struct FaucetCommitmentPlan {
     pub memo: Vec<u8>,
 }
 
+#[derive(CandidType, Deserialize, serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SplitterDestination {
+    DefaultAccount,
+    SubaccountOne,
+}
+
+#[derive(CandidType, Deserialize, serde::Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SplitterLegPlan {
+    pub destination: SplitterDestination,
+    pub gross_share_e8s: u64,
+    pub amount_e8s: u64,
+    pub fee_e8s: u64,
+    pub created_at_time_nanos: u64,
+}
+
+#[derive(CandidType, Deserialize, serde::Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SplitterPlan {
+    pub splitter_number: u8,
+    pub percentage_to_default: u8,
+    pub source_subaccount: [u8; 32],
+    pub balance_start_e8s: u64,
+    pub default_leg: SplitterLegPlan,
+    pub subaccount_one_leg: SplitterLegPlan,
+}
+
 pub(crate) fn cmc_deposit_account(cmc_id: Principal, canister_id: Principal) -> Account {
     Account {
         owner: cmc_id,
@@ -89,10 +115,14 @@ pub(crate) fn default_account(self_id: Principal) -> Account {
     }
 }
 
-pub(crate) fn relay_subaccount_one() -> [u8; 32] {
+pub(crate) fn relay_numbered_subaccount(number: u8) -> [u8; 32] {
     let mut out = [0u8; 32];
-    out[31] = 1;
+    out[31] = number;
     out
+}
+
+pub(crate) fn relay_subaccount_one() -> [u8; 32] {
+    relay_numbered_subaccount(1)
 }
 
 pub(crate) fn relay_subaccount_one_account(self_id: Principal) -> Account {
@@ -100,6 +130,85 @@ pub(crate) fn relay_subaccount_one_account(self_id: Principal) -> Account {
         owner: self_id,
         subaccount: Some(relay_subaccount_one()),
     }
+}
+
+pub(crate) fn splitter_percentage(number: u8) -> Option<u8> {
+    SPLITTER_PERCENTAGES
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == number)
+}
+
+pub(crate) fn splitter_source_account(relay_id: Principal, number: u8) -> Option<Account> {
+    splitter_percentage(number).map(|_| Account {
+        owner: relay_id,
+        subaccount: Some(relay_numbered_subaccount(number)),
+    })
+}
+
+pub(crate) fn splitter_destination_account(
+    relay_id: Principal,
+    destination: SplitterDestination,
+) -> Account {
+    match destination {
+        SplitterDestination::DefaultAccount => default_account(relay_id),
+        SplitterDestination::SubaccountOne => relay_subaccount_one_account(relay_id),
+    }
+}
+
+pub(crate) fn build_splitter_plan(
+    splitter_number: u8,
+    balance_start_e8s: u64,
+    fee_e8s: u64,
+    now_nanos: u64,
+) -> Result<SplitterPlan, &'static str> {
+    let percentage_to_default =
+        splitter_percentage(splitter_number).ok_or("splitter_not_protocol_defined")?;
+    if balance_start_e8s == 0 {
+        return Err("splitter_no_funds");
+    }
+    if balance_start_e8s <= fee_e8s
+        || balance_start_e8s - fee_e8s < MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S
+    {
+        return Err("splitter_below_1_icp_net");
+    }
+
+    let default_gross_e8s = (u128::from(balance_start_e8s)
+        .checked_mul(u128::from(percentage_to_default))
+        .ok_or("splitter_share_overflow")?
+        / 100)
+        .try_into()
+        .map_err(|_| "splitter_share_overflow")?;
+    let subaccount_one_gross_e8s = balance_start_e8s
+        .checked_sub(default_gross_e8s)
+        .ok_or("splitter_share_underflow")?;
+    if default_gross_e8s <= fee_e8s || subaccount_one_gross_e8s <= fee_e8s {
+        return Err("splitter_share_does_not_exceed_fee");
+    }
+    let subaccount_one_created_at_time_nanos = now_nanos
+        .checked_add(1)
+        .ok_or("splitter_created_at_overflow")?;
+
+    Ok(SplitterPlan {
+        splitter_number,
+        percentage_to_default,
+        source_subaccount: relay_numbered_subaccount(splitter_number),
+        balance_start_e8s,
+        default_leg: SplitterLegPlan {
+            destination: SplitterDestination::DefaultAccount,
+            gross_share_e8s: default_gross_e8s,
+            amount_e8s: default_gross_e8s - fee_e8s,
+            fee_e8s,
+            created_at_time_nanos: now_nanos,
+        },
+        subaccount_one_leg: SplitterLegPlan {
+            destination: SplitterDestination::SubaccountOne,
+            gross_share_e8s: subaccount_one_gross_e8s,
+            amount_e8s: subaccount_one_gross_e8s - fee_e8s,
+            fee_e8s,
+            created_at_time_nanos: subaccount_one_created_at_time_nanos,
+        },
+    })
 }
 
 pub(crate) fn relay_faucet_commitment_memo(self_id: Principal) -> Result<Vec<u8>, String> {
@@ -813,6 +922,115 @@ mod tests {
         let subaccount = relay_subaccount_one();
         assert_eq!(&subaccount[..31], [0u8; 31].as_slice());
         assert_eq!(subaccount[31], 1);
+    }
+
+    #[test]
+    fn fixed_splitter_numbers_have_exact_numbered_subaccounts_and_destinations() {
+        assert_eq!(SPLITTER_PERCENTAGES, [10, 20, 30, 40, 50, 60, 70, 80, 90]);
+        for number in SPLITTER_PERCENTAGES {
+            let subaccount = relay_numbered_subaccount(number);
+            assert_eq!(&subaccount[..31], [0u8; 31].as_slice());
+            assert_eq!(subaccount[31], number);
+            assert_ne!(subaccount, [0u8; 32]);
+            assert_eq!(splitter_percentage(number), Some(number));
+        }
+        for number in [0, 1, 5, 11, 100, 255] {
+            assert_eq!(splitter_percentage(number), None);
+            assert_eq!(splitter_source_account(canister_a(), number), None);
+        }
+
+        assert_eq!(
+            splitter_destination_account(canister_a(), SplitterDestination::DefaultAccount),
+            Account {
+                owner: canister_a(),
+                subaccount: None,
+            }
+        );
+        assert_eq!(
+            splitter_destination_account(canister_a(), SplitterDestination::SubaccountOne),
+            Account {
+                owner: canister_a(),
+                subaccount: Some(relay_subaccount_one()),
+            }
+        );
+    }
+
+    #[test]
+    fn every_fixed_splitter_plan_conserves_balance_and_uses_gross_share_flooring() {
+        let balance = 987_654_321_u64;
+        let fee = 10_000_u64;
+        for percentage in SPLITTER_PERCENTAGES {
+            let first = build_splitter_plan(percentage, balance, fee, 123).unwrap();
+            let second = build_splitter_plan(percentage, balance, fee, 123).unwrap();
+            assert_eq!(first, second);
+            assert_eq!(
+                first.default_leg.destination,
+                SplitterDestination::DefaultAccount
+            );
+            assert_eq!(
+                first.subaccount_one_leg.destination,
+                SplitterDestination::SubaccountOne
+            );
+            assert_eq!(
+                first.default_leg.gross_share_e8s,
+                u64::try_from(u128::from(balance) * u128::from(percentage) / 100).unwrap()
+            );
+            assert_eq!(
+                first.default_leg.gross_share_e8s + first.subaccount_one_leg.gross_share_e8s,
+                balance
+            );
+            assert_eq!(
+                first.default_leg.amount_e8s
+                    + first.default_leg.fee_e8s
+                    + first.subaccount_one_leg.amount_e8s
+                    + first.subaccount_one_leg.fee_e8s,
+                balance
+            );
+        }
+    }
+
+    #[test]
+    fn splitter_threshold_feasibility_overflow_and_remainder_rules_are_exact() {
+        let fee = 10_000;
+        let threshold = MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S + fee;
+        assert_eq!(build_splitter_plan(30, 0, fee, 1), Err("splitter_no_funds"));
+        assert_eq!(
+            build_splitter_plan(30, threshold - 1, fee, 1),
+            Err("splitter_below_1_icp_net")
+        );
+        assert!(build_splitter_plan(30, threshold, fee, 1).is_ok());
+        assert!(build_splitter_plan(30, threshold + 1, fee, 1).is_ok());
+
+        assert_eq!(
+            build_splitter_plan(10, 120_000_000, 20_000_000, 1),
+            Err("splitter_share_does_not_exceed_fee")
+        );
+        let maximum = build_splitter_plan(90, u64::MAX, fee, 1).unwrap();
+        assert_eq!(
+            maximum.default_leg.gross_share_e8s + maximum.subaccount_one_leg.gross_share_e8s,
+            u64::MAX
+        );
+        assert_eq!(
+            build_splitter_plan(50, threshold, fee, u64::MAX),
+            Err("splitter_created_at_overflow")
+        );
+
+        let awkward = build_splitter_plan(30, 200_000_013, fee, 1).unwrap();
+        assert_eq!(awkward.default_leg.gross_share_e8s, 60_000_003);
+        assert_eq!(awkward.subaccount_one_leg.gross_share_e8s, 140_000_010);
+        let fifty = build_splitter_plan(50, 200_000_013, fee, 1).unwrap();
+        assert_eq!(fifty.default_leg.gross_share_e8s, 100_000_006);
+        assert_eq!(fifty.subaccount_one_leg.gross_share_e8s, 100_000_007);
+        let ten = build_splitter_plan(10, 200_000_013, fee, 1).unwrap();
+        let ninety = build_splitter_plan(90, 200_000_013, fee, 1).unwrap();
+        assert_eq!(
+            ten.default_leg.gross_share_e8s,
+            ninety.subaccount_one_leg.gross_share_e8s - 1
+        );
+        assert_eq!(
+            ten.subaccount_one_leg.gross_share_e8s,
+            ninety.default_leg.gross_share_e8s + 1
+        );
     }
 
     #[test]

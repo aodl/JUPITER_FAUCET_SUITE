@@ -2,6 +2,8 @@ mod clients;
 mod logic;
 mod reward_state;
 mod scheduler;
+mod splitter_state;
+mod stable_memory;
 mod state;
 
 use candid::{CandidType, Deserialize, Principal};
@@ -222,6 +224,9 @@ fn initialize_from_config(cfg: crate::state::Config, lifecycle_event: &'static s
     let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::logic::validate_config(&cfg, self_canister_principal_for_validation())
         .expect("invalid relay config");
+    crate::splitter_state::initialize_if_uninitialized();
+    crate::splitter_state::validate_active_ledger(cfg.ledger_canister_id)
+        .expect("splitter journal ledger mismatch");
     crate::state::set_state(crate::state::State::new(cfg, now_secs));
     crate::reward_state::initialize_if_uninitialized();
     crate::scheduler::install_timers();

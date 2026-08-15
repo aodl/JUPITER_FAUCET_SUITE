@@ -59,6 +59,7 @@ pub(crate) fn log_lifecycle(
     emit_log_line(format_event_line("relay", "LIFECYCLE", &fields));
 }
 
+#[cfg(not(test))]
 pub(super) fn log_cycles_and_config() {
     let cycles: u128 = ic_cdk::api::canister_cycle_balance();
     emit_log_line(format!("Cycles: {}", cycles));

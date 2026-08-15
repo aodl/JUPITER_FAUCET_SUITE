@@ -4,7 +4,8 @@ use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, Transfer
 
 use crate::clients::{ClientError, CmcClient, GovernanceClient, LedgerClient};
 use crate::logic;
-use crate::scheduler::logging::{emit_log_line, log_error, log_structured_error};
+use crate::scheduler::ledger_fee::record_bad_fee;
+use crate::scheduler::logging::{emit_log_line, log_error};
 use crate::state::{
     self, PendingFaucetCommitmentTransfer, PendingTransfer, PendingTransferKind,
     PendingTransferPhase,
@@ -29,7 +30,7 @@ pub(crate) fn debug_set_trap_after_successful_transfer(v: bool) {
 }
 
 #[cfg(feature = "debug_api")]
-fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+pub(super) fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
     if TRAP_AFTER_SUCCESSFUL_TRANSFER.with(|cell| cell.replace(false)) {
         return DebugSuccessfulTransferInjection::Trap;
     }
@@ -40,12 +41,12 @@ fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
 }
 
 #[cfg(not(feature = "debug_api"))]
-fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
+pub(super) fn debug_successful_transfer_injection() -> DebugSuccessfulTransferInjection {
     DebugSuccessfulTransferInjection::None
 }
 
 #[allow(dead_code)]
-enum DebugSuccessfulTransferInjection {
+pub(super) enum DebugSuccessfulTransferInjection {
     None,
     Abort,
     Trap,
@@ -141,38 +142,6 @@ async fn transfer_once<L: LedgerClient>(ledger: &L, arg: TransferArg) -> Transfe
             | TransferError::TooOld,
         )) => TransferAttemptOutcome::Failed,
         Err(_) => TransferAttemptOutcome::ImmediateRetryable,
-    }
-}
-
-fn record_bad_fee(context: &'static str, planned_fee_e8s: u64, expected_fee: &Nat) {
-    match u64::try_from(expected_fee.0.clone()) {
-        Ok(expected_fee_e8s) => {
-            state::with_state_mut(|st| {
-                st.last_known_ledger_fee_e8s = Some(expected_fee_e8s);
-            });
-            log_structured_error(
-                "ledger_fee_changed",
-                &[
-                    ("context", context.to_string()),
-                    ("planned_fee_e8s", planned_fee_e8s.to_string()),
-                    ("expected_fee_e8s", expected_fee_e8s.to_string()),
-                ],
-            );
-        }
-        Err(_) => {
-            log_structured_error(
-                "ledger_fee_changed",
-                &[
-                    ("context", context.to_string()),
-                    ("planned_fee_e8s", planned_fee_e8s.to_string()),
-                    ("expected_fee", expected_fee.to_string()),
-                    (
-                        "conversion_error",
-                        "expected_fee_out_of_u64_range".to_string(),
-                    ),
-                ],
-            );
-        }
     }
 }
 

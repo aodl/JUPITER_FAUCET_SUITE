@@ -118,10 +118,10 @@ Lifecycle summary:
 | Canister group | Routine upgrade args | Config-changing upgrade args | State behavior |
 | --- | --- | --- | --- |
 | Disburser/Faucet/Historian | No args | Temporary `Option<UpgradeArgs>` | Stable state preserved |
-| Relay | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Heap-only replacement; config and operational state reset; non-resumable |
+| Relay | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Config and ordinary operational heap state reset; stable reward and splitter journals preserved |
 | Frontend/Lifeline/SNS Rewards | No args | No args | No install args |
 
-Relay has no `UpgradeArgs`. Relay config-changing upgrades update and review the checked-in full `InitArgs` file at `canisters/relay/mainnet-install-args.did`. Relay upgrades are replacement-style and non-resumable. Avoid deploying Relay artifacts during active Relay work where practical. After upgrade, verify `CONFIG` logs, the `BaselineOnly` first tick, and managed canister cycle balances.
+Relay has no `UpgradeArgs`. Relay config-changing upgrades update and review the checked-in full `InitArgs` file at `canisters/relay/mainnet-install-args.did`. Relay upgrades replace config and reset ordinary operational heap state, while stable memory 0 preserves the reward journal and stable memory 1 preserves the fixed-splitter transaction journal and quarantine evidence. An active splitter journal pins its ICP Ledger identity, so an upgrade supplying another Ledger fails closed. Avoid upgrades during active work where practical. After upgrade, verify `CONFIG` logs, the `BaselineOnly` first ordinary allocation tick, stable-journal continuation where applicable, and managed canister cycle balances.
 
 ## Ordinary local icp deploy
 

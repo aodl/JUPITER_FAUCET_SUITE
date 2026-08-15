@@ -1,11 +1,7 @@
 use std::borrow::Cow;
 
 use candid::{CandidType, Deserialize, Nat, Principal};
-use ic_stable_structures::{
-    memory_manager::{MemoryId, MemoryManager, VirtualMemory},
-    storable::Bound,
-    DefaultMemoryImpl, StableCell, Storable,
-};
+use ic_stable_structures::{storable::Bound, StableCell, Storable};
 use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
 
@@ -63,20 +59,17 @@ impl Storable for VersionedRewardState {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-type Memory = VirtualMemory<DefaultMemoryImpl>;
-
 thread_local! {
-    static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
-        std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
-    static CELL: std::cell::RefCell<Option<StableCell<VersionedRewardState, Memory>>> =
+    static CELL: std::cell::RefCell<Option<StableCell<VersionedRewardState, crate::stable_memory::Memory>>> =
         const { std::cell::RefCell::new(None) };
 }
 
-fn with_cell<R>(f: impl FnOnce(&mut StableCell<VersionedRewardState, Memory>) -> R) -> R {
+fn with_cell<R>(
+    f: impl FnOnce(&mut StableCell<VersionedRewardState, crate::stable_memory::Memory>) -> R,
+) -> R {
     CELL.with(|cell| {
         if cell.borrow().is_none() {
-            let memory = MEMORY_MANAGER
-                .with(|manager| manager.borrow().get(MemoryId::new(REWARD_STATE_MEMORY_ID)));
+            let memory = crate::stable_memory::memory(REWARD_STATE_MEMORY_ID);
             *cell.borrow_mut() = Some(StableCell::init(
                 memory,
                 VersionedRewardState::Uninitialized,

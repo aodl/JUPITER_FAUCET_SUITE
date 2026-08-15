@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::path::PathBuf;
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -11,7 +13,7 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager},
     storable::Bound,
-    StableCell, Storable,
+    Memory, StableCell, Storable,
 };
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
@@ -41,6 +43,7 @@ static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_PROD_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static PRE_SPLITTER_RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_REWARDS_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -62,6 +65,103 @@ fn relay_wasm() -> Result<Vec<u8>> {
 }
 fn relay_prod_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&RELAY_PROD_WASM, "jupiter-relay", None)
+}
+
+const PRE_SPLITTER_RELAY_REVISION: &str = "4b2bf3aa0e45df5da11bd089e73d527dce661794";
+
+fn pre_splitter_relay_wasm() -> Result<Vec<u8>> {
+    if let Some(bytes) = PRE_SPLITTER_RELAY_WASM.get() {
+        return Ok(bytes.clone());
+    }
+    if let Ok(path) = std::env::var("JUPITER_RELAY_PRE_SPLITTER_WASM") {
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read JUPITER_RELAY_PRE_SPLITTER_WASM at {path}"))?;
+        let _ = PRE_SPLITTER_RELAY_WASM.set(bytes.clone());
+        return Ok(bytes);
+    }
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .context("resolve repository root")?
+        .to_path_buf();
+    let revision = Command::new("git")
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            PRE_SPLITTER_RELAY_REVISION,
+            "HEAD",
+        ])
+        .current_dir(&repo)
+        .status()
+        .context("validate pre-splitter Relay revision")?;
+    if !revision.success() {
+        bail!(
+            "historical Relay fixture revision {PRE_SPLITTER_RELAY_REVISION} is not an ancestor of HEAD"
+        );
+    }
+
+    let worktree =
+        std::env::temp_dir().join(format!("jupiter-relay-pre-splitter-{}", std::process::id()));
+    let add = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "--detach",
+            worktree
+                .to_str()
+                .context("UTF-8 historical worktree path")?,
+            PRE_SPLITTER_RELAY_REVISION,
+        ])
+        .current_dir(&repo)
+        .status()
+        .context("create pre-splitter Relay worktree")?;
+    if !add.success() {
+        bail!("failed to create pre-splitter Relay worktree");
+    }
+
+    let target_dir = std::env::temp_dir().join("jupiter-relay-pre-splitter-target");
+    let build = Command::new("cargo")
+        .args([
+            "build",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+            "--locked",
+            "-p",
+            "jupiter-relay",
+            "--features",
+            "debug_api",
+        ])
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .current_dir(&worktree)
+        .status()
+        .context("build pre-splitter Relay Wasm")?;
+    let wasm_path = target_dir.join("wasm32-unknown-unknown/release/jupiter_relay.wasm");
+    let bytes = if build.success() {
+        std::fs::read(&wasm_path)
+            .with_context(|| format!("read historical Relay Wasm at {}", wasm_path.display()))
+    } else {
+        Err(anyhow::anyhow!("pre-splitter Relay Wasm build failed"))
+    };
+    let remove = Command::new("git")
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            worktree
+                .to_str()
+                .context("UTF-8 historical worktree path")?,
+        ])
+        .current_dir(&repo)
+        .status()
+        .context("remove pre-splitter Relay worktree")?;
+    if !remove.success() {
+        bail!("failed to remove pre-splitter Relay worktree");
+    }
+    let bytes = bytes?;
+    let _ = PRE_SPLITTER_RELAY_WASM.set(bytes.clone());
+    Ok(bytes)
 }
 fn sns_rewards_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(
@@ -150,7 +250,7 @@ struct ListSnsCanistersResponse {
     extensions: Option<SnsExtensions>,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(Clone, CandidType, Deserialize, Debug, PartialEq, Eq)]
 struct RewardJournalView {
     epoch_sns_root_canister_id: Option<Principal>,
     processed_through_commitment_tx_id: Option<u64>,
@@ -196,6 +296,98 @@ struct RewardStateFixture {
 enum VersionedRewardStateFixture {
     Uninitialized,
     V1(RewardStateFixture),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum SplitterDestinationFixture {
+    DefaultAccount,
+    SubaccountOne,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct SplitterLegPlanFixture {
+    destination: SplitterDestinationFixture,
+    gross_share_e8s: u64,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    created_at_time_nanos: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct SplitterPlanFixture {
+    splitter_number: u8,
+    percentage_to_default: u8,
+    source_subaccount: [u8; 32],
+    balance_start_e8s: u64,
+    default_leg: SplitterLegPlanFixture,
+    subaccount_one_leg: SplitterLegPlanFixture,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum SplitterLegFixture {
+    DefaultAccount,
+    SubaccountOne,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum SplitterLegStatusFixture {
+    Ready,
+    WaitingForFunds { observed_balance_e8s: u64 },
+    WaitingForFeasibleFee { expected_fee_e8s: Nat },
+    Accepted { block_index: Nat },
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct SplitterLegProgressFixture {
+    status: SplitterLegStatusFixture,
+    attempt_started: bool,
+    uncertain_attempt_seen: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct ActiveSplitterJobFixture {
+    pinned_ledger_canister_id: Principal,
+    plan: SplitterPlanFixture,
+    default_leg: SplitterLegProgressFixture,
+    subaccount_one_leg: SplitterLegProgressFixture,
+    driver_revision: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct QuarantinedSplitterJobFixture {
+    job: ActiveSplitterJobFixture,
+    blocked_leg: SplitterLegFixture,
+    quarantined_at_nanos: u64,
+    reason: String,
+}
+
+#[derive(Clone, Debug, Default, CandidType, Deserialize, PartialEq, Eq)]
+struct SplitterStateFixture {
+    active_job: Option<ActiveSplitterJobFixture>,
+    quarantined_jobs: std::collections::BTreeMap<u8, QuarantinedSplitterJobFixture>,
+    next_driver_revision: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum VersionedSplitterStateFixture {
+    Uninitialized,
+    V1(SplitterStateFixture),
+}
+
+impl Storable for VersionedSplitterStateFixture {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(encode_one(self).expect("encode splitter-state fixture"))
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        encode_one(self).expect("encode splitter-state fixture")
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(bytes.as_ref()).expect("decode splitter-state fixture")
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
 }
 
 impl Storable for VersionedRewardStateFixture {
@@ -326,12 +518,14 @@ enum DebugNotifyBehavior {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum DebugNextTransferError {
+    PassThrough,
+    AcceptThenTrap,
     TemporarilyUnavailable,
     BadFee { expected_fee_e8s: u64 },
     Duplicate { duplicate_of: u64 },
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct TransferRecord {
     from: Account,
     to: Account,
@@ -549,9 +743,13 @@ impl RelayEnv {
     }
 
     fn credit_relay_subaccount_one(&self, amount_e8s: u64) -> Result<()> {
+        self.credit_relay_numbered_subaccount(1, amount_e8s)
+    }
+
+    fn credit_relay_numbered_subaccount(&self, number: u8, amount_e8s: u64) -> Result<()> {
         let relay_account = Account {
             owner: self.relay,
-            subaccount: Some(relay_subaccount_one()),
+            subaccount: Some(relay_numbered_subaccount(number)),
         };
         let _: () = update_bytes(
             &self.pic,
@@ -588,6 +786,11 @@ impl RelayEnv {
     }
 
     fn tick_relay(&self) -> Result<RelaySummary> {
+        self.trigger_relay()?;
+        self.summary()
+    }
+
+    fn trigger_relay(&self) -> Result<()> {
         let _: () = update_noargs(
             &self.pic,
             self.relay,
@@ -595,7 +798,7 @@ impl RelayEnv {
             "debug_main_tick",
         )?;
         tick_n(&self.pic, 5);
-        self.summary()
+        Ok(())
     }
 
     fn summary(&self) -> Result<RelaySummary> {
@@ -646,6 +849,10 @@ impl RelayEnv {
     }
 
     fn relay_subaccount_one_balance(&self) -> Result<u64> {
+        self.relay_numbered_subaccount_balance(1)
+    }
+
+    fn relay_numbered_subaccount_balance(&self, number: u8) -> Result<u64> {
         let balance: Nat = query_one(
             &self.pic,
             self.ledger,
@@ -653,10 +860,24 @@ impl RelayEnv {
             "icrc1_balance_of",
             Account {
                 owner: self.relay,
-                subaccount: Some(relay_subaccount_one()),
+                subaccount: Some(relay_numbered_subaccount(number)),
             },
         )?;
         Ok(nat_to_u64(&balance))
+    }
+
+    fn splitter_transfers(&self, number: u8) -> Result<Vec<TransferRecord>> {
+        Ok(self
+            .transfers()?
+            .into_iter()
+            .filter(|transfer| {
+                transfer.from
+                    == (Account {
+                        owner: self.relay,
+                        subaccount: Some(relay_numbered_subaccount(number)),
+                    })
+            })
+            .collect())
     }
 
     fn notifications(&self) -> Result<Vec<NotifyRecord>> {
@@ -805,10 +1026,312 @@ fn neuron_subaccount(neuron_id: u64) -> [u8; 32] {
     account
 }
 
-fn relay_subaccount_one() -> [u8; 32] {
+fn relay_numbered_subaccount(number: u8) -> [u8; 32] {
     let mut subaccount = [0u8; 32];
-    subaccount[31] = 1;
+    subaccount[31] = number;
     subaccount
+}
+
+fn relay_subaccount_one() -> [u8; 32] {
+    relay_numbered_subaccount(1)
+}
+
+fn assert_splitter_transfer_pair(
+    env: &RelayEnv,
+    splitter_number: u8,
+    starting_balance_e8s: u64,
+    fee_e8s: u64,
+) -> Result<Vec<TransferRecord>> {
+    let transfers = env.splitter_transfers(splitter_number)?;
+    if transfers.len() != 2 {
+        bail!("expected exactly two transfers from splitter {splitter_number}, got {transfers:?}");
+    }
+    assert_splitter_transfer_pair_records(
+        env.relay,
+        splitter_number,
+        starting_balance_e8s,
+        fee_e8s,
+        &transfers,
+    )?;
+    Ok(transfers)
+}
+
+fn assert_splitter_transfer_pair_records(
+    relay: Principal,
+    splitter_number: u8,
+    starting_balance_e8s: u64,
+    fee_e8s: u64,
+    transfers: &[TransferRecord],
+) -> Result<()> {
+    if transfers.len() != 2 {
+        bail!("expected one splitter transfer pair, got {transfers:?}");
+    }
+    let default_gross =
+        u64::try_from(u128::from(starting_balance_e8s) * u128::from(splitter_number) / 100)?;
+    let subaccount_one_gross = starting_balance_e8s - default_gross;
+    if transfers[0].to
+        != (Account {
+            owner: relay,
+            subaccount: None,
+        })
+        || transfers[1].to
+            != (Account {
+                owner: relay,
+                subaccount: Some(relay_subaccount_one()),
+            })
+        || nat_to_u64(&transfers[0].amount) + fee_e8s != default_gross
+        || nat_to_u64(&transfers[1].amount) + fee_e8s != subaccount_one_gross
+        || nat_to_u64(&transfers[0].fee) != fee_e8s
+        || nat_to_u64(&transfers[1].fee) != fee_e8s
+    {
+        bail!("unexpected splitter {splitter_number} transfer pair: {transfers:?}");
+    }
+    if nat_to_u64(&transfers[0].amount)
+        + nat_to_u64(&transfers[0].fee)
+        + nat_to_u64(&transfers[1].amount)
+        + nat_to_u64(&transfers[1].fee)
+        != starting_balance_e8s
+    {
+        bail!("splitter {splitter_number} did not conserve its pinned balance");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn fixed_splitters_10_50_90_route_exact_gross_shares_and_drain_source() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(Some(1))?;
+    let starting_balance = 250_000_007;
+    for splitter_number in [10, 50, 90] {
+        env.credit_relay_numbered_subaccount(splitter_number, starting_balance)?;
+        env.trigger_relay()?;
+        assert_splitter_transfer_pair(&env, splitter_number, starting_balance, 10_000)?;
+        if env.relay_numbered_subaccount_balance(splitter_number)? != 0 {
+            bail!("splitter {splitter_number} did not drain its pinned starting balance");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_accumulates_below_threshold_and_splits_full_balance_after_crossing() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.credit_relay_numbered_subaccount(30, 100_009_999)?;
+    env.trigger_relay()?;
+    if !env.splitter_transfers(30)?.is_empty()
+        || env.relay_numbered_subaccount_balance(30)? != 100_009_999
+    {
+        bail!("splitter 30 should remain untouched below the ordinary threshold");
+    }
+
+    env.credit_relay_numbered_subaccount(30, 1)?;
+    env.trigger_relay()?;
+    assert_splitter_transfer_pair(&env, 30, 100_010_000, 10_000)?;
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_chains_into_existing_subaccount_one_commitment_in_same_tick() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.credit_relay_numbered_subaccount(10, 200_000_000)?;
+    env.trigger_relay()?;
+
+    let transfers = env.transfers()?;
+    if transfers.len() < 3 {
+        bail!("expected splitter pair followed by Faucet commitment, got {transfers:?}");
+    }
+    if transfers[0].from.subaccount != Some(relay_numbered_subaccount(10))
+        || transfers[0].to.subaccount.is_some()
+        || transfers[1].from.subaccount != Some(relay_numbered_subaccount(10))
+        || transfers[1].to.subaccount != Some(relay_subaccount_one())
+        || transfers[2].from.subaccount != Some(relay_subaccount_one())
+        || transfers[2].to.owner != env.governance
+    {
+        bail!("unexpected same-tick splitter/Faucet ordering: {transfers:?}");
+    }
+    let expected_memo = format!("{}.Relay", env.relay.to_text().replace('-', "")).into_bytes();
+    if transfers[2].memo.as_deref() != Some(expected_memo.as_slice()) {
+        bail!("same-tick third transfer did not use the existing Faucet commitment memo");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_default_branch_is_available_to_allocation_in_same_tick() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    let baseline = env.tick_relay()?;
+    if baseline.mode != RelayMode::BaselineOnly {
+        bail!("expected allocation baseline before splitter funding, got {baseline:?}");
+    }
+
+    env.set_managed_cycles(9_000_000_000_000)?;
+    env.credit_relay_numbered_subaccount(90, 500_000_000)?;
+    let summary = env.tick_relay()?;
+    assert_splitter_transfer_pair(&env, 90, 500_000_000, 10_000)?;
+    let transfers = env.transfers()?;
+    let allocation_position = transfers.iter().position(|transfer| {
+        transfer.from
+            == (Account {
+                owner: env.relay,
+                subaccount: None,
+            })
+    });
+    if allocation_position.is_none_or(|position| position < 2)
+        || summary.ledger_transfer_count == 0
+        || summary.cmc_notify_success_count == 0
+    {
+        bail!("expected same-tick default-account allocation after splitter pair: summary={summary:?} transfers={transfers:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_lost_response_retries_exact_identity_without_duplicate_spend() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    env.advance_time_and_tick(5 * 60, 5);
+    let starting_balance = 500_000_007;
+    env.credit_relay_numbered_subaccount(50, starting_balance)?;
+    env.set_ledger_error_script(vec![DebugNextTransferError::AcceptThenTrap])?;
+    env.trigger_relay()?;
+    let first = env.splitter_transfers(50)?;
+    if first.len() != 1 || env.transfers()?.len() != 1 {
+        bail!("expected one accepted transfer with a lost response, got {first:?}");
+    }
+    env.advance_time_and_tick(3_601, 30);
+    let completed = assert_splitter_transfer_pair(&env, 50, starting_balance, 10_000)?;
+    if completed[0] != first[0] || env.relay_numbered_subaccount_balance(50)? != 0 {
+        bail!("lost-response retry changed the accepted first transfer or re-split residual funds");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_journal_survives_upgrade_and_second_leg_bad_fee_preserves_gross_budget() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    let starting_balance = 500_000_007;
+    env.credit_relay_numbered_subaccount(30, starting_balance)?;
+    env.abort_after_successful_transfer()?;
+    let _: () = update_noargs(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
+    if env.splitter_transfers(30)?.len() != 1 || env.transfers()?.len() != 1 {
+        bail!("expected debug interruption after the accepted first splitter leg");
+    }
+    if !matches!(
+        read_splitter_state_fixture(&env.pic, env.relay),
+        VersionedSplitterStateFixture::V1(SplitterStateFixture {
+            active_job: Some(_),
+            ..
+        })
+    ) {
+        bail!("expected the interrupted splitter job to remain active in memory 1");
+    }
+
+    let mismatched_ledger_args = RelayInitArg {
+        ledger_canister_id: Some(Principal::from_slice(&[0x7d, 0x01])),
+        ..env.default_init_arg()
+    };
+    let mismatch = env.pic.upgrade_canister(
+        env.relay,
+        relay_wasm()?,
+        encode_one(mismatched_ledger_args)?,
+        Some(Principal::anonymous()),
+    );
+    if mismatch.is_ok() {
+        bail!("an active splitter journal must reject an upgrade that changes the pinned ledger");
+    }
+    env.pic.advance_time(Duration::from_secs(2));
+    env.upgrade_relay_with_init_args(env.default_init_arg())?;
+    env.trigger_relay()?;
+    assert_splitter_transfer_pair(&env, 30, starting_balance, 10_000)?;
+
+    let env = RelayEnv::new(None)?;
+    env.credit_relay_numbered_subaccount(30, starting_balance)?;
+    env.set_ledger_error_script(vec![
+        DebugNextTransferError::PassThrough,
+        DebugNextTransferError::BadFee {
+            expected_fee_e8s: 20_000,
+        },
+    ])?;
+    env.trigger_relay()?;
+    if env.splitter_transfers(30)?.len() != 1 {
+        bail!("expected first leg accepted before second-leg BadFee");
+    }
+    env.set_ledger_fee(20_000)?;
+    env.trigger_relay()?;
+    let transfers = env.splitter_transfers(30)?;
+    if transfers.len() != 2 {
+        bail!("expected safely re-pinned second leg, got {transfers:?}");
+    }
+    let original_second_gross =
+        starting_balance - u64::try_from(u128::from(starting_balance) * 30_u128 / 100)?;
+    if nat_to_u64(&transfers[1].amount) + nat_to_u64(&transfers[1].fee) != original_second_gross
+        || nat_to_u64(&transfers[1].fee) != 20_000
+        || env.relay_numbered_subaccount_balance(30)? != 0
+    {
+        bail!("second-leg fee replacement changed the original gross budget: {transfers:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn deposit_arriving_between_splitter_legs_remains_for_an_independent_later_split() -> Result<()> {
+    require_ignored_flag()?;
+    let env = RelayEnv::new(None)?;
+    let original_balance = 500_000_007;
+    let later_deposit = 300_000_019;
+    env.credit_relay_numbered_subaccount(30, original_balance)?;
+    env.abort_after_successful_transfer()?;
+    env.trigger_relay()?;
+    let first_leg = env.splitter_transfers(30)?;
+    if first_leg.len() != 1 {
+        bail!("expected the original split to pause after its first accepted leg: {first_leg:?}");
+    }
+
+    env.credit_relay_numbered_subaccount(30, later_deposit)?;
+    env.trigger_relay()?;
+    let original_pair = env.splitter_transfers(30)?;
+    assert_splitter_transfer_pair_records(env.relay, 30, original_balance, 10_000, &original_pair)?;
+    if original_pair[0] != first_leg[0]
+        || env.relay_numbered_subaccount_balance(30)? != later_deposit
+    {
+        bail!(
+            "the pinned split absorbed a later deposit or changed its first leg: {original_pair:?}"
+        );
+    }
+
+    env.trigger_relay()?;
+    let all_transfers = env.splitter_transfers(30)?;
+    if all_transfers.len() != 4 {
+        bail!("expected two independent splitter operations, got {all_transfers:?}");
+    }
+    assert_splitter_transfer_pair_records(
+        env.relay,
+        30,
+        later_deposit,
+        10_000,
+        &all_transfers[2..],
+    )?;
+    if env.relay_numbered_subaccount_balance(30)? != 0 {
+        bail!("the independently planned later deposit was not drained");
+    }
+    Ok(())
 }
 
 #[test]
@@ -2176,6 +2699,26 @@ fn write_reward_state_fixture(pic: &PocketIc, relay: Principal, state: RewardSta
     );
 }
 
+fn relay_virtual_memory_sizes(pic: &PocketIc, relay: Principal) -> (u64, u64) {
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(relay)));
+    let manager = MemoryManager::init(stable_memory);
+    (
+        manager.get(MemoryId::new(0)).size(),
+        manager.get(MemoryId::new(1)).size(),
+    )
+}
+
+fn read_splitter_state_fixture(pic: &PocketIc, relay: Principal) -> VersionedSplitterStateFixture {
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(relay)));
+    let manager = MemoryManager::init(stable_memory);
+    StableCell::<VersionedSplitterStateFixture, _>::init(
+        manager.get(MemoryId::new(1)),
+        VersionedSplitterStateFixture::Uninitialized,
+    )
+    .get()
+    .clone()
+}
+
 fn wait_for_real_index_transactions(
     pic: &PocketIc,
     index: Principal,
@@ -2206,7 +2749,7 @@ fn wait_for_real_index_transactions(
 
 #[test]
 #[ignore]
-fn relay_carries_concurrent_real_icp_credit_and_recovers_masked_reward_ambiguity() -> Result<()> {
+fn pre_splitter_upgrade_preserves_reward_journal_and_concurrent_real_icp_credit() -> Result<()> {
     require_ignored_flag()?;
     let pic = support::ledger::build_pic_with_real_icp();
     let icp_ledger = support::principals::icp_ledger();
@@ -2292,7 +2835,12 @@ fn relay_carries_concurrent_real_icp_credit_and_recovers_masked_reward_ambiguity
         surplus_canister_recipients: None,
         surplus_neuron_recipients: vec![],
     };
-    pic.install_canister(relay, relay_wasm()?, encode_one(relay_init.clone())?, None);
+    pic.install_canister(
+        relay,
+        pre_splitter_relay_wasm()?,
+        encode_one(relay_init.clone())?,
+        None,
+    );
 
     for owner in [owner_a, owner_b] {
         real_icp_transfer(
@@ -2345,6 +2893,9 @@ fn relay_carries_concurrent_real_icp_credit_and_recovers_masked_reward_ambiguity
         None,
     );
     let _: () = update_noargs(&pic, sns_rewards, Principal::anonymous(), "debug_scan_tick")?;
+    // Let the pre-splitter startup tick release MainGuard before invoking the guard-sharing debug
+    // reward sweep.
+    tick_n(&pic, 30);
     let reward_fee = 1_000_u64;
     let first_pot = 1_000_000_u64;
     let _: () = update_one(
@@ -2429,6 +2980,78 @@ fn relay_carries_concurrent_real_icp_credit_and_recovers_masked_reward_ambiguity
         "debug_credit",
         encode_args((reward_relay_account, second_pot))?,
     )?;
+    let _: () = update_one(
+        &pic,
+        reward_ledger,
+        Principal::anonymous(),
+        "debug_set_error_script",
+        vec![
+            DebugNextTransferError::AcceptThenTrap,
+            DebugNextTransferError::TemporarilyUnavailable,
+        ],
+    )?;
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_reward_sweep")?;
+    let old_pending_journal: RewardJournalView = query_one(
+        &pic,
+        relay,
+        Principal::anonymous(),
+        "debug_reward_state",
+        (),
+    )?;
+    let old_pending = old_pending_journal
+        .pending_transfer
+        .as_ref()
+        .context("pre-splitter Relay did not persist the uncertain reward transfer")?;
+    if old_pending_journal.epoch_sns_root_canister_id != Some(root)
+        || old_pending_journal.processed_through_commitment_tx_id != Some(first_commitment_tx)
+        || old_pending_journal.carried_credit_start_tx_id != Some(incoming_b_tx)
+        || old_pending.through_commitment_tx_id != second_commitment_tx
+        || !old_pending.attempt_started
+        || !old_pending.uncertain_attempt_seen
+        || old_pending.status != RewardPendingTransferStatusFixture::Ambiguous
+    {
+        bail!("old Relay did not journal the expected pending reward identity: {old_pending_journal:?}");
+    }
+    let old_memory_sizes = relay_virtual_memory_sizes(&pic, relay);
+    if old_memory_sizes.0 == 0 || old_memory_sizes.1 != 0 {
+        bail!("pre-splitter stable layout was not isolated to memory 0: {old_memory_sizes:?}");
+    }
+
+    pic.advance_time(Duration::from_secs(5 * 60));
+    tick_n(&pic, 5);
+    pic.upgrade_canister(
+        relay,
+        relay_wasm()?,
+        encode_one(relay_init.clone())?,
+        Some(Principal::anonymous()),
+    )
+    .map_err(|err| anyhow::anyhow!("pre-splitter Relay upgrade failed: {err:?}"))?;
+    let upgraded_pending_journal: RewardJournalView = query_one(
+        &pic,
+        relay,
+        Principal::anonymous(),
+        "debug_reward_state",
+        (),
+    )?;
+    if upgraded_pending_journal != old_pending_journal {
+        bail!(
+            "memory-0 reward journal changed across the pre-splitter upgrade: old={old_pending_journal:?} new={upgraded_pending_journal:?}"
+        );
+    }
+    let upgraded_memory_sizes = relay_virtual_memory_sizes(&pic, relay);
+    if upgraded_memory_sizes.0 != old_memory_sizes.0 || upgraded_memory_sizes.1 == 0 {
+        bail!(
+            "candidate did not preserve memory 0 and initialize memory 1: old={old_memory_sizes:?} new={upgraded_memory_sizes:?}"
+        );
+    }
+    if read_splitter_state_fixture(&pic, relay)
+        != VersionedSplitterStateFixture::V1(SplitterStateFixture::default())
+    {
+        bail!("candidate did not initialize memory 1 as an empty V1 splitter journal");
+    }
+
+    // The candidate retries the exact old reward identity and resolves the accepted transfer as a
+    // Duplicate before any splitter work is exercised.
     let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_reward_sweep")?;
     assert_eq!(
         support::ledger::icrc1_balance(
@@ -2462,8 +3085,63 @@ fn relay_carries_concurrent_real_icp_credit_and_recovers_masked_reward_ambiguity
     )?;
     if second_journal.processed_through_commitment_tx_id != Some(second_commitment_tx)
         || second_journal.carried_credit_start_tx_id.is_some()
+        || second_journal.pending_transfer.is_some()
     {
         bail!("second reward boundary did not consume and clear B's carry: {second_journal:?}");
+    }
+
+    real_icp_transfer(
+        &pic,
+        icp_ledger,
+        Principal::anonymous(),
+        Account {
+            owner: relay,
+            subaccount: Some(relay_numbered_subaccount(50)),
+        },
+        200_000_000,
+    )?;
+    let _: () = update_noargs(&pic, relay, Principal::anonymous(), "debug_main_tick")?;
+    if support::ledger::icrc1_balance(
+        &pic,
+        icp_ledger,
+        &Account {
+            owner: relay,
+            subaccount: Some(relay_numbered_subaccount(50)),
+        },
+    )? != 0
+    {
+        bail!("splitter memory initialized on upgrade but could not execute a split");
+    }
+
+    pic.advance_time(Duration::from_secs(5 * 60));
+    tick_n(&pic, 5);
+    pic.upgrade_canister(
+        relay,
+        relay_wasm()?,
+        encode_one(relay_init.clone())?,
+        Some(Principal::anonymous()),
+    )
+    .map_err(|err| anyhow::anyhow!("candidate Relay follow-up upgrade failed: {err:?}"))?;
+    let after_candidate_upgrade: RewardJournalView = query_one(
+        &pic,
+        relay,
+        Principal::anonymous(),
+        "debug_reward_state",
+        (),
+    )?;
+    let splitter_after_candidate_upgrade = read_splitter_state_fixture(&pic, relay);
+    if after_candidate_upgrade != second_journal
+        || relay_virtual_memory_sizes(&pic, relay).1 != upgraded_memory_sizes.1
+        || !matches!(
+            splitter_after_candidate_upgrade,
+            VersionedSplitterStateFixture::V1(SplitterStateFixture {
+                active_job: None,
+                next_driver_revision,
+                ref quarantined_jobs,
+            }) if next_driver_revision > 0 && quarantined_jobs.is_empty()
+        )
+    {
+        bail!("candidate upgrade did not preserve reward and splitter journals");
     }
 
     let transfers: Vec<TransferRecord> = query_one(

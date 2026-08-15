@@ -45,6 +45,8 @@ type LegacyTransferRecord = record {
 };
 
 type DebugNextTransferError = variant {
+  PassThrough;
+  AcceptThenTrap;
   TemporarilyUnavailable;
   TooOld;
   CreatedInFuture : record { ledger_time : nat64 };
@@ -59,6 +61,7 @@ service : {
   icrc1_transfer : (TransferArg) -> (variant { Ok : nat; Err : TransferError });
 
   debug_reset : () -> ();
+  debug_noop : () -> ();
   debug_set_fee : (nat64) -> ();
   debug_set_fee_query_failure : (bool) -> ();
   debug_set_next_error : (opt DebugNextTransferError) -> ();

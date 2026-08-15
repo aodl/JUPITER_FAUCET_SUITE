@@ -31,6 +31,8 @@ struct DedupKey {
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
 pub enum DebugNextTransferError {
+    PassThrough,
+    AcceptThenTrap,
     TemporarilyUnavailable,
     TooOld,
     CreatedInFuture { ledger_time: u64 },
@@ -177,27 +179,35 @@ fn account_balance(args: BinaryAccountBalanceArgs) -> Tokens {
 }
 
 #[ic_cdk::update]
-fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
+async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
     // Inject scripted error if set, otherwise a one-shot next error.
-    if let Some(err) = ST.with(|s| {
+    let scripted = ST.with(|s| {
         let mut st = s.borrow_mut();
         st.next_error_script
             .pop_front()
             .or_else(|| st.next_error.take())
-    }) {
-        return Err(match err {
-            DebugNextTransferError::TemporarilyUnavailable => TransferError::TemporarilyUnavailable,
-            DebugNextTransferError::TooOld => TransferError::TooOld,
-            DebugNextTransferError::CreatedInFuture { ledger_time } => {
-                TransferError::CreatedInFuture { ledger_time }
+    });
+    let accept_then_trap = matches!(scripted, Some(DebugNextTransferError::AcceptThenTrap));
+    if let Some(err) = scripted {
+        let error = match err {
+            DebugNextTransferError::PassThrough | DebugNextTransferError::AcceptThenTrap => None,
+            DebugNextTransferError::TemporarilyUnavailable => {
+                Some(TransferError::TemporarilyUnavailable)
             }
-            DebugNextTransferError::BadFee { expected_fee_e8s } => TransferError::BadFee {
+            DebugNextTransferError::TooOld => Some(TransferError::TooOld),
+            DebugNextTransferError::CreatedInFuture { ledger_time } => {
+                Some(TransferError::CreatedInFuture { ledger_time })
+            }
+            DebugNextTransferError::BadFee { expected_fee_e8s } => Some(TransferError::BadFee {
                 expected_fee: Nat::from(expected_fee_e8s),
-            },
-            DebugNextTransferError::Duplicate { duplicate_of } => TransferError::Duplicate {
+            }),
+            DebugNextTransferError::Duplicate { duplicate_of } => Some(TransferError::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
-            },
-        });
+            }),
+        };
+        if let Some(error) = error {
+            return Err(error);
+        }
     }
 
     // ic-cdk 0.19: caller() deprecated
@@ -228,8 +238,8 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
 
     let created_at = arg.created_at_time.unwrap_or(0);
 
-    // Dedup only when both memo and created_at_time exist and are meaningful
-    if !memo_bytes.is_empty() && created_at != 0 {
+    // ICRC transfer identity includes an absent/empty memo. A meaningful timestamp is enough.
+    if created_at != 0 {
         let dkey = DedupKey {
             from: key(&from),
             to: key(&arg.to),
@@ -273,7 +283,7 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
         let block = st.next_block;
 
         // store dedup
-        if !memo_bytes.is_empty() && created_at != 0 {
+        if created_at != 0 {
             let dkey = DedupKey {
                 from: from_key.clone(),
                 to: to_key.clone(),
@@ -298,8 +308,20 @@ fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
         block
     });
 
+    if accept_then_trap {
+        // Yield after committing the accepted transfer, then trap so the caller observes
+        // transport uncertainty. This models a lost response without rolling back the ledger.
+        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "debug_noop")
+            .with_arg(&())
+            .await;
+        ic_cdk::trap("debug accepted transfer with lost response");
+    }
+
     Ok(Nat::from(block))
 }
+
+#[ic_cdk::update]
+fn debug_noop() {}
 
 #[ic_cdk::update]
 fn transfer(arg: LegacyTransferArg) -> Result<u64, LegacyTransferError> {

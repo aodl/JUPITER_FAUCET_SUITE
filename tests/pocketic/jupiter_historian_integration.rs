@@ -13,7 +13,7 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
-    GetAccountIdentifierTransactionsResult,
+    GetAccountIdentifierTransactionsResult, IndexOperation,
 };
 use pocket_ic::PocketIc;
 use serde::Serialize;
@@ -1417,6 +1417,76 @@ fn assert_spawned_relay_faucet_identity(
     Ok(())
 }
 
+fn assert_spawned_relay_fixed_splitter(
+    pic: &PocketIc,
+    ledger: Principal,
+    index: Principal,
+    relay: Principal,
+) -> Result<()> {
+    let fee = icrc1_fee(pic, ledger)?;
+    let starting_balance = 100_010_000_u64;
+    let mut splitter_subaccount = [0u8; 32];
+    splitter_subaccount[31] = 90;
+    let source = Account {
+        owner: relay,
+        subaccount: Some(splitter_subaccount),
+    };
+    icrc1_transfer(
+        pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: source,
+            fee: Some(Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(starting_balance),
+        },
+    )?;
+    pic.advance_time(Duration::from_secs(3_601));
+    tick_n(pic, 30);
+
+    let source_identifier = account_identifier_text(relay, Some(splitter_subaccount));
+    let page = wait_for_index_transactions(pic, index, &source_identifier, 3)?;
+    let default_identifier = account_identifier_text(relay, None);
+    let mut subaccount_one = [0u8; 32];
+    subaccount_one[31] = 1;
+    let subaccount_one_identifier = account_identifier_text(relay, Some(subaccount_one));
+    let outgoing = page
+        .transactions
+        .iter()
+        .filter_map(|entry| match &entry.transaction.operation {
+            IndexOperation::Transfer {
+                from,
+                to,
+                amount,
+                fee,
+                ..
+            } if from == &source_identifier => Some((entry.id, to, amount.e8s(), fee.e8s())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outgoing.len(),
+        2,
+        "embedded Relay splitter records: {outgoing:?}"
+    );
+    let default_gross = u64::try_from(u128::from(starting_balance) * 90 / 100)?;
+    assert!(outgoing.iter().any(|(_, to, amount, transfer_fee)| {
+        to.as_str() == default_identifier.as_str()
+            && *amount + *transfer_fee == default_gross
+            && *transfer_fee == fee
+    }));
+    assert!(outgoing.iter().any(|(_, to, amount, transfer_fee)| {
+        to.as_str() == subaccount_one_identifier.as_str()
+            && *amount + *transfer_fee == starting_balance - default_gross
+            && *transfer_fee == fee
+    }));
+    assert_eq!(support::ledger::icrc1_balance(pic, ledger, &source)?, 0);
+    Ok(())
+}
+
 fn prepare_pre_cutover_fixture(
     base_wasm: &[u8],
     invalid_registry: bool,
@@ -1981,6 +2051,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
             .map_err(|error| anyhow!("relay status failed: {error:?}"))?;
         assert!(status.module_hash.is_some());
     }
+    assert_spawned_relay_fixed_splitter(&pic, ledger, index, singleton_relay)?;
 
     let reversed: RelaySetupViewResult = query_one(
         &pic,
