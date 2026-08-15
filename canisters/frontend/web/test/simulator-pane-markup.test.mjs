@@ -1123,8 +1123,9 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(mainJs, /cyclesStatus\.kind !== 'error'/);
   assert.match(mainJs, /cyclesStatus\.kind !== 'notAvailable'/);
   assert.match(mainJs, /Estimated observed cycles burned\/day/);
-  assert.match(mainJs, /observed CMC top-ups when a cached ICP\/XDR rate is available/);
-  assert.match(mainJs, /falls back to downward balance changes/);
+  assert.match(mainJs, /data-tooltip-id="tracker-burn-estimate-help"/);
+  assert.match(mainJs, /Observation window:/);
+  assert.doesNotMatch(mainJs, /Estimated observed cycles burn is calculated from loaded/);
   assert.match(mainJs, /renderCyclesProbeInfoNote/);
   assert.match(mainJs, /using canister log cycles/);
   assert.match(mainJs, /const estimatedObservedCyclesBurnedPerDay = estimateCyclesBurnedPerDay\(classifiedData\);/);
@@ -1135,6 +1136,22 @@ test('canister tracker displays cycles as T cycles and estimates burn per day', 
   assert.match(trackerControllerJs, /const TRACKER_REGISTRATION_URL = '#how-it-works';/);
   assert.match(trackerControllerJs, /href="\$\{TRACKER_REGISTRATION_URL\}" data-panel="how-it-works">How it works guide<\/a>/);
   assert.match(metricsCss, /\.tracker-log-details\s*\{/);
+});
+
+test('burn estimate help describes the approximation and CMC conversion assumptions', () => {
+  assert.match(bootstrapJs, /'tracker-burn-estimate-help'/);
+  assert.match(bootstrapJs, /Estimated, not a live burn-rate reading/);
+  assert.match(bootstrapJs, /averages balance-derived cycle consumption across the observation window/);
+  assert.match(bootstrapJs, /top-ups from masking consumption/);
+  assert.match(bootstrapJs, /estimated minted cycles and added back/);
+  assert.match(bootstrapJs, /does not track historical ICP\/XDR rates for this estimate/);
+  assert.match(bootstrapJs, /Historian's latest cached rate/);
+  assert.match(bootstrapJs, /rates during the window were reasonably close/);
+  assert.match(bootstrapJs, /each observed CMC deposit successfully minted cycles/);
+  assert.match(bootstrapJs, /falls back to observed downward balance changes/);
+  assert.match(trackerControllerJs, /Distinct ICP-ledger transfers to the canister's CMC deposit account/);
+  assert.match(metricsCss, /\.tracker-burn-estimate-value \{[\s\S]*flex-direction: column;[\s\S]*align-items: flex-start;/);
+  assert.match(metricsCss, /\.tracker-burn-observation \{[\s\S]*font-size: 11px;[\s\S]*opacity: 0\.68;/);
 });
 
 test('simulator prepopulates commitment from calculated break-even minimum', () => {

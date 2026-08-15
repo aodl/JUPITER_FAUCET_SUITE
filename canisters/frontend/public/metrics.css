@@ -984,6 +984,34 @@
   margin: 0 0 14px;
 }
 
+.tracker-burn-estimate-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.tracker-burn-estimate-label > span {
+  min-width: 0;
+}
+
+.tracker-burn-estimate-label .pane-inline-tooltip-icon {
+  flex: 0 0 auto;
+}
+
+.tracker-burn-estimate-value {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.tracker-burn-observation {
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.68;
+}
+
 .relay-setup-principal-fieldset {
   display: grid;
   min-width: 0;
