@@ -513,7 +513,9 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /forever increasing the rate of future\s*maturity-minted ICP back into the relay/);
   assert.match(howItWorks, /remaining surplus ICP\s*into the IO neuron's\s*staking account \(described below\)/);
   assert.match(howItWorks, /<strong>Example:<\/strong>[\s\S]*This flow depends on raw ICP top-ups[\s\S]*Anyone can deploy their own relay canister/);
-  assert.match(howItWorks, /choosing one to five immutable surplus recipient principals/);
+  assert.match(howItWorks, /choosing one to five immutable typed surplus recipients/);
+  assert.match(howItWorks, /Each recipient may be a Principal/);
+  assert.match(howItWorks, /public NNS neuron ID/);
   assert.match(howItWorks, /No IO recipient\s*is added automatically to a self-service Relay/);
   assert.doesNotMatch(howItWorks, /surplus ICP will automatically be routed to the IO neuron/);
   assert.match(howItWorks, /href="\/#relay-setup"[^>]*data-panel="relay-setup"[^>]*>Relay Setup<\/a>/);
@@ -871,12 +873,15 @@ test('Relay Setup uses accessible repeatable target and recipient fields', () =>
   assert.match(relaySetup, /id="relay-setup-target-count-hint"[^>]*>1 target canister<\/span>/);
   assert.match(relaySetup, /<legend class="tracker-label">Surplus recipients<\/legend>/);
   assert.match(relaySetup, /data-relay-recipient-input="true"/);
+  assert.match(relaySetup, /data-relay-recipient-type="true"/);
+  assert.match(relaySetup, /<option value="Principal" selected>Principal<\/option>/);
+  assert.match(relaySetup, /<option value="Neuron">Neuron ID<\/option>/);
   assert.match(relaySetup, /id="relay-setup-add-recipient"[^>]*>Add another recipient<\/button>/);
   assert.match(relaySetup, /data-relay-recipient-remove="true"[^>]*hidden>Remove<\/button>/);
-  assert.match(relaySetup, /id="relay-setup-recipient-count-hint"[^>]*>1 recipient principal<\/span>/);
+  assert.match(relaySetup, /id="relay-setup-recipient-count-hint"[^>]*>1 surplus recipient<\/span>/);
   assert.match(relaySetup, /id="relay-setup-submit"[^>]*disabled[^>]*>Check Relay configuration<\/button>/);
   assert.match(relaySetup, /id="relay-setup-warning"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(relaySetup, /Targets and recipients together determine the setup address/);
+  assert.match(relaySetup, /Targets and typed recipients together determine the setup address/);
   assert.match(relaySetup, /incorrectly selected Relay configuration are not automatically refundable/);
   assert.match(relaySetup, /id="relay-setup-recipient-count"/);
   assert.match(relaySetup, /id="relay-setup-canonical-recipients"/);

@@ -619,7 +619,7 @@
                 section. This ensures Jupiter Faucet perpetually transfers raw ICP rather than
                 directly topping up the relay canister with cycles. The relay canister then uses
                 that raw ICP to keep itself topped up along with configured canisters. Surplus ICP
-                (if any) can then be routed to configured principals' default ICP accounts. The
+                (if any) can then be routed to configured principals' default ICP accounts or public NNS neuron staking accounts. The
                 Jupiter Faucet protocol's own relay canister routes 50% of any surplus ICP back into
                 the Jupiter Faucet neuron itself (forever increasing the rate of future
                 maturity-minted ICP back into the relay). The relay routes remaining surplus ICP
@@ -633,7 +633,7 @@
                 <li>
                   The easiest path to deploying a relay canister is to use the
                   <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
-                  tool, choosing one to five immutable surplus recipient principals. No IO recipient
+                  tool, choosing one to five immutable typed surplus recipients. Each recipient may be a Principal (paid at its default ICP account) or a public NNS neuron ID (paid at its Governance staking account); Relay requests claim/refresh after a successful neuron transfer. No IO recipient
                   is added automatically to a self-service Relay.
                 </li>
                 <li>
@@ -1031,11 +1031,15 @@
               </fieldset>
               <fieldset class="relay-setup-principal-fieldset">
                 <legend class="tracker-label">Surplus recipients</legend>
-                <p class="relay-setup-principal-hint" id="relay-setup-recipient-hint">Enter one principal per field. Recipients are immutable, receive equal shares at their default ICP accounts, and may be users or canisters.</p>
+                <p class="relay-setup-principal-hint" id="relay-setup-recipient-hint">Choose Principal for a user's or canister's default ICP account, or Neuron ID for a public NNS neuron's staking account. Recipients are immutable.</p>
                 <div class="relay-setup-principal-list" id="relay-setup-recipient-list">
                   <div class="relay-setup-principal-row" data-relay-recipient-row="true">
                     <label class="relay-setup-principal-label" for="relay-setup-recipient-1" data-relay-recipient-label="true">Recipient principal 1</label>
                     <div class="relay-setup-principal-controls">
+                      <select class="tracker-input relay-setup-recipient-type" aria-label="Surplus recipient 1 type" data-relay-recipient-type="true">
+                        <option value="Principal" selected>Principal</option>
+                        <option value="Neuron">Neuron ID</option>
+                      </select>
                       <input class="tracker-input mono relay-setup-principal-input" id="relay-setup-recipient-1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Principal" aria-describedby="relay-setup-recipient-hint relay-setup-recipient-error-1" data-relay-recipient-input="true" />
                       <button class="pane-page-button relay-setup-remove-principal" type="button" aria-label="Remove recipient principal 1" data-relay-recipient-remove="true" hidden>Remove</button>
                     </div>
@@ -1044,13 +1048,13 @@
                 </div>
                 <div class="relay-setup-principal-actions">
                   <button class="pane-page-button relay-setup-add-principal" id="relay-setup-add-recipient" type="button">Add another recipient</button>
-                  <span class="relay-setup-principal-count" id="relay-setup-recipient-count-hint">1 recipient principal</span>
+                  <span class="relay-setup-principal-count" id="relay-setup-recipient-count-hint">1 surplus recipient</span>
                   <button class="pane-page-button relay-setup-submit" id="relay-setup-submit" type="submit" disabled>Check Relay configuration</button>
                 </div>
                 <p class="relay-setup-principal-announcement" id="relay-setup-recipient-announcement" role="status" aria-live="polite"></p>
               </fieldset>
             </form>
-            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets and recipients together determine the setup address; changing either creates a different address and independent Relay. Surplus is divided equally between recipients at their default ICP accounts, but Relay top-ups and safety requirements take priority. Each recipient's net share must reach at least 1 ICP. No IO recipient is added automatically.</p>
+            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets and typed recipients together determine the setup address; changing a type or value creates a different address and independent Relay. A Principal receives surplus at its default ICP account. A Neuron ID must be publicly readable so Relay can resolve its NNS Governance staking account, and Relay requests claim/refresh after a successful neuron transfer. Surplus is divided equally, but Relay top-ups and safety requirements take priority; each recipient's net share must reach at least 1 ICP. No IO recipient is added automatically.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error"><strong>Check carefully before paying:</strong> deposits sent for an incorrectly selected Relay configuration are not automatically refundable.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error" id="relay-setup-warning" role="status" aria-live="polite" hidden></p>
             <div class="tracker-result" id="relay-setup-result">

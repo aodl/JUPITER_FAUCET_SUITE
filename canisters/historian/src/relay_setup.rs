@@ -20,6 +20,7 @@ use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account::principal_to_subaccount;
 use jupiter_ic_clients::cycles_probe::{probe_cycles, CyclesProbeClient, CyclesProbePolicy};
+use jupiter_ic_clients::governance::NnsGovernanceCanister;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -152,6 +153,20 @@ trait ManagementClient: Send + Sync {
         &self,
         args: &jupiter_ic_clients::management::UpdateSettingsArgs,
     ) -> Result<(), String>;
+}
+
+#[async_trait::async_trait]
+trait RelayNeuronResolver: Send + Sync {
+    async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], String>;
+}
+
+#[async_trait::async_trait]
+impl RelayNeuronResolver for NnsGovernanceCanister {
+    async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], String> {
+        NnsGovernanceCanister::neuron_staking_subaccount(self, neuron_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 struct IcManagementClient;
@@ -536,7 +551,7 @@ fn setup_view_for_historian(args: RelaySetupArgs, historian: Principal) -> Relay
     state::with_state(|state| {
         let setup = match CanonicalRelaySetup::canonicalize(
             args.target_canister_ids,
-            args.surplus_recipient_principals,
+            args.surplus_recipients,
         ) {
             Ok(setup) => setup,
             Err(message) => return RelaySetupViewResult::Err(message),
@@ -577,7 +592,7 @@ fn setup_view_for_historian(args: RelaySetupArgs, historian: Principal) -> Relay
         };
         RelaySetupViewResult::Ok(RelaySetupView {
             canonical_target_canister_ids: setup.targets().to_vec(),
-            canonical_surplus_recipient_principals: setup.surplus_recipients().to_vec(),
+            canonical_surplus_recipients: setup.surplus_recipients().to_vec(),
             setup_key_identifier: key.identifier(),
             setup_account,
             setup_account_identifier,
@@ -736,6 +751,24 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
         .and_then(|count| count.checked_add(1))
         .and_then(|count| u32::try_from(count).ok())
         .expect("self-service Relay transfer cap is bounded at 20 + 5 + 1");
+    let mut principal_recipients = Vec::new();
+    let mut neuron_recipients = Vec::new();
+    for recipient in setup.surplus_recipients() {
+        match recipient {
+            RelaySurplusRecipient::Principal(principal) => {
+                principal_recipients.push(SurplusCanisterRecipient {
+                    canister_id: *principal,
+                    memo: Vec::new(),
+                });
+            }
+            RelaySurplusRecipient::Neuron(neuron_id) => {
+                neuron_recipients.push(SurplusNeuronRecipient {
+                    neuron_id: *neuron_id,
+                    memo: Vec::new(),
+                });
+            }
+        }
+    }
     Encode!(&InitArgs {
         managed_canisters: setup.targets().to_vec(),
         ledger_canister_id: Some(config.ledger_canister_id),
@@ -746,18 +779,9 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
         icp_index_canister_id: None,
         main_interval_seconds: Some(config.self_service_relay_interval_seconds),
         max_transfers_per_tick: Some(transfer_cap),
-        surplus_canister_recipients: Some(
-            setup
-                .surplus_recipients()
-                .iter()
-                .copied()
-                .map(|principal| SurplusCanisterRecipient {
-                    canister_id: principal,
-                    memo: Vec::new(),
-                })
-                .collect(),
-        ),
-        surplus_neuron_recipients: Vec::new(),
+        surplus_canister_recipients: (!principal_recipients.is_empty())
+            .then_some(principal_recipients),
+        surplus_neuron_recipients: neuron_recipients,
     })
     .expect("Relay init args should encode")
 }
@@ -772,10 +796,59 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     management: &dyn ManagementClient,
     fiduciary_blackhole: &dyn BlackholeClient,
 ) -> RelaySetupNotifyResult {
+    let neuron_resolver =
+        NnsGovernanceCanister::new(jupiter_ic_clients::constants::nns_governance_id());
+    notify_with_clients_and_neuron_resolver(
+        args,
+        historian,
+        ledger,
+        cycles_probe_client,
+        cmc,
+        management,
+        fiduciary_blackhole,
+        &neuron_resolver,
+    )
+    .await
+}
+
+async fn validate_neuron_recipients(
+    key: RelaySetupKey,
+    setup: &CanonicalRelaySetup,
+    neuron_resolver: &dyn RelayNeuronResolver,
+) -> Result<(), RelaySetupNotifyResult> {
+    for recipient in setup.surplus_recipients() {
+        let RelaySurplusRecipient::Neuron(neuron_id) = recipient else {
+            continue;
+        };
+        let resolution = neuron_resolver.neuron_staking_subaccount(*neuron_id).await;
+        require_phase(key, RelayCreationPhase::Reserved)?;
+        if resolution.is_err() {
+            remove_reservation(key, RelayCreationPhase::Reserved);
+            return Err(RelaySetupNotifyResult::FailedPreSpend {
+                message: bounded_message(format!(
+                    "Could not verify neuron {neuron_id} as publicly readable by NNS Governance. Check the neuron ID and try again."
+                )),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
+    args: RelaySetupArgs,
+    historian: Principal,
+    ledger: &dyn LedgerClient,
+    cycles_probe_client: &C,
+    cmc: &dyn CmcClient,
+    management: &dyn ManagementClient,
+    fiduciary_blackhole: &dyn BlackholeClient,
+    neuron_resolver: &dyn RelayNeuronResolver,
+) -> RelaySetupNotifyResult {
     let config = state::with_state(|state| state.config.clone());
     let setup = match CanonicalRelaySetup::canonicalize(
         args.target_canister_ids,
-        args.surplus_recipient_principals,
+        args.surplus_recipients,
     ) {
         Ok(setup) => setup,
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
@@ -844,12 +917,13 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     if let Err(result) = reserve(key) {
         return result;
     }
-    if update_progress(key, RelayCreationPhase::Reserved, |progress| {
+    if let Err(result) = validate_neuron_recipients(key, &setup, neuron_resolver).await {
+        return result;
+    }
+    if let Err(result) = update_progress(key, RelayCreationPhase::Reserved, |progress| {
         progress.phase = RelayCreationPhase::ProbingTargets;
-    })
-    .is_err()
-    {
-        return notify_for_entry(get_entry(key).expect("reservation exists"));
+    }) {
+        return result;
     }
     for target in setup.targets() {
         let cached_route =
@@ -1325,9 +1399,10 @@ mod tests {
         DeployedSns, ListDeployedSnsesResponse, ListSnsCanistersResponse,
     };
     use std::collections::VecDeque;
+    use std::future::Future;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use std::task::Poll;
+    use std::task::{Context, Poll};
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
@@ -1336,14 +1411,24 @@ mod tests {
     fn setup_args(target_canister_ids: Vec<Principal>) -> RelaySetupArgs {
         RelaySetupArgs {
             target_canister_ids,
-            surplus_recipient_principals: vec![principal(200)],
+            surplus_recipients: vec![RelaySurplusRecipient::Principal(principal(200))],
+        }
+    }
+
+    fn neuron_setup_args(target: Principal, neuron_id: u64) -> RelaySetupArgs {
+        RelaySetupArgs {
+            target_canister_ids: vec![target],
+            surplus_recipients: vec![RelaySurplusRecipient::Neuron(neuron_id)],
         }
     }
 
     fn key_for_targets(target_canister_ids: &[Principal]) -> RelaySetupKey {
-        CanonicalRelaySetup::canonicalize(target_canister_ids.to_vec(), vec![principal(200)])
-            .expect("test setup should be structurally valid")
-            .key()
+        CanonicalRelaySetup::canonicalize(
+            target_canister_ids.to_vec(),
+            vec![RelaySurplusRecipient::Principal(principal(200))],
+        )
+        .expect("test setup should be structurally valid")
+        .key()
     }
 
     fn config() -> Config {
@@ -1819,6 +1904,121 @@ mod tests {
         status_results: Mutex<VecDeque<Result<AuditedCanisterStatus, String>>>,
     }
 
+    struct MockNeuronResolver {
+        calls: Mutex<Vec<u64>>,
+        unreadable: Option<u64>,
+        expected_reserved_key: Option<RelaySetupKey>,
+        reserved_observations: Mutex<Vec<bool>>,
+    }
+
+    impl MockNeuronResolver {
+        fn readable() -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                unreadable: None,
+                expected_reserved_key: None,
+                reserved_observations: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RelayNeuronResolver for MockNeuronResolver {
+        async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], String> {
+            self.calls.lock().unwrap().push(neuron_id);
+            if let Some(key) = self.expected_reserved_key {
+                self.reserved_observations.lock().unwrap().push(matches!(
+                    get_entry(key),
+                    Some(RelaySetupEntry::Creating(RelayCreationProgress {
+                        phase: RelayCreationPhase::Reserved,
+                        ..
+                    }))
+                ));
+            }
+            if self.unreadable == Some(neuron_id) {
+                Err("neuron is not public".to_string())
+            } else {
+                let mut subaccount = [0u8; 32];
+                subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
+                Ok(subaccount)
+            }
+        }
+    }
+
+    struct YieldingNeuronResolver {
+        calls: Mutex<Vec<u64>>,
+        unreadable: bool,
+    }
+
+    struct BlockingNeuronResolver {
+        calls: Mutex<Vec<u64>>,
+        waiters: Mutex<VecDeque<oneshot::Receiver<()>>>,
+    }
+
+    struct SupersedingNeuronResolver {
+        key: RelaySetupKey,
+        relay_canister_id: Principal,
+    }
+
+    #[async_trait::async_trait]
+    impl RelayNeuronResolver for YieldingNeuronResolver {
+        async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], String> {
+            self.calls.lock().unwrap().push(neuron_id);
+            let mut yielded = false;
+            futures::future::poll_fn(|context| {
+                if yielded {
+                    Poll::Ready(())
+                } else {
+                    yielded = true;
+                    context.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            })
+            .await;
+            if self.unreadable {
+                Err("neuron cannot be read".to_string())
+            } else {
+                let mut subaccount = [0u8; 32];
+                subaccount[24..].copy_from_slice(&neuron_id.to_be_bytes());
+                Ok(subaccount)
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RelayNeuronResolver for BlockingNeuronResolver {
+        async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], String> {
+            self.calls.lock().unwrap().push(neuron_id);
+            let waiter = self.waiters.lock().unwrap().pop_front().unwrap();
+            let _ = waiter.await;
+            Err("neuron cannot be read".to_string())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RelayNeuronResolver for SupersedingNeuronResolver {
+        async fn neuron_staking_subaccount(&self, _neuron_id: u64) -> Result<[u8; 32], String> {
+            let mut yielded = false;
+            futures::future::poll_fn(|context| {
+                if yielded {
+                    Poll::Ready(())
+                } else {
+                    yielded = true;
+                    context.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            })
+            .await;
+            insert_entry(
+                self.key,
+                RelaySetupEntry::Active {
+                    relay_canister_id: self.relay_canister_id,
+                },
+            );
+            Err("stale validation result".to_string())
+        }
+    }
+
     #[async_trait::async_trait]
     impl ManagementClient for MockManagement {
         async fn create_canister(
@@ -2159,10 +2359,16 @@ mod tests {
     fn recipient_changes_produce_independent_keys_accounts_and_reservations() {
         reset();
         let historian = principal(42);
-        let setup_a =
-            CanonicalRelaySetup::canonicalize(vec![principal(1)], vec![principal(2)]).unwrap();
-        let setup_b =
-            CanonicalRelaySetup::canonicalize(vec![principal(1)], vec![principal(3)]).unwrap();
+        let setup_a = CanonicalRelaySetup::canonicalize(
+            vec![principal(1)],
+            vec![RelaySurplusRecipient::Principal(principal(2))],
+        )
+        .unwrap();
+        let setup_b = CanonicalRelaySetup::canonicalize(
+            vec![principal(1)],
+            vec![RelaySurplusRecipient::Principal(principal(3))],
+        )
+        .unwrap();
         assert_ne!(setup_a.key(), setup_b.key());
         assert_ne!(
             setup_account_for(historian, setup_a.key()),
@@ -2586,6 +2792,91 @@ mod tests {
     }
 
     #[test]
+    fn unfunded_neuron_configuration_does_not_call_governance_or_reserve() {
+        reset();
+        let args = neuron_setup_args(principal(1), 42);
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([0], []), true, None);
+        let resolver = MockNeuronResolver::readable();
+
+        let result = block_on(notify_with_clients_and_neuron_resolver(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+
+        assert_eq!(
+            result,
+            RelaySetupNotifyResult::BelowMinimum {
+                balance_e8s: 0,
+                required_e8s: 300_000_000,
+                shortfall_e8s: 300_000_000,
+            }
+        );
+        assert!(resolver.calls.lock().unwrap().is_empty());
+        assert!(debug_setup_entries().is_empty());
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn below_current_requirement_neuron_configuration_does_not_call_governance_or_reserve() {
+        clear_setup_entries_for_debug();
+        let mut cfg = config();
+        cfg.relay_setup_min_e8s = 1;
+        state::set_state(State::new(cfg, 0));
+        let args = neuron_setup_args(principal(1), 42);
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([107_039_999], []), true, None);
+        let resolver = MockNeuronResolver::readable();
+
+        let result = block_on(notify_with_clients_and_neuron_resolver(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+
+        assert_eq!(
+            result,
+            RelaySetupNotifyResult::BelowCurrentRequirement {
+                balance_e8s: 107_039_999,
+                required_e8s: 107_040_000,
+                shortfall_e8s: 1,
+            }
+        );
+        assert!(resolver.calls.lock().unwrap().is_empty());
+        assert!(debug_setup_entries().is_empty());
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 1);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn pre_spend_read_and_live_requirement_failures_leave_no_durable_or_external_work() {
         let args = setup_args(vec![principal(1)]);
 
@@ -2885,6 +3176,170 @@ mod tests {
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 1);
         assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn same_key_contention_performs_one_governance_validation_sequence() {
+        reset();
+        let args = neuron_setup_args(principal(1), 42);
+        let ledger = MockLedger::new(
+            [400_000_000, 397_990_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        );
+        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let resolver = YieldingNeuronResolver {
+            calls: Mutex::new(Vec::new()),
+            unreadable: false,
+        };
+
+        let first = notify_with_clients_and_neuron_resolver(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        );
+        let second = notify_with_clients_and_neuron_resolver(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        );
+        let (first, second) = block_on(futures::future::join(first, second));
+
+        assert!(matches!(
+            (&first, &second),
+            (
+                RelaySetupNotifyResult::Active { .. },
+                RelaySetupNotifyResult::InProgress {
+                    phase: RelayCreationPhase::Reserved,
+                    ..
+                }
+            ) | (
+                RelaySetupNotifyResult::InProgress {
+                    phase: RelayCreationPhase::Reserved,
+                    ..
+                },
+                RelaySetupNotifyResult::Active { .. }
+            )
+        ));
+        assert_eq!(*resolver.calls.lock().unwrap(), vec![42]);
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.installs.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn neuron_validation_reservations_count_toward_global_concurrency_limit() {
+        reset();
+        let ledger = MockLedger::new([400_000_000; 5], []);
+        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let mut releases = Vec::new();
+        let mut waiters = VecDeque::new();
+        for _ in 0..MAX_CONCURRENT_FUNDED_RELAY_SETUPS {
+            let (release, waiter) = oneshot::channel();
+            releases.push(release);
+            waiters.push_back(waiter);
+        }
+        let resolver = BlockingNeuronResolver {
+            calls: Mutex::new(Vec::new()),
+            waiters: Mutex::new(waiters),
+        };
+
+        let mut one = Box::pin(notify_with_clients_and_neuron_resolver(
+            neuron_setup_args(principal(1), 1),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+        let mut two = Box::pin(notify_with_clients_and_neuron_resolver(
+            neuron_setup_args(principal(2), 2),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+        let mut three = Box::pin(notify_with_clients_and_neuron_resolver(
+            neuron_setup_args(principal(3), 3),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+        let mut four = Box::pin(notify_with_clients_and_neuron_resolver(
+            neuron_setup_args(principal(5), 4),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+        let five = notify_with_clients_and_neuron_resolver(
+            neuron_setup_args(principal(6), 5),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        );
+        let mut context = Context::from_waker(futures::task::noop_waker_ref());
+        assert!(matches!(one.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(two.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(three.as_mut().poll(&mut context), Poll::Pending));
+        let four_poll = four.as_mut().poll(&mut context);
+        assert!(
+            matches!(four_poll, Poll::Pending),
+            "fourth setup returned {four_poll:?}; entries: {:?}",
+            debug_setup_entries()
+        );
+        let five = block_on(five);
+        assert_eq!(resolver.calls.lock().unwrap().len(), 4);
+        for sender in releases {
+            let _ = sender.send(());
+        }
+        let one = block_on(one);
+        let two = block_on(two);
+        let three = block_on(three);
+        let four = block_on(four);
+
+        for result in [one, two, three, four] {
+            assert!(matches!(
+                result,
+                RelaySetupNotifyResult::FailedPreSpend { .. }
+            ));
+        }
+        assert_eq!(five, RelaySetupNotifyResult::Busy);
+        assert_eq!(*resolver.calls.lock().unwrap(), vec![1, 2, 3, 4]);
+        assert!(debug_setup_entries().is_empty());
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -3401,15 +3856,21 @@ mod tests {
     }
 
     #[test]
-    fn maximum_configuration_installs_canonical_principal_recipients_and_cap_26() {
+    fn maximum_configuration_installs_canonical_mixed_recipients_and_cap_26() {
         reset();
         let targets = (100..120).rev().map(principal).collect::<Vec<_>>();
-        let recipients = (200..205).rev().map(principal).collect::<Vec<_>>();
+        let recipients = vec![
+            RelaySurplusRecipient::Neuron(42),
+            RelaySurplusRecipient::Principal(principal(202)),
+            RelaySurplusRecipient::Principal(principal(200)),
+            RelaySurplusRecipient::Neuron(7),
+            RelaySurplusRecipient::Principal(principal(201)),
+        ];
         let setup = CanonicalRelaySetup::canonicalize(targets.clone(), recipients.clone()).unwrap();
         let key = setup.key();
         let args = RelaySetupArgs {
             target_canister_ids: targets,
-            surplus_recipient_principals: recipients,
+            surplus_recipients: recipients,
         };
         let (ledger, probe, cmc, management, fiduciary) = mocks(
             MockLedger::new(
@@ -3419,7 +3880,8 @@ mod tests {
             true,
             None,
         );
-        let result = block_on(notify_with_clients_for_historian(
+        let neuron_resolver = MockNeuronResolver::readable();
+        let result = block_on(notify_with_clients_and_neuron_resolver(
             args,
             principal(42),
             &ledger,
@@ -3427,6 +3889,7 @@ mod tests {
             &cmc,
             &management,
             &fiduciary,
+            &neuron_resolver,
         ));
         assert_eq!(
             result,
@@ -3481,12 +3944,23 @@ mod tests {
                 .iter()
                 .map(|recipient| recipient.canister_id)
                 .collect::<Vec<_>>(),
-            (200..205).map(principal).collect::<Vec<_>>()
+            (200..203).map(principal).collect::<Vec<_>>()
         );
         assert!(installed_recipients
             .iter()
             .all(|recipient| recipient.memo.is_empty()));
-        assert!(init.surplus_neuron_recipients.is_empty());
+        assert_eq!(
+            init.surplus_neuron_recipients
+                .iter()
+                .map(|recipient| recipient.neuron_id)
+                .collect::<Vec<_>>(),
+            vec![7, 42]
+        );
+        assert!(init
+            .surplus_neuron_recipients
+            .iter()
+            .all(|recipient| recipient.memo.is_empty()));
+        assert_eq!(*neuron_resolver.calls.lock().unwrap(), vec![7, 42]);
         drop(installs);
 
         assert_eq!(
@@ -3509,6 +3983,147 @@ mod tests {
                 .unwrap()
                 .contains(&CanisterTrackingReason::RelayInstance));
         });
+    }
+
+    #[test]
+    fn relay_init_arg_splits_principal_only_and_neuron_only_recipients() {
+        #[derive(CandidType, Deserialize)]
+        struct CanisterRecipient {
+            canister_id: Principal,
+            memo: Vec<u8>,
+        }
+        #[derive(CandidType, Deserialize)]
+        struct NeuronRecipient {
+            neuron_id: u64,
+            memo: Vec<u8>,
+        }
+        #[derive(CandidType, Deserialize)]
+        struct InitArgs {
+            surplus_canister_recipients: Option<Vec<CanisterRecipient>>,
+            surplus_neuron_recipients: Vec<NeuronRecipient>,
+        }
+
+        let principal_setup = CanonicalRelaySetup::canonicalize(
+            vec![principal(1)],
+            vec![RelaySurplusRecipient::Principal(principal(2))],
+        )
+        .unwrap();
+        let principal_init: InitArgs =
+            candid::decode_one(&relay_init_arg(&config(), &principal_setup)).unwrap();
+        assert_eq!(
+            principal_init.surplus_canister_recipients.unwrap()[0].canister_id,
+            principal(2)
+        );
+        assert!(principal_init.surplus_neuron_recipients.is_empty());
+
+        let neuron_setup = CanonicalRelaySetup::canonicalize(
+            vec![principal(1)],
+            vec![RelaySurplusRecipient::Neuron(u64::MAX)],
+        )
+        .unwrap();
+        let neuron_init: InitArgs =
+            candid::decode_one(&relay_init_arg(&config(), &neuron_setup)).unwrap();
+        assert!(neuron_init.surplus_canister_recipients.is_none());
+        assert_eq!(neuron_init.surplus_neuron_recipients[0].neuron_id, u64::MAX);
+        assert!(neuron_init.surplus_neuron_recipients[0].memo.is_empty());
+    }
+
+    #[test]
+    fn funded_unreadable_neuron_cleans_reserved_state_before_probe_or_spend() {
+        reset();
+        let args = RelaySetupArgs {
+            target_canister_ids: vec![principal(1)],
+            surplus_recipients: vec![
+                RelaySurplusRecipient::Neuron(7),
+                RelaySurplusRecipient::Neuron(42),
+            ],
+        };
+        let key = CanonicalRelaySetup::canonicalize(
+            args.target_canister_ids.clone(),
+            args.surplus_recipients.clone(),
+        )
+        .unwrap()
+        .key();
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([400_000_000], []), true, None);
+        let resolver = MockNeuronResolver {
+            calls: Mutex::new(Vec::new()),
+            unreadable: Some(42),
+            expected_reserved_key: Some(key),
+            reserved_observations: Mutex::new(Vec::new()),
+        };
+        let result = block_on(notify_with_clients_and_neuron_resolver(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::FailedPreSpend { message }
+                if message.contains("neuron 42") && message.contains("publicly readable")
+        ));
+        assert_eq!(*resolver.calls.lock().unwrap(), vec![7, 42]);
+        assert_eq!(
+            *resolver.reserved_observations.lock().unwrap(),
+            vec![true, true]
+        );
+        assert_eq!(get_entry(key), None);
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 1);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn superseded_neuron_validation_cannot_clean_or_advance_authoritative_state() {
+        reset();
+        let args = neuron_setup_args(principal(1), 42);
+        let key = CanonicalRelaySetup::canonicalize(
+            args.target_canister_ids.clone(),
+            args.surplus_recipients.clone(),
+        )
+        .unwrap()
+        .key();
+        let relay_canister_id = principal(81);
+        let (ledger, probe, cmc, management, fiduciary) =
+            mocks(MockLedger::new([400_000_000], []), true, None);
+        let resolver = SupersedingNeuronResolver {
+            key,
+            relay_canister_id,
+        };
+
+        let result = block_on(notify_with_clients_and_neuron_resolver(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+
+        assert_eq!(result, RelaySetupNotifyResult::Active { relay_canister_id });
+        assert_eq!(
+            get_entry(key),
+            Some(RelaySetupEntry::Active { relay_canister_id })
+        );
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
     }
 
     #[test]

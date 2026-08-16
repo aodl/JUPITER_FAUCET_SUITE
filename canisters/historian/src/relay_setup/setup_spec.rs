@@ -1,5 +1,6 @@
 use super::recipient_set::CanonicalSurplusRecipientSet;
 use super::{CanonicalRelayTargetSet, RelaySetupKey};
+use crate::api::RelaySurplusRecipient;
 use crate::state::Config;
 use candid::Principal;
 
@@ -12,13 +13,11 @@ pub(crate) struct CanonicalRelaySetup {
 impl CanonicalRelaySetup {
     pub(crate) fn canonicalize(
         target_canister_ids: Vec<Principal>,
-        surplus_recipient_principals: Vec<Principal>,
+        surplus_recipients: Vec<RelaySurplusRecipient>,
     ) -> Result<Self, String> {
         Ok(Self {
             targets: CanonicalRelayTargetSet::canonicalize(target_canister_ids)?,
-            surplus_recipients: CanonicalSurplusRecipientSet::canonicalize(
-                surplus_recipient_principals,
-            )?,
+            surplus_recipients: CanonicalSurplusRecipientSet::canonicalize(surplus_recipients)?,
         })
     }
 
@@ -35,7 +34,7 @@ impl CanonicalRelaySetup {
         self.targets.targets()
     }
 
-    pub(crate) fn surplus_recipients(&self) -> &[Principal] {
+    pub(crate) fn surplus_recipients(&self) -> &[RelaySurplusRecipient] {
         self.surplus_recipients.recipients()
     }
 
@@ -60,26 +59,91 @@ mod tests {
         Principal::from_slice(&[0x7f, byte])
     }
 
-    fn setup(targets: &[u8], recipients: &[u8]) -> CanonicalRelaySetup {
+    fn setup(targets: &[u8], recipients: Vec<RelaySurplusRecipient>) -> CanonicalRelaySetup {
         CanonicalRelaySetup::canonicalize(
             targets.iter().copied().map(principal).collect(),
-            recipients.iter().copied().map(principal).collect(),
+            recipients,
         )
         .unwrap()
     }
 
     #[test]
     fn permutations_preserve_identity_and_category_changes_do_not() {
-        assert_eq!(setup(&[1, 2], &[3, 4]).key(), setup(&[2, 1], &[3, 4]).key());
-        assert_eq!(setup(&[1, 2], &[3, 4]).key(), setup(&[1, 2], &[4, 3]).key());
-        assert_ne!(setup(&[1], &[2]).key(), setup(&[3], &[2]).key());
-        assert_ne!(setup(&[1], &[2]).key(), setup(&[1], &[3]).key());
-        assert_ne!(setup(&[1], &[2]).key(), setup(&[2], &[1]).key());
+        let principals = || {
+            vec![
+                RelaySurplusRecipient::Principal(principal(3)),
+                RelaySurplusRecipient::Principal(principal(4)),
+            ]
+        };
+        assert_eq!(
+            setup(&[1, 2], principals()).key(),
+            setup(&[2, 1], principals()).key()
+        );
+        assert_eq!(
+            setup(&[1, 2], principals()).key(),
+            setup(&[1, 2], principals().into_iter().rev().collect()).key()
+        );
+        assert_eq!(
+            setup(
+                &[1],
+                vec![
+                    RelaySurplusRecipient::Neuron(2),
+                    RelaySurplusRecipient::Neuron(1)
+                ]
+            )
+            .key(),
+            setup(
+                &[1],
+                vec![
+                    RelaySurplusRecipient::Neuron(1),
+                    RelaySurplusRecipient::Neuron(2)
+                ]
+            )
+            .key()
+        );
+        assert_eq!(
+            setup(
+                &[1],
+                vec![
+                    RelaySurplusRecipient::Neuron(2),
+                    RelaySurplusRecipient::Principal(principal(3))
+                ]
+            )
+            .key(),
+            setup(
+                &[1],
+                vec![
+                    RelaySurplusRecipient::Principal(principal(3)),
+                    RelaySurplusRecipient::Neuron(2)
+                ]
+            )
+            .key()
+        );
+        assert_ne!(
+            setup(&[1], vec![RelaySurplusRecipient::Principal(principal(2))]).key(),
+            setup(&[3], vec![RelaySurplusRecipient::Principal(principal(2))]).key()
+        );
+        assert_ne!(
+            setup(&[1], vec![RelaySurplusRecipient::Principal(principal(2))]).key(),
+            setup(&[1], vec![RelaySurplusRecipient::Principal(principal(3))]).key()
+        );
+        assert_ne!(
+            setup(&[1], vec![RelaySurplusRecipient::Neuron(2)]).key(),
+            setup(&[1], vec![RelaySurplusRecipient::Neuron(3)]).key()
+        );
+        assert_ne!(
+            setup(&[1], vec![RelaySurplusRecipient::Principal(principal(2))]).key(),
+            setup(&[1], vec![RelaySurplusRecipient::Neuron(2)]).key()
+        );
     }
 
     #[test]
     fn principal_may_be_target_and_recipient() {
-        let setup = setup(&[1], &[1]);
-        assert_eq!(setup.targets(), setup.surplus_recipients());
+        let setup = setup(&[1], vec![RelaySurplusRecipient::Principal(principal(1))]);
+        assert_eq!(setup.targets(), &[principal(1)]);
+        assert_eq!(
+            setup.surplus_recipients(),
+            &[RelaySurplusRecipient::Principal(principal(1))]
+        );
     }
 }

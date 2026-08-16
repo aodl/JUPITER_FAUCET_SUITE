@@ -162,10 +162,16 @@ pub struct PublicStatus {
     pub relay_setup_min_e8s: Option<u64>,
 }
 
+#[derive(CandidType, Deserialize, Clone, Copy, Serialize, Debug, PartialEq, Eq)]
+pub enum RelaySurplusRecipient {
+    Principal(Principal),
+    Neuron(u64),
+}
+
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct RelaySetupArgs {
     pub target_canister_ids: Vec<Principal>,
-    pub surplus_recipient_principals: Vec<Principal>,
+    pub surplus_recipients: Vec<RelaySurplusRecipient>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
@@ -188,7 +194,7 @@ pub enum RelaySetupState {
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
 pub struct RelaySetupView {
     pub canonical_target_canister_ids: Vec<Principal>,
-    pub canonical_surplus_recipient_principals: Vec<Principal>,
+    pub canonical_surplus_recipients: Vec<RelaySurplusRecipient>,
     pub setup_key_identifier: String,
     pub setup_account: Option<Account>,
     pub setup_account_identifier: Option<String>,
