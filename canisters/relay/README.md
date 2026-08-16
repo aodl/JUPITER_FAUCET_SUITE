@@ -2,6 +2,8 @@
 
 `jupiter-relay` keeps Jupiter Faucet Suite canisters funded with cycles. Relay spends ICP from its default ICP ledger account to top up managed canisters through CMC. Once managed-canister recovery targets are satisfied, any surplus ICP can be routed to configured surplus recipients.
 
+<img src="../frontend/public/relay.svg">
+
 Relay can be funded in four ways:
 
 - direct ICP payment to Relay's default account for immediate one-off liquidity;
