@@ -654,29 +654,106 @@ test('view and Create calls carry both configuration vectors', async () => {
 test('neuron recipients serialize as bigint and preflight through NNS Governance', async () => {
   await withDom(async (nodes) => {
     let viewArgs;
+    const callOrder = [];
     const harness = controllerHarness({
       getView: async (args) => {
+        callOrder.push('historian');
         viewArgs = args;
         return { Ok: viewFor({ recipients: [{ Neuron: 42n }] }) };
+      },
+      loadNeuron: async () => {
+        callOrder.push('governance');
+        return { owner: Principal.fromText(HISTORIAN), subaccount: [Array(32).fill(0)] };
       },
     });
     await submit(nodes, harness, TARGET_A, '42', ['Neuron']);
     assert.equal(harness.calls.governanceActors, 1);
     assert.deepEqual(harness.calls.neurons, [42n]);
+    assert.deepEqual(callOrder, ['historian', 'governance']);
     assert.deepEqual(viewArgs.surplus_recipients, [{ Neuron: 42n }]);
     assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'Neuron: 42');
   });
 });
 
-test('unverified neuron blocks Historian setup view without asserting a privacy cause', async () => {
+test('unverified neuron reads the Historian view but never exposes payment details', async () => {
   await withDom(async (nodes) => {
     const harness = controllerHarness({
       loadNeuron: async () => { throw new Error('not public'); },
     });
     await submit(nodes, harness, TARGET_A, '123', ['Neuron']);
-    assert.equal(harness.calls.view, 0);
+    assert.equal(harness.calls.view, 1);
+    assert.equal(harness.calls.balance, 0);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(harness.controller.state.view, null);
     assert.match(nodes.get('relay-setup-status').textContent, /Could not verify neuron 123 as publicly readable by NNS Governance/i);
     assert.doesNotMatch(nodes.get('relay-setup-status').textContent, /must be public/i);
+  });
+});
+
+test('existing Active neuron configuration remains visible when the neuron loader would fail', async () => {
+  await withDom(async (nodes) => {
+    const active = { Active: { relay_canister_id: Principal.fromText(RELAY) } };
+    const harness = controllerHarness({
+      view: viewFor({ recipients: [{ Neuron: 42n }], state: active }),
+      loadNeuron: async () => { throw new Error('governance unavailable'); },
+    });
+    await submit(nodes, harness, TARGET_A, '42', ['Neuron']);
+    assert.equal(harness.calls.view, 1);
+    assert.equal(harness.calls.governanceActors, 0);
+    assert.deepEqual(harness.calls.neurons, []);
+    assert.equal(harness.calls.balance, 0);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
+    assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+  });
+});
+
+test('existing InProgress neuron configuration skips Governance preflight', async () => {
+  await withDom(async (nodes) => {
+    const inProgress = { InProgress: { phase: { CreateDispatched: null }, relay_canister_id: [] } };
+    const harness = controllerHarness({
+      view: viewFor({ recipients: [{ Neuron: 42n }], state: inProgress }),
+      loadNeuron: async () => { throw new Error('governance unavailable'); },
+    });
+    await submit(nodes, harness, TARGET_A, '42', ['Neuron']);
+    assert.equal(harness.calls.view, 1);
+    assert.equal(harness.calls.governanceActors, 0);
+    assert.deepEqual(harness.calls.neurons, []);
+    assert.equal(harness.calls.balance, 0);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /CreateDispatched/);
+    assert.equal(harness.calls.intervals, 1);
+  });
+});
+
+test('existing ManualRecoveryRequired neuron configuration skips Governance preflight', async () => {
+  await withDom(async (nodes) => {
+    const manualRecovery = {
+      ManualRecoveryRequired: {
+        phase: { RelayFunded: null },
+        relay_canister_id: [Principal.fromText(RELAY)],
+        message: 'operator investigation is required',
+      },
+    };
+    const harness = controllerHarness({
+      view: viewFor({
+        recipients: [{ Neuron: 42n }],
+        account: null,
+        state: manualRecovery,
+      }),
+      loadNeuron: async () => { throw new Error('governance unavailable'); },
+    });
+    await submit(nodes, harness, TARGET_A, '42', ['Neuron']);
+    assert.equal(harness.calls.view, 1);
+    assert.equal(harness.calls.governanceActors, 0);
+    assert.deepEqual(harness.calls.neurons, []);
+    assert.equal(harness.calls.balance, 0);
+    assert.match(nodes.get('relay-setup-status').textContent, /Manual\s*Recovery\s*Required/i);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /operator investigation is required/);
+    assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(harness.calls.intervals, 0);
   });
 });
 
@@ -695,11 +772,13 @@ test('stale neuron preflight failure cannot cross a recipient type change', asyn
     pending.reject(new Error('not public'));
     await first;
     assert.doesNotMatch(nodes.get('relay-setup-status').textContent, /public\/readable/i);
-    assert.equal(harness.calls.view, 0);
+    assert.equal(harness.calls.view, 1);
+    assert.equal(harness.calls.balance, 0);
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
   });
 });
 
-test('stale neuron preflight completion cannot request a view after a type change', async () => {
+test('stale neuron preflight completion cannot expose a view after a value change', async () => {
   await withDom(async (nodes) => {
     seedTargetRow(nodes, TARGET_A);
     const recipient = seedRecipientRow(nodes, '42');
@@ -709,12 +788,27 @@ test('stale neuron preflight completion cannot request a view after a type chang
     harness.controller.bindPane();
     const first = harness.controller.submitConfiguration();
     while (harness.calls.neurons.length === 0) await Promise.resolve();
-    recipient.type.value = 'Principal';
-    nodes.get('relay-setup-recipient-list').listeners.get('change')({ target: recipient.type });
+    recipient.input.value = '43';
+    nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.input });
     pending.resolve({ owner: Principal.fromText(HISTORIAN), subaccount: [Array(32).fill(0)] });
     await first;
-    assert.equal(harness.calls.view, 0);
+    assert.equal(harness.calls.view, 1);
+    assert.equal(harness.calls.balance, 0);
     assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+  });
+});
+
+test('polling a new neuron configuration never repeats Governance preflight', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({ balance: 299_999_999n });
+    await submit(nodes, harness, TARGET_A, '42', ['Neuron']);
+    assert.equal(harness.calls.governanceActors, 1);
+    assert.deepEqual(harness.calls.neurons, [42n]);
+    assert.equal(harness.calls.intervals, 1);
+    await harness.controller.refresh();
+    assert.equal(harness.calls.view, 2);
+    assert.equal(harness.calls.governanceActors, 1);
+    assert.deepEqual(harness.calls.neurons, [42n]);
   });
 });
 

@@ -758,16 +758,18 @@ export function createRelaySetupController({
   } = {}) {
     if (!state.targets.length || !state.surplusRecipients.length) return;
     const { agent, historian } = await historianBundle();
-    if (preflightNeurons) {
-      await preflightNeuronRecipients(agent);
-      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
-    }
     const result = await historian.get_relay_configuration_view(setupArgs());
     if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
     const view = unwrapView(result);
-    let balance = null;
+    const kind = viewState(view);
     const account = readOptional(view.setup_account);
-    if (account) {
+    const isNewConfiguration = kind === 'NotFunded' && Boolean(account);
+    if (preflightNeurons && isNewConfiguration) {
+      await preflightNeuronRecipients(agent);
+      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+    }
+    let balance = null;
+    if (isNewConfiguration) {
       const ledger = await loadLedger({ agent, historian });
       balance = BigInt(await ledger.icrc1_balance_of(account));
       if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
@@ -776,7 +778,6 @@ export function createRelaySetupController({
     state.balanceE8s = balance;
     state.error = '';
     state.loading = false;
-    const kind = viewState(view);
     if (kind === 'Active' || kind === 'ManualRecoveryRequired') {
       state.requiredBalanceOverride = null;
     }
