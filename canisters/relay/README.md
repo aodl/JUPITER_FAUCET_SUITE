@@ -26,7 +26,7 @@ For example, a project with a low-burn frontend and a high-burn storage canister
 
 ## Create a self-service Relay
 
-The frontend route `#relay-setup` uses [Jupiter Historian](../historian/README.md) as a factory for dedicated immutable Relay instances.
+The frontend route [`#relay-setup`](https://jupiter-faucet.com/#relay-setup) uses [Jupiter Historian](../historian/README.md) as a factory for dedicated immutable Relay instances.
 
 The current self-service configuration is:
 
