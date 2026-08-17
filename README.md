@@ -17,6 +17,8 @@ The operational path is intentionally split across small canisters:
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
 - [`canisters/lifeline`](canisters/lifeline) and [`canisters/sns-rewards`](canisters/sns-rewards) provide recovery/support and reward-recipient roles.
 
+<img src="/canisters/frontend/public/jupiter faucet overview.svg">
+
 At a high level, a participant declares a faucet target by transferring ICP to the configured staking account and placing a supported ASCII directive in `icrc1_memo`. Plain declared canister ID text is the primary cycles top-up form. The faucet also supports `canister_id.memo` for raw ICP routing and decimal NNS neuron IDs, optionally with `.memo`, for neuron staking-account top-ups. The exact eligibility, memo, fee, retry, and rescue rules live in the component READMEs:
 
 - [`canisters/disburser/README.md`](canisters/disburser/README.md)
