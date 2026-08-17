@@ -1,128 +1,182 @@
 # Jupiter Relay
 
-`jupiter-relay` keeps Jupiter Faucet Suite canisters funded with cycles. Relay spends ICP from its default ICP ledger account to top up managed canisters through CMC. Once managed-canister recovery targets are satisfied, any surplus ICP can be routed to configured surplus recipients.
+`jupiter-relay` is an autonomous ICP-to-cycles allocator for Internet Computer projects.
 
-<img src="../frontend/public/relay.svg">
+A Relay gives a project **one ICP funding destination** and uses that funding to keep a fixed set of canisters supplied with cycles according to their observed consumption. It measures cycles burn, converts ICP through the Cycles Minting Canister (CMC), tops up the canisters that need it, and can route genuine excess ICP to fixed surplus recipients instead of allowing cycles buffers to grow without bound.
 
-Relay can be funded in four ways:
+Relay can use ordinary direct ICP funding, but it also integrates with [Jupiter Faucet](../faucet/README.md): a Faucet commitment can perpetually produce raw ICP for a Relay, while Relay decides how that ICP should be allocated as downstream needs change.
 
-- direct ICP payment to Relay's default account for immediate one-off liquidity;
-- a Jupiter Faucet commitment that targets Relay and perpetually pays raw ICP into Relay's default account;
-- Relay subaccount 1, which accumulates or memo-fixes ICP and then creates that Jupiter Faucet commitment for Relay; and
-- fixed splitter subaccounts 10–90, which divide ICP between Relay's default account and subaccount 1.
+<img src="../frontend/public/relay.svg" alt="Jupiter Relay funding and allocation flows">
 
-Default-account funding is direct liquidity. Faucet commitments are perpetual funding. Subaccount 1 is a staging helper for creating Faucet commitments when a direct commitment is not possible.
+> **Diagram scope:** the diagram shows the common Relay flows. Its “up to 5” surplus-recipient annotation is a limit of the current **Historian self-service factory**, not of the Relay runtime itself.
 
-## Four ways to fund Relay
+See the suite overview in [`../../README.md`](../../README.md). Unless otherwise noted, command examples are run from the repository root.
 
-| Workflow | Send ICP to | Use when | What happens | Outcome |
-|---|---|---|---|---|
-| 1. Direct Relay funding | Relay default account | You need ICP available to Relay now for short-term canister-cycle funding, bootstrap, or manual recovery | Relay spends the ICP directly on managed-canister CMC top-ups first, then surplus if safe | One-off operational liquidity; must be replenished periodically |
-| 2. Direct Jupiter Faucet commitment for Relay | Jupiter Faucet neuron staking account, with memo `u2qkp-aqaaa-aaaar-qb7ea-cai.` | You can attach the memo and send at least the qualifying commitment amount | Jupiter Faucet records a commitment whose payout target is Relay's default account in raw ICP form | Recommended perpetual funding stream into Relay |
-| 3. Relay subaccount 1 staging | Relay subaccount 1 `u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1` | You cannot attach the memo, or ICP arrives in small amounts below the Faucet threshold | Relay accumulates the ICP, adds the correct memo, and forwards a qualifying Jupiter Faucet commitment | Helper path that creates the same perpetual Faucet-backed funding stream |
-| 4. Fixed splitters | Relay numbered subaccount 10, 20, …, or 90 | One deposit should be divided predictably between immediate Relay liquidity and Faucet-commitment staging | Relay durably pins and sequentially transfers the configured-by-protocol percentage to the default account and the complement to subaccount 1 | Intrinsic immutable routing; no install argument or endpoint |
+## Why use a Relay?
 
-## Workflow 1: Direct Relay default-account funding
+Relay is useful when a project has several canisters, changing cycles demand, or a long-term funding source that could eventually exceed current operating needs.
 
-This is the direct way to give Relay ICP to spend immediately. It is useful for bootstrapping, short-term funding gaps, manual recovery, or emergency canister-cycle support.
+- **One funding destination.** Fund the Relay instead of maintaining separate flows for application, storage, frontend, indexer, and other canisters.
+- **Allocation follows demand.** Higher-burn canisters naturally receive more because Relay derives demand from observed cycles consumption rather than a fixed percentage split.
+- **Surplus stays useful.** After the managed set is covered, excess ICP can go to a treasury, user/canister account, or public NNS neuron rather than becoming an unnecessarily large cycles buffer.
+- **Current and future funding can be combined.** Relay can keep some ICP spendable now while routing another portion into a Jupiter Faucet commitment that feeds the Relay again in future.
+- **Self-service deployment is immutable and observable.** The frontend/Historian flow can create a dedicated Relay, blackhole it after verification, and register both the Relay and its targets for Historian cycles tracking.
 
-ICP sent to Relay's default account is not a Jupiter Faucet commitment. It does not create a perpetual stream. Once spent, it must be replenished by another direct payment or by Faucet-backed flows.
+For example, a project with a low-burn frontend and a high-burn storage canister does not need to guess a permanent funding split. One Relay funding stream can follow the observed burn. If total burn later falls, or ICP rises enough that the stream becomes excessive, the residual ICP can leave the cycles loop through the configured surplus recipients.
 
-Relay uses default-account ICP for managed-canister CMC top-ups first. Surplus is only routed after canister recovery targets are satisfied.
+## Create a self-service Relay
 
-Relay's default ICP ledger account is:
+The frontend route `#relay-setup` uses [Jupiter Historian](../historian/README.md) as a factory for dedicated immutable Relay instances.
+
+The current self-service configuration is:
+
+- **1–20 managed target canisters**;
+- **1–5 surplus recipient principals**;
+- equal surplus shares to each recipient's default ICP account;
+- no custom recipient weights, memos, subaccounts, or neuron IDs; and
+- a daily Relay cadence with automatic cycles-probe routing.
+
+The Relay runtime itself is more general: a manually installed Relay can also use public NNS neuron surplus recipients and is not subject to the factory's five-recipient limit.
+
+### Creation flow
+
+1. Choose the targets and surplus recipients in the frontend.
+2. Historian canonicalizes both lists and returns the deterministic setup account and current funding requirement for that complete configuration.
+3. Fund the setup account, then explicitly press **Create Relay**. Funding alone never starts creation.
+4. Historian verifies that every target is observable, creates the child canister, installs the reviewed Relay Wasm and immutable configuration, and sends the remaining eligible setup balance to the child's **subaccount 1**.
+5. Historian verifies the installed module/settings, hands the child to the Fiduciary blackhole, verifies the final blackholed state, and records the configuration as active.
+6. Historian adds `RelayTarget` tracking to the targets and `RelayInstance` tracking to the spawned Relay so their cycles histories can be sampled and shown by the frontend.
+
+After activation, fund the **Relay itself**, not the setup account. Historian does not control, upgrade, reconstruct, or mutate a successfully blackholed child.
+
+Targets and recipients jointly define the immutable configuration. Order does not matter, but changing any target or recipient produces a different setup account and Relay configuration. Repeating the exact same configuration returns its existing active Relay rather than creating a duplicate.
+
+Setup deposits are aggregate protocol deposits: Historian does not attribute them to individual payers and does not automatically refund an incorrectly funded configuration. The frontend's live funding requirement should be treated as authoritative because Historian rechecks the ICP ledger fee and CMC conversion rate before irreversible work.
+
+The detailed factory state machine, funding formula, fail-closed reconciliation, `ManualRecoveryRequired` behavior, and deployment cutover are intentionally documented once in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md).
+
+### Target observability
+
+Relay must be able to measure cycles balances before it can allocate by burn. Self-service Historian therefore probes every target before spending setup ICP, and the child uses the shared **Auto** observation policy at runtime. Auto mode can use recognized blackhole and SNS status routes, including SNS-governed dapps that are not themselves blackholed.
+
+A manually installed Relay can instead set `blackhole_canister_id`, selecting a fixed blackhole route for non-self targets.
+
+A newly installed Relay is a replenishment controller, not an initial rescue mechanism: the first complete sample establishes a baseline and spends no default-account ICP. Targets should start with enough cycles to survive until a later sample can measure burn and fund them.
+
+If a scheduled target probe fails, Relay fails closed for that target. After three consecutive scheduled failures it may classify the target as unavailable **for that run only**, allowing other observable targets to progress. Later ticks keep probing it, and any successful sample resets the failure count.
+
+## Allocation model
+
+Relay always adds **itself** to the effective managed set, so install arguments should list only the external targets.
+
+After the baseline sample, recent burn is estimated as:
 
 ```text
-Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai; subaccount = null }
+estimated_burn_cycles = max(
+  previous_cycles
+  + relay_minted_cycles_since_previous_sample
+  - current_cycles,
+  0
+)
 ```
 
-Its legacy ICP account identifier is:
+Tracking cycles minted by Relay prevents a successful top-up from disguising the consumption that occurred between samples.
+
+### With surplus recipients
+
+This is the mode used by current self-service Relays. For each observable managed canister:
 
 ```text
-ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd
+new_burn_target_cycles = ceil(recent_burn_cycles × 101 / 100)
+target_topup_cycles = carried_recovery_deficit_cycles + new_burn_target_cycles
 ```
 
-Its ICRC textual account is:
+The 1% headroom applies only to newly observed burn. A previous underfunding deficit is carried forward at face value.
+
+Relay then:
+
+1. calculates the ICP needed for the managed-canister top-ups using the CMC conversion estimate;
+2. executes managed-canister top-ups first;
+3. carries forward any unmet deficit caused by insufficient funding or transfer/notify failure; and
+4. considers surplus only when the observable planned recovery deficit is cleared.
+
+Surplus is divided equally across the configured recipients. Every recipient must be able to receive at least **1 ICP net of its own ledger fee**, so with fee `F` and `N` recipients Relay requires at least:
 
 ```text
-u2qkp-aqaaa-aaaar-qb7ea-cai
+N × (100,000,000 + F) e8s
 ```
 
-The Relay default account remains the only account used for managed-canister CMC top-ups and configured surplus routing.
+of safely distributable ICP after managed-canister requirements and retained-balance accounting.
 
-## Workflow 2: Direct Jupiter Faucet commitment for perpetual Relay funding
+### Without surplus recipients
 
-This is the recommended long-term funding path when the sender can make a normal qualifying Jupiter Faucet commitment.
+A manually installed Relay can configure no raw-ICP recipients. This selects **all-cycles mode**: available top-up funding is divided among positive cycles needs instead of preserving a raw-ICP surplus path.
 
-The sender commits ICP through Jupiter Faucet with memo:
+All-cycles mode uses recent burn plus carried deficit without the 1% headroom and waits until the proportional shares are fee-efficient enough to spend. Dust and fee-unspendable balance remain in the default account for a later tick.
+
+## Funding a Relay
+
+Think of Relay funding as two buckets:
+
+- **default account:** ICP Relay can spend on cycles now;
+- **subaccount 1:** ICP Relay will use to create a Jupiter Faucet commitment that can feed its default account again in future.
+
+The numbered splitter subaccounts divide one deposit between those buckets.
+
+| Funding path | Immediate liquidity | Builds Faucet commitment | Best fit |
+|---|---:|---:|---|
+| Relay default account | 100% | 0% | Bootstrap, normal direct funding, recovery |
+| Direct Jupiter Faucet commitment targeting Relay | Future Faucet payouts | 100% | Cleanest perpetual funding path |
+| Relay subaccount 1 | 0% initially | 100% | Accumulation or memo repair |
+| Splitter 10–90 | 10–90% | 90–10% | Blend current and future funding |
+
+### Default account
+
+The default account is:
 
 ```text
-u2qkp-aqaaa-aaaar-qb7ea-cai.
+Account { owner = <relay principal>; subaccount = null }
 ```
 
-The Relay canister ID before the dot identifies Relay as the target. The trailing `.` matters: it asks Jupiter Faucet to route raw ICP to Relay, with an empty outgoing memo, rather than convert the payout to cycles first.
+ICP sent there is immediately available to the allocation loop. It is finite funding: once spent, it must be replenished by another payment or by a recurring source.
 
-In [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` means raw ICP to the canister default account with the right-hand segment used as the outgoing memo. An empty right-hand segment sends raw ICP with an empty memo.
+### Direct Jupiter Faucet commitment
 
-Jupiter Faucet then perpetually pays Relay's default account in raw ICP according to the commitment's future payouts. Relay, not Jupiter Faucet, orchestrates the downstream CMC conversion and allocation across managed canisters.
-
-This is different from sending ICP directly to Relay's default account. A direct payment is finite. A Faucet commitment is a recurring/perpetual funding source for Relay.
-
-## Workflow 3: Relay subaccount 1 staging
-
-Relay subaccount 1 is not for immediate canister top-ups. It is a staging account for creating a Jupiter Faucet commitment that targets Relay.
-
-Subaccount 1 exists for two cases:
-
-1. Memo is unavailable. Some funding paths can send ICP but cannot attach the required Jupiter Faucet memo. For example, minting maturity can send or mint ICP to Relay subaccount 1, and Relay later forwards the ICP with the correct memo.
-2. ICP arrives in small pieces. If ICP arrives in dribs and drabs below Jupiter Faucet's minimum qualifying commitment threshold, sending each piece directly to Jupiter Faucet would not create qualifying commitments. Relay subaccount 1 accumulates those pieces until it can make one qualifying commitment.
-
-Once subaccount 1 holds enough ICP to send at least the qualifying commitment amount after paying the resolved ledger fee, Relay forwards `balance - fee` to the Jupiter Faucet neuron staking account and attaches the memo for Relay. Jupiter Faucet then treats that as a normal commitment that perpetually pays raw ICP back to Relay's default account.
-
-Subaccount 1 eventually produces the same kind of perpetual funding stream as workflow 2. It just lets Relay assemble the commitment when the sender cannot do so directly.
-
-Relay subaccount 1 is exactly 32 bytes: 31 zero bytes followed by `0x01`.
-
-The production ICRC textual account is:
+If the sender can make a normal qualifying Faucet commitment and attach an ICRC memo, use:
 
 ```text
-u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
+<relay-canister-id>.
 ```
 
-Its equivalent explicit ICRC account fields are:
+The trailing `.` matters. Under [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` requests **raw ICP** to that canister rather than a direct cycles top-up; an empty right-hand segment means no outgoing raw-ICP memo.
+
+Jupiter Faucet then sends future payout ICP to Relay's default account. Faucet produces the recurring ICP; Relay decides how to allocate it.
+
+### Subaccount 1
+
+Relay subaccount 1 is 32 bytes with 31 zero bytes followed by `0x01`:
 
 ```text
-owner = u2qkp-aqaaa-aaaar-qb7ea-cai
+owner = <relay principal>
 subaccount = 0000000000000000000000000000000000000000000000000000000000000001
 ```
 
-On each main tick, Relay checks:
+Incoming memos are irrelevant. On an accepted main tick, once the balance can send at least 1 ICP after the resolved ledger fee, Relay forwards `balance - fee` to the canonical Jupiter Faucet neuron staking account with a memo derived from its own principal:
 
 ```text
-Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai, subaccount = opt blob "\00...\01" }
+<relay principal without hyphens>.Relay
 ```
 
-The destination Jupiter Faucet neuron is `11614578985374291210`, resolved through NNS Governance `list_neurons`. The forwarding memo is `u2qkpaqaaaaaaarqb7eacai.Relay`. Balances below `1 ICP + fee` remain in subaccount 1 for a future tick. `RELAY_FAUCET_COMMITMENT` logs show subaccount-1 forwarding attempts without printing raw memo bytes.
+That creates a normal Faucet commitment targeting the Relay; future payouts return to the Relay's default account. Subaccount 1 is useful when the original sender cannot attach the Faucet memo or when many small deposits need to accumulate before they qualify.
 
-Subaccount 1 flow:
+Self-service creation deliberately sends the eligible remainder of setup funding here, so a new Relay starts by building its long-term funding base rather than merely holding deployment residue.
 
-1. ICP arrives at Relay subaccount 1.
-2. Relay checks subaccount 1 on each main tick.
-3. If the balance is below the inclusive minimum described below, Relay leaves it there.
-4. Once the balance can produce at least a qualifying net commitment, Relay sends `balance - fee` to the Jupiter Faucet neuron staking account.
-5. Relay attaches memo `u2qkpaqaaaaaaarqb7eacai.Relay`.
-6. Jupiter Faucet records the commitment.
-7. Future Faucet payouts from that commitment flow as raw ICP to Relay's default account.
-8. Relay then uses that default-account ICP for managed-canister top-ups and surplus routing.
+### Splitter subaccounts 10–90
 
-## Workflow 4: fixed splitter subaccounts 10–90
-
-Every Relay Wasm intrinsically recognizes exactly nine splitter subaccounts: 10, 20, 30, 40, 50, 60, 70, 80, and 90. A numbered subaccount is 32 bytes with 31 zero bytes and the number in the last byte: splitter 10 ends in `0x0a`, splitter 20 in `0x14`, and splitter 90 in `0x5a`. The Relay default account remains `Account { owner: relay_id, subaccount: null }`; an all-zero explicit subaccount is not treated as the default account.
-
-The splitter number is the gross percentage routed to the default account. The complement is routed to the existing subaccount 1:
+Every Relay intrinsically recognizes subaccounts `10, 20, ... 90`. The number is the **gross percentage routed to the default account**; the complement goes to subaccount 1.
 
 | Splitter | Default account | Subaccount 1 |
-| --- | ---: | ---: |
+|---|---:|---:|
 | 10 | 10% | 90% |
 | 20 | 20% | 80% |
 | 30 | 30% | 70% |
@@ -133,355 +187,222 @@ The splitter number is the gross percentage routed to the default account. The c
 | 80 | 80% | 20% |
 | 90 | 90% | 10% |
 
-For observed balance `B`, splitter percentage `P`, and resolved fee `F`, Relay pins `floor(B × P / 100)` as the default-account gross spending budget and assigns the remainder to subaccount 1. Each leg sends its gross budget minus its own fee. Both gross budgets must exceed `F`, and a completed operation conserves every e8s: the two net amounts plus two fees equal the pinned `B`. The ordinary qualification gate is unchanged from subaccount 1: `B > F` and `B - F >= 1 ICP`. The additional two-leg feasibility check only prevents a non-positive leg under a pathological fee.
+A numbered subaccount is 32 bytes with the number in the final byte. Each split pays one ICP ledger fee per leg, so both gross leg budgets must exceed the current fee. Small deposits simply remain until a later tick or additional deposit makes the split valid.
 
-The complete two-leg plan, ledger identity, fees, destinations, distinct `created_at_time` values, and progress are written to stable memory before the first ledger call. The default-account leg always executes first. The subaccount-1 leg starts only after the first is accepted or returns `Duplicate`. Later deposits are not absorbed into the pinned plan and remain for a later split. This is safe sequential execution, not a ledger-atomic two-transfer operation.
+Splitter execution is sequential but durably journaled before the first transfer. The default-account leg executes first; the subaccount-1 leg follows only after the first leg is accepted (including ledger `Duplicate`). Deposits arriving after a split has been pinned are left for a later independent split.
 
-An hourly retry timer only resumes an already-active splitter identity. It never scans for new balances or directly runs other Relay work. Every await-capable driver step advances a persisted fencing revision; a late callback may update stable state only while its complete job, leg identity, and revision still match. Transport uncertainty keeps the exact identity pinned. An uncertain identity that ages beyond the safe ledger deduplication window is quarantined; that splitter is thereafter skipped so Relay cannot guess whether to re-spend its residual balance, while other splitters and ordinary Relay work remain available. There is no force-clear endpoint.
+Subaccount 90 is a practical “mostly now, gradually more forever” path: each payment keeps 90% available for current cycles needs while directing 10% toward the future Faucet-backed funding stream.
 
-On an accepted main tick, Relay performs SNS reward work, scans splitters in numeric order, runs the existing subaccount-1 commitment stage, and finally runs default-account allocation. A completed split can therefore feed both downstream stages in that same tick. If splitter work is guarded or unresolved, the main lease is released without consuming the configured main cadence. Completion or quarantine coalesces a bounded one-shot normal continuation so downstream work resumes promptly; an unresolved operation never exposes a partial split to those stages. One full splitter scan is intrinsically bounded to 18 outgoing transfers. Splitter transfers are independent of `max_transfers_per_tick`.
+## Surplus recipients and reward attribution
 
-## SNS reward attribution
-
-Subaccount 1 remains memo-less: incoming ICP memos are neither required nor consulted. It is intended for protocols that accumulate or drip-feed ICP, funding paths that cannot attach the Faucet memo, and exceptional flows such as maturity minted directly to Relay.
-
-Once a week, at the start of an accepted daily main tick, Relay asks the configured `jupiter-sns-rewards` canister for a fresh completed owner snapshot and its Root-resolved token Ledger. Relay never caches the SNS Ledger ID. It then reads its live reward-token balance and that Ledger's live `icrc1_fee`; the ICP fee cache and `10_000` e8s bootstrap fallback do not apply. A transfer is economical only when the balance exceeds the fee and `fee * 10 <= balance - fee`. Exactly 10% qualifies; anything greater waits with the token pot untouched. A pending transfer is driven on every daily tick.
-
-Relay scans its own subaccount-1 account through the real ICP Index, bounded to 10 pages, 10,000 transactions, and 128 distinct sources. The first sweep for each SNS Root may consider all bounded historical completed commitments. Later sweeps begin strictly after the stable processed Faucet-commitment transaction ID, plus one narrow older overlap when an unconsumed carried credit precedes that cursor. Transactions at or after the owner snapshot's scan-start timestamp wait for a later snapshot.
-
-Relay stages each Faucet transfer from a previously observed subaccount balance. A whole incoming credit may be recorded before the outgoing Faucet transfer even when it arrived after that balance read. The reward parser therefore reconstructs a commitment by consuming the oldest exact FIFO prefix of whole credits whose sum equals the outgoing Faucet amount plus that transaction's actual ICP fee. It never splits a credit. Newer unconsumed credits that precede the completed commitment are retained in order and carried into the next reward batch with one stable transaction-ID boundary. Ordinary trailing credits after the latest commitment are newer than the processed cursor and are naturally discovered by the next scan.
-
-An eligible source is an indexed SNS neuron owner's exact default ICP account (`subaccount = null`), not Relay subaccount 1. Named subaccounts, exchanges, custodians, wallet canisters, unknown accounts, and mints are ineligible. Owner discovery is automatic and has no registration endpoint. The completed owner snapshot may classify the preceding unprocessed commitment batch retroactively.
-
-Eligible credits aggregate per principal. All unknown and minted funding forms one competing ineligible bucket. One principal wins the whole current economical token pot only if its eligible total is uniquely largest among eligible principals and strictly exceeds the ineligible total. Contributor ties are never broken. A definitive tie or no-winner batch advances the commitment cursor without sending tokens, so only the token pot rolls forward; a later unique winner may receive that accumulated pot.
-
-This is not a proportional or historically exact donor-reward system. It is a deliberately bounded protocol-oriented attribution policy for a blackholed Relay.
-
-The transfer identity pins Ledger, recipient, amount, explicit fee, versioned commitment memo, creation timestamp, and the proposed next carry boundary in stable memory before the first await. Success and `Duplicate` advance the commitment cursor and carry boundary together. A first-attempt definitive rejection clears the pending transfer without advancing either boundary; an explicit retryable rejection retries once with the identical identity. Transport uncertainty followed by anything other than success or `Duplicate` becomes stable ambiguity. An ambiguous transfer blocks only new reward adjudication, never ordinary ICP work. A later pinned-ledger balance below the original observed balance proves acceptance; otherwise, while the pinned creation timestamp remains valid, Relay may retry the exact same identity once per pending drive. Success or `Duplicate` resolves it, while every other result remains ambiguous. No new identity, reward-ledger history scan, force-clear endpoint, fee fallback, or Ledger cache is used.
-
-The SNS Root defines the epoch. A new Root resets both the processed commitment cursor and carried-credit boundary only when no prior pending transfer exists. Operators must not switch Root while any Relay reports a pending or ambiguous reward transfer.
-
-## ICP Ledger Fee Resolution and Thresholds
-
-Relay queries the configured ledger's `icrc1_fee` whenever it builds a new fee-dependent splitter, subaccount-1, or default-account plan. Fee resolution is live fee, then the heap-only last-known fee, then a `10_000` e8s bootstrap fallback. The bootstrap value is an emergency contingency, not a permanent ICP ledger invariant. A failed live read emits a structured Relay error log with the planning context (`splitter`, `subaccount_1`, or `default_account`), ledger error, selected `cached` or `bootstrap` source, and selected fee. An ordinary successful live read emits no extra error log.
-
-Every staged transfer pins and explicitly supplies its resolved fee, including deterministic retries. A definitive ledger `BadFee` records the expected fee when it fits `u64`, invalidates the stale plan, and reports `ledger_fee_changed`; Relay does not continue later transfers from that plan. If `BadFee` arrives only after an uncertain first attempt, the current transfer remains ambiguous because the first attempt might have been accepted. Relay neither mutates nor rebuilds an ambiguous transfer under a new identity. The last-known fee is runtime heap state and resets on a replacement upgrade with the rest of Relay's heap state.
-
-The exact inclusive thresholds are:
+Relay supports two raw-ICP surplus target types at install time:
 
 ```text
-F = resolved ICP ledger fee in e8s
-N = number of configured raw-ICP surplus recipients
-
-subaccount_1_minimum_balance = 100,000,000 + F
-surplus_minimum_available_after_topups = N × (100,000,000 + F)
+SurplusCanisterRecipient { canister_id = principal; memo = blob }
+SurplusNeuronRecipient   { neuron_id = nat64; memo = blob }
 ```
 
-The surplus formula applies to ICP remaining after managed-canister top-up requirements, retained-balance accounting, and all other surplus safety gates.
+A `SurplusCanisterRecipient` is paid to `Account { owner = principal; subaccount = null }`; despite the field name, that principal can represent a canister or another valid principal account. An empty memo blob means no outgoing ledger memo.
 
-```text
-At F = 10,000:
+A public NNS neuron recipient is resolved through NNS Governance and paid to its staking subaccount. Relay then best-effort calls `claim_or_refresh_neuron`. A refresh failure does not repeat an already accepted ICP transfer. These are **NNS**, not arbitrary SNS, neuron IDs.
 
-subaccount 1:
-100,010,000 e8s = 1.0001 ICP
+Current self-service creation uses only the first form, with empty memos and 1–5 recipients. No IO recipient or other protocol recipient is added automatically.
 
-production surplus with two recipients:
-200,020,000 e8s = 2.0002 ICP
-```
+### SNS reward attribution
 
-Exactly those amounts qualify; both comparisons are inclusive.
+Reward attribution is a separate bounded stage; it does not change the cycles-allocation rules. Once per week, Relay can use its configured ICP Index and [`jupiter-sns-rewards`](../sns-rewards/README.md) owner snapshot to attribute completed **subaccount-1 Faucet commitments** to eligible SNS neuron owners.
 
-## When should I use which workflow?
+The policy is intentionally conservative: only exact default ICP accounts that resolve to SNS neuron owners are eligible; internal routing, unknown/custodial sources and named subaccounts are not. A reward-token pot is sent only when there is a unique largest eligible contributor and that contribution also exceeds the combined ineligible-funding bucket. Ties and no-winner batches leave the pot for a later batch.
 
-Use direct Relay default-account funding when:
+A reward-token transfer is pinned before its first await and uses duplicate-safe transfer identity. An ambiguous reward transfer blocks new reward adjudication but **does not block ordinary Relay ICP/cycles work**. SNS Root changes must not be made while such a transfer is pending or ambiguous.
 
-- Relay needs ICP available now;
-- you are bootstrapping;
-- you are filling a short-term gap;
-- you are manually recovering after replacement or unexpected funding shortfall.
+## Runtime, failure and retry model
 
-Use a direct Jupiter Faucet commitment when:
+The default main interval is one day and is clamped to at least 60 seconds. Current self-service and canonical production Relays use the daily cadence.
 
-- you want long-term/perpetual Relay funding;
-- you can attach memo `u2qkp-aqaaa-aaaar-qb7ea-cai.`;
-- you can meet the Jupiter Faucet minimum qualifying commitment threshold.
+On an accepted main tick, stages run in this order:
 
-Use Relay subaccount 1 when:
+1. SNS reward work;
+2. numbered splitter work;
+3. subaccount-1 Faucet forwarding; and
+4. default-account cycles allocation and possible surplus routing.
 
-- you want long-term/perpetual Relay funding, but cannot attach the memo directly;
-- the source produces small ICP amounts that individually do not meet the Jupiter Faucet threshold;
-- you want Relay to accumulate those amounts and make the qualifying Faucet commitment later.
+The value-moving paths are designed around fixed transfer identities and fail-closed ambiguity handling:
 
-Do not use subaccount 1 when:
+- a new fee-dependent plan queries the ICP Ledger's live `icrc1_fee`, falling back to an in-memory last-known fee and then a `10_000` e8s bootstrap value if necessary;
+- staged transfers pin their amount, fee, memo and `created_at_time`; retrying reuses the same identity and ledger `Duplicate` counts as accepted;
+- after an accepted CMC transfer, retryable `notify_top_up` uncertainty is retried once inline and then recorded as ambiguous rather than creating a second ICP transfer;
+- unresolved ordinary recovery deficits block surplus;
+- splitter state and reward-transfer state use isolated stable journals so ambiguous or in-flight identities can survive a same-canister upgrade; and
+- if a splitter remains uncertain beyond safe ledger deduplication, that exact splitter identity is quarantined instead of guessed, while unrelated Relay work can continue.
 
-- you need immediate ICP available to Relay;
-- you can already make a direct qualifying Jupiter Faucet commitment with the right memo;
-- you intend a one-off operational top-up rather than a perpetual Faucet-backed funding stream.
+`max_transfers_per_tick`, when configured, limits only outgoing ICP-ledger transfers started by the **default-account allocation job**. Splitter and subaccount-1 work are separate stages. Historian sets the self-service value to `target_count + recipient_count + 1`, where the final slot covers Relay itself.
 
-## Role in the Suite
+## Public interface and observability
 
-The production relay is intended to top up all Jupiter-operated solution canisters plus the managed blackhole canisters. The relay itself is automatically included at runtime; operators should not include the relay principal in `managed_canisters`.
-
-System and dependency canisters are intentionally excluded from the managed set. The relay should not manage the ICP ledger, CMC, NNS governance, ICP index, SNS-WASM, SNS roots, XRC, or other external dependencies.
-
-## Production Managed Set
-
-```text
-jupiter_disburser          uccpi-cqaaa-aaaar-qby3q-cai
-jupiter_lifeline           afisn-gqaaa-aaaar-qb4qa-cai
-jupiter_faucet             acjuz-liaaa-aaaar-qb4qq-cai
-jupiter_sns_rewards        alk7f-5aaaa-aaaar-qb4ra-cai
-jupiter_faucet_frontend    jufzc-caaaa-aaaar-qb5da-cai
-jupiter_historian          j5gs6-uiaaa-aaaar-qb5cq-cai
-blackhole_fiduciary_subnet 77deu-baaaa-aaaar-qb6za-cai
-blackhole_13_node_subnet   e3mmv-5qaaa-aaaah-aadma-cai
-relay, auto-included       u2qkp-aqaaa-aaaar-qb7ea-cai
-```
-
-## Managed Canisters
-
-Install args include `managed_canisters : vec principal`. The runtime set is the sorted unique union of that list and the relay canister itself. The relay is always included even when omitted from config.
-
-Anonymous and management canister principals are rejected. Duplicate configured managed canisters are rejected. The relay probes its own cycles directly with `canister_cycle_balance`.
-
-Relay supports two cycles-observation modes:
-
-- **Fixed mode** is used when `blackhole_canister_id` is configured. Non-self managed targets are probed through that configured blackhole canister. Known managed blackhole canisters are probed through themselves by calling their own `canister_status` endpoint with their own principal as the target.
-- **Auto mode** is used when no `blackhole_canister_id` is configured. Relay first checks direct self balance and recognized blackhole self-status. For ordinary targets, Auto mode first reuses the target's previously successful positive route, whether that route is the 13-node blackhole, the Fiduciary blackhole, SNS Root, or SNS Swap. If that route is absent or fails, route discovery tries the 13-node blackhole, then the Fiduciary blackhole, then SNS discovery. The 13-node blackhole is preferred when selecting an unknown blackhole route, while a healthy positive route is reused to avoid predictable failed calls and unnecessary cycles burn. Route failure triggers immediate rediscovery. No route TTL or negative cache is used. SNS-governed targets do not need the SNS root or target to be controlled by a blackhole; Relay can use SNS root status routes when the target is an SNS dapp.
-
-The canonical production Relay remains Fixed mode through the Fiduciary blackhole route. Self-service Relays created by Historian use Auto mode and are immutable after controller handoff.
-
-A failed probe does not immediately mean a managed target is deleted. Relay keeps an in-memory consecutive probe failure count per effective managed target. One or two consecutive failures preserve the conservative fail-closed behavior: Relay records a degraded summary and spends no default-account ICP. After three consecutive scheduled runs fail to probe the same target, Relay treats that target as unavailable for allocation in that run only. This is an availability classification after consecutive probe failures, not cryptographic proof of deletion. Relay excludes the unavailable target from target top-up planning, continues probing it on every later schedule, and resets the count to zero after any successful probe. Targets are never permanently marked deleted by this policy.
-
-When unavailable targets are excluded and no transient failures remain, Relay keeps the relay canister itself in the managed set and applies the normal allocation rules to observable targets. For a self-service relay whose external target is unavailable after the threshold, Relay does not attempt that target top-up, still respects relay self-management, and routes remaining default-account ICP through the configured surplus rules. Unavailable targets at or above the threshold do not by themselves block surplus routing; transient failures below the threshold still do.
-
-## Runtime Config Verification
-
-The production relay exposes no public application query or update endpoints. Debug endpoints are only available in non-production debug builds, and the debug API guard traps if a debug build is ever installed at the production relay principal. The operational model treats the production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed relay with debug APIs is a separate non-production/debug deployment. No controller-only production application endpoint is used for recovery.
-
-The relay logs public runtime verification lines on every main tick that actually runs:
-
-```text
-Cycles: <relay_self_cycles_balance>
-CONFIG relay_canister_id=...
-```
-
-The recurring `CONFIG` line makes the complete effective Relay configuration publicly reconstructable. It includes the configured managed canisters, effective managed canisters including relay self, ICP Ledger, CMC, NNS Governance, blackhole, SNS rewards canister, ICP Index, cycles-probe policy, interval, transfer limit, surplus recipients, surplus memo lengths, lossless surplus memo values, and whether the configured production managed set matches the known Jupiter suite set.
-
-`surplus_recipients` and `surplus_recipient_memos` are ordered in lockstep. `none` represents the effective internal value `None`; `hex:<lowercase hexadecimal bytes>` represents the effective internal value `Some(bytes)`. Public Relay `InitArgs` normalize an empty memo blob to `None`, so an empty install or replacement-style upgrade argument is logged as `none`. The formatter defensively retains `hex:` as the lossless representation of an internal `Some(vec![])`, but current public arguments do not preserve that state. Binary memo bytes are never truncated or interpreted as UTF-8. The existing `surplus_recipient_memo_lengths` field remains available as a convenience. This is a public log-format and observability guarantee only and does not change allocation, transfers, scheduling, stable state, or lifecycle behavior.
-
-After deployment, anyone can verify the installed source/config by building the canister from the reviewed source, checking the production canister ID mapping, comparing public logs with [`mainnet-install-args.did`](mainnet-install-args.did), and using the [frontend source pane](../frontend). Public verification happens through logs, reproducible build/source metadata, the production canister ID mapping, and the frontend source pane.
-
-```bash
-icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
-```
-
-Canister logs have finite retention. Operators should archive logs externally if long-term history is required. Logs are intentionally low-noise: timer callbacks that are suppressed by the guard, startup liveness checks that are suppressed by the recent-run guard, empty splitter/subaccount-1 scans, below-threshold splitter/subaccount-1 scans, routine per-canister allocation skips, and observable target-probe statuses do not produce extra public detail lines. Main ticks that actually proceed still emit the documented runtime and financial summary logs.
-
-## Public Log Records
-
-The relay emits consistent, single-line, grep-friendly public records:
-
-```text
-Cycles: <relay_self_cycles_balance>
-CONFIG relay_canister_id=...
-RELAY_SUMMARY mode=<BaselineOnly|TopUpThenSurplus|Degraded|NoFunds> started_at_ts_nanos=<nat64> completed_at_ts_nanos=<nat64-or-null> min_cycles_balance=<nat-or-null> min_cycles_canister_id=<principal-or-null> min_cycles_sample=<nat-or-null> total_burn_cycles=<nat> total_target_topup_cycles=<nat> total_actual_minted_cycles=<nat> total_carried_deficit_cycles=<nat> total_remaining_deficit_cycles=<nat> deficit_canister_count=<nat32> max_remaining_deficit_canister_id=<principal-or-null> max_remaining_deficit_cycles=<nat-or-null> balance_start_e8s=<nat64> fee_e8s=<nat64> transfer_count=<nat32> ledger_transfer_count=<nat32> ledger_sent_e8s=<nat64> ledger_fees_e8s=<nat64> cmc_notify_success_count=<nat32> cmc_notify_failed_count=<nat32> cmc_notify_ambiguous_count=<nat32> planned_retained_e8s=<nat64> known_unspent_e8s=<nat64> ambiguous_e8s=<nat64> failed_transfers=<nat32> ambiguous_transfers=<nat32> partial_tick_count=<nat32> conversion_cycles_per_e8=<nat-or-null> surplus_e8s_before_fees=<nat64> skipped_surplus_reason=<escaped-text-or-null> canister_skip_counts=<escaped-reason:count|none> surplus_allowed_despite_unavailable_targets=<bool>
-RELAY_CANISTER canister_id=<principal> previous_cycles=<nat-or-null> current_cycles=<nat> relay_minted_cycles=<nat> burn_cycles=<nat> carried_deficit_cycles=<nat> target_topup_cycles=<nat> planned_topup_e8s=<nat64> sent_topup_e8s=<nat64> actual_minted_cycles=<nat> remaining_deficit_cycles=<nat> skipped_reason=<escaped-text-or-null>
-RELAY_SURPLUS_TRANSFER target=<canister:principal|neuron:nat64> owner=<principal> subaccount=<hex-or-null> gross_share_e8s=<nat64> amount_e8s=<nat64> skipped_reason=<escaped-text-or-null> memo_len=<nat32-or-null>
-RELAY_SPLITTER splitter_number=<10|20|...|90> source_owner=<relay-principal> source_subaccount=<hex> balance_start_e8s=<nat64> percentage_to_default=<nat8> default_gross_e8s=<nat64> default_amount_e8s=<nat64> default_fee_e8s=<nat64> default_block_index=<nat> subaccount_one_gross_e8s=<nat64> subaccount_one_amount_e8s=<nat64> subaccount_one_fee_e8s=<nat64> subaccount_one_block_index=<nat> status=completed
-RELAY_FAUCET_COMMITMENT source_owner=<principal> source_subaccount=<hex> destination_owner=<principal> destination_subaccount=<hex-or-null> balance_start_e8s=<nat64> amount_e8s=<nat64> fee_e8s=<nat64> memo_len=<nat32> skipped_reason=<escaped-text-or-null>
-RELAY_PROBE_FAILURE canister_id=<principal> consecutive_failures=<nat32> error=<escaped-text>
-RELAY_TARGET_PROBE canister_id=<principal> consecutive_probe_failures=<nat32> classification=<observable|transient_probe_failure|target_unavailable_after_consecutive_probe_failures> skipped_reason=<escaped-text-or-null>
-relay LIFECYCLE event=<init_complete|post_upgrade_complete> timers_installed=true main_interval_seconds=<nat64>
-relay ERR message=<escaped-text>
-relay ERR event=<ledger_fee_fallback|ledger_fee_changed> context=<subaccount_1|default_account> ...
-```
-
-`RELAY_SUMMARY` aggregates the per-canister recovery view: `total_target_topup_cycles` is the tick's total CMC target for observable targets, `total_actual_minted_cycles` is cycles returned by successful CMC notify calls, `total_carried_deficit_cycles` is pre-existing recovery debt, `total_remaining_deficit_cycles` is unrecovered debt after the tick, and `deficit_canister_count` is the number of observable planned canisters still blocking surplus. The min/max fields identify the lowest observed cycles sample and largest remaining recovery deficit, while `canister_skip_counts` summarizes routine skip reasons without one line per canister. `ledger_fee_changed` means a definitive fee rejection invalidated the current allocation plan; `ledger_balance_read_failed` means the default-account ledger balance could not be read. `RELAY_CANISTER` logs show current cycles, previous cycles, relay-minted cycles since the previous sample, estimated fresh burn, carried recovery deficit, the mode-specific top-up target, planned top-up e8s, sent top-up e8s, actual minted cycles, remaining recovery deficit, and skipped reason if any. Relay emits `RELAY_CANISTER` detail only for actionable cases such as accepted or minted top-ups, transfer failure or ambiguity context, and abnormal per-canister skipped reasons. `planned_topup_e8s` is the intended net CMC top-up amount. `sent_topup_e8s` is the accepted net amount actually sent to CMC, and is zero if the transfer was not accepted. `RELAY_SURPLUS_TRANSFER` logs show surplus recipients, amount, and memo length without printing raw memo bytes. `RELAY_TARGET_PROBE` logs expose transient probe failures and targets that are unavailable after consecutive probe failures; observable targets are summarized instead of logged one by one. `RELAY_FAUCET_COMMITMENT` logs show successful, ambiguous, or failed subaccount-1 forwarding attempts without printing raw memo bytes. Structured `ledger_fee_fallback` error logs identify cached or bootstrap fallback use. Healthy empty scans and below-threshold scans are quiet; they do not produce repeated public log lines or durable status records. Canister logs are public observability, not durable full history.
-
-## Status and Recovery
-
-Production Relay exposes no public application query or update endpoints. Debug endpoints exist only in non-production debug builds. No controller-only production application endpoint is used for recovery. Replacement with full init args re-installs timers, resets runtime state, and emits one `relay LIFECYCLE event=<init_complete|post_upgrade_complete> ...` log line.
-
-Production Relay identity and subaccount-1 addresses:
-
-```text
-relay principal: u2qkp-aqaaa-aaaar-qb7ea-cai
-default subaccount hex: 0000000000000000000000000000000000000000000000000000000000000000
-default legacy ICP account identifier: ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd
-default ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai
-subaccount 1 hex: 0000000000000000000000000000000000000000000000000000000000000001
-subaccount 1 legacy ICP account identifier: 9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee
-subaccount 1 ICRC textual account: u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1
-```
-
-## Tick Behavior
-
-The default main interval is one day and timer intervals are clamped to at least 60 seconds. After init or post-upgrade, the relay schedules an internal, stateless one-shot startup liveness tick that calls the normal non-forced main tick path. This is not an endpoint and does not write diagnostic state. If the recent-run guard suppresses that tick, no extra config/timer-firing log line is emitted.
-
-The first successful complete probe is baseline-only. It stores current cycles and does not spend ICP. Later ticks compare the previous completed sample, relay-minted cycles since that sample, and the current probe:
-
-```text
-estimated_burn_cycles = max(previous_cycles + relay_minted_cycles_since_previous_sample - current_cycles, 0)
-```
-
-Relay-minted cycles come from successful CMC `notify_top_up` responses. This prevents relay top-ups from hiding real burn when a canister's net cycles balance increases.
-
-`max_transfers_per_tick`, when set, limits how many outgoing ledger transfers the default-account allocation job starts in one tick. It applies to CMC top-up transfers and surplus transfers. Set values must be greater than zero. Unstarted transfers remain in the active job and are resumed by later ticks. Surplus transfers are not planned until all canister top-up transfers for that job have either completed or been deterministically skipped. Subaccount-1 Jupiter Faucet commitment forwarding is a separate at-most-one-transfer stage. The fixed splitter stage is also separate and is intrinsically bounded to at most 18 outgoing transfers per full scan. Neither stage consumes or is throttled by `max_transfers_per_tick`.
-
-## Lifecycle
-
-Relay configuration and ordinary operational state remain replacement-style and heap-only. Config, cycle samples, relay-minted-cycle accounting, recovery deficits, consecutive probe failure counts, conversion estimates, last-known ICP ledger fee, summaries, allocation jobs, ICP pending transfers, Faucet forwarding state, and job IDs are initialized fresh from supplied `InitArgs` on install, reinstall, and upgrade.
-
-There are two versioned stable journals using non-overlapping stable-memory IDs. Memory 0 retains the existing SNS reward journal unchanged: epoch Root, processed Faucet-commitment cursor, carried-credit start, last weekly sweep attempt, and any fully pinned pending reward-token transfer. Memory 1 stores splitter transactions, driver fencing revisions, and quarantine evidence. Old Relay state with no memory-1 cell initializes an empty splitter journal without rewriting memory 0; initialization never clears an existing journal. Active splitter work survives a same-ledger upgrade, while an upgrade that changes the configured ICP Ledger during an active split fails closed. A reinstall clears both stable memories with the canister's stable memory.
-
-Ordinary default-account allocation and subaccount-1 work remain non-resumable. Avoid upgrading during active Relay work where practical, especially ICP top-ups, ambiguous ordinary ICP transfers, or CMC notify sequences. After upgrade, Relay starts fresh from supplied `InitArgs` for ordinary work while preserving both the SNS reward journal and fixed-splitter journal. Confirm the fresh `CONFIG` log, both stable journals where applicable, managed-canister cycle balances, and any required reconciliation.
-
-This is intentional and differs from Faucet, Disburser, and Historian, which preserve safety-critical stable state across ordinary upgrades.
-
-## Relay Allocation Modes
-
-Jupiter Relay has two allocation modes depending on whether raw ICP surplus recipients are configured.
-
-Before Relay has a complete previous cycle sample for every effective managed canister, it runs in `BaselineOnly` mode: it records the current cycle balances and does not infer burn. If a later configuration change adds a new managed canister and makes the previous sample incomplete, Relay establishes the new baseline while preserving existing `recovery_deficit_cycles` for canisters that remain managed. New or newly sampled canisters start with no carried deficit.
-
-### Raw ICP Recipients Configured
-
-When one or more raw ICP surplus recipients are configured, Relay performs capped canister top-up planning.
-
-Relay first attempts to refresh the latest CMC ICP/XDR conversion rate. It uses that CMC rate to calculate capped CMC top-ups from any carried recovery deficit plus recent observed burn with 1% headroom:
-
-```text
-cycles_per_e8 = xdr_permyriad_per_icp
-new_burn_target_cycles = ceil(recent_burn_cycles * 101 / 100)
-target_topup_cycles = carried_deficit_cycles + new_burn_target_cycles
-planned_topup_e8s = ceil(target_topup_cycles / cycles_per_e8)
-```
-
-The 1% headroom applies only to fresh burn. Carried recovery deficits are not multiplied again.
-
-`planned_topup_e8s` is the intended net CMC top-up amount and does not include the ledger fee. `sent_topup_e8s` is the accepted net amount sent to CMC, or zero if no ledger transfer was accepted. Summary-level `fee_e8s`, `ledger_fees_e8s`, and `ledger_sent_e8s` carry the fee accounting.
-
-If the live CMC conversion-rate refresh fails or returns unusable data, Relay may fall back to the cached or bootstrap CMC estimate for capped top-up planning.
-
-Relay always executes canister top-ups before raw ICP surplus routing. If there is not enough ICP to cover all planned top-ups and ledger fees, Relay spends only on canister top-ups and routes no raw ICP surplus. Underfunded, failed, ambiguous, or NoFunds rounds persist the unmet `target_topup_cycles - actual_minted_cycles` as `recovery_deficit_cycles` for that canister. Future ticks add that carried deficit to the fresh-burn target until it is recovered. Surplus routing is allowed only after relay self-management, observable-target top-up planning, retained ICP accounting, and ledger fees are satisfied, and no observable planned canister recovery deficit remains. Targets skipped after the consecutive-probe-failure threshold do not block surplus for that run.
-
-Raw ICP surplus is routed only when every configured raw ICP recipient receives at least 1 ICP net of the resolved ledger fee. If the equal net share is below 1 ICP, Relay sends no raw ICP surplus transfers and keeps the ICP in its default ledger account for a future tick. The exact inclusive threshold is defined in [ICP Ledger Fee Resolution and Thresholds](#icp-ledger-fee-resolution-and-thresholds).
-
-This threshold applies uniformly to all raw ICP surplus recipients, including canister targets and neuron targets.
-
-### No Raw ICP Recipients Configured
-
-When no raw ICP surplus recipients are configured, Relay does not query ICP/XDR and does not apply the 1% capped top-up policy.
-
-Instead, Relay routes ICP to CMC top-ups using need-weighted allocations across managed canisters with positive need:
-
-```text
-all_cycles_need_cycles = recent_burn_cycles + carried_deficit_cycles
-target_topup_cycles = all_cycles_need_cycles
-```
-
-The all-cycles batch is intentionally gated: Relay only sends the batch when every positive-need managed canister would receive a fee-efficient top-up. In practice, the slowest positive-need canister must receive a gross share of at least twice the ICP ledger fee, so that the net amount delivered to CMC is at least the fee paid to transfer it.
-
-If the batch is not yet fee-efficient for every positive-burn canister, Relay sends no CMC top-ups in that tick and leaves the ICP in its default ledger account for a future tick.
-
-This prevents slow-burning canisters from being skipped indefinitely and avoids wasting most of a slow burner's proportional allocation on ledger fees. Canisters with zero fresh burn but a carried recovery deficit still participate. Canisters with zero total need do not participate in the split and do not block the batch. Any unavoidable dust, integer-division remainder, or fee-unspendable balance remains in Relay's default ledger account.
-
-Clearing all raw ICP surplus recipients therefore switches Relay into all-cycles mode.
-
-## Surplus Recipient Configuration
-
-Surplus recipients use split homogeneous public install records:
-
-```text
-SurplusCanisterRecipient {
-  canister_id = principal
-  memo = blob
-}
-
-SurplusNeuronRecipient {
-  neuron_id = nat64
-  memo = blob
-}
-```
-
-Install args use `surplus_canister_recipients : opt vec SurplusCanisterRecipient`; production sets it to `null` for no canister surplus recipients. Install args use `surplus_neuron_recipients : vec SurplusNeuronRecipient`. An empty `memo = blob ""` means no outgoing ledger memo internally; a non-empty blob is used as the outgoing ledger memo. Canister targets route to `Account { owner = canister_id; subaccount = null }`. Neuron targets require a public NNS neuron; the relay reads NNS Governance, resolves the staking subaccount, transfers ICP to the Governance canister with that subaccount, and best-effort refreshes the neuron after transfer. Refresh failure is logged as a follow-up failure and does not roll back or duplicate a ledger-accepted transfer. The NNS claim/refresh endpoint is publicly callable, so a later natural flow or manual/public retry can refresh the neuron; no durable claim-refresh retry queue is maintained.
-
-Historian-created self-service Relays use the canister-style record for arbitrary valid principal recipients, always with an empty memo, so payment goes to each principal's default ICP account. Historian limits that path to five recipients; Relay itself intentionally has no global five-recipient limit because separately installed Relays may use other valid configurations.
-
-Top-ups use the same CMC path as the faucet: transfer ICP to the CMC deposit account derived from the target canister principal, then call `notify_top_up { canister_id, block_index }`.
-
-Production surplus is split 50/50 between two public NNS neuron recipients:
-
-- IO neuron `10292412127977304661`, with `memo = blob ""`
-- Jupiter Faucet neuron `11614578985374291210`, with `memo = blob "10292412127977304661"`
-
-The Jupiter Faucet neuron memo encodes the IO neuron ID as ASCII decimal bytes. This preserves the existing memo convention while separating immediate IO stake growth from compounding Jupiter Faucet neuron growth that feeds long-term IO-aligned maturity.
-
-## Retry Safety
-
-Each pending transfer stores a heap/runtime `created_at_time` and memo. Immediate ledger retries reuse the same identity during the current Wasm lifetime, and ledger `Duplicate` is treated as an accepted transfer using the duplicate block index. Once a ledger transfer is accepted, CMC `Processing` and transport-like notify failures are retried once inline. Repeated uncertainty is recorded as ambiguous rather than blindly retried with a changed transfer identity.
-
-A first-attempt `BadFee` is a definitive rejection: Relay records the ledger's representable expected fee, accounts the rejected amount as known-unspent, marks the summary `ledger_fee_changed`, and stops the stale allocation job before any later transfer starts. A `BadFee` after an uncertain first attempt instead leaves the current amount ambiguous and still stops later stale-fee work. Never-started allocations remain known-unspent for the completed summary and future planning.
-
-Subaccount-1 Jupiter Faucet commitment forwarding uses the same deterministic transfer identity and ledger duplicate handling. After a ledger-accepted transfer to the Jupiter Faucet neuron staking account, Relay marks the transfer complete and schedules NNS Governance `claim_or_refresh_neuron` on a zero-delay timer; a refresh failure is logged as a follow-up failure and does not roll back or duplicate the accepted ledger transfer.
-
-## Operational Warning
-
-A non-self managed canister that is not observable through the configured Fixed route or through Auto route discovery prevents spending for that tick. This preserves funds for the next tick and prevents allocation from partial or stale cycle data.
-
-If ledger or CMC uncertainty occurs after a transfer boundary, the summary marks the affected amount ambiguous rather than blindly changing transfer identity. If ledger acceptance never happened, the amount remains known-unspent.
-
-## Production Operations Checklist
-
-1. For Fixed mode, verify the configured blackhole can read every configured managed canister. For Auto mode, verify the target is observable through its previously successful positive route, or through rediscovery in 13-node blackhole, Fiduciary blackhole, then SNS status order.
-2. Verify canister settings: logs public, log memory limit `2MiB`, canonical blackhole as an additional controller, and the current operational/admin controller retained until handoff is complete.
-3. Compare `CONFIG` public logs with [`mainnet-install-args.did`](mainnet-install-args.did).
-4. Observe a first complete baseline tick and confirm it spends no ICP.
-5. For allocation testing, fund Relay's default account with a small direct ICP payment so liquidity is available immediately.
-6. Observe the first allocation tick and verify CMC notifications and any surplus transfers match the expected policy.
-7. Increase funding only after the baseline and first allocation behave as expected.
-
-## Production upgrades
-
-Production canister: `jupiter_relay` / `u2qkp-aqaaa-aaaar-qb7ea-cai`
-
-### Routine replacement upgrade
-
-Routine Relay upgrades pass the full reviewed `InitArgs` file. Relay intentionally requires full InitArgs on upgrade because configuration remains heap-only. Under this replacement-style lifecycle, Relay does not support no-arg upgrades and does not support Relay UpgradeArgs. The isolated SNS reward and fixed-splitter journals survive; an active splitter requires the same configured ICP Ledger.
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
-  --environment ic \
-  --mode upgrade \
-  --args-file canisters/relay/mainnet-install-args.did
-```
-
-Avoid running this command during active Relay work where practical. After upgrade, confirm the fresh `CONFIG` log from supplied `InitArgs`, confirm the first successful tick is `BaselineOnly`, check managed canister cycle balances, and manually top up or reconcile if needed.
-
-### Config-changing replacement upgrade
-
-Config-changing Relay upgrades use full `InitArgs`. Relay has no `UpgradeArgs`, so the standard production path is to update [`canisters/relay/mainnet-install-args.did`](mainnet-install-args.did) in the repo, review the diff, and deploy that reviewed checked-in file. A config-changing upgrade is also non-resumable and resets all Relay heap state; avoid active Relay work where practical.
-
-Example shape:
+Production Relay intentionally exposes **no application methods** after initialization:
 
 ```did
-(
-  record {
-    managed_canisters = vec { principal "..." };
-    ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
-    cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
-    governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
-    blackhole_canister_id = opt principal "e3mmv-5qaaa-aaaah-aadma-cai";
-    main_interval_seconds = opt (86400 : nat64);
-    max_transfers_per_tick = opt (10 : nat32);
-    surplus_canister_recipients = null;
-    surplus_neuron_recipients = vec {};
-  },
-)
+service : (InitArgs) -> {}
 ```
 
-Deploy with:
+Targets, recipients, withdrawals, transfers, and recovery cannot be changed through a production endpoint. Debug builds expose test helpers such as `debug_state`, `debug_config`, `debug_last_summary`, `debug_main_tick`, reward helpers and fault injection; they are for local/PocketIC use only and are guarded against use at the embedded canonical production Relay principal. See [`jupiter_relay_debug.did`](jupiter_relay_debug.did).
+
+Public canister logs are therefore an important verification surface. Every main tick that actually runs emits the Relay cycles balance and a `CONFIG` record describing the effective runtime wiring. Operational records include:
+
+```text
+Cycles:
+CONFIG
+RELAY_SUMMARY
+RELAY_CANISTER
+RELAY_SURPLUS_TRANSFER
+RELAY_SPLITTER
+RELAY_FAUCET_COMMITMENT
+RELAY_PROBE_FAILURE
+RELAY_TARGET_PROBE
+relay LIFECYCLE
+relay ERR
+```
+
+`RELAY_SUMMARY` is the main per-tick accounting record; the other records provide actionable target, transfer, splitter, Faucet-forwarding and probe detail. Logs have finite retention, so operators needing durable history should archive them externally. Self-service Relay and target **cycles histories** are separately tracked by Historian.
+
+## External dependencies and install configuration
+
+By default Relay talks to:
+
+- ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`) — balances, transfers and live ledger fee;
+- CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`) — ICP/XDR conversion and cycles top-up notification;
+- NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`) — Relay Faucet-neuron staking and public NNS neuron surplus recipients;
+- ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`) — subaccount-1 reward-attribution history;
+- `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`) — SNS owner snapshots and reward-token context; and
+- the configured fixed blackhole (canonical default `77deu-baaaa-aaaar-qb6za-cai`) or shared Auto probe routes — target cycles observation.
+
+The public install type is defined in [`jupiter_relay.did`](jupiter_relay.did):
+
+```did
+type SurplusCanisterRecipient = record { canister_id : principal; memo : blob };
+type SurplusNeuronRecipient = record { neuron_id : nat64; memo : blob };
+type InitArgs = record {
+  managed_canisters : vec principal;
+  ledger_canister_id : opt principal;
+  cmc_canister_id : opt principal;
+  governance_canister_id : opt principal;
+  blackhole_canister_id : opt principal;
+  sns_rewards_canister_id : opt principal;
+  icp_index_canister_id : opt principal;
+  main_interval_seconds : opt nat64;
+  max_transfers_per_tick : opt nat32;
+  surplus_canister_recipients : opt vec SurplusCanisterRecipient;
+  surplus_neuron_recipients : vec SurplusNeuronRecipient;
+};
+service : (InitArgs) -> {};
+```
+
+Omitted dependency IDs use the canonical mainnet defaults compiled into the Wasm. `blackhole_canister_id = null` selects Auto probe mode; providing one selects Fixed mode. `max_transfers_per_tick = null` removes the default-account transfer cap. No raw-ICP recipients selects all-cycles mode.
+
+### Lifecycle
+
+Relay is deliberately replacement-style. Install, reinstall and upgrade all initialize ordinary heap state from full `InitArgs`. An upgrade therefore resets ordinary cycle samples, deficits, cached fee/conversion state, default-account allocation work and subaccount-1 forwarding state.
+
+Two narrow stable journals survive ordinary same-canister upgrades:
+
+- stable memory 0: SNS reward attribution state and any pinned reward-token transfer;
+- stable memory 1: splitter transactions, fencing revisions and quarantine evidence.
+
+An active splitter requires the replacement args to retain the same ICP Ledger. Avoid controller-managed upgrades during active value-moving work where practical. Self-service blackholed Relays are not upgraded by Historian at all.
+
+The suite-wide lifecycle matrix and deployment cautions live in [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md).
+
+## Jupiter Faucet's canonical Relay
+
+Jupiter Faucet uses the same Relay design to fund its own suite. The production instance recorded in this repository is:
+
+```text
+jupiter_relay
+u2qkp-aqaaa-aaaar-qb7ea-cai
+```
+
+### Canonical ICP funding accounts
+
+For the canonical Relay, the following are the **legacy ICP Ledger account identifiers** (the 64-character hexadecimal addresses), rather than only the ICRC owner/subaccount notation. These are the Relay-owned ICP accounts used for immediate funding, Faucet-commitment staging, and the fixed splitter routes.
+
+| Relay account | Purpose | Subaccount byte | ICP Ledger account identifier |
+|---|---|---:|---|
+| Default | ICP available for managed-canister top-ups and eventual surplus | `00` (ICRC default / `null`) | `ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd` |
+| Subaccount 1 | Jupiter Faucet commitment staging | `01` | `9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee` |
+| Splitter 10 | 10% default / 90% subaccount 1 | `0a` | `888cbe557e118986bfdd515c6d7622dc54a0a83b6bff17287134fa514a805594` |
+| Splitter 20 | 20% default / 80% subaccount 1 | `14` | `4f74f3f8320540a1998c4ff4da9264f166ba8546cbaef9650177c573cb913619` |
+| Splitter 30 | 30% default / 70% subaccount 1 | `1e` | `a6b8c79aad7424c51f566db0781060404a1e13f2c9b96531fbd8664759967c84` |
+| Splitter 40 | 40% default / 60% subaccount 1 | `28` | `75b0acc13f98dd766111e510682c4038b32f4e165d60f26457ebf741e119cff8` |
+| Splitter 50 | 50% default / 50% subaccount 1 | `32` | `ddc112cd674286bc5342c933ad70b94d5a6f956f08283a9cfc2dacc7346df034` |
+| Splitter 60 | 60% default / 40% subaccount 1 | `3c` | `98394d5d6d5438c1629b9801574478c63170c115df9ae2c02b223e8b501b8fd5` |
+| Splitter 70 | 70% default / 30% subaccount 1 | `46` | `3d27e1558913c4771959af6119e9758c79e548c75ee6951da7f1fc726a0760e7` |
+| Splitter 80 | 80% default / 20% subaccount 1 | `50` | `1f2e1e0d228cda21e9bb2852554362739a8c955755c2034ee04893d38a47442a` |
+| Splitter 90 | 90% default / 10% subaccount 1 | `5a` | `7dd38b0e9fa61ec7075d730fa3fe6026fb128b816e36d4007bcd937a3cd52f3e` |
+
+For the numbered accounts, the full subaccount is 32 bytes: 31 zero bytes followed by the byte shown above. The default ICRC account is `Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai; subaccount = null }`; the legacy account-identifier derivation uses the canonical all-zero default subaccount.
+
+Its checked-in configuration is [`mainnet-install-args.did`](mainnet-install-args.did). It manages the suite canisters plus the two production blackholes, with Relay itself auto-included:
+
+```text
+jupiter_disburser           uccpi-cqaaa-aaaar-qby3q-cai
+jupiter_lifeline            afisn-gqaaa-aaaar-qb4qa-cai
+jupiter_faucet              acjuz-liaaa-aaaar-qb4qq-cai
+jupiter_sns_rewards         alk7f-5aaaa-aaaar-qb4ra-cai
+jupiter_faucet_frontend     jufzc-caaaa-aaaar-qb5da-cai
+jupiter_historian           j5gs6-uiaaa-aaaar-qb5cq-cai
+blackhole_fiduciary_subnet  77deu-baaaa-aaaar-qb6za-cai
+blackhole_13_node_subnet    e3mmv-5qaaa-aaaah-aadma-cai
+relay, auto-included        u2qkp-aqaaa-aaaar-qb7ea-cai
+```
+
+The canonical Relay uses Fixed probe mode through the Fiduciary blackhole, a daily cadence, and two equal public NNS neuron surplus recipients:
+
+- IO neuron `10292412127977304661` with no memo;
+- Jupiter Faucet neuron `11614578985374291210` with memo `10292412127977304661`.
+
+The second recipient compounds part of genuine surplus back into the stake that produces future Jupiter Faucet maturity; the other half grows the IO neuron stake. This is a protocol-specific example, not a requirement for self-service Relays.
+
+Historian reserves this canonical target set so it cannot be recreated through the principal-only self-service API with a different recipient configuration.
+
+## Build, test and reproducible verification
+
+Production build:
+
+```bash
+cargo build -p jupiter-relay --target wasm32-unknown-unknown --release --locked
+```
+
+Debug build:
+
+```bash
+cargo build -p jupiter-relay --target wasm32-unknown-unknown --release --features debug_api --locked
+```
+
+Unit tests can also be run directly with `cargo test -p jupiter-relay --lib`. Preferred repo-aware test entry points are:
+
+```bash
+cargo run -p xtask -- relay_unit
+cargo run -p xtask -- relay_local_integration
+cargo run -p xtask -- relay_pocketic_integration
+cargo run -p xtask -- relay_all
+```
+
+The Relay integration suite covers configuration wiring, cycles probes, CMC top-ups, equal surplus routing, all-cycles mode, live-fee handling, duplicate-safe transfer recovery, transfer caps, subaccount-1 forwarding, fixed splitters, upgrade/stable-journal behavior, production/debug API boundaries, and SNS reward attribution. See [`../../tools/xtask/README.md`](../../tools/xtask/README.md) for the suite-wide matrix.
+
+For canonical release artifacts and module-hash verification, use the pinned Docker build:
+
+```bash
+./tools/scripts/docker-build
+```
+
+This produces `release-artifacts/jupiter_relay.wasm` and `.wasm.gz` plus hashes. The same release flow builds the factory-enabled Historian with the reviewed raw Relay Wasm embedded; Historian verifies spawned children against that approved module hash before activation. See [`../../docs/operations/reproducible-builds.md`](../../docs/operations/reproducible-builds.md).
+
+## Canonical Relay operations
+
+These commands apply to the controller-managed canonical Jupiter Faucet Relay, **not** to immutable self-service children.
+
+Relay requires full `InitArgs` on every upgrade:
 
 ```bash
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
@@ -490,54 +411,27 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
   --args-file canisters/relay/mainnet-install-args.did
 ```
 
-`max_transfers_per_tick = opt <nat32>` sets the transfer limit; `max_transfers_per_tick = null` clears it. For `surplus_canister_recipients`, `null` means no canister recipients. For `surplus_neuron_recipients`, `vec {}` means no neuron recipients.
+After an upgrade, verify the fresh `CONFIG` log, expect the first successful complete ordinary allocation sample to be `BaselineOnly`, inspect managed-canister cycles balances, and reconcile any externally ambiguous pre-upgrade ordinary work before increasing funding.
 
-### Fresh install
+Fresh install and destructive reinstall use the same checked-in args with `--mode install` or `--mode reinstall`. Reinstall also clears the stable journals and should be used only for an intentionally fresh deployment.
 
-Fresh install uses the reviewed Relay `InitArgs` file. This creates fresh config and fresh operational state.
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
-  --environment ic \
-  --mode install \
-  --args-file canisters/relay/mainnet-install-args.did
-```
-
-### Destructive reinstall
-
-Destructive reinstall uses the reviewed Relay `InitArgs` file. This creates fresh config and fresh operational state.
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
-  --environment ic \
-  --mode reinstall \
-  --args-file canisters/relay/mainnet-install-args.did
-```
-
-Reinstall is destructive to Relay Wasm and heap state. Use it only when replacing Relay as a fresh deployment and after confirming external ICP/cycles conditions are safe.
-
-Before any Relay upgrade or reinstall, confirm that state reset is intentional, save current public logs/settings if needed, and verify managed canister cycle balances are healthy enough for a new baseline.
-
-Post-replacement verification:
+Useful production checks:
 
 ```bash
 ./tools/scripts/smoke-relay-mainnet
 icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
 ```
 
-Exact settings update command:
+For the full production lifecycle, settings/handoff procedure, rollback guidance and cross-canister deployment order, use [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md) rather than duplicating it here.
 
-```bash
-icp canister settings update u2qkp-aqaaa-aaaar-qb7ea-cai \
-  --add-controller 77deu-baaaa-aaaar-qb6za-cai \
-  --log-visibility public \
-  --log-memory-limit 2mib \
-  -n ic
-```
+## Related documentation
 
-Suggested settings and log checks:
-
-```bash
-icp canister settings show u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
-icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
-```
+- [Suite overview](../../README.md)
+- [Jupiter Faucet](../faucet/README.md) — commitment and raw-ICP source used for perpetual Relay funding
+- [Jupiter Historian](../historian/README.md) — self-service factory and public cycles histories
+- [Jupiter frontend](../frontend/README.md) — browser Relay Setup and tracker behavior
+- [Self-service Relay configuration and recovery](../../docs/relay-setup-recovery.md) — factory state machine and recovery rules
+- [Jupiter SNS Rewards](../sns-rewards/README.md) — owner snapshots used by reward attribution
+- [Deployment operations](../../docs/operations/deployment.md) — lifecycle matrix and production procedures
+- [Reproducible builds](../../docs/operations/reproducible-builds.md) — canonical artifact verification
+- [`jupiter-memo-policy`](../../crates/memo-policy) — Faucet memo forms used for raw-ICP Relay funding
