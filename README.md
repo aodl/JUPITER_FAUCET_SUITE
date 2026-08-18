@@ -4,6 +4,8 @@
 
 ![Jupiter Faucet](canisters/frontend/public/og/preview-20260520.jpg)
 
+<img src="/canisters/frontend/public/perpetual canister topups.svg">
+
 The suite turns durable ICP and NNS maturity into durable cycles support. A controlled NNS neuron produces recurring maturity, the disburser stages that maturity as ICP, the faucet allocates the base ICP flow to memo-declared targets, and the relay helps keep the suite's own canisters funded before routing surplus ICP to configured neuron recipients. Historian and frontend canisters provide public observability, while small recovery/support canisters keep the value-moving path narrow and auditable.
 
 ## Protocol Overview
