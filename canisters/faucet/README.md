@@ -99,6 +99,8 @@ This is an explicit economic trade-off, not an oversight. A committer can still 
 
 ### How a participant declares a target
 
+<img src="../frontend/public/faucet.svg">
+
 A participant declares a faucet target by sending ICP to the configured staking account and placing a supported ASCII declaration in `icrc1_memo`:
 
 - staking account address (ICRC-1 text): `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
