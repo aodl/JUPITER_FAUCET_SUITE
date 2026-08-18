@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     baseProfile="full"
+     class="jf-diagram"
+     width="1190"
+     height="330"
+     viewBox="35 10 1190 330"
+     role="img"
+     version="1.1">
+  <defs>
+    <style type="text/css"><![CDATA[
+      .jf-diagram { font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .bg{fill:#ffffff;}
+      .node-title{fill:#18212b;font-size:18px;font-weight:700}
+      .node-sub{fill:#607080;font-size:13px;font-weight:520}
+      .badge{font-size:11px;font-weight:760}
+      .section{fill:#607080;font-size:12px;font-weight:760;letter-spacing:1.2px}
+      .edge-label{fill:#18212b;font-size:12px;font-weight:650}
+      .note{fill:#607080;font-size:13px;font-weight:560}
+      .canister.jupiter rect.body{fill:#edf9f5;stroke:#118866;}
+      .canister.target rect.body{fill:#fafbfc;stroke:#8b96a3;}
+      .edge{fill:none;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+      .edge.icp{stroke:#c4870e;}
+      .edge.cycles{stroke:#168c65;}
+    ]]></style>
+
+    <marker id="a-icp" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#c4870e"/>
+    </marker>
+    <marker id="a-cycles" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#168c65"/>
+    </marker>
+  </defs>
+
+  <title>Perpetual canister top-up</title>
+  <desc>A one-time ICP commitment becomes permanent stake in the Faucet neuron. Recurring maturity is handled by the Jupiter Faucet Disburser and Faucet, which repeatedly top up the target canister with cycles.</desc>
+
+  <rect class="bg" x="0" y="0" width="1260" height="370"/>
+
+  <text class="section" x="60" y="48">ONE-TIME COMMITMENT</text>
+  <text class="section" x="545" y="48">RECURRING, UNSTOPPABLE TOP-UPS</text>
+  <line stroke="#dbe3ea" stroke-dasharray="6 7" stroke-width="1.4" x1="500" x2="500" y1="24" y2="305"/>
+
+  <path class="edge icp" d="M 142,220 L 220,220" marker-end="url(#a-icp)"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="138.7" x="111" y="132"/>
+  <text class="edge-label" text-anchor="middle" x="180.35" y="149">ICP + target memo</text>
+
+  <path class="edge icp" d="M 464,220 L 560,220" marker-end="url(#a-icp)"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="74.8" x="474.6" y="132"/>
+  <text class="edge-label" text-anchor="middle" x="512" y="149">maturity</text>
+
+  <path class="edge cycles" d="M 860,220 L 980,220" marker-end="url(#a-cycles)"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="60.6" x="889.7" y="132"/>
+  <text class="edge-label" text-anchor="middle" x="920" y="149">cycles</text>
+
+  <g class="entity user">
+    <circle cx="100" cy="220" fill="#eef4ff" r="42" stroke="#2f6ee5" stroke-width="2.4"/>
+    <circle cx="100" cy="214" fill="none" r="7.5" stroke="#2f6ee5" stroke-width="2.3"/>
+    <path d="M85,236 C90,222 110,222 115,236" fill="none" stroke="#2f6ee5" stroke-linecap="round" stroke-width="2.3"/>
+    <text class="node-title" text-anchor="middle" x="100" y="290">User</text>
+  </g>
+
+  <g class="entity neuron">
+    <polygon fill="#fff7e6" points="244,175 440,175 464,220 440,265 244,265 220,220"
+             stroke="#b97712" stroke-width="2.3"/>
+    <rect fill="#fff7e6" height="22" rx="11" ry="11" stroke="#b97712" stroke-width="1.5" width="56" x="234" y="164"/>
+    <text class="badge" fill="#b97712" text-anchor="middle" x="262" y="179">Neuron</text>
+    <circle cx="256" cy="220" fill="none" r="4.5" stroke="#b97712" stroke-width="2"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="256" x2="270" y1="220" y2="220"/>
+    <circle cx="270" cy="220" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="256" x2="263" y1="220" y2="232.124"/>
+    <circle cx="263" cy="232.124" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="256" x2="249" y1="220" y2="232.124"/>
+    <circle cx="249" cy="232.124" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="256" x2="242" y1="220" y2="220"/>
+    <circle cx="242" cy="220" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="256" x2="249" y1="220" y2="207.876"/>
+    <circle cx="249" cy="207.876" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="256" x2="263" y1="220" y2="207.876"/>
+    <circle cx="263" cy="207.876" fill="#b97712" r="2.5"/>
+    <text class="node-title" x="290" y="217">Faucet neuron</text>
+    <text class="node-sub" x="290" y="239">permanent stake</text>
+  </g>
+
+  <g class="entity canister jupiter">
+    <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="300" x="560" y="175"/>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="574" y="164"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="617.5" y="179">Jupiter Faucet</text>
+    <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="581" y="208"/>
+    <line stroke="#118866" stroke-width="2" x1="587" x2="601" y1="216" y2="216"/>
+    <line stroke="#118866" stroke-width="2" x1="587" x2="601" y1="224" y2="224"/>
+    <text class="node-title" x="624" y="226">Disburser &amp; Faucet</text>
+  </g>
+
+  <g class="entity canister target">
+    <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="210" x="980" y="175"/>
+    <rect fill="#fafbfc" height="22" rx="11" ry="11" stroke="#8b96a3" stroke-width="1.5" width="56" x="994" y="164"/>
+    <text class="badge" fill="#8b96a3" text-anchor="middle" x="1022" y="179">Target</text>
+    <rect fill="none" height="24" rx="6" ry="6" stroke="#8b96a3" stroke-width="2.2" width="26" x="1001" y="208"/>
+    <line stroke="#8b96a3" stroke-width="2" x1="1007" x2="1021" y1="216" y2="216"/>
+    <line stroke="#8b96a3" stroke-width="2" x1="1007" x2="1021" y1="224" y2="224"/>
+    <text class="node-title" x="1044" y="221">Canister</text>
+    <text class="node-sub" x="1044" y="244">Declared by memo</text>
+  </g>
+
+</svg>
