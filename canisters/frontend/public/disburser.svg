@@ -94,8 +94,8 @@
   </g>
   <g class="entity canister jupiter">
     <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="230" x="480" y="375"/>
-    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="58.1" x="494" y="364"/>
-    <text class="badge" fill="#118866" text-anchor="middle" x="523.05" y="379">Jupiter</text>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="494" y="364"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="537.5" y="379">Jupiter Faucet</text>
     <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="501" y="408.0"/>
     <line stroke="#118866" stroke-width="2" x1="507" x2="521" y1="416.0" y2="416.0"/>
     <line stroke="#118866" stroke-width="2" x1="507" x2="521" y1="424.0" y2="424.0"/>
@@ -103,8 +103,8 @@
   </g>
   <g class="entity canister jupiter">
     <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="240" x="850" y="375"/>
-    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="58.1" x="864" y="364"/>
-    <text class="badge" fill="#118866" text-anchor="middle" x="893.05" y="379">Jupiter</text>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="864" y="364"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="907.5" y="379">Jupiter Faucet</text>
     <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="871" y="408.0"/>
     <line stroke="#118866" stroke-width="2" x1="877" x2="891" y1="416.0" y2="416.0"/>
     <line stroke="#118866" stroke-width="2" x1="877" x2="891" y1="424.0" y2="424.0"/>
@@ -113,8 +113,8 @@
   </g>
   <g class="entity canister jupiter">
     <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="240" x="350" y="575"/>
-    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="58.1" x="364" y="564"/>
-    <text class="badge" fill="#118866" text-anchor="middle" x="393.05" y="579">Jupiter</text>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="364" y="564"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="407.5" y="579">Jupiter Faucet</text>
     <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="371" y="608.0"/>
     <line stroke="#118866" stroke-width="2" x1="377" x2="391" y1="616.0" y2="616.0"/>
     <line stroke="#118866" stroke-width="2" x1="377" x2="391" y1="624.0" y2="624.0"/>
