@@ -2,6 +2,8 @@ pub(crate) mod cycles_probe;
 mod guards;
 mod ledger_fee;
 mod logging;
+mod reward_history;
+mod reward_splitter;
 mod reward_sweep;
 mod splitter;
 mod tick;
@@ -25,5 +27,6 @@ pub(crate) async fn debug_reward_sweep_impl() {
 
 #[cfg(feature = "debug_api")]
 pub(crate) use transfer::{
-    debug_set_abort_after_successful_transfer, debug_set_trap_after_successful_transfer,
+    debug_set_abort_after_successful_transfer, debug_set_pause_after_persisted_splitter_leg,
+    debug_set_trap_after_successful_transfer,
 };

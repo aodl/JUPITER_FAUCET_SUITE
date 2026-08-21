@@ -4,7 +4,7 @@ Production deployment is a governance-controlled operation. Once Jupiter Faucet 
 
 Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
 
-Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service Relays use the canonical daily cadence with canonical 1–20 targets, automatic probe routing, and 1–5 submitted principal recipients paid equally at default ICP accounts. Pricing remains target-based; no IO or neuron recipient is added automatically.
+Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service Relays use the canonical daily cadence with canonical 1–20 targets, automatic probe routing, and 1–5 submitted typed recipients. Principals are paid equally at default ICP accounts; public NNS neuron IDs are paid at resolved Governance staking accounts, and Relay requests `claim_or_refresh` after a successful neuron transfer. Pricing remains target-based; no IO recipient is added automatically.
 
 Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
@@ -211,7 +211,7 @@ For config-changing upgrades, Disburser, Faucet, and Historian use the canister'
 | `jupiter_lifeline` | No install args | No args | No args | Minimal support canister state |
 | `jupiter_sns_rewards` | `InitArgs` with optional SNS Root | No args | Temporary nested `Option<UpgradeArgs>` | Stable configuration, active owner snapshot, staging scan, and cursor preserved when Root is unchanged |
 
-Relay ordinary default-account allocation and subaccount-1 work remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`. Stable memory 0 preserves the SNS reward cursor and pending transfer; stable memory 1 preserves any pinned fixed-splitter transaction and quarantine evidence. An active splitter requires the replacement `InitArgs` to name the same ICP Ledger. After upgrade, confirm the fresh `CONFIG` log, stable journal state, first successful `BaselineOnly` ordinary allocation tick, managed-canister cycle balances, and any required reconciliation.
+Relay ordinary default-account allocation and subaccount-1 work remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`. Stable memory 0 preserves the SNS reward main cursor/carry, per-splitter attribution boundaries, and pending transfer with proposed boundary updates; stable memory 1 preserves any pinned fixed-splitter execution transaction and quarantine evidence. An active splitter requires the replacement `InitArgs` to name the same ICP Ledger. After upgrade, confirm the fresh `CONFIG` log, stable journal state, first successful `BaselineOnly` ordinary allocation tick, managed-canister cycle balances, and any required reconciliation.
 
 ## SNS rewards lifecycle and Root switch
 
@@ -256,7 +256,7 @@ Before switching from OpenChat to jUP:
 5. Verify the context exposes the expected Root-derived jUP Ledger.
 6. Allow Relay to begin the new Root epoch with an empty processed commitment cursor.
 
-A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay does not carry its processed cursor or carried-credit boundary between Roots and never caches the reward Ledger ID. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
+A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay does not carry its main cursor/carry or any splitter attribution boundary between Roots and never caches the reward Ledger ID. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
 
 ## Local development builds
 

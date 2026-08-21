@@ -1,6 +1,6 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use async_trait::async_trait;
 use candid::{CandidType, Deserialize, Nat, Principal};
@@ -8,23 +8,19 @@ use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::{account_identifier_bytes, account_identifier_text};
-use jupiter_ic_clients::index::{
-    GetAccountIdentifierTransactionsResponse, IcpIndexCanister, IndexOperation,
-    IndexTransactionWithId,
-};
+use jupiter_ic_clients::index::{IndexOperation, IndexTransactionWithId};
 use jupiter_ic_clients::ledger::IcrcLedgerCanister;
 
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::GovernanceClient;
 use crate::reward_state::{self, PendingRewardTransfer, PendingRewardTransferStatus};
+use crate::scheduler::reward_history;
+use crate::scheduler::reward_splitter::{self, SplitterFundingCredit};
 use crate::scheduler::transfer::created_at_time_is_valid;
 use crate::{logic, state};
 
 pub(crate) const REWARD_SWEEP_INTERVAL_SECONDS: u64 = 7 * 24 * 60 * 60;
 const REWARD_CONTEXT_MAX_AGE_NANOS: u64 = 48 * 60 * 60 * 1_000_000_000;
-const ICP_HISTORY_PAGE_SIZE: u64 = 1_000;
-const ICP_HISTORY_MAX_PAGES: usize = 10;
-const ICP_HISTORY_MAX_TRANSACTIONS: usize = 10_000;
 const ICP_HISTORY_MAX_DISTINCT_SOURCES: usize = 128;
 const REWARD_MEMO_PREFIX: &[u8; 4] = b"JRS1";
 
@@ -64,6 +60,9 @@ struct RewardLog {
     processed_through: Option<u64>,
     scanned_transactions: usize,
     completed_commitments: usize,
+    splitter_credits: usize,
+    splitters_scanned: usize,
+    expanded_distinct_sources: usize,
     distinct_sources: usize,
     eligible_principals: usize,
     winner_e8s: Option<u64>,
@@ -82,13 +81,14 @@ impl RewardLog {
                 .unwrap_or_else(|| "null".to_string())
         }
         ic_cdk::println!(
-            "RELAY_SNS_REWARD status={} reason={} sns_root_canister_id={} sns_ledger_canister_id={} snapshot_id={} snapshot_cutoff_ts_nanos={} processed_from_commitment_tx_id={} processed_through_commitment_tx_id={} scanned_transactions={} completed_commitments={} distinct_sources={} eligible_principals={} eligible_winner_icp_e8s={} ineligible_icp_e8s={} token_balance={} token_fee={} token_amount={} recipient={}",
+            "RELAY_SNS_REWARD status={} reason={} sns_root_canister_id={} sns_ledger_canister_id={} snapshot_id={} snapshot_cutoff_ts_nanos={} processed_from_commitment_tx_id={} processed_through_commitment_tx_id={} scanned_transactions={} completed_commitments={} splitter_credits={} splitters_scanned={} expanded_distinct_sources={} distinct_sources={} eligible_principals={} eligible_winner_icp_e8s={} ineligible_icp_e8s={} token_balance={} token_fee={} token_amount={} recipient={}",
             self.status,
             self.reason.as_deref().map(jupiter_canister_logging::escape_value).unwrap_or_else(|| "null".to_string()),
             self.root.map(|v| v.to_text()).unwrap_or_else(|| "null".to_string()),
             self.ledger.map(|v| v.to_text()).unwrap_or_else(|| "null".to_string()),
             opt(self.snapshot_id), opt(self.cutoff), opt(self.processed_from), opt(self.processed_through),
-            self.scanned_transactions, self.completed_commitments, self.distinct_sources,
+            self.scanned_transactions, self.completed_commitments, self.splitter_credits,
+            self.splitters_scanned, self.expanded_distinct_sources, self.distinct_sources,
             self.eligible_principals, opt(self.winner_e8s), opt(self.ineligible_e8s),
             opt(self.token_balance.as_ref()), opt(self.token_fee.as_ref()), opt(self.token_amount.as_ref()),
             self.recipient.map(|v| v.to_text()).unwrap_or_else(|| "null".to_string())
@@ -214,7 +214,7 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
     let relay = ic_cdk::api::canister_self();
     let relay_account_identifier =
         account_identifier_text(relay, Some(logic::relay_subaccount_one()));
-    let transactions = scan_history(
+    let transactions = reward_history::scan_history(
         cfg.icp_index_canister_id,
         relay_account_identifier,
         processed_from,
@@ -228,7 +228,8 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         .map_err(|_| "faucet_staking_account_unavailable".to_string())?;
     let faucet_account_identifier =
         account_identifier_text(cfg.governance_canister_id, Some(staking_subaccount));
-    let batch = reconstruct_batch(
+    let intrinsic_splitters = reward_splitter::intrinsic_splitter_accounts(relay);
+    let batch = reconstruct_batch_with_splitters(
         &transactions,
         processed_from,
         carried_credit_start,
@@ -237,6 +238,7 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         &faucet_account_identifier,
         &logic::relay_faucet_commitment_memo(relay)
             .map_err(|_| "commitment_memo_invalid".to_string())?,
+        &intrinsic_splitters,
     )?;
     let Some(batch) = batch else {
         log.reason = Some("no_new_completed_commitment".to_string());
@@ -244,13 +246,28 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
     };
     log.processed_through = Some(batch.through_commitment_tx_id);
     log.completed_commitments = batch.completed_commitments;
-    log.distinct_sources = batch.sources.len();
-    if batch.sources.len() > ICP_HISTORY_MAX_DISTINCT_SOURCES {
+    log.splitter_credits = batch.splitter_credits.len();
+    let expanded = reward_splitter::expand_splitter_provenance(
+        cfg.icp_index_canister_id,
+        relay,
+        &batch.splitter_credits,
+        &reward_boundary.splitter_boundaries,
+    )
+    .await?;
+    log.scanned_transactions = log
+        .scanned_transactions
+        .checked_add(expanded.scanned_transactions)
+        .ok_or_else(|| "history_count_overflow".to_string())?;
+    log.splitters_scanned = expanded.splitters_scanned;
+    log.expanded_distinct_sources = expanded.sources.len();
+    let (final_sources, final_ineligible) =
+        merge_attribution(batch.sources, batch.ineligible_e8s, &expanded)?;
+    log.distinct_sources = final_sources.len();
+    if final_sources.len() > ICP_HISTORY_MAX_DISTINCT_SOURCES {
         log.reason = Some("too_many_distinct_sources".to_string());
         return Ok(());
     }
-    let requested = batch
-        .sources
+    let requested = final_sources
         .keys()
         .map(|account| account.to_vec())
         .collect::<Vec<_>>();
@@ -270,11 +287,11 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
             return Err(format!("invalid_source_account_identifier_{index}"));
         }
     };
-    if owners.len() != batch.sources.len() {
+    if owners.len() != final_sources.len() {
         return Err("owner_lookup_length_mismatch".to_string());
     }
     let (eligible, ineligible, mismatches) =
-        classify_sources(batch.sources, batch.ineligible_e8s, owners)?;
+        classify_sources(final_sources, final_ineligible, owners)?;
     for principal in mismatches {
         ic_cdk::println!(
             "RELAY_SNS_REWARD_OWNER_MISMATCH principal={}",
@@ -292,7 +309,8 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
                 state,
                 batch.through_commitment_tx_id,
                 batch.next_carried_credit_start_tx_id,
-            )
+            );
+            advance_splitter_boundaries(state, &expanded.boundary_updates);
         });
         return Ok(());
     };
@@ -304,6 +322,7 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
         snapshot_id: context.snapshot_id,
         through_commitment_tx_id: batch.through_commitment_tx_id,
         next_carried_credit_start_tx_id: batch.next_carried_credit_start_tx_id,
+        proposed_splitter_boundaries: expanded.boundary_updates,
         recipient: Account {
             owner: winner,
             subaccount: None,
@@ -325,164 +344,28 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
     Ok(())
 }
 
-async fn scan_history(
-    index_id: Principal,
-    account_identifier: String,
-    prior_cursor: Option<u64>,
-    carried_credit_start_tx_id: Option<u64>,
-) -> Result<Vec<IndexTransactionWithId>, String> {
-    let index = IcpIndexCanister::new(index_id);
-    scan_history_with_index(
-        &index,
-        account_identifier,
-        prior_cursor,
-        carried_credit_start_tx_id,
-    )
-    .await
-}
-
-#[async_trait]
-trait RewardHistoryClient: Send + Sync {
-    async fn get_transactions(
-        &self,
-        account_identifier: String,
-        start: Option<u64>,
-        max_results: u64,
-    ) -> Result<GetAccountIdentifierTransactionsResponse, String>;
-}
-
-#[async_trait]
-impl RewardHistoryClient for IcpIndexCanister {
-    async fn get_transactions(
-        &self,
-        account_identifier: String,
-        start: Option<u64>,
-        max_results: u64,
-    ) -> Result<GetAccountIdentifierTransactionsResponse, String> {
-        self.get_account_identifier_transactions(account_identifier, start, max_results)
-            .await
-            .map_err(|_| "history_read_failed".to_string())
-    }
-}
-
-async fn scan_history_with_index<I: RewardHistoryClient>(
-    index: &I,
-    account_identifier: String,
-    prior_cursor: Option<u64>,
-    carried_credit_start_tx_id: Option<u64>,
-) -> Result<Vec<IndexTransactionWithId>, String> {
-    match (prior_cursor, carried_credit_start_tx_id) {
-        (None, Some(_)) => return Err("history_carry_without_cursor".to_string()),
-        (Some(cursor), Some(carried)) if carried >= cursor => {
-            return Err("history_carry_invalid".to_string())
-        }
-        _ => {}
-    }
-    let mut start = None;
-    let mut seen_starts = BTreeSet::new();
-    let mut transactions = Vec::new();
-    let mut boundary_found = false;
-    let mut cursor_found = prior_cursor.is_none();
-    let mut previous_tx_id = None;
-    for _ in 0..ICP_HISTORY_MAX_PAGES {
-        let page = index
-            .get_transactions(account_identifier.clone(), start, ICP_HISTORY_PAGE_SIZE)
-            .await
-            .map_err(|_| "history_read_failed".to_string())?;
-        if page.transactions.is_empty() {
-            boundary_found = prior_cursor.is_none();
-            break;
-        }
-        for transaction in &page.transactions {
-            if previous_tx_id.is_some_and(|previous| transaction.id >= previous) {
-                return Err("history_pagination_non_progressing".to_string());
-            }
-            previous_tx_id = Some(transaction.id);
-
-            if let Some(cursor) = prior_cursor {
-                if !cursor_found {
-                    match transaction.id.cmp(&cursor) {
-                        std::cmp::Ordering::Greater => {}
-                        std::cmp::Ordering::Equal => {
-                            cursor_found = true;
-                            if carried_credit_start_tx_id.is_none() {
-                                boundary_found = true;
-                                break;
-                            }
-                            continue;
-                        }
-                        std::cmp::Ordering::Less => {
-                            return Err("history_cursor_not_found".to_string())
-                        }
-                    }
-                } else if let Some(carried) = carried_credit_start_tx_id {
-                    if transaction.id < carried {
-                        return Err("history_carried_credit_not_found".to_string());
-                    }
-                }
-            }
-
-            transactions.push(transaction.clone());
-            if transactions.len() > ICP_HISTORY_MAX_TRANSACTIONS {
-                return Err("history_limit_exceeded".to_string());
-            }
-            if carried_credit_start_tx_id == Some(transaction.id) {
-                boundary_found = true;
-                break;
-            }
-        }
-        if boundary_found {
-            break;
-        }
-        let oldest_in_page = page.transactions.last().expect("nonempty page").id;
-        let reached_history_start = page.transactions.len() < ICP_HISTORY_PAGE_SIZE as usize
-            || page.oldest_tx_id == Some(oldest_in_page);
-        if reached_history_start {
-            if prior_cursor.is_none() {
-                boundary_found = true;
-                break;
-            }
-            return Err(if !cursor_found {
-                "history_cursor_not_found"
-            } else {
-                "history_carried_credit_not_found"
-            }
-            .to_string());
-        }
-        if start == Some(oldest_in_page) || !seen_starts.insert(oldest_in_page) {
-            return Err("history_pagination_non_progressing".to_string());
-        }
-        start = Some(oldest_in_page);
-    }
-    if !boundary_found {
-        return Err(if transactions.len() >= ICP_HISTORY_MAX_TRANSACTIONS {
-            "history_limit_exceeded"
-        } else if !cursor_found {
-            "history_cursor_not_found"
-        } else if carried_credit_start_tx_id.is_some() {
-            "history_carried_credit_not_found"
-        } else {
-            "history_limit_exceeded"
-        }
-        .to_string());
-    }
-    Ok(transactions)
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct ContributionBatch {
     through_commitment_tx_id: u64,
     next_carried_credit_start_tx_id: Option<u64>,
     completed_commitments: usize,
     sources: BTreeMap<[u8; 32], u64>,
+    splitter_credits: Vec<SplitterFundingCredit>,
     ineligible_e8s: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct FundingCredit {
     tx_id: u64,
-    source: Option<[u8; 32]>,
+    origin: FundingOrigin,
     amount_e8s: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FundingOrigin {
+    External([u8; 32]),
+    Splitter(u8),
+    MintOrInvalid,
 }
 
 fn decode_account_identifier(text: &str) -> Option<[u8; 32]> {
@@ -495,6 +378,18 @@ fn add_checked(target: &mut u64, amount: u64) -> Result<(), String> {
         .checked_add(amount)
         .ok_or_else(|| "contribution_overflow".to_string())?;
     Ok(())
+}
+
+fn merge_attribution(
+    mut direct_sources: BTreeMap<[u8; 32], u64>,
+    mut ineligible_e8s: u64,
+    expanded: &reward_splitter::ExpandedSplitterProvenance,
+) -> Result<(BTreeMap<[u8; 32], u64>, u64), String> {
+    for (source, amount) in &expanded.sources {
+        add_checked(direct_sources.entry(*source).or_default(), *amount)?;
+    }
+    add_checked(&mut ineligible_e8s, expanded.ineligible_e8s)?;
+    Ok((direct_sources, ineligible_e8s))
 }
 
 fn economical_reward_amount(balance: &Nat, fee: &Nat) -> Result<Nat, &'static str> {
@@ -520,6 +415,15 @@ fn advance_reward_boundary(
     state.carried_credit_start_tx_id = next_carried_credit_start_tx_id;
 }
 
+fn advance_splitter_boundaries(
+    state: &mut reward_state::RewardState,
+    splitter_boundary_updates: &BTreeMap<u8, reward_state::RewardHistoryBoundary>,
+) {
+    for (splitter, boundary) in splitter_boundary_updates {
+        state.splitter_boundaries.insert(*splitter, *boundary);
+    }
+}
+
 fn apply_reward_epoch(root: Principal, now_secs: u64) -> Result<(), &'static str> {
     let current = reward_state::get();
     if current.epoch_sns_root_canister_id == Some(root) {
@@ -532,6 +436,7 @@ fn apply_reward_epoch(root: Principal, now_secs: u64) -> Result<(), &'static str
         state.epoch_sns_root_canister_id = Some(root);
         state.processed_through_commitment_tx_id = None;
         state.carried_credit_start_tx_id = None;
+        state.splitter_boundaries.clear();
         state.last_sweep_attempt_timestamp_seconds = 0;
     });
     reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = now_secs);
@@ -564,7 +469,7 @@ fn classify_sources(
     Ok((eligible, ineligible, mismatches))
 }
 
-fn reconstruct_batch(
+fn reconstruct_batch_with_splitters(
     transactions: &[IndexTransactionWithId],
     prior_cursor: Option<u64>,
     carried_credit_start_tx_id: Option<u64>,
@@ -572,11 +477,13 @@ fn reconstruct_batch(
     relay_account_identifier: &str,
     faucet_account_identifier: &str,
     commitment_memo: &[u8],
+    intrinsic_splitters: &BTreeMap<[u8; 32], u8>,
 ) -> Result<Option<ContributionBatch>, String> {
     let mut chronological = transactions.to_vec();
     chronological.sort_by_key(|transaction| transaction.id);
     let mut funding = VecDeque::<FundingCredit>::new();
     let mut batch_sources = BTreeMap::<[u8; 32], u64>::new();
+    let mut batch_splitter_credits = Vec::new();
     let mut batch_ineligible = 0_u64;
     let mut through = None;
     let mut completed = 0usize;
@@ -626,13 +533,21 @@ fn reconstruct_batch(
                             return Err("commitment_reconciliation_failed".to_string());
                         }
                         remaining -= credit.amount_e8s;
-                        if let Some(source) = credit.source {
-                            add_checked(
+                        match credit.origin {
+                            FundingOrigin::External(source) => add_checked(
                                 batch_sources.entry(source).or_default(),
                                 credit.amount_e8s,
-                            )?;
-                        } else {
-                            add_checked(&mut batch_ineligible, credit.amount_e8s)?;
+                            )?,
+                            FundingOrigin::Splitter(splitter_number) => {
+                                batch_splitter_credits.push(SplitterFundingCredit {
+                                    splitter_number,
+                                    tx_id: credit.tx_id,
+                                    amount_e8s: credit.amount_e8s,
+                                });
+                            }
+                            FundingOrigin::MintOrInvalid => {
+                                add_checked(&mut batch_ineligible, credit.amount_e8s)?;
+                            }
                         }
                     }
                     through = Some(entry.id);
@@ -640,7 +555,16 @@ fn reconstruct_batch(
                 } else if to == relay_account_identifier {
                     funding.push_back(FundingCredit {
                         tx_id: entry.id,
-                        source: decode_account_identifier(from),
+                        origin: decode_account_identifier(from).map_or(
+                            FundingOrigin::MintOrInvalid,
+                            |source| {
+                                intrinsic_splitters
+                                    .get(&source)
+                                    .copied()
+                                    .map(FundingOrigin::Splitter)
+                                    .unwrap_or(FundingOrigin::External(source))
+                            },
+                        ),
                         amount_e8s: amount.e8s(),
                     });
                 }
@@ -653,7 +577,16 @@ fn reconstruct_batch(
                 } else if to == relay_account_identifier {
                     funding.push_back(FundingCredit {
                         tx_id: entry.id,
-                        source: decode_account_identifier(from),
+                        origin: decode_account_identifier(from).map_or(
+                            FundingOrigin::MintOrInvalid,
+                            |source| {
+                                intrinsic_splitters
+                                    .get(&source)
+                                    .copied()
+                                    .map(FundingOrigin::Splitter)
+                                    .unwrap_or(FundingOrigin::External(source))
+                            },
+                        ),
                         amount_e8s: amount.e8s(),
                     });
                 }
@@ -661,7 +594,7 @@ fn reconstruct_batch(
             IndexOperation::Mint { to, amount } if to == relay_account_identifier => {
                 funding.push_back(FundingCredit {
                     tx_id: entry.id,
-                    source: None,
+                    origin: FundingOrigin::MintOrInvalid,
                     amount_e8s: amount.e8s(),
                 });
             }
@@ -685,9 +618,32 @@ fn reconstruct_batch(
             next_carried_credit_start_tx_id,
             completed_commitments: completed,
             sources: batch_sources,
+            splitter_credits: batch_splitter_credits,
             ineligible_e8s: batch_ineligible,
         }
     }))
+}
+
+#[cfg(test)]
+fn reconstruct_batch(
+    transactions: &[IndexTransactionWithId],
+    prior_cursor: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
+    cutoff_nanos: u64,
+    relay_account_identifier: &str,
+    faucet_account_identifier: &str,
+    commitment_memo: &[u8],
+) -> Result<Option<ContributionBatch>, String> {
+    reconstruct_batch_with_splitters(
+        transactions,
+        prior_cursor,
+        carried_credit_start_tx_id,
+        cutoff_nanos,
+        relay_account_identifier,
+        faucet_account_identifier,
+        commitment_memo,
+        &BTreeMap::new(),
+    )
 }
 
 fn select_winner(eligible: &BTreeMap<Principal, u64>, ineligible: u64) -> Option<(Principal, u64)> {
@@ -785,11 +741,13 @@ fn accept_pending(reason: &str) {
         if let Some(pending) = state.pending_transfer.as_ref() {
             let through_commitment_tx_id = pending.through_commitment_tx_id;
             let next_carried_credit_start_tx_id = pending.next_carried_credit_start_tx_id;
+            let splitter_boundary_updates = pending.proposed_splitter_boundaries.clone();
             advance_reward_boundary(
                 state,
                 through_commitment_tx_id,
                 next_carried_credit_start_tx_id,
             );
+            advance_splitter_boundaries(state, &splitter_boundary_updates);
             state.pending_transfer = None;
         }
     });
@@ -944,7 +902,13 @@ async fn drive_pending_with_ledger<L: RewardLedgerClient>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jupiter_ic_clients::index::{IndexTimeStamp, IndexTransaction, Tokens};
+    use crate::scheduler::reward_history::{
+        scan_history_with_index, RewardHistoryClient, ICP_HISTORY_MAX_TRANSACTIONS,
+        ICP_HISTORY_PAGE_SIZE,
+    };
+    use jupiter_ic_clients::index::{
+        GetAccountIdentifierTransactionsResponse, IndexTimeStamp, IndexTransaction, Tokens,
+    };
     use std::sync::Mutex;
 
     fn principal(byte: u8) -> Principal {
@@ -957,6 +921,13 @@ mod tests {
             snapshot_id: 3,
             through_commitment_tx_id: 44,
             next_carried_credit_start_tx_id: Some(43),
+            proposed_splitter_boundaries: BTreeMap::from([(
+                50,
+                reward_state::RewardHistoryBoundary {
+                    processed_through_tx_id: Some(41),
+                    carried_credit_start_tx_id: Some(40),
+                },
+            )]),
             recipient: Account {
                 owner: principal(8),
                 subaccount: None,
@@ -1335,6 +1306,59 @@ mod tests {
     }
 
     #[test]
+    fn consumed_intrinsic_splitter_credit_is_deferred_but_trailing_credit_is_not() {
+        let relay_owner = principal(77);
+        let relay = account_identifier_text(relay_owner, Some(logic::relay_subaccount_one()));
+        let faucet = "22".repeat(32);
+        let splitter =
+            account_identifier_text(relay_owner, Some(logic::relay_numbered_subaccount(50)));
+        let memo = b"relay".to_vec();
+        let history = vec![
+            transfer(
+                1,
+                1,
+                splitter.clone(),
+                relay.clone(),
+                100_010_000,
+                10_000,
+                None,
+            ),
+            transfer(
+                2,
+                2,
+                relay.clone(),
+                faucet.clone(),
+                100_000_000,
+                10_000,
+                Some(memo.clone()),
+            ),
+            transfer(3, 3, splitter, relay.clone(), 20_000_000, 10_000, None),
+        ];
+        let batch = reconstruct_batch_with_splitters(
+            &history,
+            None,
+            None,
+            10,
+            &relay,
+            &faucet,
+            &memo,
+            &reward_splitter::intrinsic_splitter_accounts(relay_owner),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(batch.sources.is_empty());
+        assert_eq!(
+            batch.splitter_credits,
+            vec![SplitterFundingCredit {
+                splitter_number: 50,
+                tx_id: 1,
+                amount_e8s: 100_010_000,
+            }]
+        );
+        assert_eq!(batch.next_carried_credit_start_tx_id, None);
+    }
+
+    #[test]
     fn fifo_never_splits_overshooting_credit_and_rejects_insufficient_queue() {
         let relay = "11".repeat(32);
         let faucet = "22".repeat(32);
@@ -1705,6 +1729,69 @@ mod tests {
     }
 
     #[test]
+    fn splitter_net_weight_merges_before_source_limit_and_winner_selection() {
+        let alice = principal(1);
+        let bob = principal(2);
+        let alice_account = account_identifier_bytes(alice, None);
+        let bob_account = account_identifier_bytes(bob, None);
+        let alice_splitter_90 =
+            reward_splitter::proportional_allocations(&[1_000_000_000], 99_990_000).unwrap()[0];
+        let expanded = reward_splitter::ExpandedSplitterProvenance {
+            sources: BTreeMap::from([(alice_account, alice_splitter_90)]),
+            ..Default::default()
+        };
+        let (sources, ineligible) =
+            merge_attribution(BTreeMap::from([(bob_account, 200_000_000)]), 0, &expanded).unwrap();
+        assert_eq!(sources.len(), 2);
+        let owners = sources
+            .keys()
+            .map(|account| {
+                Some(if *account == alice_account {
+                    alice
+                } else {
+                    bob
+                })
+            })
+            .collect();
+        let (eligible, ineligible, _) = classify_sources(sources, ineligible, owners).unwrap();
+        assert_eq!(
+            select_winner(&eligible, ineligible),
+            Some((bob, 200_000_000))
+        );
+
+        let repeated_owner = reward_splitter::ExpandedSplitterProvenance {
+            sources: BTreeMap::from([(alice_account, 20)]),
+            ..Default::default()
+        };
+        let (merged, _) =
+            merge_attribution(BTreeMap::from([(alice_account, 10)]), 0, &repeated_owner).unwrap();
+        assert_eq!(merged, BTreeMap::from([(alice_account, 30)]));
+
+        let direct = (0..128_u8)
+            .map(|value| ([value; 32], 1))
+            .collect::<BTreeMap<_, _>>();
+        let overlapping = reward_splitter::ExpandedSplitterProvenance {
+            sources: BTreeMap::from([([0; 32], 1)]),
+            ..Default::default()
+        };
+        assert_eq!(
+            merge_attribution(direct.clone(), 0, &overlapping)
+                .unwrap()
+                .0
+                .len(),
+            128
+        );
+        let new_source = reward_splitter::ExpandedSplitterProvenance {
+            sources: BTreeMap::from([([255; 32], 1)]),
+            ..Default::default()
+        };
+        assert_eq!(
+            merge_attribution(direct, 0, &new_source).unwrap().0.len(),
+            129
+        );
+    }
+
+    #[test]
     fn dynamic_fee_rule_allows_exactly_ten_percent_of_net() {
         assert_eq!(
             economical_reward_amount(&Nat::from(110_u64), &Nat::from(10_u64)),
@@ -1951,6 +2038,13 @@ mod tests {
             state.epoch_sns_root_canister_id = Some(first);
             state.processed_through_commitment_tx_id = Some(7);
             state.carried_credit_start_tx_id = Some(6);
+            state.splitter_boundaries.insert(
+                50,
+                reward_state::RewardHistoryBoundary {
+                    processed_through_tx_id: Some(5),
+                    carried_credit_start_tx_id: Some(4),
+                },
+            );
             state.last_sweep_attempt_timestamp_seconds = 8;
         });
         apply_reward_epoch(first, 100).unwrap();
@@ -1959,6 +2053,7 @@ mod tests {
             Some(7)
         );
         assert_eq!(reward_state::get().carried_credit_start_tx_id, Some(6));
+        assert!(reward_state::get().splitter_boundaries.contains_key(&50));
         assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 8);
 
         apply_reward_epoch(second, 100).unwrap();
@@ -1966,6 +2061,7 @@ mod tests {
         assert_eq!(changed.epoch_sns_root_canister_id, Some(second));
         assert_eq!(changed.processed_through_commitment_tx_id, None);
         assert_eq!(changed.carried_credit_start_tx_id, None);
+        assert!(changed.splitter_boundaries.is_empty());
         assert_eq!(changed.last_sweep_attempt_timestamp_seconds, 100);
     }
 
@@ -2024,5 +2120,12 @@ mod tests {
             Some(44)
         );
         assert_eq!(reward_state::get().carried_credit_start_tx_id, Some(43));
+        assert_eq!(
+            reward_state::get().splitter_boundaries[&50],
+            reward_state::RewardHistoryBoundary {
+                processed_through_tx_id: Some(41),
+                carried_credit_start_tx_id: Some(40),
+            }
+        );
     }
 }

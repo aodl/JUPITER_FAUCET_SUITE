@@ -34,6 +34,13 @@ const INLINE_TOOLTIP_CONTENT = {
       <p>Cycles observability is attempted automatically through recognized blackhole and SNS routes. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
       <a class="pane-page-button pane-fixed-tooltip-more-info" href="#how-it-works:4" data-tooltip-navigation>More info</a>
     </div>`,
+  'tracker-burn-estimate-help': `
+    <div class="pane-fixed-tooltip-content">
+      <p>Estimated, not a live burn-rate reading. It averages balance-derived cycle consumption across the observation window shown with the value.</p>
+      <p>To keep top-ups from masking consumption, observed ICP-ledger transfers into this canister's CMC deposit account are converted to estimated minted cycles and added back when reconstructing burn.</p>
+      <p>Memo Tracker does not track historical ICP/XDR rates for this estimate, so these transfers use Historian's latest cached rate. This assumes rates during the window were reasonably close to that rate and that each observed CMC deposit successfully minted cycles.</p>
+      <p>If a usable ICP/XDR rate is unavailable, the estimate falls back to observed downward balance changes.</p>
+    </div>`,
 };
 
 function isLocalHost() {

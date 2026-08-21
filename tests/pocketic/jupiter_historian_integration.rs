@@ -624,16 +624,35 @@ enum RelaySetupState {
     },
 }
 
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RelaySurplusRecipient {
+    Principal(Principal),
+    Neuron(u64),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CmcIcpXdrConversionRate {
+    timestamp_seconds: u64,
+    xdr_permyriad_per_icp: u64,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CmcIcpXdrConversionRateResponse {
+    data: CmcIcpXdrConversionRate,
+    hash_tree: Vec<u8>,
+    certificate: Vec<u8>,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RelaySetupArgs {
     target_canister_ids: Vec<Principal>,
-    surplus_recipient_principals: Vec<Principal>,
+    surplus_recipients: Vec<RelaySurplusRecipient>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RelaySetupView {
     canonical_target_canister_ids: Vec<Principal>,
-    canonical_surplus_recipient_principals: Vec<Principal>,
+    canonical_surplus_recipients: Vec<RelaySurplusRecipient>,
     setup_key_identifier: String,
     setup_account: Option<Account>,
     setup_account_identifier: Option<String>,
@@ -1331,7 +1350,7 @@ fn activate_target_set(
     historian: Principal,
     ledger: Principal,
     targets: Vec<Principal>,
-    surplus_recipients: Vec<Principal>,
+    surplus_recipients: Vec<RelaySurplusRecipient>,
 ) -> Result<Principal> {
     let view_result: RelaySetupViewResult = query_one(
         pic,
@@ -1340,7 +1359,7 @@ fn activate_target_set(
         "get_relay_configuration_view",
         RelaySetupArgs {
             target_canister_ids: targets.clone(),
-            surplus_recipient_principals: surplus_recipients.clone(),
+            surplus_recipients: surplus_recipients.clone(),
         },
     )?;
     let view = match view_result {
@@ -1388,7 +1407,7 @@ fn activate_target_set(
         "notify_relay_configuration",
         RelaySetupArgs {
             target_canister_ids: targets,
-            surplus_recipient_principals: surplus_recipients,
+            surplus_recipients,
         },
     )?;
     match result {
@@ -1695,7 +1714,7 @@ fn direct_older_cutover_succeeds_but_nonempty_memory_25_fails_closed() -> Result
             "get_relay_configuration_view",
             RelaySetupArgs {
                 target_canister_ids: vec![target],
-                surplus_recipient_principals: vec![recipient],
+                surplus_recipients: vec![RelaySurplusRecipient::Principal(recipient)],
             },
         )?;
         let RelaySetupViewResult::Ok(view) = result else {
@@ -1703,7 +1722,10 @@ fn direct_older_cutover_succeeds_but_nonempty_memory_25_fails_closed() -> Result
         };
         assert_eq!(view.state, RelaySetupState::NotFunded);
         assert_eq!(view.canonical_target_canister_ids, vec![target]);
-        assert_eq!(view.canonical_surplus_recipient_principals, vec![recipient]);
+        assert_eq!(
+            view.canonical_surplus_recipients,
+            vec![RelaySurplusRecipient::Principal(recipient)]
+        );
         assert_eq!(view.target_count, 1);
         assert_eq!(view.surplus_recipient_count, 1);
         let full_configuration_account = view
@@ -1793,7 +1815,7 @@ fn direct_older_cutover_succeeds_but_nonempty_memory_25_fails_closed() -> Result
             "get_relay_configuration_view",
             RelaySetupArgs {
                 target_canister_ids: vec![target],
-                surplus_recipient_principals: vec![recipient],
+                surplus_recipients: vec![RelaySurplusRecipient::Principal(recipient)],
             },
         )?;
         let RelaySetupViewResult::Ok(view) = result else {
@@ -1881,12 +1903,16 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         (),
     )?;
 
-    let recipients = (1..=5)
-        .map(|id| Principal::from_slice(&[0x7e, id]))
-        .collect::<Vec<_>>();
+    let recipients = vec![
+        RelaySurplusRecipient::Principal(Principal::from_slice(&[0x7e, 1])),
+        RelaySurplusRecipient::Principal(Principal::from_slice(&[0x7e, 2])),
+        RelaySurplusRecipient::Principal(Principal::from_slice(&[0x7e, 3])),
+        RelaySurplusRecipient::Neuron(42),
+        RelaySurplusRecipient::Neuron(11614578985374291210),
+    ];
     let underfunded_args = RelaySetupArgs {
         target_canister_ids: vec![targets[1]],
-        surplus_recipient_principals: vec![recipients[0]],
+        surplus_recipients: vec![recipients[0]],
     };
     let underfunded_view: RelaySetupViewResult = query_one(
         &pic,
@@ -1951,6 +1977,124 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         underfunded_view_after_notify.state,
         RelaySetupState::NotFunded { .. }
     ));
+
+    let hidden_neuron_id = 999u64;
+    let hidden_args = RelaySetupArgs {
+        target_canister_ids: vec![targets[2]],
+        surplus_recipients: vec![RelaySurplusRecipient::Neuron(hidden_neuron_id)],
+    };
+    let hidden_view: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        hidden_args.clone(),
+    )?;
+    let RelaySetupViewResult::Ok(hidden_view) = hidden_view else {
+        bail!("hidden-neuron configuration view was rejected before funding")
+    };
+    let hidden_account = hidden_view
+        .setup_account
+        .context("hidden-neuron configuration should expose setup account")?;
+    let hidden_fee = icrc1_fee(&pic, ledger)?;
+    let live_rate: CmcIcpXdrConversionRateResponse = query_one(
+        &pic,
+        cmc,
+        Principal::anonymous(),
+        "get_icp_xdr_conversion_rate",
+        (),
+    )?;
+    assert!(live_rate.data.xdr_permyriad_per_icp > 0);
+    let rate = u128::from(live_rate.data.xdr_permyriad_per_icp);
+    let conversion_e8s = u64::try_from((1_000_000_000_000u128 + rate - 1) / rate)?;
+    let hidden_live_requirement = hidden_view.nominal_minimum_e8s.max(
+        conversion_e8s
+            .checked_add(5_000_000)
+            .and_then(|value| value.checked_add(100_020_000))
+            .and_then(|value| value.checked_add(hidden_fee.checked_mul(2)?))
+            .context("hidden-neuron live requirement overflow")?,
+    );
+    let _ = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: hidden_account,
+            fee: Some(Nat::from(hidden_fee)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(hidden_live_requirement),
+        },
+    )?;
+    let hidden_balance_before = support::ledger::icrc1_balance(&pic, ledger, &hidden_account)?;
+    assert!(hidden_balance_before >= hidden_live_requirement);
+    let registry_len_before = relay_setup_map_lengths(&pic, historian).2;
+    let relay_instances_before: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayInstance),
+        },
+    )?;
+    update_bytes::<()>(
+        &pic,
+        governance,
+        Principal::anonymous(),
+        "debug_set_neuron_public",
+        encode_args((hidden_neuron_id, false))?,
+    )?;
+    let hidden_result: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        hidden_args.clone(),
+    )?;
+    assert!(matches!(
+        hidden_result,
+        RelaySetupNotifyResult::FailedPreSpend { message }
+            if message.contains("neuron 999") && message.contains("publicly readable")
+    ));
+    assert_eq!(
+        support::ledger::icrc1_balance(&pic, ledger, &hidden_account)?,
+        hidden_balance_before
+    );
+    assert_eq!(
+        relay_setup_map_lengths(&pic, historian).2,
+        registry_len_before
+    );
+    let relay_instances_after: ListCanistersResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "list_canisters",
+        ListCanistersArgs {
+            start_after: None,
+            limit: Some(100),
+            tracking_reason_filter: Some(CanisterTrackingReason::RelayInstance),
+        },
+    )?;
+    assert_eq!(relay_instances_after.items, relay_instances_before.items);
+    let hidden_after: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        hidden_args,
+    )?;
+    assert!(matches!(
+        hidden_after,
+        RelaySetupViewResult::Ok(RelaySetupView {
+            state: RelaySetupState::NotFunded,
+            ..
+        })
+    ));
+
     let singleton_relay = activate_target_set(
         &pic,
         historian,
@@ -1965,7 +2109,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         "get_relay_configuration_view",
         RelaySetupArgs {
             target_canister_ids: vec![targets[0]],
-            surplus_recipient_principals: recipients[..2].to_vec(),
+            surplus_recipients: recipients[..2].to_vec(),
         },
     )?;
     let RelaySetupViewResult::Ok(first_singleton_view) = first_singleton_view else {
@@ -1978,7 +2122,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         "get_relay_configuration_view",
         RelaySetupArgs {
             target_canister_ids: vec![targets[0]],
-            surplus_recipient_principals: vec![recipients[4]],
+            surplus_recipients: vec![recipients[4]],
         },
     )?;
     let RelaySetupViewResult::Ok(alternate_view) = alternate_view else {
@@ -2034,7 +2178,12 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
     assert!(multi_logs.contains("surplus_recipient_count=5"));
     let canonical_recipients = recipients
         .iter()
-        .map(|recipient| format!("canister:{}", recipient.to_text()))
+        .map(|recipient| match recipient {
+            RelaySurplusRecipient::Principal(principal) => {
+                format!("canister:{}", principal.to_text())
+            }
+            RelaySurplusRecipient::Neuron(neuron_id) => format!("neuron:{neuron_id}"),
+        })
         .collect::<Vec<_>>()
         .join("|");
     assert!(multi_logs.contains(&format!(
@@ -2042,8 +2191,8 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
     )));
     assert!(multi_logs.contains("surplus_recipient_memo_lengths=null|null|null|null|null"));
     assert!(multi_logs.contains("surplus_recipient_memos=none|none|none|none|none"));
-    assert!(!multi_logs.contains("surplus_recipients=neuron:"));
-    assert!(!multi_logs.contains("10292412127977304661"));
+    assert!(multi_logs.contains("neuron:42"));
+    assert!(multi_logs.contains("neuron:11614578985374291210"));
     for relay in [singleton_relay, alternate_relay, multi_relay] {
         assert_eq!(pic.get_controllers(relay), vec![fiduciary]);
         let status = pic
@@ -2060,7 +2209,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         "get_relay_configuration_view",
         RelaySetupArgs {
             target_canister_ids: targets.iter().rev().copied().collect(),
-            surplus_recipient_principals: recipients.iter().rev().copied().collect(),
+            surplus_recipients: recipients.iter().rev().copied().collect(),
         },
     )?;
     let RelaySetupViewResult::Ok(reversed) = reversed else {
@@ -2073,6 +2222,28 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
             relay_canister_id: multi_relay
         }
     );
+
+    let mut type_changed_recipients = recipients.clone();
+    type_changed_recipients[4] =
+        RelaySurplusRecipient::Principal(Principal::from_slice(&[0x7e, 4]));
+    let type_changed: RelaySetupViewResult = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        RelaySetupArgs {
+            target_canister_ids: targets.clone(),
+            surplus_recipients: type_changed_recipients,
+        },
+    )?;
+    let RelaySetupViewResult::Ok(type_changed) = type_changed else {
+        bail!("recipient-type-changed configuration was rejected")
+    };
+    assert_ne!(
+        type_changed.setup_key_identifier,
+        reversed.setup_key_identifier
+    );
+    assert!(type_changed.setup_account.is_some());
 
     let relays: ListCanistersResponse = query_one(
         &pic,
@@ -2121,7 +2292,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         "get_relay_configuration_view",
         RelaySetupArgs {
             target_canister_ids: targets.clone(),
-            surplus_recipient_principals: recipients.clone(),
+            surplus_recipients: recipients.clone(),
         },
     )?;
     let RelaySetupViewResult::Ok(after_upgrade) = after_upgrade else {
@@ -2225,7 +2396,13 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
     );
 
     let recipient = Principal::from_slice(&[0x7e, 42]);
-    let relay = activate_target_set(&pic, historian, ledger, vec![target], vec![recipient])?;
+    let relay = activate_target_set(
+        &pic,
+        historian,
+        ledger,
+        vec![target],
+        vec![RelaySurplusRecipient::Principal(recipient)],
+    )?;
     let counts_before: PublicCounts = query_one(
         &pic,
         historian,
@@ -2285,7 +2462,7 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
         "get_relay_configuration_view",
         RelaySetupArgs {
             target_canister_ids: vec![target],
-            surplus_recipient_principals: vec![recipient],
+            surplus_recipients: vec![RelaySurplusRecipient::Principal(recipient)],
         },
     )?;
     assert!(matches!(
@@ -2302,7 +2479,7 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
         "notify_relay_configuration",
         RelaySetupArgs {
             target_canister_ids: vec![target],
-            surplus_recipient_principals: vec![recipient],
+            surplus_recipients: vec![RelaySurplusRecipient::Principal(recipient)],
         },
     )?;
     assert!(matches!(

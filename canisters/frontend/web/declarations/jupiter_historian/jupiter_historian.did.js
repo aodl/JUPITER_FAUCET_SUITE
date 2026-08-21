@@ -171,8 +171,12 @@ export const idlFactory = ({ IDL }) => {
     'total_memory_bytes' : IDL.Opt(IDL.Nat64),
     'last_index_run_ts' : IDL.Opt(IDL.Nat64),
   });
+  const RelaySurplusRecipient = IDL.Variant({
+    'Principal' : IDL.Principal,
+    'Neuron' : IDL.Nat64,
+  });
   const RelaySetupArgs = IDL.Record({
-    'surplus_recipient_principals' : IDL.Vec(IDL.Principal),
+    'surplus_recipients' : IDL.Vec(RelaySurplusRecipient),
     'target_canister_ids' : IDL.Vec(IDL.Principal),
   });
   const RelayCreationPhase = IDL.Variant({
@@ -204,7 +208,7 @@ export const idlFactory = ({ IDL }) => {
   const RelaySetupView = IDL.Record({
     'setup_key_identifier' : IDL.Text,
     'canonical_target_canister_ids' : IDL.Vec(IDL.Principal),
-    'canonical_surplus_recipient_principals' : IDL.Vec(IDL.Principal),
+    'canonical_surplus_recipients' : IDL.Vec(RelaySurplusRecipient),
     'state' : RelaySetupState,
     'nominal_minimum_e8s' : IDL.Nat64,
     'singleton_nominal_minimum_e8s' : IDL.Nat64,

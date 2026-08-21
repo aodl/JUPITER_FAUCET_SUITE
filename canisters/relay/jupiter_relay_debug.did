@@ -148,12 +148,17 @@ type DebugConfig = record {
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 type PendingRewardTransferStatus = variant { AwaitingTransfer; Ambiguous };
+type RewardHistoryBoundary = record {
+  processed_through_tx_id : opt nat64;
+  carried_credit_start_tx_id : opt nat64;
+};
 type PendingRewardTransfer = record {
   sns_root_canister_id : principal;
   sns_ledger_canister_id : principal;
   snapshot_id : nat64;
   through_commitment_tx_id : nat64;
   next_carried_credit_start_tx_id : opt nat64;
+  proposed_splitter_boundaries : vec record { nat8; RewardHistoryBoundary };
   recipient : Account;
   observed_balance : nat;
   fee : nat;
@@ -168,6 +173,7 @@ type RewardState = record {
   epoch_sns_root_canister_id : opt principal;
   processed_through_commitment_tx_id : opt nat64;
   carried_credit_start_tx_id : opt nat64;
+  splitter_boundaries : vec record { nat8; RewardHistoryBoundary };
   last_sweep_attempt_timestamp_seconds : nat64;
   pending_transfer : opt PendingRewardTransfer;
 };
@@ -179,6 +185,7 @@ service : (InitArgs) -> {
   debug_set_cycles_sample : (principal, nat) -> ();
   debug_force_clear_active_job : () -> ();
   debug_abort_after_successful_transfer : (bool) -> ();
+  debug_pause_after_persisted_splitter_leg : (bool) -> ();
   debug_trap_after_successful_transfer : (bool) -> ();
   debug_reward_sweep : () -> ();
   debug_reward_state : () -> (RewardState) query;

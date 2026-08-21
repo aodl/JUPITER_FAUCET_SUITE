@@ -1,11 +1,15 @@
 import { Principal } from '@icp-sdk/core/principal';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
+import { createActor as createGovernanceActor } from '../../declarations/nns_governance/index.js';
 import { createHistorianClient, normalizeError } from './agent.js';
+import { GOVERNANCE_CANISTER_ID } from './config.js';
 import { accountIdentifierHex, bytesToHex, readOptional } from '../data/dashboard-transforms.js';
+import { loadPublicNeuronStakingAccount } from '../data/nns-neurons.js';
 import { DASH, formatIcpE8s, renderCanisterTrackerLink } from './view-formatters.js';
 
 const MAX_TARGETS = 20;
 const MAX_RECIPIENTS = 5;
+const MAX_U64 = 18_446_744_073_709_551_615n;
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
@@ -54,13 +58,57 @@ export function parseRelayTargetSet(text) {
   });
 }
 
-export function parseRelayRecipientSet(text) {
-  return parsePrincipalList(text, {
-    maximum: MAX_RECIPIENTS,
-    emptyMessage: 'Enter at least one recipient principal.',
-    maximumMessage: `Enter no more than ${MAX_RECIPIENTS} recipient principals.`,
-    invalidLabel: 'recipient principal',
-    duplicateMessage: 'Duplicate surplus recipients are not allowed.',
+export function parseRelayNeuronId(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/u.test(text)) throw new Error(`Invalid recipient neuron ID: ${text || '(empty)'}`);
+  const neuronId = BigInt(text);
+  if (neuronId < 1n || neuronId > MAX_U64) {
+    throw new Error(`Recipient neuron ID must be between 1 and ${MAX_U64}.`);
+  }
+  return neuronId;
+}
+
+function recipientDuplicateKey(recipient) {
+  if (recipient.type === 'Neuron') return `Neuron:${parseRelayNeuronId(recipient.value)}`;
+  return `Principal:${Principal.fromText(String(recipient.value || '').trim()).toText()}`;
+}
+
+export function duplicateRelayRecipientIndexes(recipients) {
+  const canonicalIndexes = new Map();
+  recipients.forEach((recipient, index) => {
+    try {
+      const canonical = recipientDuplicateKey(recipient);
+      const indexes = canonicalIndexes.get(canonical) || [];
+      indexes.push(index);
+      canonicalIndexes.set(canonical, indexes);
+    } catch {
+      // Incomplete and malformed values are handled when the form is submitted.
+    }
+  });
+  return new Set(
+    [...canonicalIndexes.values()]
+      .filter((indexes) => indexes.length > 1)
+      .flat(),
+  );
+}
+
+export function parseRelayRecipientSet(recipients) {
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    throw new Error('Enter at least one surplus recipient.');
+  }
+  if (recipients.length > MAX_RECIPIENTS) {
+    throw new Error(`Enter no more than ${MAX_RECIPIENTS} surplus recipients.`);
+  }
+  const duplicates = duplicateRelayRecipientIndexes(recipients);
+  if (duplicates.size > 0) throw new Error('Duplicate surplus recipients are not allowed.');
+  return recipients.map(({ type, value }) => {
+    if (type === 'Neuron') return { Neuron: parseRelayNeuronId(value) };
+    const text = String(value || '').trim();
+    try {
+      return { Principal: Principal.fromText(text) };
+    } catch {
+      throw new Error(`Invalid recipient principal: ${text || '(empty)'}`);
+    }
   });
 }
 
@@ -187,6 +235,8 @@ export function createRelaySetupController({
   isLocalHost = () => false,
   createHistorian = createHistorianClient,
   ledgerActorFactory = createLedgerActor,
+  governanceActorFactory = createGovernanceActor,
+  publicNeuronLoader = loadPublicNeuronStakingAccount,
   copyTextToClipboard = null,
   hostProvider = () => window.location.origin,
   setIntervalFn = (callback, delay) => window.setInterval(callback, delay),
@@ -238,15 +288,16 @@ export function createRelaySetupController({
       labelSelector: '[data-relay-recipient-label]',
       removeSelector: '[data-relay-recipient-remove]',
       errorSelector: '[data-relay-recipient-error]',
+      typeSelector: '[data-relay-recipient-type]',
       dataPrefix: 'relayRecipient',
       idPrefix: 'relay-setup-recipient',
       hintId: 'relay-setup-recipient-hint',
-      label: 'Recipient principal',
+      label: 'Surplus recipient',
       placeholder: 'Principal',
-      noun: 'recipient principal',
+      noun: 'surplus recipient',
       maximum: MAX_RECIPIENTS,
       parse: parseRelayRecipientSet,
-      duplicateError: 'Duplicate principal. Each recipient must be unique.',
+      duplicateError: 'Duplicate surplus recipient. Each recipient must be unique.',
     },
   };
   const nextFieldIds = { target: 2, recipient: 2 };
@@ -277,10 +328,22 @@ export function createRelaySetupController({
     return listInputs(kind).map((input) => String(input.value || ''));
   }
 
+  function recipientRowsValues({ trim = true } = {}) {
+    return listRows('recipient').map((row) => {
+      const value = String(row.querySelector?.(listSpecs.recipient.inputSelector)?.value || '');
+      return {
+        type: row.querySelector?.(listSpecs.recipient.typeSelector)?.value === 'Neuron'
+          ? 'Neuron'
+          : 'Principal',
+        value: trim ? value.trim() : value,
+      };
+    });
+  }
+
   function configurationFingerprint() {
     return JSON.stringify({
       targets: rawListValues('target'),
-      surplusRecipients: rawListValues('recipient'),
+      surplusRecipients: recipientRowsValues({ trim: false }),
     });
   }
 
@@ -301,13 +364,20 @@ export function createRelaySetupController({
     const spec = listSpecs[kind];
     const inputs = listInputs(kind);
     const values = listValues(kind);
-    const duplicates = duplicatePrincipalIndexes(values);
+    const recipientValues = kind === 'recipient' ? recipientRowsValues() : null;
+    const duplicates = kind === 'recipient'
+      ? duplicateRelayRecipientIndexes(recipientValues)
+      : duplicatePrincipalIndexes(values);
     const errors = values.map((value, index) => {
       if (duplicates.has(index)) return spec.duplicateError;
       if (!includeIncomplete) return '';
       if (!value) return `Enter a ${spec.noun} or remove this field.`;
       try {
-        Principal.fromText(value);
+        if (kind === 'recipient' && recipientValues[index].type === 'Neuron') {
+          parseRelayNeuronId(value);
+        } else {
+          Principal.fromText(value);
+        }
         return '';
       } catch {
         return `Enter a valid ${spec.noun}.`;
@@ -325,7 +395,7 @@ export function createRelaySetupController({
     const target = validateVisibleList('target', { includeIncomplete });
     const recipient = validateVisibleList('recipient', { includeIncomplete });
     const duplicateTarget = duplicatePrincipalIndexes(listValues('target')).size > 0;
-    const duplicateRecipient = duplicatePrincipalIndexes(listValues('recipient')).size > 0;
+    const duplicateRecipient = duplicateRelayRecipientIndexes(recipientRowsValues()).size > 0;
     const warning = document.getElementById('relay-setup-warning');
     if (warning) {
       warning.textContent = duplicateTarget
@@ -358,7 +428,20 @@ export function createRelaySetupController({
       const number = index + 1;
       const label = row.querySelector?.(spec.labelSelector);
       const removeButton = row.querySelector?.(spec.removeSelector);
-      if (label) label.textContent = `${spec.label} ${number}`;
+      if (label) {
+        const recipientType = kind === 'recipient'
+          ? row.querySelector?.(spec.typeSelector)?.value
+          : null;
+        label.textContent = kind === 'recipient'
+          ? `Recipient ${recipientType === 'Neuron' ? 'neuron ID' : 'principal'} ${number}`
+          : `${spec.label} ${number}`;
+      }
+      if (kind === 'recipient') {
+        row.querySelector?.(spec.typeSelector)?.setAttribute?.(
+          'aria-label',
+          `Surplus recipient ${number} type`,
+        );
+      }
       if (removeButton) {
         removeButton.hidden = rows.length === 1;
         removeButton.setAttribute?.('aria-label', `Remove ${spec.noun} ${number}`);
@@ -372,7 +455,18 @@ export function createRelaySetupController({
     );
   }
 
-  function createPrincipalRow(kind) {
+  function applyRecipientType(row) {
+    const spec = listSpecs.recipient;
+    const type = row.querySelector?.(spec.typeSelector)?.value === 'Neuron' ? 'Neuron' : 'Principal';
+    const input = row.querySelector?.(spec.inputSelector);
+    if (input) {
+      input.placeholder = type === 'Neuron' ? 'Neuron ID' : 'Principal';
+      if (type === 'Neuron') input.setAttribute?.('inputmode', 'numeric');
+      else input.removeAttribute?.('inputmode');
+    }
+  }
+
+  function createListRow(kind) {
     const spec = listSpecs[kind];
     const rowId = nextFieldIds[kind];
     nextFieldIds[kind] += 1;
@@ -387,6 +481,22 @@ export function createRelaySetupController({
 
     const controls = document.createElement('div');
     controls.className = 'relay-setup-principal-controls';
+
+    if (kind === 'recipient') {
+      const type = document.createElement('select');
+      type.className = 'tracker-input relay-setup-recipient-type';
+      type.dataset.relayRecipientType = 'true';
+      type.setAttribute('aria-label', `Surplus recipient ${rowId} type`);
+      const principalOption = document.createElement('option');
+      principalOption.value = 'Principal';
+      principalOption.textContent = 'Principal';
+      const neuronOption = document.createElement('option');
+      neuronOption.value = 'Neuron';
+      neuronOption.textContent = 'Neuron ID';
+      type.append(principalOption, neuronOption);
+      type.value = 'Principal';
+      controls.append(type);
+    }
 
     const input = document.createElement('input');
     input.className = 'tracker-input mono relay-setup-principal-input';
@@ -413,6 +523,7 @@ export function createRelaySetupController({
 
     controls.append(input, removeButton);
     row.append(label, controls, error);
+    if (kind === 'recipient') applyRecipientType(row);
     return row;
   }
 
@@ -431,18 +542,18 @@ export function createRelaySetupController({
     render();
   }
 
-  function handleVisibleConfigurationChange() {
+  function handleVisibleConfigurationChange({ includeIncomplete = false } = {}) {
     const fingerprint = configurationFingerprint();
     if (fingerprint !== state.configurationFingerprint) invalidateCurrentConfiguration();
-    validateVisibleConfiguration();
+    validateVisibleConfiguration({ includeIncomplete });
   }
 
-  function addPrincipalField(kind) {
+  function addListField(kind) {
     const spec = listSpecs[kind];
     const list = listNode(kind);
     const rows = listRows(kind);
     if (!list || rows.length >= spec.maximum) return;
-    const row = createPrincipalRow(kind);
+    const row = createListRow(kind);
     list.append(row);
     updateListRows(kind);
     invalidateCurrentConfiguration();
@@ -451,7 +562,7 @@ export function createRelaySetupController({
     announceListChange(kind, `${spec.label} ${rows.length + 1} added.`);
   }
 
-  function removePrincipalField(kind, button) {
+  function removeListField(kind, button) {
     const spec = listSpecs[kind];
     const row = button?.closest?.(spec.rowSelector);
     if (!row) return;
@@ -471,10 +582,10 @@ export function createRelaySetupController({
     announceListChange(kind, `${spec.label} removed. ${inputs.length} field${inputs.length === 1 ? '' : 's'} remaining.`);
   }
 
-  const addTargetField = () => addPrincipalField('target');
-  const addRecipientField = () => addPrincipalField('recipient');
-  const removeTargetField = (button) => removePrincipalField('target', button);
-  const removeRecipientField = (button) => removePrincipalField('recipient', button);
+  const addTargetField = () => addListField('target');
+  const addRecipientField = () => addListField('recipient');
+  const removeTargetField = (button) => removeListField('target', button);
+  const removeRecipientField = (button) => removeListField('recipient', button);
   const validateVisibleTargetFields = (options) => validateVisibleList('target', options);
 
   function stopPolling() {
@@ -595,7 +706,10 @@ export function createRelaySetupController({
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
     setText('relay-setup-canonical-targets', view ? view.canonical_target_canister_ids.map(principalText).join('\n') : DASH);
     setText('relay-setup-recipient-count', view ? String(view.surplus_recipient_count) : DASH);
-    setText('relay-setup-canonical-recipients', view ? view.canonical_surplus_recipient_principals.map(principalText).join('\n') : DASH);
+    setText('relay-setup-canonical-recipients', view ? view.canonical_surplus_recipients.map((recipient) => {
+      if ('Neuron' in recipient) return `Neuron: ${recipient.Neuron}`;
+      return `Principal: ${principalText(recipient.Principal)}`;
+    }).join('\n') : DASH);
     setText('relay-setup-configuration-hash', view?.setup_key_identifier || DASH);
     setText('relay-setup-base-minimum', view ? formatIcpE8s(view.singleton_nominal_minimum_e8s) : DASH);
     setText('relay-setup-extra-count', view ? String(view.extra_target_count) : DASH);
@@ -618,19 +732,44 @@ export function createRelaySetupController({
   function setupArgs() {
     return {
       target_canister_ids: state.targets,
-      surplus_recipient_principals: state.surplusRecipients,
+      surplus_recipients: state.surplusRecipients,
     };
   }
 
-  async function refresh({ expectedConfiguration = state.configurationFingerprint, requestGeneration = generation } = {}) {
+  async function preflightNeuronRecipients(agent) {
+    const neuronIds = [...new Set(state.surplusRecipients
+      .filter((recipient) => 'Neuron' in recipient)
+      .map((recipient) => recipient.Neuron))];
+    if (neuronIds.length === 0) return;
+    const governance = governanceActorFactory(GOVERNANCE_CANISTER_ID, { agent });
+    for (const neuronId of neuronIds) {
+      try {
+        await publicNeuronLoader({ governance, neuronId });
+      } catch {
+        throw new Error(`Could not verify neuron ${neuronId} as publicly readable by NNS Governance. Check the neuron ID and try again.`);
+      }
+    }
+  }
+
+  async function refresh({
+    expectedConfiguration = state.configurationFingerprint,
+    requestGeneration = generation,
+    preflightNeurons = false,
+  } = {}) {
     if (!state.targets.length || !state.surplusRecipients.length) return;
     const { agent, historian } = await historianBundle();
     const result = await historian.get_relay_configuration_view(setupArgs());
     if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
     const view = unwrapView(result);
-    let balance = null;
+    const kind = viewState(view);
     const account = readOptional(view.setup_account);
-    if (account) {
+    const isNewConfiguration = kind === 'NotFunded' && Boolean(account);
+    if (preflightNeurons && isNewConfiguration) {
+      await preflightNeuronRecipients(agent);
+      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+    }
+    let balance = null;
+    if (isNewConfiguration) {
       const ledger = await loadLedger({ agent, historian });
       balance = BigInt(await ledger.icrc1_balance_of(account));
       if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
@@ -639,7 +778,6 @@ export function createRelaySetupController({
     state.balanceE8s = balance;
     state.error = '';
     state.loading = false;
-    const kind = viewState(view);
     if (kind === 'Active' || kind === 'ManualRecoveryRequired') {
       state.requiredBalanceOverride = null;
     }
@@ -685,9 +823,9 @@ export function createRelaySetupController({
         throw new Error(validation.firstError);
       }
       state.targets = parseRelayTargetSet(listValues('target').join('\n'));
-      state.surplusRecipients = parseRelayRecipientSet(listValues('recipient').join('\n'));
+      state.surplusRecipients = parseRelayRecipientSet(recipientRowsValues());
       render();
-      await refresh({ expectedConfiguration: fingerprint, requestGeneration });
+      await refresh({ expectedConfiguration: fingerprint, requestGeneration, preflightNeurons: true });
     } catch (error) {
       if (!configurationStillCurrent(fingerprint, requestGeneration)) return;
       state.targets = [];
@@ -754,17 +892,28 @@ export function createRelaySetupController({
           if (!event.target?.matches?.(spec.inputSelector)) return;
           handleVisibleConfigurationChange();
         });
+        if (kind === 'recipient') {
+          list.addEventListener('change', (event) => {
+            if (!event.target?.matches?.(spec.typeSelector)) return;
+            const row = event.target.closest?.(spec.rowSelector);
+            if (!row) return;
+            applyRecipientType(row);
+            updateListRows(kind);
+            handleVisibleConfigurationChange({ includeIncomplete: true });
+          });
+          listRows(kind).forEach(applyRecipientType);
+        }
         list.addEventListener('click', (event) => {
           const removeButton = event.target?.closest?.(spec.removeSelector);
           if (!removeButton) return;
-          removePrincipalField(kind, removeButton);
+          removeListField(kind, removeButton);
         });
         updateListRows(kind);
       }
       const addButton = document.getElementById(spec.addId);
       if (addButton && addButton.dataset.bound !== 'true') {
         addButton.dataset.bound = 'true';
-        addButton.addEventListener('click', () => addPrincipalField(kind));
+        addButton.addEventListener('click', () => addListField(kind));
       }
     }
     validateVisibleConfiguration();

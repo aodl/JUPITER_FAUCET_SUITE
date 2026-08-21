@@ -215,13 +215,17 @@ type RelaySetupState = variant {
     message : text;
   };
 };
+type RelaySurplusRecipient = variant {
+  Principal : principal;
+  Neuron : nat64;
+};
 type RelaySetupArgs = record {
   target_canister_ids : vec principal;
-  surplus_recipient_principals : vec principal;
+  surplus_recipients : vec RelaySurplusRecipient;
 };
 type RelaySetupView = record {
   canonical_target_canister_ids : vec principal;
-  canonical_surplus_recipient_principals : vec principal;
+  canonical_surplus_recipients : vec RelaySurplusRecipient;
   setup_key_identifier : text;
   setup_account : opt Account;
   setup_account_identifier : opt text;

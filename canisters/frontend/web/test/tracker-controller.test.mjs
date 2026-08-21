@@ -234,6 +234,79 @@ function minimalTrackerData() {
   };
 }
 
+function burnEstimateCycleSamples() {
+  const firstTimestampNanos = 1_700_000_000_000_000_000n;
+  return [0n, 7n, 14n, 21n, 28n].map((day, index) => ({
+    timestamp_nanos: firstTimestampNanos + day * 86_400_000_000_000n,
+    source: { BlackholeStatus: null },
+    cycles: 5_000_000_000_000n - BigInt(index) * 100_000_000_000n,
+  }));
+}
+
+function burnEstimateLogSamples() {
+  return burnEstimateCycleSamples().map((sample) => ({
+    timestamp_nanos: sample.timestamp_nanos,
+    text: `Cycles: ${sample.cycles}`,
+  }));
+}
+
+function assertBurnEstimateUx(html) {
+  assert.match(html, /Estimated observed cycles burned\/day/);
+  assert.match(html, /data-tooltip-id="tracker-burn-estimate-help"/);
+  assert.match(html, /aria-label="About the estimated cycles burn rate"/);
+  assert.match(html, /Observation window: 4 weeks · 5 samples/);
+}
+
+test('commitment beneficiary burn estimate shows the selected log-sample observation window and help', async () => {
+  const nodes = trackerNodes();
+  const data = minimalTrackerData();
+  data.cycles.items = [{
+    timestamp_nanos: 1_700_000_000_000_000_000n + 35n * 86_400_000_000_000n,
+    cycles: 4_500_000_000_000n,
+  }];
+  data.logs.items = burnEstimateLogSamples();
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+
+    await controller.submitPrincipal();
+
+    const html = nodeMap.get('tracker-result').innerHTML;
+    assertBurnEstimateUx(html);
+    assert.doesNotMatch(html, /Estimated observed cycles burn is calculated from loaded/);
+  });
+});
+
+test('cycles-only tracked canister burn estimate shows the probe observation window and help', async () => {
+  const nodes = trackerNodes();
+  const data = minimalTrackerData();
+  data.isCommitmentBeneficiary = false;
+  data.overview.tracking_reasons = [{ RelayInstance: null }];
+  data.cycles.items = burnEstimateCycleSamples();
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async () => data,
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = 'u2qkp-aqaaa-aaaar-qb7ea-cai';
+
+    await controller.submitPrincipal();
+
+    assertBurnEstimateUx(nodeMap.get('tracker-result').innerHTML);
+  });
+});
+
 test('tracker renders cycles-only data for recognized relay instances', async () => {
   const nodes = trackerNodes();
   const relay = 'u2qkp-aqaaa-aaaar-qb7ea-cai';
@@ -282,6 +355,8 @@ test('tracker renders cycles-only data for recognized relay instances', async ()
     assert.doesNotMatch(html, /Qualifying commitments/);
     assert.doesNotMatch(html, /not a recognized commitment beneficiary/);
     assert.doesNotMatch(html, /Commitment history is updated/);
+    assert.doesNotMatch(html, /tracker-burn-estimate-help/);
+    assert.doesNotMatch(html, /Observation window:/);
     assert.match(html, /Cycles balances are sampled by historian cycles sweeps/);
   });
 });
@@ -1212,6 +1287,7 @@ test('observed CMC chart does not render Relay links or disclosure without visib
 
     const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
     assert.match(html, /Observed CMC top-ups/);
+    assert.match(html, /Distinct ICP-ledger transfers to the canister's CMC deposit account/);
     assert.match(html, /data-source-segment="faucet"/);
     assert.equal(relayTrackerLinks(html).length, 0);
     assert.doesNotMatch(html, /tracker-relay-overflow-details/);

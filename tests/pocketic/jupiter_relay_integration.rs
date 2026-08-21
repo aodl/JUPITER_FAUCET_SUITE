@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -13,13 +14,13 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager},
     storable::Bound,
-    Memory, StableCell, Storable,
+    Memory, StableCell, Storable, VectorMemory,
 };
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::index::{
-    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
+    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult, IndexOperation,
 };
 use pocket_ic::PocketIc;
 
@@ -255,8 +256,15 @@ struct RewardJournalView {
     epoch_sns_root_canister_id: Option<Principal>,
     processed_through_commitment_tx_id: Option<u64>,
     carried_credit_start_tx_id: Option<u64>,
+    splitter_boundaries: Option<BTreeMap<u8, RewardHistoryBoundaryFixture>>,
     last_sweep_attempt_timestamp_seconds: u64,
-    pending_transfer: Option<RewardPendingTransferFixture>,
+    pending_transfer: Option<RewardPendingTransferView>,
+}
+
+#[derive(Clone, Copy, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RewardHistoryBoundaryFixture {
+    processed_through_tx_id: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -272,6 +280,25 @@ struct RewardPendingTransferFixture {
     snapshot_id: u64,
     through_commitment_tx_id: u64,
     next_carried_credit_start_tx_id: Option<u64>,
+    recipient: Account,
+    observed_balance: Nat,
+    fee: Nat,
+    amount: Nat,
+    memo: Vec<u8>,
+    created_at_time_nanos: u64,
+    attempt_started: bool,
+    uncertain_attempt_seen: bool,
+    status: RewardPendingTransferStatusFixture,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RewardPendingTransferView {
+    sns_root_canister_id: Principal,
+    sns_ledger_canister_id: Principal,
+    snapshot_id: u64,
+    through_commitment_tx_id: u64,
+    next_carried_credit_start_tx_id: Option<u64>,
+    proposed_splitter_boundaries: Option<BTreeMap<u8, RewardHistoryBoundaryFixture>>,
     recipient: Account,
     observed_balance: Nat,
     fee: Nat,
@@ -2682,14 +2709,24 @@ fn relay_faucet_commitment_memo(relay: Principal) -> Vec<u8> {
 }
 
 fn write_reward_state_fixture(pic: &PocketIc, relay: Principal, state: RewardStateFixture) {
-    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(relay)));
-    let manager = MemoryManager::init(stable_memory.clone());
-    let mut cell = StableCell::<VersionedRewardStateFixture, _>::init(
-        manager.get(MemoryId::new(0)),
+    let fixture_memory = VectorMemory::default();
+    let mut fixture_cell = StableCell::<VersionedRewardStateFixture, _>::init(
+        fixture_memory.clone(),
         VersionedRewardStateFixture::Uninitialized,
     );
-    cell.set(VersionedRewardStateFixture::V1(state));
-    drop(cell);
+    fixture_cell.set(VersionedRewardStateFixture::V1(state));
+    drop(fixture_cell);
+    let mut fixture_bytes = vec![0; fixture_memory.size() as usize * 65_536];
+    fixture_memory.read(0, &mut fixture_bytes);
+
+    let stable_memory = Rc::new(RefCell::new(pic.get_stable_memory(relay)));
+    let manager = MemoryManager::init(stable_memory.clone());
+    let reward_memory = manager.get(MemoryId::new(0));
+    if reward_memory.size() < fixture_memory.size() {
+        reward_memory.grow(fixture_memory.size() - reward_memory.size());
+    }
+    reward_memory.write(0, &fixture_bytes);
+    drop(reward_memory);
     drop(manager);
     let bytes = stable_memory.borrow().clone();
     pic.set_stable_memory(
@@ -2745,6 +2782,836 @@ fn wait_for_real_index_transactions(
         tick_n(pic, 5);
     }
     bail!("real ICP Index did not expose {minimum} expected account transactions")
+}
+
+fn copy_snapshot_directory(source: &std::path::Path, target: &std::path::Path) -> Result<()> {
+    std::fs::create_dir(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::copy(entry.path(), target.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+fn set_real_icp_ledger_fee_via_snapshot(
+    pic: &PocketIc,
+    ledger: Principal,
+    old_fee_e8s: u64,
+    new_fee_e8s: u64,
+) -> Result<()> {
+    if support::ledger::icrc1_fee(pic, ledger)? != old_fee_e8s {
+        bail!("real ICP Ledger did not start with expected fee {old_fee_e8s}");
+    }
+    let root = support::principals::nns_root();
+    let snapshot = pic
+        .take_canister_snapshot(ledger, Some(root), None)
+        .map_err(|err| anyhow::anyhow!("take ICP ledger snapshot: {err:?}"))?;
+    let base_dir = std::env::temp_dir().join(format!(
+        "jupiter-real-icp-ledger-fee-snapshot-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&base_dir)?;
+    pic.canister_snapshot_download(ledger, root, snapshot.id.clone(), base_dir.clone());
+    let wasm_memory = std::fs::read(base_dir.join("wasm_memory.bin"))?;
+    let old_bytes = old_fee_e8s.to_le_bytes();
+    let candidate_offsets = wasm_memory
+        .windows(old_bytes.len())
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == old_bytes).then_some(offset))
+        .collect::<Vec<_>>();
+    if candidate_offsets.is_empty() {
+        bail!("real ICP Ledger heap did not contain its queried fee");
+    }
+
+    let mut matching_snapshots = Vec::new();
+    for (candidate_number, offset) in candidate_offsets.into_iter().enumerate() {
+        let candidate_dir = std::env::temp_dir().join(format!(
+            "jupiter-real-icp-ledger-fee-candidate-{}-{candidate_number}",
+            std::process::id()
+        ));
+        copy_snapshot_directory(&base_dir, &candidate_dir)?;
+        let mut candidate_memory = wasm_memory.clone();
+        candidate_memory[offset..offset + 8].copy_from_slice(&new_fee_e8s.to_le_bytes());
+        std::fs::write(candidate_dir.join("wasm_memory.bin"), candidate_memory)?;
+        let candidate_snapshot =
+            pic.canister_snapshot_upload(ledger, root, None, candidate_dir.clone());
+        std::fs::remove_dir_all(candidate_dir)?;
+        pic.load_canister_snapshot(ledger, Some(root), candidate_snapshot.clone())
+            .map_err(|err| anyhow::anyhow!("load ICP ledger candidate snapshot: {err:?}"))?;
+        if support::ledger::icrc1_fee(pic, ledger).ok() == Some(new_fee_e8s) {
+            matching_snapshots.push(candidate_snapshot);
+        }
+        pic.load_canister_snapshot(ledger, Some(root), snapshot.id.clone())
+            .map_err(|err| anyhow::anyhow!("restore ICP ledger snapshot: {err:?}"))?;
+    }
+    std::fs::remove_dir_all(base_dir)?;
+    let [matching_snapshot] = matching_snapshots.as_slice() else {
+        bail!(
+            "expected exactly one real ICP Ledger heap fee location, found {}",
+            matching_snapshots.len()
+        );
+    };
+    pic.load_canister_snapshot(ledger, Some(root), matching_snapshot.clone())
+        .map_err(|err| anyhow::anyhow!("load patched ICP ledger snapshot: {err:?}"))?;
+    if support::ledger::icrc1_fee(pic, ledger)? != new_fee_e8s {
+        bail!("real ICP Ledger fee snapshot patch did not persist");
+    }
+    Ok(())
+}
+
+struct RealSplitterRewardEnv {
+    pic: PocketIc,
+    icp_ledger: Principal,
+    icp_index: Principal,
+    root: Principal,
+    reward_ledger: Principal,
+    sns_rewards: Principal,
+    relay: Principal,
+    relay_init: RewardRelayInitArg,
+    owners: Vec<Principal>,
+    rewards_installed: bool,
+}
+
+impl RealSplitterRewardEnv {
+    fn new(owner_count: usize) -> Result<Self> {
+        let pic = support::ledger::build_pic_with_real_icp();
+        let icp_ledger = support::principals::icp_ledger();
+        let icp_index = support::principals::icp_index();
+        let root = pic.create_canister();
+        let sns_governance = pic.create_canister();
+        let reward_ledger = pic.create_canister();
+        let sns_rewards = pic.create_canister();
+        let cmc = pic.create_canister();
+        let nns_governance = pic.create_canister();
+        let blackhole = pic.create_canister();
+        let relay = pic.create_canister();
+        for canister in [
+            root,
+            sns_governance,
+            reward_ledger,
+            sns_rewards,
+            cmc,
+            nns_governance,
+            blackhole,
+            relay,
+        ] {
+            pic.add_cycles(canister, 5_000_000_000_000);
+        }
+        pic.install_canister(root, sns_root_wasm()?, vec![], None);
+        pic.install_canister(sns_governance, sns_governance_wasm()?, vec![], None);
+        pic.install_canister(reward_ledger, ledger_wasm()?, vec![], None);
+        pic.install_canister(cmc, cmc_wasm()?, vec![], None);
+        pic.install_canister(nns_governance, governance_wasm()?, vec![], None);
+        pic.install_canister(blackhole, blackhole_wasm()?, vec![], None);
+        let _: () = update_one(
+            &pic,
+            root,
+            Principal::anonymous(),
+            "debug_set_canisters",
+            ListSnsCanistersResponse {
+                root: Some(root),
+                governance: Some(sns_governance),
+                ledger: Some(reward_ledger),
+                swap: None,
+                index: None,
+                dapps: vec![],
+                archives: vec![],
+                extensions: None,
+            },
+        )?;
+        let owners = (0..owner_count)
+            .map(|index| Principal::self_authenticating(&[(index + 41) as u8; 32]))
+            .collect::<Vec<_>>();
+        let neurons = owners
+            .iter()
+            .enumerate()
+            .map(|(index, owner)| SnsNeuron {
+                id: Some(SnsNeuronId {
+                    id: vec![(index + 1) as u8; 32],
+                }),
+                permissions: vec![SnsNeuronPermission {
+                    principal: Some(*owner),
+                    permission_type: vec![1, 2, 3],
+                }],
+                cached_neuron_stake_e8s: 100_000_000,
+                neuron_fees_e8s: 0,
+            })
+            .collect::<Vec<_>>();
+        let _: () = update_one(
+            &pic,
+            sns_governance,
+            Principal::anonymous(),
+            "debug_set_neurons",
+            neurons,
+        )?;
+        let relay_init = RewardRelayInitArg {
+            managed_canisters: vec![],
+            ledger_canister_id: Some(icp_ledger),
+            cmc_canister_id: Some(cmc),
+            governance_canister_id: Some(nns_governance),
+            blackhole_canister_id: Some(blackhole),
+            sns_rewards_canister_id: Some(sns_rewards),
+            icp_index_canister_id: Some(icp_index),
+            main_interval_seconds: Some(31_536_000),
+            max_transfers_per_tick: None,
+            surplus_canister_recipients: None,
+            surplus_neuron_recipients: vec![],
+        };
+        pic.install_canister(relay, relay_wasm()?, encode_one(relay_init.clone())?, None);
+        let _: () = update_one(
+            &pic,
+            reward_ledger,
+            Principal::anonymous(),
+            "debug_set_fee",
+            1_000_u64,
+        )?;
+        Ok(Self {
+            pic,
+            icp_ledger,
+            icp_index,
+            root,
+            reward_ledger,
+            sns_rewards,
+            relay,
+            relay_init,
+            owners,
+            rewards_installed: false,
+        })
+    }
+
+    fn fund_owner(&self, owner: Principal, amount_e8s: u64) -> Result<()> {
+        real_icp_transfer(
+            &self.pic,
+            self.icp_ledger,
+            Principal::anonymous(),
+            Account {
+                owner,
+                subaccount: None,
+            },
+            amount_e8s,
+        )?;
+        Ok(())
+    }
+
+    fn send_to_relay(
+        &self,
+        owner: Principal,
+        subaccount: [u8; 32],
+        amount_e8s: u64,
+    ) -> Result<u64> {
+        real_icp_transfer(
+            &self.pic,
+            self.icp_ledger,
+            owner,
+            Account {
+                owner: self.relay,
+                subaccount: Some(subaccount),
+            },
+            amount_e8s,
+        )
+    }
+
+    fn main_tick(&self) -> Result<()> {
+        update_noargs(
+            &self.pic,
+            self.relay,
+            Principal::anonymous(),
+            "debug_main_tick",
+        )
+    }
+
+    fn refresh_snapshot(&mut self) -> Result<()> {
+        self.pic.advance_time(Duration::from_secs(1));
+        tick_n(&self.pic, 5);
+        if !self.rewards_installed {
+            self.pic.install_canister(
+                self.sns_rewards,
+                sns_rewards_wasm()?,
+                encode_one(SnsRewardsInitArgs {
+                    reward_sns_root_canister_id: Some(self.root),
+                })?,
+                None,
+            );
+            self.rewards_installed = true;
+        }
+        update_noargs(
+            &self.pic,
+            self.sns_rewards,
+            Principal::anonymous(),
+            "debug_scan_tick",
+        )
+    }
+
+    fn credit_reward_pot(&self, amount_e8s: u64) -> Result<()> {
+        update_bytes(
+            &self.pic,
+            self.reward_ledger,
+            Principal::anonymous(),
+            "debug_credit",
+            encode_args((
+                Account {
+                    owner: self.relay,
+                    subaccount: None,
+                },
+                amount_e8s,
+            ))?,
+        )
+    }
+
+    fn reward_sweep(&self) -> Result<()> {
+        update_noargs(
+            &self.pic,
+            self.relay,
+            Principal::anonymous(),
+            "debug_reward_sweep",
+        )
+    }
+
+    fn wait_for_histories(&self, splitter: u8, subaccount_one_minimum: usize) -> Result<()> {
+        wait_for_real_index_transactions(
+            &self.pic,
+            self.icp_index,
+            &account_identifier_text(self.relay, Some(relay_subaccount_one())),
+            subaccount_one_minimum,
+        )?;
+        wait_for_real_index_transactions(
+            &self.pic,
+            self.icp_index,
+            &account_identifier_text(self.relay, Some(relay_numbered_subaccount(splitter))),
+            3,
+        )
+    }
+
+    fn index_transactions(
+        &self,
+        account_identifier: String,
+    ) -> Result<Vec<jupiter_ic_clients::index::IndexTransactionWithId>> {
+        let result: GetAccountIdentifierTransactionsResult = query_one(
+            &self.pic,
+            self.icp_index,
+            Principal::anonymous(),
+            "get_account_identifier_transactions",
+            GetAccountIdentifierTransactionsArgs {
+                max_results: 1_000,
+                start: None,
+                account_identifier,
+            },
+        )?;
+        match result {
+            GetAccountIdentifierTransactionsResult::Ok(page) => Ok(page.transactions),
+            GetAccountIdentifierTransactionsResult::Err(error) => {
+                bail!("real ICP Index history query failed: {error:?}")
+            }
+        }
+    }
+
+    fn journal(&self) -> Result<RewardJournalView> {
+        query_one(
+            &self.pic,
+            self.relay,
+            Principal::anonymous(),
+            "debug_reward_state",
+            (),
+        )
+    }
+
+    fn reward_balance(&self, owner: Principal) -> Result<u64> {
+        support::ledger::icrc1_balance(
+            &self.pic,
+            self.reward_ledger,
+            &Account {
+                owner,
+                subaccount: None,
+            },
+        )
+    }
+}
+
+#[test]
+#[ignore]
+fn splitter_reward_real_ledger_bad_fee_records_unequal_fees_and_attributes_owner() -> Result<()> {
+    require_ignored_flag()?;
+    const SPLITTER: u8 = 30;
+    const PINNED_BALANCE: u64 = 500_000_007;
+    const DEFAULT_FEE: u64 = 10_000;
+    const SUBACCOUNT_ONE_FEE: u64 = 20_000;
+
+    let mut env = RealSplitterRewardEnv::new(1)?;
+    let owner = env.owners[0];
+    let default_gross = u64::try_from(u128::from(PINNED_BALANCE) * u128::from(SPLITTER) / 100)?;
+    let subaccount_one_gross = PINNED_BALANCE - default_gross;
+    let default_amount = default_gross - DEFAULT_FEE;
+    let subaccount_one_amount = subaccount_one_gross - SUBACCOUNT_ONE_FEE;
+
+    env.fund_owner(owner, PINNED_BALANCE + DEFAULT_FEE)?;
+    env.send_to_relay(owner, relay_numbered_subaccount(SPLITTER), PINNED_BALANCE)?;
+    let _: () = update_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_pause_after_persisted_splitter_leg",
+        true,
+    )?;
+    env.main_tick()?;
+    if !matches!(
+        read_splitter_state_fixture(&env.pic, env.relay),
+        VersionedSplitterStateFixture::V1(SplitterStateFixture {
+            active_job: Some(ActiveSplitterJobFixture {
+                default_leg: SplitterLegProgressFixture {
+                    status: SplitterLegStatusFixture::Accepted { .. },
+                    ..
+                },
+                subaccount_one_leg: SplitterLegProgressFixture {
+                    status: SplitterLegStatusFixture::Ready,
+                    attempt_started: false,
+                    ..
+                },
+                ..
+            }),
+            ..
+        })
+    ) {
+        bail!("Relay did not pause after durably accepting only the default leg");
+    }
+
+    set_real_icp_ledger_fee_via_snapshot(
+        &env.pic,
+        env.icp_ledger,
+        DEFAULT_FEE,
+        SUBACCOUNT_ONE_FEE,
+    )?;
+    env.main_tick()?;
+    env.main_tick()?;
+    env.wait_for_histories(SPLITTER, 2)?;
+
+    let splitter_account =
+        account_identifier_text(env.relay, Some(relay_numbered_subaccount(SPLITTER)));
+    let default_account = account_identifier_text(env.relay, None);
+    let subaccount_one_account = account_identifier_text(env.relay, Some(relay_subaccount_one()));
+    let mut outgoing = env
+        .index_transactions(splitter_account.clone())?
+        .into_iter()
+        .filter_map(|entry| match entry.transaction.operation {
+            IndexOperation::Transfer {
+                from,
+                to,
+                amount,
+                fee,
+                ..
+            } if from == splitter_account => Some((entry.id, to, amount.e8s(), fee.e8s())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    outgoing.sort_by_key(|entry| entry.0);
+    let [default_leg, subaccount_one_leg] = outgoing.as_slice() else {
+        bail!("real ICP Index did not expose exactly two splitter legs: {outgoing:?}");
+    };
+    if default_leg.1 != default_account
+        || default_leg.2 != default_amount
+        || default_leg.3 != DEFAULT_FEE
+        || subaccount_one_leg.1 != subaccount_one_account
+        || subaccount_one_leg.2 != subaccount_one_amount
+        || subaccount_one_leg.3 != SUBACCOUNT_ONE_FEE
+        || default_leg.3 == subaccount_one_leg.3
+        || default_leg.0 >= subaccount_one_leg.0
+    {
+        bail!("real indexed splitter legs did not record the intended unequal fees: {outgoing:?}");
+    }
+
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(owner)?, 999_000);
+    assert_eq!(env.reward_balance(env.relay)?, 0);
+    let journal = env.journal()?;
+    if journal.pending_transfer.is_some()
+        || journal.processed_through_commitment_tx_id.is_none()
+        || !journal
+            .splitter_boundaries
+            .as_ref()
+            .and_then(|boundaries| boundaries.get(&SPLITTER))
+            .is_some_and(|boundary| boundary.processed_through_tx_id == Some(subaccount_one_leg.0))
+    {
+        bail!("unequal-fee reward did not advance both boundaries cleanly: {journal:?}");
+    }
+    let logs = env
+        .pic
+        .fetch_canister_logs(env.relay, Principal::anonymous())
+        .map_err(|err| anyhow::anyhow!("fetch Relay logs failed: {err:?}"))?;
+    if !logs.iter().any(|entry| {
+        let line = String::from_utf8_lossy(&entry.content);
+        line.contains("RELAY_SNS_REWARD status=accepted")
+            && line.contains(&format!("eligible_winner_icp_e8s={subaccount_one_amount}"))
+            && line.contains("ineligible_icp_e8s=0")
+            && line.contains("distinct_sources=1")
+            && line.contains("splitter_credits=1")
+    }) {
+        bail!(
+            "reward log did not attribute exactly the real SubaccountOne net amount {subaccount_one_amount}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_reward_uses_real_index_net_weight_and_ambiguous_boundaries_are_atomic() -> Result<()> {
+    require_ignored_flag()?;
+    let mut env = RealSplitterRewardEnv::new(2)?;
+    let alice = env.owners[0];
+    let bob = env.owners[1];
+    env.fund_owner(alice, 1_100_000_000)?;
+    env.fund_owner(bob, 300_000_000)?;
+    env.send_to_relay(alice, relay_numbered_subaccount(90), 1_000_000_000)?;
+    env.send_to_relay(bob, relay_subaccount_one(), 200_000_000)?;
+    env.main_tick()?;
+    env.wait_for_histories(90, 3)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    let _: () = update_one(
+        &env.pic,
+        env.reward_ledger,
+        Principal::anonymous(),
+        "debug_set_error_script",
+        vec![
+            DebugNextTransferError::AcceptThenTrap,
+            DebugNextTransferError::TemporarilyUnavailable,
+        ],
+    )?;
+    env.reward_sweep()?;
+
+    let ambiguous = env.journal()?;
+    let pending = ambiguous
+        .pending_transfer
+        .as_ref()
+        .context("splitter-derived reward transfer was not kept pending")?;
+    if ambiguous.processed_through_commitment_tx_id.is_some()
+        || ambiguous
+            .splitter_boundaries
+            .as_ref()
+            .is_some_and(|boundaries| !boundaries.is_empty())
+        || pending.status != RewardPendingTransferStatusFixture::Ambiguous
+        || !pending
+            .proposed_splitter_boundaries
+            .as_ref()
+            .is_some_and(|updates| updates.contains_key(&90))
+    {
+        bail!("ambiguous splitter reward advanced a boundary or lost its proposal: {ambiguous:?}");
+    }
+    assert_eq!(env.reward_balance(alice)?, 0);
+    assert_eq!(
+        env.reward_balance(bob)?,
+        999_000,
+        "Bob's 2 ICP direct contribution must beat Alice's approximately 1 ICP splitter-90 net leg"
+    );
+
+    env.pic.advance_time(Duration::from_secs(5 * 60));
+    tick_n(&env.pic, 5);
+    env.pic
+        .upgrade_canister(
+            env.relay,
+            relay_wasm()?,
+            encode_one(env.relay_init.clone())?,
+            Some(Principal::anonymous()),
+        )
+        .map_err(|err| anyhow::anyhow!("ambiguous splitter reward upgrade failed: {err:?}"))?;
+    let restored = env.journal()?;
+    if restored != ambiguous {
+        bail!("pending splitter boundary proposal changed across upgrade");
+    }
+    env.reward_sweep()?;
+    let resolved = env.journal()?;
+    if resolved.pending_transfer.is_some()
+        || resolved.processed_through_commitment_tx_id.is_none()
+        || !resolved
+            .splitter_boundaries
+            .as_ref()
+            .is_some_and(|boundaries| {
+                boundaries
+                    .get(&90)
+                    .is_some_and(|boundary| boundary.processed_through_tx_id.is_some())
+            })
+    {
+        bail!("Duplicate resolution did not atomically advance main and splitter-90 boundaries: {resolved:?}");
+    }
+    assert_eq!(env.reward_balance(bob)?, 999_000, "reward paid twice");
+    let logs = env
+        .pic
+        .fetch_canister_logs(env.relay, Principal::anonymous())
+        .map_err(|err| anyhow::anyhow!("fetch Relay logs failed: {err:?}"))?;
+    if !logs.iter().any(|entry| {
+        let line = String::from_utf8_lossy(&entry.content);
+        line.contains("RELAY_SNS_REWARD status=ambiguous")
+            && line.contains("splitter_credits=1")
+            && line.contains("splitters_scanned=1")
+    }) {
+        bail!("missing bounded splitter-aware reward summary log");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_reward_allocates_multiple_real_sources_and_no_winner_closes_provenance() -> Result<()> {
+    require_ignored_flag()?;
+    let mut env = RealSplitterRewardEnv::new(2)?;
+    let alice = env.owners[0];
+    let bob = env.owners[1];
+    env.fund_owner(alice, 400_000_000)?;
+    env.fund_owner(bob, 300_000_000)?;
+    env.send_to_relay(alice, relay_numbered_subaccount(50), 300_000_000)?;
+    env.send_to_relay(bob, relay_numbered_subaccount(50), 200_000_000)?;
+    env.main_tick()?;
+    env.wait_for_histories(50, 2)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(alice)?, 999_000);
+    assert_eq!(env.reward_balance(bob)?, 0);
+    let first = env.journal()?;
+    if !first
+        .splitter_boundaries
+        .as_ref()
+        .is_some_and(|boundaries| boundaries.contains_key(&50))
+    {
+        bail!("multi-source splitter-50 reward did not advance provenance");
+    }
+
+    let unknown = Principal::self_authenticating(&[99; 32]);
+    env.fund_owner(unknown, 300_000_000)?;
+    env.send_to_relay(unknown, relay_numbered_subaccount(10), 200_000_000)?;
+    env.main_tick()?;
+    env.main_tick()?;
+    env.wait_for_histories(10, 4)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(500_000)?;
+    env.reward_sweep()?;
+    let no_winner = env.journal()?;
+    if no_winner.processed_through_commitment_tx_id == first.processed_through_commitment_tx_id
+        || !no_winner
+            .splitter_boundaries
+            .as_ref()
+            .is_some_and(|boundaries| boundaries.contains_key(&10))
+        || no_winner.pending_transfer.is_some()
+    {
+        bail!("no-winner splitter batch did not close both attribution boundaries: {no_winner:?}");
+    }
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &env.pic,
+            env.reward_ledger,
+            &Account {
+                owner: env.relay,
+                subaccount: None,
+            }
+        )?,
+        500_000,
+        "no-winner reward pot must roll forward"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_reward_real_post_pin_credit_is_carried_and_attributed_once() -> Result<()> {
+    require_ignored_flag()?;
+    let mut env = RealSplitterRewardEnv::new(2)?;
+    let alice = env.owners[0];
+    let bob = env.owners[1];
+    env.fund_owner(alice, 600_000_000)?;
+    env.fund_owner(bob, 400_000_000)?;
+    env.send_to_relay(alice, relay_numbered_subaccount(30), 500_000_000)?;
+    let _: () = update_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_abort_after_successful_transfer",
+        true,
+    )?;
+    env.main_tick()?;
+    let carried_tx = env.send_to_relay(bob, relay_numbered_subaccount(30), 300_000_000)?;
+    env.main_tick()?;
+    env.wait_for_histories(30, 2)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(alice)?, 999_000);
+    assert_eq!(env.reward_balance(bob)?, 0);
+    let first = env.journal()?;
+    let first_boundary = first
+        .splitter_boundaries
+        .as_ref()
+        .and_then(|boundaries| boundaries.get(&30))
+        .context("missing splitter-30 first boundary")?;
+    if first_boundary.carried_credit_start_tx_id != Some(carried_tx) {
+        bail!("post-pin credit was not durably carried: {first_boundary:?}");
+    }
+
+    env.main_tick()?;
+    env.main_tick()?;
+    env.wait_for_histories(30, 4)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(alice)?, 999_000);
+    assert_eq!(env.reward_balance(bob)?, 999_000);
+    let second = env.journal()?;
+    let second_boundary = second
+        .splitter_boundaries
+        .as_ref()
+        .and_then(|boundaries| boundaries.get(&30))
+        .context("missing splitter-30 second boundary")?;
+    if second_boundary.processed_through_tx_id == first_boundary.processed_through_tx_id
+        || second_boundary.carried_credit_start_tx_id.is_some()
+    {
+        bail!("carried splitter credit was not consumed exactly once: {second_boundary:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn splitter_reward_real_same_owner_aggregates_direct_and_several_splitters() -> Result<()> {
+    require_ignored_flag()?;
+    let mut env = RealSplitterRewardEnv::new(1)?;
+    let owner = env.owners[0];
+    env.fund_owner(owner, 700_000_000)?;
+    env.send_to_relay(owner, relay_subaccount_one(), 100_010_000)?;
+    env.send_to_relay(owner, relay_numbered_subaccount(30), 200_000_000)?;
+    env.send_to_relay(owner, relay_numbered_subaccount(70), 200_000_000)?;
+    env.main_tick()?;
+    env.wait_for_histories(30, 4)?;
+    env.wait_for_histories(70, 4)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(owner)?, 999_000);
+    let journal = env.journal()?;
+    if !journal
+        .splitter_boundaries
+        .as_ref()
+        .is_some_and(|boundaries| boundaries.contains_key(&30) && boundaries.contains_key(&70))
+    {
+        bail!("same-owner multi-path batch did not advance both splitter boundaries: {journal:?}");
+    }
+    let logs = env
+        .pic
+        .fetch_canister_logs(env.relay, Principal::anonymous())
+        .map_err(|err| anyhow::anyhow!("fetch Relay logs failed: {err:?}"))?;
+    if !logs.iter().any(|entry| {
+        let line = String::from_utf8_lossy(&entry.content);
+        line.contains("RELAY_SNS_REWARD status=accepted")
+            && line.contains("splitter_credits=2")
+            && line.contains("splitters_scanned=2")
+            && line.contains("distinct_sources=1")
+    }) {
+        bail!("multi-path reward attribution did not merge the owner's AccountIdentifier");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn bca6ae_reward_v1_fixture_migrates_with_splitter_memory_and_new_provenance() -> Result<()> {
+    require_ignored_flag()?;
+    // This independently encoded V1 is the reward-state wire shape at
+    // bca6ae1ba36a9aa98e768c8d099b5017cb1de064. Memory 1 is populated separately so the
+    // upgrade proves the two journals remain isolated.
+    let mut env = RealSplitterRewardEnv::new(1)?;
+    let owner = env.owners[0];
+    env.fund_owner(owner, 400_000_000)?;
+    env.send_to_relay(owner, relay_numbered_subaccount(50), 300_000_000)?;
+    let _: () = update_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_abort_after_successful_transfer",
+        true,
+    )?;
+    env.main_tick()?;
+    let splitter_before_upgrade = read_splitter_state_fixture(&env.pic, env.relay);
+    if !matches!(
+        &splitter_before_upgrade,
+        VersionedSplitterStateFixture::V1(SplitterStateFixture {
+            active_job: Some(_),
+            ..
+        })
+    ) {
+        bail!("splitter execution memory was not active before V1 reward migration");
+    }
+
+    write_reward_state_fixture(
+        &env.pic,
+        env.relay,
+        RewardStateFixture {
+            epoch_sns_root_canister_id: None,
+            processed_through_commitment_tx_id: None,
+            carried_credit_start_tx_id: None,
+            last_sweep_attempt_timestamp_seconds: 0,
+            pending_transfer: None,
+        },
+    );
+    env.pic.advance_time(Duration::from_secs(5 * 60));
+    tick_n(&env.pic, 5);
+    env.pic
+        .upgrade_canister(
+            env.relay,
+            relay_wasm()?,
+            encode_one(env.relay_init.clone())?,
+            Some(Principal::anonymous()),
+        )
+        .map_err(|err| anyhow::anyhow!("bca6ae V1 fixture upgrade failed: {err:?}"))?;
+    let migrated = env.journal()?;
+    if migrated.epoch_sns_root_canister_id.is_some()
+        || migrated.processed_through_commitment_tx_id.is_some()
+        || migrated.pending_transfer.is_some()
+        || !migrated
+            .splitter_boundaries
+            .as_ref()
+            .is_some_and(BTreeMap::is_empty)
+    {
+        bail!("frozen bca6ae reward V1 did not migrate to empty-boundary V2: {migrated:?}");
+    }
+    let splitter_after_upgrade = read_splitter_state_fixture(&env.pic, env.relay);
+    if matches!(
+        &splitter_after_upgrade,
+        VersionedSplitterStateFixture::Uninitialized
+            | VersionedSplitterStateFixture::V1(SplitterStateFixture {
+                active_job: None,
+                next_driver_revision: 0,
+                ..
+            })
+    ) {
+        bail!(
+            "reward V1 migration reset the independent splitter journal: before={splitter_before_upgrade:?} after={splitter_after_upgrade:?}"
+        );
+    }
+
+    env.main_tick()?;
+    env.wait_for_histories(50, 2)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(owner)?, 999_000);
+    let attributed = env.journal()?;
+    if attributed.pending_transfer.is_some()
+        || !attributed
+            .splitter_boundaries
+            .as_ref()
+            .is_some_and(|boundaries| boundaries.contains_key(&50))
+        || !matches!(
+            read_splitter_state_fixture(&env.pic, env.relay),
+            VersionedSplitterStateFixture::V1(SplitterStateFixture {
+                active_job: None,
+                ..
+            })
+        )
+    {
+        bail!("post-migration splitter provenance or execution completion failed: {attributed:?}");
+    }
+    Ok(())
 }
 
 #[test]
@@ -3033,7 +3900,12 @@ fn pre_splitter_upgrade_preserves_reward_journal_and_concurrent_real_icp_credit(
         "debug_reward_state",
         (),
     )?;
-    if upgraded_pending_journal != old_pending_journal {
+    let mut normalized_old_pending_journal = old_pending_journal.clone();
+    normalized_old_pending_journal.splitter_boundaries = Some(BTreeMap::new());
+    if let Some(pending) = normalized_old_pending_journal.pending_transfer.as_mut() {
+        pending.proposed_splitter_boundaries = Some(BTreeMap::new());
+    }
+    if upgraded_pending_journal != normalized_old_pending_journal {
         bail!(
             "memory-0 reward journal changed across the pre-splitter upgrade: old={old_pending_journal:?} new={upgraded_pending_journal:?}"
         );

@@ -4,6 +4,7 @@ use jupiter_nns_types::{
     Neuron, NeuronId,
 };
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 type NeuronResult = Result<Neuron, GovernanceError>;
 
@@ -15,6 +16,7 @@ struct GovState {
     refresh_calls: u64,
     claim_or_refresh_calls: u64,
     claim_or_refresh_fails: bool,
+    hidden_neuron_ids: BTreeSet<u64>,
 }
 
 thread_local! {
@@ -54,10 +56,11 @@ fn get_full_neuron(neuron_id: u64) -> NeuronResult {
 
 #[ic_cdk::update]
 fn list_neurons(req: ListNeurons) -> ListNeuronsResponse {
+    let hidden_neuron_ids = ST.with(|state| state.borrow().hidden_neuron_ids.clone());
     let full_neurons = if req.include_public_neurons_in_full_neurons == Some(true) {
         req.neuron_ids
             .into_iter()
-            .filter(|id| *id != 0)
+            .filter(|id| *id != 0 && !hidden_neuron_ids.contains(id))
             .map(|id| {
                 let mut account = vec![0u8; 32];
                 account[24..].copy_from_slice(&id.to_be_bytes());
@@ -171,6 +174,18 @@ fn debug_set_aging_since(ts: u64) {
 #[ic_cdk::update]
 fn debug_set_claim_or_refresh_fails(v: bool) {
     ST.with(|s| s.borrow_mut().claim_or_refresh_fails = v);
+}
+
+#[ic_cdk::update]
+fn debug_set_neuron_public(neuron_id: u64, is_public: bool) {
+    ST.with(|state| {
+        let mut state = state.borrow_mut();
+        if is_public {
+            state.hidden_neuron_ids.remove(&neuron_id);
+        } else {
+            state.hidden_neuron_ids.insert(neuron_id);
+        }
+    });
 }
 
 #[ic_cdk::query]

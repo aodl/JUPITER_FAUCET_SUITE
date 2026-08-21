@@ -29,6 +29,10 @@ import {
 } from './view-formatters.js';
 
 const TRACKER_REGISTRATION_URL = '#how-it-works';
+const NANOS_PER_SECOND = 1_000_000_000n;
+const SECONDS_PER_MINUTE = 60n;
+const SECONDS_PER_HOUR = 60n * SECONDS_PER_MINUTE;
+const SECONDS_PER_DAY = 24n * SECONDS_PER_HOUR;
 const TRACKER_RANGE_LABELS = {
   month: 'last month',
   year: 'last year',
@@ -221,6 +225,16 @@ function renderCyclesHelpIcon() {
       type="button"
       data-tooltip-id="blackhole-controller-help"
       aria-label="Cycles observability help"
+    >i</button>`;
+}
+
+function renderBurnEstimateHelpIcon() {
+  return `
+    <button
+      class="pane-inline-tooltip-icon"
+      type="button"
+      data-tooltip-id="tracker-burn-estimate-help"
+      aria-label="About the estimated cycles burn rate"
     >i</button>`;
 }
 
@@ -623,13 +637,45 @@ function rawMemoSegmentPlan(items, outgoingMemoText) {
   return { memoSegmentByText, memoSegments: [...memoSegments, ...overflowSegments] };
 }
 
-function cycleSampleSourceLabel(samples) {
-  return samples[0]?.source === 'log' ? 'canister logs' : 'historian cycle probes';
-}
-
 function formatTrillionCyclesPerDay(value) {
   if (value === null || value === undefined) return DASH;
   return `${formatTrillionCycles(value).replace(' cycles', '')} cycles/day`;
+}
+
+function formatBurnObservationDuration(samples) {
+  if (samples.length < 2) return null;
+  const elapsedNanos = samples[samples.length - 1].timestampNanos - samples[0].timestampNanos;
+  if (elapsedNanos <= 0n) return null;
+  const elapsedSeconds = elapsedNanos / NANOS_PER_SECOND;
+  if (elapsedSeconds >= SECONDS_PER_DAY) {
+    return formatDurationSeconds((elapsedSeconds / SECONDS_PER_DAY) * SECONDS_PER_DAY);
+  }
+  if (elapsedSeconds >= SECONDS_PER_HOUR) {
+    return formatDurationSeconds((elapsedSeconds / SECONDS_PER_HOUR) * SECONDS_PER_HOUR);
+  }
+  if (elapsedSeconds >= SECONDS_PER_MINUTE) {
+    return formatDurationSeconds((elapsedSeconds / SECONDS_PER_MINUTE) * SECONDS_PER_MINUTE);
+  }
+  return formatDurationSeconds(elapsedSeconds);
+}
+
+function renderBurnEstimateSummary(data, estimatedCyclesBurnHtml) {
+  if (estimatedCyclesBurnHtml === null) return '';
+  const samples = cycleSamplesForBurnEstimate(data);
+  const observationDuration = formatBurnObservationDuration(samples);
+  if (observationDuration === null) return '';
+  return `<div>
+    <dt>
+      <span class="tracker-burn-estimate-label">
+        <span>Estimated observed cycles burned/day</span>
+        ${renderBurnEstimateHelpIcon()}
+      </span>
+    </dt>
+    <dd class="pane-detail-value tracker-burn-estimate-value">
+      <span>${estimatedCyclesBurnHtml}</span>
+      <span class="tracker-burn-observation">Observation window: ${escapeHtml(observationDuration)} · ${escapeHtml(pluralize(samples.length, 'sample'))}</span>
+    </dd>
+  </div>`;
 }
 
 function sumE8s(items) {
@@ -839,7 +885,7 @@ export function createTrackerController({
             })
           : `${renderTrackerLoadingCard({
               title: 'Observed CMC top-ups',
-              subtitle: 'Transfers to the CMC deposit account in the selected range, color-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.',
+              subtitle: 'Distinct ICP-ledger transfers to the canister\'s CMC deposit account in the selected range, color-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.',
               message: 'Loading observed CMC top-up history…',
             })}
             ${renderTrackerLoadingCard({
@@ -1109,7 +1155,7 @@ export function createTrackerController({
       ${hasObservedCmcTopUps ? `<div class="tracker-chart-card">
         <div class="tracker-chart-header">
           <h3>Observed CMC top-ups</h3>
-          <span>Transfers to the CMC deposit account in the selected range, color-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.</span>
+          <span>Distinct ICP-ledger transfers to the canister's CMC deposit account in the selected range, color-coded by source. Relay canister IDs open the corresponding raw ICP tracker; direct non-Jupiter top-ups may appear.</span>
         </div>
         ${renderActiveSourceLegend({ includeProtocol: Boolean(state.protocolCanisterText), segments: sourceSegments, buckets })}
         ${renderRelayOverflowDisclosure(relayPlan, data?.cmcTransfers?.items || [])}
@@ -1202,7 +1248,7 @@ export function createTrackerController({
         <div><dt>Tracking reasons</dt><dd class="pane-detail-value">${escapeHtml(trackingReasons)}</dd></div>
         <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
         <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
-        ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
+        ${renderBurnEstimateSummary(data, estimatedCyclesBurnHtml)}
       </dl>
       <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. This canister is tracked by historian for cycles observability, not memo-registered commitment history.</p>
       ${cyclesStatusNote}
@@ -1252,8 +1298,6 @@ export function createTrackerController({
       commitmentE8s: fullSummary.qualifyingCommittedE8s || fullSummary.totalCommittedE8s,
       simulatorHashForPrefill,
     });
-    const burnEstimateSamples = cycleSamplesForBurnEstimate(classifiedData);
-    const cycleSourceLabel = burnEstimateSamples.length > 0 ? cycleSampleSourceLabel(burnEstimateSamples) : 'available cycle data';
     const commitmentError = classifiedData.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(classifiedData.errors.commitments)}</p>` : '';
     const cyclesError = classifiedData.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(classifiedData.errors.cycles)}</p>` : '';
     const hasCyclesOutsideRange = (classifiedData?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
@@ -1286,11 +1330,10 @@ export function createTrackerController({
         <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(cmcLoading, formatInteger(summary.observedCmcTransferCount))}</dd></div>
         <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(cmcLoading, formatIcpE8s(summary.observedCmcE8s))}</dd></div>
         <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
-        ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Estimated observed cycles burned/day</dt><dd class="pane-detail-value">${estimatedCyclesBurnHtml}</dd></div>`}
+        ${renderBurnEstimateSummary(classifiedData, estimatedCyclesBurnHtml)}
         ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Simulator prefill</dt><dd class="pane-detail-value">${simulatorPrefillHtml}</dd></div>`}
       </dl>
       <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
-      ${estimatedCyclesBurnHtml === null ? '' : `<p class="pane-status-note tracker-status-note">Estimated observed cycles burn is calculated from loaded ${escapeHtml(cycleSourceLabel)} samples and observed CMC top-ups when a cached ICP/XDR rate is available; otherwise it falls back to downward balance changes.</p>`}
       ${renderTrackerCadenceNote(classifiedData)}
       ${commitmentError}
       ${cyclesStatusNote}
