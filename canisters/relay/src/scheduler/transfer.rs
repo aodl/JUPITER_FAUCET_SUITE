@@ -16,6 +16,7 @@ const LEDGER_CREATED_AT_VALID_WINDOW_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 #[cfg(feature = "debug_api")]
 thread_local! {
     static ABORT_AFTER_SUCCESSFUL_TRANSFER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PAUSE_AFTER_PERSISTED_SPLITTER_LEG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static TRAP_AFTER_SUCCESSFUL_TRANSFER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -27,6 +28,21 @@ pub(crate) fn debug_set_abort_after_successful_transfer(v: bool) {
 #[cfg(feature = "debug_api")]
 pub(crate) fn debug_set_trap_after_successful_transfer(v: bool) {
     TRAP_AFTER_SUCCESSFUL_TRANSFER.with(|cell| cell.set(v));
+}
+
+#[cfg(feature = "debug_api")]
+pub(crate) fn debug_set_pause_after_persisted_splitter_leg(v: bool) {
+    PAUSE_AFTER_PERSISTED_SPLITTER_LEG.with(|cell| cell.set(v));
+}
+
+#[cfg(feature = "debug_api")]
+pub(super) fn debug_pause_after_persisted_splitter_leg() -> bool {
+    PAUSE_AFTER_PERSISTED_SPLITTER_LEG.with(|cell| cell.replace(false))
+}
+
+#[cfg(not(feature = "debug_api"))]
+pub(super) fn debug_pause_after_persisted_splitter_leg() -> bool {
+    false
 }
 
 #[cfg(feature = "debug_api")]

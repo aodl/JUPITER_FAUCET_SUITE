@@ -407,6 +407,13 @@ fn debug_abort_after_successful_transfer(v: bool) {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
+fn debug_pause_after_persisted_splitter_leg(v: bool) {
+    guard_debug_api_not_production();
+    crate::scheduler::debug_set_pause_after_persisted_splitter_leg(v);
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
 fn debug_trap_after_successful_transfer(v: bool) {
     guard_debug_api_not_production();
     crate::scheduler::debug_set_trap_after_successful_transfer(v);

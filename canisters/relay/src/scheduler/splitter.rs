@@ -526,6 +526,9 @@ async fn drive_active_job<L: LedgerClient>(
                 leg_progress_mut(&mut job, leg).status =
                     SplitterLegStatus::Accepted { block_index };
                 splitter_state::set_active_job(job);
+                if super::transfer::debug_pause_after_persisted_splitter_leg() {
+                    return DriveResult::Unresolved;
+                }
             }
             TransferOutcome::TransportUncertain(error) => {
                 leg_progress_mut(&mut job, leg).uncertain_attempt_seen = true;
