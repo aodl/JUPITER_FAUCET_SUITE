@@ -8,6 +8,9 @@ It controls one NNS neuron, periodically disburses maturity as ICP, and routes t
 - **95% of the age bonus** goes to [`jupiter-sns-rewards`](../sns-rewards)
 - **5% of the age bonus** goes to the D-QUORUM neuron staking account
 
+<img src="../frontend/public/disburser.svg">
+
+
 This canister is intentionally narrow in scope. It does not top up cycles directly and it does not expose a public production API.
 
 See the suite overview in [`../../README.md`](../../README.md).

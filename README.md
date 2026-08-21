@@ -4,6 +4,8 @@
 
 ![Jupiter Faucet](canisters/frontend/public/og/preview-20260520.jpg)
 
+<img src="/canisters/frontend/public/perpetual canister topups.svg">
+
 The suite turns durable ICP and NNS maturity into durable cycles support. A controlled NNS neuron produces recurring maturity, the disburser stages that maturity as ICP, the faucet allocates the base ICP flow to memo-declared targets, and the relay helps keep the suite's own canisters funded before routing surplus ICP to configured neuron recipients. Historian and frontend canisters provide public observability, while small recovery/support canisters keep the value-moving path narrow and auditable.
 
 ## Protocol Overview
@@ -11,11 +13,15 @@ The suite turns durable ICP and NNS maturity into durable cycles support. A cont
 The operational path is intentionally split across small canisters:
 
 - [`canisters/disburser`](canisters/disburser) controls one NNS neuron, disburses available maturity, and routes staged ICP into the fixed base/age-bonus recipients.
-- [`canisters/faucet`](canisters/faucet) receives the base ICP flow, scans the configured staking account, interprets eligible transfer memos, and performs proportional payouts as cycles top-ups, raw ICP transfers, or NNS neuron stake transfers.
+  <img src="/canisters/frontend/public/disburser.svg">
+- [`canisters/faucet`](canisters/faucet) receives the base ICP flow, scans the configured staking account, interprets eligible transfer memos, and performs proportional payouts as cycles top-ups, raw ICP transfers, or NNS neuron stake transfers (the target canister/neuron and top-up mode is determined by the staking account transfer memo).
+  <img src="/canisters/frontend/public/faucet.svg">
 - [`canisters/relay`](canisters/relay) receives suite-funding ICP from the faucet, tops up managed suite canisters from recent cycles-burn observations plus carried recovery deficits, and routes remaining surplus only after canister recovery targets are met.
 - [`canisters/historian`](canisters/historian) indexes commitment history, target canisters, cycles samples, SNS discovery, and dashboard-facing public state.
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
 - [`canisters/lifeline`](canisters/lifeline) and [`canisters/sns-rewards`](canisters/sns-rewards) provide recovery/support and reward-recipient roles.
+
+<img src="/canisters/frontend/public/jupiter faucet overview.svg">
 
 At a high level, a participant declares a faucet target by transferring ICP to the configured staking account and placing a supported ASCII directive in `icrc1_memo`. Plain declared canister ID text is the primary cycles top-up form. The faucet also supports `canister_id.memo` for raw ICP routing and decimal NNS neuron IDs, optionally with `.memo`, for neuron staking-account top-ups. The exact eligibility, memo, fee, retry, and rescue rules live in the component READMEs:
 

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:ev="http://www.w3.org/2001/xml-events" xmlns:xlink="http://www.w3.org/1999/xlink" baseProfile="full" class="jf-diagram" height="380" role="img" version="1.1" viewBox="90 350 1040 340" width="1160">
+  <defs>
+    <style type="text/css"><![CDATA[
+        .jf-diagram { font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .bg{fill:#ffffff;}
+        .title{fill:#18212b;font-size:30px;font-weight:720;letter-spacing:-.35px}
+        .subtitle{fill:#607080;font-size:14px;font-weight:520}
+        .node-title{fill:#18212b;font-size:18px;font-weight:700}
+        .node-sub{fill:#607080;font-size:13px;font-weight:520}
+        .badge{font-size:11px;font-weight:760}
+        .section{fill:#607080;font-size:12px;font-weight:760;letter-spacing:1.2px}
+        .lane{fill:#607080;font-size:13px;font-weight:760;letter-spacing:.9px}
+        .edge-label{fill:#18212b;font-size:12px;font-weight:650}
+        .edge-mono{fill:#18212b;font-size:12px;font-weight:650;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+        .legend{fill:#18212b;font-size:12px;font-weight:650}
+        .note{fill:#607080;font-size:13px;font-weight:560}
+        .small-title{fill:#18212b;font-size:15px;font-weight:700}
+        .step-number{fill:#fff;font-size:12px;font-weight:800}
+        .canister.jupiter rect.body{fill:#edf9f5;stroke:#118866;}
+        .canister.system rect.body{fill:#f1f5fa;stroke:#53657a;}
+        .canister.target rect.body{fill:#fafbfc;stroke:#8b96a3;}
+        .canister.sns rect.body{fill:#f7f0fb;stroke:#8752b6;}
+        .canister.blackhole rect.body{fill:#f5f1f7;stroke:#73517f;}
+        .account path.body{fill:#fbfcfd;stroke:#778697;}
+        .edge{fill:none;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+        .edge.icp{stroke:#c4870e;}
+        .edge.cycles{stroke:#168c65;}
+        .edge.token{stroke:#9b4dca;}
+        .edge.data{stroke:#3977ba;stroke-dasharray:8 7;}
+        .edge.control{stroke:#626b75;stroke-dasharray:2 7;}
+        .edge.action{stroke:#2f6ee5;}
+        .theme-bg{fill:#ffffff;}
+        ]]></style>
+    <marker id="a-icp" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#c4870e"/>
+    </marker>
+    <marker id="a-cycles" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#168c65"/>
+    </marker>
+    <marker id="a-token" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#9b4dca"/>
+    </marker>
+    <marker id="a-data" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#3977ba"/>
+    </marker>
+    <marker id="a-control" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#626b75"/>
+    </marker>
+    <marker id="a-action" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
+      <path d="M0,0 L10,4 L0,8 z" fill="#2f6ee5"/>
+    </marker>
+  </defs>
+  <title>Disburser maturity split</title>
+  <desc>Disburser sends the age-neutral base to Faucet on the right. The separate age-bonus portion flows down from the bottom of Disburser and splits to SNS Rewards and the D-QUORUM neuron beneath it.</desc>
+  <rect class="bg" height="340" width="1040" x="90" y="350"/>
+  <path class="edge icp" d="M 360,420 L 480,420" marker-end="url(#a-icp)" stroke-width="3.1"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="74.8" x="382.6" y="393"/>
+  <text class="edge-label" text-anchor="middle" x="420" y="410">maturity</text>
+  <path class="edge icp" d="M 710,420 H 850" marker-end="url(#a-icp)" stroke-width="3.1"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="96.1" x="731.95" y="393"/>
+  <text class="edge-label" text-anchor="middle" x="780" y="410">base reward</text>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="52" x="754" y="429"/>
+  <text class="edge-label" text-anchor="middle" x="780" y="446">100%</text>
+  <path class="edge icp" d="M 595,465 V 540" stroke-width="3.1"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="81.9" x="615" y="488"/>
+  <text class="edge-label" text-anchor="middle" x="655.95" y="505">age bonus</text>
+  <circle cx="595" cy="540" fill="#c4870e" r="6" stroke="#ffffff" stroke-width="2"/>
+  <path class="edge icp" d="M 595,540 H 470 V 575" marker-end="url(#a-icp)" stroke-width="3.1"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="46" x="498" y="547"/>
+  <text class="edge-label" text-anchor="middle" x="521" y="564">95%</text>
+  <path class="edge icp" d="M 595,540 H 790 V 575" marker-end="url(#a-icp)" stroke-width="3.1"/>
+  <rect fill="#ffffff" height="24" rx="12" ry="12" stroke="#dbe3ea" stroke-width="1.1" width="46" x="716" y="547"/>
+  <text class="edge-label" text-anchor="middle" x="739" y="564">5%</text>
+  <g class="entity neuron">
+    <polygon fill="#fff7e6" points="144,375 336,375 360,420.0 336,465 144,465 120,420.0" stroke="#b97712" stroke-width="2.3"/>
+    <rect fill="#fff7e6" height="22" rx="11" ry="11" stroke="#b97712" stroke-width="1.5" width="56" x="134" y="364"/>
+    <text class="badge" fill="#b97712" text-anchor="middle" x="162.0" y="379">Neuron</text>
+    <circle cx="156" cy="420.0" fill="none" r="4.5" stroke="#b97712" stroke-width="2"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="156" x2="170.0" y1="420.0" y2="420.0"/>
+    <circle cx="170.0" cy="420.0" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="156" x2="163.0" y1="420.0" y2="432.12435565298216"/>
+    <circle cx="163.0" cy="432.12435565298216" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="156" x2="149.0" y1="420.0" y2="432.12435565298216"/>
+    <circle cx="149.0" cy="432.12435565298216" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="156" x2="142.0" y1="420.0" y2="420.0"/>
+    <circle cx="142.0" cy="420.0" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="156" x2="149.0" y1="420.0" y2="407.87564434701784"/>
+    <circle cx="149.0" cy="407.87564434701784" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="156" x2="163.0" y1="420.0" y2="407.87564434701784"/>
+    <circle cx="163.0" cy="407.87564434701784" fill="#b97712" r="2.5"/>
+    <text class="node-title" x="190" y="417.0">Faucet neuron</text>
+    <text class="node-sub" x="190" y="439.0">maturity source</text>
+  </g>
+  <g class="entity canister jupiter">
+    <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="230" x="480" y="375"/>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="494" y="364"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="537.5" y="379">Jupiter Faucet</text>
+    <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="501" y="408.0"/>
+    <line stroke="#118866" stroke-width="2" x1="507" x2="521" y1="416.0" y2="416.0"/>
+    <line stroke="#118866" stroke-width="2" x1="507" x2="521" y1="424.0" y2="424.0"/>
+    <text class="node-title" x="544" y="426.0">Disburser</text>
+  </g>
+  <g class="entity canister jupiter">
+    <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="240" x="850" y="375"/>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="864" y="364"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="907.5" y="379">Jupiter Faucet</text>
+    <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="871" y="408.0"/>
+    <line stroke="#118866" stroke-width="2" x1="877" x2="891" y1="416.0" y2="416.0"/>
+    <line stroke="#118866" stroke-width="2" x1="877" x2="891" y1="424.0" y2="424.0"/>
+    <text class="node-title" x="914" y="417.0">Faucet</text>
+    <text class="node-sub" x="914" y="439.0">age-neutral base</text>
+  </g>
+  <g class="entity canister jupiter">
+    <rect class="body" height="90" rx="23" ry="23" stroke-width="2.2" width="240" x="350" y="575"/>
+    <rect fill="#edf9f5" height="22" rx="11" ry="11" stroke="#118866" stroke-width="1.5" width="87" x="364" y="564"/>
+    <text class="badge" fill="#118866" text-anchor="middle" x="407.5" y="579">Jupiter Faucet</text>
+    <rect fill="none" height="24" rx="6" ry="6" stroke="#118866" stroke-width="2.2" width="26" x="371" y="608.0"/>
+    <line stroke="#118866" stroke-width="2" x1="377" x2="391" y1="616.0" y2="616.0"/>
+    <line stroke="#118866" stroke-width="2" x1="377" x2="391" y1="624.0" y2="624.0"/>
+    <text class="node-title" x="414" y="617.0">SNS Rewards</text>
+    <text class="node-sub" x="414" y="639.0">95% of age bonus</text>
+  </g>
+  <g class="entity neuron">
+    <polygon fill="#fff7e6" points="664,575 886,575 910,620.0 886,665 664,665 640,620.0" stroke="#b97712" stroke-width="2.3"/>
+    <rect fill="#fff7e6" height="22" rx="11" ry="11" stroke="#b97712" stroke-width="1.5" width="56" x="654" y="564"/>
+    <text class="badge" fill="#b97712" text-anchor="middle" x="682.0" y="579">Neuron</text>
+    <circle cx="676" cy="620.0" fill="none" r="4.5" stroke="#b97712" stroke-width="2"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="676" x2="690.0" y1="620.0" y2="620.0"/>
+    <circle cx="690.0" cy="620.0" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="676" x2="683.0" y1="620.0" y2="632.1243556529821"/>
+    <circle cx="683.0" cy="632.1243556529821" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="676" x2="669.0" y1="620.0" y2="632.1243556529821"/>
+    <circle cx="669.0" cy="632.1243556529821" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="676" x2="662.0" y1="620.0" y2="620.0"/>
+    <circle cx="662.0" cy="620.0" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="676" x2="669.0" y1="620.0" y2="607.8756443470179"/>
+    <circle cx="669.0" cy="607.8756443470179" fill="#b97712" r="2.5"/>
+    <line stroke="#b97712" stroke-width="1.9" x1="676" x2="683.0" y1="620.0" y2="607.8756443470179"/>
+    <circle cx="683.0" cy="607.8756443470179" fill="#b97712" r="2.5"/>
+    <text class="node-title" x="710" y="617.0">D-QUORUM neuron</text>
+    <text class="node-sub" x="710" y="639.0">5% of age bonus</text>
+  </g>
+</svg>
