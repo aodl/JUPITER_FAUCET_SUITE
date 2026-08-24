@@ -91,14 +91,14 @@ fn transfer_arg(
     amount_e8s: u64,
     fee_e8s: u64,
     created_at_time_nanos: u64,
-    memo_bytes: Vec<u8>,
+    memo: Option<Vec<u8>>,
 ) -> TransferArg {
     TransferArg {
         from_subaccount,
         to,
         fee: Some(Nat::from(fee_e8s)),
         created_at_time: Some(created_at_time_nanos),
-        memo: Some(Memo::from(memo_bytes)),
+        memo: memo.map(Memo::from),
         amount: Nat::from(amount_e8s),
     }
 }
@@ -122,13 +122,13 @@ fn from_subaccount_for_pending(pending: &PendingTransfer) -> Option<[u8; 32]> {
     }
 }
 
-fn memo_for_pending(pending: &PendingTransfer) -> Vec<u8> {
+fn memo_for_pending(pending: &PendingTransfer) -> Option<Vec<u8>> {
     match &pending.kind {
         PendingTransferKind::CmcTopUp { .. } => {
-            logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec()
+            Some(logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec())
         }
-        PendingTransferKind::SurplusIcp { memo, .. } => memo.clone().unwrap_or_default(),
-        PendingTransferKind::FaucetCommitment { memo, .. } => memo.clone(),
+        PendingTransferKind::SurplusIcp { memo, .. } => memo.clone(),
+        PendingTransferKind::FaucetCommitment { memo, .. } => Some(memo.clone()),
     }
 }
 
@@ -499,7 +499,9 @@ fn log_faucet_commitment(transfer: &PendingFaucetCommitmentTransfer, skipped_rea
         subaccount: from_subaccount_for_pending(&transfer.transfer),
     };
     let destination = destination_for_pending(Principal::management_canister(), &transfer.transfer);
-    let memo_len = memo_for_pending(&transfer.transfer).len() as u32;
+    let memo_len = memo_for_pending(&transfer.transfer)
+        .as_ref()
+        .map_or(0, Vec::len) as u32;
     emit_log_line(state::relay_faucet_commitment_log_line(
         source,
         destination,
@@ -721,6 +723,7 @@ mod tests {
     enum ScriptedTransferOutcome {
         CallFailure,
         BadFee(Nat),
+        Duplicate(u64),
     }
 
     struct ScriptedLedger {
@@ -762,6 +765,11 @@ mod tests {
                 }
                 Some(ScriptedTransferOutcome::BadFee(expected_fee)) => {
                     Ok(Err(TransferError::BadFee { expected_fee }))
+                }
+                Some(ScriptedTransferOutcome::Duplicate(duplicate_of)) => {
+                    Ok(Err(TransferError::Duplicate {
+                        duplicate_of: Nat::from(duplicate_of),
+                    }))
                 }
                 None => panic!("unexpected transfer attempt"),
             }
@@ -1041,6 +1049,89 @@ mod tests {
                 phase: PendingTransferPhase::AwaitingTransfer,
             });
         });
+    }
+
+    #[test]
+    fn memo_for_pending_preserves_kind_specific_option() {
+        let canister_id = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let account = Account {
+            owner: canister_id,
+            subaccount: None,
+        };
+        let pending = |kind| PendingTransfer {
+            kind,
+            gross_share_e8s: 20,
+            amount_e8s: 10,
+            created_at_time_nanos: 1,
+            phase: PendingTransferPhase::AwaitingTransfer,
+        };
+
+        assert_eq!(
+            memo_for_pending(&pending(PendingTransferKind::CmcTopUp { canister_id })),
+            Some(logic::MEMO_TOP_UP_CANISTER_U64.to_le_bytes().to_vec())
+        );
+        assert_eq!(
+            memo_for_pending(&pending(PendingTransferKind::SurplusIcp {
+                target: SurplusTarget::Canister(canister_id),
+                account,
+                memo: None,
+            })),
+            None
+        );
+        assert_eq!(
+            memo_for_pending(&pending(PendingTransferKind::SurplusIcp {
+                target: SurplusTarget::Canister(canister_id),
+                account,
+                memo: Some(vec![0]),
+            })),
+            Some(vec![0])
+        );
+        assert_eq!(
+            memo_for_pending(&pending(PendingTransferKind::FaucetCommitment {
+                neuron_id: 1,
+                account,
+                from_subaccount: [1; 32],
+                memo: vec![0xa1, 0xb2],
+            })),
+            Some(vec![0xa1, 0xb2])
+        );
+    }
+
+    #[test]
+    fn immediate_retry_and_duplicate_reuse_exact_optional_surplus_memo() {
+        for memo in [None, Some(Vec::new()), Some(vec![0])] {
+            install_pending_surplus_with_never_started_shares();
+            state::with_state_mut(|st| {
+                let pending = st
+                    .active_job
+                    .as_mut()
+                    .and_then(|job| job.pending_transfer.as_mut())
+                    .expect("pending surplus transfer");
+                let PendingTransferKind::SurplusIcp {
+                    memo: pending_memo, ..
+                } = &mut pending.kind
+                else {
+                    panic!("expected surplus transfer");
+                };
+                *pending_memo = memo.clone();
+            });
+            let ledger = ScriptedLedger::new(vec![
+                ScriptedTransferOutcome::CallFailure,
+                ScriptedTransferOutcome::Duplicate(77),
+            ]);
+
+            assert!(block_on(drive_pending_transfer(
+                &ledger,
+                &MintingCmc { minted_cycles: 0 },
+                principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+                2,
+            )));
+
+            let transfers = ledger.transfers.lock().unwrap();
+            assert_eq!(transfers.len(), 2);
+            assert_eq!(transfers[0], transfers[1]);
+            assert_eq!(transfers[0].memo, memo.clone().map(Memo::from));
+        }
     }
 
     #[test]

@@ -25,7 +25,7 @@ struct DedupKey {
     to: AccountKey,
     amount: u64,
     fee: u64,
-    memo: Vec<u8>,
+    memo: Option<Vec<u8>>,
     created_at: u64,
 }
 
@@ -234,7 +234,6 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
 
     // Memo in icrc-ledger-types is Memo(ByteBuf) => convert to Vec<u8>
     let memo_opt: Option<Vec<u8>> = arg.memo.as_ref().map(|m| m.0.to_vec());
-    let memo_bytes: Vec<u8> = memo_opt.clone().unwrap_or_default();
 
     let created_at = arg.created_at_time.unwrap_or(0);
 
@@ -245,7 +244,7 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
             to: key(&arg.to),
             amount,
             fee,
-            memo: memo_bytes.clone(),
+            memo: memo_opt.clone(),
             created_at,
         };
 
@@ -289,7 +288,7 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
                 to: to_key.clone(),
                 amount,
                 fee,
-                memo: memo_bytes.clone(),
+                memo: memo_opt.clone(),
                 created_at,
             };
             st.dedup.insert(dkey, block);
@@ -423,3 +422,36 @@ fn debug_legacy_transfers() -> Vec<LegacyTransferRecord> {
 }
 
 ic_cdk::export_candid!();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_key_distinguishes_absent_and_present_empty_memos() {
+        let from = AccountKey {
+            owner: Principal::anonymous(),
+            sub: None,
+        };
+        let to = AccountKey {
+            owner: Principal::management_canister(),
+            sub: None,
+        };
+        let key_with_memo = |memo| DedupKey {
+            from: from.clone(),
+            to: to.clone(),
+            amount: 100_000_000,
+            fee: 10_000,
+            memo,
+            created_at: 1,
+        };
+        let absent = key_with_memo(None);
+        let present_empty = key_with_memo(Some(Vec::new()));
+
+        assert_ne!(absent, present_empty);
+        let mut identities = HashMap::new();
+        identities.insert(absent, 1);
+        identities.insert(present_empty, 2);
+        assert_eq!(identities.len(), 2);
+    }
+}

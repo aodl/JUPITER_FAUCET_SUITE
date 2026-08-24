@@ -2076,6 +2076,110 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
 
 #[test]
 #[ignore]
+fn surplus_recipient_memos_preserve_absent_and_binary_icrc1_forms() -> Result<()> {
+    require_ignored_flag()?;
+    let empty_neuron_id = 42_u64;
+    let binary_neuron_id = 43_u64;
+    let arbitrary_canister_memo = vec![0xa1, 0xb2];
+    let arbitrary_neuron_memo = vec![0x00, 0xff, 0x80];
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, blackhole, _relay| {
+        (
+            vec![cmc],
+            Some(vec![
+                SurplusCanisterRecipient {
+                    canister_id: cmc,
+                    memo: Vec::new(),
+                },
+                SurplusCanisterRecipient {
+                    canister_id: ledger,
+                    memo: vec![0],
+                },
+                SurplusCanisterRecipient {
+                    canister_id: blackhole,
+                    memo: arbitrary_canister_memo.clone(),
+                },
+            ]),
+            vec![
+                SurplusNeuronRecipient {
+                    neuron_id: empty_neuron_id,
+                    memo: Vec::new(),
+                },
+                SurplusNeuronRecipient {
+                    neuron_id: binary_neuron_id,
+                    memo: arbitrary_neuron_memo.clone(),
+                },
+            ],
+        )
+    })?;
+    env.set_managed_cycles(4_000_000_000_000)?;
+    env.credit_relay(99_000_000)?;
+
+    let baseline = env.tick_relay()?;
+    if baseline.mode != RelayMode::BaselineOnly {
+        bail!("expected baseline-only first tick before surplus transfers, got {baseline:?}");
+    }
+
+    env.set_managed_cycles(2_000_000_000_000)?;
+    let topup = env.tick_relay()?;
+    if topup.cmc_notify_success_count == 0 {
+        bail!("expected bootstrap top-up to establish conversion estimate, got {topup:?}");
+    }
+
+    env.credit_relay(5_000_000_000)?;
+    env.add_relay_cycles(1_000_000_000_000);
+    env.set_managed_cycles(4_000_000_000_000)?;
+    let summary = env.tick_relay()?;
+    if summary.mode != RelayMode::TopUpThenSurplus || summary.surplus_transfers.len() != 5 {
+        bail!("expected five surplus recipient transfers, got {summary:?}");
+    }
+
+    let transfers = env.transfers()?;
+    let memo_to = |account: Account| {
+        transfers
+            .iter()
+            .find(|transfer| transfer.to == account)
+            .map(|transfer| transfer.memo.clone())
+    };
+    if memo_to(Account {
+        owner: env.cmc,
+        subaccount: None,
+    }) != Some(None)
+    {
+        bail!("expected empty Principal recipient memo to be absent, got {transfers:?}");
+    }
+    if memo_to(Account {
+        owner: env.governance,
+        subaccount: Some(neuron_subaccount(empty_neuron_id)),
+    }) != Some(None)
+    {
+        bail!("expected empty neuron recipient memo to be absent, got {transfers:?}");
+    }
+    if memo_to(Account {
+        owner: env.ledger,
+        subaccount: None,
+    }) != Some(Some(vec![0]))
+    {
+        bail!("expected [0x00] Principal recipient memo to remain present, got {transfers:?}");
+    }
+    if memo_to(Account {
+        owner: env.blackhole,
+        subaccount: None,
+    }) != Some(Some(arbitrary_canister_memo))
+    {
+        bail!("expected arbitrary Principal recipient memo bytes, got {transfers:?}");
+    }
+    if memo_to(Account {
+        owner: env.governance,
+        subaccount: Some(neuron_subaccount(binary_neuron_id)),
+    }) != Some(Some(arbitrary_neuron_memo))
+    {
+        bail!("expected arbitrary neuron recipient memo bytes, got {transfers:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn recovery_deficit_carries_underfunded_topup_and_blocks_surplus_until_recovered() -> Result<()> {
     require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
